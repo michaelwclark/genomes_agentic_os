@@ -6,8 +6,10 @@ node_modules/
 dist/
 build/
 .cache/
+.venv/
 .pytest_cache/
 __pycache__/
 *.pyc
+*.egg-info/
 *.log
 tmp/

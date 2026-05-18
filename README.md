@@ -80,3 +80,67 @@ The first useful version is not a full automation runtime. It is a scaffold that
 3. Run the right workflow or automation.
 4. Store decisions and artifacts.
 5. Resume later without burning tokens rediscovering state.
+
+## Installable V1
+
+Install the CLI from this repository:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+```
+
+For local test development, include the optional pytest dependency:
+
+```bash
+python -m pip install -e '.[dev]'
+```
+
+The installed command is generic:
+
+```bash
+agentic-os --help
+```
+
+### Smoke Test
+
+Run this against a temporary directory before using a real OS root:
+
+```bash
+tmpdir=$(mktemp -d)
+agentic-os init --target "$tmpdir/os"
+agentic-os domain create internal_product --root "$tmpdir/os"
+agentic-os workflow create internal_product engineering feature_dev --root "$tmpdir/os"
+agentic-os automation create internal_product support production_thread_intake --root "$tmpdir/os"
+agentic-os run-log create internal_product feature_dev --root "$tmpdir/os"
+agentic-os validate --root "$tmpdir/os"
+find "$tmpdir/os" -maxdepth 4 -type f | sort
+```
+
+For a real install, use the default root or pass an explicit target:
+
+```bash
+agentic-os init --target ~/agentic_os
+```
+
+### What V1 Does
+
+- Creates the base installed OS tree under `~/agentic_os` or a supplied target.
+- Copies repository templates into the installed `templates/` folder.
+- Creates domain folders, domain config, context placeholders, workflow folders, automation folders, decision folders, and Notion mapping folders.
+- Creates workflow and automation Markdown specs from the repository templates.
+- Creates timestamped run logs under `runs/`.
+- Validates required folders plus JSON/YAML parseability.
+
+### What V1 Does Not Do
+
+- It does not call the Notion API or create pages/databases in your Notion workspace.
+- It does not install Claude or Codex skills into local harness folders.
+- It does not execute automations, schedule jobs, or manage long-running state.
+- It does not overwrite existing hand-authored files.
+- It does not perform full JSON Schema validation of workflow or automation content yet.
+
+### Public Customization
+
+Keep the source package generic. Put organization-specific names, private project references, workspace IDs, channel names, and secrets only in the installed OS root or in a separate private overlay. Use domains such as `internal_product`, `client_operations`, or another filesystem-safe name that matches `^[a-z0-9_]+$`.
