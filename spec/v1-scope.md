@@ -8,7 +8,8 @@
 - Example domain overlays for internal product work, client operations, and candidate pipeline work.
 - JSON schemas for validating core objects.
 - Claude and Codex skill entrypoints.
-- Installer plan for future scaffold commands.
+- Installable CLI scaffold for base OS roots, domains, workflows, automations, run logs, and V1 validation.
+- Installer plan for future Notion scaffolding, context-pack build commands, and Claude/Codex surface installation.
 
 ## Do Not Build In V1
 
@@ -18,6 +19,9 @@
 - Complex permissions UI.
 - Full migration from all existing projects and automations.
 - Automatic mutation of external systems without approval controls.
+- Full JSON Schema enforcement for every generated object.
+- Notion API page/database creation.
+- Claude/Codex skill installation into live harness folders.
 
 ## First Pilot
 

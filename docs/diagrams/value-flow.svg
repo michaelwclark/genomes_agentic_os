@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="640" viewBox="0 0 1180 640" role="img" aria-labelledby="title desc">
+  <title id="title">Agentic OS value flow</title>
+  <desc id="desc">How repeated work moves from scattered context into a reusable operating system with faster execution, clearer approvals, and durable handoff.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#36556f"/>
+    </marker>
+    <style>
+      .bg { fill: #f7f8fb; }
+      .panel { fill: #ffffff; stroke: #d6dee8; stroke-width: 2; rx: 14; }
+      .source { fill: #fff8e7; stroke: #d9b85f; stroke-width: 2; rx: 12; }
+      .system { fill: #eaf3f8; stroke: #77a8bf; stroke-width: 2; rx: 12; }
+      .outcome { fill: #eaf7ef; stroke: #76ad83; stroke-width: 2; rx: 12; }
+      .title { fill: #1f2d3d; font-family: Arial, sans-serif; font-size: 28px; font-weight: 700; }
+      .subtitle { fill: #486174; font-family: Arial, sans-serif; font-size: 16px; }
+      .label { fill: #1f2d3d; font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; }
+      .text { fill: #34495e; font-family: Arial, sans-serif; font-size: 14px; }
+      .small { fill: #526a7a; font-family: Arial, sans-serif; font-size: 13px; }
+      .arrow { stroke: #36556f; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1180" height="640"/>
+  <text class="title" x="54" y="58">Why Genome's Agentic OS Exists</text>
+  <text class="subtitle" x="54" y="86">It converts scattered repeated work into a repeatable operating loop that agents and humans can resume.</text>
+
+  <rect class="panel" x="54" y="120" width="320" height="430"/>
+  <text class="label" x="84" y="158">Before</text>
+  <text class="small" x="84" y="184">Context is rebuilt in every chat.</text>
+
+  <rect class="source" x="84" y="220" width="240" height="58"/>
+  <text class="text" x="106" y="245">Chat history</text>
+  <text class="small" x="106" y="265">decisions and assumptions</text>
+
+  <rect class="source" x="84" y="300" width="240" height="58"/>
+  <text class="text" x="106" y="325">Scattered tools</text>
+  <text class="small" x="106" y="345">tickets, PRs, messages, notes</text>
+
+  <rect class="source" x="84" y="380" width="240" height="58"/>
+  <text class="text" x="106" y="405">Implicit approvals</text>
+  <text class="small" x="106" y="425">unclear action boundaries</text>
+
+  <rect class="source" x="84" y="460" width="240" height="58"/>
+  <text class="text" x="106" y="485">One-off scripts</text>
+  <text class="small" x="106" y="505">hard to audit or resume</text>
+
+  <rect class="panel" x="430" y="120" width="320" height="430"/>
+  <text class="label" x="460" y="158">Agentic OS</text>
+  <text class="small" x="460" y="184">Shared operating structure.</text>
+
+  <rect class="system" x="460" y="218" width="240" height="54"/>
+  <text class="text" x="482" y="251">Domains</text>
+
+  <rect class="system" x="460" y="288" width="240" height="54"/>
+  <text class="text" x="482" y="321">Workflows and automations</text>
+
+  <rect class="system" x="460" y="358" width="240" height="54"/>
+  <text class="text" x="482" y="391">Context packs</text>
+
+  <rect class="system" x="460" y="428" width="240" height="54"/>
+  <text class="text" x="482" y="461">Run logs and approvals</text>
+
+  <rect class="panel" x="806" y="120" width="320" height="430"/>
+  <text class="label" x="836" y="158">After</text>
+  <text class="small" x="836" y="184">Work is reusable and auditable.</text>
+
+  <rect class="outcome" x="836" y="220" width="240" height="58"/>
+  <text class="text" x="858" y="245">Less rediscovery</text>
+  <text class="small" x="858" y="265">agents load known sources</text>
+
+  <rect class="outcome" x="836" y="300" width="240" height="58"/>
+  <text class="text" x="858" y="325">Clearer approvals</text>
+  <text class="small" x="858" y="345">mutations have gates</text>
+
+  <rect class="outcome" x="836" y="380" width="240" height="58"/>
+  <text class="text" x="858" y="405">Better handoff</text>
+  <text class="small" x="858" y="425">runs record evidence</text>
+
+  <rect class="outcome" x="836" y="460" width="240" height="58"/>
+  <text class="text" x="858" y="485">Safer automation</text>
+  <text class="small" x="858" y="505">permissions are explicit</text>
+
+  <path class="arrow" d="M374 335 H425"/>
+  <path class="arrow" d="M750 335 H801"/>
+
+  <rect class="system" x="250" y="575" width="680" height="38"/>
+  <text class="text" x="300" y="600">intake -> classify -> build context -> execute -> validate -> record -> route next action</text>
+</svg>

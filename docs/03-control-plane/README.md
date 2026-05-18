@@ -4,6 +4,8 @@ Notion is the human cockpit. It should show what exists, what is waiting, what i
 
 Notion should not be treated as the only durable execution layer for high-volume changing state. It is excellent for visibility, approvals, and structured review. Use a database when state needs locking, dedupe, replay, or high-volume querying.
 
+The control plane exists for people. The filesystem and future active state plane exist so agents and automations have durable execution records.
+
 ## Required Notion Areas
 
 | Area | Purpose |
@@ -18,6 +20,22 @@ Notion should not be treated as the only durable execution layer for high-volume
 | Decisions | Durable architectural and operating decisions. |
 | Meeting Notes | Meeting inputs and extracted actions. |
 | Artifacts | Links to files, PRs, docs, exports, reports, and outputs. |
+
+## Control Plane Data Flow
+
+```text
+raw input -> inbox -> work item -> workflow or automation run -> approval or done -> artifact links
+```
+
+Each Notion object should link back to source evidence:
+
+| Notion Object | Should Link To |
+| --- | --- |
+| Inbox item | Raw message, note, ticket, PR, email, form submission, or manual prompt. |
+| Work item | Domain, workflow, current run, owner, status, and next action. |
+| Run | Filesystem run log, artifacts, validation evidence, and approval record. |
+| Approval | Proposed external write, production change, customer-visible output, or permission escalation. |
+| Decision | Decision record, source discussion, affected workflows, and review date. |
 
 ## Notion Responsibilities
 
@@ -46,3 +64,29 @@ meeting notes -> extracted actions/decisions/risks -> work items -> workflow or 
 ```
 
 The key is to preserve the raw notes, then create structured records for the actions that agents can execute.
+
+## Approval Discipline
+
+Approval records should be explicit when a workflow or automation can:
+
+- Send messages externally.
+- Create, update, or close tickets.
+- Change production state.
+- Publish customer-visible content.
+- Spend money or consume significant resources.
+- Move data across security boundaries.
+
+The approval record should include the proposed action, evidence, destination, rollback or correction path, and the exact human decision.
+
+## What Notion Should Not Hide
+
+Do not let the control plane become the only place where operational truth exists. A future agent should be able to reconstruct the work from:
+
+- The source object.
+- The domain context.
+- The workflow or automation spec.
+- The run log.
+- The artifacts.
+- The approval or decision record.
+
+Notion can summarize that state, but it should not be the only copy of execution evidence.

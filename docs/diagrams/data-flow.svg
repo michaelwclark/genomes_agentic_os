@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Agentic OS data flow</title>
+  <desc id="desc">Data flow across the source package, installed OS, control plane, work repositories, memory, and future active state plane.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#34495e"/>
+    </marker>
+    <style>
+      .bg { fill: #f7f8fb; }
+      .box { fill: #ffffff; stroke: #d6dee8; stroke-width: 2; rx: 14; }
+      .source { fill: #eef5ff; stroke: #6f9dcc; stroke-width: 2; rx: 12; }
+      .runtime { fill: #edf8f1; stroke: #73aa82; stroke-width: 2; rx: 12; }
+      .control { fill: #fff8e8; stroke: #d4ad4b; stroke-width: 2; rx: 12; }
+      .work { fill: #f2eefc; stroke: #9a82c9; stroke-width: 2; rx: 12; }
+      .future { fill: #f3f5f7; stroke: #8a9aa8; stroke-width: 2; rx: 12; }
+      .title { fill: #1f2d3d; font-family: Arial, sans-serif; font-size: 28px; font-weight: 700; }
+      .subtitle { fill: #486174; font-family: Arial, sans-serif; font-size: 16px; }
+      .label { fill: #1f2d3d; font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; }
+      .text { fill: #34495e; font-family: Arial, sans-serif; font-size: 14px; }
+      .small { fill: #526a7a; font-family: Arial, sans-serif; font-size: 13px; }
+      .arrow { stroke: #34495e; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke: #72808c; stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="760"/>
+  <text class="title" x="60" y="58">Agentic OS Data Flow</text>
+  <text class="subtitle" x="60" y="86">Each layer has a different job. The OS links them without making any one tool own all truth.</text>
+
+  <rect class="source" x="70" y="130" width="270" height="150"/>
+  <text class="label" x="95" y="168">Product Source</text>
+  <text class="text" x="95" y="198">this repository</text>
+  <text class="small" x="95" y="226">docs, specs, templates</text>
+  <text class="small" x="95" y="248">schemas, examples, CLI</text>
+
+  <rect class="runtime" x="505" y="130" width="270" height="150"/>
+  <text class="label" x="530" y="168">Installed OS</text>
+  <text class="text" x="530" y="198">~/agentic_os</text>
+  <text class="small" x="530" y="226">domains, context packs</text>
+  <text class="small" x="530" y="248">workflow specs, run logs</text>
+
+  <rect class="control" x="940" y="130" width="270" height="150"/>
+  <text class="label" x="965" y="168">Control Plane</text>
+  <text class="text" x="965" y="198">your Notion workspace</text>
+  <text class="small" x="965" y="226">inbox, work items</text>
+  <text class="small" x="965" y="248">approvals, dashboards</text>
+
+  <rect class="work" x="190" y="430" width="270" height="150"/>
+  <text class="label" x="215" y="468">Work Repos</text>
+  <text class="text" x="215" y="498">~/projects/*</text>
+  <text class="small" x="215" y="526">code, product artifacts</text>
+  <text class="small" x="215" y="548">PRs, tests, deliverables</text>
+
+  <rect class="future" x="505" y="430" width="270" height="150"/>
+  <text class="label" x="530" y="468">Active State Plane</text>
+  <text class="text" x="530" y="498">future database or queue</text>
+  <text class="small" x="530" y="526">locks, dedupe, events</text>
+  <text class="small" x="530" y="548">high-volume mutable state</text>
+
+  <rect class="future" x="820" y="430" width="270" height="150"/>
+  <text class="label" x="845" y="468">Memory And Retrieval</text>
+  <text class="text" x="845" y="498">agent memory, indexes</text>
+  <text class="small" x="845" y="526">prior learnings, similarity</text>
+  <text class="small" x="845" y="548">not authoritative status</text>
+
+  <path class="arrow" d="M340 205 H500"/>
+  <text class="small" x="382" y="190">CLI copies templates</text>
+
+  <path class="arrow" d="M775 205 H935"/>
+  <text class="small" x="810" y="190">status and approvals</text>
+
+  <path class="arrow" d="M640 280 V425"/>
+  <text class="small" x="655" y="360">run evidence</text>
+
+  <path class="arrow" d="M505 485 H465"/>
+  <text class="small" x="468" y="470">operate on repos</text>
+
+  <path class="dashed" d="M775 505 H815"/>
+  <text class="small" x="780" y="490">retrieval hints</text>
+
+  <path class="dashed" d="M955 430 V285"/>
+  <text class="small" x="970" y="360">summaries</text>
+
+  <rect class="box" x="190" y="645" width="900" height="52"/>
+  <text class="text" x="225" y="676">Rule: link across layers, but keep authority clear. Files own specs and run logs; the control plane owns human approval visibility.</text>
+</svg>

@@ -1,19 +1,24 @@
 # CLI Spec
 
-The CLI should be a scaffold and validation tool first. It does not need to run the whole automation platform in V1.
+The CLI is a scaffold and validation tool first. It does not run the whole automation platform in V1.
 
-## Proposed Commands
+## Implemented V1 Commands
 
 ```text
 agentic-os init --target ~/agentic_os
-agentic-os domain create <name>
-agentic-os workflow create <domain> <lane> <name>
-agentic-os automation create <domain> <lane> <name>
+agentic-os domain create <name> --root ~/agentic_os
+agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os
+agentic-os automation create <domain> <lane> <name> --root ~/agentic_os
+agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os
+agentic-os validate --root ~/agentic_os
+```
+
+## Future Commands
+
+```text
 agentic-os context build <work-item-id>
-agentic-os run-log create <workflow-or-automation>
 agentic-os notion scaffold <domain>
 agentic-os agents install --codex --claude
-agentic-os validate
 ```
 
 ## Command Responsibilities
@@ -37,3 +42,7 @@ agentic-os validate
 - Never overwrite hand-authored content without an explicit flag.
 - Output should identify exactly what changed.
 - Validation should fail loudly when required operating fields are missing.
+
+## V1 Validation Scope
+
+V1 validation checks the installed folder shape and parses JSON/YAML files. Full schema enforcement, Markdown section validation, Notion ID verification, and agent-surface installation checks are future work.

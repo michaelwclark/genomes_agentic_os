@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="780" viewBox="0 0 1280 780" role="img" aria-labelledby="title desc">
+  <title id="title">Workflow and automation lifecycle</title>
+  <desc id="desc">How workflows, automations, approval gates, and run logs relate in the Agentic OS.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#34495e"/>
+    </marker>
+    <style>
+      .bg { fill: #f7f8fb; }
+      .lane { fill: #ffffff; stroke: #d6dee8; stroke-width: 2; rx: 16; }
+      .workflow { fill: #eef5ff; stroke: #6f9dcc; stroke-width: 2; rx: 12; }
+      .automation { fill: #edf8f1; stroke: #73aa82; stroke-width: 2; rx: 12; }
+      .approval { fill: #fff8e8; stroke: #d4ad4b; stroke-width: 2; rx: 12; }
+      .run { fill: #f2eefc; stroke: #9a82c9; stroke-width: 2; rx: 12; }
+      .title { fill: #1f2d3d; font-family: Arial, sans-serif; font-size: 28px; font-weight: 700; }
+      .subtitle { fill: #486174; font-family: Arial, sans-serif; font-size: 16px; }
+      .label { fill: #1f2d3d; font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; }
+      .text { fill: #34495e; font-family: Arial, sans-serif; font-size: 14px; }
+      .small { fill: #526a7a; font-family: Arial, sans-serif; font-size: 13px; }
+      .arrow { stroke: #34495e; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke: #72808c; stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="780"/>
+  <text class="title" x="60" y="58">Workflow And Automation Lifecycle</text>
+  <text class="subtitle" x="60" y="86">Workflows define repeatable judgment. Automations add triggers, permissions, idempotency, and audit rules.</text>
+
+  <rect class="lane" x="70" y="125" width="1140" height="235"/>
+  <text class="label" x="100" y="162">Workflow path</text>
+
+  <rect class="workflow" x="105" y="200" width="185" height="82"/>
+  <text class="text" x="130" y="232">Manual or routed</text>
+  <text class="small" x="130" y="254">work item arrives</text>
+
+  <rect class="workflow" x="345" y="200" width="185" height="82"/>
+  <text class="text" x="370" y="232">Load workflow</text>
+  <text class="small" x="370" y="254">spec and context</text>
+
+  <rect class="workflow" x="585" y="200" width="185" height="82"/>
+  <text class="text" x="610" y="232">Execute steps</text>
+  <text class="small" x="610" y="254">agent or human</text>
+
+  <rect class="approval" x="825" y="200" width="185" height="82"/>
+  <text class="text" x="850" y="232">Approval gate</text>
+  <text class="small" x="850" y="254">if mutation needs it</text>
+
+  <rect class="run" x="1065" y="200" width="110" height="82"/>
+  <text class="text" x="1084" y="232">Run log</text>
+  <text class="small" x="1084" y="254">evidence</text>
+
+  <path class="arrow" d="M290 241 H340"/>
+  <path class="arrow" d="M530 241 H580"/>
+  <path class="arrow" d="M770 241 H820"/>
+  <path class="arrow" d="M1010 241 H1060"/>
+
+  <rect class="lane" x="70" y="410" width="1140" height="250"/>
+  <text class="label" x="100" y="447">Automation path</text>
+
+  <rect class="automation" x="105" y="492" width="150" height="82"/>
+  <text class="text" x="130" y="524">Trigger</text>
+  <text class="small" x="130" y="546">schedule or event</text>
+
+  <rect class="automation" x="300" y="492" width="150" height="82"/>
+  <text class="text" x="325" y="524">Filter</text>
+  <text class="small" x="325" y="546">allowed inputs</text>
+
+  <rect class="automation" x="495" y="492" width="150" height="82"/>
+  <text class="text" x="520" y="524">Idempotency</text>
+  <text class="small" x="520" y="546">avoid duplicates</text>
+
+  <rect class="automation" x="690" y="492" width="150" height="82"/>
+  <text class="text" x="715" y="524">Allowed action</text>
+  <text class="small" x="715" y="546">observe to guarded</text>
+
+  <rect class="approval" x="885" y="492" width="150" height="82"/>
+  <text class="text" x="910" y="524">Approval</text>
+  <text class="small" x="910" y="546">when required</text>
+
+  <rect class="run" x="1080" y="492" width="95" height="82"/>
+  <text class="text" x="1098" y="524">Audit</text>
+  <text class="small" x="1098" y="546">run log</text>
+
+  <path class="arrow" d="M255 533 H295"/>
+  <path class="arrow" d="M450 533 H490"/>
+  <path class="arrow" d="M645 533 H685"/>
+  <path class="arrow" d="M840 533 H880"/>
+  <path class="arrow" d="M1035 533 H1075"/>
+
+  <path class="dashed" d="M760 492 C760 380, 438 380, 438 287"/>
+  <text class="small" x="525" y="390">automation reuses workflow spec and context rules</text>
+
+  <rect class="run" x="230" y="700" width="820" height="42"/>
+  <text class="text" x="260" y="726">Promotion rule: observe -> prepare -> propose -> execute approved -> execute guarded, with evidence at every step.</text>
+</svg>
