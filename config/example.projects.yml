@@ -1,0 +1,20 @@
+projects:
+  internal_product:
+    repo_root: ~/projects/internal_product
+    default_domain: internal_product
+    primary_lanes:
+      - engineering
+      - support
+  client_operations:
+    repo_root: ~/projects/client_operations
+    default_domain: client_operations
+    primary_lanes:
+      - operations
+      - support
+  candidate_pipeline:
+    repo_root: ""
+    default_domain: candidate_pipeline
+    primary_lanes:
+      - operations
+      - sales
+      - support

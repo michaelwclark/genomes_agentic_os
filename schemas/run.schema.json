@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/run.schema.json",
+  "title": "Run",
+  "type": "object",
+  "required": ["run_id", "domain", "run_type", "status", "started_at", "input", "actions", "validation"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "domain": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "run_type": { "type": "string", "enum": ["workflow", "automation", "skill"] },
+    "status": {
+      "type": "string",
+      "enum": ["new", "triaged", "ready", "running", "waiting", "needs_approval", "done", "archived", "failed"]
+    },
+    "started_at": { "type": "string" },
+    "completed_at": { "type": "string" },
+    "input": { "type": "object" },
+    "actions": { "type": "array" },
+    "validation": { "type": "object" },
+    "artifacts": { "type": "array" },
+    "next_action": { "type": "string" }
+  }
+}

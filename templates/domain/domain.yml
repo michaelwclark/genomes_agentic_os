@@ -1,0 +1,38 @@
+id: example_domain
+name: Example Domain
+owner: OS Owner
+status: active
+
+purpose: >
+  Describe the operating boundary this domain owns.
+
+lanes:
+  - engineering
+  - support
+  - operations
+
+source_systems:
+  - name: Notion
+    role: control_plane
+    url: ""
+  - name: GitHub
+    role: code_and_prs
+    url: ""
+
+approval_policy:
+  external_writes_require_approval: true
+  customer_visible_output_requires_approval: true
+  production_changes_require_approval: true
+
+notion:
+  os_home_page_id: ""
+  inbox_database_id: ""
+  work_items_database_id: ""
+  runs_database_id: ""
+  approvals_database_id: ""
+
+storage:
+  active_state: filesystem
+  artifacts: filesystem
+  cockpit: notion
+  memory: agent_memory

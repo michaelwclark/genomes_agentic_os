@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/automation.schema.json",
+  "title": "Automation",
+  "type": "object",
+  "required": ["id", "domain", "lane", "status", "level", "trigger", "permissions", "audit"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "domain": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "lane": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "status": { "type": "string", "enum": ["draft", "active", "paused", "archived"] },
+    "level": {
+      "type": "string",
+      "enum": ["observe", "prepare", "propose", "execute_approved", "execute_guarded"]
+    },
+    "trigger": { "type": "object" },
+    "permissions": { "type": "object" },
+    "audit": { "type": "object" }
+  }
+}

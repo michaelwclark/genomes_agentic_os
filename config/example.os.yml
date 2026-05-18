@@ -1,0 +1,30 @@
+os:
+  name: agentic_os
+  root: ~/agentic_os
+  owner: OS Owner
+  timezone: America/Chicago
+
+control_plane:
+  provider: notion
+  workspace: "Your Notion Workspace"
+  os_home_page_id: ""
+
+storage:
+  filesystem:
+    enabled: true
+  database:
+    enabled: false
+    provider: postgres
+  memory:
+    enabled: true
+
+agent_surfaces:
+  codex:
+    enabled: true
+  claude:
+    enabled: true
+
+defaults:
+  automation_level: prepare
+  require_approval_for_external_writes: true
+  require_run_log: true

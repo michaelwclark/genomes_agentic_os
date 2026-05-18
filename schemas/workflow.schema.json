@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/workflow.schema.json",
+  "title": "Workflow",
+  "type": "object",
+  "required": ["id", "domain", "lane", "status", "purpose", "inputs", "steps", "validation", "outputs"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "domain": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "lane": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "status": { "type": "string", "enum": ["draft", "active", "paused", "archived"] },
+    "purpose": { "type": "string" },
+    "inputs": { "type": "array" },
+    "steps": { "type": "array" },
+    "validation": { "type": "array" },
+    "outputs": { "type": "array" }
+  }
+}

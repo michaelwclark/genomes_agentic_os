@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="360" viewBox="0 0 1320 360" role="img" aria-labelledby="title desc">
+  <title id="title">Genome's Agentic OS Lifecycle</title>
+  <desc id="desc">A flow from intake through classification, context building, workflow execution, validation, recording, and routing.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 10; }
+      .accent { fill: #e0f2fe; stroke: #0369a1; }
+      .text { font-family: Arial, sans-serif; font-size: 19px; fill: #0f172a; font-weight: 700; }
+      .small { font-family: Arial, sans-serif; font-size: 14px; fill: #334155; }
+      .arrow { stroke: #475569; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1320" height="360"/>
+  <rect class="box accent" x="40" y="110" width="145" height="95"/>
+  <text class="text" x="112.5" y="148" text-anchor="middle">Intake</text>
+  <text class="small" x="112.5" y="176" text-anchor="middle">message, PR, Jira,</text>
+  <text class="small" x="112.5" y="196" text-anchor="middle">meeting, manual ask</text>
+  <path class="arrow" d="M185 157 L245 157"/>
+  <rect class="box" x="250" y="110" width="145" height="95"/>
+  <text class="text" x="322.5" y="148" text-anchor="middle">Classify</text>
+  <text class="small" x="322.5" y="176" text-anchor="middle">domain, lane, type,</text>
+  <text class="small" x="322.5" y="196" text-anchor="middle">urgency, permissions</text>
+  <path class="arrow" d="M395 157 L455 157"/>
+  <rect class="box" x="460" y="110" width="145" height="95"/>
+  <text class="text" x="532.5" y="148" text-anchor="middle">Context</text>
+  <text class="small" x="532.5" y="176" text-anchor="middle">minimal source-backed</text>
+  <text class="small" x="532.5" y="196" text-anchor="middle">context pack</text>
+  <path class="arrow" d="M605 157 L665 157"/>
+  <rect class="box" x="670" y="110" width="145" height="95"/>
+  <text class="text" x="742.5" y="148" text-anchor="middle">Execute</text>
+  <text class="small" x="742.5" y="176" text-anchor="middle">workflow, automation,</text>
+  <text class="small" x="742.5" y="196" text-anchor="middle">or skill</text>
+  <path class="arrow" d="M815 157 L875 157"/>
+  <rect class="box" x="880" y="110" width="145" height="95"/>
+  <text class="text" x="952.5" y="148" text-anchor="middle">Validate</text>
+  <text class="small" x="952.5" y="176" text-anchor="middle">tests, checks,</text>
+  <text class="small" x="952.5" y="196" text-anchor="middle">approval gates</text>
+  <path class="arrow" d="M1025 157 L1085 157"/>
+  <rect class="box" x="1090" y="110" width="145" height="95"/>
+  <text class="text" x="1162.5" y="148" text-anchor="middle">Record</text>
+  <text class="small" x="1162.5" y="176" text-anchor="middle">run log, artifacts,</text>
+  <text class="small" x="1162.5" y="196" text-anchor="middle">decisions, state</text>
+  <path class="arrow" d="M1162 205 C1162 275 112 275 112 210"/>
+  <text class="small" x="642" y="300" text-anchor="middle">Route next action: done, waiting, needs approval, retry, failed, or archived</text>
+</svg>

@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="title desc">
+  <title id="title">Agentic OS Storage Boundaries</title>
+  <desc id="desc">A diagram showing Git filesystem, Notion, database, memory, and project repos as separate storage responsibilities.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 10; }
+      .git { fill: #ecfeff; stroke: #0891b2; }
+      .notion { fill: #fefce8; stroke: #ca8a04; }
+      .db { fill: #f0fdf4; stroke: #16a34a; }
+      .mem { fill: #fdf2f8; stroke: #db2777; }
+      .repo { fill: #f1f5f9; stroke: #475569; }
+      .title { font-family: Arial, sans-serif; font-size: 22px; fill: #0f172a; font-weight: 700; }
+      .text { font-family: Arial, sans-serif; font-size: 16px; fill: #334155; }
+      .small { font-family: Arial, sans-serif; font-size: 14px; fill: #475569; }
+      .arrow { stroke: #64748b; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1120" height="520"/>
+  <rect class="box" x="440" y="40" width="240" height="92"/>
+  <text class="title" x="560" y="78" text-anchor="middle">Agents</text>
+  <text class="small" x="560" y="106" text-anchor="middle">Claude, Codex, workers</text>
+  <rect class="box git" x="70" y="190" width="260" height="140"/>
+  <text class="title" x="200" y="230" text-anchor="middle">Git / Filesystem</text>
+  <text class="text" x="200" y="262" text-anchor="middle">specs, templates, context packs</text>
+  <text class="text" x="200" y="286" text-anchor="middle">run logs, artifacts, decisions</text>
+  <rect class="box notion" x="430" y="190" width="260" height="140"/>
+  <text class="title" x="560" y="230" text-anchor="middle">Notion</text>
+  <text class="text" x="560" y="262" text-anchor="middle">cockpit, approvals, dashboards</text>
+  <text class="text" x="560" y="286" text-anchor="middle">human-readable work state</text>
+  <rect class="box db" x="790" y="190" width="260" height="140"/>
+  <text class="title" x="920" y="230" text-anchor="middle">Database</text>
+  <text class="text" x="920" y="262" text-anchor="middle">active state, locks, dedupe</text>
+  <text class="text" x="920" y="286" text-anchor="middle">events, replay, matching</text>
+  <rect class="box repo" x="250" y="390" width="260" height="92"/>
+  <text class="title" x="380" y="428" text-anchor="middle">Project Repos</text>
+  <text class="small" x="380" y="456" text-anchor="middle">actual product and client code</text>
+  <rect class="box mem" x="610" y="390" width="260" height="92"/>
+  <text class="title" x="740" y="428" text-anchor="middle">Memory / Vector</text>
+  <text class="small" x="740" y="456" text-anchor="middle">retrieval aid, not source of truth</text>
+  <path class="arrow" d="M510 132 L245 188"/>
+  <path class="arrow" d="M560 132 L560 188"/>
+  <path class="arrow" d="M610 132 L875 188"/>
+  <path class="arrow" d="M330 300 L380 388"/>
+  <path class="arrow" d="M690 300 L740 388"/>
+  <path class="arrow" d="M790 260 L692 260"/>
+  <path class="arrow" d="M430 260 L332 260"/>
+</svg>

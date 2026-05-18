@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/domain.schema.json",
+  "title": "Domain",
+  "type": "object",
+  "required": ["id", "name", "owner", "status", "lanes", "approval_policy", "storage"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "name": { "type": "string" },
+    "owner": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "paused", "archived"] },
+    "purpose": { "type": "string" },
+    "lanes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+    },
+    "approval_policy": { "type": "object" },
+    "notion": { "type": "object" },
+    "storage": { "type": "object" }
+  }
+}
