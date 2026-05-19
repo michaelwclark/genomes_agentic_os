@@ -15,13 +15,13 @@ Use this skill when the user asks Codex to operate, scaffold, inspect, or execut
 ## Procedure
 
 1. Locate the OS root. Default to `~/agentic_os` unless the user provides another path.
-2. Load OS config and domain registry.
+2. Load root `AGENTS.md`, then the selected domain's `AGENTS.md`.
 3. Identify the domain, lane, and work type from the user's input.
-4. Load the matching workflow or automation spec.
+4. Load the matching workflow or automation spec from `03-workflows` or `04-automations`.
 5. Build or update the context pack.
 6. Execute the allowed workflow steps.
 7. Validate against the spec.
-8. Write or update the run log.
+8. Write or update the run log under `<domain>/06-runs-and-logs/runs/`.
 9. Update the control plane if configured and allowed.
 10. Report final state, artifacts, validation, and next action.
 

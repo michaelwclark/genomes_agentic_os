@@ -1,12 +1,12 @@
-# Example Domain: Internal Product
+# Example Domain: LOS
 
-Internal product work is a strong first pilot because it has repeated daily loops with changing state.
+LOS work is a strong first pilot because it has repeated daily loops with changing state, code repos, Jira, PRs, releases, support threads, and production safety gates.
 
 ## Suggested Lanes
 
 - `engineering`
 - `support`
-- `release_management`
+- `operations`
 
 ## First Workflows
 

@@ -3,18 +3,19 @@
 ## Phase 1: Filesystem Scaffold
 
 1. Create OS root.
-2. Create base folders.
-3. Copy templates.
-4. Create config files.
-5. Validate folder shape.
+2. Create root `AGENTS.md`, `AGENT.md`, and `README.md`.
+3. Create default domain roots: `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive`.
+4. Create each domain's numbered structure from `00-control-plane` through `08-archive`.
+5. Copy templates into `shared_factory/05-knowledge/templates/`.
+6. Validate folder shape.
 
 ## Phase 2: Domain Scaffold
 
 1. Create domain folder.
 2. Fill domain config from prompts or flags.
-3. Create context placeholders.
-4. Create workflow and automation folders.
-5. Register Notion mapping stubs.
+3. Create the domain router and control-plane files.
+4. Create inbox, project, workflow, automation, knowledge, run-log, metric, and archive folders.
+5. Register Notion mappings in `domain.yml` or `05-knowledge/source-map.md`.
 
 ## Phase 3: Agent Install
 

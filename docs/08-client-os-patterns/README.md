@@ -5,20 +5,35 @@ Each client OS should be a domain overlay on the core model, not a full fork.
 ## Client Domain Shape
 
 ```text
-domains/<client>/
+<client_domain>/
+  AGENTS.md
+  AGENT.md
   README.md
   domain.yml
-  context/
-    business.md
-    systems.md
-    stakeholders.md
-    access-policy.md
-  workflows/
-  automations/
-  meetings/
-  decisions/
-  notion/
+  00-control-plane/
+    active-work.md
+    decisions.md
+    routing-rules.md
+    approval-rules.md
+  01-inbox/
+    raw-ideas.md
+    triage.md
+  02-projects/
+  03-workflows/
+  04-automations/
+  05-knowledge/
+    source-map.md
+    glossary.md
+    memory-policy.md
+  06-runs-and-logs/
+    activity-log.md
+    runs/
+    failures/
+  07-metrics/
+  08-archive/
 ```
+
+The client domain can live beside `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive` in the installed root.
 
 ## Client Operations Pattern
 
@@ -29,6 +44,20 @@ Useful for service businesses or advisory clients:
 - Automation runs tracked visibly.
 - Human approval before outbound or customer-facing changes.
 
+Recommended starting folders:
+
+```text
+<client_domain>/
+  03-workflows/
+    operations/
+      inbound_message_triage/
+    support/
+      client_status_update/
+  04-automations/
+    operations/
+      weekly_digest_prepare/
+```
+
 ## Candidate Pipeline Pattern
 
 Useful for recruiting, staffing, marketplace, or matching-heavy workflows:
@@ -38,13 +67,42 @@ Useful for recruiting, staffing, marketplace, or matching-heavy workflows:
 - Workers or lightweight functions for glue tasks and syncs.
 - Agent workflows for analysis, enrichment, routing, and reporting.
 
+Recommended starting folders:
+
+```text
+<client_domain>/
+  03-workflows/
+    operations/
+      candidate_intake/
+      shortlist_review/
+  04-automations/
+    operations/
+      source_sync_prepare/
+```
+
 ## Internal Product Pattern
 
 Useful for the operator's own software and operations:
 
-- Personal, internal product, client delivery, and shared services as separate domains.
-- Engineering workflows for feature work, PR review, release management, and production support.
-- Daily operating dashboard pulling from GitHub, Jira, Slack, Notion, and local run logs.
+- `los`, `lenders`, `clarks_consulting`, `personal`, and `shared_factory` remain separate domain roots.
+- Engineering workflows handle feature work, PR review, release management, and production support.
+- Daily operating dashboards can pull from GitHub, Jira, Slack, Notion, and local run logs.
+
+Recommended starting folders:
+
+```text
+los/
+  03-workflows/
+    engineering/
+      feature_dev/
+      pull_request_review/
+      release_management/
+    support/
+      production_issue_triage/
+  04-automations/
+    support/
+      production_thread_intake/
+```
 
 ## Customization Rule
 

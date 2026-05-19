@@ -15,13 +15,13 @@ Use this skill when Claude is asked to operate, scaffold, inspect, or execute wo
 ## Procedure
 
 1. Locate the OS root. Default to `~/agentic_os` unless another path is provided.
-2. Load OS config and domain registry.
+2. Load root `AGENTS.md`, then the selected domain's `AGENTS.md`.
 3. Identify the domain, lane, and work type.
-4. Load the workflow or automation spec.
+4. Load the workflow or automation spec from `03-workflows` or `04-automations`.
 5. Build or update the context pack.
 6. Execute only the allowed workflow steps.
 7. Validate against the workflow or automation spec.
-8. Write or update the run log.
+8. Write or update the run log under `<domain>/06-runs-and-logs/runs/`.
 9. Update the control plane if configured and allowed.
 10. Return final state, artifacts, validation, and next action.
 

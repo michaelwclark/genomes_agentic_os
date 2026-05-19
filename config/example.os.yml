@@ -6,7 +6,7 @@ os:
 
 control_plane:
   provider: notion
-  workspace: "Your Notion Workspace"
+  workspace: "Genome's Notion"
   os_home_page_id: ""
 
 storage:
@@ -28,3 +28,10 @@ defaults:
   automation_level: prepare
   require_approval_for_external_writes: true
   require_run_log: true
+  root_domains:
+    - personal
+    - clarks_consulting
+    - los
+    - lenders
+    - shared_factory
+    - archive

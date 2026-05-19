@@ -5,7 +5,7 @@
 - Documentation for the operating model.
 - Specs for product, architecture, CLI, Notion scaffold, and agent install surfaces.
 - Templates for domains, workflows, automations, memory policy, run logs, and approvals.
-- Example domain overlays for internal product work, client operations, and candidate pipeline work.
+- Example domain overlays for `los`, `clarks_consulting`, and `personal`.
 - JSON schemas for validating core objects.
 - Claude and Codex skill entrypoints.
 - Installable CLI scaffold for base OS roots, domains, workflows, automations, run logs, and V1 validation.
@@ -25,7 +25,7 @@
 
 ## First Pilot
 
-Use internal product work as the first pilot because it has clear recurring loops:
+Use `los` work as the first pilot because it has clear recurring loops:
 
 - PR review.
 - Production issue tracking.

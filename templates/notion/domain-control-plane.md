@@ -36,4 +36,4 @@
 - Filesystem specs are the source for workflow and automation definitions.
 - Notion displays and links those specs.
 - Notion approval decisions must be reflected in run logs.
-- Notion IDs are stored in the domain's `notion/` folder.
+- Notion IDs are stored in the domain's `domain.yml` or `05-knowledge/source-map.md`.

@@ -35,7 +35,7 @@ Agentic work is currently distributed across chats, repos, Slack threads, Notion
 
 | Object | Definition |
 | --- | --- |
-| Domain | A context/security/business boundary such as `internal_product`, `client_operations`, or `candidate_pipeline`. |
+| Domain | A top-level context/security/business boundary such as `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, or a client domain. |
 | Lane | Functional grouping inside a domain such as engineering, support, sales, or operations. |
 | Workflow | Repeatable judgment-heavy process. |
 | Automation | Triggered or scheduled process with guardrails. |
@@ -48,10 +48,10 @@ Agentic work is currently distributed across chats, repos, Slack threads, Notion
 
 ## V1 Acceptance Criteria
 
-- A new OS can be scaffolded locally from templates.
-- A domain can be created with standard folders and context files.
-- A workflow spec can be created and validated.
-- An automation spec can be created and validated.
+- A new OS can be scaffolded locally with top-level domain roots.
+- A domain can be created with router files, control plane, inbox, projects, workflows, automations, knowledge, run logs, metrics, and archive folders.
+- A workflow folder can be created and validated at `<domain>/03-workflows/<lane>/<workflow>/`.
+- An automation folder can be created and validated at `<domain>/04-automations/<lane>/<automation>/`.
 - Claude and Codex can load the same operating rules.
 - Notion control-plane requirements are documented clearly enough to build.
-- Example domains exist for internal product work, client operations, and candidate pipeline work.
+- The default installed roots cover `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive`.

@@ -25,12 +25,12 @@ agentic-os agents install --codex --claude
 
 | Command | Responsibility |
 | --- | --- |
-| `init` | Create the installed OS tree and base config. |
-| `domain create` | Create a domain folder, domain config, context files, and Notion mapping stub. |
-| `workflow create` | Copy workflow template into a lane and register it. |
-| `automation create` | Copy automation template into a lane and register it. |
+| `init` | Create the domain-first installed OS tree, root router, default domain routers, numbered domain lanes, and shared runtime templates. |
+| `domain create` | Create an additional top-level domain with router, config, control plane, inbox, projects, workflows, automations, knowledge, run logs, metrics, and archive structure. |
+| `workflow create` | Create a workflow folder under `<domain>/03-workflows/<lane>/<workflow>/` with spec, state machine, context pack, approval rules, output contract, runbook, examples, and runs. |
+| `automation create` | Create an automation folder under `<domain>/04-automations/<lane>/<automation>/` with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `context build` | Assemble a context pack from known inputs and domain rules. |
-| `run-log create` | Create a run log using the standard template. |
+| `run-log create` | Create a timestamped run folder under `<domain>/06-runs-and-logs/runs/` using the standard template. |
 | `notion scaffold` | Create or update control-plane pages/databases. |
 | `agents install` | Install Claude/Codex rules and skill entrypoints. |
 | `validate` | Validate files against schemas and required fields. |
@@ -43,6 +43,20 @@ agentic-os agents install --codex --claude
 - Output should identify exactly what changed.
 - Validation should fail loudly when required operating fields are missing.
 
+## Installed Shape
+
+```text
+~/agentic_os/
+  personal/
+  clarks_consulting/
+  los/
+  lenders/
+  shared_factory/
+  archive/
+```
+
+Every domain uses the standard `00-control-plane` through `08-archive` lane structure. Workflows and automations are folders inside `03-workflows` and `04-automations`, not loose root-level files.
+
 ## V1 Validation Scope
 
-V1 validation checks the installed folder shape and parses JSON/YAML files. Full schema enforcement, Markdown section validation, Notion ID verification, and agent-surface installation checks are future work.
+V1 validation checks the domain-first installed folder shape and parses JSON/YAML files. Full schema enforcement, Markdown section validation, Notion ID verification, and agent-surface installation checks are future work.

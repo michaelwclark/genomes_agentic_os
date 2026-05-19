@@ -3,7 +3,7 @@
   "$id": "https://example.com/schemas/agentic-os/domain.schema.json",
   "title": "Domain",
   "type": "object",
-  "required": ["id", "name", "owner", "status", "lanes", "approval_policy", "storage"],
+  "required": ["id", "name", "owner", "status", "lanes", "directories", "approval_policy", "storage"],
   "properties": {
     "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
     "name": { "type": "string" },
@@ -14,6 +14,22 @@
       "type": "array",
       "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
     },
+    "directories": {
+      "type": "object",
+      "required": ["control_plane", "inbox", "projects", "workflows", "automations", "knowledge", "runs_and_logs", "metrics", "archive"],
+      "properties": {
+        "control_plane": { "const": "00-control-plane" },
+        "inbox": { "const": "01-inbox" },
+        "projects": { "const": "02-projects" },
+        "workflows": { "const": "03-workflows" },
+        "automations": { "const": "04-automations" },
+        "knowledge": { "const": "05-knowledge" },
+        "runs_and_logs": { "const": "06-runs-and-logs" },
+        "metrics": { "const": "07-metrics" },
+        "archive": { "const": "08-archive" }
+      }
+    },
+    "source_systems": { "type": "array" },
     "approval_policy": { "type": "object" },
     "notion": { "type": "object" },
     "storage": { "type": "object" }

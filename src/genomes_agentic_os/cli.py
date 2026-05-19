@@ -105,6 +105,8 @@ def handle_validate(args: argparse.Namespace) -> int:
     result = validate_root(args.root)
     if result.ok:
         print(f"valid: {Path(args.root).expanduser()}")
+        for warning in result.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
         return 0
     for error in result.errors:
         print(f"error: {error}", file=sys.stderr)

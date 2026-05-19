@@ -6,6 +6,20 @@ Workflows are used when judgment is required. Automations are used when the deci
 
 Workflows are the main unit of reusable agent work. A good workflow should be specific enough for an agent to execute, but general enough to run across many work items in the same domain and lane.
 
+Workflow specs live under the selected domain:
+
+```text
+<domain>/03-workflows/<lane>/<workflow>/
+  workflow.md
+  state-machine.md
+  context-pack.md
+  approval-rules.md
+  output-contract.md
+  runbook.md
+  examples/
+  runs/
+```
+
 ## Required Workflow Sections
 
 Every workflow spec should include:

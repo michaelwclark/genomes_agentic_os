@@ -6,6 +6,8 @@ The OS should make context cheap to reconstruct by storing stable, small context
 
 The purpose of context packs is not to store everything. It is to make the first five minutes of every agent run predictable.
 
+Domain-level context starts in `<domain>/05-knowledge/`. Workflow-level context starts in `<domain>/03-workflows/<lane>/<workflow>/context-pack.md`. Run-specific context and evidence belong in `<domain>/06-runs-and-logs/runs/<run-id>/`.
+
 ## Context Pack Types
 
 | Pack | Purpose |

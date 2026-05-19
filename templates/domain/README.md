@@ -1,25 +1,38 @@
 # Domain Template
 
-Use this when creating a new operating boundary such as `internal_product`, `client_operations`, `candidate_pipeline`, or `personal`.
+Use this when creating a new top-level operating boundary such as `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, or a client domain.
 
 ## Required Files
 
-- `domain.yml`
+- `AGENTS.md`
+- `AGENT.md`
 - `README.md`
-- `context/business.md`
-- `context/systems.md`
-- `context/stakeholders.md`
-- `context/access-policy.md`
-- `workflows/`
-- `automations/`
-- `decisions/`
-- `notion/`
+- `domain.yml`
+- `00-control-plane/active-work.md`
+- `00-control-plane/decisions.md`
+- `00-control-plane/routing-rules.md`
+- `00-control-plane/approval-rules.md`
+- `01-inbox/raw-ideas.md`
+- `01-inbox/triage.md`
+- `02-projects/README.md`
+- `03-workflows/<lane>/`
+- `04-automations/<lane>/`
+- `05-knowledge/source-map.md`
+- `05-knowledge/glossary.md`
+- `05-knowledge/memory-policy.md`
+- `06-runs-and-logs/activity-log.md`
+- `06-runs-and-logs/runs/`
+- `06-runs-and-logs/failures/`
+- `07-metrics/baselines.md`
+- `07-metrics/scorecards.md`
+- `08-archive/README.md`
 
 ## Setup Steps
 
 1. Create the domain folder.
 2. Fill `domain.yml`.
-3. Add system and stakeholder context.
-4. Create or link the Notion OS Home.
-5. Add first workflows before adding automations.
-6. Set approval rules before allowing external writes.
+3. Fill the domain router and control plane rules.
+4. Add source maps and memory policy notes.
+5. Create or link the Notion control plane.
+6. Add first workflows before adding automations.
+7. Set approval rules before allowing external writes.

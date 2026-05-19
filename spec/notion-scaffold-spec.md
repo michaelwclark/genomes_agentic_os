@@ -106,5 +106,5 @@ Properties:
 - Every domain should have its own OS Home.
 - Shared internal OS pages may aggregate across domains.
 - Do not create pages in the wrong Notion workspace.
-- Store Notion page/database IDs in the domain's `notion/` folder.
+- Store Notion page/database IDs in the domain's `domain.yml` or `05-knowledge/source-map.md`.
 - Generated Notion structure should be idempotent.

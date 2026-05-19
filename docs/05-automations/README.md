@@ -6,6 +6,20 @@ Automations should be conservative at first. Start by capturing, classifying, su
 
 The best first automation is usually not "do the whole job." It is "watch the input, classify it correctly, draft the next action, and record evidence."
 
+Automation specs live under the selected domain:
+
+```text
+<domain>/04-automations/<lane>/<automation>/
+  automation.md
+  inputs.md
+  outputs.md
+  permissions.md
+  failure-modes.md
+  runbook.md
+  tests.md
+  logs/
+```
+
 ## Required Automation Sections
 
 Every automation spec should include:

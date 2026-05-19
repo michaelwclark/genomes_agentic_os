@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 .cache/
+.playwright-mcp/
 .venv/
 .pytest_cache/
 __pycache__/

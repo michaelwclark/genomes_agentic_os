@@ -8,7 +8,36 @@ from pathlib import Path
 
 import yaml
 
-from .scaffold import BASE_FOLDERS, expand_path
+from .scaffold import (
+    CONTROL_PLANE_FILES,
+    DEFAULT_DOMAINS,
+    DOMAIN_DIRECTORIES,
+    INBOX_FILES,
+    KNOWLEDGE_FILES,
+    METRIC_FILES,
+    STANDARD_LANES,
+    expand_path,
+)
+
+
+ROOT_FILES = (
+    "README.md",
+    "AGENTS.md",
+    "AGENT.md",
+)
+
+LEGACY_ROOT_FOLDERS = (
+    "domains",
+    "workflows",
+    "automations",
+    "inbox",
+    "runs",
+    "context",
+    "memory",
+    "notion",
+    "config",
+    "templates",
+)
 
 
 @dataclass
@@ -22,6 +51,49 @@ class ValidationResult:
         return not self.errors
 
 
+def require_file(path: Path, result: ValidationResult) -> None:
+    if not path.is_file():
+        result.errors.append(f"missing required file: {path}")
+
+
+def require_dir(path: Path, result: ValidationResult) -> None:
+    if not path.is_dir():
+        result.errors.append(f"missing required folder: {path}")
+
+
+def validate_domain(domain_root: Path, result: ValidationResult) -> None:
+    require_dir(domain_root, result)
+    require_file(domain_root / "README.md", result)
+    require_file(domain_root / "AGENTS.md", result)
+    require_file(domain_root / "AGENT.md", result)
+    require_file(domain_root / "domain.yml", result)
+
+    for directory in DOMAIN_DIRECTORIES:
+        require_dir(domain_root / directory, result)
+
+    for filename in CONTROL_PLANE_FILES:
+        require_file(domain_root / "00-control-plane" / filename, result)
+
+    for filename in INBOX_FILES:
+        require_file(domain_root / "01-inbox" / filename, result)
+
+    require_file(domain_root / "02-projects" / "README.md", result)
+
+    for lane in STANDARD_LANES:
+        require_dir(domain_root / "03-workflows" / lane, result)
+        require_dir(domain_root / "04-automations" / lane, result)
+
+    for filename in KNOWLEDGE_FILES:
+        require_file(domain_root / "05-knowledge" / filename, result)
+
+    require_file(domain_root / "06-runs-and-logs" / "activity-log.md", result)
+
+    for filename in METRIC_FILES:
+        require_file(domain_root / "07-metrics" / filename, result)
+
+    require_file(domain_root / "08-archive" / "README.md", result)
+
+
 def validate_root(root: str | Path) -> ValidationResult:
     os_root = expand_path(root)
     result = ValidationResult(root=os_root)
@@ -32,10 +104,16 @@ def validate_root(root: str | Path) -> ValidationResult:
         result.errors.append(f"root is not a directory: {os_root}")
         return result
 
-    for folder in BASE_FOLDERS:
+    for filename in ROOT_FILES:
+        require_file(os_root / filename, result)
+
+    for domain in DEFAULT_DOMAINS:
+        validate_domain(os_root / domain, result)
+
+    for folder in LEGACY_ROOT_FOLDERS:
         path = os_root / folder
-        if not path.is_dir():
-            result.errors.append(f"missing required folder: {path}")
+        if path.exists():
+            result.warnings.append(f"legacy root folder present: {path}")
 
     for path in sorted(os_root.rglob("*.json")):
         try:

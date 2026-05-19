@@ -8,8 +8,24 @@ purpose: >
 
 lanes:
   - engineering
+  - marketing
+  - sales
   - support
   - operations
+  - finance
+  - personal_admin
+  - learning
+
+directories:
+  control_plane: 00-control-plane
+  inbox: 01-inbox
+  projects: 02-projects
+  workflows: 03-workflows
+  automations: 04-automations
+  knowledge: 05-knowledge
+  runs_and_logs: 06-runs-and-logs
+  metrics: 07-metrics
+  archive: 08-archive
 
 source_systems:
   - name: Notion
@@ -23,9 +39,10 @@ approval_policy:
   external_writes_require_approval: true
   customer_visible_output_requires_approval: true
   production_changes_require_approval: true
+  destructive_actions_require_approval: true
 
 notion:
-  os_home_page_id: ""
+  domain_home_page_id: ""
   inbox_database_id: ""
   work_items_database_id: ""
   runs_database_id: ""
