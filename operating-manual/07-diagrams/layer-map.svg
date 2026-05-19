@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="640" viewBox="0 0 1040 640" role="img" aria-labelledby="title desc">
+  <title id="title">Agentic OS Layer Map</title>
+  <desc id="desc">Color coded map of root, domain, project, workflow, automation, run, and shared factory layers.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 10; }
+    .root { stroke: #2563eb; }
+    .domain { stroke: #059669; }
+    .project { stroke: #0f766e; }
+    .workflow { stroke: #d97706; }
+    .automation { stroke: #7c3aed; }
+    .run { stroke: #dc2626; }
+    .shared { stroke: #0891b2; }
+    .title { font: 700 30px system-ui, sans-serif; fill: #17202a; }
+    .h { font: 700 18px system-ui, sans-serif; fill: #17202a; }
+    .t { font: 14px system-ui, sans-serif; fill: #475569; }
+    .arrow { stroke: #64748b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1040" height="640"/>
+  <text class="title" x="40" y="56">Agentic OS Layer Map</text>
+
+  <rect class="box root" x="60" y="100" width="250" height="92"/>
+  <text class="h" x="82" y="134">Root</text>
+  <text class="t" x="82" y="160">ROUTER.md maps domains.</text>
+  <text class="t" x="82" y="180">No active work here.</text>
+
+  <rect class="box domain" x="390" y="100" width="250" height="92"/>
+  <text class="h" x="412" y="134">Domain</text>
+  <text class="t" x="412" y="160">Context, references, policy,</text>
+  <text class="t" x="412" y="180">workflows, automations, logs.</text>
+
+  <rect class="box project" x="720" y="100" width="250" height="92"/>
+  <text class="h" x="742" y="134">Project</text>
+  <text class="t" x="742" y="160">Active outcome with status,</text>
+  <text class="t" x="742" y="180">sources, artifacts, decisions.</text>
+
+  <rect class="box workflow" x="120" y="300" width="250" height="104"/>
+  <text class="h" x="142" y="334">Workflow</text>
+  <text class="t" x="142" y="360">Judgment-heavy repeatable</text>
+  <text class="t" x="142" y="380">process with validation.</text>
+
+  <rect class="box automation" x="450" y="300" width="250" height="104"/>
+  <text class="h" x="472" y="334">Automation</text>
+  <text class="t" x="472" y="360">Trigger, inputs, permissions,</text>
+  <text class="t" x="472" y="380">failure modes, tests, logs.</text>
+
+  <rect class="box run" x="780" y="300" width="210" height="104"/>
+  <text class="h" x="802" y="334">Run</text>
+  <text class="t" x="802" y="360">One execution record</text>
+  <text class="t" x="802" y="380">with evidence.</text>
+
+  <rect class="box shared" x="280" y="500" width="480" height="92"/>
+  <text class="h" x="302" y="534">Shared Factory</text>
+  <text class="t" x="302" y="560">Templates, manual, skills, commands, examples, diagrams, schemas.</text>
+
+  <path class="arrow" d="M310 146 H390"/>
+  <path class="arrow" d="M640 146 H720"/>
+  <path class="arrow" d="M845 192 C845 236 246 252 246 300"/>
+  <path class="arrow" d="M370 352 H450"/>
+  <path class="arrow" d="M700 352 H780"/>
+  <path class="arrow" d="M885 404 C885 472 742 510 760 546"/>
+  <path class="arrow" d="M520 500 C520 458 246 442 246 404"/>
+</svg>

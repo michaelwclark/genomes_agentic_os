@@ -10,6 +10,8 @@ agentic-os domain create <name> --root ~/agentic_os
 agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os
 agentic-os automation create <domain> <lane> <name> --root ~/agentic_os
 agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os
+agentic-os docs install --root ~/agentic_os
+agentic-os docs update --root ~/agentic_os
 agentic-os validate --root ~/agentic_os
 ```
 
@@ -25,12 +27,14 @@ agentic-os agents install --codex --claude
 
 | Command | Responsibility |
 | --- | --- |
-| `init` | Create the domain-first installed OS tree, root/domain source-of-truth routers, Claude/Codex pointer files, domain context/reference files, numbered domain lanes, and shared runtime templates. |
+| `init` | Create the domain-first installed OS tree, root/domain source-of-truth routers, Claude/Codex pointer files, domain context/reference files, numbered domain lanes, shared runtime templates, operating manual, commands, and skills. |
 | `domain create` | Create an additional top-level domain with router, context, references, config, control plane, inbox, projects, workflows, automations, knowledge, run logs, metrics, and archive structure. |
 | `workflow create` | Create a workflow folder under `<domain>/03-workflows/<lane>/<workflow>/` with spec, outcome brief, alignment questions, PRD, implementation plan, dispatch handoff, progress, quick reference, state machine, context pack, approval rules, output contract, runbook, examples, and runs. |
 | `automation create` | Create an automation folder under `<domain>/04-automations/<lane>/<automation>/` with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `context build` | Assemble a context pack from known inputs and domain rules. |
 | `run-log create` | Create a timestamped run folder under `<domain>/06-runs-and-logs/runs/` using the standard template. |
+| `docs install` | Install managed operating manual, command prompts, and skill specs under `shared_factory/05-knowledge/`. |
+| `docs update` | Refresh managed operating manual, command prompts, and skill specs under `shared_factory/05-knowledge/`. |
 | `notion scaffold` | Create or update control-plane pages/databases. |
 | `agents install` | Install Claude/Codex rules and skill entrypoints. |
 | `validate` | Validate files against schemas and required fields. |
@@ -55,6 +59,11 @@ agentic-os agents install --codex --claude
   clarks_consulting/
   los/
   shared_factory/
+    05-knowledge/
+      operating-manual/
+      commands/
+      skills/
+      templates/
   archive/
 ```
 

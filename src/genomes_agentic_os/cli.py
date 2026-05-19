@@ -11,6 +11,7 @@ from .scaffold import (
     create_domain,
     create_run_log,
     create_workflow,
+    install_docs,
     init_os,
 )
 from .validate import validate_root
@@ -64,6 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     validate_parser.set_defaults(handler=handle_validate)
 
+    docs_parser = subparsers.add_parser("docs", help="Install or refresh runtime OS documentation.")
+    docs_subparsers = docs_parser.add_subparsers(dest="docs_command", required=True)
+    docs_install = docs_subparsers.add_parser("install", help="Install runtime manual, commands, and skills.")
+    docs_install.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    docs_install.set_defaults(handler=handle_docs_install)
+    docs_update = docs_subparsers.add_parser("update", help="Refresh runtime manual, commands, and skills.")
+    docs_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    docs_update.set_defaults(handler=handle_docs_update)
+
     return parser
 
 
@@ -113,6 +123,16 @@ def handle_validate(args: argparse.Namespace) -> int:
     for warning in result.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     return 1
+
+
+def handle_docs_install(args: argparse.Namespace) -> int:
+    print_result(install_docs(args.root, overwrite=False))
+    return 0
+
+
+def handle_docs_update(args: argparse.Namespace) -> int:
+    print_result(install_docs(args.root, overwrite=True))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

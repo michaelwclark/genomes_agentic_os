@@ -11,3 +11,4 @@ These specs define what the scaffold should become and what the current installa
 | [CLI Spec](cli-spec.md) | Implemented V1 scaffold commands plus future command surface. |
 | [Notion Scaffold Spec](notion-scaffold-spec.md) | Notion control-plane page and database model. |
 | [Install Surface](install-surface.md) | Filesystem, Claude, Codex, Notion, and future runtime targets. |
+| [Running OS Roadmap](running-os-roadmap.md) | Build backlog for projects, automations, context buildup, routing updates, cleanup, Notion sync, and metrics. |

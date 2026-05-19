@@ -43,6 +43,26 @@ LEGACY_ROOT_FOLDERS = (
 )
 
 
+SHARED_KNOWLEDGE_FILES = (
+    "templates/workflow/workflow.md",
+    "operating-manual/README.md",
+    "operating-manual/index.html",
+    "operating-manual/manual-manifest.yml",
+    "operating-manual/03-file-formats/README.md",
+    "operating-manual/04-recipes/README.md",
+    "operating-manual/07-diagrams/layer-map.svg",
+    "operating-manual/07-diagrams/running-os-loop.svg",
+    "commands/os-route.md",
+    "commands/os-create-workflow.md",
+    "commands/os-create-automation.md",
+    "commands/os-doctor.md",
+    "skills/os-navigator/SKILL.md",
+    "skills/workflow-builder/SKILL.md",
+    "skills/automation-qualifier/SKILL.md",
+    "skills/os-doctor/SKILL.md",
+)
+
+
 @dataclass
 class ValidationResult:
     root: Path
@@ -122,6 +142,10 @@ def validate_root(root: str | Path) -> ValidationResult:
 
     for domain in DEFAULT_DOMAINS:
         validate_domain(os_root / domain, result)
+
+    shared_knowledge = os_root / "shared_factory" / "05-knowledge"
+    for filename in SHARED_KNOWLEDGE_FILES:
+        require_file(shared_knowledge / filename, result)
 
     for folder in LEGACY_ROOT_FOLDERS:
         path = os_root / folder

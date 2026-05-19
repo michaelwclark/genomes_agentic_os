@@ -84,6 +84,8 @@ Each domain gets the same numbered operating structure:
 
 `ROUTER.md` is the source of truth. Root `ROUTER.md` picks the domain. Domain `ROUTER.md` picks the lane, project, workflow, automation, or run-log destination. `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` are compatibility pointers for tools that discover those filenames automatically. Domain `CONTEXT.md` and `REFERENCES.md` teach the agent how the domain works and where its source systems live.
 
+The installed OS also includes a self-contained operator layer under `shared_factory/05-knowledge/`: an operating manual, command prompts, harness skills, visual diagrams, and templates. This lets a human or agent operate from `~/agentic_os` without returning to this source repository for normal usage.
+
 ## Why This Matters
 
 Most AI work fails quietly because state lives in the wrong places:
@@ -246,6 +248,8 @@ agentic-os init --target ~/agentic_os
 | `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with outcome brief, alignment questions, PRD, implementation plan, handoff, progress, spec, context pack, approvals, output contract, runbook, examples, and runs folder. |
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os` | Timestamped run folder under the domain's `06-runs-and-logs/runs/`. |
+| `agentic-os docs install --root ~/agentic_os` | Runtime operating manual, command prompts, and harness skills under `shared_factory/05-knowledge/`. |
+| `agentic-os docs update --root ~/agentic_os` | Refreshes the managed runtime manual, command prompts, and harness skills. |
 | `agentic-os validate --root ~/agentic_os` | Required domain-first folder checks plus JSON/YAML parseability. |
 
 ## What V1 Does
@@ -257,6 +261,9 @@ agentic-os init --target ~/agentic_os
 - Creates each domain's numbered operating lanes from `00-control-plane` through `08-archive`.
 - Creates workflow and automation folders with the support files needed to run, validate, approve, and audit them.
 - Copies repository templates into `shared_factory/05-knowledge/templates/`.
+- Copies the operating manual into `shared_factory/05-knowledge/operating-manual/`.
+- Copies harness command prompts into `shared_factory/05-knowledge/commands/`.
+- Copies harness skill specs into `shared_factory/05-knowledge/skills/`.
 - Creates timestamped run folders under the selected domain.
 - Validates the required domain-first tree plus JSON/YAML parseability.
 - Keeps generated files safe to rerun by not overwriting existing hand-authored content.

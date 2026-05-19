@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="520" viewBox="0 0 1040 520" role="img" aria-labelledby="title desc">
+  <title id="title">Running OS Loop</title>
+  <desc id="desc">Loop from intake to route, context, execute, validate, record, promote, and clean.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .node { fill: #ffffff; stroke-width: 3; rx: 12; }
+    .n1 { stroke: #2563eb; }
+    .n2 { stroke: #059669; }
+    .n3 { stroke: #d97706; }
+    .n4 { stroke: #7c3aed; }
+    .n5 { stroke: #dc2626; }
+    .n6 { stroke: #0f766e; }
+    .n7 { stroke: #0891b2; }
+    .n8 { stroke: #475569; }
+    .title { font: 700 30px system-ui, sans-serif; fill: #17202a; }
+    .h { font: 700 17px system-ui, sans-serif; fill: #17202a; }
+    .t { font: 13px system-ui, sans-serif; fill: #475569; }
+    .arrow { stroke: #64748b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1040" height="520"/>
+  <text class="title" x="40" y="56">Running OS Loop</text>
+
+  <rect class="node n1" x="60" y="120" width="180" height="88"/>
+  <text class="h" x="84" y="154">Intake</text>
+  <text class="t" x="84" y="178">Capture request</text>
+  <text class="t" x="84" y="196">or trigger.</text>
+
+  <rect class="node n2" x="300" y="120" width="180" height="88"/>
+  <text class="h" x="324" y="154">Route</text>
+  <text class="t" x="324" y="178">Domain, lane,</text>
+  <text class="t" x="324" y="196">project, workflow.</text>
+
+  <rect class="node n3" x="540" y="120" width="180" height="88"/>
+  <text class="h" x="564" y="154">Context</text>
+  <text class="t" x="564" y="178">Load minimum</text>
+  <text class="t" x="564" y="196">useful sources.</text>
+
+  <rect class="node n4" x="780" y="120" width="180" height="88"/>
+  <text class="h" x="804" y="154">Execute</text>
+  <text class="t" x="804" y="178">Run within</text>
+  <text class="t" x="804" y="196">permissions.</text>
+
+  <rect class="node n5" x="780" y="300" width="180" height="88"/>
+  <text class="h" x="804" y="334">Validate</text>
+  <text class="t" x="804" y="358">Tests, evidence,</text>
+  <text class="t" x="804" y="376">approval gates.</text>
+
+  <rect class="node n6" x="540" y="300" width="180" height="88"/>
+  <text class="h" x="564" y="334">Record</text>
+  <text class="t" x="564" y="358">Run log, artifacts,</text>
+  <text class="t" x="564" y="376">final state.</text>
+
+  <rect class="node n7" x="300" y="300" width="180" height="88"/>
+  <text class="h" x="324" y="334">Promote</text>
+  <text class="t" x="324" y="358">Update context,</text>
+  <text class="t" x="324" y="376">routing, templates.</text>
+
+  <rect class="node n8" x="60" y="300" width="180" height="88"/>
+  <text class="h" x="84" y="334">Clean</text>
+  <text class="t" x="84" y="358">Doctor, archive,</text>
+  <text class="t" x="84" y="376">repair drift.</text>
+
+  <path class="arrow" d="M240 164 H300"/>
+  <path class="arrow" d="M480 164 H540"/>
+  <path class="arrow" d="M720 164 H780"/>
+  <path class="arrow" d="M870 208 V300"/>
+  <path class="arrow" d="M780 344 H720"/>
+  <path class="arrow" d="M540 344 H480"/>
+  <path class="arrow" d="M300 344 H240"/>
+  <path class="arrow" d="M150 300 V208"/>
+</svg>

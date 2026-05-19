@@ -1,0 +1,7 @@
+id: agentic_os_operating_manual
+version: 0.2.0
+install_path: shared_factory/05-knowledge/operating-manual
+managed: true
+purpose: >
+  Self-contained operating documentation installed inside the runtime OS.
+refresh_command: agentic-os docs update --root ~/agentic_os
