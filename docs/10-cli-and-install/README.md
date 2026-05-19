@@ -58,10 +58,11 @@ Expected result:
 
 - `validate` exits successfully.
 - `personal/`, `clarks_consulting/`, `los/`, `shared_factory/`, and `archive/` exist at the OS root.
-- Root `AGENTS.md` exists and routes work into domains.
-- `los/AGENTS.md` and `los/AGENT.md` exist.
+- Root `ROUTER.md` exists and routes work into domains.
+- Root `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` point to `ROUTER.md`.
+- `los/ROUTER.md`, `los/AGENTS.md`, `los/CLAUDE.md`, and `los/AGENT.md` exist.
 - `los/00-control-plane/routing-rules.md` and `los/00-control-plane/approval-rules.md` exist.
-- `los/CONTEXT.md`, `los/REFERENCES.md`, and `los/CLAUDE.md` exist.
+- `los/CONTEXT.md` and `los/REFERENCES.md` exist.
 - `los/03-workflows/README.md` and `los/03-workflows/engineering/README.md` exist.
 - `los/03-workflows/engineering/feature_dev/workflow.md` exists.
 - `los/03-workflows/engineering/feature_dev/outcome-brief.md`, `alignment-questions.md`, `prd.md`, `implementation-plan.md`, `dispatch-handoff.md`, `progress.md`, and `quick-reference.md` exist.
@@ -91,7 +92,7 @@ If a template needs to update existing installed files in a future version, that
 
 V1 validation checks:
 
-- Root `README.md`, `AGENTS.md`, and `AGENT.md` exist.
+- Root `README.md`, `ROUTER.md`, `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` exist.
 - Default domain roots exist.
 - Each default domain has its router, config, numbered operating lanes, standard lane folders, knowledge files, activity log, metrics files, and archive placeholder.
 - JSON files under the OS root are parseable.
@@ -113,8 +114,8 @@ Before using a real `~/agentic_os` root:
 
 1. Run the smoke test in a temporary directory.
 2. Run `agentic-os init --target ~/agentic_os`.
-3. Read root `~/agentic_os/AGENTS.md`.
-4. Read the relevant domain router, such as `~/agentic_os/los/AGENTS.md`.
+3. Read root `~/agentic_os/ROUTER.md`.
+4. Read the relevant domain router, such as `~/agentic_os/los/ROUTER.md`.
 5. Fill in the domain control plane before running real work.
 6. Add one workflow before adding automations.
 7. Keep automation permissions at `observe` or `prepare` until approval and rollback rules are explicit.

@@ -4,7 +4,9 @@ Use this when creating a new top-level operating boundary such as `personal`, `c
 
 ## Required Files
 
+- `ROUTER.md`
 - `AGENTS.md`
+- `CLAUDE.md`
 - `AGENT.md`
 - `README.md`
 - `domain.yml`
@@ -31,7 +33,7 @@ Use this when creating a new top-level operating boundary such as `personal`, `c
 
 1. Create the domain folder.
 2. Fill `domain.yml`.
-3. Fill the domain router and control plane rules.
+3. Fill `ROUTER.md` and the control plane rules.
 4. Add source maps and memory policy notes.
 5. Create or link the Notion control plane.
 6. Add first workflows before adding automations.

@@ -20,7 +20,7 @@ Genome's Agentic OS implements that as:
 
 | Cliefnotes Concept | Agentic OS Implementation | Purpose |
 | --- | --- | --- |
-| Map | Root `AGENTS.md` and `CLAUDE.md` | Route the request to the right domain. |
+| Map | Root `ROUTER.md` | Route the request to the right domain. |
 | Room | Domain folder such as `los/`, `personal/`, or `clarks_consulting/` | Keep persistent context, workflows, and logs for one operating area. |
 | Room context | Domain `CONTEXT.md`, `REFERENCES.md`, `domain.yml`, and `05-knowledge/` | Teach the agent how this domain works and where source truth lives. |
 | Tools | Workflows, automations, skills, connectors, scripts, hooks, and plugins | Package repeatable work instead of reprompting from scratch. |
@@ -33,6 +33,7 @@ Genome's Agentic OS implements that as:
 
 ```text
 ~/agentic_os/
+  ROUTER.md
   AGENTS.md
   CLAUDE.md
   AGENT.md
@@ -48,6 +49,7 @@ Each domain is a room with its own router, context, references, control plane, i
 
 ```text
 <domain>/
+  ROUTER.md
   AGENTS.md
   CLAUDE.md
   AGENT.md
@@ -127,7 +129,7 @@ The value is not a prettier folder tree. The value is that a new Claude or Codex
 Use this sequence for a new install or a new client/domain room.
 
 1. Install the CLI from this repo and run `agentic-os init --target ~/agentic_os`.
-2. Open root `AGENTS.md` and `CLAUDE.md`; confirm the domain list is right.
+2. Open root `ROUTER.md`; confirm the domain list is right.
 3. Pick one domain. Do not start by filling every folder.
 4. Fill that domain's `CONTEXT.md` with purpose, good-output rules, systems, work style, and common tasks.
 5. Fill `REFERENCES.md` and `05-knowledge/source-map.md` with links to real source systems.
@@ -192,7 +194,7 @@ The custom UI is not the OS. It is one possible control surface over the same fo
 
 This repo now encodes the source guidance by generating:
 
-- `CLAUDE.md` alongside `AGENTS.md` so Claude and Codex use the same router model.
+- `ROUTER.md` as the source of truth with `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` pointers so Claude and Codex use the same router model without duplicate content.
 - Domain `CONTEXT.md` and `REFERENCES.md` so each room has persistent local memory.
 - Workflow `outcome-brief.md`, `alignment-questions.md`, `prd.md`, `implementation-plan.md`, `dispatch-handoff.md`, `progress.md`, and `quick-reference.md`.
 - Automation worthiness and ask-before-acting guardrails.

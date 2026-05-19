@@ -29,8 +29,8 @@ Each root contains the standard domain router and numbered folders from `00-cont
 
 Codex install should provide:
 
-- Project or global `AGENTS.md` instructions.
-- Installed root and domain `AGENTS.md` routers.
+- Project or global `AGENTS.md` pointer instructions.
+- Installed root and domain `ROUTER.md` routers, with `AGENTS.md` pointers for Codex discovery.
 - A `genomes-agentic-os` skill.
 - Optional validation scripts for context packs and specs.
 - Rules for preserving local work and writing run logs.
@@ -39,7 +39,7 @@ Codex install should provide:
 
 Claude install should provide:
 
-- `CLAUDE.md` instructions.
+- `CLAUDE.md` pointers to the same `ROUTER.md` instructions.
 - A matching `genomes-agentic-os` skill or command.
 - Same domain routing, workflow names, and output contracts as Codex.
 - Memory policy references.

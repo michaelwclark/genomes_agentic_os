@@ -35,8 +35,8 @@
   <rect x="330" y="110" width="240" height="140" class="box map" />
   <text x="354" y="144" class="label">Installed OS Root</text>
   <text x="354" y="174" class="body">~/agentic_os</text>
-  <text x="354" y="196" class="body">AGENTS.md</text>
-  <text x="354" y="218" class="body">CLAUDE.md</text>
+  <text x="354" y="196" class="body">ROUTER.md</text>
+  <text x="354" y="218" class="body">AGENTS/CLAUDE pointers</text>
   <text x="354" y="240" class="body">domain folders</text>
 
   <rect x="660" y="100" width="400" height="160" class="box room" />

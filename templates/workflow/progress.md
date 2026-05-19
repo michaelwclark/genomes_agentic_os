@@ -37,5 +37,5 @@
 Use this when resuming in a new session:
 
 ```text
-Read AGENTS.md or CLAUDE.md, then read this workflow's progress.md, outcome-brief.md, alignment-questions.md, prd.md, implementation-plan.md, dispatch-handoff.md, and context-pack.md. Summarize current status, blockers, next action, and required validation before editing anything.
+Read ROUTER.md, then read this workflow's progress.md, outcome-brief.md, alignment-questions.md, prd.md, implementation-plan.md, dispatch-handoff.md, and context-pack.md. Summarize current status, blockers, next action, and required validation before editing anything.
 ```

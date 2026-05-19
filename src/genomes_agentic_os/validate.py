@@ -22,7 +22,9 @@ from .scaffold import (
 
 ROOT_FILES = (
     "README.md",
+    "ROUTER.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "AGENT.md",
 )
 
@@ -65,8 +67,12 @@ def require_dir(path: Path, result: ValidationResult) -> None:
 def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     require_dir(domain_root, result)
     require_file(domain_root / "README.md", result)
+    require_file(domain_root / "ROUTER.md", result)
     require_file(domain_root / "AGENTS.md", result)
+    require_file(domain_root / "CLAUDE.md", result)
     require_file(domain_root / "AGENT.md", result)
+    require_file(domain_root / "CONTEXT.md", result)
+    require_file(domain_root / "REFERENCES.md", result)
     require_file(domain_root / "domain.yml", result)
 
     for directory in DOMAIN_DIRECTORIES:

@@ -6,6 +6,8 @@ These are the working formats agents should use when reviewing or extending the 
 
 Root routers should stay short. Their job is to pick the domain.
 
+Source file: `ROUTER.md`. `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` should be pointers to it.
+
 Required sections:
 
 - `# Agent Router`

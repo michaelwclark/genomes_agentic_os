@@ -6,7 +6,9 @@ Each client OS should be a domain overlay on the core model, not a full fork.
 
 ```text
 <client_domain>/
+  ROUTER.md
   AGENTS.md
+  CLAUDE.md
   AGENT.md
   README.md
   domain.yml

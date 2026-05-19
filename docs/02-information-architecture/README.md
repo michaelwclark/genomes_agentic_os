@@ -19,7 +19,9 @@ The installed OS should start with domain roots:
 
 ```text
 ~/agentic_os/
+  ROUTER.md
   AGENTS.md
+  CLAUDE.md
   AGENT.md
   README.md
   personal/
@@ -39,7 +41,9 @@ Each domain should be able to stand alone:
 
 ```text
 <domain>/
+  ROUTER.md
   AGENTS.md
+  CLAUDE.md
   AGENT.md
   README.md
   domain.yml
@@ -60,7 +64,7 @@ The domain is the unit of operating policy. Put access rules, approval rules, so
 
 ## Domain Router
 
-Every domain has `AGENTS.md`. That file tells an agent:
+Every domain has `ROUTER.md`. That file tells an agent:
 
 - Where raw intake goes.
 - Where project work goes.
@@ -70,7 +74,7 @@ Every domain has `AGENTS.md`. That file tells an agent:
 - Where run logs and failure records go.
 - Which approval rules apply before external or risky action.
 
-`AGENT.md` is a compatibility pointer to `AGENTS.md`.
+`AGENTS.md`, `CLAUDE.md`, and `AGENT.md` are compatibility pointers to `ROUTER.md`.
 
 ## Standard Lanes
 
@@ -108,7 +112,7 @@ Lanes should not own global state. They group reusable workflow and automation s
 
 | Object | Preferred Location | Notes |
 | --- | --- | --- |
-| Domain router | `<domain>/AGENTS.md` | First file an agent should read after root routing. |
+| Domain router | `<domain>/ROUTER.md` | Source-of-truth router an agent should read after root routing. |
 | Domain config | `<domain>/domain.yml` | Stable ID, display name, lanes, directory map, approval defaults, and source systems. |
 | Active work | `<domain>/00-control-plane/active-work.md` | Current work and next actions. |
 | Routing rules | `<domain>/00-control-plane/routing-rules.md` | How to choose lane, project, workflow, or automation. |

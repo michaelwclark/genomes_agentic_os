@@ -14,6 +14,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     for domain in ("personal", "clarks_consulting", "los", "shared_factory", "archive"):
         domain_root = root / domain
         assert domain_root.is_dir()
+        assert (domain_root / "ROUTER.md").is_file()
         assert (domain_root / "AGENTS.md").is_file()
         assert (domain_root / "CLAUDE.md").is_file()
         assert (domain_root / "AGENT.md").is_file()
@@ -33,6 +34,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "06-runs-and-logs" / "failures" / "README.md").is_file()
         assert (domain_root / "08-archive" / "README.md").is_file()
 
+    assert (root / "ROUTER.md").is_file()
     assert (root / "AGENTS.md").is_file()
     assert (root / "CLAUDE.md").is_file()
     assert (root / "AGENT.md").is_file()
@@ -50,8 +52,10 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
 
     domain_root = root / "client_delivery"
     assert (domain_root / "README.md").is_file()
+    assert (domain_root / "ROUTER.md").is_file()
     assert (domain_root / "AGENTS.md").is_file()
     assert (domain_root / "CLAUDE.md").is_file()
+    assert (domain_root / "AGENT.md").is_file()
     assert (domain_root / "CONTEXT.md").is_file()
     assert (domain_root / "REFERENCES.md").is_file()
     assert (domain_root / "domain.yml").read_text(encoding="utf-8").startswith("id: client_delivery")
@@ -156,10 +160,14 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
     run_log = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
 
     required_sections = {
-        root / "AGENTS.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
-        root / "CLAUDE.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
-        root / "los" / "AGENTS.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
-        root / "los" / "CLAUDE.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
+        root / "ROUTER.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
+        root / "AGENTS.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "CLAUDE.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "AGENT.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "los" / "ROUTER.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
+        root / "los" / "AGENTS.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "los" / "CLAUDE.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "los" / "AGENT.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
         root / "los" / "CONTEXT.md": ("# Context: LOS", "## What Good Output Looks Like", "## Common Tasks"),
         root / "los" / "REFERENCES.md": ("# References: LOS", "## Source Systems", "## Known Gaps"),
         root / "los" / "03-workflows" / "README.md": ("# Workflows: LOS", "## Lane Directories", "## Workflow Folder Format"),

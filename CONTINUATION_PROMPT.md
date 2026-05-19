@@ -71,6 +71,8 @@ V1 command surface:
 V1 behavior:
 - init creates the domain-first base tree:
   - AGENTS.md
+  - ROUTER.md
+  - CLAUDE.md
   - AGENT.md
   - README.md
   - personal/
@@ -80,6 +82,8 @@ V1 behavior:
   - archive/
 - each domain gets:
   - AGENTS.md
+  - ROUTER.md
+  - CLAUDE.md
   - AGENT.md
   - README.md
   - domain.yml
@@ -101,7 +105,7 @@ V1 behavior:
 Orchestration plan:
 
 1. Baseline and project loading
-   - Read AGENTS.md, README.md, spec/README.md, spec/cli-spec.md, spec/install-surface.md, templates/README.md.
+   - Read ROUTER.md or AGENTS.md, README.md, spec/README.md, spec/cli-spec.md, spec/install-surface.md, templates/README.md.
    - Capture:
      - git status --short
      - git rev-parse HEAD

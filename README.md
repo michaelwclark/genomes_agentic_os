@@ -10,6 +10,7 @@ The CLI scaffolds an installed OS root, usually at `~/agentic_os`. The installed
 
 ```text
 ~/agentic_os/
+  ROUTER.md
   AGENTS.md
   CLAUDE.md
   AGENT.md
@@ -27,6 +28,7 @@ Each domain gets the same numbered operating structure:
 
 ```text
 <domain>/
+  ROUTER.md
   AGENTS.md
   CLAUDE.md
   AGENT.md
@@ -80,7 +82,7 @@ Each domain gets the same numbered operating structure:
   08-archive/
 ```
 
-`AGENTS.md` and `CLAUDE.md` are the routers. Root routers pick the domain. Domain routers pick the lane, project, workflow, automation, or run-log destination. `AGENT.md` is included as a compatibility pointer for tools or habits that look for the singular filename. Domain `CONTEXT.md` and `REFERENCES.md` teach the agent how the domain works and where its source systems live.
+`ROUTER.md` is the source of truth. Root `ROUTER.md` picks the domain. Domain `ROUTER.md` picks the lane, project, workflow, automation, or run-log destination. `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` are compatibility pointers for tools that discover those filenames automatically. Domain `CONTEXT.md` and `REFERENCES.md` teach the agent how the domain works and where its source systems live.
 
 ## Why This Matters
 
@@ -250,7 +252,7 @@ agentic-os init --target ~/agentic_os
 
 - Creates a working local OS tree under `~/agentic_os` or a supplied target.
 - Creates the default domain roots: `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive`.
-- Creates root and domain `AGENTS.md` and `CLAUDE.md` routers plus `AGENT.md` compatibility pointers.
+- Creates root and domain `ROUTER.md` files plus `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` compatibility pointers.
 - Creates domain `CONTEXT.md` and `REFERENCES.md` files for workspace memory and source maps.
 - Creates each domain's numbered operating lanes from `00-control-plane` through `08-archive`.
 - Creates workflow and automation folders with the support files needed to run, validate, approve, and audit them.

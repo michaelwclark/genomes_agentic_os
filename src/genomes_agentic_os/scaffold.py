@@ -233,12 +233,12 @@ Each domain uses the same numbered operating lanes:
 
 ## Agent Entry Point
 
-Start with `AGENTS.md` in this directory, then follow the domain router in the selected domain.
-Claude-compatible installs also get `CLAUDE.md` with the same routing contract.
+Start with `ROUTER.md` in this directory, then follow the domain router in the selected domain.
+`AGENTS.md`, `CLAUDE.md`, and `AGENT.md` are compatibility pointers to `ROUTER.md`.
 """
 
 
-def root_agents() -> str:
+def root_router() -> str:
     routing_rows = "\n".join(
         f"| `{domain}` | {domain_purpose(domain)} | `{domain}/01-inbox/` |"
         for domain in DEFAULT_DOMAINS
@@ -273,10 +273,12 @@ External writes, customer-visible output, production changes, destructive action
 """
 
 
-def agent_shim() -> str:
+def router_pointer() -> str:
     return """# Agent Router
 
-Use `AGENTS.md` in this directory. This compatibility file exists for tools or habits that look for singular `AGENT.md`.
+Source of truth: `ROUTER.md`.
+
+Load `ROUTER.md` before taking action. This compatibility file exists for tools that discover this filename automatically.
 """
 
 
@@ -391,7 +393,7 @@ See `05-knowledge/source-map.md`.
 """
 
 
-def domain_agents(domain: str) -> str:
+def domain_router(domain: str) -> str:
     display_name = titleize_name(domain)
     return f"""# Agent Router: {display_name}
 
@@ -825,10 +827,11 @@ def render_template(content: str, replacements: dict[str, str]) -> str:
 def ensure_root_files(root: Path, result: ScaffoldResult) -> None:
     ensure_dir(root, result)
     write_file_once(root / "README.md", root_readme(), result)
-    root_router = root_agents()
-    write_file_once(root / "AGENTS.md", root_router, result)
-    write_file_once(root / "CLAUDE.md", root_router, result)
-    write_file_once(root / "AGENT.md", agent_shim(), result)
+    router = root_router()
+    write_file_once(root / "ROUTER.md", router, result)
+    write_file_once(root / "AGENTS.md", router_pointer(), result)
+    write_file_once(root / "CLAUDE.md", router_pointer(), result)
+    write_file_once(root / "AGENT.md", router_pointer(), result)
 
 
 def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) -> None:
@@ -836,10 +839,11 @@ def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) 
     domain_root = os_root / domain
     ensure_dir(domain_root, result)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
-    domain_router = domain_agents(domain)
-    write_file_once(domain_root / "AGENTS.md", domain_router, result)
-    write_file_once(domain_root / "CLAUDE.md", domain_router, result)
-    write_file_once(domain_root / "AGENT.md", agent_shim(), result)
+    router = domain_router(domain)
+    write_file_once(domain_root / "ROUTER.md", router, result)
+    write_file_once(domain_root / "AGENTS.md", router_pointer(), result)
+    write_file_once(domain_root / "CLAUDE.md", router_pointer(), result)
+    write_file_once(domain_root / "AGENT.md", router_pointer(), result)
     write_file_once(domain_root / "CONTEXT.md", domain_context(domain), result)
     write_file_once(domain_root / "REFERENCES.md", domain_references(domain), result)
     write_file_once(domain_root / "domain.yml", domain_config(domain), result)

@@ -50,7 +50,7 @@ This file records the one-by-one operating analysis of the local source dump at 
 | `the-foundation/014-4-1-install-and-first-use.md` | Install and first use should lead to immediate hands-on execution. | CLI install docs need a smoke test and real `workflow create` path. | Yes |
 | `the-foundation/015-4-2-claude-code-in-practice.md` | Claude Code is effective when operating against files and commands. | Workflows should be executable from Claude or Codex against the same repo files. | Yes |
 | `the-foundation/016-4-3-claude-desktop-as-a-thinking-partner.md` | Chat is useful for thinking and planning. | Keep brainstorm/outcome/planning before dispatch, not as hidden chat history. | Yes |
-| `the-foundation/017-4-4-making-claude-understand-your-project.md` | A project root instruction file explains overview, stack, commands, conventions, and avoid rules. | Generate `CLAUDE.md` alongside `AGENTS.md`; domain context teaches the room. | Yes |
+| `the-foundation/017-4-4-making-claude-understand-your-project.md` | A project root instruction file explains overview, stack, commands, conventions, and avoid rules. | Generate `ROUTER.md` as the source of truth, with Claude/Codex pointer files; domain context teaches the room. | Yes |
 | `the-foundation/018-4-5-where-this-goes.md` | The method expands into larger operating systems. | Docs should show path from folder to workflows, automations, and control plane. | Partial |
 | `the-foundation/019-5-1-your-path-from-here.md` | Users should leave foundation with a next path. | Setup sequence should move from install to first domain to first workflow. | Yes |
 
@@ -152,7 +152,7 @@ This file records the one-by-one operating analysis of the local source dump at 
 
 High-confidence changes made from this analysis:
 
-- Generate Claude and Codex routers from the same contract.
+- Generate `ROUTER.md` as the source router with Claude and Codex pointer files.
 - Add domain context/reference files.
 - Add workflow pre-build files for outcome, questions, PRD, plan, handoff, progress, and quick reference.
 - Strengthen automation permissions with worthiness and ask-before-acting rules.
