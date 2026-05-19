@@ -65,12 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     validate_parser.set_defaults(handler=handle_validate)
 
-    docs_parser = subparsers.add_parser("docs", help="Install or refresh runtime OS documentation.")
+    docs_parser = subparsers.add_parser("docs", help="Install or update runtime OS documentation.")
     docs_subparsers = docs_parser.add_subparsers(dest="docs_command", required=True)
     docs_install = docs_subparsers.add_parser("install", help="Install runtime manual, commands, and skills.")
     docs_install.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_install.set_defaults(handler=handle_docs_install)
-    docs_update = docs_subparsers.add_parser("update", help="Refresh runtime manual, commands, and skills.")
+    docs_update = docs_subparsers.add_parser(
+        "update",
+        help="Add missing runtime manual, command, and skill assets without overwriting local edits.",
+    )
     docs_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_update.set_defaults(handler=handle_docs_update)
 
@@ -126,12 +129,12 @@ def handle_validate(args: argparse.Namespace) -> int:
 
 
 def handle_docs_install(args: argparse.Namespace) -> int:
-    print_result(install_docs(args.root, overwrite=False))
+    print_result(install_docs(args.root))
     return 0
 
 
 def handle_docs_update(args: argparse.Namespace) -> int:
-    print_result(install_docs(args.root, overwrite=True))
+    print_result(install_docs(args.root))
     return 0
 
 

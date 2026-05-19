@@ -249,7 +249,7 @@ agentic-os init --target ~/agentic_os
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os` | Timestamped run folder under the domain's `06-runs-and-logs/runs/`. |
 | `agentic-os docs install --root ~/agentic_os` | Runtime operating manual, command prompts, and harness skills under `shared_factory/05-knowledge/`. |
-| `agentic-os docs update --root ~/agentic_os` | Refreshes the managed runtime manual, command prompts, and harness skills. |
+| `agentic-os docs update --root ~/agentic_os` | Adds missing runtime manual, command prompt, and harness skill assets without overwriting local edits. |
 | `agentic-os validate --root ~/agentic_os` | Required domain-first folder checks plus JSON/YAML parseability. |
 
 ## What V1 Does
@@ -267,6 +267,7 @@ agentic-os init --target ~/agentic_os
 - Creates timestamped run folders under the selected domain.
 - Validates the required domain-first tree plus JSON/YAML parseability.
 - Keeps generated files safe to rerun by not overwriting existing hand-authored content.
+- Treats updates as additive and idempotent: new package assets are added where missing, existing OS files are preserved.
 
 ## What V1 Does Not Do
 

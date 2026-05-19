@@ -9,6 +9,7 @@ Use it when you are operating inside the installed OS and need to know what to c
 | Need | Read |
 | --- | --- |
 | First use | `00-start-here/README.md` |
+| Update safety | `00-start-here/update-contract.md` |
 | Conceptual model | `01-concepts/README.md` |
 | Folder and layer map | `02-layer-map/README.md` |
 | File formats | `03-file-formats/README.md` |
@@ -22,6 +23,10 @@ Use it when you are operating inside the installed OS and need to know what to c
 ## Operating Rule
 
 Do not start by inventing a new shape. Pick the current layer, use the expected format, then record the run or routing update that proves what changed.
+
+## Update Rule
+
+Install and update commands are additive and idempotent. They may add missing manual, command, skill, template, or scaffold files, but they must not overwrite existing runtime files by default.
 
 ## Visual Index
 

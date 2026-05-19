@@ -17,6 +17,7 @@ These are source-of-truth local copies. Harness-specific installers can later co
 | `os-create-workflow.md` | Create and complete a workflow contract. |
 | `os-create-automation.md` | Convert a proven workflow into guarded automation. |
 | `os-run-log.md` | Create or complete a run log. |
+| `os-update.md` | Add missing package assets without overwriting runtime files. |
 | `os-doctor.md` | Validate structure and find stale or incomplete state. |
 | `os-sync-notion.md` | Prepare Notion control-plane sync. |
 

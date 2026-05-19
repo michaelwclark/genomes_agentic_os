@@ -39,7 +39,7 @@ The CLI flow mirrors the operating model:
 | Create automation | `agentic-os automation create los support production_thread_intake --root ~/agentic_os` | Adds a guarded trigger-driven process folder. |
 | Create run log | `agentic-os run-log create los feature_dev --root ~/agentic_os` | Records one execution attempt for audit and handoff. |
 | Install docs | `agentic-os docs install --root ~/agentic_os` | Adds the runtime operating manual, command prompts, and harness skills. |
-| Refresh docs | `agentic-os docs update --root ~/agentic_os` | Refreshes managed manual, command, and skill assets. |
+| Update docs | `agentic-os docs update --root ~/agentic_os` | Adds missing manual, command, and skill assets without overwriting local edits. |
 | Validate | `agentic-os validate --root ~/agentic_os` | Checks the required tree and parseable structured files. |
 
 ## Smoke Test
@@ -82,7 +82,7 @@ Expected result:
 
 Source templates stay in this repo. Runtime copies live in `shared_factory` because reusable templates and cross-domain patterns belong there.
 
-Manual, command, and skill copies are managed assets. Refresh them with:
+Manual, command, and skill copies are runtime assets. Add anything missing from the current package with:
 
 ```bash
 agentic-os docs update --root ~/agentic_os
@@ -95,9 +95,10 @@ V1 commands are intentionally conservative:
 - Existing files are not overwritten.
 - Existing folders are reused.
 - Re-running a scaffold command should not erase hand-authored context.
+- Update commands are additive and idempotent: they add newly packaged files across the installed OS, but preserve existing runtime files.
 - New run logs use timestamped folders so each execution gets its own record.
 
-If a template needs to update existing installed files in a future version, that should be an explicit migration command with a reviewable diff.
+If a template needs to change existing installed files in a future version, that must be an explicit migration command with a reviewable diff. It should not happen through default install or update commands.
 
 ## Validation Scope
 

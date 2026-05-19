@@ -43,9 +43,11 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "index.html").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "07-diagrams" / "layer-map.svg").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-route.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-doctor.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-update.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
@@ -145,19 +147,27 @@ def test_commands_are_safe_to_rerun(tmp_path: Path) -> None:
     assert before == after
 
 
-def test_docs_update_refreshes_installed_manual_assets(tmp_path: Path) -> None:
+def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
     manual_readme = root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md"
-    manual_readme.write_text("# stale\n", encoding="utf-8")
+    command_file = root / "shared_factory" / "05-knowledge" / "commands" / "os-sync-notion.md"
+    manual_readme.write_text("# local edit\n", encoding="utf-8")
+    command_file.unlink()
 
     assert main(["docs", "update", "--root", str(root)]) == 0
 
     content = manual_readme.read_text(encoding="utf-8")
-    assert content.startswith("# Agentic OS Operating Manual")
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-sync-notion.md").is_file()
+    assert content == "# local edit\n"
+    assert command_file.is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-update.md").is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md"
+    ).is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "os-doctor" / "SKILL.md").is_file()
+    assert main(["docs", "update", "--root", str(root)]) == 0
+    assert manual_readme.read_text(encoding="utf-8") == "# local edit\n"
 
 
 def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:

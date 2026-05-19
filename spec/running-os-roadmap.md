@@ -12,6 +12,12 @@ V1 provides:
 - Runtime copies of templates, operating manual, commands, and skills.
 - Validation for required structure and parseable YAML or JSON.
 
+## Update Contract
+
+Every install, update, doctor repair, and future migration starts from the same rule: preserve runtime state. Default commands are non-destructive, additive, and idempotent. They may create missing files, folders, docs, skills, commands, templates, indexes, and validation surfaces across the installed OS, but they must not overwrite existing files.
+
+If an existing installed file needs to change, that belongs in an explicit migration flow with a previewable diff and human approval.
+
 ## Build Backlog
 
 | Phase | Capability | User Outcome | Primary Command Or Skill |

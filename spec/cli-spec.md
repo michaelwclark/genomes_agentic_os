@@ -33,8 +33,8 @@ agentic-os agents install --codex --claude
 | `automation create` | Create an automation folder under `<domain>/04-automations/<lane>/<automation>/` with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `context build` | Assemble a context pack from known inputs and domain rules. |
 | `run-log create` | Create a timestamped run folder under `<domain>/06-runs-and-logs/runs/` using the standard template. |
-| `docs install` | Install managed operating manual, command prompts, and skill specs under `shared_factory/05-knowledge/`. |
-| `docs update` | Refresh managed operating manual, command prompts, and skill specs under `shared_factory/05-knowledge/`. |
+| `docs install` | Install operating manual, command prompts, and skill specs under `shared_factory/05-knowledge/` without overwriting existing files. |
+| `docs update` | Add missing operating manual, command prompt, and skill spec assets under `shared_factory/05-knowledge/` without overwriting existing files. |
 | `notion scaffold` | Create or update control-plane pages/databases. |
 | `agents install` | Install Claude/Codex rules and skill entrypoints. |
 | `validate` | Validate files against schemas and required fields. |
@@ -43,7 +43,10 @@ agentic-os agents install --codex --claude
 
 - Commands should be safe to rerun.
 - Generated files should have stable markers or IDs where updates are expected.
-- Never overwrite hand-authored content without an explicit flag.
+- Default install and update commands must be non-destructive, additive, and idempotent.
+- New package assets should be added across the installed OS when missing.
+- Existing installed OS files must not be overwritten by default, even if they began as managed package assets.
+- Any future command that changes existing installed files must be an explicit migration with a reviewable diff.
 - Output should identify exactly what changed.
 - Validation should fail loudly when required operating fields are missing.
 

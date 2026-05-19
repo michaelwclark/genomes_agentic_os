@@ -178,13 +178,8 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     result.created.append(path)
 
 
-def copy_file(source: Path, destination: Path, result: ScaffoldResult, overwrite: bool = False) -> None:
+def copy_file(source: Path, destination: Path, result: ScaffoldResult) -> None:
     if destination.exists():
-        if overwrite and source.read_bytes() != destination.read_bytes():
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
-            result.updated.append(destination)
-            return
         result.skipped.append(destination)
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -196,7 +191,7 @@ def copy_file_once(source: Path, destination: Path, result: ScaffoldResult) -> N
     copy_file(source, destination, result)
 
 
-def copy_tree(source: Path, destination: Path, overwrite: bool = False) -> ScaffoldResult:
+def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
     result = ScaffoldResult()
     for item in sorted(source.rglob("*")):
         relative = item.relative_to(source)
@@ -204,12 +199,12 @@ def copy_tree(source: Path, destination: Path, overwrite: bool = False) -> Scaff
         if item.is_dir():
             ensure_dir(target, result)
         else:
-            copy_file(item, target, result, overwrite=overwrite)
+            copy_file(item, target, result)
     return result
 
 
 def copy_tree_missing(source: Path, destination: Path) -> ScaffoldResult:
-    return copy_tree(source, destination, overwrite=False)
+    return copy_tree(source, destination)
 
 
 def titleize_name(name: str) -> str:
@@ -933,7 +928,7 @@ def ensure_default_domains(os_root: Path, result: ScaffoldResult) -> None:
     for domain in DEFAULT_DOMAINS:
         create_domain_structure(os_root, domain, result)
     result.extend(copy_tree_missing(template_source_dir(), os_root / "shared_factory" / "05-knowledge" / "templates"))
-    result.extend(install_docs(os_root, overwrite=False))
+    result.extend(install_docs(os_root))
 
 
 def init_os(target: str | Path) -> ScaffoldResult:
@@ -944,28 +939,25 @@ def init_os(target: str | Path) -> ScaffoldResult:
     return result
 
 
-def install_docs(root: str | Path, overwrite: bool = False) -> ScaffoldResult:
+def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
     result.extend(
         copy_tree(
             operating_manual_source_dir(),
             os_root / "shared_factory" / "05-knowledge" / "operating-manual",
-            overwrite=overwrite,
         )
     )
     result.extend(
         copy_tree(
             harness_source_dir() / "commands",
             os_root / "shared_factory" / "05-knowledge" / "commands",
-            overwrite=overwrite,
         )
     )
     result.extend(
         copy_tree(
             harness_source_dir() / "skills",
             os_root / "shared_factory" / "05-knowledge" / "skills",
-            overwrite=overwrite,
         )
     )
     return result

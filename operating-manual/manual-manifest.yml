@@ -5,3 +5,4 @@ managed: true
 purpose: >
   Self-contained operating documentation installed inside the runtime OS.
 refresh_command: agentic-os docs update --root ~/agentic_os
+update_policy: additive_non_destructive
