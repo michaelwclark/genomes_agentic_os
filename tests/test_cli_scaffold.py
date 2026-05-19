@@ -18,10 +18,16 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "AGENT.md").is_file()
         assert (domain_root / "00-control-plane" / "routing-rules.md").is_file()
         assert (domain_root / "01-inbox" / "triage.md").is_file()
+        assert (domain_root / "03-workflows" / "README.md").is_file()
+        assert (domain_root / "03-workflows" / "engineering" / "README.md").is_file()
         assert (domain_root / "03-workflows" / "engineering").is_dir()
+        assert (domain_root / "04-automations" / "README.md").is_file()
+        assert (domain_root / "04-automations" / "operations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations").is_dir()
         assert (domain_root / "05-knowledge" / "source-map.md").is_file()
         assert (domain_root / "06-runs-and-logs" / "runs").is_dir()
+        assert (domain_root / "06-runs-and-logs" / "runs" / "README.md").is_file()
+        assert (domain_root / "06-runs-and-logs" / "failures" / "README.md").is_file()
         assert (domain_root / "08-archive" / "README.md").is_file()
 
     assert (root / "AGENTS.md").is_file()
@@ -63,7 +69,9 @@ def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
     assert (workflow_root / "output-contract.md").is_file()
     assert (workflow_root / "runbook.md").is_file()
     assert (workflow_root / "examples").is_dir()
+    assert (workflow_root / "examples" / "README.md").is_file()
     assert (workflow_root / "runs").is_dir()
+    assert (workflow_root / "runs" / "README.md").is_file()
 
     assert (
         main(
@@ -88,6 +96,7 @@ def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
     assert (automation_root / "runbook.md").is_file()
     assert (automation_root / "tests.md").is_file()
     assert (automation_root / "logs").is_dir()
+    assert (automation_root / "logs" / "README.md").is_file()
 
     assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
     run_logs = list((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
@@ -106,3 +115,47 @@ def test_commands_are_safe_to_rerun(tmp_path: Path) -> None:
     after = (root / "client_delivery" / "domain.yml").read_text(encoding="utf-8")
 
     assert before == after
+
+
+def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+
+    workflow_root = root / "los" / "03-workflows" / "engineering" / "feature_dev"
+    automation_root = root / "los" / "04-automations" / "support" / "production_thread_intake"
+    run_log = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
+
+    required_sections = {
+        root / "AGENTS.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
+        root / "los" / "AGENTS.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
+        root / "los" / "03-workflows" / "README.md": ("# Workflows: LOS", "## Lane Directories", "## Workflow Folder Format"),
+        root / "los" / "03-workflows" / "engineering" / "README.md": (
+            "# Workflow Lane: engineering",
+            "## Workflow Folder Format",
+            "## Routing Rule",
+        ),
+        workflow_root / "workflow.md": ("# Workflow: feature_dev", "## Metadata", "## Purpose", "## Validation"),
+        workflow_root / "state-machine.md": ("# State Machine: feature_dev", "| From | To | Condition |"),
+        workflow_root / "output-contract.md": ("# Output Contract: feature_dev", "## Required Outputs", "## Quality Bar"),
+        workflow_root / "examples" / "README.md": ("# Examples: feature_dev", "## Example Format"),
+        root / "los" / "04-automations" / "README.md": (
+            "# Automations: LOS",
+            "## Lane Directories",
+            "## Automation Folder Format",
+        ),
+        automation_root / "automation.md": ("# Automation: production_thread_intake", "## Metadata", "## Trigger"),
+        automation_root / "inputs.md": ("# Inputs: production_thread_intake", "| Input | Required | Source | Validation |"),
+        automation_root / "logs" / "README.md": ("# Automation Logs: production_thread_intake", "## Log Format"),
+        root / "los" / "06-runs-and-logs" / "runs" / "README.md": ("# Runs: LOS", "## Run Folder Format"),
+        root / "los" / "06-runs-and-logs" / "failures" / "README.md": ("# Failures: LOS", "## Failure Record Format"),
+        run_log: ("# Run Log:", "## Metadata", "## Input", "## Validation", "## Handoff"),
+    }
+
+    for path, sections in required_sections.items():
+        content = path.read_text(encoding="utf-8")
+        assert content.startswith("# "), path
+        for section in sections:
+            assert section in content, path

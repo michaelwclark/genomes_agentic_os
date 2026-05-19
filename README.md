@@ -39,7 +39,9 @@ Each domain gets the same numbered operating structure:
     triage.md
   02-projects/
   03-workflows/
+    README.md
     engineering/
+      README.md
     marketing/
     sales/
     support/
@@ -48,6 +50,7 @@ Each domain gets the same numbered operating structure:
     personal_admin/
     learning/
   04-automations/
+    README.md
     engineering/
     marketing/
     sales/
@@ -63,7 +66,9 @@ Each domain gets the same numbered operating structure:
   06-runs-and-logs/
     activity-log.md
     runs/
+      README.md
     failures/
+      README.md
   07-metrics/
     baselines.md
     scorecards.md
@@ -146,7 +151,9 @@ The CLI creates workflow folders, not one loose Markdown file:
   output-contract.md
   runbook.md
   examples/
+    README.md
   runs/
+    README.md
 ```
 
 An automation is a workflow with a trigger and enough guardrails to run without a fresh human prompt. Automations start conservatively: observe, prepare, propose, then execute only after approval rules are proven.
@@ -161,6 +168,7 @@ An automation is a workflow with a trigger and enough guardrails to run without 
   runbook.md
   tests.md
   logs/
+    README.md
 ```
 
 A run is one execution of a workflow, automation, or skill. Runs are the audit trail. If a second agent cannot tell what happened from the run log, the system did not record enough.

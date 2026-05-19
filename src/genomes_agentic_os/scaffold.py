@@ -541,6 +541,165 @@ def metric_file_content(domain: str, filename: str) -> str:
 """
 
 
+def workflows_readme(domain: str) -> str:
+    return f"""# Workflows: {titleize_name(domain)}
+
+Workflow specs live here when the work needs judgment, context assembly, validation, or approval gates.
+
+## Lane Directories
+
+{chr(10).join(f"- `{lane}/`" for lane in STANDARD_LANES)}
+
+## Workflow Folder Format
+
+```text
+<lane>/<workflow>/
+  workflow.md
+  state-machine.md
+  context-pack.md
+  approval-rules.md
+  output-contract.md
+  runbook.md
+  examples/
+  runs/
+```
+
+## Creation Rule
+
+Use `agentic-os workflow create {domain} <lane> <workflow> --root ~/agentic_os`.
+"""
+
+
+def workflow_lane_readme(domain: str, lane: str) -> str:
+    return f"""# Workflow Lane: {lane}
+
+## Domain
+
+`{domain}`
+
+## Purpose
+
+Create reusable workflow folders here for `{lane}` work inside `{domain}`.
+
+## Workflow Folder Format
+
+```text
+<workflow>/
+  workflow.md
+  state-machine.md
+  context-pack.md
+  approval-rules.md
+  output-contract.md
+  runbook.md
+  examples/
+  runs/
+```
+
+## Routing Rule
+
+If the work can be repeated and still needs judgment, create a workflow. If the trigger and action are stable enough to run unattended, create an automation under `04-automations/{lane}/`.
+"""
+
+
+def automations_readme(domain: str) -> str:
+    return f"""# Automations: {titleize_name(domain)}
+
+Automation specs live here when a trigger can safely run a guarded process with declared permissions, idempotency, logs, and approval gates.
+
+## Lane Directories
+
+{chr(10).join(f"- `{lane}/`" for lane in STANDARD_LANES)}
+
+## Automation Folder Format
+
+```text
+<lane>/<automation>/
+  automation.md
+  inputs.md
+  outputs.md
+  permissions.md
+  failure-modes.md
+  runbook.md
+  tests.md
+  logs/
+```
+
+## Creation Rule
+
+Use `agentic-os automation create {domain} <lane> <automation> --root ~/agentic_os`.
+"""
+
+
+def automation_lane_readme(domain: str, lane: str) -> str:
+    return f"""# Automation Lane: {lane}
+
+## Domain
+
+`{domain}`
+
+## Purpose
+
+Create guarded automation folders here for `{lane}` work inside `{domain}`.
+
+## Automation Folder Format
+
+```text
+<automation>/
+  automation.md
+  inputs.md
+  outputs.md
+  permissions.md
+  failure-modes.md
+  runbook.md
+  tests.md
+  logs/
+```
+
+## Safety Rule
+
+Start automations at `observe` or `prepare`. External writes, customer-visible output, production changes, destructive actions, secrets, billing, and legal records require approval.
+"""
+
+
+def runs_readme(domain: str) -> str:
+    return f"""# Runs: {titleize_name(domain)}
+
+Each folder records one workflow, automation, or skill execution.
+
+## Run Folder Format
+
+```text
+<run-id>/
+  run-log.md
+  artifacts/
+```
+
+## Required Run Evidence
+
+- Input reference.
+- Context loaded.
+- Actions taken.
+- Validation performed.
+- Artifacts created or changed.
+- Final state and next action.
+"""
+
+
+def failures_readme(domain: str) -> str:
+    return f"""# Failures: {titleize_name(domain)}
+
+Use this folder for failed runs, recovery notes, and repeated failure modes that need redesign.
+
+## Failure Record Format
+
+```text
+<date>-<short-name>.md
+```
+
+Each record should include the source run, failure mode, impact, attempted recovery, and next action.
+"""
+
+
 def simple_readme(title: str, body: str) -> str:
     return f"# {title}\n\n{body}\n"
 
@@ -585,9 +744,14 @@ def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) 
         result,
     )
 
+    write_file_once(domain_root / "03-workflows" / "README.md", workflows_readme(domain), result)
+    write_file_once(domain_root / "04-automations" / "README.md", automations_readme(domain), result)
+
     for lane in STANDARD_LANES:
         ensure_dir(domain_root / "03-workflows" / lane, result)
         ensure_dir(domain_root / "04-automations" / lane, result)
+        write_file_once(domain_root / "03-workflows" / lane / "README.md", workflow_lane_readme(domain, lane), result)
+        write_file_once(domain_root / "04-automations" / lane / "README.md", automation_lane_readme(domain, lane), result)
 
     for filename in KNOWLEDGE_FILES:
         write_file_once(domain_root / "05-knowledge" / filename, knowledge_file_content(domain, filename), result)
@@ -600,6 +764,8 @@ def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) 
         ),
         result,
     )
+    write_file_once(domain_root / "06-runs-and-logs" / "runs" / "README.md", runs_readme(domain), result)
+    write_file_once(domain_root / "06-runs-and-logs" / "failures" / "README.md", failures_readme(domain), result)
 
     for filename in METRIC_FILES:
         write_file_once(domain_root / "07-metrics" / filename, metric_file_content(domain, filename), result)
@@ -706,6 +872,48 @@ def workflow_scaffold_content(domain: str, lane: str, name: str, filename: str) 
 """
 
 
+def workflow_examples_readme(domain: str, lane: str, name: str) -> str:
+    return f"""# Examples: {name}
+
+## Domain
+
+`{domain}`
+
+## Lane
+
+`{lane}`
+
+## Purpose
+
+Store sanitized example inputs, expected outputs, and edge cases for this workflow.
+
+## Example Format
+
+```text
+<short-case-name>.md
+```
+
+Each example should include input, expected routing, required context, approval behavior, and expected output.
+"""
+
+
+def workflow_runs_readme(domain: str, lane: str, name: str) -> str:
+    return f"""# Workflow Runs: {name}
+
+## Domain
+
+`{domain}`
+
+## Lane
+
+`{lane}`
+
+## Purpose
+
+Use this folder for workflow-local run notes when they are useful. The audit record still belongs under `{domain}/06-runs-and-logs/runs/`.
+"""
+
+
 def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> ScaffoldResult:
     domain = validate_name(domain, "domain")
     lane = validate_name(lane, "lane")
@@ -715,6 +923,8 @@ def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> Scaf
     ensure_dir(workflow_root, result)
     ensure_dir(workflow_root / "examples", result)
     ensure_dir(workflow_root / "runs", result)
+    write_file_once(workflow_root / "examples" / "README.md", workflow_examples_readme(domain, lane, name), result)
+    write_file_once(workflow_root / "runs" / "README.md", workflow_runs_readme(domain, lane, name), result)
     for filename in WORKFLOW_FILES:
         write_file_once(workflow_root / filename, workflow_scaffold_content(domain, lane, name, filename), result)
     return result
@@ -791,6 +1001,31 @@ def automation_scaffold_content(domain: str, lane: str, name: str, filename: str
 """
 
 
+def automation_logs_readme(domain: str, lane: str, name: str) -> str:
+    return f"""# Automation Logs: {name}
+
+## Domain
+
+`{domain}`
+
+## Lane
+
+`{lane}`
+
+## Purpose
+
+Store automation-local logs, dry-run outputs, and failure snapshots here. Durable audit records still belong under `{domain}/06-runs-and-logs/runs/`.
+
+## Log Format
+
+```text
+<timestamp>-<result>.md
+```
+
+Each log should include trigger reference, idempotency key, action level, validation result, and next action.
+"""
+
+
 def create_automation(root: str | Path, domain: str, lane: str, name: str) -> ScaffoldResult:
     domain = validate_name(domain, "domain")
     lane = validate_name(lane, "lane")
@@ -799,6 +1034,7 @@ def create_automation(root: str | Path, domain: str, lane: str, name: str) -> Sc
     automation_root = expand_path(root) / domain / "04-automations" / lane / name
     ensure_dir(automation_root, result)
     ensure_dir(automation_root / "logs", result)
+    write_file_once(automation_root / "logs" / "README.md", automation_logs_readme(domain, lane, name), result)
     for filename in AUTOMATION_FILES:
         write_file_once(automation_root / filename, automation_scaffold_content(domain, lane, name, filename), result)
     return result

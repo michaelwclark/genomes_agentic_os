@@ -61,7 +61,9 @@ Expected result:
 - Root `AGENTS.md` exists and routes work into domains.
 - `los/AGENTS.md` and `los/AGENT.md` exist.
 - `los/00-control-plane/routing-rules.md` and `los/00-control-plane/approval-rules.md` exist.
+- `los/03-workflows/README.md` and `los/03-workflows/engineering/README.md` exist.
 - `los/03-workflows/engineering/feature_dev/workflow.md` exists.
+- `los/04-automations/README.md` and `los/04-automations/support/README.md` exist.
 - `los/04-automations/support/production_thread_intake/automation.md` exists.
 - `los/06-runs-and-logs/runs/<run-id>/run-log.md` exists.
 - `shared_factory/05-knowledge/templates/` contains copied source templates.

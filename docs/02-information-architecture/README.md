@@ -46,7 +46,9 @@ Each domain should be able to stand alone:
   01-inbox/
   02-projects/
   03-workflows/
+    README.md
   04-automations/
+    README.md
   05-knowledge/
   06-runs-and-logs/
   07-metrics/
@@ -75,7 +77,9 @@ Workflow and automation lanes repeat inside each domain:
 
 ```text
 03-workflows/
+  README.md
   engineering/
+    README.md
   marketing/
   sales/
   support/
@@ -85,7 +89,9 @@ Workflow and automation lanes repeat inside each domain:
   learning/
 
 04-automations/
+  README.md
   engineering/
+    README.md
   marketing/
   sales/
   support/
@@ -109,7 +115,9 @@ Lanes should not own global state. They group reusable workflow and automation s
 | Inbox | `<domain>/01-inbox/` | Raw capture and triage. |
 | Project | `<domain>/02-projects/<project>/` | Project-specific state and links. |
 | Workflow spec | `<domain>/03-workflows/<lane>/<workflow>/workflow.md` | Process for judgment-heavy repeated work. |
+| Workflow lane router | `<domain>/03-workflows/<lane>/README.md` | What belongs in that lane and the workflow folder contract. |
 | Automation spec | `<domain>/04-automations/<lane>/<automation>/automation.md` | Triggered process with permissions and audit rules. |
+| Automation lane router | `<domain>/04-automations/<lane>/README.md` | What belongs in that lane and the automation folder contract. |
 | Knowledge | `<domain>/05-knowledge/` | Source maps, glossary, memory policy, and references. |
 | Run log | `<domain>/06-runs-and-logs/runs/<run-id>/run-log.md` | One execution record, not a reusable spec. |
 | Failure record | `<domain>/06-runs-and-logs/failures/` | Failed runs and recovery notes. |
@@ -128,7 +136,9 @@ Lanes should not own global state. They group reusable workflow and automation s
   output-contract.md
   runbook.md
   examples/
+    README.md
   runs/
+    README.md
 ```
 
 ## Automation Folder
@@ -143,6 +153,7 @@ Lanes should not own global state. They group reusable workflow and automation s
   runbook.md
   tests.md
   logs/
+    README.md
 ```
 
 ## Naming Rules

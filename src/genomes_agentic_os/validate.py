@@ -78,15 +78,21 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
         require_file(domain_root / "01-inbox" / filename, result)
 
     require_file(domain_root / "02-projects" / "README.md", result)
+    require_file(domain_root / "03-workflows" / "README.md", result)
+    require_file(domain_root / "04-automations" / "README.md", result)
 
     for lane in STANDARD_LANES:
         require_dir(domain_root / "03-workflows" / lane, result)
         require_dir(domain_root / "04-automations" / lane, result)
+        require_file(domain_root / "03-workflows" / lane / "README.md", result)
+        require_file(domain_root / "04-automations" / lane / "README.md", result)
 
     for filename in KNOWLEDGE_FILES:
         require_file(domain_root / "05-knowledge" / filename, result)
 
     require_file(domain_root / "06-runs-and-logs" / "activity-log.md", result)
+    require_file(domain_root / "06-runs-and-logs" / "runs" / "README.md", result)
+    require_file(domain_root / "06-runs-and-logs" / "failures" / "README.md", result)
 
     for filename in METRIC_FILES:
         require_file(domain_root / "07-metrics" / filename, result)
