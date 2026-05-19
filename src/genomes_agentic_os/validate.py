@@ -37,6 +37,7 @@ LEGACY_ROOT_FOLDERS = (
     "notion",
     "config",
     "templates",
+    "lenders",
 )
 
 

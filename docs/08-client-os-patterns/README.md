@@ -33,7 +33,7 @@ Each client OS should be a domain overlay on the core model, not a full fork.
   08-archive/
 ```
 
-The client domain can live beside `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive` in the installed root.
+The client domain can live beside `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive` in the installed root.
 
 ## Client Operations Pattern
 
@@ -84,7 +84,8 @@ Recommended starting folders:
 
 Useful for the operator's own software and operations:
 
-- `los`, `lenders`, `clarks_consulting`, `personal`, and `shared_factory` remain separate domain roots.
+- `los`, `clarks_consulting`, `personal`, and `shared_factory` remain separate domain roots.
+- Lender-related work stays inside `los`.
 - Engineering workflows handle feature work, PR review, release management, and production support.
 - Daily operating dashboards can pull from GitHub, Jira, Slack, Notion, and local run logs.
 

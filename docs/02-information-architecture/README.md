@@ -25,10 +25,11 @@ The installed OS should start with domain roots:
   personal/
   clarks_consulting/
   los/
-  lenders/
   shared_factory/
   archive/
 ```
+
+Lender-related work belongs inside `los/`; it is not a separate top-level domain.
 
 Avoid making `engineering`, `marketing`, `sales`, `workflows`, or `automations` the top-level split. Those are operating lanes inside a domain.
 

@@ -53,7 +53,6 @@ agentic-os agents install --codex --claude
   personal/
   clarks_consulting/
   los/
-  lenders/
   shared_factory/
   archive/
 ```

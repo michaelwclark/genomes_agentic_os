@@ -40,7 +40,6 @@ Genome's Agentic OS implements that as:
   personal/
   clarks_consulting/
   los/
-  lenders/
   shared_factory/
   archive/
 ```

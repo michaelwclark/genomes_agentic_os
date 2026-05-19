@@ -13,10 +13,13 @@ DEFAULT_DOMAINS = (
     "personal",
     "clarks_consulting",
     "los",
-    "lenders",
     "shared_factory",
     "archive",
 )
+
+DOMAIN_ALIASES = {
+    "lenders": "los",
+}
 
 STANDARD_LANES = (
     "engineering",
@@ -128,6 +131,11 @@ def validate_name(value: str, label: str = "name") -> str:
     return value
 
 
+def normalize_domain(value: str) -> str:
+    domain = validate_name(value, "domain")
+    return DOMAIN_ALIASES.get(domain, domain)
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -182,7 +190,6 @@ def titleize_name(name: str) -> str:
         "personal": "Personal",
         "clarks_consulting": "Clark's Consulting",
         "los": "LOS",
-        "lenders": "Lenders",
         "shared_factory": "Shared Factory",
         "archive": "Archive",
     }
@@ -193,8 +200,7 @@ def domain_purpose(domain: str) -> str:
     purposes = {
         "personal": "Personal administration, household operations, learning, planning, and life logistics.",
         "clarks_consulting": "Client delivery, consulting operations, sales, marketing, and reusable service workflows.",
-        "los": "Loan origination system product work, support, releases, implementation, and operational knowledge.",
-        "lenders": "Lender-specific knowledge, requests, implementations, and reusable lender-facing workflows.",
+        "los": "Loan origination system and lender-related product work, support, releases, implementation, and operational knowledge.",
         "shared_factory": "Shared patterns, templates, routers, reusable automations, schemas, and cross-domain tools.",
         "archive": "Inactive work, retired projects, historical runs, and preserved decisions.",
     }
@@ -907,7 +913,7 @@ def init_os(target: str | Path) -> ScaffoldResult:
 
 
 def create_domain(root: str | Path, domain: str) -> ScaffoldResult:
-    domain = validate_name(domain, "domain")
+    domain = normalize_domain(domain)
     os_root = expand_path(root)
     result = init_os(os_root)
     if domain not in DEFAULT_DOMAINS:
@@ -1041,7 +1047,7 @@ Use this folder for workflow-local run notes when they are useful. The audit rec
 
 
 def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> ScaffoldResult:
-    domain = validate_name(domain, "domain")
+    domain = normalize_domain(domain)
     lane = validate_name(lane, "lane")
     name = validate_name(name, "workflow")
     result = create_domain(root, domain)
@@ -1153,7 +1159,7 @@ Each log should include trigger reference, idempotency key, action level, valida
 
 
 def create_automation(root: str | Path, domain: str, lane: str, name: str) -> ScaffoldResult:
-    domain = validate_name(domain, "domain")
+    domain = normalize_domain(domain)
     lane = validate_name(lane, "lane")
     name = validate_name(name, "automation")
     result = create_domain(root, domain)
@@ -1179,7 +1185,7 @@ def unique_run_log_dir(runs_dir: Path, run_id: str) -> Path:
 
 
 def create_run_log(root: str | Path, domain: str, workflow_or_automation: str) -> ScaffoldResult:
-    domain = validate_name(domain, "domain")
+    domain = normalize_domain(domain)
     workflow_or_automation = validate_name(workflow_or_automation, "workflow_or_automation")
     result = create_domain(root, domain)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

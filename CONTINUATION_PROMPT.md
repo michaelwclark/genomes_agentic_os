@@ -18,7 +18,7 @@ Current repo state:
 - Package/repo slug may remain filesystem-safe as genomes_agentic_os.
 - CLI command should be generic: agentic-os
 - Default installed OS root should be generic: ~/agentic_os
-- The installed OS profile is domain-first. Default roots are `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive`.
+- The installed OS profile is domain-first. Default roots are `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive`.
 
 Hard constraints:
 - Preserve the domain-first installed root from the Agentic Operating System Manual.
@@ -76,7 +76,6 @@ V1 behavior:
   - personal/
   - clarks_consulting/
   - los/
-  - lenders/
   - shared_factory/
   - archive/
 - each domain gets:

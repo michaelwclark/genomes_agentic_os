@@ -57,7 +57,7 @@ find "$tmpdir/os" -maxdepth 4 -type f | sort
 Expected result:
 
 - `validate` exits successfully.
-- `personal/`, `clarks_consulting/`, `los/`, `lenders/`, `shared_factory/`, and `archive/` exist at the OS root.
+- `personal/`, `clarks_consulting/`, `los/`, `shared_factory/`, and `archive/` exist at the OS root.
 - Root `AGENTS.md` exists and routes work into domains.
 - `los/AGENTS.md` and `los/AGENT.md` exist.
 - `los/00-control-plane/routing-rules.md` and `los/00-control-plane/approval-rules.md` exist.

@@ -17,10 +17,11 @@ The CLI scaffolds an installed OS root, usually at `~/agentic_os`. The installed
   personal/
   clarks_consulting/
   los/
-  lenders/
   shared_factory/
   archive/
 ```
+
+Lender-related work belongs inside `los/`; it is not a separate top-level domain.
 
 Each domain gets the same numbered operating structure:
 
@@ -248,7 +249,7 @@ agentic-os init --target ~/agentic_os
 ## What V1 Does
 
 - Creates a working local OS tree under `~/agentic_os` or a supplied target.
-- Creates the default domain roots: `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive`.
+- Creates the default domain roots: `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive`.
 - Creates root and domain `AGENTS.md` and `CLAUDE.md` routers plus `AGENT.md` compatibility pointers.
 - Creates domain `CONTEXT.md` and `REFERENCES.md` files for workspace memory and source maps.
 - Creates each domain's numbered operating lanes from `00-control-plane` through `08-archive`.

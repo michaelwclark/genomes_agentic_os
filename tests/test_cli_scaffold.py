@@ -11,7 +11,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
 
     assert main(["init", "--target", str(root)]) == 0
 
-    for domain in ("personal", "clarks_consulting", "los", "lenders", "shared_factory", "archive"):
+    for domain in ("personal", "clarks_consulting", "los", "shared_factory", "archive"):
         domain_root = root / domain
         assert domain_root.is_dir()
         assert (domain_root / "AGENTS.md").is_file()
@@ -40,6 +40,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
     assert not (root / "domains").exists()
+    assert not (root / "lenders").exists()
 
 
 def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None:
@@ -131,6 +132,16 @@ def test_commands_are_safe_to_rerun(tmp_path: Path) -> None:
     after = (root / "client_delivery" / "domain.yml").read_text(encoding="utf-8")
 
     assert before == after
+
+
+def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["workflow", "create", "lenders", "support", "lender_intake", "--root", str(root)]) == 0
+
+    assert (root / "los" / "03-workflows" / "support" / "lender_intake" / "workflow.md").is_file()
+    assert not (root / "lenders").exists()
+    assert validate_root(root).ok
 
 
 def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None:

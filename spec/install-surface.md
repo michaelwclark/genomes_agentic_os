@@ -19,7 +19,6 @@ Default installed roots:
   personal/
   clarks_consulting/
   los/
-  lenders/
   shared_factory/
   archive/
 ```

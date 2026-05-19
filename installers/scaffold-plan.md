@@ -4,7 +4,7 @@
 
 1. Create OS root.
 2. Create root `AGENTS.md`, `AGENT.md`, and `README.md`.
-3. Create default domain roots: `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive`.
+3. Create default domain roots: `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive`.
 4. Create each domain's numbered structure from `00-control-plane` through `08-archive`.
 5. Copy templates into `shared_factory/05-knowledge/templates/`.
 6. Validate folder shape.

@@ -1,6 +1,6 @@
 # Domain Template
 
-Use this when creating a new top-level operating boundary such as `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, or a client domain.
+Use this when creating a new top-level operating boundary such as `personal`, `clarks_consulting`, `los`, `shared_factory`, or a client domain.
 
 ## Required Files
 
