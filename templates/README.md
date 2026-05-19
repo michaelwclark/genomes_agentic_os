@@ -9,7 +9,7 @@ Agents should not invent new document shapes when a template exists. They should
 | Group | Purpose |
 | --- | --- |
 | `domain/` | Domain setup and context boundary. |
-| `workflow/` | Repeatable process specs, context packs, run logs, and approvals. |
+| `workflow/` | Repeatable process specs, outcome briefs, alignment questions, PRDs, implementation plans, dispatch handoffs, progress files, context packs, run logs, and approvals. |
 | `automation/` | Triggered process specs, permissions, and failure policies. |
 | `notion/` | Notion control-plane mapping and page structure. |
 | `memory/` | Memory policy for durable agent context. |

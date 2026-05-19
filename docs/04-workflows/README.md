@@ -6,11 +6,20 @@ Workflows are used when judgment is required. Automations are used when the deci
 
 Workflows are the main unit of reusable agent work. A good workflow should be specific enough for an agent to execute, but general enough to run across many work items in the same domain and lane.
 
+For complex work, use the [Cliefnotes Operating Guide](../11-cliefnotes-operating-guide/README.md) before dispatching execution.
+
 Workflow specs live under the selected domain:
 
 ```text
 <domain>/03-workflows/<lane>/<workflow>/
   workflow.md
+  outcome-brief.md
+  alignment-questions.md
+  prd.md
+  implementation-plan.md
+  dispatch-handoff.md
+  progress.md
+  quick-reference.md
   state-machine.md
   context-pack.md
   approval-rules.md
@@ -25,6 +34,7 @@ Workflow specs live under the selected domain:
 Every workflow spec should include:
 
 - Purpose.
+- Pre-build gate.
 - When to use.
 - When not to use.
 - Inputs.
@@ -42,6 +52,7 @@ Every workflow spec should include:
 | Section | Why It Exists |
 | --- | --- |
 | Purpose | Prevents agents from using the workflow for adjacent but wrong work. |
+| Pre-Build Gate | Keeps brainstorming, planning, and handoff explicit before execution starts. |
 | Use When / Do Not Use When | Creates routing boundaries and avoids accidental scope creep. |
 | Inputs | Defines required identifiers, source objects, and requested outcome. |
 | Preconditions | Blocks execution until required context and permissions exist. |
@@ -58,11 +69,13 @@ Agents executing a workflow must:
 
 1. Confirm the input object and domain.
 2. Load the workflow spec.
-3. Build the context pack from declared sources.
-4. Execute only the allowed steps.
-5. Validate against the workflow's acceptance criteria.
-6. Write a run log.
-7. Update the control plane status.
+3. Confirm `outcome-brief.md`, `alignment-questions.md`, `prd.md`, `implementation-plan.md`, and `dispatch-handoff.md` exist or create them before build work starts.
+4. Build the context pack from declared sources.
+5. Execute only the allowed steps.
+6. Validate against the workflow's acceptance criteria.
+7. Write a run log.
+8. Update the control plane status.
+9. Update `progress.md` with the resume point and next action when work remains open.
 
 ## Context Loading Contract
 

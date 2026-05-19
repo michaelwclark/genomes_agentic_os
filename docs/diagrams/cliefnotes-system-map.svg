@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="680" viewBox="0 0 1120 680" role="img" aria-labelledby="title desc">
+  <title id="title">Cliefnotes System Map</title>
+  <desc id="desc">A map showing source package, installed OS root, domain rooms, tools, runs, control plane, and memory.</desc>
+  <defs>
+    <style>
+      text { font-family: Inter, Arial, sans-serif; fill: #17202a; }
+      .title { font-size: 26px; font-weight: 700; }
+      .label { font-size: 17px; font-weight: 700; }
+      .body { font-size: 14px; }
+      .small { font-size: 12px; }
+      .box { fill: #f8fafc; stroke: #34495e; stroke-width: 2; rx: 10; }
+      .source { fill: #e8f5e9; }
+      .map { fill: #e3f2fd; }
+      .room { fill: #fff8e1; }
+      .tool { fill: #f3e5f5; }
+      .run { fill: #fce4ec; }
+      .plane { fill: #ede7f6; }
+      .arrow { stroke: #34495e; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#34495e" />
+    </marker>
+  </defs>
+
+  <rect width="1120" height="680" fill="#ffffff" />
+  <text x="40" y="46" class="title">Cliefnotes Method As Genome's Agentic OS</text>
+  <text x="40" y="76" class="body">The folder is the operating system. Chat is the interface. Durable work lives in files.</text>
+
+  <rect x="40" y="120" width="210" height="120" class="box source" />
+  <text x="62" y="154" class="label">Source Package</text>
+  <text x="62" y="184" class="body">This repo</text>
+  <text x="62" y="206" class="body">docs, templates, schemas</text>
+  <text x="62" y="228" class="body">CLI scaffold</text>
+
+  <rect x="330" y="110" width="240" height="140" class="box map" />
+  <text x="354" y="144" class="label">Installed OS Root</text>
+  <text x="354" y="174" class="body">~/agentic_os</text>
+  <text x="354" y="196" class="body">AGENTS.md</text>
+  <text x="354" y="218" class="body">CLAUDE.md</text>
+  <text x="354" y="240" class="body">domain folders</text>
+
+  <rect x="660" y="100" width="400" height="160" class="box room" />
+  <text x="684" y="134" class="label">Domain Rooms</text>
+  <text x="684" y="164" class="body">CONTEXT.md and REFERENCES.md</text>
+  <text x="684" y="186" class="body">00-control-plane, 01-inbox, 02-projects</text>
+  <text x="684" y="208" class="body">03-workflows, 04-automations</text>
+  <text x="684" y="230" class="body">05-knowledge, 06-runs-and-logs</text>
+
+  <rect x="80" y="350" width="290" height="150" class="box tool" />
+  <text x="104" y="384" class="label">Tools And Packages</text>
+  <text x="104" y="414" class="body">workflows, automations</text>
+  <text x="104" y="436" class="body">skills, scripts, hooks</text>
+  <text x="104" y="458" class="body">MCPs, connectors, plugins</text>
+  <text x="104" y="480" class="body">shared_factory templates</text>
+
+  <rect x="455" y="350" width="280" height="150" class="box run" />
+  <text x="479" y="384" class="label">Execution Evidence</text>
+  <text x="479" y="414" class="body">outcome brief, PRD, plan</text>
+  <text x="479" y="436" class="body">dispatch handoff, progress</text>
+  <text x="479" y="458" class="body">run logs, artifacts</text>
+  <text x="479" y="480" class="body">validation and approvals</text>
+
+  <rect x="820" y="350" width="240" height="150" class="box plane" />
+  <text x="844" y="384" class="label">Control And Memory</text>
+  <text x="844" y="414" class="body">Notion cockpit</text>
+  <text x="844" y="436" class="body">active work and approvals</text>
+  <text x="844" y="458" class="body">memory policy</text>
+  <text x="844" y="480" class="body">future active state plane</text>
+
+  <path d="M250 180 H330" class="arrow" />
+  <path d="M570 180 H660" class="arrow" />
+  <path d="M860 260 V350" class="arrow" />
+  <path d="M660 220 C520 280 330 290 250 350" class="arrow" />
+  <path d="M370 425 H455" class="arrow" />
+  <path d="M735 425 H820" class="arrow" />
+  <path d="M940 350 C980 285 980 235 940 260" class="arrow" />
+
+  <text x="40" y="610" class="small">Design rule: root routes, domains hold context, tools package repeatable work, runs prove what happened.</text>
+</svg>

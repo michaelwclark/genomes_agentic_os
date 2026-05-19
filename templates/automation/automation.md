@@ -21,9 +21,34 @@ State what the automation does and what decision it helps with.
 - Source:
 - Frequency:
 
+## Worth Automating Check
+
+Do not move beyond `observe` or `prepare` unless this checklist is true.
+
+| Question | Answer |
+| --- | --- |
+| Does this happen weekly or more often? |  |
+| Are the steps stable and repeatable? |  |
+| Can the automation finish without complex judgment? |  |
+| Are login, CAPTCHA, and permission issues handled? |  |
+| Is there a clear approval boundary before external writes? |  |
+| Is there a run log and failure path? |  |
+
 ## Input Filters
 
 - 
+
+## Readiness Checks
+
+| Check | Passes | Evidence |
+| --- | --- | --- |
+| Repeats often enough to justify automation |  |  |
+| Steps are stable and inspectable |  |  |
+| Inputs can be filtered before action |  |  |
+| Done state is observable |  |  |
+| Duplicate handling is clear |  |  |
+| External writes stop at approval gates |  |  |
+| Failures route to a human |  |  |
 
 ## Idempotency
 
@@ -35,6 +60,7 @@ State what the automation does and what decision it helps with.
 - Read:
 - Write:
 - Requires approval:
+- Default action before approval: `observe | prepare | propose`
 
 ## Context Sources
 
@@ -45,10 +71,12 @@ State what the automation does and what decision it helps with.
 1. Capture input.
 2. Classify input.
 3. Build or update work item.
-4. Run allowed action.
-5. Validate result.
-6. Record run.
-7. Route next action.
+4. Prepare output or proposed action.
+5. Stop for approval when the action writes externally, changes production, changes money/legal state, deletes data, or becomes customer-visible.
+6. Run the allowed action.
+7. Validate result.
+8. Record run.
+9. Route next action.
 
 ## Outputs
 

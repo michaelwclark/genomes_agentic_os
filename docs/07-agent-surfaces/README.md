@@ -27,7 +27,7 @@ Codex should receive:
 
 Claude should receive:
 
-- `CLAUDE.md` global or project rules.
+- `CLAUDE.md` global or project rules generated from the same router contract as `AGENTS.md`.
 - Skills or commands matching the Codex workflow names.
 - Memory policy references.
 - Context loading conventions that mirror Codex.
@@ -35,3 +35,9 @@ Claude should receive:
 ## Cross-Harness Rule
 
 Claude and Codex should not have separate operating philosophies. They can have different mechanics, but they should read the same specs and produce the same run logs.
+
+## Remote And Mobile Sessions
+
+Remote access is a transport layer, not a new source of truth. A mobile or remote session should still load the installed OS root, read the relevant router, use the same workflow files, and update the same run log or `progress.md` before disconnecting.
+
+Use remote sessions for quick status checks, approvals, small interventions, and handoffs. Do not use a remote chat transcript as the only record of active state.

@@ -11,6 +11,7 @@ The CLI scaffolds an installed OS root, usually at `~/agentic_os`. The installed
 ```text
 ~/agentic_os/
   AGENTS.md
+  CLAUDE.md
   AGENT.md
   README.md
   personal/
@@ -26,7 +27,10 @@ Each domain gets the same numbered operating structure:
 ```text
 <domain>/
   AGENTS.md
+  CLAUDE.md
   AGENT.md
+  CONTEXT.md
+  REFERENCES.md
   README.md
   domain.yml
   00-control-plane/
@@ -75,7 +79,7 @@ Each domain gets the same numbered operating structure:
   08-archive/
 ```
 
-`AGENTS.md` is the router. Root `AGENTS.md` picks the domain. Domain `AGENTS.md` picks the lane, project, workflow, automation, or run-log destination. `AGENT.md` is included as a compatibility pointer for tools or habits that look for the singular filename.
+`AGENTS.md` and `CLAUDE.md` are the routers. Root routers pick the domain. Domain routers pick the lane, project, workflow, automation, or run-log destination. `AGENT.md` is included as a compatibility pointer for tools or habits that look for the singular filename. Domain `CONTEXT.md` and `REFERENCES.md` teach the agent how the domain works and where its source systems live.
 
 ## Why This Matters
 
@@ -145,6 +149,13 @@ The CLI creates workflow folders, not one loose Markdown file:
 ```text
 <domain>/03-workflows/<lane>/<workflow>/
   workflow.md
+  outcome-brief.md
+  alignment-questions.md
+  prd.md
+  implementation-plan.md
+  dispatch-handoff.md
+  progress.md
+  quick-reference.md
   state-machine.md
   context-pack.md
   approval-rules.md
@@ -229,7 +240,7 @@ agentic-os init --target ~/agentic_os
 | --- | --- |
 | `agentic-os init --target ~/agentic_os` | Domain-first installed OS with root/domain routers and the standard numbered lanes. |
 | `agentic-os domain create <name> --root ~/agentic_os` | Additional top-level domain with the same router, control plane, inbox, workflow, automation, knowledge, run, metric, and archive structure. |
-| `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with spec, state machine, context pack, approvals, output contract, runbook, examples, and runs folder. |
+| `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with outcome brief, alignment questions, PRD, implementation plan, handoff, progress, spec, context pack, approvals, output contract, runbook, examples, and runs folder. |
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os` | Timestamped run folder under the domain's `06-runs-and-logs/runs/`. |
 | `agentic-os validate --root ~/agentic_os` | Required domain-first folder checks plus JSON/YAML parseability. |
@@ -238,7 +249,8 @@ agentic-os init --target ~/agentic_os
 
 - Creates a working local OS tree under `~/agentic_os` or a supplied target.
 - Creates the default domain roots: `personal`, `clarks_consulting`, `los`, `lenders`, `shared_factory`, and `archive`.
-- Creates root and domain `AGENTS.md` routers plus `AGENT.md` compatibility pointers.
+- Creates root and domain `AGENTS.md` and `CLAUDE.md` routers plus `AGENT.md` compatibility pointers.
+- Creates domain `CONTEXT.md` and `REFERENCES.md` files for workspace memory and source maps.
 - Creates each domain's numbered operating lanes from `00-control-plane` through `08-archive`.
 - Creates workflow and automation folders with the support files needed to run, validate, approve, and audit them.
 - Copies repository templates into `shared_factory/05-knowledge/templates/`.
@@ -277,6 +289,7 @@ Key starting points:
 - [Operating model](docs/01-operating-model/README.md)
 - [Information architecture](docs/02-information-architecture/README.md)
 - [Workflow guide](docs/04-workflows/README.md)
+- [Cliefnotes operating guide](docs/11-cliefnotes-operating-guide/README.md)
 - [Automation guide](docs/05-automations/README.md)
 - [Storage model](docs/09-storage-model/README.md)
 - [Spec index](spec/README.md)

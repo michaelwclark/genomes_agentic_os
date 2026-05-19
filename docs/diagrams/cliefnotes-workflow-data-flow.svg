@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Cliefnotes Workflow Data Flow</title>
+  <desc id="desc">A flow from capture through routing, outcome, questions, PRD, plan, dispatch, validation, run log, and feedback.</desc>
+  <defs>
+    <style>
+      text { font-family: Inter, Arial, sans-serif; fill: #16212c; }
+      .title { font-size: 24px; font-weight: 700; }
+      .body { font-size: 13px; }
+      .step { font-size: 15px; font-weight: 700; }
+      .box { fill: #f8fafc; stroke: #2c3e50; stroke-width: 2; rx: 8; }
+      .pre { fill: #e3f2fd; }
+      .build { fill: #fff8e1; }
+      .evidence { fill: #e8f5e9; }
+      .arrow { stroke: #2c3e50; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+      <path d="M1,1 L9,5.5 L1,10 Z" fill="#2c3e50" />
+    </marker>
+  </defs>
+
+  <rect width="1200" height="420" fill="#ffffff" />
+  <text x="40" y="44" class="title">Workflow Data Flow</text>
+  <text x="40" y="70" class="body">Pre-build thinking becomes dispatchable files. Execution produces evidence. Evidence improves the OS.</text>
+
+  <rect x="40" y="125" width="115" height="90" class="box pre" />
+  <text x="62" y="158" class="step">Capture</text>
+  <text x="62" y="184" class="body">inbox</text>
+  <text x="62" y="202" class="body">source link</text>
+
+  <rect x="185" y="125" width="115" height="90" class="box pre" />
+  <text x="211" y="158" class="step">Route</text>
+  <text x="207" y="184" class="body">root map</text>
+  <text x="205" y="202" class="body">domain room</text>
+
+  <rect x="330" y="125" width="120" height="90" class="box pre" />
+  <text x="356" y="158" class="step">Outcome</text>
+  <text x="350" y="184" class="body">brief</text>
+  <text x="350" y="202" class="body">done proof</text>
+
+  <rect x="480" y="125" width="120" height="90" class="box pre" />
+  <text x="509" y="158" class="step">Ask</text>
+  <text x="500" y="184" class="body">alignment</text>
+  <text x="500" y="202" class="body">questions</text>
+
+  <rect x="630" y="125" width="120" height="90" class="box build" />
+  <text x="665" y="158" class="step">PRD</text>
+  <text x="650" y="184" class="body">requirements</text>
+  <text x="650" y="202" class="body">scope</text>
+
+  <rect x="780" y="125" width="120" height="90" class="box build" />
+  <text x="812" y="158" class="step">Plan</text>
+  <text x="800" y="184" class="body">stages</text>
+  <text x="800" y="202" class="body">validation</text>
+
+  <rect x="930" y="125" width="120" height="90" class="box build" />
+  <text x="955" y="158" class="step">Dispatch</text>
+  <text x="950" y="184" class="body">handoff</text>
+  <text x="950" y="202" class="body">ownership</text>
+
+  <rect x="1080" y="125" width="85" height="90" class="box evidence" />
+  <text x="1098" y="158" class="step">Run</text>
+  <text x="1098" y="184" class="body">execute</text>
+  <text x="1098" y="202" class="body">approve</text>
+
+  <path d="M155 170 H185" class="arrow" />
+  <path d="M300 170 H330" class="arrow" />
+  <path d="M450 170 H480" class="arrow" />
+  <path d="M600 170 H630" class="arrow" />
+  <path d="M750 170 H780" class="arrow" />
+  <path d="M900 170 H930" class="arrow" />
+  <path d="M1050 170 H1080" class="arrow" />
+
+  <rect x="250" y="285" width="180" height="70" class="box evidence" />
+  <text x="288" y="315" class="step">Validate</text>
+  <text x="277" y="339" class="body">tests, scripts, evidence</text>
+
+  <rect x="510" y="285" width="180" height="70" class="box evidence" />
+  <text x="555" y="315" class="step">Record</text>
+  <text x="538" y="339" class="body">run log, artifacts</text>
+
+  <rect x="770" y="285" width="180" height="70" class="box evidence" />
+  <text x="814" y="315" class="step">Improve</text>
+  <text x="800" y="339" class="body">templates, context, rules</text>
+
+  <path d="M1122 215 C1080 285 575 260 430 315" class="arrow" />
+  <path d="M430 320 H510" class="arrow" />
+  <path d="M690 320 H770" class="arrow" />
+  <path d="M860 285 C840 245 840 230 840 215" class="arrow" />
+</svg>

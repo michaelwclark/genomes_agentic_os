@@ -22,6 +22,16 @@
 
 - 
 
+## Session Continuity
+
+| Item | Value |
+| --- | --- |
+| Last completed action |  |
+| Still open |  |
+| Resume from |  |
+| Blocked by |  |
+| Progress updated | `yes | no` |
+
 ## Actions Taken
 
 1. 
@@ -43,6 +53,12 @@
 - Previous state:
 - New state:
 - Next action:
+
+## Memory Writebacks
+
+- Durable learning to promote:
+- Memory or context pack updated:
+- Not recorded because:
 
 ## Handoff
 

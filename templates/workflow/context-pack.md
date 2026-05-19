@@ -34,6 +34,16 @@ State the exact outcome for this run.
 
 Summarize only the state needed to act correctly.
 
+## Session Continuity
+
+| Item | Current Value |
+| --- | --- |
+| Last completed action |  |
+| Still open |  |
+| Resume from |  |
+| Blocked by |  |
+| Progress file | `progress.md` |
+
 ## Relevant Decisions
 
 - Decision:

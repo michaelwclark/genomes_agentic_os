@@ -69,6 +69,13 @@ DOMAIN_DIRECTORIES = (
 
 WORKFLOW_FILES = (
     "workflow.md",
+    "outcome-brief.md",
+    "alignment-questions.md",
+    "prd.md",
+    "implementation-plan.md",
+    "dispatch-handoff.md",
+    "progress.md",
+    "quick-reference.md",
     "state-machine.md",
     "context-pack.md",
     "approval-rules.md",
@@ -221,6 +228,7 @@ Each domain uses the same numbered operating lanes:
 ## Agent Entry Point
 
 Start with `AGENTS.md` in this directory, then follow the domain router in the selected domain.
+Claude-compatible installs also get `CLAUDE.md` with the same routing contract.
 """
 
 
@@ -327,6 +335,11 @@ def domain_readme(domain: str) -> str:
 
 {domain_purpose(domain)}
 
+## Context Files
+
+- `CONTEXT.md` defines how this domain works and what good output looks like.
+- `REFERENCES.md` points to source systems, docs, repos, tools, and recurring examples.
+
 ## Active Outcomes
 
 -
@@ -386,6 +399,8 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | --- | --- |
 | Raw capture | `01-inbox/raw-ideas.md` |
 | Triage notes | `01-inbox/triage.md` |
+| Domain context | `CONTEXT.md` |
+| Domain references | `REFERENCES.md` |
 | Active project | `02-projects/<project>/` |
 | Workflow spec | `03-workflows/<lane>/<workflow>/workflow.md` |
 | Automation spec | `04-automations/<lane>/<automation>/automation.md` |
@@ -398,6 +413,7 @@ Classify the request into one of this domain's operating lanes, then choose the 
 ## Routing Rules
 
 - Read `00-control-plane/routing-rules.md` before creating a new workflow or automation.
+- Read `CONTEXT.md` and `REFERENCES.md` before doing domain-specific work.
 - Use `03-workflows` when judgment, context assembly, or approval gates are central.
 - Use `04-automations` when a trigger can safely run a repeatable action with declared permissions.
 - Use `shared_factory` when a pattern should be reused by multiple domains.
@@ -407,6 +423,82 @@ Classify the request into one of this domain's operating lanes, then choose the 
 - Follow `00-control-plane/approval-rules.md`.
 - Escalate before external writes, customer-visible output, production changes, destructive actions, secrets, billing, and legal records.
 - Write a run log before ending any non-trivial execution.
+"""
+
+
+def domain_context(domain: str) -> str:
+    display_name = titleize_name(domain)
+    return f"""# Context: {display_name}
+
+This file teaches agents how work inside `{domain}` should be understood before they execute a task.
+
+## Domain Purpose
+
+{domain_purpose(domain)}
+
+## What Good Output Looks Like
+
+- It routes work to the correct project, workflow, automation, or run log.
+- It preserves source links and evidence.
+- It follows approval rules before external, production, destructive, billing, legal, or customer-visible action.
+- It updates active state or records a next action before the session ends.
+
+## Standing Context
+
+- Main people:
+- Main systems:
+- Main repositories:
+- Main Notion pages:
+- Main Jira or issue trackers:
+
+## Work Style
+
+- Preferred level of detail:
+- Required terminology:
+- Formatting expectations:
+- Things to avoid:
+
+## Common Tasks
+
+| Task Type | Route | Notes |
+| --- | --- | --- |
+|  |  |  |
+
+## Update Rule
+
+Update this file when a stable domain rule, source system, work style preference, or repeated failure mode becomes durable.
+"""
+
+
+def domain_references(domain: str) -> str:
+    display_name = titleize_name(domain)
+    return f"""# References: {display_name}
+
+Use this file as the domain's durable source map. Link to the source; do not paste whole private documents unless they are intentionally part of this OS.
+
+## Source Systems
+
+| Source | Location | What It Contains | When To Use |
+| --- | --- | --- | --- |
+| Notion |  | Control plane, docs, status |  |
+| GitHub |  | Repositories, PRs, issues |  |
+| Local files |  | Working artifacts and installed OS state |  |
+
+## Example Outputs
+
+| Example | Location | Why It Is Useful |
+| --- | --- | --- |
+|  |  |  |
+
+## Reusable Prompts Or Briefs
+
+| Name | Location | Use For |
+| --- | --- | --- |
+|  |  |  |
+
+## Known Gaps
+
+-
 """
 
 
@@ -555,6 +647,13 @@ Workflow specs live here when the work needs judgment, context assembly, validat
 ```text
 <lane>/<workflow>/
   workflow.md
+  outcome-brief.md
+  alignment-questions.md
+  prd.md
+  implementation-plan.md
+  dispatch-handoff.md
+  progress.md
+  quick-reference.md
   state-machine.md
   context-pack.md
   approval-rules.md
@@ -586,6 +685,13 @@ Create reusable workflow folders here for `{lane}` work inside `{domain}`.
 ```text
 <workflow>/
   workflow.md
+  outcome-brief.md
+  alignment-questions.md
+  prd.md
+  implementation-plan.md
+  dispatch-handoff.md
+  progress.md
+  quick-reference.md
   state-machine.md
   context-pack.md
   approval-rules.md
@@ -713,7 +819,9 @@ def render_template(content: str, replacements: dict[str, str]) -> str:
 def ensure_root_files(root: Path, result: ScaffoldResult) -> None:
     ensure_dir(root, result)
     write_file_once(root / "README.md", root_readme(), result)
-    write_file_once(root / "AGENTS.md", root_agents(), result)
+    root_router = root_agents()
+    write_file_once(root / "AGENTS.md", root_router, result)
+    write_file_once(root / "CLAUDE.md", root_router, result)
     write_file_once(root / "AGENT.md", agent_shim(), result)
 
 
@@ -722,8 +830,12 @@ def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) 
     domain_root = os_root / domain
     ensure_dir(domain_root, result)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
-    write_file_once(domain_root / "AGENTS.md", domain_agents(domain), result)
+    domain_router = domain_agents(domain)
+    write_file_once(domain_root / "AGENTS.md", domain_router, result)
+    write_file_once(domain_root / "CLAUDE.md", domain_router, result)
     write_file_once(domain_root / "AGENT.md", agent_shim(), result)
+    write_file_once(domain_root / "CONTEXT.md", domain_context(domain), result)
+    write_file_once(domain_root / "REFERENCES.md", domain_references(domain), result)
     write_file_once(domain_root / "domain.yml", domain_config(domain), result)
 
     for directory in DOMAIN_DIRECTORIES:
@@ -818,6 +930,20 @@ def workflow_scaffold_content(domain: str, lane: str, name: str, filename: str) 
     template_dir = template_source_dir() / "workflow"
     if filename == "workflow.md":
         return render_template((template_dir / "workflow.md").read_text(encoding="utf-8"), replacements)
+    if filename == "outcome-brief.md":
+        return render_template((template_dir / "outcome-brief.md").read_text(encoding="utf-8"), replacements)
+    if filename == "alignment-questions.md":
+        return render_template((template_dir / "alignment-questions.md").read_text(encoding="utf-8"), replacements)
+    if filename == "prd.md":
+        return render_template((template_dir / "prd.md").read_text(encoding="utf-8"), replacements)
+    if filename == "implementation-plan.md":
+        return render_template((template_dir / "implementation-plan.md").read_text(encoding="utf-8"), replacements)
+    if filename == "dispatch-handoff.md":
+        return render_template((template_dir / "dispatch-handoff.md").read_text(encoding="utf-8"), replacements)
+    if filename == "progress.md":
+        return render_template((template_dir / "progress.md").read_text(encoding="utf-8"), replacements)
+    if filename == "quick-reference.md":
+        return render_template((template_dir / "quick-reference.md").read_text(encoding="utf-8"), replacements)
     if filename == "context-pack.md":
         return render_template((template_dir / "context-pack.md").read_text(encoding="utf-8"), replacements)
     if filename == "approval-rules.md":

@@ -13,6 +13,8 @@ Do not use Mermaid for durable documentation here. The intended publishing targe
 | [Data Flow](data-flow.svg) | Showing source package, installed OS, control plane, work repos, memory, and future active state boundaries. |
 | [Workflow And Automation Lifecycle](workflow-automation-lifecycle.svg) | Explaining how workflows, automations, approvals, and run logs relate. |
 | [Storage Boundaries](storage-boundaries.svg) | Explaining what filesystem, Notion, database, and memory should own. |
+| [Cliefnotes System Map](cliefnotes-system-map.svg) | Showing how the Cliefnotes map, rooms, tools, memory, and control-plane concepts map to this OS. |
+| [Cliefnotes Workflow Data Flow](cliefnotes-workflow-data-flow.svg) | Showing the source-derived flow from capture through outcome, questions, PRD, plan, dispatch, validation, and feedback. |
 
 ## Authoring Rules
 

@@ -25,9 +25,9 @@ agentic-os agents install --codex --claude
 
 | Command | Responsibility |
 | --- | --- |
-| `init` | Create the domain-first installed OS tree, root router, default domain routers, numbered domain lanes, and shared runtime templates. |
-| `domain create` | Create an additional top-level domain with router, config, control plane, inbox, projects, workflows, automations, knowledge, run logs, metrics, and archive structure. |
-| `workflow create` | Create a workflow folder under `<domain>/03-workflows/<lane>/<workflow>/` with spec, state machine, context pack, approval rules, output contract, runbook, examples, and runs. |
+| `init` | Create the domain-first installed OS tree, root/domain Claude and Codex routers, domain context/reference files, numbered domain lanes, and shared runtime templates. |
+| `domain create` | Create an additional top-level domain with router, context, references, config, control plane, inbox, projects, workflows, automations, knowledge, run logs, metrics, and archive structure. |
+| `workflow create` | Create a workflow folder under `<domain>/03-workflows/<lane>/<workflow>/` with spec, outcome brief, alignment questions, PRD, implementation plan, dispatch handoff, progress, quick reference, state machine, context pack, approval rules, output contract, runbook, examples, and runs. |
 | `automation create` | Create an automation folder under `<domain>/04-automations/<lane>/<automation>/` with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `context build` | Assemble a context pack from known inputs and domain rules. |
 | `run-log create` | Create a timestamped run folder under `<domain>/06-runs-and-logs/runs/` using the standard template. |
@@ -47,6 +47,9 @@ agentic-os agents install --codex --claude
 
 ```text
 ~/agentic_os/
+  AGENTS.md
+  CLAUDE.md
+  AGENT.md
   personal/
   clarks_consulting/
   los/

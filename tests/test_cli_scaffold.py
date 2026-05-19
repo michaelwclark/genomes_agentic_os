@@ -15,7 +15,10 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         domain_root = root / domain
         assert domain_root.is_dir()
         assert (domain_root / "AGENTS.md").is_file()
+        assert (domain_root / "CLAUDE.md").is_file()
         assert (domain_root / "AGENT.md").is_file()
+        assert (domain_root / "CONTEXT.md").is_file()
+        assert (domain_root / "REFERENCES.md").is_file()
         assert (domain_root / "00-control-plane" / "routing-rules.md").is_file()
         assert (domain_root / "01-inbox" / "triage.md").is_file()
         assert (domain_root / "03-workflows" / "README.md").is_file()
@@ -31,8 +34,11 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "08-archive" / "README.md").is_file()
 
     assert (root / "AGENTS.md").is_file()
+    assert (root / "CLAUDE.md").is_file()
     assert (root / "AGENT.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
     assert not (root / "domains").exists()
 
 
@@ -44,6 +50,9 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
     domain_root = root / "client_delivery"
     assert (domain_root / "README.md").is_file()
     assert (domain_root / "AGENTS.md").is_file()
+    assert (domain_root / "CLAUDE.md").is_file()
+    assert (domain_root / "CONTEXT.md").is_file()
+    assert (domain_root / "REFERENCES.md").is_file()
     assert (domain_root / "domain.yml").read_text(encoding="utf-8").startswith("id: client_delivery")
     assert (domain_root / "00-control-plane" / "active-work.md").is_file()
     assert (domain_root / "00-control-plane" / "approval-rules.md").is_file()
@@ -63,6 +72,13 @@ def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
     assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
     workflow_root = root / "los" / "03-workflows" / "engineering" / "feature_dev"
     assert (workflow_root / "workflow.md").is_file()
+    assert (workflow_root / "outcome-brief.md").is_file()
+    assert (workflow_root / "alignment-questions.md").is_file()
+    assert (workflow_root / "prd.md").is_file()
+    assert (workflow_root / "implementation-plan.md").is_file()
+    assert (workflow_root / "dispatch-handoff.md").is_file()
+    assert (workflow_root / "progress.md").is_file()
+    assert (workflow_root / "quick-reference.md").is_file()
     assert (workflow_root / "state-machine.md").is_file()
     assert (workflow_root / "context-pack.md").is_file()
     assert (workflow_root / "approval-rules.md").is_file()
@@ -130,7 +146,11 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
 
     required_sections = {
         root / "AGENTS.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
+        root / "CLAUDE.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
         root / "los" / "AGENTS.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
+        root / "los" / "CLAUDE.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
+        root / "los" / "CONTEXT.md": ("# Context: LOS", "## What Good Output Looks Like", "## Common Tasks"),
+        root / "los" / "REFERENCES.md": ("# References: LOS", "## Source Systems", "## Known Gaps"),
         root / "los" / "03-workflows" / "README.md": ("# Workflows: LOS", "## Lane Directories", "## Workflow Folder Format"),
         root / "los" / "03-workflows" / "engineering" / "README.md": (
             "# Workflow Lane: engineering",
@@ -138,6 +158,41 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
             "## Routing Rule",
         ),
         workflow_root / "workflow.md": ("# Workflow: feature_dev", "## Metadata", "## Purpose", "## Validation"),
+        workflow_root / "outcome-brief.md": (
+            "# Outcome Brief: feature_dev",
+            "## Definition Of Done",
+            "## Acceptance Criteria",
+        ),
+        workflow_root / "alignment-questions.md": (
+            "# Alignment Questions: feature_dev",
+            "## Required Questions",
+            "## Dispatch Decision",
+        ),
+        workflow_root / "prd.md": (
+            "# PRD: feature_dev",
+            "## Requirements",
+            "## Validation",
+        ),
+        workflow_root / "implementation-plan.md": (
+            "# Implementation Plan: feature_dev",
+            "## Build Stages",
+            "## Validation Plan",
+        ),
+        workflow_root / "dispatch-handoff.md": (
+            "# Dispatch Handoff: feature_dev",
+            "## Required Sources To Load",
+            "## Stop Conditions",
+        ),
+        workflow_root / "progress.md": (
+            "# Progress: feature_dev",
+            "## Current State",
+            "## Handoff Prompt",
+        ),
+        workflow_root / "quick-reference.md": (
+            "# Quick Reference: feature_dev",
+            "## Start Here",
+            "## Common Failure Modes",
+        ),
         workflow_root / "state-machine.md": ("# State Machine: feature_dev", "| From | To | Condition |"),
         workflow_root / "output-contract.md": ("# Output Contract: feature_dev", "## Required Outputs", "## Quality Bar"),
         workflow_root / "examples" / "README.md": ("# Examples: feature_dev", "## Example Format"),
@@ -151,7 +206,7 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
         automation_root / "logs" / "README.md": ("# Automation Logs: production_thread_intake", "## Log Format"),
         root / "los" / "06-runs-and-logs" / "runs" / "README.md": ("# Runs: LOS", "## Run Folder Format"),
         root / "los" / "06-runs-and-logs" / "failures" / "README.md": ("# Failures: LOS", "## Failure Record Format"),
-        run_log: ("# Run Log:", "## Metadata", "## Input", "## Validation", "## Handoff"),
+        run_log: ("# Run Log:", "## Metadata", "## Input", "## Session Continuity", "## Validation", "## Handoff"),
     }
 
     for path, sections in required_sections.items():

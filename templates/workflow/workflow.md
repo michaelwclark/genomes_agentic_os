@@ -15,6 +15,17 @@
 
 State the concrete outcome this workflow produces.
 
+## Pre-Build Gate
+
+Do not dispatch build work until these files are complete enough for a fresh agent to execute:
+
+- `outcome-brief.md` - one-sentence definition of done, scope, constraints, and acceptance criteria.
+- `alignment-questions.md` - operator questions that must be answered before the PRD is trusted.
+- `prd.md` - problem, users, requirements, scope, source systems, and validation contract.
+- `implementation-plan.md` - build stages, file or system scope, risks, and validation plan.
+- `dispatch-handoff.md` - source loading, ownership, constraints, stop conditions, and verification.
+- `progress.md` - current status, blockers, resume point, and next action.
+
 ## Use When
 
 - The input matches this workflow's work type.
@@ -51,13 +62,18 @@ State the concrete outcome this workflow produces.
 
 ## Steps
 
-1. Confirm domain and work type.
-2. Create or update the work item.
-3. Build the context pack.
-4. Execute the workflow steps.
-5. Validate output.
-6. Record artifacts and decisions.
-7. Update state and next action.
+1. Brainstorm the real outcome and write `outcome-brief.md`.
+2. Ask and answer alignment questions in `alignment-questions.md`.
+3. Write or update `prd.md`.
+4. Plan the work and write `implementation-plan.md`.
+5. Create `dispatch-handoff.md` for the agent or human doing the execution.
+6. Confirm domain and work type.
+7. Create or update the work item.
+8. Build the context pack.
+9. Execute the workflow steps.
+10. Validate output.
+11. Record artifacts and decisions.
+12. Update `progress.md`, state, and next action.
 
 ## Validation
 
@@ -68,6 +84,12 @@ State the concrete outcome this workflow produces.
 
 ## Outputs
 
+- Outcome brief.
+- Alignment questions.
+- PRD.
+- Implementation plan.
+- Dispatch handoff.
+- Progress update.
 - Updated work item.
 - Run log.
 - Artifacts.

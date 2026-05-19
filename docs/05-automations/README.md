@@ -6,6 +6,8 @@ Automations should be conservative at first. Start by capturing, classifying, su
 
 The best first automation is usually not "do the whole job." It is "watch the input, classify it correctly, draft the next action, and record evidence."
 
+Before promoting a workflow into automation, capture the operator's real process: trigger, starting point, stable steps, end state, variations, risks, and audit evidence. If the process cannot be described in those terms, keep it as a workflow until more runs produce clearer evidence.
+
 Automation specs live under the selected domain:
 
 ```text
@@ -49,6 +51,19 @@ Every automation spec should include:
 | `execute_guarded` | Execute within pre-approved limits and record evidence. |
 
 Default to `observe` or `prepare` until the workflow is proven.
+
+## Readiness Checks
+
+Good automation candidates usually meet most of these conditions:
+
+- The work repeats often enough to justify setup.
+- The steps are stable and short enough to inspect.
+- Inputs can be filtered before action.
+- Done state is observable.
+- Duplicate handling is clear.
+- Approval gates can stop external writes.
+- Failures can be routed to a human.
+- Source-system changes are not expected to break the process every week.
 
 ## Automation Lifecycle
 
