@@ -612,6 +612,44 @@ def write_customer_profile(path: Path) -> None:
     )
 
 
+def write_room_profile(path: Path) -> None:
+    path.write_text(
+        """os:
+  display_name: Studio OS
+  owner: Operator
+approval_policy:
+  external_writes_require_approval: true
+rooms:
+  - slug: writing_room
+    display_name: Writing Room
+    purpose: Ideas become polished drafts.
+    inputs:
+      - rough ideas
+      - research notes
+    output_folders:
+      drafts: drafts
+      finals: final
+    routing:
+      - task: write blog post
+        read_first:
+          - docs/voice.md
+        read_when_needed:
+          - docs/audience.md
+        skip_by_default:
+          - production docs
+        output_path: drafts/
+    tools:
+      - name: humanizer
+        trigger: before final
+        notes: remove generic wording
+    done_means:
+      - output exists in the expected folder
+      - source files are preserved
+""",
+        encoding="utf-8",
+    )
+
+
 def customer_text_files(root: Path) -> list[Path]:
     return [
         path
@@ -680,6 +718,54 @@ def test_customer_init_rejects_private_source_domains(tmp_path: Path) -> None:
     )
 
     assert main(["customer", "init", "acme_ops", "--profile", str(profile), "--target", str(tmp_path / "out")]) == 2
+
+
+def test_room_profile_init_creates_custom_room_without_default_domains(tmp_path: Path, capsys) -> None:
+    profile = tmp_path / "room-profile.yml"
+    root = tmp_path / "studio_os"
+    write_room_profile(profile)
+
+    assert main(["profile", "validate", str(profile)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["rooms"] == ["writing_room"]
+
+    assert main(["init", "--target", str(root), "--profile", str(profile)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["rooms"] == ["writing_room"]
+    assert (root / "writing_room" / "CONTEXT.md").is_file()
+    assert not (root / "los").exists()
+    assert not (root / "clarks_consulting").exists()
+
+    context = (root / "writing_room" / "CONTEXT.md").read_text(encoding="utf-8")
+    assert "rough ideas" in context
+    assert "docs/voice.md" in context
+    assert "humanizer" in context
+    assert "output exists in the expected folder" in context
+    router = (root / "ROUTER.md").read_text(encoding="utf-8")
+    assert "`writing_room`" in router
+    assert main(["validate", "--root", str(root)]) == 0
+
+    (root / "writing_room" / "CONTEXT.md").write_text("# local room context edit\n<!-- room-profile-managed -->\n", encoding="utf-8")
+    assert main(["room", "update", "writing_room", "--root", str(root), "--from-profile", str(profile)]) == 0
+    assert (root / "writing_room" / "CONTEXT.md").read_text(encoding="utf-8").startswith("# local room context edit")
+
+
+def test_profile_validate_rejects_duplicate_rooms_and_missing_approvals(tmp_path: Path) -> None:
+    profile = tmp_path / "bad-profile.yml"
+    profile.write_text(
+        """rooms:
+  - slug: writing_room
+    purpose: Drafts.
+    done_means:
+      - done
+  - slug: writing_room
+    purpose: Duplicate.
+    done_means:
+      - done
+""",
+        encoding="utf-8",
+    )
+    assert main(["profile", "validate", str(profile)]) == 2
 
 
 def test_notion_sync_plan_maps_filesystem_objects_and_is_idempotent(tmp_path: Path, capsys) -> None:
