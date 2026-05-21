@@ -408,6 +408,179 @@ def test_route_fails_safely_when_ambiguous(tmp_path: Path) -> None:
     assert main(["route", "Compare los and personal work", "--root", str(root)]) == 2
 
 
+def write_ready_automation_contract(path: Path) -> None:
+    path.write_text(
+        """# Automation: production_thread_intake
+
+## Metadata
+
+| Field | Value |
+| --- | --- |
+| Domain | `los` |
+| Lane | `support` |
+| Status | `draft` |
+| Level | `observe` |
+| Owner | `OS Owner` |
+| Last Reviewed | `2026-05-21` |
+
+## Trigger
+
+- Type: `manual`
+- Source: `support queue`
+- Frequency: `on demand`
+
+## Idempotency
+
+- Key: `support_thread_id`
+- Duplicate handling: `link existing run log`
+
+## Permissions
+
+- Read: `support queue`
+- Write: `filesystem only`
+- Requires approval: `external messages`
+- Default action before approval: `propose`
+
+## Outputs
+
+- Run log with evidence.
+- Draft response for approval.
+
+## Audit Requirements
+
+- Input reference.
+- Action taken.
+- Result.
+- Evidence.
+""",
+        encoding="utf-8",
+    )
+
+
+def test_automation_check_and_safe_maturity_levels(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    automation_md = root / "los" / "04-automations" / "support" / "production_thread_intake" / "automation.md"
+    assert "| Level | `observe` |" in automation_md.read_text(encoding="utf-8")
+
+    capsys.readouterr()
+    assert main(["automation", "check", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["level"] == "observe"
+    assert any(finding["severity"] == "blocker" for finding in packet["findings"])
+
+    assert (
+        main(
+            [
+                "automation",
+                "set-maturity",
+                "los",
+                "support",
+                "production_thread_intake",
+                "prepare",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    assert "| Level | `prepare` |" in automation_md.read_text(encoding="utf-8")
+    decisions = (root / "los" / "00-control-plane" / "decisions.md").read_text(encoding="utf-8")
+    assert "maturity changed from `observe` to `prepare`" in decisions
+
+    assert (
+        main(
+            [
+                "automation",
+                "set-maturity",
+                "los",
+                "support",
+                "production_thread_intake",
+                "propose",
+                "--root",
+                str(root),
+            ]
+        )
+        == 2
+    )
+
+
+def test_automation_maturity_advances_after_file_first_evidence(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    automation_md = root / "los" / "04-automations" / "support" / "production_thread_intake" / "automation.md"
+    write_ready_automation_contract(automation_md)
+
+    capsys.readouterr()
+    assert main(["automation", "check", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert not [finding for finding in packet["findings"] if finding["severity"] == "blocker"]
+
+    assert (
+        main(
+            [
+                "automation",
+                "set-maturity",
+                "los",
+                "support",
+                "production_thread_intake",
+                "propose",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["old_level"] == "observe"
+    assert result["new_level"] == "propose"
+    assert "| Level | `propose` |" in automation_md.read_text(encoding="utf-8")
+
+
+def test_automation_attach_updates_project_status_and_source_map(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "automation",
+                "attach",
+                "los",
+                "support",
+                "production_thread_intake",
+                "--project",
+                "losmon_replacement",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["project"].endswith("los/02-projects/losmon_replacement")
+
+    project_status = (root / "los" / "02-projects" / "losmon_replacement" / "status.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Automation Attachments" in project_status
+    assert "`production_thread_intake`" in project_status
+    source_map = (root / "los" / "02-projects" / "losmon_replacement" / "source-map.md").read_text(
+        encoding="utf-8"
+    )
+    assert "| Automation | 04-automations/support/production_thread_intake/ |" in source_map
+    automation_md = (
+        root / "los" / "04-automations" / "support" / "production_thread_intake" / "automation.md"
+    ).read_text(encoding="utf-8")
+    assert "## Project Attachments" in automation_md
+    assert "`losmon_replacement`" in automation_md
+
+
 def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
