@@ -124,3 +124,10 @@
 - Implemented on branch `codex/build-runner-15`.
 - Commit: `7f5999e`.
 - Merged and pushed to `main` as `8811d09`.
+
+## 16 Connected Source Watch Registry
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-16`.
+- Commit: `8a9eb9b`.
+- Merged and pushed to `main` as `94d5cef`.

@@ -194,6 +194,11 @@
       "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
       "action": "complete-done-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
+      "action": "complete-done-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -378,8 +383,11 @@
       "slug": "16-connected-source-watch-registry",
       "title": "16 Connected Source Watch Registry",
       "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
-      "status": "building",
-      "branch": "codex/build-runner-16"
+      "status": "done",
+      "branch": "codex/build-runner-16",
+      "merge_commit": "94d5cef",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T23:00:41Z"
     },
     {
       "prefix": "17",

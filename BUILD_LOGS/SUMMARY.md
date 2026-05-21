@@ -63,3 +63,7 @@ Client automation, control-plane bootstrap, and context audit playbooks now inst
 ## 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Runtime heartbeats, schedules, execution targets, integration setup, run queue state, and guarded Notion runtime tracking are now file-backed and available through CLI commands.
+
+## 16 Connected Source Watch Registry
+
+Connected systems and watch sources are now provider-agnostic, file-backed, doctorable, dry-run pollable, and able to write local normalized source event evidence.
