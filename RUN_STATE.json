@@ -89,6 +89,16 @@
       "card_id": "366683b4-8dab-8187-8c04-e4b4b1f262cf",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81ac-a630-c84850ee2030",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81c5-add3-e3913cbb362e",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -152,8 +162,11 @@
       "slug": "05-customer-os-factory",
       "title": "05 Customer Os Factory",
       "card_id": "366683b4-8dab-81ac-a630-c84850ee2030",
-      "status": "building",
-      "branch": "codex/build-runner-05"
+      "status": "done",
+      "branch": "codex/build-runner-05",
+      "merge_commit": "a587a7b",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T21:55:33Z"
     },
     {
       "prefix": "06",
@@ -176,7 +189,8 @@
       "slug": "08-losmon-replacement-validation",
       "title": "08 Losmon Replacement Validation",
       "card_id": "366683b4-8dab-81c5-add3-e3913cbb362e",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-08"
     },
     {
       "prefix": "09",

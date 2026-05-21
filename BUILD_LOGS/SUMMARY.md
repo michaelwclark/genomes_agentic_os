@@ -19,3 +19,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 04 Automation Maturity And Reconfiguration
 
 `agentic-os automation check`, `automation set-maturity`, and `automation attach` now keep automation execution conservative, require file evidence for higher-risk maturity levels, and write reviewable project/source-map attachments.
+
+## 05 Customer Os Factory
+
+`agentic-os customer init`, `customer update`, and `customer validate` now generate profile-driven customer OS roots with approved domains, bundled workflows/automations, public customer assets, additive updates, and profile-aware validation.

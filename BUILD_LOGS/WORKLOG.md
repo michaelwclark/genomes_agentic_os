@@ -37,3 +37,11 @@
 - Commit: `fa697de`.
 - Merged and pushed to `main` as `44fab9a`.
 - Claimed the next READY feature `07 Doctor Validation And Migrations` to keep the active set at three.
+
+## 05 Customer Os Factory
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-05`.
+- Commit: `d74ed5a`.
+- Merged and pushed to `main` as `a587a7b`.
+- Claimed the next READY feature `08 Losmon Replacement Validation` to keep the active set at three.

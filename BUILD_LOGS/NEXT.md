@@ -19,3 +19,7 @@ Next active lower prefixes are `04 Automation Maturity And Reconfiguration`, `05
 ## 04 Automation Maturity And Reconfiguration
 
 Next active lower prefixes are `05 Customer Os Factory`, `06 Notion Control Plane Sync`, and `07 Doctor Validation And Migrations`. Continue with `05` as the lowest incomplete active prefix.
+
+## 05 Customer Os Factory
+
+Next active lower prefixes are `06 Notion Control Plane Sync`, `07 Doctor Validation And Migrations`, and `08 Losmon Replacement Validation`. Continue with `06` as the lowest incomplete active prefix.

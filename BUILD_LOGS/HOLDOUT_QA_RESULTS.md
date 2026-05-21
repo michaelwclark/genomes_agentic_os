@@ -27,3 +27,9 @@
 - `uv run --extra dev pytest -q`: `20 passed in 1.28s` on merged `main`.
 - Temp-root automation check, set-maturity prepare, attach, and validation smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 05 Customer Os Factory
+
+- `uv run --extra dev pytest -q`: `23 passed in 1.27s` on merged `main`.
+- Temp customer init, update, validate, and private-name scan passed.
+- Notion completion write/comment returned HTTP 200.
