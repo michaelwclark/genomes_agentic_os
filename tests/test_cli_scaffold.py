@@ -768,6 +768,37 @@ def test_profile_validate_rejects_duplicate_rooms_and_missing_approvals(tmp_path
     assert main(["profile", "validate", str(profile)]) == 2
 
 
+def test_factory_templates_install_and_customer_facing_templates_are_sanitized(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "room" / "context.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "stage" / "stage-context.md").is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
+    ).is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "templates" / "profile" / "customer-os-profile.yml"
+    ).is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "automation-fit-matrix.md"
+    ).is_file()
+
+    sanitized_roots = [
+        Path("templates/room"),
+        Path("templates/stage"),
+        Path("templates/reference"),
+        Path("templates/profile"),
+        Path("templates/customer"),
+    ]
+    disallowed = ("eduba", "school", "acme", "clarks_consulting")
+    for relative_root in sanitized_roots:
+        for path in relative_root.rglob("*"):
+            if path.is_file():
+                content = path.read_text(encoding="utf-8").lower()
+                assert not any(term in content for term in disallowed), path
+
+
 def test_notion_sync_plan_maps_filesystem_objects_and_is_idempotent(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
