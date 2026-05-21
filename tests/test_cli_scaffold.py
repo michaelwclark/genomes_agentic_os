@@ -776,6 +776,54 @@ def test_customer_notion_sync_requires_configured_customer_workspace(tmp_path: P
     )
 
 
+def test_doctor_reports_stale_run_logs_and_repairs_missing_managed_files(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    missing_doc = root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "client-automation-brief.md"
+    missing_doc.unlink()
+    local_readme = root / "README.md"
+    local_readme.write_text("# local root edit\n", encoding="utf-8")
+
+    assert main(["doctor", "--root", str(root)]) == 1
+    report = yaml.safe_load(capsys.readouterr().out)
+    assert any(finding["severity"] == "blocker" and str(missing_doc) in finding["message"] for finding in report["findings"])
+
+    assert main(["doctor", "--root", str(root), "--fix-missing"]) == 0
+    report = yaml.safe_load(capsys.readouterr().out)
+    assert report["repairs"]
+    assert missing_doc.is_file()
+    assert local_readme.read_text(encoding="utf-8") == "# local root edit\n"
+
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert main(["doctor", "--root", str(root)]) == 0
+    report = yaml.safe_load(capsys.readouterr().out)
+    assert any("run log has no final status" in finding["message"] for finding in report["findings"])
+
+
+def test_migration_plan_and_apply_require_stable_preview(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["migrate", "apply", "notion-sync-readme-v1", "--root", str(root)]) == 2
+
+    assert main(["migrate", "plan", "--root", str(root)]) == 0
+    plan = yaml.safe_load(capsys.readouterr().out)
+    assert plan["migrations"][0]["migration_id"] == "notion-sync-readme-v1"
+    assert "---" in plan["migrations"][0]["diff"]
+
+    target = root / ".notion-sync" / "README.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# changed after preview\n", encoding="utf-8")
+    assert main(["migrate", "apply", "notion-sync-readme-v1", "--root", str(root)]) == 2
+
+    target.unlink()
+    assert main(["migrate", "plan", "--root", str(root)]) == 0
+    assert main(["migrate", "apply", "notion-sync-readme-v1", "--root", str(root)]) == 0
+    assert "Filesystem state remains the source of truth" in target.read_text(encoding="utf-8")
+
+
 def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 

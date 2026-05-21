@@ -1,0 +1,19 @@
+id: 366683b4-8dab-8187-8c04-e4b4b1f262cf
+title: 07 Doctor Validation And Migrations
+prefix: "07"
+slug: 07-doctor-validation-and-migrations
+status: done
+source_queue: Ready
+branch: codex/build-runner-07
+started_at: 2026-05-21T22:01:17Z
+completed_at: 2026-05-21T22:04:34Z
+acceptance:
+  - doctor reports blocker, fix-soon, cleanup, and observation findings
+  - fix-missing creates missing managed files without overwriting local edits
+  - migration plan prints reviewable diffs and saves preview state
+  - migration apply requires a migration ID and fails when the target changed after preview
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 27 passed in 1.81s
+  - command: temp-root doctor missing/fix/stale-run and migrate plan/apply smoke
+    result: doctor migration smoke valid
