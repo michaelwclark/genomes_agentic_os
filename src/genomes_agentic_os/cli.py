@@ -15,6 +15,7 @@ from .automation_ops import (
 )
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
 from .doctor import doctor, format_doctor_result
+from .losmon import format_losmon_result, losmon_validate
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_sync_plan, build_sync_plan, format_sync_result
 from .routing import build_context, context_from_here, format_packet, route_request
@@ -200,6 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_apply_parser.add_argument("migration_id")
     migrate_apply_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     migrate_apply_parser.set_defaults(handler=handle_migrate_apply)
+
+    losmon_parser = subparsers.add_parser("losmon", help="Validate Agentic OS against LOSMon replacement needs.")
+    losmon_subparsers = losmon_parser.add_subparsers(dest="losmon_command", required=True)
+    losmon_validate_parser = losmon_subparsers.add_parser("validate", help="Create LOSMon replacement validation objects.")
+    losmon_validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    losmon_validate_parser.add_argument("--repo", help="LOS or losmon repository path.")
+    losmon_validate_parser.set_defaults(handler=handle_losmon_validate)
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -392,6 +400,11 @@ def handle_migrate_plan(args: argparse.Namespace) -> int:
 
 def handle_migrate_apply(args: argparse.Namespace) -> int:
     print(format_migration_result(migrate_apply(args.root, args.migration_id)))
+    return 0
+
+
+def handle_losmon_validate(args: argparse.Namespace) -> int:
+    print(format_losmon_result(losmon_validate(args.root, repo=args.repo)))
     return 0
 
 
