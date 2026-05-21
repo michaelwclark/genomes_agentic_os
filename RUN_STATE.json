@@ -119,6 +119,16 @@
       "card_id": "366683b4-8dab-81f5-b933-c1084316190a",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81c5-add3-e3913cbb362e",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81f5-8206-f8614c996da3",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -215,8 +225,11 @@
       "slug": "08-losmon-replacement-validation",
       "title": "08 Losmon Replacement Validation",
       "card_id": "366683b4-8dab-81c5-add3-e3913cbb362e",
-      "status": "building",
-      "branch": "codex/build-runner-08"
+      "status": "done",
+      "branch": "codex/build-runner-08",
+      "merge_commit": "735e205",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:10:07Z"
     },
     {
       "prefix": "09",
@@ -239,7 +252,8 @@
       "slug": "11-room-first-installer-and-routing",
       "title": "11 Room First Installer And Routing",
       "card_id": "366683b4-8dab-81f5-8206-f8614c996da3",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-11"
     },
     {
       "prefix": "12",

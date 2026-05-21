@@ -45,3 +45,9 @@
 - `uv run --extra dev pytest -q`: `27 passed in 1.64s` on merged `main`.
 - Temp-root doctor missing/fix/stale-run and migration plan/apply smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 08 Losmon Replacement Validation
+
+- `uv run --extra dev pytest -q`: `28 passed in 1.72s` on merged `main`.
+- Temp-root LOSMon validation package and root validation smoke passed.
+- Notion completion write/comment returned HTTP 200.

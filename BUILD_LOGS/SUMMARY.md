@@ -31,3 +31,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 07 Doctor Validation And Migrations
 
 `agentic-os doctor` now reports deeper runtime health findings and additive repair, while `agentic-os migrate` creates reviewable migration previews and refuses changed targets during apply.
+
+## 08 Losmon Replacement Validation
+
+`agentic-os losmon validate` now creates the LOSMon replacement validation package with LOS project state, validation workflows, thread intake automation, run logs, and a comparison artifact that keeps migration gaps explicit.

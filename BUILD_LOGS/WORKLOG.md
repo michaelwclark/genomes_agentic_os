@@ -61,3 +61,11 @@
 - Commit: `2d3bdf4`.
 - Merged and pushed to `main` as `bbacbb0`.
 - Claimed the next READY feature `10 Notion Control Plane Bootstrap` to keep the active set at three.
+
+## 08 Losmon Replacement Validation
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-08`.
+- Commit: `5d68051`.
+- Merged and pushed to `main` as `735e205`.
+- Claimed the next READY feature `11 Room First Installer And Routing` to keep the active set at three.

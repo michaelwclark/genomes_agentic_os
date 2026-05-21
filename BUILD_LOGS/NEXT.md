@@ -31,3 +31,7 @@ Next active lower prefixes are `07 Doctor Validation And Migrations`, `08 Losmon
 ## 07 Doctor Validation And Migrations
 
 Next active lower prefixes are `08 Losmon Replacement Validation`, `09 Future Ideas Intake`, and `10 Notion Control Plane Bootstrap`. Continue with `08` as the lowest incomplete active prefix.
+
+## 08 Losmon Replacement Validation
+
+Next active lower prefixes are `09 Future Ideas Intake`, `10 Notion Control Plane Bootstrap`, and `11 Room First Installer And Routing`. Continue with `09` as the lowest incomplete active prefix.
