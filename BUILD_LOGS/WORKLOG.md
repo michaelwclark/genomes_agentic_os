@@ -109,3 +109,11 @@
 - Commit: `2496772`.
 - Merged and pushed to `main` as `1d5a148`.
 - Claimed the next READY feature `16 Connected Source Watch Registry` to keep the active set at three.
+
+## 14 Client Automation And Control Plane Playbooks
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-14`.
+- Commit: `a83035c`.
+- Merged and pushed to `main` as `f29439b`.
+- Claimed the next READY feature `17 Event Graph And Chained Automations` to keep the active set at three.

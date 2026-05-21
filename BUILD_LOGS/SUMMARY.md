@@ -55,3 +55,7 @@ Factory-derived templates now have an import inventory and sanitation/install te
 ## 13 Reference And Skill Index Layer
 
 Runtime reference files now install under shared factory references, validation checks them, and context packets include shared naming/tool/source/style references.
+
+## 14 Client Automation And Control Plane Playbooks
+
+Client automation, control-plane bootstrap, and context audit playbooks now install into runtime knowledge as command prompts and skills, and validation requires them in installed OS roots.

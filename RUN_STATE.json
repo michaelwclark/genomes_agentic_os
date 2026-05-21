@@ -179,6 +179,16 @@
       "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-819f-995d-e2f16ced18d6",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81e4-aacc-d4e6388f2c9f",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -341,8 +351,11 @@
       "slug": "14-client-automation-and-control-plane-playbooks",
       "title": "14 Client Automation And Control Plane Playbooks",
       "card_id": "366683b4-8dab-819f-995d-e2f16ced18d6",
-      "status": "building",
-      "branch": "codex/build-runner-14"
+      "status": "done",
+      "branch": "codex/build-runner-14",
+      "merge_commit": "f29439b",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:40:35Z"
     },
     {
       "prefix": "15",
@@ -365,7 +378,8 @@
       "slug": "17-event-graph-and-chained-automations",
       "title": "17 Event Graph And Chained Automations",
       "card_id": "366683b4-8dab-81e4-aacc-d4e6388f2c9f",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-17"
     }
   ],
   "generated_subtasks": []
