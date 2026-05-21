@@ -47,3 +47,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 11 Room First Installer And Routing
 
 `agentic-os init --profile`, `profile validate`, and room commands now support room-first OS installs without inheriting Genome default domains.
+
+## 12 Factory Template Import Backlog
+
+Factory-derived templates now have an import inventory and sanitation/install tests for room, stage, reference, profile, and customer template surfaces.

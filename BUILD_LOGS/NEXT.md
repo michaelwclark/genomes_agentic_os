@@ -47,3 +47,7 @@ Next active lower prefixes are `11 Room First Installer And Routing`, `12 Factor
 ## 11 Room First Installer And Routing
 
 Next active lower prefixes are `12 Factory Template Import Backlog`, `13 Reference And Skill Index Layer`, and `14 Client Automation And Control Plane Playbooks`. Continue with `12` as the lowest incomplete active prefix.
+
+## 12 Factory Template Import Backlog
+
+Next active lower prefixes are `13 Reference And Skill Index Layer`, `14 Client Automation And Control Plane Playbooks`, and `15 Always On Runtime Heartbeats Schedules And Integrations`. Continue with `13` as the lowest incomplete active prefix.

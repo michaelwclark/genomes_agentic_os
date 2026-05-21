@@ -93,3 +93,11 @@
 - Commit: `3a9ef0e`.
 - Merged and pushed to `main` as `c3ffe5c`.
 - Claimed the next READY feature `14 Client Automation And Control Plane Playbooks` to keep the active set at three.
+
+## 12 Factory Template Import Backlog
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-12`.
+- Commit: `4304663`.
+- Merged and pushed to `main` as `402b960`.
+- Claimed the next READY feature `15 Always On Runtime Heartbeats Schedules And Integrations` to keep the active set at three.

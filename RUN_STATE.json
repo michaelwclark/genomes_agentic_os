@@ -159,6 +159,16 @@
       "card_id": "366683b4-8dab-819f-995d-e2f16ced18d6",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8166-9cf3-f870f78c47be",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -299,8 +309,11 @@
       "slug": "12-factory-template-import-backlog",
       "title": "12 Factory Template Import Backlog",
       "card_id": "366683b4-8dab-8166-9cf3-f870f78c47be",
-      "status": "building",
-      "branch": "codex/build-runner-12"
+      "status": "done",
+      "branch": "codex/build-runner-12",
+      "merge_commit": "402b960",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:28:28Z"
     },
     {
       "prefix": "13",
@@ -323,7 +336,8 @@
       "slug": "15-always-on-runtime-heartbeats-schedules-and-integrations",
       "title": "15 Always On Runtime Heartbeats Schedules And Integrations",
       "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-15"
     },
     {
       "prefix": "16",

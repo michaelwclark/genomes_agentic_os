@@ -69,3 +69,9 @@
 - `uv run --extra dev pytest -q`: `32 passed in 1.92s` on merged `main`.
 - Temp room-profile validate/init/validate smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 12 Factory Template Import Backlog
+
+- `uv run --extra dev pytest -q`: `33 passed in 1.96s` on merged `main`.
+- Temp-root docs update/template smoke passed.
+- Notion completion write/comment returned HTTP 200.
