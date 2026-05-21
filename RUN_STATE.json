@@ -79,6 +79,16 @@
       "card_id": "366683b4-8dab-81ec-a805-e5d2c9a14f47",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8155-bbb6-d150b26504ec",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8187-8c04-e4b4b1f262cf",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -131,8 +141,11 @@
       "slug": "04-automation-maturity-and-reconfiguration",
       "title": "04 Automation Maturity And Reconfiguration",
       "card_id": "366683b4-8dab-8155-bbb6-d150b26504ec",
-      "status": "building",
-      "branch": "codex/build-runner-04"
+      "status": "done",
+      "branch": "codex/build-runner-04",
+      "merge_commit": "44fab9a",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T21:48:20Z"
     },
     {
       "prefix": "05",
@@ -155,7 +168,8 @@
       "slug": "07-doctor-validation-and-migrations",
       "title": "07 Doctor Validation And Migrations",
       "card_id": "366683b4-8dab-8187-8c04-e4b4b1f262cf",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-07"
     },
     {
       "prefix": "08",

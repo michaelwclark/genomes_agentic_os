@@ -15,3 +15,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 03 Workflow Readiness And Run Closeout
 
 `agentic-os workflow check` reports workflow readiness findings, and `agentic-os run-log close` records validation-backed final status, closeout notes, activity-log updates, workflow progress updates, and optional linked project status updates.
+
+## 04 Automation Maturity And Reconfiguration
+
+`agentic-os automation check`, `automation set-maturity`, and `automation attach` now keep automation execution conservative, require file evidence for higher-risk maturity levels, and write reviewable project/source-map attachments.

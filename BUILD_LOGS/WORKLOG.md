@@ -29,3 +29,11 @@
 - Commit: `b712281`.
 - Merged and pushed to `main` as `36196d4`.
 - Claimed the next READY feature `06 Notion Control Plane Sync` to keep the active set at three.
+
+## 04 Automation Maturity And Reconfiguration
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-04`.
+- Commit: `fa697de`.
+- Merged and pushed to `main` as `44fab9a`.
+- Claimed the next READY feature `07 Doctor Validation And Migrations` to keep the active set at three.
