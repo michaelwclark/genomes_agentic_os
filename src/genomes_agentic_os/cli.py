@@ -17,6 +17,7 @@ from .scaffold import (
     init_os,
 )
 from .validate import validate_root
+from .workflow_ops import check_workflow, close_run_log, format_findings
 
 
 DEFAULT_ROOT = "~/agentic_os"
@@ -58,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_create.add_argument("name")
     workflow_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     workflow_create.set_defaults(handler=handle_workflow_create)
+    workflow_check = workflow_subparsers.add_parser("check", help="Check workflow readiness.")
+    workflow_check.add_argument("domain")
+    workflow_check.add_argument("lane")
+    workflow_check.add_argument("workflow")
+    workflow_check.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    workflow_check.set_defaults(handler=handle_workflow_check)
 
     automation_parser = subparsers.add_parser("automation", help="Manage automations.")
     automation_subparsers = automation_parser.add_subparsers(dest="automation_command", required=True)
@@ -75,6 +82,20 @@ def build_parser() -> argparse.ArgumentParser:
     run_log_create.add_argument("workflow_or_automation")
     run_log_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     run_log_create.set_defaults(handler=handle_run_log_create)
+    run_log_close = run_log_subparsers.add_parser("close", help="Close a run log with audit evidence.")
+    run_log_close.add_argument("domain")
+    run_log_close.add_argument("run_id")
+    run_log_close.add_argument("--status", required=True, choices=("done", "waiting", "failed", "needs_approval"))
+    run_log_close.add_argument("--summary", default="")
+    run_log_close.add_argument("--validation", action="append", default=[])
+    run_log_close.add_argument("--artifact", action="append", default=[])
+    run_log_close.add_argument("--approval", action="append", default=[])
+    run_log_close.add_argument("--next-action", default="")
+    run_log_close.add_argument("--owner", default="OS Owner")
+    run_log_close.add_argument("--learning", default="")
+    run_log_close.add_argument("--project")
+    run_log_close.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    run_log_close.set_defaults(handler=handle_run_log_close)
 
     route_parser = subparsers.add_parser("route", help="Route a request to a domain, project, or workflow.")
     route_parser.add_argument("request")
@@ -165,6 +186,11 @@ def handle_workflow_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_workflow_check(args: argparse.Namespace) -> int:
+    print(format_findings(check_workflow(args.root, args.domain, args.lane, args.workflow)))
+    return 0
+
+
 def handle_automation_create(args: argparse.Namespace) -> int:
     print_result(create_automation(args.root, args.domain, args.lane, args.name))
     return 0
@@ -173,6 +199,31 @@ def handle_automation_create(args: argparse.Namespace) -> int:
 def handle_run_log_create(args: argparse.Namespace) -> int:
     print_result(create_run_log(args.root, args.domain, args.workflow_or_automation))
     return 0
+
+
+def handle_run_log_close(args: argparse.Namespace) -> int:
+    result = close_run_log(
+        args.root,
+        args.domain,
+        args.run_id,
+        status=args.status,
+        summary=args.summary,
+        validation=args.validation,
+        artifacts=args.artifact,
+        approvals=args.approval,
+        next_action=args.next_action,
+        owner=args.owner,
+        learning=args.learning,
+        project=args.project,
+    )
+    print(yaml_dump(result))
+    return 0
+
+
+def yaml_dump(value) -> str:
+    import yaml
+
+    return yaml.safe_dump(value, sort_keys=False).strip()
 
 
 def handle_route(args: argparse.Namespace) -> int:

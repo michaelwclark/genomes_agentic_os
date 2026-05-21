@@ -1,0 +1,19 @@
+id: 366683b4-8dab-81bb-85f9-f94db7a4cf64
+title: 03 Workflow Readiness And Run Closeout
+prefix: "03"
+slug: 03-workflow-readiness-and-run-closeout
+status: done
+source_queue: Ready
+branch: codex/build-runner-03
+started_at: 2026-05-21T21:30:00Z
+completed_at: 2026-05-21T21:37:46Z
+acceptance:
+  - workflow check reports blocker, fix-soon, cleanup, and observation severity findings
+  - run-log close records final status, summary, validation, artifacts, approvals, next action, owner, and learning
+  - done closeout is refused without validation evidence
+  - closeout updates activity log, workflow progress, and linked project status
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 17 passed in 1.00s
+  - command: temp-root workflow check, run-log close, and validate smoke
+    result: valid temp root after closeout
