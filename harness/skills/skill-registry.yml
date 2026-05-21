@@ -81,6 +81,33 @@ skills:
     bootstrap: false
     purpose: >
       Promote useful run learnings into durable OS knowledge.
+  - id: runtime-operator
+    title: Runtime Operator
+    source_path: harness/skills/runtime-operator
+    installed_path: shared_factory/05-knowledge/skills/runtime-operator
+    harness_targets:
+      - codex
+      - claude
+    status: draft
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Operate file-backed runtime heartbeats, schedules, execution targets, run
+      queues, and guarded Notion runtime tracking.
+  - id: integration-setup
+    title: Integration Setup
+    source_path: harness/skills/integration-setup
+    installed_path: shared_factory/05-knowledge/skills/integration-setup
+    harness_targets:
+      - codex
+      - claude
+    status: draft
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Prepare approval-gated integrations such as Orgo.io, Composio,
+      AgentMail, Granola, and Genome's Notion before runtime automation uses
+      them.
   - id: os-doctor
     title: OS Doctor
     source_path: harness/skills/os-doctor

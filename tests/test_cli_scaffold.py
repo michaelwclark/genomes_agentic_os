@@ -87,6 +87,14 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (
         root / "shared_factory" / "05-knowledge" / "templates" / "notion" / "control-plane-database-spec.md"
     ).is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "heartbeat.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "schedule.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "execution-target.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "integration.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "run-queue-item.yml").is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "templates" / "notion" / "runtime-tracking-database-spec.md"
+    ).is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "index.html").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
@@ -99,6 +107,9 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-client-automation-brief.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-control-plane-bootstrap.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-context-audit.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-runtime-init.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-heartbeat.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-integration-setup.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "plans" / "README.md").is_file()
     assert (
         root / "shared_factory" / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
@@ -141,8 +152,61 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         root / "shared_factory" / "05-knowledge" / "skills" / "control-plane-bootstrap" / "SKILL.md"
     ).is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "context-audit" / "SKILL.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "skills" / "runtime-operator" / "SKILL.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "skills" / "integration-setup" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
+
+
+def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    assert (root / "shared_factory" / "00-control-plane" / "runtime-registry.yml").is_file()
+    assert (root / "shared_factory" / "00-control-plane" / "integration-registry.yml").is_file()
+    assert (root / "shared_factory" / "00-control-plane" / "run-queue.yml").is_file()
+    assert (root / "shared_factory" / "06-runs-and-logs" / "heartbeats").is_dir()
+
+    assert main(["runtime", "doctor", "--root", str(root)]) == 0
+    assert main(["heartbeat", "list", "--root", str(root)]) == 0
+
+    assert main(["heartbeat", "run", "granola_recent_notes_sync", "--root", str(root), "--dry-run"]) == 0
+    assert list((root / "shared_factory" / "06-runs-and-logs" / "heartbeats").glob("*granola_recent_notes_sync.yml"))
+    assert main(["schedule", "create", "weekly_runtime_doctor", "--root", str(root), "--cadence", "weekly"]) == 0
+    assert main(["schedule", "run-due", "--root", str(root), "--dry-run"]) == 0
+    assert main(["integration", "list", "--root", str(root)]) == 0
+    assert main(["integration", "setup", "granola", "--root", str(root), "--dry-run"]) == 0
+    assert main(["integration", "doctor", "granola", "--root", str(root)]) == 0
+    assert main(["notion", "track-runtime", "--root", str(root), "--dry-run"]) == 0
+    assert main(["notion", "track-runtime", "--root", str(root), "--apply"]) == 2
+    assert (
+        main(
+            [
+                "notion",
+                "track-runtime",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Genome's Notion",
+            ]
+        )
+        == 0
+    )
+    assert (root / ".notion-runtime-tracking" / "manifest.yml").is_file()
+
+    registry = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "runtime-registry.yml").read_text())
+    integration_registry = yaml.safe_load(
+        (root / "shared_factory" / "00-control-plane" / "integration-registry.yml").read_text()
+    )
+    assert {"codex_harness", "claude_harness", "script", "orgo_desktop", "composio_cli", "agentmail_api", "granola_local", "notion_api"} <= {
+        target["id"] for target in registry["execution_targets"]
+    }
+    assert {"orgo", "composio", "agentmail", "granola", "notion"} <= {
+        integration["id"] for integration in integration_registry["integrations"]
+    }
+    assert validate_root(root).ok
 
 
 def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None:

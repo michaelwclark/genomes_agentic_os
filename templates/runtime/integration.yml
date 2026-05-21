@@ -1,0 +1,28 @@
+id: granola
+display_name: Granola
+provider: granola
+status: planned
+setup_tasks:
+  - Confirm transcript sensitivity handling.
+  - Run a local recent-notes dry run.
+  - Track any Notion write as blocked until workspace verification passes.
+health_checks:
+  - id: local_access
+    type: manual
+    command: check Granola export or local app access
+  - id: pilot_heartbeat
+    type: dry_run
+    command: agentic-os heartbeat run granola_recent_notes_sync --dry-run
+approval_gates:
+  - sensitive_transcript_handling
+  - external_write
+  - notion_workspace_verification
+credentials:
+  env_vars: []
+notion_tracking:
+  database: Integrations
+  fields:
+    - Status
+    - Transcript Handling
+    - Last Sync
+    - Workspace Verified

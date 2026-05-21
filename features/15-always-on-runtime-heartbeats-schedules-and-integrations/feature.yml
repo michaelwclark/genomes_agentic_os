@@ -1,0 +1,21 @@
+id: 7682b712-8074-4f13-9bec-105c8cb968d4
+title: 15 Always-On Runtime, Heartbeats, Schedules, And Integrations
+prefix: "15"
+slug: 15-always-on-runtime-heartbeats-schedules-and-integrations
+status: done
+source_queue: Ready
+branch: codex/build-runner-15
+started_at: 2026-05-21T22:17:00Z
+completed_at: 2026-05-21T22:54:05Z
+acceptance:
+  - runtime templates install into shared Factory knowledge
+  - runtime, heartbeat, schedule, integration, and Notion tracking commands are available
+  - runtime-operator and integration-setup skills install into shared knowledge
+  - file-backed runtime registries represent Codex, Claude, script, Orgo.io, Composio, AgentMail, Granola, and Notion
+  - heartbeat, schedule, integration setup, doctor, and Notion track-runtime dry-run paths work
+  - Notion runtime tracking apply requires verified Genome's Notion workspace
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 35 passed in 2.34s
+  - command: temp-root init, docs update, validate, runtime init/doctor, heartbeat/schedule/integration dry-run, Notion track-runtime dry-run/apply
+    result: restored managed files, validated root, wrote one heartbeat dry-run log, and wrote guarded local runtime tracking manifest

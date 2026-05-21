@@ -21,6 +21,20 @@ from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_
 from .plans import capture_plan, format_plan_result
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
 from .routing import build_context, context_from_here, format_packet, route_request
+from .runtime_ops import (
+    apply_runtime_tracking,
+    build_runtime_tracking_plan,
+    format_runtime_result,
+    heartbeat_list,
+    heartbeat_run,
+    integration_doctor,
+    integration_list,
+    integration_setup,
+    runtime_doctor,
+    runtime_init,
+    schedule_create,
+    schedule_run_due,
+)
 from .scaffold import (
     create_automation,
     create_domain,
@@ -218,6 +232,74 @@ def build_parser() -> argparse.ArgumentParser:
     notion_bootstrap.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_bootstrap.add_argument("--parent-page-id", help="Approved parent page id in the verified workspace.")
     notion_bootstrap.set_defaults(handler=handle_notion_bootstrap)
+    notion_track_runtime = notion_subparsers.add_parser(
+        "track-runtime",
+        help="Plan or apply guarded Notion tracking for runtime registries and runs.",
+    )
+    notion_track_runtime.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_track_runtime_mode = notion_track_runtime.add_mutually_exclusive_group(required=True)
+    notion_track_runtime_mode.add_argument("--dry-run", action="store_true")
+    notion_track_runtime_mode.add_argument("--apply", action="store_true")
+    notion_track_runtime.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
+    notion_track_runtime.set_defaults(handler=handle_notion_track_runtime)
+
+    runtime_parser = subparsers.add_parser("runtime", help="Manage file-backed runtime state.")
+    runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
+    runtime_init_parser = runtime_subparsers.add_parser("init", help="Create runtime registries and log folders.")
+    runtime_init_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_init_parser.set_defaults(handler=handle_runtime_init)
+    runtime_doctor_parser = runtime_subparsers.add_parser("doctor", help="Check runtime registry health.")
+    runtime_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_doctor_parser.set_defaults(handler=handle_runtime_doctor)
+
+    heartbeat_parser = subparsers.add_parser("heartbeat", help="Manage runtime heartbeats.")
+    heartbeat_subparsers = heartbeat_parser.add_subparsers(dest="heartbeat_command", required=True)
+    heartbeat_list_parser = heartbeat_subparsers.add_parser("list", help="List configured heartbeats.")
+    heartbeat_list_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    heartbeat_list_parser.set_defaults(handler=handle_heartbeat_list)
+    heartbeat_run_parser = heartbeat_subparsers.add_parser("run", help="Run or dry-run a heartbeat.")
+    heartbeat_run_parser.add_argument("heartbeat_id")
+    heartbeat_run_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    heartbeat_run_mode = heartbeat_run_parser.add_mutually_exclusive_group()
+    heartbeat_run_mode.add_argument("--dry-run", action="store_true", default=True)
+    heartbeat_run_mode.add_argument("--apply", action="store_true")
+    heartbeat_run_parser.set_defaults(handler=handle_heartbeat_run)
+    heartbeat_doctor_parser = heartbeat_subparsers.add_parser("doctor", help="Check runtime heartbeat health.")
+    heartbeat_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    heartbeat_doctor_parser.set_defaults(handler=handle_runtime_doctor)
+
+    schedule_parser = subparsers.add_parser("schedule", help="Manage runtime schedules.")
+    schedule_subparsers = schedule_parser.add_subparsers(dest="schedule_command", required=True)
+    schedule_create_parser = schedule_subparsers.add_parser("create", help="Create a schedule in the runtime registry.")
+    schedule_create_parser.add_argument("schedule_id")
+    schedule_create_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    schedule_create_parser.add_argument("--cadence", default="manual")
+    schedule_create_parser.add_argument("--timezone", default="America/Chicago")
+    schedule_create_parser.add_argument("--command")
+    schedule_create_parser.set_defaults(handler=handle_schedule_create)
+    schedule_run_due_parser = schedule_subparsers.add_parser("run-due", help="Queue due schedules without executing external effects.")
+    schedule_run_due_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    schedule_run_due_mode = schedule_run_due_parser.add_mutually_exclusive_group()
+    schedule_run_due_mode.add_argument("--dry-run", action="store_true", default=True)
+    schedule_run_due_mode.add_argument("--apply", action="store_true")
+    schedule_run_due_parser.set_defaults(handler=handle_schedule_run_due)
+
+    integration_parser = subparsers.add_parser("integration", help="Manage runtime integrations.")
+    integration_subparsers = integration_parser.add_subparsers(dest="integration_command", required=True)
+    integration_list_parser = integration_subparsers.add_parser("list", help="List configured integrations.")
+    integration_list_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    integration_list_parser.set_defaults(handler=handle_integration_list)
+    integration_setup_parser = integration_subparsers.add_parser("setup", help="Dry-run or record integration setup.")
+    integration_setup_parser.add_argument("integration_id")
+    integration_setup_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    integration_setup_mode = integration_setup_parser.add_mutually_exclusive_group()
+    integration_setup_mode.add_argument("--dry-run", action="store_true", default=True)
+    integration_setup_mode.add_argument("--apply", action="store_true")
+    integration_setup_parser.set_defaults(handler=handle_integration_setup)
+    integration_doctor_parser = integration_subparsers.add_parser("doctor", help="Check integration setup contracts.")
+    integration_doctor_parser.add_argument("integration_id", nargs="?")
+    integration_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    integration_doctor_parser.set_defaults(handler=handle_integration_doctor)
 
     doctor_parser = subparsers.add_parser("doctor", help="Run installed OS health checks.")
     doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -473,6 +555,71 @@ def handle_notion_bootstrap(args: argparse.Namespace) -> int:
             )
         )
     return 0
+
+
+def handle_notion_track_runtime(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_runtime_result(build_runtime_tracking_plan(args.root)))
+    else:
+        print(format_runtime_result(apply_runtime_tracking(args.root, verified_workspace=args.verified_workspace)))
+    return 0
+
+
+def handle_runtime_init(args: argparse.Namespace) -> int:
+    print(format_runtime_result(runtime_init(args.root)))
+    return 0
+
+
+def handle_runtime_doctor(args: argparse.Namespace) -> int:
+    result = runtime_doctor(args.root)
+    print(format_runtime_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_heartbeat_list(args: argparse.Namespace) -> int:
+    print(format_runtime_result(heartbeat_list(args.root)))
+    return 0
+
+
+def handle_heartbeat_run(args: argparse.Namespace) -> int:
+    print(format_runtime_result(heartbeat_run(args.root, args.heartbeat_id, dry_run=not args.apply)))
+    return 0
+
+
+def handle_schedule_create(args: argparse.Namespace) -> int:
+    print(
+        format_runtime_result(
+            schedule_create(
+                args.root,
+                args.schedule_id,
+                cadence=args.cadence,
+                timezone_name=args.timezone,
+                command=args.command,
+            )
+        )
+    )
+    return 0
+
+
+def handle_schedule_run_due(args: argparse.Namespace) -> int:
+    print(format_runtime_result(schedule_run_due(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_integration_list(args: argparse.Namespace) -> int:
+    print(format_runtime_result(integration_list(args.root)))
+    return 0
+
+
+def handle_integration_setup(args: argparse.Namespace) -> int:
+    print(format_runtime_result(integration_setup(args.root, args.integration_id, dry_run=not args.apply)))
+    return 0
+
+
+def handle_integration_doctor(args: argparse.Namespace) -> int:
+    result = integration_doctor(args.root, args.integration_id)
+    print(format_runtime_result(result))
+    return 0 if result["ok"] else 1
 
 
 def handle_doctor(args: argparse.Namespace) -> int:

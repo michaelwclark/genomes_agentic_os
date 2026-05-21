@@ -1,0 +1,15 @@
+id: daily_agentic_os_doctor
+display_name: Daily Agentic OS doctor
+enabled: true
+cadence: daily
+timezone: America/Chicago
+execution_target: script
+command: agentic-os validate --root ~/agentic_os
+outputs:
+  - shared_factory/06-runs-and-logs/runs/
+notion_update:
+  object: Heartbeats
+  status_field: Last Status
+runtime_policy:
+  dry_run_first: true
+  external_write_requires_verified_workspace: true
