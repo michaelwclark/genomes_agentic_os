@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 import yaml
@@ -579,6 +580,106 @@ def test_automation_attach_updates_project_status_and_source_map(tmp_path: Path,
     ).read_text(encoding="utf-8")
     assert "## Project Attachments" in automation_md
     assert "`losmon_replacement`" in automation_md
+
+
+def write_customer_profile(path: Path) -> None:
+    path.write_text(
+        """customer:
+  slug: acme_ops
+  display_name: Acme Operations
+  owner: Operations Lead
+  notion_workspace: Acme Notion
+  approved_domains:
+    - support
+  source_systems:
+    - name: helpdesk
+      role: customer support inbox
+  default_workflows:
+    - domain: support
+      lane: support
+      name: intake_triage
+  default_automations:
+    - domain: support
+      lane: support
+      name: thread_intake
+  approval_policy:
+    external_writes_require_approval: true
+    customer_visible_output_requires_approval: true
+    production_changes_require_approval: true
+    destructive_actions_require_approval: true
+""",
+        encoding="utf-8",
+    )
+
+
+def customer_text_files(root: Path) -> list[Path]:
+    return [
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".md", ".yml", ".yaml"}
+    ]
+
+
+def test_customer_init_generates_public_customer_os_from_profile(tmp_path: Path, capsys) -> None:
+    profile = tmp_path / "profile.yml"
+    root = tmp_path / "customer_os"
+    write_customer_profile(profile)
+
+    assert main(["customer", "init", "acme_ops", "--profile", str(profile), "--target", str(root)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["customer"] == "acme_ops"
+    assert (root / "README.md").is_file()
+    assert (root / "ROUTER.md").is_file()
+    assert (root / "customer.yml").is_file()
+    assert (root / "support" / "domain.yml").is_file()
+    assert (root / "support" / "03-workflows" / "support" / "intake_triage" / "workflow.md").is_file()
+    assert (root / "support" / "04-automations" / "support" / "thread_intake" / "automation.md").is_file()
+    assert not (root / "clarks_consulting").exists()
+    assert not (root / "los").exists()
+
+    disallowed = ("genome", "clark", "clarks_consulting", "los", "lenders")
+    generated_text = "\n".join(path.read_text(encoding="utf-8").lower() for path in customer_text_files(root))
+    assert not any(re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", generated_text) for term in disallowed)
+
+    assert main(["customer", "validate", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["ok"] is True
+    assert packet["core_errors"] == []
+    assert packet["profile_warnings"] == []
+
+
+def test_customer_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> None:
+    profile = tmp_path / "profile.yml"
+    root = tmp_path / "customer_os"
+    write_customer_profile(profile)
+
+    assert main(["customer", "init", "acme_ops", "--profile", str(profile), "--target", str(root)]) == 0
+    handoff = root / "customer" / "handoff-checklist.md"
+    brief = root / "customer" / "client-automation-brief.md"
+    handoff.write_text("# local customer handoff edit\n", encoding="utf-8")
+    brief.unlink()
+
+    assert main(["customer", "update", "acme_ops", "--root", str(root)]) == 0
+
+    assert handoff.read_text(encoding="utf-8") == "# local customer handoff edit\n"
+    assert brief.is_file()
+    assert main(["customer", "validate", "--root", str(root)]) == 0
+
+
+def test_customer_init_rejects_private_source_domains(tmp_path: Path) -> None:
+    profile = tmp_path / "profile.yml"
+    profile.write_text(
+        """customer:
+  slug: acme_ops
+  display_name: Acme Operations
+  owner: Operations Lead
+  approved_domains:
+    - los
+""",
+        encoding="utf-8",
+    )
+
+    assert main(["customer", "init", "acme_ops", "--profile", str(profile), "--target", str(tmp_path / "out")]) == 2
 
 
 def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:

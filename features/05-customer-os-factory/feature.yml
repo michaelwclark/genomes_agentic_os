@@ -1,0 +1,19 @@
+id: 366683b4-8dab-81ac-a630-c84850ee2030
+title: 05 Customer Os Factory
+prefix: "05"
+slug: 05-customer-os-factory
+status: done
+source_queue: Ready
+branch: codex/build-runner-05
+started_at: 2026-05-21T21:48:20Z
+completed_at: 2026-05-21T21:54:02Z
+acceptance:
+  - customer profile can create a customer OS root without private source-owner domains
+  - customer update remains additive and preserves local edits
+  - customer-specific domains, workflows, and automations are generated from profile data
+  - customer validation separates core errors from profile warnings
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 23 passed in 1.27s
+  - command: temp customer init, update, validate, and private-name scan
+    result: customer smoke valid

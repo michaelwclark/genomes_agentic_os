@@ -13,6 +13,7 @@ from .automation_ops import (
     format_automation_check,
     set_automation_maturity,
 )
+from .customer import customer_init, customer_update, customer_validate, format_customer_result
 from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
     create_automation,
@@ -153,6 +154,21 @@ def build_parser() -> argparse.ArgumentParser:
     here_context_build = here_context_subparsers.add_parser("build", help="Build context from the current directory.")
     here_context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     here_context_build.set_defaults(handler=handle_here_context_build)
+
+    customer_parser = subparsers.add_parser("customer", help="Manage customer Agentic OS installs.")
+    customer_subparsers = customer_parser.add_subparsers(dest="customer_command", required=True)
+    customer_init_parser = customer_subparsers.add_parser("init", help="Create a customer OS from a profile.")
+    customer_init_parser.add_argument("customer_slug")
+    customer_init_parser.add_argument("--profile", required=True)
+    customer_init_parser.add_argument("--target", required=True)
+    customer_init_parser.set_defaults(handler=handle_customer_init)
+    customer_update_parser = customer_subparsers.add_parser("update", help="Add missing customer OS assets.")
+    customer_update_parser.add_argument("customer_slug")
+    customer_update_parser.add_argument("--root", required=True)
+    customer_update_parser.set_defaults(handler=handle_customer_update)
+    customer_validate_parser = customer_subparsers.add_parser("validate", help="Validate a customer OS root.")
+    customer_validate_parser.add_argument("--root", required=True)
+    customer_validate_parser.set_defaults(handler=handle_customer_validate)
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -301,6 +317,22 @@ def handle_here_route(args: argparse.Namespace) -> int:
 def handle_here_context_build(args: argparse.Namespace) -> int:
     print(format_packet(context_from_here(args.root, cwd=Path.cwd())))
     return 0
+
+
+def handle_customer_init(args: argparse.Namespace) -> int:
+    print(format_customer_result(customer_init(args.customer_slug, args.profile, args.target)))
+    return 0
+
+
+def handle_customer_update(args: argparse.Namespace) -> int:
+    print(format_customer_result(customer_update(args.customer_slug, args.root)))
+    return 0
+
+
+def handle_customer_validate(args: argparse.Namespace) -> int:
+    result = customer_validate(args.root)
+    print(format_customer_result(result))
+    return 0 if result["ok"] else 1
 
 
 def handle_validate(args: argparse.Namespace) -> int:
