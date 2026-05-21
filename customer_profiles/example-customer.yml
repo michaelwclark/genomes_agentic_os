@@ -1,0 +1,24 @@
+customer:
+  slug: acme_ops
+  display_name: Acme Operations
+  owner: Operations Lead
+  notion_workspace: Acme Notion
+  approved_domains:
+    - support
+  source_systems:
+    - name: helpdesk
+      role: customer support inbox
+      access: read
+  default_workflows:
+    - domain: support
+      lane: support
+      name: intake_triage
+  default_automations:
+    - domain: support
+      lane: support
+      name: thread_intake
+  approval_policy:
+    external_writes_require_approval: true
+    customer_visible_output_requires_approval: true
+    production_changes_require_approval: true
+    destructive_actions_require_approval: true
