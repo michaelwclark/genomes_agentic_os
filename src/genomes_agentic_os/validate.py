@@ -172,7 +172,9 @@ def validate_root(root: str | Path) -> ValidationResult:
     for filename in ROOT_FILES:
         require_file(os_root / filename, result)
 
-    for domain in DEFAULT_DOMAINS:
+    profile_domains = profile_domain_names(os_root)
+    domains_to_validate = profile_domains or list(DEFAULT_DOMAINS)
+    for domain in domains_to_validate:
         validate_domain(os_root / domain, result)
 
     shared_knowledge = os_root / "shared_factory" / "05-knowledge"
@@ -198,3 +200,21 @@ def validate_root(root: str | Path) -> ValidationResult:
                 result.errors.append(f"invalid YAML: {path}: {exc}")
 
     return result
+
+
+def profile_domain_names(root: Path) -> list[str]:
+    for filename in ("profile.yml", "customer.yml"):
+        path = root / filename
+        if not path.is_file():
+            continue
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            return []
+        if filename == "profile.yml":
+            rooms = data.get("rooms") or []
+            return [str(room.get("slug")) for room in rooms if isinstance(room, dict) and room.get("slug")]
+        customer = data.get("customer") or {}
+        domains = customer.get("approved_domains") or []
+        return [str(domain) for domain in domains]
+    return []

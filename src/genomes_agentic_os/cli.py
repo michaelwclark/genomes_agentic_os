@@ -19,6 +19,7 @@ from .losmon import format_losmon_result, losmon_validate
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
+from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
 from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
     create_automation,
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_parser = subparsers.add_parser("init", help="Create the base installed OS tree.")
     init_parser.add_argument("--target", default=DEFAULT_ROOT, help="Installed OS target path.")
+    init_parser.add_argument("--profile", help="Room-first OS profile YAML.")
     init_parser.set_defaults(handler=handle_init)
 
     domain_parser = subparsers.add_parser("domain", help="Manage domains.")
@@ -50,6 +52,27 @@ def build_parser() -> argparse.ArgumentParser:
     domain_create.add_argument("name")
     domain_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     domain_create.set_defaults(handler=handle_domain_create)
+
+    profile_parser = subparsers.add_parser("profile", help="Manage room-first OS profiles.")
+    profile_subparsers = profile_parser.add_subparsers(dest="profile_command", required=True)
+    profile_create = profile_subparsers.add_parser("create", help="Create an editable profile template.")
+    profile_create.add_argument("--target", required=True)
+    profile_create.set_defaults(handler=handle_profile_create)
+    profile_validate = profile_subparsers.add_parser("validate", help="Validate a room-first profile.")
+    profile_validate.add_argument("profile")
+    profile_validate.set_defaults(handler=handle_profile_validate)
+
+    room_parser = subparsers.add_parser("room", help="Manage rooms.")
+    room_subparsers = room_parser.add_subparsers(dest="room_command", required=True)
+    room_create = room_subparsers.add_parser("create", help="Create a room scaffold.")
+    room_create.add_argument("room_slug")
+    room_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    room_create.set_defaults(handler=handle_room_create)
+    room_update = room_subparsers.add_parser("update", help="Update a room from a profile.")
+    room_update.add_argument("room_slug")
+    room_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    room_update.add_argument("--from-profile", required=True)
+    room_update.set_defaults(handler=handle_room_update)
 
     project_parser = subparsers.add_parser("project", help="Manage projects.")
     project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
@@ -261,12 +284,41 @@ def print_result(result) -> None:
 
 
 def handle_init(args: argparse.Namespace) -> int:
+    if args.profile:
+        print(format_profile_result(install_profile_os(args.target, args.profile)))
+        return 0
     print_result(init_os(args.target))
     return 0
 
 
 def handle_domain_create(args: argparse.Namespace) -> int:
     print_result(create_domain(args.root, args.name))
+    return 0
+
+
+def handle_profile_create(args: argparse.Namespace) -> int:
+    print(format_profile_result(write_profile_template(args.target)))
+    return 0
+
+
+def handle_profile_validate(args: argparse.Namespace) -> int:
+    profile = load_os_profile(args.profile)
+    print(format_profile_result({"profile": args.profile, "rooms": [room["slug"] for room in profile["rooms"]], "ok": True}))
+    return 0
+
+
+def handle_room_create(args: argparse.Namespace) -> int:
+    print_result(create_domain(args.root, args.room_slug))
+    return 0
+
+
+def handle_room_update(args: argparse.Namespace) -> int:
+    profile = load_os_profile(args.from_profile)
+    room = next((room for room in profile["rooms"] if room["slug"] == args.room_slug), None)
+    if room is None:
+        raise ValueError(f"room not found in profile: {args.room_slug}")
+    result = install_profile_os(args.root, args.from_profile)
+    print(format_profile_result(result))
     return 0
 
 
