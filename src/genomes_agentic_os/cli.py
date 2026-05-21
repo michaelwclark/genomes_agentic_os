@@ -18,6 +18,7 @@ from .doctor import doctor, format_doctor_result
 from .losmon import format_losmon_result, losmon_validate
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_sync_plan, build_sync_plan, format_sync_result
+from .plans import capture_plan, format_plan_result
 from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
     create_automation,
@@ -208,6 +209,17 @@ def build_parser() -> argparse.ArgumentParser:
     losmon_validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     losmon_validate_parser.add_argument("--repo", help="LOS or losmon repository path.")
     losmon_validate_parser.set_defaults(handler=handle_losmon_validate)
+
+    plan_parser = subparsers.add_parser("plan", help="Capture future OS ideas and plans.")
+    plan_subparsers = plan_parser.add_subparsers(dest="plan_command", required=True)
+    plan_capture = plan_subparsers.add_parser("capture", help="Capture a future idea in the right OS location.")
+    plan_capture.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    plan_capture.add_argument("--title", required=True)
+    plan_capture.add_argument("--summary", required=True)
+    plan_capture.add_argument("--kind", default="os", choices=("os", "domain", "customer"))
+    plan_capture.add_argument("--domain")
+    plan_capture.add_argument("--project")
+    plan_capture.set_defaults(handler=handle_plan_capture)
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -405,6 +417,22 @@ def handle_migrate_apply(args: argparse.Namespace) -> int:
 
 def handle_losmon_validate(args: argparse.Namespace) -> int:
     print(format_losmon_result(losmon_validate(args.root, repo=args.repo)))
+    return 0
+
+
+def handle_plan_capture(args: argparse.Namespace) -> int:
+    print(
+        format_plan_result(
+            capture_plan(
+                args.root,
+                title=args.title,
+                summary=args.summary,
+                kind=args.kind,
+                domain=args.domain,
+                project=args.project,
+            )
+        )
+    )
     return 0
 
 

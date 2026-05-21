@@ -857,6 +857,84 @@ def test_losmon_validate_creates_required_validation_objects(tmp_path: Path, cap
     assert main(["validate", "--root", str(root)]) == 0
 
 
+def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+
+    assert (
+        main(
+            [
+                "plan",
+                "capture",
+                "--root",
+                str(root),
+                "--title",
+                "Telemetry Adapter",
+                "--summary",
+                "Capture losmon telemetry into run logs.",
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    os_plan = Path(result["target"])
+    assert os_plan.is_file()
+    assert "Capture losmon telemetry into run logs." in os_plan.read_text(encoding="utf-8")
+    assert "future-ideas/telemetry-adapter.md" in (
+        root / "shared_factory" / "05-knowledge" / "plans" / "README.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "plan",
+                "capture",
+                "--root",
+                str(root),
+                "--kind",
+                "domain",
+                "--domain",
+                "los",
+                "--title",
+                "CI failure clustering",
+                "--summary",
+                "Group related CI failures before triage.",
+            ]
+        )
+        == 0
+    )
+    raw_ideas = (root / "los" / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
+    assert "CI failure clustering" in raw_ideas
+
+    assert (
+        main(
+            [
+                "plan",
+                "capture",
+                "--root",
+                str(root),
+                "--kind",
+                "customer",
+                "--domain",
+                "los",
+                "--project",
+                "losmon_replacement",
+                "--title",
+                "Customer-safe deploy brief",
+                "--summary",
+                "Create reusable customer deploy planning notes.",
+            ]
+        )
+        == 0
+    )
+    project_status = (root / "los" / "02-projects" / "losmon_replacement" / "status.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Customer-safe deploy brief" in project_status
+
+
 def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
