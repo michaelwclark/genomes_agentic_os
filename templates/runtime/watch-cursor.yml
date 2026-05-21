@@ -1,0 +1,5 @@
+watch_source_id: <watch_source_id>
+cursor_type: event_id | timestamp | page_token | file_mtime
+last_value: null
+updated_at: null
+notes: ""

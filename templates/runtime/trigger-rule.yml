@@ -1,0 +1,20 @@
+id: <trigger_rule_id>
+display_name: <display_name>
+enabled: false
+source_ids: []
+when:
+  event_type: <system.event_type>
+  fields: {}
+only_if: {}
+then:
+  emit_event:
+    type: os.observation
+  enqueue:
+    work_type: review
+    route_to: shared_factory
+    context_profile: default
+    maturity: observe
+approval:
+  required: false
+idempotency:
+  key: "{event.id}:{rule.id}"

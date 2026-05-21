@@ -1,0 +1,22 @@
+id: <source_event_id>
+schema_version: 1
+event_type: <system.event_type>
+observed_at: <iso8601>
+source:
+  watch_source_id: <watch_source_id>
+  connected_system: <system_id>
+  provider: <provider_id>
+  source_type: <source_type>
+dedupe:
+  idempotency_key: <dedupe_key>
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+summary: ""
+payload_ref:
+  type: link | file | registry
+  href: ""
+privacy:
+  contains_secret: false
+  contains_customer_data: false
