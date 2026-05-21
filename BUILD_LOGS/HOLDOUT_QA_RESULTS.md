@@ -51,3 +51,9 @@
 - `uv run --extra dev pytest -q`: `28 passed in 1.72s` on merged `main`.
 - Temp-root LOSMon validation package and root validation smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 09 Future Ideas Intake
+
+- `uv run --extra dev pytest -q`: `29 passed in 1.80s` on merged `main`.
+- Temp-root OS/domain/project plan capture and validation smoke passed.
+- Notion completion write/comment returned HTTP 200.

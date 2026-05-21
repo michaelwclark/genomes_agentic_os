@@ -69,3 +69,11 @@
 - Commit: `5d68051`.
 - Merged and pushed to `main` as `735e205`.
 - Claimed the next READY feature `11 Room First Installer And Routing` to keep the active set at three.
+
+## 09 Future Ideas Intake
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-09`.
+- Commit: `5502a08`.
+- Merged and pushed to `main` as `8a978ed`.
+- Claimed the next READY feature `12 Factory Template Import Backlog` to keep the active set at three.

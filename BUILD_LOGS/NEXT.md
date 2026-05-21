@@ -35,3 +35,7 @@ Next active lower prefixes are `08 Losmon Replacement Validation`, `09 Future Id
 ## 08 Losmon Replacement Validation
 
 Next active lower prefixes are `09 Future Ideas Intake`, `10 Notion Control Plane Bootstrap`, and `11 Room First Installer And Routing`. Continue with `09` as the lowest incomplete active prefix.
+
+## 09 Future Ideas Intake
+
+Next active lower prefixes are `10 Notion Control Plane Bootstrap`, `11 Room First Installer And Routing`, and `12 Factory Template Import Backlog`. Continue with `10` as the lowest incomplete active prefix.

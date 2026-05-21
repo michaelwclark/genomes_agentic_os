@@ -129,6 +129,16 @@
       "card_id": "366683b4-8dab-81f5-8206-f8614c996da3",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-819b-9cc2-d65228c323cb",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8166-9cf3-f870f78c47be",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -236,8 +246,11 @@
       "slug": "09-future-ideas-intake",
       "title": "09 Future Ideas Intake",
       "card_id": "366683b4-8dab-819b-9cc2-d65228c323cb",
-      "status": "building",
-      "branch": "codex/build-runner-09"
+      "status": "done",
+      "branch": "codex/build-runner-09",
+      "merge_commit": "8a978ed",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:14:49Z"
     },
     {
       "prefix": "10",
@@ -260,7 +273,8 @@
       "slug": "12-factory-template-import-backlog",
       "title": "12 Factory Template Import Backlog",
       "card_id": "366683b4-8dab-8166-9cf3-f870f78c47be",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-12"
     },
     {
       "prefix": "13",

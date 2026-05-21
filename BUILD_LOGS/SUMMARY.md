@@ -35,3 +35,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 08 Losmon Replacement Validation
 
 `agentic-os losmon validate` now creates the LOSMon replacement validation package with LOS project state, validation workflows, thread intake automation, run logs, and a comparison artifact that keeps migration gaps explicit.
+
+## 09 Future Ideas Intake
+
+`agentic-os plan capture` now routes reusable OS ideas to shared plans, domain ideas to raw inboxes, and customer/project ideas to project status files.
