@@ -189,6 +189,11 @@
       "card_id": "366683b4-8dab-81e4-aacc-d4e6388f2c9f",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
+      "action": "complete-done-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -362,8 +367,11 @@
       "slug": "15-always-on-runtime-heartbeats-schedules-and-integrations",
       "title": "15 Always On Runtime Heartbeats Schedules And Integrations",
       "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
-      "status": "building",
-      "branch": "codex/build-runner-15"
+      "status": "done",
+      "branch": "codex/build-runner-15",
+      "merge_commit": "8811d09",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:58:25Z"
     },
     {
       "prefix": "16",

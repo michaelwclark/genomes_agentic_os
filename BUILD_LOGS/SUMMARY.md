@@ -59,3 +59,7 @@ Runtime reference files now install under shared factory references, validation 
 ## 14 Client Automation And Control Plane Playbooks
 
 Client automation, control-plane bootstrap, and context audit playbooks now install into runtime knowledge as command prompts and skills, and validation requires them in installed OS roots.
+
+## 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Runtime heartbeats, schedules, execution targets, integration setup, run queue state, and guarded Notion runtime tracking are now file-backed and available through CLI commands.

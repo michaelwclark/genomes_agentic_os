@@ -117,3 +117,10 @@
 - Commit: `a83035c`.
 - Merged and pushed to `main` as `f29439b`.
 - Claimed the next READY feature `17 Event Graph And Chained Automations` to keep the active set at three.
+
+## 15 Always On Runtime Heartbeats Schedules And Integrations
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-15`.
+- Commit: `7f5999e`.
+- Merged and pushed to `main` as `8811d09`.
