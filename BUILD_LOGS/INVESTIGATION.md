@@ -7,3 +7,9 @@
 - Found 18 live READY/Building queue cards after claiming `00`.
 - Preserved existing dirty repo work and avoided overlapping edits.
 - Confirmed installed runtime contains the plans directory, index, and future-ideas plan.
+
+## 01 Project Create And Active Work
+
+- Existing CLI had no project command.
+- Existing scaffold already had domain aliases, domain project folders, active-work files, and additive write helpers.
+- Implementation extends the filesystem-first scaffold with append-only project index, active-work, and source-map rows.

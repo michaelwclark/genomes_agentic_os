@@ -6,3 +6,10 @@
 - Feature artifact: `features/00-current-state-and-gap-map/SPEC.md`
 - Source plan: `PLANS/00-current-state-and-gap-map.md`
 - Acceptance: readable source backlog, installed runtime plans, validation requirement, traceability to one plan file.
+
+## 01 Project Create And Active Work
+
+- Source card: `366683b4-8dab-81e2-9268-ea82e66315a2`
+- Feature artifact: `features/01-project-create-and-active-work/SPEC.md`
+- Source plan: `PLANS/01-project-create-and-active-work.md`
+- Acceptance: `agentic-os project create` creates indexed, source-linked, idempotent project records.

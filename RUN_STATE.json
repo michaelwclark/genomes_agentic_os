@@ -34,6 +34,16 @@
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
       "action": "complete-done-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81e2-9268-ea82e66315a2",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81e2-9268-ea82e66315a2",
+      "action": "complete-done-and-comment",
+      "status": "pending"
     }
   ],
   "features": [
@@ -53,7 +63,11 @@
       "slug": "01-project-create-and-active-work",
       "title": "01 Project Create And Active Work",
       "card_id": "366683b4-8dab-81e2-9268-ea82e66315a2",
-      "status": "ready"
+      "status": "done",
+      "branch": "codex/build-runner-01",
+      "merge_commit": "6ef98cf",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T21:24:08Z"
     },
     {
       "prefix": "02",
