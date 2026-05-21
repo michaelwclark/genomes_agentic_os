@@ -13,3 +13,10 @@
 - Feature artifact: `features/01-project-create-and-active-work/SPEC.md`
 - Source plan: `PLANS/01-project-create-and-active-work.md`
 - Acceptance: `agentic-os project create` creates indexed, source-linked, idempotent project records.
+
+## 02 Routing And Context Builder
+
+- Source card: `366683b4-8dab-8154-bf58-f38c275a29ab`
+- Feature artifact: `features/02-routing-and-context-builder/SPEC.md`
+- Source plan: `PLANS/02-routing-and-context-builder.md`
+- Acceptance: route/context/here commands build deterministic, read-only context packets.

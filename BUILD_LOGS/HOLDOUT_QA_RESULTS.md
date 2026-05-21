@@ -10,3 +10,8 @@
 
 - `uv run --extra dev pytest -q`: `10 passed in 0.62s`.
 - Temp-root smoke with `agentic-os init`, `agentic-os project create los losmon_replacement`, and `agentic-os validate`: `valid`.
+
+## 02 Routing And Context Builder
+
+- `uv run --extra dev pytest -q`: `14 passed in 0.83s`.
+- Temp-root route, linked-repo `here context build`, and validation smoke passed.

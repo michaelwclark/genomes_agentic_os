@@ -14,3 +14,10 @@
 - Implemented on branch `codex/build-runner-01`.
 - Commit: `9947834`.
 - Merged and pushed to `main` as `6ef98cf`.
+
+## 02 Routing And Context Builder
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-02`.
+- Commit: `d5412d9`.
+- Merged and pushed to `main` as `1e0a7d7`.

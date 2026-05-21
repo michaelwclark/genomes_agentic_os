@@ -44,6 +44,21 @@
       "card_id": "366683b4-8dab-81e2-9268-ea82e66315a2",
       "action": "complete-done-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8154-bf58-f38c275a29ab",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8154-bf58-f38c275a29ab",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8155-bbb6-d150b26504ec",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -74,7 +89,11 @@
       "slug": "02-routing-and-context-builder",
       "title": "02 Routing And Context Builder",
       "card_id": "366683b4-8dab-8154-bf58-f38c275a29ab",
-      "status": "ready"
+      "status": "done",
+      "branch": "codex/build-runner-02",
+      "merge_commit": "1e0a7d7",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T21:29:23Z"
     },
     {
       "prefix": "03",
@@ -88,7 +107,8 @@
       "slug": "04-automation-maturity-and-reconfiguration",
       "title": "04 Automation Maturity And Reconfiguration",
       "card_id": "366683b4-8dab-8155-bbb6-d150b26504ec",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-04"
     },
     {
       "prefix": "05",

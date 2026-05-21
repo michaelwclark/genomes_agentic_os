@@ -7,3 +7,7 @@ Run plan: verify config, verify board identity and write access, claim `00`, val
 ## 01 Project Create And Active Work
 
 Run plan: add project scaffold renderers, wire `agentic-os project create`, add tests for creation/idempotency/aliasing/invalid names, verify in a temp root, merge, push, and close the card.
+
+## 02 Routing And Context Builder
+
+Run plan: add routing module, wire route/context/here CLI commands, add tests for request routing, context sources, here detection, ambiguity, and approval risks, verify, merge, push, and close the card.

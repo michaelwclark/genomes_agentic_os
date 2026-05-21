@@ -10,3 +10,8 @@
 
 - Worktree-local `uv run pytest` needed `--extra dev` when the worktree venv was fresh.
 - Project create should stay additive: do not rewrite project files; append missing index/source rows only.
+
+## 02 Routing And Context Builder
+
+- Deterministic routing can use project `sources.repo` to map external cwd values back into the installed OS project tree.
+- Route commands are read-only by default; context packets are printed YAML.
