@@ -14,6 +14,8 @@ from .automation_ops import (
     set_automation_maturity,
 )
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
+from .doctor import doctor, format_doctor_result
+from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_sync_plan, build_sync_plan, format_sync_result
 from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
@@ -183,6 +185,21 @@ def build_parser() -> argparse.ArgumentParser:
     notion_sync_mode.add_argument("--apply", action="store_true")
     notion_sync.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_sync.set_defaults(handler=handle_notion_sync)
+
+    doctor_parser = subparsers.add_parser("doctor", help="Run installed OS health checks.")
+    doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doctor_parser.add_argument("--fix-missing", action="store_true", help="Create missing managed files only.")
+    doctor_parser.set_defaults(handler=handle_doctor)
+
+    migrate_parser = subparsers.add_parser("migrate", help="Plan and apply explicit migrations.")
+    migrate_subparsers = migrate_parser.add_subparsers(dest="migrate_command", required=True)
+    migrate_plan_parser = migrate_subparsers.add_parser("plan", help="Create a reviewable migration plan.")
+    migrate_plan_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    migrate_plan_parser.set_defaults(handler=handle_migrate_plan)
+    migrate_apply_parser = migrate_subparsers.add_parser("apply", help="Apply an approved migration by ID.")
+    migrate_apply_parser.add_argument("migration_id")
+    migrate_apply_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    migrate_apply_parser.set_defaults(handler=handle_migrate_apply)
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -359,6 +376,22 @@ def handle_notion_sync(args: argparse.Namespace) -> int:
         print(format_sync_result(build_sync_plan(args.root)))
     else:
         print(format_sync_result(apply_sync_plan(args.root, verified_workspace=args.verified_workspace)))
+    return 0
+
+
+def handle_doctor(args: argparse.Namespace) -> int:
+    result = doctor(args.root, fix_missing=args.fix_missing)
+    print(format_doctor_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_migrate_plan(args: argparse.Namespace) -> int:
+    print(format_migration_result(migrate_plan(args.root)))
+    return 0
+
+
+def handle_migrate_apply(args: argparse.Namespace) -> int:
+    print(format_migration_result(migrate_apply(args.root, args.migration_id)))
     return 0
 
 
