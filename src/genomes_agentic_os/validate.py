@@ -80,6 +80,9 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-create-automation.md",
     "commands/os-doctor.md",
     "commands/os-update.md",
+    "commands/os-client-automation-brief.md",
+    "commands/os-control-plane-bootstrap.md",
+    "commands/os-context-audit.md",
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "plans/README.md",
@@ -97,6 +100,9 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/workflow-builder/SKILL.md",
     "skills/automation-qualifier/SKILL.md",
     "skills/os-doctor/SKILL.md",
+    "skills/client-automation-brief/SKILL.md",
+    "skills/control-plane-bootstrap/SKILL.md",
+    "skills/context-audit/SKILL.md",
 )
 
 

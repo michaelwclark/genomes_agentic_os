@@ -96,6 +96,9 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-discover-rooms.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-doctor.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-update.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-client-automation-brief.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-control-plane-bootstrap.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-context-audit.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "plans" / "README.md").is_file()
     assert (
         root / "shared_factory" / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
@@ -131,6 +134,13 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "room-builder" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
+    ).is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "skills" / "control-plane-bootstrap" / "SKILL.md"
+    ).is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "skills" / "context-audit" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
 
@@ -236,6 +246,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert main(["init", "--target", str(root)]) == 0
     manual_readme = root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md"
     command_file = root / "shared_factory" / "05-knowledge" / "commands" / "os-sync-notion.md"
+    playbook_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-client-automation-brief.md"
+    playbook_skill = root / "shared_factory" / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
     plan_readme = root / "shared_factory" / "05-knowledge" / "plans" / "README.md"
     plan_file = root / "shared_factory" / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
     planning_template = root / "shared_factory" / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
@@ -243,6 +255,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     manual_readme.write_text("# local edit\n", encoding="utf-8")
     plan_readme.write_text("# local plan edit\n", encoding="utf-8")
     command_file.unlink()
+    playbook_command.unlink()
+    playbook_skill.unlink()
     plan_file.unlink()
     planning_template.unlink()
     domain_context_template.unlink()
@@ -253,6 +267,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert content == "# local edit\n"
     assert plan_readme.read_text(encoding="utf-8") == "# local plan edit\n"
     assert command_file.is_file()
+    assert playbook_command.is_file()
+    assert playbook_skill.is_file()
     assert plan_file.is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
@@ -261,6 +277,7 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
         root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md"
     ).is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "os-doctor" / "SKILL.md").is_file()
+    assert main(["validate", "--root", str(root)]) == 0
     assert main(["docs", "update", "--root", str(root)]) == 0
     assert manual_readme.read_text(encoding="utf-8") == "# local edit\n"
     assert plan_readme.read_text(encoding="utf-8") == "# local plan edit\n"
@@ -809,6 +826,53 @@ def test_factory_templates_install_and_customer_facing_templates_are_sanitized(t
             if path.is_file():
                 content = path.read_text(encoding="utf-8").lower()
                 assert not any(term in content for term in disallowed), path
+
+
+def test_client_playbook_commands_and_skills_are_installed_and_sanitized(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    knowledge_root = root / "shared_factory" / "05-knowledge"
+    command_paths = [
+        knowledge_root / "commands" / "os-client-automation-brief.md",
+        knowledge_root / "commands" / "os-control-plane-bootstrap.md",
+        knowledge_root / "commands" / "os-context-audit.md",
+    ]
+    skill_paths = [
+        knowledge_root / "skills" / "client-automation-brief" / "SKILL.md",
+        knowledge_root / "skills" / "control-plane-bootstrap" / "SKILL.md",
+        knowledge_root / "skills" / "context-audit" / "SKILL.md",
+    ]
+    for path in [*command_paths, *skill_paths]:
+        assert path.is_file(), path
+
+    brief_command = command_paths[0].read_text(encoding="utf-8").lower()
+    brief_skill = skill_paths[0].read_text(encoding="utf-8").lower()
+    brief_template = (
+        knowledge_root / "templates" / "customer" / "client-automation-brief.md"
+    ).read_text(encoding="utf-8").lower()
+    control_plane_skill = skill_paths[1].read_text(encoding="utf-8").lower()
+
+    assert "deterministic" in brief_command
+    assert "rule-based" in brief_command
+    assert "llm-needed" in brief_command
+    assert "human judgment" in brief_command
+    assert "automation-fit-matrix.md" in brief_skill
+    assert "approval gate" in brief_skill
+    assert "filesystem remains the source of truth" in control_plane_skill
+    for required_heading in (
+        "## outcome",
+        "## current manual workflow",
+        "## automation candidate steps",
+        "## approval gate",
+        "## metrics baseline",
+    ):
+        assert required_heading in brief_template
+
+    disallowed = ("eduba", "school", "clarks_consulting", "michael clark", "flywheel")
+    installed_text = "\n".join(path.read_text(encoding="utf-8").lower() for path in command_paths + skill_paths)
+    assert not any(term in installed_text for term in disallowed)
 
 
 def test_notion_sync_plan_maps_filesystem_objects_and_is_idempotent(tmp_path: Path, capsys) -> None:
