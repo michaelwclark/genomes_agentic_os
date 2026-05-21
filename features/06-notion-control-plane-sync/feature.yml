@@ -1,0 +1,19 @@
+id: 366683b4-8dab-81ec-a805-e5d2c9a14f47
+title: 06 Notion Control Plane Sync
+prefix: "06"
+slug: 06-notion-control-plane-sync
+status: done
+source_queue: Ready
+branch: codex/build-runner-06
+started_at: 2026-05-21T21:55:33Z
+completed_at: 2026-05-21T21:59:35Z
+acceptance:
+  - dry run lists create/update/no-op actions from filesystem objects
+  - apply refuses unverified or blocked personal Notion workspaces
+  - apply records local mapping IDs and is idempotent
+  - customer roots require their configured customer workspace
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 25 passed in 1.63s
+  - command: temp-root notion plan, refused unverified apply, verified apply, dry-run no-op smoke
+    result: notion sync smoke valid

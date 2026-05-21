@@ -14,6 +14,7 @@ from .automation_ops import (
     set_automation_maturity,
 )
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
+from .notion_sync import apply_sync_plan, build_sync_plan, format_sync_result
 from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
     create_automation,
@@ -169,6 +170,19 @@ def build_parser() -> argparse.ArgumentParser:
     customer_validate_parser = customer_subparsers.add_parser("validate", help="Validate a customer OS root.")
     customer_validate_parser.add_argument("--root", required=True)
     customer_validate_parser.set_defaults(handler=handle_customer_validate)
+
+    notion_parser = subparsers.add_parser("notion", help="Plan and apply filesystem-to-Notion sync.")
+    notion_subparsers = notion_parser.add_subparsers(dest="notion_command", required=True)
+    notion_plan = notion_subparsers.add_parser("plan-sync", help="Build a reviewable Notion sync plan.")
+    notion_plan.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_plan.set_defaults(handler=handle_notion_plan_sync)
+    notion_sync = notion_subparsers.add_parser("sync", help="Run a guarded Notion sync.")
+    notion_sync.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_sync_mode = notion_sync.add_mutually_exclusive_group(required=True)
+    notion_sync_mode.add_argument("--dry-run", action="store_true")
+    notion_sync_mode.add_argument("--apply", action="store_true")
+    notion_sync.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
+    notion_sync.set_defaults(handler=handle_notion_sync)
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -333,6 +347,19 @@ def handle_customer_validate(args: argparse.Namespace) -> int:
     result = customer_validate(args.root)
     print(format_customer_result(result))
     return 0 if result["ok"] else 1
+
+
+def handle_notion_plan_sync(args: argparse.Namespace) -> int:
+    print(format_sync_result(build_sync_plan(args.root)))
+    return 0
+
+
+def handle_notion_sync(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_sync_result(build_sync_plan(args.root)))
+    else:
+        print(format_sync_result(apply_sync_plan(args.root, verified_workspace=args.verified_workspace)))
+    return 0
 
 
 def handle_validate(args: argparse.Namespace) -> int:

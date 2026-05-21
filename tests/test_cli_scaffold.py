@@ -682,6 +682,100 @@ def test_customer_init_rejects_private_source_domains(tmp_path: Path) -> None:
     assert main(["customer", "init", "acme_ops", "--profile", str(profile), "--target", str(tmp_path / "out")]) == 2
 
 
+def test_notion_sync_plan_maps_filesystem_objects_and_is_idempotent(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+
+    capsys.readouterr()
+    assert main(["notion", "plan-sync", "--root", str(root)]) == 0
+    plan = yaml.safe_load(capsys.readouterr().out)
+    action_kinds = {(action["action"], action["kind"]) for action in plan["actions"]}
+    assert ("create", "domain") in action_kinds
+    assert ("create", "project") in action_kinds
+    assert ("create", "workflow") in action_kinds
+    assert ("create", "automation") in action_kinds
+    assert ("create", "run") in action_kinds
+    assert not (root / ".notion-sync" / "mapping.yml").exists()
+
+    assert main(["notion", "sync", "--root", str(root), "--apply"]) == 2
+    assert (
+        main(
+            [
+                "notion",
+                "sync",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Michael Clark Personal Notion",
+            ]
+        )
+        == 2
+    )
+
+    assert (
+        main(
+            [
+                "notion",
+                "sync",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Genome's Notion",
+            ]
+        )
+        == 0
+    )
+    assert (root / ".notion-sync" / "mapping.yml").is_file()
+
+    capsys.readouterr()
+    assert main(["notion", "sync", "--root", str(root), "--dry-run"]) == 0
+    plan = yaml.safe_load(capsys.readouterr().out)
+    assert {action["action"] for action in plan["actions"]} == {"no-op"}
+
+
+def test_customer_notion_sync_requires_configured_customer_workspace(tmp_path: Path) -> None:
+    profile = tmp_path / "profile.yml"
+    root = tmp_path / "customer_os"
+    write_customer_profile(profile)
+
+    assert main(["customer", "init", "acme_ops", "--profile", str(profile), "--target", str(root)]) == 0
+    assert (
+        main(
+            [
+                "notion",
+                "sync",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Genome's Notion",
+            ]
+        )
+        == 2
+    )
+    assert (
+        main(
+            [
+                "notion",
+                "sync",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Acme Notion",
+            ]
+        )
+        == 0
+    )
+
+
 def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
