@@ -776,6 +776,77 @@ def test_customer_notion_sync_requires_configured_customer_workspace(tmp_path: P
     )
 
 
+def test_notion_bootstrap_requires_verified_workspace_and_parent(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+
+    capsys.readouterr()
+    assert main(["notion", "bootstrap", "--root", str(root), "--dry-run"]) == 0
+    plan = yaml.safe_load(capsys.readouterr().out)
+    assert plan["home_page"]["name"] == "Agentic OS"
+    assert {database["name"] for database in plan["databases"]} >= {
+        "OS Inbox",
+        "Work Items",
+        "Runs",
+        "Approvals",
+        "Domains",
+    }
+    assert plan["seed_records"]["runs"]
+    assert not (root / ".notion-control-plane" / "manifest.yml").exists()
+
+    assert (
+        main(
+            [
+                "notion",
+                "bootstrap",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Genome's Notion",
+            ]
+        )
+        == 2
+    )
+    assert (
+        main(
+            [
+                "notion",
+                "bootstrap",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Michael Clark Personal Notion",
+                "--parent-page-id",
+                "abc123",
+            ]
+        )
+        == 2
+    )
+    assert (
+        main(
+            [
+                "notion",
+                "bootstrap",
+                "--root",
+                str(root),
+                "--apply",
+                "--verified-workspace",
+                "Genome's Notion",
+                "--parent-page-id",
+                "366683b48dab81a1ab5fc73e7e1f5c60",
+            ]
+        )
+        == 0
+    )
+    manifest = yaml.safe_load((root / ".notion-control-plane" / "manifest.yml").read_text(encoding="utf-8"))
+    assert manifest["workspace"] == "Genome's Notion"
+    assert manifest["home_page"]["name"] == "Agentic OS"
+
+
 def test_doctor_reports_stale_run_logs_and_repairs_missing_managed_files(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
