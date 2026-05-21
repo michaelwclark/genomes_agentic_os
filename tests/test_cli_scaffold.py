@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
@@ -404,6 +406,102 @@ def test_route_fails_safely_when_ambiguous(tmp_path: Path) -> None:
     assert main(["init", "--target", str(root)]) == 0
     assert main(["route", "Do the thing", "--root", str(root)]) == 2
     assert main(["route", "Compare los and personal work", "--root", str(root)]) == 2
+
+
+def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["workflow", "check", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+
+    severities = {finding["severity"] for finding in packet["findings"]}
+    assert severities <= {"blocker", "fix-soon", "cleanup", "observation"}
+    assert "fix-soon" in severities
+
+    runbook = root / "los" / "03-workflows" / "engineering" / "feature_dev" / "runbook.md"
+    runbook.write_text(runbook.read_text(encoding="utf-8").replace("## After Running", "## Finish"), encoding="utf-8")
+
+    assert main(["workflow", "check", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert {
+        "severity": "blocker",
+        "path": str(runbook),
+        "message": "missing required section: After Running",
+    } in packet["findings"]
+
+
+def test_run_log_close_requires_validation_for_done_and_rejects_invalid_status(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+    run_id = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev")).name
+
+    assert main(["run-log", "close", "los", run_id, "--status", "done", "--root", str(root)]) == 2
+    with pytest.raises(SystemExit) as exc:
+        main(["run-log", "close", "los", run_id, "--status", "finished", "--root", str(root)])
+    assert exc.value.code == 2
+
+
+def test_run_log_close_records_closeout_and_activity_updates(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+    run_dir = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev"))
+
+    assert (
+        main(
+            [
+                "run-log",
+                "close",
+                "los",
+                run_dir.name,
+                "--status",
+                "done",
+                "--summary",
+                "Built and verified the workflow closeout command.",
+                "--validation",
+                "uv run --extra dev pytest -q passed",
+                "--artifact",
+                "run-log.md",
+                "--approval",
+                "No external approval gate encountered.",
+                "--next-action",
+                "Promote to the next feature.",
+                "--learning",
+                "Closeout needs validation evidence before done.",
+                "--project",
+                "losmon_replacement",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["status"] == "done"
+
+    run_log = run_dir / "run-log.md"
+    content = run_log.read_text(encoding="utf-8")
+    assert "| Status | `done` |" in content
+    assert "## Closeout" in content
+    assert "uv run --extra dev pytest -q passed" in content
+    assert "Promote to the next feature." in content
+
+    activity_log = (root / "los" / "06-runs-and-logs" / "activity-log.md").read_text(encoding="utf-8")
+    assert run_dir.name in activity_log
+    progress = (root / "los" / "03-workflows" / "engineering" / "feature_dev" / "progress.md").read_text(
+        encoding="utf-8"
+    )
+    assert run_dir.name in progress
+    project_status = (root / "los" / "02-projects" / "losmon_replacement" / "status.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Run Closeout" in project_status
+    assert validate_root(root).ok
 
 
 def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None:
