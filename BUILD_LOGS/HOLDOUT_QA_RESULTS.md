@@ -39,3 +39,9 @@
 - `uv run --extra dev pytest -q`: `25 passed in 1.36s` on merged `main`.
 - Temp-root Notion plan/refusal/apply/idempotency smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 07 Doctor Validation And Migrations
+
+- `uv run --extra dev pytest -q`: `27 passed in 1.64s` on merged `main`.
+- Temp-root doctor missing/fix/stale-run and migration plan/apply smoke passed.
+- Notion completion write/comment returned HTTP 200.

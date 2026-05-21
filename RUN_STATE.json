@@ -109,6 +109,16 @@
       "card_id": "366683b4-8dab-819b-9cc2-d65228c323cb",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8187-8c04-e4b4b1f262cf",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81f5-b933-c1084316190a",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -194,8 +204,11 @@
       "slug": "07-doctor-validation-and-migrations",
       "title": "07 Doctor Validation And Migrations",
       "card_id": "366683b4-8dab-8187-8c04-e4b4b1f262cf",
-      "status": "building",
-      "branch": "codex/build-runner-07"
+      "status": "done",
+      "branch": "codex/build-runner-07",
+      "merge_commit": "bbacbb0",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:06:11Z"
     },
     {
       "prefix": "08",
@@ -218,7 +231,8 @@
       "slug": "10-notion-control-plane-bootstrap",
       "title": "10 Notion Control Plane Bootstrap",
       "card_id": "366683b4-8dab-81f5-b933-c1084316190a",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-10"
     },
     {
       "prefix": "11",

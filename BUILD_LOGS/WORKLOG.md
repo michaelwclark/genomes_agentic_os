@@ -53,3 +53,11 @@
 - Commit: `4420895`.
 - Merged and pushed to `main` as `d8406e1`.
 - Claimed the next READY feature `09 Future Ideas Intake` to keep the active set at three.
+
+## 07 Doctor Validation And Migrations
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-07`.
+- Commit: `2d3bdf4`.
+- Merged and pushed to `main` as `bbacbb0`.
+- Claimed the next READY feature `10 Notion Control Plane Bootstrap` to keep the active set at three.

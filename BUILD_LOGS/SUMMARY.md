@@ -27,3 +27,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 06 Notion Control Plane Sync
 
 `agentic-os notion plan-sync` and guarded `notion sync` now build reviewable sync plans, refuse unverified workspaces, support configured customer workspaces, and maintain an idempotent local mapping file.
+
+## 07 Doctor Validation And Migrations
+
+`agentic-os doctor` now reports deeper runtime health findings and additive repair, while `agentic-os migrate` creates reviewable migration previews and refuses changed targets during apply.
