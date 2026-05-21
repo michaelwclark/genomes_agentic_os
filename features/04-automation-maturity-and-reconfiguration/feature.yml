@@ -1,0 +1,19 @@
+id: 366683b4-8dab-8155-bbb6-d150b26504ec
+title: 04 Automation Maturity And Reconfiguration
+prefix: "04"
+slug: 04-automation-maturity-and-reconfiguration
+status: done
+source_queue: Ready
+branch: codex/build-runner-04
+started_at: 2026-05-21T21:40:19Z
+completed_at: 2026-05-21T21:46:35Z
+acceptance:
+  - automation check reports required contract and maturity evidence gaps
+  - new automations start at observe maturity
+  - maturity can move to prepare safely and higher levels require file-first evidence
+  - project attachment updates project status, source map, and automation attachments
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 20 passed in 1.18s
+  - command: temp-root automation check, set-maturity prepare, attach, and validate smoke
+    result: valid temp root after automation reconfiguration
