@@ -1,0 +1,32 @@
+id: <event_id>
+type: <event_type>
+schema_version: 1
+occurred_at: <iso8601>
+observed_at: <iso8601>
+source:
+  system: <system>
+  provider: <provider>
+  watch_source_id: <watch_source_id>
+actor:
+  type: user | agent | system
+  display_name: <actor>
+object:
+  type: <object_type>
+  external_id: <external_id>
+  title: <title>
+correlation:
+  correlation_id: <correlation_id>
+  parent_event_id: null
+  run_id: null
+idempotency_key: <dedupe_key>
+summary: ""
+payload_ref:
+  type: link | file | registry
+  href: ""
+privacy:
+  contains_secret: false
+  contains_customer_data: false
+links:
+  run_log: null
+  notion_record: null
+  source_url: null

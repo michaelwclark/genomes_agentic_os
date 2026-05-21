@@ -79,6 +79,11 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/watch-cursor.yml",
     "templates/runtime/source-event.yml",
     "templates/runtime/trigger-rule.yml",
+    "templates/runtime/event-envelope.yml",
+    "templates/runtime/event-ledger-index.md",
+    "templates/runtime/chain-rule.yml",
+    "templates/runtime/event-processing-result.yml",
+    "templates/runtime/dead-letter-event.yml",
     "operating-manual/README.md",
     "operating-manual/index.html",
     "operating-manual/manual-manifest.yml",
@@ -96,6 +101,8 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-control-plane-bootstrap.md",
     "commands/os-context-audit.md",
     "commands/os-watch-source.md",
+    "commands/os-event.md",
+    "commands/os-chain.md",
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "commands/os-runtime-init.md",
@@ -122,6 +129,7 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/runtime-operator/SKILL.md",
     "skills/integration-setup/SKILL.md",
     "skills/source-watcher/SKILL.md",
+    "skills/event-graph-operator/SKILL.md",
 )
 
 

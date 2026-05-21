@@ -101,6 +101,13 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-cursor.yml").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "source-event.yml").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "trigger-rule.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-ledger-index.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "chain-rule.yml").is_file()
+    assert (
+        root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-processing-result.yml"
+    ).is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "dead-letter-event.yml").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "index.html").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
@@ -117,6 +124,8 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-heartbeat.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-integration-setup.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-event.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-chain.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "plans" / "README.md").is_file()
     assert (
         root / "shared_factory" / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
@@ -162,6 +171,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "runtime-operator" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "integration-setup" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
 
@@ -322,6 +332,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     playbook_skill = root / "shared_factory" / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
     watch_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-watch-source.md"
     watch_template = root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-source.yml"
+    event_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-event.md"
+    event_template = root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml"
     plan_readme = root / "shared_factory" / "05-knowledge" / "plans" / "README.md"
     plan_file = root / "shared_factory" / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
     planning_template = root / "shared_factory" / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
@@ -333,6 +345,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     playbook_skill.unlink()
     watch_command.unlink()
     watch_template.unlink()
+    event_command.unlink()
+    event_template.unlink()
     plan_file.unlink()
     planning_template.unlink()
     domain_context_template.unlink()
@@ -347,6 +361,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert playbook_skill.is_file()
     assert watch_command.is_file()
     assert watch_template.is_file()
+    assert event_command.is_file()
+    assert event_template.is_file()
     assert plan_file.is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
@@ -1028,6 +1044,119 @@ def test_watch_source_doctor_catches_missing_cursor_and_provider(tmp_path: Path,
     assert main(["connected-system", "doctor", "notion_genome", "--root", str(root)]) == 1
     system_doctor = yaml.safe_load(capsys.readouterr().out)
     assert any("missing providers" in finding["message"] for finding in system_doctor["findings"])
+
+
+def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert (
+        main(
+            [
+                "event",
+                "append",
+                "--root",
+                str(root),
+                "--type",
+                "github.pull_request.merged",
+                "--source",
+                "github:genomes_agentic_os:pull/123",
+                "--summary",
+                "PR 123 merged into main.",
+            ]
+        )
+        == 0
+    )
+    event = yaml.safe_load(capsys.readouterr().out)
+    event_path = Path(event["path"])
+    assert event_path.is_file()
+    assert (root / "shared_factory" / "06-runs-and-logs" / "events" / "event-ledger-index.md").is_file()
+
+    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
+    data["chain_rules"][0]["enabled"] = True
+    data["chain_rules"][0]["when"]["filters"] = {}
+    chain_rules.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["chain", "test", "feature_merged_to_docs_update", "--event", str(event_path), "--root", str(root)]) == 0
+    test_result = yaml.safe_load(capsys.readouterr().out)
+    assert test_result["matched"] is True
+    assert test_result["queue_item"]["work_type"] == "documentation_update"
+
+    assert main(["event", "process-due", "--root", str(root), "--dry-run"]) == 0
+    dry_run = yaml.safe_load(capsys.readouterr().out)
+    assert dry_run["dry_run"] is True
+    assert dry_run["actions"][0]["results"][0]["status"] == "dry-run"
+    assert not (root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(
+        encoding="utf-8"
+    ).count("documentation_update")
+
+    assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
+    applied = yaml.safe_load(capsys.readouterr().out)
+    assert applied["actions"][0]["results"][0]["status"] == "queued"
+    run_queue = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    assert run_queue["run_queue"][0]["work_type"] == "documentation_update"
+
+    assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
+    repeated = yaml.safe_load(capsys.readouterr().out)
+    assert repeated["actions"][0]["results"][0]["status"] == "skipped"
+    assert main(["validate", "--root", str(root)]) == 0
+
+
+def test_event_graph_dead_letter_and_run_close_emit_events(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["event", "append", "--root", str(root), "--type", "example.failed", "--source", "example:1"]) == 0
+    capsys.readouterr()
+    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
+    data["chain_rules"].append(
+        {
+            "id": "broken_rule",
+            "display_name": "Broken Rule",
+            "enabled": True,
+            "when": {"event_type": "example.failed"},
+            "then": {},
+            "limits": {"max_chain_depth": 1},
+            "idempotency": {"key": "{event_id}:broken"},
+        }
+    )
+    chain_rules.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["chain", "doctor", "--root", str(root)]) == 1
+    doctor = yaml.safe_load(capsys.readouterr().out)
+    assert any("missing enqueue action" in finding["message"] for finding in doctor["findings"])
+
+    assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
+    processed = yaml.safe_load(capsys.readouterr().out)
+    assert processed["actions"][0]["results"][0]["status"] == "dead-letter"
+    assert list((root / "shared_factory" / "06-runs-and-logs" / "events" / "dead-letter").glob("*.yml"))
+
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+    run_dir = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev"))
+    assert (
+        main(
+            [
+                "run-log",
+                "close",
+                "los",
+                run_dir.name,
+                "--status",
+                "done",
+                "--validation",
+                "event graph test validation passed",
+                "--emit-events",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    closeout = yaml.safe_load(capsys.readouterr().out)
+    assert closeout["emitted_event"]["type"] == "os.run.closed.done"
+    assert Path(closeout["emitted_event"]["emitted_path"]).is_file()
 
 
 def test_notion_sync_plan_maps_filesystem_objects_and_is_idempotent(tmp_path: Path, capsys) -> None:
