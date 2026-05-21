@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import yaml
 
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.validate import validate_root
@@ -331,6 +332,78 @@ def test_project_create_rejects_invalid_names_and_normalizes_domain_alias(tmp_pa
     assert main(["project", "create", "lenders", "lender_portal", "--root", str(root)]) == 0
     assert (root / "los" / "02-projects" / "lender_portal" / "project.yml").is_file()
     assert not (root / "lenders").exists()
+
+
+def test_route_classifies_project_request_and_approval_risk(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "losmon_repo"
+    repo.mkdir()
+
+    assert main(["project", "create", "los", "losmon_replacement", "--repo", str(repo), "--root", str(root)]) == 0
+    assert main(["route", "Deploy losmon_replacement to production", "--root", str(root)]) == 0
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "project"
+    assert packet["target_path"].endswith("los/02-projects/losmon_replacement")
+    assert "production change" in packet["approval_risks"]
+    assert any(path.endswith("source-map.md") for path in packet["sources_to_load"])
+
+
+def test_context_build_returns_exact_project_sources(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "context",
+                "build",
+                "--domain",
+                "los",
+                "--project",
+                "losmon_replacement",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "project"
+    assert str(root / "ROUTER.md") in packet["sources_to_load"]
+    assert str(root / "los" / "ROUTER.md") in packet["sources_to_load"]
+    assert str(root / "los" / "02-projects" / "losmon_replacement" / "project.yml") in packet["sources_to_load"]
+
+
+def test_here_detects_os_path_and_linked_project_repo(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "losmon_repo"
+    repo.mkdir()
+
+    assert main(["project", "create", "los", "losmon_replacement", "--repo", str(repo), "--root", str(root)]) == 0
+    monkeypatch.chdir(root / "los")
+    assert main(["here", "route", "Summarize active work", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "domain"
+
+    monkeypatch.chdir(repo)
+    assert main(["here", "context", "build", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "project"
+    assert packet["target_path"].endswith("los/02-projects/losmon_replacement")
+
+
+def test_route_fails_safely_when_ambiguous(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["route", "Do the thing", "--root", str(root)]) == 2
+    assert main(["route", "Compare los and personal work", "--root", str(root)]) == 2
 
 
 def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None:

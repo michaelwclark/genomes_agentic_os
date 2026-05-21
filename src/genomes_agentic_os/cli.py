@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 import sys
 
+from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
     create_automation,
     create_domain,
@@ -74,6 +75,33 @@ def build_parser() -> argparse.ArgumentParser:
     run_log_create.add_argument("workflow_or_automation")
     run_log_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     run_log_create.set_defaults(handler=handle_run_log_create)
+
+    route_parser = subparsers.add_parser("route", help="Route a request to a domain, project, or workflow.")
+    route_parser.add_argument("request")
+    route_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    route_parser.set_defaults(handler=handle_route)
+
+    context_parser = subparsers.add_parser("context", help="Build deterministic context packets.")
+    context_subparsers = context_parser.add_subparsers(dest="context_command", required=True)
+    context_build = context_subparsers.add_parser("build", help="Build a context packet.")
+    context_build.add_argument("--domain", required=True)
+    context_build.add_argument("--project")
+    context_build.add_argument("--workflow")
+    context_build.add_argument("--lane")
+    context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    context_build.set_defaults(handler=handle_context_build)
+
+    here_parser = subparsers.add_parser("here", help="Route from the current working directory.")
+    here_subparsers = here_parser.add_subparsers(dest="here_command", required=True)
+    here_route = here_subparsers.add_parser("route", help="Route a request from the current directory.")
+    here_route.add_argument("request")
+    here_route.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    here_route.set_defaults(handler=handle_here_route)
+    here_context = here_subparsers.add_parser("context", help="Build context from the current directory.")
+    here_context_subparsers = here_context.add_subparsers(dest="here_context_command", required=True)
+    here_context_build = here_context_subparsers.add_parser("build", help="Build context from the current directory.")
+    here_context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    here_context_build.set_defaults(handler=handle_here_context_build)
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -144,6 +172,36 @@ def handle_automation_create(args: argparse.Namespace) -> int:
 
 def handle_run_log_create(args: argparse.Namespace) -> int:
     print_result(create_run_log(args.root, args.domain, args.workflow_or_automation))
+    return 0
+
+
+def handle_route(args: argparse.Namespace) -> int:
+    print(format_packet(route_request(args.root, args.request)))
+    return 0
+
+
+def handle_context_build(args: argparse.Namespace) -> int:
+    print(
+        format_packet(
+            build_context(
+                args.root,
+                domain=args.domain,
+                project=args.project,
+                workflow=args.workflow,
+                lane=args.lane,
+            )
+        )
+    )
+    return 0
+
+
+def handle_here_route(args: argparse.Namespace) -> int:
+    print(format_packet(route_request(args.root, args.request, cwd=Path.cwd())))
+    return 0
+
+
+def handle_here_context_build(args: argparse.Namespace) -> int:
+    print(format_packet(context_from_here(args.root, cwd=Path.cwd())))
     return 0
 
 
