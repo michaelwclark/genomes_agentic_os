@@ -1,0 +1,19 @@
+id: 366683b4-8dab-8111-af7c-f5408e76ac4d
+title: 13 Reference And Skill Index Layer
+prefix: "13"
+slug: 13-reference-and-skill-index-layer
+status: done
+source_queue: Ready
+branch: codex/build-runner-13
+started_at: 2026-05-21T22:28:28Z
+completed_at: 2026-05-21T22:32:14Z
+acceptance:
+  - reference templates install into shared factory templates
+  - runtime reference files install into shared_factory/05-knowledge/references
+  - validation checks installed runtime references
+  - context packets include shared reference files
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 33 passed in 2.17s
+  - command: temp-root init, context build, validate smoke
+    result: reference index smoke valid

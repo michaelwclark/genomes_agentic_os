@@ -1061,6 +1061,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
             os_root / "shared_factory" / "05-knowledge" / "plans",
         )
     )
+    result.extend(
+        copy_tree(
+            template_source_dir() / "reference",
+            os_root / "shared_factory" / "05-knowledge" / "references",
+        )
+    )
     return result
 
 
