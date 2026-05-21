@@ -9,6 +9,7 @@ import sys
 from .scaffold import (
     create_automation,
     create_domain,
+    create_project,
     create_run_log,
     create_workflow,
     install_docs,
@@ -34,6 +35,19 @@ def build_parser() -> argparse.ArgumentParser:
     domain_create.add_argument("name")
     domain_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     domain_create.set_defaults(handler=handle_domain_create)
+
+    project_parser = subparsers.add_parser("project", help="Manage projects.")
+    project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
+    project_create = project_subparsers.add_parser("create", help="Create a project scaffold.")
+    project_create.add_argument("domain")
+    project_create.add_argument("project")
+    project_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_create.add_argument("--repo", help="Repository path or URL.")
+    project_create.add_argument("--notion", help="Notion page, database, or URL.")
+    project_create.add_argument("--jira", help="Jira project, issue, or URL.")
+    project_create.add_argument("--status", default="active", choices=("active", "waiting", "blocked", "done"))
+    project_create.add_argument("--lane", help="Primary operating lane for this project.")
+    project_create.set_defaults(handler=handle_project_create)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -99,6 +113,22 @@ def handle_init(args: argparse.Namespace) -> int:
 
 def handle_domain_create(args: argparse.Namespace) -> int:
     print_result(create_domain(args.root, args.name))
+    return 0
+
+
+def handle_project_create(args: argparse.Namespace) -> int:
+    print_result(
+        create_project(
+            args.root,
+            args.domain,
+            args.project,
+            repo=args.repo,
+            notion=args.notion,
+            jira=args.jira,
+            status=args.status,
+            lane=args.lane,
+        )
+    )
     return 0
 
 

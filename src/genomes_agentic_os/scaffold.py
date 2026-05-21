@@ -32,6 +32,13 @@ STANDARD_LANES = (
     "learning",
 )
 
+PROJECT_STATUSES = (
+    "active",
+    "waiting",
+    "blocked",
+    "done",
+)
+
 CONTROL_PLANE_FILES = (
     "README.md",
     "active-work.md",
@@ -183,6 +190,17 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     result.created.append(path)
+
+
+def append_once(path: Path, content: str, result: ScaffoldResult) -> None:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if content in existing:
+        result.skipped.append(path)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    path.write_text(f"{existing}{separator}{content}", encoding="utf-8")
+    result.updated.append(path)
 
 
 def copy_file(source: Path, destination: Path, result: ScaffoldResult) -> None:
@@ -1052,6 +1070,165 @@ def create_domain(root: str | Path, domain: str) -> ScaffoldResult:
     result = init_os(os_root)
     if domain not in DEFAULT_DOMAINS:
         create_domain_structure(os_root, domain, result)
+    return result
+
+
+def project_readme(domain: str, project: str, status: str, lane: str | None) -> str:
+    lane_label = lane or ""
+    return f"""# Project: {project}
+
+## Metadata
+
+| Field | Value |
+| --- | --- |
+| Domain | `{domain}` |
+| Status | `{status}` |
+| Lane | `{lane_label}` |
+
+## Purpose
+
+Describe the project outcome, boundaries, source systems, and active workflows.
+
+## Start Here
+
+- `status.md` records current state and next action.
+- `source-map.md` records repos, Notion pages, Jira projects, and other source links.
+- `decisions.md` records durable project decisions.
+- `artifacts/` stores project-specific outputs that do not belong in a workflow run.
+"""
+
+
+def project_config(
+    domain: str,
+    project: str,
+    status: str,
+    lane: str | None,
+    repo: str | None,
+    notion: str | None,
+    jira: str | None,
+) -> str:
+    return f"""id: {project}
+name: {project}
+domain: {domain}
+status: {status}
+lane: {lane or ""}
+
+sources:
+  repo: {repo or ""}
+  notion: {notion or ""}
+  jira: {jira or ""}
+
+routing:
+  project_root: 02-projects/{project}
+  status_file: status.md
+  source_map: source-map.md
+  decisions: decisions.md
+"""
+
+
+def project_status(project: str, status: str) -> str:
+    return f"""# Status: {project}
+
+| Field | Value |
+| --- | --- |
+| Status | `{status}` |
+| Owner | OS Owner |
+| Next Action |  |
+
+## Current State
+
+-
+
+## Recent Activity
+
+| Date | Update | Link |
+| --- | --- | --- |
+"""
+
+
+def project_decisions(project: str) -> str:
+    return f"""# Decisions: {project}
+
+| Date | Decision | Why | Impact | Link |
+| --- | --- | --- | --- | --- |
+"""
+
+
+def project_source_map(project: str, repo: str | None, notion: str | None, jira: str | None) -> str:
+    rows = ["| Source | Location | Purpose | Notes |", "| --- | --- | --- | --- |"]
+    if repo:
+        rows.append(f"| Repo | {repo} | Code and working tree |  |")
+    if notion:
+        rows.append(f"| Notion | {notion} | Control plane or docs |  |")
+    if jira:
+        rows.append(f"| Jira | {jira} | Issues, roadmap, or delivery tracking |  |")
+    if len(rows) == 2:
+        rows.append("|  |  |  |  |")
+    return f"""# Source Map: {project}
+
+{chr(10).join(rows)}
+"""
+
+
+def ensure_project_index(projects_readme: Path, domain: str, project: str, status: str, result: ScaffoldResult) -> None:
+    table = "\n## Project Index\n\n| Project | Status | Folder |\n| --- | --- | --- |\n"
+    if "## Project Index" not in projects_readme.read_text(encoding="utf-8"):
+        append_once(projects_readme, table, result)
+    append_once(projects_readme, f"| `{project}` | `{status}` | `{project}/` |\n", result)
+
+
+def ensure_active_work(active_work: Path, project: str, status: str, result: ScaffoldResult) -> None:
+    append_once(
+        active_work,
+        f"| `{project}` | `{status}` | OS Owner | Define next action. | `02-projects/{project}/` |\n",
+        result,
+    )
+
+
+def append_project_source_refs(source_map: Path, repo: str | None, notion: str | None, jira: str | None, result: ScaffoldResult) -> None:
+    rows = []
+    if repo:
+        rows.append(f"| Repo | {repo} | Code and working tree |  |\n")
+    if notion:
+        rows.append(f"| Notion | {notion} | Control plane or docs |  |\n")
+    if jira:
+        rows.append(f"| Jira | {jira} | Issues, roadmap, or delivery tracking |  |\n")
+    for row in rows:
+        append_once(source_map, row, result)
+
+
+def create_project(
+    root: str | Path,
+    domain: str,
+    project: str,
+    *,
+    repo: str | None = None,
+    notion: str | None = None,
+    jira: str | None = None,
+    status: str = "active",
+    lane: str | None = None,
+) -> ScaffoldResult:
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    if status not in PROJECT_STATUSES:
+        raise ValueError(f"status must be one of {', '.join(PROJECT_STATUSES)}: {status!r}")
+    if lane is not None:
+        lane = validate_name(lane, "lane")
+
+    result = create_domain(root, domain)
+    domain_root = expand_path(root) / domain
+    project_root = domain_root / "02-projects" / project
+    ensure_dir(project_root, result)
+    ensure_dir(project_root / "artifacts", result)
+    write_file_once(project_root / "README.md", project_readme(domain, project, status, lane), result)
+    write_file_once(project_root / "project.yml", project_config(domain, project, status, lane, repo, notion, jira), result)
+    write_file_once(project_root / "status.md", project_status(project, status), result)
+    write_file_once(project_root / "decisions.md", project_decisions(project), result)
+    write_file_once(project_root / "source-map.md", project_source_map(project, repo, notion, jira), result)
+
+    ensure_project_index(domain_root / "02-projects" / "README.md", domain, project, status, result)
+    ensure_active_work(domain_root / "00-control-plane" / "active-work.md", project, status, result)
+    append_project_source_refs(project_root / "source-map.md", repo, notion, jira, result)
     return result
 
 

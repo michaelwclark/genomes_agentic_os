@@ -266,6 +266,73 @@ def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:
     assert validate_root(root).ok
 
 
+def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert (
+        main(
+            [
+                "project",
+                "create",
+                "los",
+                "losmon_replacement",
+                "--root",
+                str(root),
+                "--repo",
+                "/Users/genome/projects/losmon",
+                "--notion",
+                "https://notion.so/example",
+                "--jira",
+                "LOS",
+                "--lane",
+                "engineering",
+            ]
+        )
+        == 0
+    )
+
+    project_root = root / "los" / "02-projects" / "losmon_replacement"
+    assert (project_root / "README.md").is_file()
+    assert (project_root / "project.yml").is_file()
+    assert (project_root / "status.md").is_file()
+    assert (project_root / "decisions.md").is_file()
+    assert (project_root / "source-map.md").is_file()
+    assert (project_root / "artifacts").is_dir()
+    assert "repo: /Users/genome/projects/losmon" in (project_root / "project.yml").read_text(encoding="utf-8")
+    assert "| Repo | /Users/genome/projects/losmon |" in (project_root / "source-map.md").read_text(
+        encoding="utf-8"
+    )
+    assert "`losmon_replacement`" in (root / "los" / "02-projects" / "README.md").read_text(encoding="utf-8")
+    assert "`losmon_replacement`" in (root / "los" / "00-control-plane" / "active-work.md").read_text(
+        encoding="utf-8"
+    )
+    assert validate_root(root).ok
+
+
+def test_project_create_is_idempotent_and_preserves_local_edits(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    command = ["project", "create", "los", "losmon_replacement", "--root", str(root)]
+
+    assert main(command) == 0
+    status_file = root / "los" / "02-projects" / "losmon_replacement" / "status.md"
+    status_file.write_text("# local status edit\n", encoding="utf-8")
+    assert main(command) == 0
+
+    assert status_file.read_text(encoding="utf-8") == "# local status edit\n"
+    active_work = (root / "los" / "00-control-plane" / "active-work.md").read_text(encoding="utf-8")
+    assert active_work.count("| `losmon_replacement` |") == 1
+    assert validate_root(root).ok
+
+
+def test_project_create_rejects_invalid_names_and_normalizes_domain_alias(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "bad-name", "--root", str(root)]) == 2
+    assert main(["project", "create", "lenders", "lender_portal", "--root", str(root)]) == 0
+    assert (root / "los" / "02-projects" / "lender_portal" / "project.yml").is_file()
+    assert not (root / "lenders").exists()
+
+
 def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
