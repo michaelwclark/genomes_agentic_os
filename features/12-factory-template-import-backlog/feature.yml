@@ -1,0 +1,19 @@
+id: 366683b4-8dab-8166-9cf3-f870f78c47be
+title: 12 Factory Template Import Backlog
+prefix: "12"
+slug: 12-factory-template-import-backlog
+status: done
+source_queue: Ready
+branch: codex/build-runner-12
+started_at: 2026-05-21T22:24:21Z
+completed_at: 2026-05-21T22:27:00Z
+acceptance:
+  - factory-derived room, stage, reference, profile, and customer templates install into shared factory
+  - import inventory categorizes copied, adapted, referenced, and rejected factory patterns
+  - customer-facing templates pass private/example-name sanitation checks
+  - docs update restores missing managed template files additively
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 33 passed in 2.18s
+  - command: temp-root docs update, validate, and template/doc smoke
+    result: factory template smoke valid
