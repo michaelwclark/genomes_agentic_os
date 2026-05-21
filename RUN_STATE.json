@@ -59,6 +59,26 @@
       "card_id": "366683b4-8dab-8155-bbb6-d150b26504ec",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81bb-85f9-f94db7a4cf64",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81bb-85f9-f94db7a4cf64",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81ac-a630-c84850ee2030",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81ec-a805-e5d2c9a14f47",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -100,7 +120,11 @@
       "slug": "03-workflow-readiness-and-run-closeout",
       "title": "03 Workflow Readiness And Run Closeout",
       "card_id": "366683b4-8dab-81bb-85f9-f94db7a4cf64",
-      "status": "ready"
+      "status": "done",
+      "branch": "codex/build-runner-03",
+      "merge_commit": "36196d4",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T21:40:19Z"
     },
     {
       "prefix": "04",
@@ -115,14 +139,16 @@
       "slug": "05-customer-os-factory",
       "title": "05 Customer Os Factory",
       "card_id": "366683b4-8dab-81ac-a630-c84850ee2030",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-05"
     },
     {
       "prefix": "06",
       "slug": "06-notion-control-plane-sync",
       "title": "06 Notion Control Plane Sync",
       "card_id": "366683b4-8dab-81ec-a805-e5d2c9a14f47",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-06"
     },
     {
       "prefix": "07",

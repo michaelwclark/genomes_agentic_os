@@ -11,3 +11,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 02 Routing And Context Builder
 
 `agentic-os route`, `agentic-os context build`, and `agentic-os here ...` commands now return deterministic context packets with source files, target paths, known gaps, handoff prompts, and approval risks.
+
+## 03 Workflow Readiness And Run Closeout
+
+`agentic-os workflow check` reports workflow readiness findings, and `agentic-os run-log close` records validation-backed final status, closeout notes, activity-log updates, workflow progress updates, and optional linked project status updates.

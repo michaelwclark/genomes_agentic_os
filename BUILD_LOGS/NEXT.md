@@ -11,3 +11,7 @@ Next active lower prefixes are `02 Routing And Context Builder` and `03 Workflow
 ## 02 Routing And Context Builder
 
 Next active lower prefixes are `03 Workflow Readiness And Run Closeout` and `04 Automation Maturity And Reconfiguration`; next READY prefix to start is `05 Customer Os Factory`.
+
+## 03 Workflow Readiness And Run Closeout
+
+Next active lower prefixes are `04 Automation Maturity And Reconfiguration`, `05 Customer Os Factory`, and `06 Notion Control Plane Sync`. Continue with `04` as the lowest incomplete active prefix.

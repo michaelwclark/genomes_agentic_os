@@ -15,3 +15,9 @@
 
 - `uv run --extra dev pytest -q`: `14 passed in 0.83s`.
 - Temp-root route, linked-repo `here context build`, and validation smoke passed.
+
+## 03 Workflow Readiness And Run Closeout
+
+- `uv run --extra dev pytest -q`: `17 passed in 1.13s` on merged `main`.
+- Temp-root workflow check, run-log close, and validation smoke passed.
+- Notion completion write/comment returned HTTP 200.

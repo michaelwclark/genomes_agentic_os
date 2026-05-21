@@ -21,3 +21,11 @@
 - Implemented on branch `codex/build-runner-02`.
 - Commit: `d5412d9`.
 - Merged and pushed to `main` as `1e0a7d7`.
+
+## 03 Workflow Readiness And Run Closeout
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-03`.
+- Commit: `b712281`.
+- Merged and pushed to `main` as `36196d4`.
+- Claimed the next READY feature `06 Notion Control Plane Sync` to keep the active set at three.
