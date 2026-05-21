@@ -51,3 +51,7 @@ Next active lower prefixes are `12 Factory Template Import Backlog`, `13 Referen
 ## 12 Factory Template Import Backlog
 
 Next active lower prefixes are `13 Reference And Skill Index Layer`, `14 Client Automation And Control Plane Playbooks`, and `15 Always On Runtime Heartbeats Schedules And Integrations`. Continue with `13` as the lowest incomplete active prefix.
+
+## 13 Reference And Skill Index Layer
+
+Next active lower prefixes are `14 Client Automation And Control Plane Playbooks`, `15 Always On Runtime Heartbeats Schedules And Integrations`, and `16 Connected Source Watch Registry`. Continue with `14` as the lowest incomplete active prefix.

@@ -75,3 +75,9 @@
 - `uv run --extra dev pytest -q`: `33 passed in 1.96s` on merged `main`.
 - Temp-root docs update/template smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 13 Reference And Skill Index Layer
+
+- `uv run --extra dev pytest -q`: `33 passed in 2.00s` on merged `main`.
+- Temp-root reference install/context/validate smoke passed.
+- Notion completion write/comment returned HTTP 200.

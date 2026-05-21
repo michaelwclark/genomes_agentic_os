@@ -51,3 +51,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 12 Factory Template Import Backlog
 
 Factory-derived templates now have an import inventory and sanitation/install tests for room, stage, reference, profile, and customer template surfaces.
+
+## 13 Reference And Skill Index Layer
+
+Runtime reference files now install under shared factory references, validation checks them, and context packets include shared naming/tool/source/style references.

@@ -101,3 +101,11 @@
 - Commit: `4304663`.
 - Merged and pushed to `main` as `402b960`.
 - Claimed the next READY feature `15 Always On Runtime Heartbeats Schedules And Integrations` to keep the active set at three.
+
+## 13 Reference And Skill Index Layer
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-13`.
+- Commit: `2496772`.
+- Merged and pushed to `main` as `1d5a148`.
+- Claimed the next READY feature `16 Connected Source Watch Registry` to keep the active set at three.

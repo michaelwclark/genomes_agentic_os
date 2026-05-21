@@ -169,6 +169,16 @@
       "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8111-af7c-f5408e76ac4d",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -320,8 +330,11 @@
       "slug": "13-reference-and-skill-index-layer",
       "title": "13 Reference And Skill Index Layer",
       "card_id": "366683b4-8dab-8111-af7c-f5408e76ac4d",
-      "status": "building",
-      "branch": "codex/build-runner-13"
+      "status": "done",
+      "branch": "codex/build-runner-13",
+      "merge_commit": "1d5a148",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:33:39Z"
     },
     {
       "prefix": "14",
@@ -344,7 +357,8 @@
       "slug": "16-connected-source-watch-registry",
       "title": "16 Connected Source Watch Registry",
       "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-16"
     },
     {
       "prefix": "17",
