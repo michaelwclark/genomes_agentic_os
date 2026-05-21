@@ -24,14 +24,19 @@ Domain `CONTEXT.md` teaches the room.
 
 Required sections:
 
-- Domain purpose.
-- What good output looks like.
+- Purpose.
+- Inputs.
+- Process.
+- Output folders.
+- What to load.
+- Tools and skills.
+- Done means.
 - Standing context.
 - Work style.
 - Common tasks.
 - Update rule.
 
-Use this for durable domain behavior, not one-off task state.
+Use this for durable domain behavior, room routing, and load/skip rules, not one-off task state. If the file starts turning into an encyclopedia, move stable reference material to `REFERENCES.md` or `05-knowledge/`.
 
 ## Domain References
 

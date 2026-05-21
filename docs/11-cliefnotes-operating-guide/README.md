@@ -68,6 +68,8 @@ Each domain is a room with its own router, context, references, control plane, i
   08-archive/
 ```
 
+The room `CONTEXT.md` is intentionally tactical. It names expected inputs, process, output folders, what to load, what to skip, tool triggers, and what done means. Long-lived source material goes in `REFERENCES.md` or `05-knowledge/`; active execution evidence goes in run logs.
+
 Inside a domain, `workflow create` builds a full operating contract, not a loose prompt:
 
 ```text

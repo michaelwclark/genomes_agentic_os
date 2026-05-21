@@ -84,7 +84,7 @@ Each domain gets the same numbered operating structure:
 
 `ROUTER.md` is the source of truth. Root `ROUTER.md` picks the domain. Domain `ROUTER.md` picks the lane, project, workflow, automation, or run-log destination. `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` are compatibility pointers for tools that discover those filenames automatically. Domain `CONTEXT.md` and `REFERENCES.md` teach the agent how the domain works and where its source systems live.
 
-The installed OS also includes a self-contained operator layer under `shared_factory/05-knowledge/`: an operating manual, command prompts, harness skills, visual diagrams, and templates. This lets a human or agent operate from `~/agentic_os` without returning to this source repository for normal usage.
+The installed OS also includes a self-contained operator layer under `shared_factory/05-knowledge/`: an operating manual, command prompts, harness skills, visual diagrams, templates, and plans. This lets a human or agent operate from `~/agentic_os` without returning to this source repository for normal usage.
 
 ## Why This Matters
 
@@ -248,8 +248,8 @@ agentic-os init --target ~/agentic_os
 | `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with outcome brief, alignment questions, PRD, implementation plan, handoff, progress, spec, context pack, approvals, output contract, runbook, examples, and runs folder. |
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os` | Timestamped run folder under the domain's `06-runs-and-logs/runs/`. |
-| `agentic-os docs install --root ~/agentic_os` | Runtime operating manual, command prompts, and harness skills under `shared_factory/05-knowledge/`. |
-| `agentic-os docs update --root ~/agentic_os` | Adds missing runtime manual, command prompt, and harness skill assets without overwriting local edits. |
+| `agentic-os docs install --root ~/agentic_os` | Runtime templates, operating manual, command prompts, harness skills, and plans under `shared_factory/05-knowledge/`. |
+| `agentic-os docs update --root ~/agentic_os` | Adds missing runtime template, manual, command prompt, harness skill, and plan assets without overwriting local edits. |
 | `agentic-os validate --root ~/agentic_os` | Required domain-first folder checks plus JSON/YAML parseability. |
 
 ## What V1 Does
@@ -264,10 +264,12 @@ agentic-os init --target ~/agentic_os
 - Copies the operating manual into `shared_factory/05-knowledge/operating-manual/`.
 - Copies harness command prompts into `shared_factory/05-knowledge/commands/`.
 - Copies harness skill specs into `shared_factory/05-knowledge/skills/`.
+- Copies the source-package build backlog into `shared_factory/05-knowledge/plans/`.
 - Creates timestamped run folders under the selected domain.
 - Validates the required domain-first tree plus JSON/YAML parseability.
 - Keeps generated files safe to rerun by not overwriting existing hand-authored content.
 - Treats updates as additive and idempotent: new package assets are added where missing, existing OS files are preserved.
+- Customer installs should use room/profile discovery instead of inheriting Genome's personal default domains.
 
 ## What V1 Does Not Do
 
@@ -282,6 +284,7 @@ agentic-os init --target ~/agentic_os
 
 ```text
 docs/       Human-readable operating manual and diagrams.
+PLANS/     Feature specs and future build backlog.
 spec/       Product and implementation specs.
 templates/  Copyable source templates for installed OS objects.
 schemas/    JSON schemas for future stricter validation.
@@ -301,6 +304,7 @@ Key starting points:
 - [Information architecture](docs/02-information-architecture/README.md)
 - [Workflow guide](docs/04-workflows/README.md)
 - [Cliefnotes operating guide](docs/11-cliefnotes-operating-guide/README.md)
+- [Factory patterns](docs/12-factory-patterns/README.md)
 - [Automation guide](docs/05-automations/README.md)
 - [Storage model](docs/09-storage-model/README.md)
 - [Spec index](spec/README.md)

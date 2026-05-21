@@ -161,6 +161,13 @@ def harness_source_dir() -> Path:
     raise FileNotFoundError("Could not find repository harness directory")
 
 
+def plans_source_dir() -> Path:
+    candidate = repo_root() / "PLANS"
+    if candidate.is_dir():
+        return candidate
+    raise FileNotFoundError("Could not find repository PLANS directory")
+
+
 def ensure_dir(path: Path, result: ScaffoldResult) -> None:
     if path.is_dir():
         result.skipped.append(path)
@@ -354,6 +361,17 @@ storage:
   artifacts: filesystem
   cockpit: notion
   memory: agent_memory
+
+context_loading:
+  map_file: ROUTER.md
+  room_file: CONTEXT.md
+  reference_file: REFERENCES.md
+  default_rule: read the map and room file first, then load only task-specific references
+  skip_by_default:
+    - unrelated domains
+    - unrelated projects
+    - workflow internals unless running that workflow
+    - automation logs unless reviewing that automation
 """
 
 
@@ -448,6 +466,16 @@ Classify the request into one of this domain's operating lanes, then choose the 
 - Use `04-automations` when a trigger can safely run a repeatable action with declared permissions.
 - Use `shared_factory` when a pattern should be reused by multiple domains.
 
+## Context Loading
+
+| Need | Load | Skip By Default |
+| --- | --- | --- |
+| Understand the room | `CONTEXT.md`, `domain.yml` | Other domains |
+| Find source truth | `REFERENCES.md`, `05-knowledge/source-map.md` | Full private docs unless needed |
+| Resume active work | `00-control-plane/active-work.md`, matching project status | Unrelated project folders |
+| Run a workflow | Matching workflow `quick-reference.md`, `context-pack.md`, `runbook.md` | Automation logs |
+| Review an automation | Matching automation spec, permissions, tests, logs | Workflow internals outside the linked process |
+
 ## Approval Rules
 
 - Follow `00-control-plane/approval-rules.md`.
@@ -460,13 +488,56 @@ def domain_context(domain: str) -> str:
     display_name = titleize_name(domain)
     return f"""# Context: {display_name}
 
-This file teaches agents how work inside `{domain}` should be understood before they execute a task.
+This file teaches agents how work inside `{domain}` should be understood before they execute a task. Treat this domain as a room: load the room guide, route to the right object, then read only the sources the task requires.
 
-## Domain Purpose
+## Purpose
 
 {domain_purpose(domain)}
 
-## What Good Output Looks Like
+## Inputs
+
+- Raw requests, notes, tickets, messages, or ideas.
+- Existing project state under `02-projects/`.
+- Workflow and automation specs under `03-workflows/` and `04-automations/`.
+- Source systems listed in `REFERENCES.md` and `05-knowledge/source-map.md`.
+
+## Process
+
+1. Read `ROUTER.md`, this file, and the matching row in `## What To Load`.
+2. Check `00-control-plane/active-work.md` before creating new work.
+3. Reuse an existing project, workflow, automation, or run log when one fits.
+4. Read only the references required for the routed task.
+5. Record validation, next action, and durable learning before ending.
+
+## Output Folders
+
+- `00-control-plane/` - routing, approvals, active work, and decisions.
+- `01-inbox/` - untriaged capture and routing notes.
+- `02-projects/` - project-specific state, source maps, status, and artifacts.
+- `03-workflows/` - repeatable judgment-heavy processes.
+- `04-automations/` - triggerable processes with declared permissions and logs.
+- `05-knowledge/` - source maps, glossary, memory policy, and reference material.
+- `06-runs-and-logs/` - execution records, failures, and activity history.
+- `07-metrics/` - baselines and scorecards.
+- `08-archive/` - inactive or historical material.
+
+## What To Load
+
+| Task Type | Read First | Read When Needed | Do Not Load By Default | Output Path |
+| --- | --- | --- | --- | --- |
+| Raw capture | `01-inbox/raw-ideas.md` | `REFERENCES.md` | workflow internals | `01-inbox/raw-ideas.md` |
+| Route work | `ROUTER.md`, `00-control-plane/routing-rules.md` | `00-control-plane/active-work.md` | unrelated domain folders | `01-inbox/triage.md` or target object |
+| Project work | `02-projects/<project>/status.md`, `source-map.md` | linked repo, linked Notion/Jira | unrelated projects | `02-projects/<project>/` |
+| Workflow run | `03-workflows/<lane>/<workflow>/quick-reference.md`, `context-pack.md` | runbook, examples, source maps | automations unless the workflow says so | `06-runs-and-logs/runs/` |
+| Automation review | `04-automations/<lane>/<automation>/automation.md`, `permissions.md` | tests, logs, failure modes | unrelated workflows | `04-automations/<lane>/<automation>/` |
+
+## Tools And Skills
+
+| Tool Or Skill | Use When | Notes |
+| --- | --- | --- |
+|  |  |  |
+
+## Done Means
 
 - It routes work to the correct project, workflow, automation, or run log.
 - It preserves source links and evidence.
@@ -490,13 +561,13 @@ This file teaches agents how work inside `{domain}` should be understood before 
 
 ## Common Tasks
 
-| Task Type | Route | Notes |
-| --- | --- | --- |
-|  |  |  |
+| Task Type | Route | Read First | Output |
+| --- | --- | --- | --- |
+|  |  |  |  |
 
 ## Update Rule
 
-Update this file when a stable domain rule, source system, work style preference, or repeated failure mode becomes durable.
+Update this file when a stable domain rule, source system, work style preference, routing pattern, tool trigger, or repeated failure mode becomes durable.
 """
 
 
@@ -944,6 +1015,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     result = ScaffoldResult()
     result.extend(
         copy_tree(
+            template_source_dir(),
+            os_root / "shared_factory" / "05-knowledge" / "templates",
+        )
+    )
+    result.extend(
+        copy_tree(
             operating_manual_source_dir(),
             os_root / "shared_factory" / "05-knowledge" / "operating-manual",
         )
@@ -958,6 +1035,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         copy_tree(
             harness_source_dir() / "skills",
             os_root / "shared_factory" / "05-knowledge" / "skills",
+        )
+    )
+    result.extend(
+        copy_tree(
+            plans_source_dir(),
+            os_root / "shared_factory" / "05-knowledge" / "plans",
         )
     )
     return result

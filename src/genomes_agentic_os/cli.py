@@ -67,12 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     docs_parser = subparsers.add_parser("docs", help="Install or update runtime OS documentation.")
     docs_subparsers = docs_parser.add_subparsers(dest="docs_command", required=True)
-    docs_install = docs_subparsers.add_parser("install", help="Install runtime manual, commands, and skills.")
+    docs_install = docs_subparsers.add_parser(
+        "install",
+        help="Install runtime templates, manual, commands, skills, and plans.",
+    )
     docs_install.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_install.set_defaults(handler=handle_docs_install)
     docs_update = docs_subparsers.add_parser(
         "update",
-        help="Add missing runtime manual, command, and skill assets without overwriting local edits.",
+        help="Add missing runtime template, manual, command, skill, and plan assets without overwriting local edits.",
     )
     docs_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_update.set_defaults(handler=handle_docs_update)

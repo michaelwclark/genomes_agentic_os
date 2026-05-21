@@ -10,6 +10,8 @@ Use this when creating a new top-level operating boundary such as `personal`, `c
 - `AGENT.md`
 - `README.md`
 - `domain.yml`
+- `CONTEXT.md`
+- `REFERENCES.md`
 - `00-control-plane/active-work.md`
 - `00-control-plane/decisions.md`
 - `00-control-plane/routing-rules.md`
@@ -33,8 +35,9 @@ Use this when creating a new top-level operating boundary such as `personal`, `c
 
 1. Create the domain folder.
 2. Fill `domain.yml`.
-3. Fill `ROUTER.md` and the control plane rules.
-4. Add source maps and memory policy notes.
-5. Create or link the Notion control plane.
-6. Add first workflows before adding automations.
-7. Set approval rules before allowing external writes.
+3. Fill `CONTEXT.md` using the room template: inputs, process, output folders, load/skip rules, tools, and done criteria.
+4. Fill `ROUTER.md` and the control plane rules.
+5. Add source maps and memory policy notes.
+6. Create or link the Notion control plane.
+7. Add first workflows before adding automations.
+8. Set approval rules before allowing external writes.

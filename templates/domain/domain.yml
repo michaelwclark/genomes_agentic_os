@@ -53,3 +53,14 @@ storage:
   artifacts: filesystem
   cockpit: notion
   memory: agent_memory
+
+context_loading:
+  map_file: ROUTER.md
+  room_file: CONTEXT.md
+  reference_file: REFERENCES.md
+  default_rule: read the map and room file first, then load only task-specific references
+  skip_by_default:
+    - unrelated domains
+    - unrelated projects
+    - workflow internals unless running that workflow
+    - automation logs unless reviewing that automation

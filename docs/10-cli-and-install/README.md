@@ -38,8 +38,8 @@ The CLI flow mirrors the operating model:
 | Create workflow | `agentic-os workflow create los engineering feature_dev --root ~/agentic_os` | Adds a repeatable process folder for judgment-heavy work. |
 | Create automation | `agentic-os automation create los support production_thread_intake --root ~/agentic_os` | Adds a guarded trigger-driven process folder. |
 | Create run log | `agentic-os run-log create los feature_dev --root ~/agentic_os` | Records one execution attempt for audit and handoff. |
-| Install docs | `agentic-os docs install --root ~/agentic_os` | Adds the runtime operating manual, command prompts, and harness skills. |
-| Update docs | `agentic-os docs update --root ~/agentic_os` | Adds missing manual, command, and skill assets without overwriting local edits. |
+| Install docs | `agentic-os docs install --root ~/agentic_os` | Adds runtime templates, operating manual, command prompts, harness skills, and plan backlog. |
+| Update docs | `agentic-os docs update --root ~/agentic_os` | Adds missing template, manual, command, skill, and plan assets without overwriting local edits. |
 | Validate | `agentic-os validate --root ~/agentic_os` | Checks the required tree and parseable structured files. |
 
 ## Smoke Test
@@ -75,14 +75,15 @@ Expected result:
 - `shared_factory/05-knowledge/operating-manual/` contains the self-contained manual and visual index.
 - `shared_factory/05-knowledge/commands/` contains reusable harness command prompts.
 - `shared_factory/05-knowledge/skills/` contains reusable harness skill specs.
+- `shared_factory/05-knowledge/plans/` contains the current source-package backlog and future-ideas intake rules.
 
 ## What The CLI Copies
 
-`init` copies the repository `templates/`, `operating-manual/`, and `harness/` trees into `shared_factory/05-knowledge/` inside the installed OS. This matters because the installed OS should remain usable even when an agent is operating from the runtime root instead of this source repository.
+`init` copies the repository `templates/`, `operating-manual/`, `harness/`, and `PLANS/` trees into `shared_factory/05-knowledge/` inside the installed OS. This matters because the installed OS should remain usable even when an agent is operating from the runtime root instead of this source repository.
 
 Source templates stay in this repo. Runtime copies live in `shared_factory` because reusable templates and cross-domain patterns belong there.
 
-Manual, command, and skill copies are runtime assets. Add anything missing from the current package with:
+Template, manual, command, skill, and plan copies are runtime assets. Add anything missing from the current package with:
 
 ```bash
 agentic-os docs update --root ~/agentic_os
@@ -107,7 +108,7 @@ V1 validation checks:
 - Root `README.md`, `ROUTER.md`, `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` exist.
 - Default domain roots exist.
 - Each default domain has its router, config, numbered operating lanes, standard lane folders, knowledge files, activity log, metrics files, and archive placeholder.
-- `shared_factory/05-knowledge/operating-manual/`, `commands/`, and `skills/` contain the managed runtime operator layer.
+- `shared_factory/05-knowledge/operating-manual/`, `commands/`, `skills/`, and `plans/` contain the managed runtime operator layer.
 - JSON files under the OS root are parseable.
 - YAML files under the OS root are parseable.
 

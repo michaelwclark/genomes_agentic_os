@@ -1,0 +1,143 @@
+id: agentic_os_shared_skills
+version: 0.1.0
+managed: true
+source_dir: harness/skills
+installed_dir: shared_factory/05-knowledge/skills
+registry_install_path: shared_factory/05-knowledge/skill-registry.yml
+install_mode: copy
+update_policy: additive_non_destructive
+purpose: >
+  Canonical registry of shared skills that ship with Genome's Agentic OS and
+  may be synced into runtime harness skill directories.
+harness_targets:
+  codex:
+    enabled: true
+    runtime_dir: ~/.codex/skills
+    install_mode: copy
+  claude:
+    enabled: true
+    runtime_dir: ~/.claude/skills
+    install_mode: copy
+skills:
+  - id: build-runner
+    title: Build Runner
+    source_path: harness/skills/build-runner
+    installed_path: shared_factory/05-knowledge/skills/build-runner
+    harness_targets:
+      - codex
+      - claude
+    status: draft
+    builtin: true
+    bootstrap: true
+    purpose: >
+      Drive a Kanban-backed implementation queue through orchestrate with local
+      feature artifacts, verified worktree merges, holdout QA, build logs, and
+      board writeback.
+  - id: automation-qualifier
+    title: Automation Qualifier
+    source_path: harness/skills/automation-qualifier
+    installed_path: shared_factory/05-knowledge/skills/automation-qualifier
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Decide whether a workflow should become an always-on automation.
+  - id: context-pack-builder
+    title: Context Pack Builder
+    source_path: harness/skills/context-pack-builder
+    installed_path: shared_factory/05-knowledge/skills/context-pack-builder
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Assemble focused context packs for repeatable OS workflows.
+  - id: domain-setup
+    title: Domain Setup
+    source_path: harness/skills/domain-setup
+    installed_path: shared_factory/05-knowledge/skills/domain-setup
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Create or update domain operating structure.
+  - id: learning-promoter
+    title: Learning Promoter
+    source_path: harness/skills/learning-promoter
+    installed_path: shared_factory/05-knowledge/skills/learning-promoter
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Promote useful run learnings into durable OS knowledge.
+  - id: os-doctor
+    title: OS Doctor
+    source_path: harness/skills/os-doctor
+    installed_path: shared_factory/05-knowledge/skills/os-doctor
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Validate installed OS structure and report drift.
+  - id: os-navigator
+    title: OS Navigator
+    source_path: harness/skills/os-navigator
+    installed_path: shared_factory/05-knowledge/skills/os-navigator
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Route a request inside an installed Agentic OS.
+  - id: room-builder
+    title: Room Builder
+    source_path: harness/skills/room-builder
+    installed_path: shared_factory/05-knowledge/skills/room-builder
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Create room-first operating spaces from source material.
+  - id: run-logger
+    title: Run Logger
+    source_path: harness/skills/run-logger
+    installed_path: shared_factory/05-knowledge/skills/run-logger
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Capture run closeout notes into OS logs.
+  - id: workflow-builder
+    title: Workflow Builder
+    source_path: harness/skills/workflow-builder
+    installed_path: shared_factory/05-knowledge/skills/workflow-builder
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Create reusable workflow specs inside the OS.

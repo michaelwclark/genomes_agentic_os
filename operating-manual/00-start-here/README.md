@@ -10,6 +10,8 @@ When you enter the OS, do this before creating anything:
 4. Check `<domain>/00-control-plane/active-work.md`.
 5. Reuse an existing project, workflow, or automation when one fits.
 
+If the request is about improving Agentic OS itself, check `shared_factory/05-knowledge/plans/` before creating new planning notes.
+
 ## First Commands
 
 ```bash
@@ -30,3 +32,7 @@ Create in this order:
 | 3 | Workflow | Repeatable judgment needs a written process. |
 | 4 | Run log | Every execution needs evidence. |
 | 5 | Automation | Only stable, low-risk workflows should become triggers. |
+
+## Future Ideas
+
+Reusable OS ideas belong under `shared_factory/05-knowledge/plans/`. Domain-specific ideas belong in `<domain>/01-inbox/raw-ideas.md` until triaged.

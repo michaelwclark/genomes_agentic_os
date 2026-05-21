@@ -6,6 +6,8 @@ Notion should not be treated as the only durable execution layer for high-volume
 
 The control plane exists for people. The filesystem and future active state plane exist so agents and automations have durable execution records.
 
+For the first top-level Notion cockpit, use `templates/notion/agentic-os-control-plane.md` and the bootstrap plan in `PLANS/10-notion-control-plane-bootstrap.md`. Filesystem OS state remains the source of truth; Notion is the dashboard, kickoff, approval, and review surface.
+
 ## Required Notion Areas
 
 | Area | Purpose |

@@ -19,6 +19,7 @@ Use it when you are operating inside the installed OS and need to know what to c
 | Visual maps | `07-diagrams/` |
 | Harness commands and skills | `08-harness-commands/README.md` |
 | Common problems | `09-troubleshooting/README.md` |
+| Build plans and future ideas | `../plans/README.md` |
 
 ## Operating Rule
 
@@ -26,7 +27,7 @@ Do not start by inventing a new shape. Pick the current layer, use the expected 
 
 ## Update Rule
 
-Install and update commands are additive and idempotent. They may add missing manual, command, skill, template, or scaffold files, but they must not overwrite existing runtime files by default.
+Install and update commands are additive and idempotent. They may add missing manual, command, skill, template, plan, or scaffold files, but they must not overwrite existing runtime files by default.
 
 ## Visual Index
 

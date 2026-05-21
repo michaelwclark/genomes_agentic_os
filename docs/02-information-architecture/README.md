@@ -35,6 +35,18 @@ Lender-related work belongs inside `los/`; it is not a separate top-level domain
 
 Avoid making `engineering`, `marketing`, `sales`, `workflows`, or `automations` the top-level split. Those are operating lanes inside a domain.
 
+## Three-Layer Routing Model
+
+The installed OS uses the same map, room, work model across Claude, Codex, and future harnesses:
+
+| Layer | File Or Folder | Job | Loading Rule |
+| --- | --- | --- | --- |
+| Map | Root `ROUTER.md` | Pick the domain and keep active work out of root. | Read first. Keep short. |
+| Room | Domain `ROUTER.md`, `CONTEXT.md`, `REFERENCES.md`, `domain.yml` | Teach the domain, route to the right object, and name source systems. | Read only after the domain is selected. |
+| Work | Project, workflow, automation, run, and artifact folders | Hold active state, process contracts, outputs, evidence, and handoff notes. | Load only the matching object and its declared references. |
+
+`CONTEXT.md` is the room guide. It should include inputs, process, output folders, what-to-load rows, do-not-load defaults, tool triggers, and done criteria. Detailed reference knowledge belongs in `05-knowledge/` or `REFERENCES.md`, not in the room guide.
+
 ## Domain Layout
 
 Each domain should be able to stand alone:
@@ -61,6 +73,18 @@ Each domain should be able to stand alone:
 ```
 
 The domain is the unit of operating policy. Put access rules, approval rules, source systems, stakeholder context, and default routing there.
+
+## Domain Context
+
+Every domain has `CONTEXT.md`. That file tells an agent:
+
+- What kind of work happens in the domain.
+- What inputs are expected.
+- Which process to follow before creating or updating output.
+- Which folders own which outputs.
+- What to read first, what to read only when needed, and what to skip by default.
+- Which tools or skills activate for specific task types.
+- What done means before the session ends.
 
 ## Domain Router
 
@@ -113,6 +137,7 @@ Lanes should not own global state. They group reusable workflow and automation s
 | Object | Preferred Location | Notes |
 | --- | --- | --- |
 | Domain router | `<domain>/ROUTER.md` | Source-of-truth router an agent should read after root routing. |
+| Domain context | `<domain>/CONTEXT.md` | Room guide with inputs, process, load/skip rules, tool triggers, and done criteria. |
 | Domain config | `<domain>/domain.yml` | Stable ID, display name, lanes, directory map, approval defaults, and source systems. |
 | Active work | `<domain>/00-control-plane/active-work.md` | Current work and next actions. |
 | Routing rules | `<domain>/00-control-plane/routing-rules.md` | How to choose lane, project, workflow, or automation. |

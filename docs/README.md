@@ -18,6 +18,7 @@ Start with the README when you need the product pitch and quick install path. Us
 | How memory and context packs reduce prompt mass | [06 - Memory And Context](06-memory-and-context/README.md) |
 | How Claude and Codex should execute the same process | [07 - Agent Surfaces](07-agent-surfaces/README.md) |
 | How the Cliefnotes source material maps into this OS | [11 - Cliefnotes Operating Guide](11-cliefnotes-operating-guide/README.md) |
+| Which factory patterns should be imported into product templates | [12 - Factory Patterns](12-factory-patterns/README.md) |
 | When filesystem, Notion, or a database should own state | [09 - Storage Model](09-storage-model/README.md) |
 
 ## Sections
@@ -36,6 +37,7 @@ Start with the README when you need the product pitch and quick install path. Us
 | [09 - Storage Model](09-storage-model/README.md) | Filesystem, Notion, database, and vector/memory boundaries. |
 | [10 - CLI And Install](10-cli-and-install/README.md) | How to install the CLI, scaffold an OS root, and smoke-test the result. |
 | [11 - Cliefnotes Operating Guide](11-cliefnotes-operating-guide/README.md) | Source-derived system guide for folder architecture, routers, workflow formats, automations, data flow, and setup. |
+| [12 - Factory Patterns](12-factory-patterns/README.md) | How factory workspace blueprints, constraints, and builder skills map into Agentic OS templates. |
 | [Diagrams](diagrams/README.md) | SVG diagrams for value flow, lifecycle, data flow, and storage boundaries. |
 
 ## Object Vocabulary

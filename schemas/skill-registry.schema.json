@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/skill-registry.schema.json",
+  "title": "Shared Skill Registry",
+  "type": "object",
+  "required": ["id", "version", "source_dir", "installed_dir", "install_mode", "skills"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "version": { "type": "string" },
+    "managed": { "type": "boolean" },
+    "source_dir": { "type": "string" },
+    "installed_dir": { "type": "string" },
+    "registry_install_path": { "type": "string" },
+    "install_mode": { "type": "string", "enum": ["copy", "symlink", "manual"] },
+    "update_policy": {
+      "type": "string",
+      "enum": ["additive_non_destructive", "overwrite_managed", "manual_review"]
+    },
+    "purpose": { "type": "string" },
+    "harness_targets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["enabled", "runtime_dir", "install_mode"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "runtime_dir": { "type": "string" },
+          "install_mode": { "type": "string", "enum": ["copy", "symlink", "manual"] }
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "source_path", "installed_path", "status", "builtin", "purpose"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "title": { "type": "string" },
+          "source_path": { "type": "string" },
+          "installed_path": { "type": "string" },
+          "harness_targets": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "status": { "type": "string", "enum": ["draft", "active", "paused", "archived"] },
+          "builtin": { "type": "boolean" },
+          "bootstrap": { "type": "boolean" },
+          "purpose": { "type": "string" }
+        }
+      }
+    }
+  }
+}

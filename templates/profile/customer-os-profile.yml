@@ -1,0 +1,34 @@
+customer:
+  slug: <customer_slug>
+  display_name: <Customer Name>
+  owner: <owner>
+  notion_workspace: ""
+
+os:
+  root_name: agentic_os
+  install_mode: customer
+  default_profile: false
+
+rooms:
+  - id: <room_id>
+    name: <Room Name>
+    purpose: <what this room owns>
+    aliases: []
+    inputs: []
+    outputs: []
+    default_tools: []
+    approval_notes: ""
+
+references:
+  naming_conventions: true
+  tool_index: true
+  style_and_output_rules: true
+  source_priority: true
+
+approval_policy:
+  external_writes_require_approval: true
+  customer_visible_output_requires_approval: true
+  production_changes_require_approval: true
+  destructive_actions_require_approval: true
+
+source_systems: []

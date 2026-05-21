@@ -1,0 +1,172 @@
+{
+  "run_id": "build-runner-2026-05-21T204209Z",
+  "board": {
+    "workspace": "Genome's Notion",
+    "database_title": "Agentic OS Kanban",
+    "database_id": "366683b4-8dab-81a1-ab5f-c73e7e1f5c60",
+    "url": "https://www.notion.so/366683b48dab81a1ab5fc73e7e1f5c60",
+    "verification": {
+      "read_access": "verified",
+      "write_access": "verified",
+      "write_test": "no-op Status=Ready update on card 00 returned HTTP 200"
+    }
+  },
+  "queue": "Ready",
+  "ordering_rule": "title-prefix-ascending",
+  "target_branch": "main",
+  "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
+  "current_active_feature": null,
+  "last_successful_phase": {
+    "00-current-state-and-gap-map": "done"
+  },
+  "board_sync_writes": [
+    {
+      "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
+      "action": "preflight-no-op-status-ready",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    }
+  ],
+  "features": [
+    {
+      "prefix": "00",
+      "slug": "00-current-state-and-gap-map",
+      "title": "00 Current State And Gap Map",
+      "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
+      "status": "done",
+      "branch": null,
+      "merge_commit": null,
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T20:45:21Z"
+    },
+    {
+      "prefix": "01",
+      "slug": "01-project-create-and-active-work",
+      "title": "01 Project Create And Active Work",
+      "card_id": "366683b4-8dab-81e2-9268-ea82e66315a2",
+      "status": "ready"
+    },
+    {
+      "prefix": "02",
+      "slug": "02-routing-and-context-builder",
+      "title": "02 Routing And Context Builder",
+      "card_id": "366683b4-8dab-8154-bf58-f38c275a29ab",
+      "status": "ready"
+    },
+    {
+      "prefix": "03",
+      "slug": "03-workflow-readiness-and-run-closeout",
+      "title": "03 Workflow Readiness And Run Closeout",
+      "card_id": "366683b4-8dab-81bb-85f9-f94db7a4cf64",
+      "status": "ready"
+    },
+    {
+      "prefix": "04",
+      "slug": "04-automation-maturity-and-reconfiguration",
+      "title": "04 Automation Maturity And Reconfiguration",
+      "card_id": "366683b4-8dab-8155-bbb6-d150b26504ec",
+      "status": "ready"
+    },
+    {
+      "prefix": "05",
+      "slug": "05-customer-os-factory",
+      "title": "05 Customer Os Factory",
+      "card_id": "366683b4-8dab-81ac-a630-c84850ee2030",
+      "status": "ready"
+    },
+    {
+      "prefix": "06",
+      "slug": "06-notion-control-plane-sync",
+      "title": "06 Notion Control Plane Sync",
+      "card_id": "366683b4-8dab-81ec-a805-e5d2c9a14f47",
+      "status": "ready"
+    },
+    {
+      "prefix": "07",
+      "slug": "07-doctor-validation-and-migrations",
+      "title": "07 Doctor Validation And Migrations",
+      "card_id": "366683b4-8dab-8187-8c04-e4b4b1f262cf",
+      "status": "ready"
+    },
+    {
+      "prefix": "08",
+      "slug": "08-losmon-replacement-validation",
+      "title": "08 Losmon Replacement Validation",
+      "card_id": "366683b4-8dab-81c5-add3-e3913cbb362e",
+      "status": "ready"
+    },
+    {
+      "prefix": "09",
+      "slug": "09-future-ideas-intake",
+      "title": "09 Future Ideas Intake",
+      "card_id": "366683b4-8dab-819b-9cc2-d65228c323cb",
+      "status": "ready"
+    },
+    {
+      "prefix": "10",
+      "slug": "10-notion-control-plane-bootstrap",
+      "title": "10 Notion Control Plane Bootstrap",
+      "card_id": "366683b4-8dab-81f5-b933-c1084316190a",
+      "status": "ready"
+    },
+    {
+      "prefix": "11",
+      "slug": "11-room-first-installer-and-routing",
+      "title": "11 Room First Installer And Routing",
+      "card_id": "366683b4-8dab-81f5-8206-f8614c996da3",
+      "status": "ready"
+    },
+    {
+      "prefix": "12",
+      "slug": "12-factory-template-import-backlog",
+      "title": "12 Factory Template Import Backlog",
+      "card_id": "366683b4-8dab-8166-9cf3-f870f78c47be",
+      "status": "ready"
+    },
+    {
+      "prefix": "13",
+      "slug": "13-reference-and-skill-index-layer",
+      "title": "13 Reference And Skill Index Layer",
+      "card_id": "366683b4-8dab-8111-af7c-f5408e76ac4d",
+      "status": "ready"
+    },
+    {
+      "prefix": "14",
+      "slug": "14-client-automation-and-control-plane-playbooks",
+      "title": "14 Client Automation And Control Plane Playbooks",
+      "card_id": "366683b4-8dab-819f-995d-e2f16ced18d6",
+      "status": "ready"
+    },
+    {
+      "prefix": "15",
+      "slug": "15-always-on-runtime-heartbeats-schedules-and-integrations",
+      "title": "15 Always On Runtime Heartbeats Schedules And Integrations",
+      "card_id": "366683b4-8dab-8165-ab1e-d9249d163c0f",
+      "status": "ready"
+    },
+    {
+      "prefix": "16",
+      "slug": "16-connected-source-watch-registry",
+      "title": "16 Connected Source Watch Registry",
+      "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
+      "status": "ready"
+    },
+    {
+      "prefix": "17",
+      "slug": "17-event-graph-and-chained-automations",
+      "title": "17 Event Graph And Chained Automations",
+      "card_id": "366683b4-8dab-81e4-aacc-d4e6388f2c9f",
+      "status": "ready"
+    }
+  ],
+  "generated_subtasks": []
+}

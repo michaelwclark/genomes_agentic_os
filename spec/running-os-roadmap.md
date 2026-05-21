@@ -9,7 +9,7 @@ V1 provides:
 - Domain-first installed root.
 - Root and domain `ROUTER.md` files.
 - Workflow, automation, and run-log scaffolds.
-- Runtime copies of templates, operating manual, commands, and skills.
+- Runtime copies of templates, operating manual, commands, skills, and the source-package plan backlog.
 - Validation for required structure and parseable YAML or JSON.
 
 ## Update Contract
