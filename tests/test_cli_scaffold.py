@@ -58,6 +58,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (
         root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
     ).is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "tool-index.md").is_file()
     assert (
         root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "source-priority.md"
@@ -66,6 +67,11 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "style-and-output-rules.md"
     ).is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "decision-log.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "references" / "naming-conventions.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "references" / "source-priority.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "references" / "style-and-output-rules.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "references" / "decision-log.md").is_file()
     assert (
         root / "shared_factory" / "05-knowledge" / "templates" / "profile" / "customer-os-profile.yml"
     ).is_file()
@@ -377,6 +383,12 @@ def test_context_build_returns_exact_project_sources(tmp_path: Path, capsys) -> 
     assert packet["domain"] == "los"
     assert packet["object_type"] == "project"
     assert str(root / "ROUTER.md") in packet["sources_to_load"]
+    assert str(root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md") in packet[
+        "sources_to_load"
+    ]
+    assert str(root / "shared_factory" / "05-knowledge" / "references" / "source-priority.md") in packet[
+        "sources_to_load"
+    ]
     assert str(root / "los" / "ROUTER.md") in packet["sources_to_load"]
     assert str(root / "los" / "02-projects" / "losmon_replacement" / "project.yml") in packet["sources_to_load"]
 

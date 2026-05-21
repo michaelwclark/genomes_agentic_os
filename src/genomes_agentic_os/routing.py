@@ -191,6 +191,10 @@ def build_context(
 
     sources = [
         os_root / "ROUTER.md",
+        os_root / "shared_factory" / "05-knowledge" / "references" / "naming-conventions.md",
+        os_root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md",
+        os_root / "shared_factory" / "05-knowledge" / "references" / "source-priority.md",
+        os_root / "shared_factory" / "05-knowledge" / "references" / "style-and-output-rules.md",
         domain_root / "ROUTER.md",
         domain_root / "CONTEXT.md",
         domain_root / "REFERENCES.md",
