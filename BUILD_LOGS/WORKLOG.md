@@ -131,3 +131,11 @@
 - Implemented on branch `codex/build-runner-16`.
 - Commit: `8a9eb9b`.
 - Merged and pushed to `main` as `94d5cef`.
+
+## 17 Event Graph And Chained Automations
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-17`.
+- Commit: `da6f0a1`.
+- Merged and pushed to `main` as `9e0a22d`.
+- Full READY queue is complete.

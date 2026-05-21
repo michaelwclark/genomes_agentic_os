@@ -67,3 +67,7 @@ Runtime heartbeats, schedules, execution targets, integration setup, run queue s
 ## 16 Connected Source Watch Registry
 
 Connected systems and watch sources are now provider-agnostic, file-backed, doctorable, dry-run pollable, and able to write local normalized source event evidence.
+
+## 17 Event Graph And Chained Automations
+
+The OS now has a file-backed event graph with event envelopes, ledger index, chain-rule tests, dry-run processing, idempotent queue writes, dead-letter records, and run-close event emission.

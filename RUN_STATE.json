@@ -199,6 +199,11 @@
       "card_id": "366683b4-8dab-813e-818b-d4dfae9524a8",
       "action": "complete-done-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81e4-aacc-d4e6388f2c9f",
+      "action": "complete-done-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -394,8 +399,11 @@
       "slug": "17-event-graph-and-chained-automations",
       "title": "17 Event Graph And Chained Automations",
       "card_id": "366683b4-8dab-81e4-aacc-d4e6388f2c9f",
-      "status": "building",
-      "branch": "codex/build-runner-17"
+      "status": "done",
+      "branch": "codex/build-runner-17",
+      "merge_commit": "9e0a22d",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T23:04:38Z"
     }
   ],
   "generated_subtasks": []
