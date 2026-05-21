@@ -1,0 +1,5 @@
+event_id: <event_id>
+chain_rule_id: <chain_rule_id>
+failure_reason: ""
+next_action: Review the event and chain rule before replay.
+recorded_at: <iso8601>

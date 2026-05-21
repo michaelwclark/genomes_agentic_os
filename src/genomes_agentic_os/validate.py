@@ -67,6 +67,11 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/planning/feature-spec.md",
     "templates/planning/future-idea.md",
     "templates/notion/control-plane-database-spec.md",
+    "templates/runtime/event-envelope.yml",
+    "templates/runtime/event-ledger-index.md",
+    "templates/runtime/chain-rule.yml",
+    "templates/runtime/event-processing-result.yml",
+    "templates/runtime/dead-letter-event.yml",
     "operating-manual/README.md",
     "operating-manual/index.html",
     "operating-manual/manual-manifest.yml",
@@ -83,6 +88,8 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-client-automation-brief.md",
     "commands/os-control-plane-bootstrap.md",
     "commands/os-context-audit.md",
+    "commands/os-event.md",
+    "commands/os-chain.md",
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "plans/README.md",
@@ -103,6 +110,7 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/client-automation-brief/SKILL.md",
     "skills/control-plane-bootstrap/SKILL.md",
     "skills/context-audit/SKILL.md",
+    "skills/event-graph-operator/SKILL.md",
 )
 
 
