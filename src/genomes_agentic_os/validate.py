@@ -66,7 +66,13 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/customer/customer-handoff-checklist.md",
     "templates/planning/feature-spec.md",
     "templates/planning/future-idea.md",
+    "templates/runtime/heartbeat.yml",
+    "templates/runtime/schedule.yml",
+    "templates/runtime/execution-target.yml",
+    "templates/runtime/integration.yml",
+    "templates/runtime/run-queue-item.yml",
     "templates/notion/control-plane-database-spec.md",
+    "templates/notion/runtime-tracking-database-spec.md",
     "operating-manual/README.md",
     "operating-manual/index.html",
     "operating-manual/manual-manifest.yml",
@@ -85,6 +91,9 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-context-audit.md",
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
+    "commands/os-runtime-init.md",
+    "commands/os-heartbeat.md",
+    "commands/os-integration-setup.md",
     "plans/README.md",
     "plans/00-current-state-and-gap-map.md",
     "plans/09-future-ideas-intake.md",
@@ -103,6 +112,8 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/client-automation-brief/SKILL.md",
     "skills/control-plane-bootstrap/SKILL.md",
     "skills/context-audit/SKILL.md",
+    "skills/runtime-operator/SKILL.md",
+    "skills/integration-setup/SKILL.md",
 )
 
 

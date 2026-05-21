@@ -1,0 +1,26 @@
+id: granola_recent_notes_sync
+display_name: Granola recent notes sync
+domain: shared_factory
+enabled: false
+cadence: every_2_hours
+execution_target: script
+integration: granola
+context:
+  read_first:
+    - shared_factory/00-control-plane/integration-registry.yml
+    - shared_factory/05-knowledge/source-map.md
+approval_policy:
+  external_write: false
+  customer_visible_output: false
+  sensitive_transcript_handling: true
+success_means:
+  - recent notes checked
+  - run log written
+  - Notion tracking updated or blocked with reason
+failure_escalation:
+  after_consecutive_failures: 2
+  notify: Genome
+notion_tracking:
+  database: Heartbeats
+  status_field: Last Status
+  run_relation: Runs

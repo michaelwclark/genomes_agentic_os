@@ -1,0 +1,19 @@
+id: orgo_desktop
+display_name: Orgo Desktop
+type: computer_use_desktop
+owner: Genome
+status: planned
+use_for:
+  - browser workflows
+  - desktop tasks requiring isolated environment
+approval_required_for:
+  - customer_visible_output
+  - production_changes
+  - credential_changes
+credentials:
+  env_vars:
+    - ORGO_API_KEY
+health_check:
+  command: agentic-os integration doctor orgo --root ~/agentic_os
+notion_tracking:
+  database: Integrations
