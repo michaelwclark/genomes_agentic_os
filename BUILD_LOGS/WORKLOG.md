@@ -77,3 +77,11 @@
 - Commit: `5502a08`.
 - Merged and pushed to `main` as `8a978ed`.
 - Claimed the next READY feature `12 Factory Template Import Backlog` to keep the active set at three.
+
+## 10 Notion Control Plane Bootstrap
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-10`.
+- Commit: `b6604fa`.
+- Merged and pushed to `main` as `3d61a49`.
+- Claimed the next READY feature `13 Reference And Skill Index Layer` to keep the active set at three.

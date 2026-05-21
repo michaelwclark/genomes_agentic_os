@@ -57,3 +57,9 @@
 - `uv run --extra dev pytest -q`: `29 passed in 1.80s` on merged `main`.
 - Temp-root OS/domain/project plan capture and validation smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 10 Notion Control Plane Bootstrap
+
+- `uv run --extra dev pytest -q`: `30 passed in 1.85s` on merged `main`.
+- Temp-root Notion bootstrap dry-run/refusal/apply smoke passed.
+- Notion completion write/comment returned HTTP 200.

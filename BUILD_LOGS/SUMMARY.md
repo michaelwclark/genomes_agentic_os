@@ -39,3 +39,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 09 Future Ideas Intake
 
 `agentic-os plan capture` now routes reusable OS ideas to shared plans, domain ideas to raw inboxes, and customer/project ideas to project status files.
+
+## 10 Notion Control Plane Bootstrap
+
+`agentic-os notion bootstrap` now plans the Agentic OS home page, MVP databases, dashboard views, seed runs, and guarded local manifest writes.

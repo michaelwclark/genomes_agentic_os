@@ -139,6 +139,16 @@
       "card_id": "366683b4-8dab-8166-9cf3-f870f78c47be",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81f5-b933-c1084316190a",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-8111-af7c-f5408e76ac4d",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -257,8 +267,11 @@
       "slug": "10-notion-control-plane-bootstrap",
       "title": "10 Notion Control Plane Bootstrap",
       "card_id": "366683b4-8dab-81f5-b933-c1084316190a",
-      "status": "building",
-      "branch": "codex/build-runner-10"
+      "status": "done",
+      "branch": "codex/build-runner-10",
+      "merge_commit": "3d61a49",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:19:17Z"
     },
     {
       "prefix": "11",
@@ -281,7 +294,8 @@
       "slug": "13-reference-and-skill-index-layer",
       "title": "13 Reference And Skill Index Layer",
       "card_id": "366683b4-8dab-8111-af7c-f5408e76ac4d",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-13"
     },
     {
       "prefix": "14",
