@@ -95,6 +95,12 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (
         root / "shared_factory" / "05-knowledge" / "templates" / "notion" / "runtime-tracking-database-spec.md"
     ).is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "connected-system.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "source-provider.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-source.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-cursor.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "source-event.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "trigger-rule.yml").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "index.html").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
@@ -110,6 +116,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-runtime-init.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-heartbeat.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-integration-setup.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "plans" / "README.md").is_file()
     assert (
         root / "shared_factory" / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
@@ -154,6 +161,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "context-audit" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "runtime-operator" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "integration-setup" / "SKILL.md").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
 
@@ -312,6 +320,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     command_file = root / "shared_factory" / "05-knowledge" / "commands" / "os-sync-notion.md"
     playbook_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-client-automation-brief.md"
     playbook_skill = root / "shared_factory" / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
+    watch_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-watch-source.md"
+    watch_template = root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-source.yml"
     plan_readme = root / "shared_factory" / "05-knowledge" / "plans" / "README.md"
     plan_file = root / "shared_factory" / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
     planning_template = root / "shared_factory" / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
@@ -321,6 +331,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     command_file.unlink()
     playbook_command.unlink()
     playbook_skill.unlink()
+    watch_command.unlink()
+    watch_template.unlink()
     plan_file.unlink()
     planning_template.unlink()
     domain_context_template.unlink()
@@ -333,6 +345,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert command_file.is_file()
     assert playbook_command.is_file()
     assert playbook_skill.is_file()
+    assert watch_command.is_file()
+    assert watch_template.is_file()
     assert plan_file.is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
@@ -937,6 +951,83 @@ def test_client_playbook_commands_and_skills_are_installed_and_sanitized(tmp_pat
     disallowed = ("eduba", "school", "clarks_consulting", "michael clark", "flywheel")
     installed_text = "\n".join(path.read_text(encoding="utf-8").lower() for path in command_paths + skill_paths)
     assert not any(term in installed_text for term in disallowed)
+
+
+def test_watch_source_registry_create_doctor_poll_and_run_due(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["connected-system", "list", "--root", str(root)]) == 0
+    systems = yaml.safe_load(capsys.readouterr().out)
+    notion = next(system for system in systems["connected_systems"] if system["id"] == "notion_genome")
+    assert notion["selected_provider"] == "notion_mcp"
+
+    assert (
+        main(
+            [
+                "watch-source",
+                "create",
+                "agentic_os_kanban",
+                "--root",
+                str(root),
+                "--external-ref",
+                "database_id=366683b48dab81a1ab5fc73e7e1f5c60",
+                "--enabled",
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["action"] == "created"
+    assert (root / "shared_factory" / "00-control-plane" / "watch-sources.yml").is_file()
+    assert (root / "shared_factory" / "00-control-plane" / "watch-cursors.yml").is_file()
+
+    assert main(["watch-source", "doctor", "agentic_os_kanban", "--root", str(root)]) == 0
+    doctor = yaml.safe_load(capsys.readouterr().out)
+    assert doctor["ok"] is True
+    assert doctor["findings"] == []
+
+    assert main(["watch-source", "poll", "agentic_os_kanban", "--root", str(root), "--dry-run"]) == 0
+    poll = yaml.safe_load(capsys.readouterr().out)
+    assert poll["dry_run"] is True
+    assert poll["events"][0]["source"]["watch_source_id"] == "agentic_os_kanban"
+    assert poll["events"][0]["source"]["provider"] == "notion_mcp"
+    assert poll["events"][0]["route"]["fallback_domain"] == "shared_factory"
+
+    assert main(["watch-source", "run-due", "--root", str(root), "--apply"]) == 0
+    run_due = yaml.safe_load(capsys.readouterr().out)
+    assert run_due["dry_run"] is False
+    assert run_due["actions"][0]["written"]
+    assert Path(run_due["actions"][0]["written"][0]).is_file()
+    assert main(["validate", "--root", str(root)]) == 0
+
+
+def test_watch_source_doctor_catches_missing_cursor_and_provider(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["watch-source", "create", "agentic_os_kanban", "--root", str(root), "--enabled"]) == 0
+    capsys.readouterr()
+    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
+    source = data["watch_sources"][0]
+    source.pop("cursor")
+    source["dedupe"] = {}
+    watch_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["watch-source", "doctor", "agentic_os_kanban", "--root", str(root)]) == 1
+    doctor = yaml.safe_load(capsys.readouterr().out)
+    messages = {finding["message"] for finding in doctor["findings"]}
+    assert "missing cursor type or state_ref" in messages
+    assert "missing dedupe idempotency_key" in messages
+
+    systems_file = root / "shared_factory" / "00-control-plane" / "connected-systems.yml"
+    systems = yaml.safe_load(systems_file.read_text(encoding="utf-8"))
+    systems["connected_systems"][0]["provider_priority"] = ["missing_provider"]
+    systems_file.write_text(yaml.safe_dump(systems, sort_keys=False), encoding="utf-8")
+
+    assert main(["connected-system", "doctor", "notion_genome", "--root", str(root)]) == 1
+    system_doctor = yaml.safe_load(capsys.readouterr().out)
+    assert any("missing providers" in finding["message"] for finding in system_doctor["findings"])
 
 
 def test_notion_sync_plan_maps_filesystem_objects_and_is_idempotent(tmp_path: Path, capsys) -> None:

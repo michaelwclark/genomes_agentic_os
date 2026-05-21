@@ -73,6 +73,12 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/run-queue-item.yml",
     "templates/notion/control-plane-database-spec.md",
     "templates/notion/runtime-tracking-database-spec.md",
+    "templates/runtime/connected-system.yml",
+    "templates/runtime/source-provider.yml",
+    "templates/runtime/watch-source.yml",
+    "templates/runtime/watch-cursor.yml",
+    "templates/runtime/source-event.yml",
+    "templates/runtime/trigger-rule.yml",
     "operating-manual/README.md",
     "operating-manual/index.html",
     "operating-manual/manual-manifest.yml",
@@ -89,6 +95,7 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-client-automation-brief.md",
     "commands/os-control-plane-bootstrap.md",
     "commands/os-context-audit.md",
+    "commands/os-watch-source.md",
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "commands/os-runtime-init.md",
@@ -114,6 +121,7 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/context-audit/SKILL.md",
     "skills/runtime-operator/SKILL.md",
     "skills/integration-setup/SKILL.md",
+    "skills/source-watcher/SKILL.md",
 )
 
 

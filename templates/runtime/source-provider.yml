@@ -1,0 +1,14 @@
+id: <provider_id>
+display_name: <display_name>
+type: composio | mcp | connector | direct_api | webhook | cli | sdk | script
+status: planned
+supports:
+  - poll
+  - trigger
+  - read
+  - write
+workspace_verification:
+  required: true
+credential_refs:
+  env_vars: []
+notes: ""

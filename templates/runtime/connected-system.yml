@@ -1,0 +1,24 @@
+id: <system_id>
+display_name: <display_name>
+system: notion | slack | jira | linear | email | github | granola | agentmail | filesystem | other
+status: planned
+owner: OS Owner
+provider_priority:
+  - composio
+  - native_mcp
+  - connector
+  - direct_api
+credential_refs:
+  env_vars: []
+  account_aliases: []
+workspace_verification:
+  required: true
+  expected_workspace: <workspace_or_account_name>
+permissions:
+  read: []
+  write: []
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor <system_id>

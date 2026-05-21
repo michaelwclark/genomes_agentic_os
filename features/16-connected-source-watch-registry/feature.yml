@@ -1,0 +1,21 @@
+id: 366683b4-8dab-813e-818b-d4dfae9524a8
+title: 16 Connected Source Watch Registry
+prefix: "16"
+slug: 16-connected-source-watch-registry
+status: done
+source_queue: Ready
+branch: codex/build-runner-16
+started_at: 2026-05-21T22:33:39Z
+completed_at: 2026-05-21T22:46:56Z
+acceptance:
+  - connected system, provider, watch source, cursor, source event, and trigger rule templates install
+  - watch-source command and source-watcher skill install
+  - file-backed connected system and watch source registries initialize additively
+  - watch-source doctor catches missing cursor, dedupe key, provider, and route requirements
+  - dry-run polling produces normalized source events without external reads
+  - apply mode writes local source event files and cursor state
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 36 passed in 2.64s
+  - command: temp-root docs update, validate, watch-source create, poll dry-run, run-due apply
+    result: source event smoke valid

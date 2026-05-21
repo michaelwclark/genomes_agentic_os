@@ -1,0 +1,22 @@
+id: <watch_source_id>
+display_name: <display_name>
+connected_system: <system_id>
+source_type: notion_database | slack_channel | jira_jql | linear_team | email_search | github_repo | granola_folder | agentmail_inbox | filesystem_glob
+external_ref: {}
+watch_method: poll
+cadence: manual
+enabled: false
+cursor:
+  type: last_edited_time | event_id | timestamp | page_token | file_mtime
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{source_id}:{event_id}"
+filters: {}
+trigger_rules: []
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml
