@@ -149,6 +149,16 @@
       "card_id": "366683b4-8dab-8111-af7c-f5408e76ac4d",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81f5-8206-f8614c996da3",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-819f-995d-e2f16ced18d6",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -278,8 +288,11 @@
       "slug": "11-room-first-installer-and-routing",
       "title": "11 Room First Installer And Routing",
       "card_id": "366683b4-8dab-81f5-8206-f8614c996da3",
-      "status": "building",
-      "branch": "codex/build-runner-11"
+      "status": "done",
+      "branch": "codex/build-runner-11",
+      "merge_commit": "c3ffe5c",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:24:21Z"
     },
     {
       "prefix": "12",
@@ -302,7 +315,8 @@
       "slug": "14-client-automation-and-control-plane-playbooks",
       "title": "14 Client Automation And Control Plane Playbooks",
       "card_id": "366683b4-8dab-819f-995d-e2f16ced18d6",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-14"
     },
     {
       "prefix": "15",

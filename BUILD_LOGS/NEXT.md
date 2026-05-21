@@ -43,3 +43,7 @@ Next active lower prefixes are `10 Notion Control Plane Bootstrap`, `11 Room Fir
 ## 10 Notion Control Plane Bootstrap
 
 Next active lower prefixes are `11 Room First Installer And Routing`, `12 Factory Template Import Backlog`, and `13 Reference And Skill Index Layer`. Continue with `11` as the lowest incomplete active prefix.
+
+## 11 Room First Installer And Routing
+
+Next active lower prefixes are `12 Factory Template Import Backlog`, `13 Reference And Skill Index Layer`, and `14 Client Automation And Control Plane Playbooks`. Continue with `12` as the lowest incomplete active prefix.

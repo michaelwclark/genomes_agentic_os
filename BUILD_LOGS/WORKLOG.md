@@ -85,3 +85,11 @@
 - Commit: `b6604fa`.
 - Merged and pushed to `main` as `3d61a49`.
 - Claimed the next READY feature `13 Reference And Skill Index Layer` to keep the active set at three.
+
+## 11 Room First Installer And Routing
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-11`.
+- Commit: `3a9ef0e`.
+- Merged and pushed to `main` as `c3ffe5c`.
+- Claimed the next READY feature `14 Client Automation And Control Plane Playbooks` to keep the active set at three.

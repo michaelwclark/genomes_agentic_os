@@ -43,3 +43,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 10 Notion Control Plane Bootstrap
 
 `agentic-os notion bootstrap` now plans the Agentic OS home page, MVP databases, dashboard views, seed runs, and guarded local manifest writes.
+
+## 11 Room First Installer And Routing
+
+`agentic-os init --profile`, `profile validate`, and room commands now support room-first OS installs without inheriting Genome default domains.
