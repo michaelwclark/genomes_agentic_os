@@ -17,7 +17,7 @@ from .customer import customer_init, customer_update, customer_validate, format_
 from .doctor import doctor, format_doctor_result
 from .losmon import format_losmon_result, losmon_validate
 from .migrations import format_migration_result, migrate_apply, migrate_plan
-from .notion_sync import apply_sync_plan, build_sync_plan, format_sync_result
+from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
 from .routing import build_context, context_from_here, format_packet, route_request
 from .scaffold import (
@@ -187,6 +187,14 @@ def build_parser() -> argparse.ArgumentParser:
     notion_sync_mode.add_argument("--apply", action="store_true")
     notion_sync.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_sync.set_defaults(handler=handle_notion_sync)
+    notion_bootstrap = notion_subparsers.add_parser("bootstrap", help="Plan or apply the Notion control-plane bootstrap.")
+    notion_bootstrap.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_bootstrap_mode = notion_bootstrap.add_mutually_exclusive_group(required=True)
+    notion_bootstrap_mode.add_argument("--dry-run", action="store_true")
+    notion_bootstrap_mode.add_argument("--apply", action="store_true")
+    notion_bootstrap.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
+    notion_bootstrap.add_argument("--parent-page-id", help="Approved parent page id in the verified workspace.")
+    notion_bootstrap.set_defaults(handler=handle_notion_bootstrap)
 
     doctor_parser = subparsers.add_parser("doctor", help="Run installed OS health checks.")
     doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -396,6 +404,22 @@ def handle_notion_sync(args: argparse.Namespace) -> int:
         print(format_sync_result(build_sync_plan(args.root)))
     else:
         print(format_sync_result(apply_sync_plan(args.root, verified_workspace=args.verified_workspace)))
+    return 0
+
+
+def handle_notion_bootstrap(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_sync_result(build_bootstrap_plan(args.root, parent_page_id=args.parent_page_id)))
+    else:
+        print(
+            format_sync_result(
+                apply_bootstrap_plan(
+                    args.root,
+                    verified_workspace=args.verified_workspace,
+                    parent_page_id=args.parent_page_id,
+                )
+            )
+        )
     return 0
 
 

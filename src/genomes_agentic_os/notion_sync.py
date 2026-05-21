@@ -14,6 +14,7 @@ from .scaffold import expand_path
 
 
 MAPPING_PATH = ".notion-sync/mapping.yml"
+BOOTSTRAP_MANIFEST_PATH = ".notion-control-plane/manifest.yml"
 GENOME_NOTION = "Genome's Notion"
 BLOCKED_WORKSPACE_MARKERS = ("michael clark", "michaelwclark", "personal notion")
 
@@ -190,3 +191,71 @@ def apply_sync_plan(root: str | Path, *, verified_workspace: str | None) -> dict
 
 def format_sync_result(result: dict[str, Any]) -> str:
     return yaml.safe_dump(result, sort_keys=False).strip()
+
+
+CONTROL_PLANE_DATABASES = (
+    ("OS Inbox", "Capture requests, rough ideas, and kickoff records."),
+    ("Work Items", "Active work queue across domains, projects, workflows, and automations."),
+    ("Runs", "Execution history, validation evidence, artifacts, and final state."),
+    ("Approvals", "Human approval queue for risky actions."),
+    ("Domains", "Domain catalog with root paths, owners, and source systems."),
+)
+
+
+def bootstrap_id(name: str) -> str:
+    digest = hashlib.sha256(name.encode()).hexdigest()[:16]
+    return f"local-bootstrap-{digest}"
+
+
+def build_bootstrap_plan(root: str | Path, *, parent_page_id: str | None = None) -> dict[str, Any]:
+    os_root = expand_path(root)
+    recent_runs = [str(path) for path in sorted(os_root.glob("*/06-runs-and-logs/runs/*/run-log.md"))[-5:]]
+    databases = [
+        {"name": name, "purpose": purpose, "action": "create-or-update", "local_id": bootstrap_id(name)}
+        for name, purpose in CONTROL_PLANE_DATABASES
+    ]
+    return {
+        "root": str(os_root),
+        "workspace": target_workspace(os_root),
+        "parent_page_id": parent_page_id,
+        "home_page": {"name": "Agentic OS", "action": "create-or-update", "local_id": bootstrap_id("Agentic OS")},
+        "databases": databases,
+        "dashboard_views": [
+            "Needs Approval",
+            "Active Work",
+            "Waiting On Me",
+            "Running Or Failed Runs",
+            "Recent Outputs",
+            "Automation Health",
+            "Inbox To Triage",
+            "Decisions This Week",
+        ],
+        "seed_records": {"runs": recent_runs},
+        "manifest_path": str(os_root / BOOTSTRAP_MANIFEST_PATH),
+    }
+
+
+def apply_bootstrap_plan(
+    root: str | Path,
+    *,
+    verified_workspace: str | None,
+    parent_page_id: str | None,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    workspace = verify_workspace(os_root, verified_workspace)
+    if not parent_page_id:
+        raise ValueError("cannot bootstrap Notion control plane without an approved parent page id")
+    plan = build_bootstrap_plan(os_root, parent_page_id=parent_page_id)
+    manifest = {
+        "workspace": workspace,
+        "parent_page_id": parent_page_id,
+        "home_page": plan["home_page"],
+        "databases": plan["databases"],
+        "dashboard_views": plan["dashboard_views"],
+        "seed_records": plan["seed_records"],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = os_root / BOOTSTRAP_MANIFEST_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    return {"root": str(os_root), "workspace": workspace, "manifest_path": str(path), "applied": True}

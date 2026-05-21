@@ -1,0 +1,18 @@
+id: 366683b4-8dab-81f5-b933-c1084316190a
+title: 10 Notion Control Plane Bootstrap
+prefix: "10"
+slug: 10-notion-control-plane-bootstrap
+status: done
+source_queue: Ready
+branch: codex/build-runner-10
+started_at: 2026-05-21T22:14:49Z
+completed_at: 2026-05-21T22:18:00Z
+acceptance:
+  - bootstrap dry-run describes home page, MVP databases, dashboard views, and seed runs
+  - apply refuses missing parent page and blocked personal workspace
+  - apply records a local manifest without overwriting runtime files
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 30 passed in 2.04s
+  - command: temp-root notion bootstrap dry-run/refusal/apply smoke
+    result: notion bootstrap smoke valid
