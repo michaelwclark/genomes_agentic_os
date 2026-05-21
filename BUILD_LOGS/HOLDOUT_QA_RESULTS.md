@@ -33,3 +33,9 @@
 - `uv run --extra dev pytest -q`: `23 passed in 1.27s` on merged `main`.
 - Temp customer init, update, validate, and private-name scan passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 06 Notion Control Plane Sync
+
+- `uv run --extra dev pytest -q`: `25 passed in 1.36s` on merged `main`.
+- Temp-root Notion plan/refusal/apply/idempotency smoke passed.
+- Notion completion write/comment returned HTTP 200.

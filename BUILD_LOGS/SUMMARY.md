@@ -23,3 +23,7 @@ The state-and-gap map is present in source and the installed runtime plan backlo
 ## 05 Customer Os Factory
 
 `agentic-os customer init`, `customer update`, and `customer validate` now generate profile-driven customer OS roots with approved domains, bundled workflows/automations, public customer assets, additive updates, and profile-aware validation.
+
+## 06 Notion Control Plane Sync
+
+`agentic-os notion plan-sync` and guarded `notion sync` now build reviewable sync plans, refuse unverified workspaces, support configured customer workspaces, and maintain an idempotent local mapping file.

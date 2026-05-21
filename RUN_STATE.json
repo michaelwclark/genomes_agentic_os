@@ -99,6 +99,16 @@
       "card_id": "366683b4-8dab-81c5-add3-e3913cbb362e",
       "action": "claim-building-and-comment",
       "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-81ec-a805-e5d2c9a14f47",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "366683b4-8dab-819b-9cc2-d65228c323cb",
+      "action": "claim-building-and-comment",
+      "status": "ok"
     }
   ],
   "features": [
@@ -173,8 +183,11 @@
       "slug": "06-notion-control-plane-sync",
       "title": "06 Notion Control Plane Sync",
       "card_id": "366683b4-8dab-81ec-a805-e5d2c9a14f47",
-      "status": "building",
-      "branch": "codex/build-runner-06"
+      "status": "done",
+      "branch": "codex/build-runner-06",
+      "merge_commit": "d8406e1",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-21T22:01:17Z"
     },
     {
       "prefix": "07",
@@ -197,7 +210,8 @@
       "slug": "09-future-ideas-intake",
       "title": "09 Future Ideas Intake",
       "card_id": "366683b4-8dab-819b-9cc2-d65228c323cb",
-      "status": "ready"
+      "status": "building",
+      "branch": "codex/build-runner-09"
     },
     {
       "prefix": "10",

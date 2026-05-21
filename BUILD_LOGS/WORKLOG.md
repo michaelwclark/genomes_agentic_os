@@ -45,3 +45,11 @@
 - Commit: `d74ed5a`.
 - Merged and pushed to `main` as `a587a7b`.
 - Claimed the next READY feature `08 Losmon Replacement Validation` to keep the active set at three.
+
+## 06 Notion Control Plane Sync
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-06`.
+- Commit: `4420895`.
+- Merged and pushed to `main` as `d8406e1`.
+- Claimed the next READY feature `09 Future Ideas Intake` to keep the active set at three.

@@ -23,3 +23,7 @@ Next active lower prefixes are `05 Customer Os Factory`, `06 Notion Control Plan
 ## 05 Customer Os Factory
 
 Next active lower prefixes are `06 Notion Control Plane Sync`, `07 Doctor Validation And Migrations`, and `08 Losmon Replacement Validation`. Continue with `06` as the lowest incomplete active prefix.
+
+## 06 Notion Control Plane Sync
+
+Next active lower prefixes are `07 Doctor Validation And Migrations`, `08 Losmon Replacement Validation`, and `09 Future Ideas Intake`. Continue with `07` as the lowest incomplete active prefix.
