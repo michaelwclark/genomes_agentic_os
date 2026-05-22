@@ -232,3 +232,7 @@ Next queue item: feature 57 config.toml installer and directory setup.
 ## 57 config.toml Installer And Directory Setup
 
 Next queue item: feature 58 OTEL and MCP configuration contracts.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Next queue item: feature 59 Codex config documentation and holdout validation.

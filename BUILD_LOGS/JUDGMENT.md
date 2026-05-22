@@ -171,3 +171,7 @@ The feature was scoped to prompt-stitching docs/templates. A stale branch commit
 ## 57 config.toml Installer And Directory Setup
 
 The installer blocks on conflicts by default because config.toml can change sandbox, approval, MCP, and telemetry behavior. Confirmed conflicts preserve local values while applying non-conflicting additions.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Telemetry and MCP config are security-sensitive, so templates name environment variables only and doctor output reports remediation without exposing values.

@@ -218,3 +218,7 @@ Source card 368683b4-8dab-8137-96a4-f8b38619482a required canonical prompt-file 
 ## 57 config.toml Installer And Directory Setup
 
 Source card 368683b4-8dab-81e9-a9f3-ec46415e3796 required a CLI/install path that writes or updates config.toml files for new and existing Agentic OS directories with dry-run, apply, backup, idempotent merge, conflict handling, and tests.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Source card 368683b4-8dab-8155-963c-e7c671e50f72 required OTEL expectations, env vars, redaction rules, per-layer defaults, MCP registration points, secret-safe installer references, and validation with remediation.

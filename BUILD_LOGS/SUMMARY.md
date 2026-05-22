@@ -238,3 +238,7 @@ adds the universal agent brain convention, reusable prompt templates, and prompt
 ## 57 config.toml Installer And Directory Setup
 
 adds agentic-os config install, a guarded local installer for Codex config.toml and prompt-file conventions across Agentic OS layers.
+
+## 58 OTEL And MCP Configuration Contracts
+
+adds OTEL/MCP configuration contracts, validation, and secret-safe template references for Agentic OS Codex config.

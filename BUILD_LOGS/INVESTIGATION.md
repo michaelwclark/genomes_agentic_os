@@ -203,3 +203,7 @@ Feature 54 established Codex AGENTS.md discovery and Agentic OS prompt layers. T
 ## 57 config.toml Installer And Directory Setup
 
 Mapped the request to the existing CLI/scaffold pattern and added a local config operation instead of a standalone script. The command writes only filesystem artifacts and does not treat Notion as runtime storage.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Extended the feature 57 config installer with OTEL env-var references, MCP secret policy, and config doctor validation so docs, templates, and CLI checks share one contract.

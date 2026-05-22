@@ -181,3 +181,7 @@ Holdout checks: merged-main pytest and a content check for required prompt filen
 ## 57 config.toml Installer And Directory Setup
 
 Holdout checks: merged-main pytest, direct config install dry-run on a missing directory, and a guard that stale feature 56 installer-validator artifacts are absent.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Holdout checks: merged-main pytest, config doctor on an installed config, and a secret-safe content check across docs, templates, and config operation code.

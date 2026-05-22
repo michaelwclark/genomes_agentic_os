@@ -192,3 +192,11 @@ Plan completed: run temp-root event graph holdout, validate docs repair, validat
 3. Add tests for creation, dry-run, idempotency, conflicts, backups, missing directory, and prompt-file layers.
 4. Add installer documentation.
 5. Run merged-main tests and direct holdout.
+
+## 58 OTEL And MCP Configuration Contracts
+
+1. Extend generated config with OTEL env-var references and MCP secret policy.
+2. Add config doctor.
+3. Add tests for valid and missing contract keys.
+4. Add docs and a machine-readable contract.
+5. Run merged-main tests and focused doctor/content holdouts.

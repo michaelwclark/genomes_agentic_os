@@ -198,3 +198,7 @@ The prompt composition source is docs/07-agent-surfaces/universal-agent-brain.md
 ## 57 config.toml Installer And Directory Setup
 
 The guarded config installer lives in src/genomes_agentic_os/config_ops.py and is exposed as agentic-os config install. The operator guide is docs/10-cli-and-install/config-toml-installer.md.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Use agentic-os config doctor for local OTEL/MCP contract validation. The machine-readable contract is templates/agent-config/otel-mcp-contract.yml.

@@ -343,3 +343,7 @@ implemented on codex/build-runner-56 at 83514dd; integrated on main as 16c0075; 
 ## 57 config.toml Installer And Directory Setup
 
 implemented on codex/build-runner-57 at 4354978; merged as 470e42b; config install dry-run holdout passed; pytest 44 passed in 3.10s on merged main; scoped-clean guard passed; Notion synced to Done.
+
+## 58 OTEL And MCP Configuration Contracts
+
+implemented on codex/build-runner-58 at 3412611; merged as 486a7ac; config doctor holdout passed; secret-safe content check passed; pytest 46 passed in 3.16s on merged main; Notion synced to Done.

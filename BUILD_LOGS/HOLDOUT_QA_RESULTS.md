@@ -278,3 +278,7 @@ Passed. Branch verification: uv run --extra dev pytest -q returned 39 passed in 
 ## 57 config.toml Installer And Directory Setup
 
 Passed. Branch verification: uv run --extra dev pytest -q returned 44 passed in 2.96s and config install dry-run holdout passed. Merged-main verification: uv run --extra dev pytest -q returned 44 passed in 3.10s; config install dry-run holdout passed; scoped-clean guard passed.
+
+## 58 OTEL And MCP Configuration Contracts
+
+Passed. Branch verification: uv run --extra dev pytest -q returned 46 passed in 3.15s; config doctor and secret-safe content checks passed. Merged-main verification: uv run --extra dev pytest -q returned 46 passed in 3.16s; config doctor and secret-safe content checks passed.
