@@ -153,3 +153,7 @@ adds feature 08 LOSMon replacement holdout validation.
 ## 36 Documentation And Help Guide For 09 Future Ideas Intake
 
 adds the feature 09 future ideas intake guide.
+
+## 37 Holdout Command Validation For 09 Future Ideas Intake
+
+adds feature 09 future ideas intake holdout validation.

@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "37",
+  "current_active_feature": "38",
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -310,6 +310,11 @@
     },
     {
       "card_id": "368683b4-8dab-811d-b268-c15938b0ea98",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8121-9255-e9faf20dd6e9",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -737,12 +742,12 @@
       "slug": "37-holdout-command-validation-for-09-future-ideas-intake",
       "title": "37 Holdout Command Validation For 09 Future Ideas Intake",
       "card_id": "368683b4-8dab-8121-9255-e9faf20dd6e9",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-37",
-      "merge_commit": null,
-      "last_successful_phase": "started",
+      "merge_commit": "d589ba9",
+      "last_successful_phase": "done",
       "started_at": "2026-05-22T05:40:41Z",
-      "completed_at": null
+      "completed_at": "2026-05-22T05:50:02Z"
     },
     {
       "prefix": "38",

@@ -124,3 +124,7 @@ objects, comparison artifact, run logs, and root validation.
 
 operator guide for durable future idea capture across OS, domain, and project
 destinations.
+
+## 37 Holdout Command Validation For 09 Future Ideas Intake
+
+local holdout validation for OS, domain, and project plan capture routing.

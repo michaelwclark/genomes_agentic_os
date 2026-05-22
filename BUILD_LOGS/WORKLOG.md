@@ -248,3 +248,8 @@ holdout passed; pytest 39 passed in 3.70s on merged main.
 
 implemented on codex/build-runner-36 at f4858cc; merged as 5542d24; guide
 reference check passed; pytest 39 passed in 3.09s on merged main.
+
+## 37 Holdout Command Validation For 09 Future Ideas Intake
+
+implemented on codex/build-runner-37 at 44df55a; merged as d589ba9; holdout
+passed; pytest 39 passed in 3.07s on merged main.

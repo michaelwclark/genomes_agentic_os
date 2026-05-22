@@ -101,3 +101,7 @@ three run logs, comparison gap table, repo capture, and root validation.
 
 future ideas docs should emphasize durable additive capture, not immediate
 promotion to active work.
+
+## 37 Holdout Command Validation For 09 Future Ideas Intake
+
+plan capture holdouts should inspect target files for captured titles.
