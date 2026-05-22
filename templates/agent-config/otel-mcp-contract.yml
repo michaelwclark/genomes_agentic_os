@@ -1,0 +1,41 @@
+id: otel_mcp_contract
+version: 0.1.0
+secret_policy:
+  inline_secret_values_allowed: false
+  env_var_names_only:
+    - AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT
+    - AGENTIC_OS_OTEL_HEADERS
+    - GENOMES_NOTION_PAT
+    - GENOMES_NOTION_CONNECTOR
+otel:
+  default_log_user_prompt: false
+  required_keys:
+    - otel.log_user_prompt
+    - otel.exporter_otlp_endpoint_env_var
+    - otel.headers_env_var
+mcp_registration_points:
+  notion:
+    required_identity: Genome's Notion
+    env_var_names:
+      - GENOMES_NOTION_PAT
+      - GENOMES_NOTION_CONNECTOR
+  browser:
+    credential_policy: use_authenticated_session
+  filesystem_runtime:
+    command: agentic-os
+    args:
+      - config
+      - doctor
+    secret_policy: no inline secrets
+  memory:
+    credential_policy: no secrets in memory writes
+  customer_integration:
+    credential_policy: customer-approved env var names only
+validation:
+  command: agentic-os config doctor
+  reports:
+    - missing config.toml
+    - missing OTEL keys
+    - missing MCP secret policy
+    - inline secret markers
+    - missing layer MCP availability

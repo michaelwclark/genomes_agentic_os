@@ -14,7 +14,7 @@ from .automation_ops import (
     set_automation_maturity,
 )
 from .config_ops import LAYERS as CONFIG_LAYERS
-from .config_ops import install_config
+from .config_ops import doctor_config, install_config
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
 from .doctor import doctor, format_doctor_result
 from .event_graph import (
@@ -252,6 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply non-conflicting additions while preserving existing conflicting keys.",
     )
     config_install.set_defaults(handler=handle_config_install)
+    config_doctor = config_subparsers.add_parser("doctor", help="Validate config.toml OTEL and MCP contracts.")
+    config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
+    config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
+    config_doctor.set_defaults(handler=handle_config_doctor)
 
     notion_parser = subparsers.add_parser("notion", help="Plan and apply filesystem-to-Notion sync.")
     notion_subparsers = notion_parser.add_subparsers(dest="notion_command", required=True)
@@ -666,6 +670,12 @@ def handle_config_install(args: argparse.Namespace) -> int:
     )
     print(yaml_dump(result.as_dict()))
     return 2 if result.blocked else 0
+
+
+def handle_config_doctor(args: argparse.Namespace) -> int:
+    result = doctor_config(args.root, layer=args.layer)
+    print(yaml_dump(result))
+    return 0 if result["ok"] else 1
 
 
 def handle_notion_plan_sync(args: argparse.Namespace) -> int:

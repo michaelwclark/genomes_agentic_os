@@ -249,6 +249,26 @@ def test_config_install_apply_creates_config_and_prompt_files(tmp_path: Path) ->
         assert (root / filename).is_file()
 
 
+def test_config_doctor_accepts_installed_otel_and_mcp_contract(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["config", "install", "--root", str(root), "--layer", "agentic_os_root", "--apply"]) == 0
+
+    content = (root / "config.toml").read_text(encoding="utf-8")
+    assert "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT" in content
+    assert "AGENTIC_OS_OTEL_HEADERS" in content
+    assert "GENOMES_NOTION_PAT=" not in content
+    assert main(["config", "doctor", "--root", str(root), "--layer", "agentic_os_root"]) == 0
+
+
+def test_config_doctor_reports_missing_required_otel_and_mcp_keys(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    root.mkdir()
+    (root / "config.toml").write_text('model = "gpt-5.2"\n', encoding="utf-8")
+
+    assert main(["config", "doctor", "--root", str(root), "--layer", "agentic_os_root"]) == 1
+
+
 def test_config_install_is_idempotent_on_repeated_apply(tmp_path: Path) -> None:
     root = tmp_path / "customer_os"
 

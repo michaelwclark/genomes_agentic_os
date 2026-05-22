@@ -14,6 +14,17 @@ from .scaffold import expand_path
 
 
 CONFIG_FILENAME = "config.toml"
+OTEL_ENV_VARS = (
+    "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT",
+    "AGENTIC_OS_OTEL_HEADERS",
+)
+MCP_REGISTRATION_POINTS = (
+    "notion",
+    "browser",
+    "filesystem_runtime",
+    "memory",
+    "customer_integration",
+)
 PROMPT_POINTER = """# Agent Entry Point
 
 Load `BRAIN.md`, `ROUTER.md`, `CONTEXT.md`, and `MEMORY.md` before acting.
@@ -120,6 +131,22 @@ class ConfigInstallResult:
         }
 
 
+@dataclass
+class ConfigDoctorFinding:
+    severity: str
+    path: Path
+    message: str
+    remediation: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "severity": self.severity,
+            "path": str(self.path),
+            "message": self.message,
+            "remediation": self.remediation,
+        }
+
+
 def config_template(layer: str) -> str:
     config = LAYERS[layer]
     profile = config["profile"]
@@ -144,6 +171,13 @@ environment = "local filesystem"
 
 [otel]
 log_user_prompt = false
+exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+[mcp_servers.filesystem_runtime]
+command = "agentic-os"
+args = ["config", "doctor"]
+secret_policy = "no inline secrets"
 """
 
 
@@ -305,3 +339,66 @@ def install_config(
         result.created.append(prompt_path)
 
     return result
+
+
+def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
+    if layer not in LAYERS:
+        raise ValueError(f"layer must be one of {', '.join(sorted(LAYERS))}: {layer!r}")
+
+    root_path = expand_path(root)
+    config_path = root_path / CONFIG_FILENAME
+    findings: list[ConfigDoctorFinding] = []
+    if not config_path.is_file():
+        findings.append(
+            ConfigDoctorFinding(
+                "blocker",
+                config_path,
+                "config.toml is missing",
+                f"Run agentic-os config install --root {root_path} --layer {layer} --dry-run, review the diff, then rerun with --apply.",
+            )
+        )
+        return {"ok": False, "root": str(root_path), "layer": layer, "findings": [finding.as_dict() for finding in findings]}
+
+    content = config_path.read_text(encoding="utf-8")
+    keys = parse_toml_keys(content)
+    profile = LAYERS[layer]["profile"]
+    required = [
+        (None, "approval_policy", "Add an approval_policy matching the layer contract."),
+        (None, "sandbox_mode", "Add a sandbox_mode matching the layer contract."),
+        ("otel", "log_user_prompt", "Add [otel] log_user_prompt = false unless explicit approval allows prompt logging."),
+        (
+            "otel",
+            "exporter_otlp_endpoint_env_var",
+            "Reference AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT by name; do not inline endpoint secrets.",
+        ),
+        ("otel", "headers_env_var", "Reference AGENTIC_OS_OTEL_HEADERS by name; do not inline header values."),
+        (
+            f"profiles.{profile}.agentic_os",
+            "mcp_availability",
+            "Declare the MCP availability boundary for this layer.",
+        ),
+        (
+            "mcp_servers.filesystem_runtime",
+            "secret_policy",
+            "Declare secret_policy = \"no inline secrets\" for MCP registration blocks.",
+        ),
+    ]
+    for section, key, remediation in required:
+        if (section, key) not in keys:
+            label = f"[{section}] {key}" if section else key
+            findings.append(ConfigDoctorFinding("blocker", config_path, f"missing required config key: {label}", remediation))
+
+    secret_markers = ("secret=", "token=", "password=", "GENOMES_NOTION_PAT=", "GENOMES_NOTION_CONNECTOR=")
+    lowered = content.lower()
+    for marker in secret_markers:
+        if marker.lower() in lowered:
+            findings.append(
+                ConfigDoctorFinding(
+                    "blocker",
+                    config_path,
+                    f"possible inline secret marker found: {marker}",
+                    "Replace secret values with environment variable names only.",
+                )
+            )
+
+    return {"ok": not findings, "root": str(root_path), "layer": layer, "findings": [finding.as_dict() for finding in findings]}
