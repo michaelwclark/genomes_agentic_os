@@ -27,3 +27,10 @@
 - Feature artifact: `features/18-documentation-and-help-guide-for-00-current-state-and-gap-map/SPEC.md`
 - Related completed feature: `features/00-current-state-and-gap-map/`
 - Acceptance: operator-facing guide for feature 00, source/runtime artifact map, validation commands, and Build Runner sequencing notes.
+
+## 19 Holdout Command Validation For 00 Current State And Gap Map
+
+- Source card: `368683b4-8dab-812f-a145-c9ae5900ff10`
+- Feature artifact: `features/19-holdout-command-validation-for-00-current-state-and-gap-map/SPEC.md`
+- Related completed feature: `features/00-current-state-and-gap-map/`
+- Acceptance: local holdout validation for feature 00 artifacts, RUN_STATE done record, source plan sections, and disposable runtime plan installation without live Notion writes.

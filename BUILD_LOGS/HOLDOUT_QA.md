@@ -15,3 +15,7 @@ Holdout QA checks full tests, temp-root project routing, linked-repo `here conte
 ## 18 Documentation And Help Guide For 00 Current State And Gap Map
 
 Holdout QA checks feature guide references, absence of Mermaid content, full pytest, and merged-main verification.
+
+## 19 Holdout Command Validation For 00 Current State And Gap Map
+
+Holdout QA runs the feature-local validator and the full pytest suite on merged `main`.

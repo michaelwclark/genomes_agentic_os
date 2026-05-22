@@ -25,3 +25,8 @@
 - Reviewed feature 00 audit artifacts and `PLANS/00-current-state-and-gap-map.md`.
 - Confirmed documentation should be a feature guide, not a runtime behavior change.
 - Worker implementation placed the guide under `docs/13-feature-guides/` and avoided runtime code changes.
+
+## 19 Holdout Command Validation For 00 Current State And Gap Map
+
+- Existing tests covered runtime plan installation, but no single local command checked the feature 00 acceptance contract.
+- RUN_STATE uses `status: done` in the current runner file, so the validator accepts either `status` or `state` as done for compatibility.

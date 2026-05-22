@@ -15,3 +15,7 @@ Run plan: add routing module, wire route/context/here CLI commands, add tests fo
 ## 18 Documentation And Help Guide For 00 Current State And Gap Map
 
 Run plan: add feature 00 guide documentation, create prefix 18 audit artifacts, run pytest, merge with `--no-ff`, push, and close the Kanban card.
+
+## 19 Holdout Command Validation For 00 Current State And Gap Map
+
+Run plan: add feature-local holdout validator, verify it does not require Notion credentials, run full pytest, merge with `--no-ff`, push, and close the Kanban card.

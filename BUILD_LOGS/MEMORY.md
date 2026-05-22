@@ -19,3 +19,7 @@
 ## 18 Documentation And Help Guide For 00 Current State And Gap Map
 
 Feature guide docs currently live under `docs/13-feature-guides/`. Feature 00 documentation should explain source/runtime boundaries and the plan mirror path rather than introducing new runtime commands.
+
+## 19 Holdout Command Validation For 00 Current State And Gap Map
+
+Feature 00 holdout checks should avoid live Notion writes and prefer local source, runner-state, and disposable-runtime evidence.
