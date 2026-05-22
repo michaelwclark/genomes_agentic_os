@@ -1,0 +1,5 @@
+# Next
+
+- Run branch verification.
+- Merge this guide after main-branch verification.
+- Mark card 46 Done after the merge commit and build-log record are pushed.
