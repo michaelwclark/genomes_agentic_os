@@ -1,0 +1,22 @@
+id: 368683b4-8dab-81c7-a601-e1f42603eba7
+title: 34 Documentation And Help Guide For 08 Losmon Replacement Validation
+prefix: "34"
+slug: 34-documentation-and-help-guide-for-08-losmon-replacement-validation
+source_url: https://www.notion.so/34-Documentation-And-Help-Guide-For-08-Losmon-Replacement-Validation-368683b48dab81c7a601e1f42603eba7
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-34
+base_sha: 123bd58
+merge_sha:
+started_at: 2026-05-22T05:30:54Z
+completed_at:
+acceptance:
+  - guide documents losmon validate command
+  - guide explains generated project, workflows, automation, run logs, and comparison artifact
+  - guide states validation is read-only and not a live replacement
+  - guide preserves LOSMon remaining-gap criteria
+verification:
+  - command: rg "losmon validate|losmon_replacement|pr_review|failing_ci_triage|deploy_planning|thread_intake|losmon-comparison" docs/13-feature-guides/08-losmon-replacement-validation.md
+    result: passed
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.42s
