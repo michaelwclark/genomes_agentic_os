@@ -123,3 +123,8 @@ tests.
 
 validated feature 10 through public Notion bootstrap CLI commands in a
 disposable OS root after verifying Genome's Notion through the direct API.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+reviewed feature 11 artifacts, room profile implementation, CLI wiring,
+scaffold support, validation behavior, and tests.

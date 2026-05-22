@@ -99,3 +99,7 @@ close because the guide is present and merged-main validation passed.
 ## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
 
 close because Notion bootstrap holdout and merged-main validation passed.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+close because the guide is present and merged-main validation passed.

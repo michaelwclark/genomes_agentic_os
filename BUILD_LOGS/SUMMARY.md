@@ -165,3 +165,7 @@ adds the feature 10 Notion control plane bootstrap guide.
 ## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
 
 adds feature 10 Notion control plane bootstrap holdout validation.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+adds the feature 11 room-first installer and routing guide.

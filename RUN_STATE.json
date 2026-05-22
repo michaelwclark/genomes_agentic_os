@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "40",
-  "last_successful_phase": "feature-39-merged-and-verified",
+  "current_active_feature": "41",
+  "last_successful_phase": "feature-40-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -798,11 +798,12 @@
       "slug": "40-documentation-and-help-guide-for-11-room-first-installer-and-routing",
       "title": "40 Documentation And Help Guide For 11 Room First Installer And Routing",
       "card_id": "368683b4-8dab-816d-afc7-c9c44c1bcd1e",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-40",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T05:55:06Z"
+      "merge_commit": "f214061",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T05:55:06Z",
+      "completed_at": "2026-05-22T06:07:28Z"
     },
     {
       "prefix": "41",

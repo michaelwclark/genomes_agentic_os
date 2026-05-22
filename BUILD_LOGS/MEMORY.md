@@ -115,3 +115,8 @@ approved parent page ID.
 
 bootstrap holdouts should verify both missing-parent refusal and Michael Clark
 personal Notion refusal before accepting verified Genome's Notion apply.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+room-first docs should distinguish operational rooms from shared runtime docs
+and keep Claude/Codex pointer behavior tied to `ROUTER.md`.

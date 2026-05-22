@@ -105,3 +105,7 @@ guide reference check plus full pytest on merged main.
 
 Notion bootstrap dry-run, missing-parent refusal, wrong-workspace refusal,
 verified apply, manifest check, and full pytest on merged main.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+guide reference check plus full pytest on merged main.

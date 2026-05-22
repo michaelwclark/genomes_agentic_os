@@ -152,3 +152,8 @@ Bootstrap.
 
 next Ready prefix is 40 Documentation And Help Guide For 11 Room First
 Installer And Routing.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+next Ready prefix is 41 Holdout Command Validation For 11 Room First Installer
+And Routing.

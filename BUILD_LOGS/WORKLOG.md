@@ -263,3 +263,8 @@ reference check passed; pytest 39 passed in 3.03s on merged main.
 
 implemented on codex/build-runner-39 at 425cba5; merged as 1a476dd; Notion
 bootstrap holdout passed; pytest 39 passed in 3.05s on merged main.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+implemented on codex/build-runner-40 at e52eec0; merged as f214061; guide
+reference check passed; pytest 39 passed in 3.08s on merged main.

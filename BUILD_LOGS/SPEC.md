@@ -138,3 +138,8 @@ verification, and local manifest state.
 
 local holdout validation for Notion bootstrap dry-run, parent-page refusal,
 wrong-workspace refusal, verified Genome's Notion apply, and manifest writing.
+
+## 40 Documentation And Help Guide For 11 Room First Installer And Routing
+
+operator guide for room-first profile installation, profile schema, room
+routing, Claude/Codex router pointers, and validation.
