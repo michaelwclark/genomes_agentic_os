@@ -47,3 +47,7 @@ workflow closeout docs should stress validation required for done and local writ
 ## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
 
 feature 03 holdouts should check validation-required done closeout and writebacks.
+
+## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
+
+automation maturity docs should stress conservative levels and local writebacks.

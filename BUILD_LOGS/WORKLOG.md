@@ -195,3 +195,7 @@ implemented on codex/build-runner-24 at 842e3c3; merged as 66152ef; guide refere
 ## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
 
 implemented on codex/build-runner-25 at e508172; merged as e7d381d; holdout passed; pytest 39 passed in 2.84s.
+
+## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
+
+implemented on codex/build-runner-26 at 009fd1b; merged as 32f7ae7; guide reference check passed; pytest 39 passed in 3.12s.

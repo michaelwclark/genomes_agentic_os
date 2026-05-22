@@ -43,3 +43,7 @@ guide reference check plus full pytest on merged main.
 ## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
 
 feature-local validator plus full pytest on merged main.
+
+## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
+
+guide reference check plus full pytest on merged main.

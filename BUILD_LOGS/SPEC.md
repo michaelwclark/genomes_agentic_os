@@ -70,3 +70,7 @@ operator guide for workflow check and run-log closeout.
 ## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
 
 local holdout validator for workflow readiness and closeout.
+
+## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
+
+operator guide for automation maturity and reconfiguration.

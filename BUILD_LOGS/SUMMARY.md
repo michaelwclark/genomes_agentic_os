@@ -103,3 +103,7 @@ adds the feature 03 workflow readiness and run closeout guide.
 ## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
 
 adds the feature 03 workflow closeout holdout validator.
+
+## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
+
+adds the feature 04 automation maturity guide.

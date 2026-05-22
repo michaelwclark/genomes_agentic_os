@@ -490,6 +490,17 @@
       "merge_commit": "e7d381d",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:58:01Z"
+    },
+    {
+      "prefix": "26",
+      "slug": "26-documentation-and-help-guide-for-04-automation-maturity-and-reconfiguration",
+      "title": "26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration",
+      "card_id": "368683b4-8dab-816b-a832-e7645cda260e",
+      "status": "done",
+      "branch": "codex/build-runner-26",
+      "merge_commit": "32f7ae7",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:58:45Z"
     }
   ],
   "generated_subtasks": []
