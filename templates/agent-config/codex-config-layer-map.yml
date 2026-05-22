@@ -1,0 +1,103 @@
+id: codex_config_layer_map
+verified_date: "2026-05-22"
+local_codex_version: "codex-cli 0.131.0-alpha.9"
+sources:
+  config_basic: https://developers.openai.com/codex/config-basic
+  config_reference: https://developers.openai.com/codex/config-reference
+  config_sample: https://developers.openai.com/codex/config-sample
+  agents_md: https://developers.openai.com/codex/guides/agents-md
+  mcp: https://developers.openai.com/codex/mcp
+  hooks: https://developers.openai.com/codex/hooks
+  schema: https://developers.openai.com/codex/config-schema.json
+precedence:
+  - layer: cli_override
+    source: CLI flags and --config key=value overrides
+  - layer: profile
+    source: --profile values from profiles.<name>
+  - layer: project_config
+    source: trusted .codex/config.toml from project root to cwd
+  - layer: user_config
+    source: ~/.codex/config.toml
+  - layer: system_config
+    source: /etc/codex/config.toml
+  - layer: built_in_defaults
+    source: Codex defaults
+agentic_os_layers:
+  global_user_harness:
+    config_path: ~/.codex/config.toml
+    prompt_files:
+      - ~/.codex/AGENTS.md
+    intended_settings:
+      - default profile
+      - personal model defaults
+      - trusted project registry
+      - global MCP servers
+      - global safety hooks
+  agentic_os_root:
+    config_path: ~/agentic_os/.codex/config.toml
+    prompt_files:
+      - AGENTS.md
+      - BRAIN.md
+      - ROUTER.md
+      - CONTEXT.md
+    intended_settings:
+      - OS operating profile
+      - shared skills and tooling
+      - filesystem memory/control-plane conventions
+      - Notion workspace guardrails
+  customer_os_root:
+    config_path: <customer_os>/.codex/config.toml
+    prompt_files:
+      - AGENTS.md
+      - BRAIN.md
+      - ROUTER.md
+      - CONTEXT.md
+    intended_settings:
+      - customer data boundary
+      - customer MCP servers
+      - customer approval policy
+      - customer telemetry posture
+  domain_or_lane:
+    config_path: <domain_or_lane>/.codex/config.toml
+    prompt_files:
+      - AGENTS.md
+      - ROUTER.md
+      - CONTEXT.md
+    intended_settings:
+      - domain routing
+      - model/reasoning profile
+      - tool allow-list
+      - validation hooks
+  workflow_or_task:
+    config_path: <workflow>/.codex/config.toml
+    prompt_files:
+      - AGENTS.md
+      - CONTEXT.md
+      - MEMORY.md
+    intended_settings:
+      - temporary profile override
+      - workflow-specific context
+      - workflow-specific validation
+security_sensitive_keys:
+  - approval_policy
+  - approvals_reviewer
+  - sandbox_mode
+  - default_permissions
+  - permissions
+  - sandbox_workspace_write.network_access
+  - mcp_servers.*.env
+  - mcp_servers.*.env_vars
+  - mcp_servers.*.bearer_token_env_var
+  - mcp_servers.*.http_headers
+  - mcp_servers.*.env_http_headers
+  - hooks
+  - otel.log_user_prompt
+  - otel.exporter
+  - projects.*.trust_level
+  - model_instructions_file
+  - project_doc_fallback_filenames
+unknown_or_surface_dependent:
+  - desktop app connector behavior for every apps key
+  - experimental feature flag behavior
+  - organization managed requirements.toml policy on unmanaged machines
+  - compatibility of every schema key with older Codex CLI releases
