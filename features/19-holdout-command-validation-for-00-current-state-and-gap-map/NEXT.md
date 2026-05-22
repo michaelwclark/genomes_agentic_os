@@ -1,3 +1,6 @@
 # Next
 
-No blocking follow-up. Future holdout cards can reuse this pattern: local artifact checks, disposable runtime validation, and no live control-plane writes.
+- After merge, append this validation record to `BUILD_LOGS/*.md`.
+- Update the source Notion card with the merge SHA and validation summary.
+- Continue with the next Ready prefix.
+
