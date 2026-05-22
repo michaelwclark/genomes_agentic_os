@@ -132,3 +132,7 @@ guide reference check plus full pytest on merged main.
 ## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
 
 reference install/context/validate smoke plus full pytest on merged main.
+
+## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
+
+guide reference check plus full pytest on merged main.

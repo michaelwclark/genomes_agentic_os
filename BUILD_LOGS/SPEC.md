@@ -168,3 +168,8 @@ behavior, skill registry alignment, and validation.
 
 local holdout validation for runtime reference install, reference templates,
 context packet shared references, decision-log install, and root validation.
+
+## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
+
+operator guide for client automation, control-plane bootstrap, and context audit
+playbooks as runtime command prompts and skills.

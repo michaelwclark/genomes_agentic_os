@@ -293,3 +293,8 @@ reference check passed; pytest 39 passed in 3.07s on merged main.
 
 implemented on codex/build-runner-45 at 4dbb504; merged as a2041f5;
 reference-layer holdout passed; pytest 39 passed in 3.05s on merged main.
+
+## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
+
+implemented on codex/build-runner-46 at 9cd3008; merged as 891b4a9; guide
+reference check passed; pytest 39 passed in 3.09s on merged main.

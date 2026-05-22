@@ -148,3 +148,8 @@ skill registry.
 reference-layer holdouts should treat `decision-log.md` as installed and
 validated, while the context packet contract covers naming, tool index, source
 priority, and style/output references.
+
+## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
+
+client playbook docs should keep automation-fit analysis separate from
+automation creation and preserve verified Notion workspace guardrails.

@@ -123,3 +123,7 @@ close because the guide is present and merged-main validation passed.
 ## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
 
 close because reference-layer holdout and merged-main validation passed.
+
+## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
+
+close because the guide is present and merged-main validation passed.
