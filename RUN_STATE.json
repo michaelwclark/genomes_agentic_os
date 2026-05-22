@@ -16,7 +16,7 @@
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
   "current_active_feature": "58",
-  "last_successful_phase": "feature-57-done",
+  "last_successful_phase": "claimed-build-window-58-59",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -511,6 +511,16 @@
     {
       "card_id": "368683b4-8dab-81e9-a9f3-ec46415e3796",
       "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8155-963c-e7c671e50f72",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81d1-ad40-f5cb620a10a2",
+      "action": "claim-building-and-comment",
       "status": "ok"
     }
   ],
@@ -1183,6 +1193,28 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T07:21:00Z",
       "completed_at": "2026-05-22T07:33:21Z"
+    },
+    {
+      "prefix": "58",
+      "slug": "58-otel-and-mcp-configuration-contracts",
+      "title": "58 OTEL And MCP Configuration Contracts",
+      "card_id": "368683b4-8dab-8155-963c-e7c671e50f72",
+      "branch": "codex/build-runner-58",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T07:34:00Z"
+    },
+    {
+      "prefix": "59",
+      "slug": "59-codex-config-documentation-and-holdout-validation",
+      "title": "59 Codex Config Documentation And Holdout Validation",
+      "card_id": "368683b4-8dab-81d1-ad40-f5cb620a10a2",
+      "branch": "codex/build-runner-59",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T07:34:00Z"
     }
   ],
   "generated_subtasks": []
