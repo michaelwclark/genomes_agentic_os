@@ -13,6 +13,8 @@ from .automation_ops import (
     format_automation_check,
     set_automation_maturity,
 )
+from .config_ops import LAYERS as CONFIG_LAYERS
+from .config_ops import install_config
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
 from .doctor import doctor, format_doctor_result
 from .event_graph import (
@@ -234,6 +236,22 @@ def build_parser() -> argparse.ArgumentParser:
     customer_validate_parser = customer_subparsers.add_parser("validate", help="Validate a customer OS root.")
     customer_validate_parser.add_argument("--root", required=True)
     customer_validate_parser.set_defaults(handler=handle_customer_validate)
+
+    config_parser = subparsers.add_parser("config", help="Install or update Codex config.toml conventions.")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_install = config_subparsers.add_parser("install", help="Install or merge config.toml for an OS directory.")
+    config_install.add_argument("--root", default=DEFAULT_ROOT, help="Directory that should receive config.toml.")
+    config_install.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
+    config_install_mode = config_install.add_mutually_exclusive_group()
+    config_install_mode.add_argument("--dry-run", action="store_true", default=True)
+    config_install_mode.add_argument("--apply", action="store_true")
+    config_install.add_argument("--backup", action="store_true", help="Back up an existing config.toml before applying.")
+    config_install.add_argument(
+        "--confirm-conflicts",
+        action="store_true",
+        help="Apply non-conflicting additions while preserving existing conflicting keys.",
+    )
+    config_install.set_defaults(handler=handle_config_install)
 
     notion_parser = subparsers.add_parser("notion", help="Plan and apply filesystem-to-Notion sync.")
     notion_subparsers = notion_parser.add_subparsers(dest="notion_command", required=True)
@@ -636,6 +654,18 @@ def handle_customer_validate(args: argparse.Namespace) -> int:
     result = customer_validate(args.root)
     print(format_customer_result(result))
     return 0 if result["ok"] else 1
+
+
+def handle_config_install(args: argparse.Namespace) -> int:
+    result = install_config(
+        args.root,
+        layer=args.layer,
+        dry_run=not args.apply,
+        backup=args.backup,
+        confirm_conflicts=args.confirm_conflicts,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 2 if result.blocked else 0
 
 
 def handle_notion_plan_sync(args: argparse.Namespace) -> int:

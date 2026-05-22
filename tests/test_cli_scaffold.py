@@ -227,6 +227,86 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     assert validate_root(root).ok
 
 
+def test_config_install_dry_run_does_not_create_missing_directory(tmp_path: Path) -> None:
+    root = tmp_path / "new_workflow"
+
+    assert main(["config", "install", "--root", str(root), "--layer", "workflow_or_task", "--dry-run"]) == 0
+
+    assert not root.exists()
+
+
+def test_config_install_apply_creates_config_and_prompt_files(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["config", "install", "--root", str(root), "--layer", "agentic_os_root", "--apply"]) == 0
+
+    config = root / "config.toml"
+    assert config.is_file()
+    content = config.read_text(encoding="utf-8")
+    assert 'layer = "agentic_os_root"' in content
+    assert 'prompt_files = ["AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"]' in content
+    for filename in ("AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"):
+        assert (root / filename).is_file()
+
+
+def test_config_install_is_idempotent_on_repeated_apply(tmp_path: Path) -> None:
+    root = tmp_path / "customer_os"
+
+    assert main(["config", "install", "--root", str(root), "--layer", "customer_os_root", "--apply"]) == 0
+    first = (root / "config.toml").read_text(encoding="utf-8")
+    assert main(["config", "install", "--root", str(root), "--layer", "customer_os_root", "--apply"]) == 0
+
+    assert (root / "config.toml").read_text(encoding="utf-8") == first
+
+
+def test_config_install_preserves_existing_conflicts_until_confirmed(tmp_path: Path) -> None:
+    root = tmp_path / "domain"
+    root.mkdir()
+    config = root / "config.toml"
+    config.write_text('model = "local-model"\n', encoding="utf-8")
+
+    assert main(["config", "install", "--root", str(root), "--layer", "domain_or_lane", "--apply"]) == 2
+    assert config.read_text(encoding="utf-8") == 'model = "local-model"\n'
+
+    assert (
+        main(
+            [
+                "config",
+                "install",
+                "--root",
+                str(root),
+                "--layer",
+                "domain_or_lane",
+                "--apply",
+                "--confirm-conflicts",
+                "--backup",
+            ]
+        )
+        == 0
+    )
+    merged = config.read_text(encoding="utf-8")
+    assert 'model = "local-model"' in merged
+    assert 'approval_policy = "on-request"' in merged
+    assert (root / "AGENTS.md").is_file()
+    assert list(root.glob("config.toml.bak-*"))
+
+
+def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> None:
+    cases = {
+        "customer_os_root": ("BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"),
+        "domain_or_lane": ("ROUTER.md", "CONTEXT.md", "MEMORY.md"),
+        "workflow_or_task": ("CONTEXT.md", "MEMORY.md"),
+        "automation": ("CONTEXT.md", "MEMORY.md"),
+    }
+
+    for layer, expected_files in cases.items():
+        root = tmp_path / layer
+        assert main(["config", "install", "--root", str(root), "--layer", layer, "--apply"]) == 0
+        assert (root / "config.toml").is_file()
+        for filename in ("AGENTS.md", "CLAUDE.md", *expected_files):
+            assert (root / filename).is_file()
+
+
 def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
