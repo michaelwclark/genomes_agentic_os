@@ -1,0 +1,21 @@
+id: 368683b4-8dab-81a4-925d-c2c18e7f5034
+url: https://www.notion.so/20-Documentation-And-Help-Guide-For-01-Project-Create-And-Active-Work-368683b48dab81a4925dc2c18e7f5034
+title: 20 Documentation And Help Guide For 01 Project Create And Active Work
+prefix: "20"
+slug: 20-documentation-and-help-guide-for-01-project-create-and-active-work
+status: ready_to_merge
+source_queue: Ready
+ordering_rule: title-prefix-ascending
+related_feature: features/01-project-create-and-active-work
+branch:
+  target: main
+  feature_branch: codex/build-runner-20
+acceptance:
+  - Feature 01 has an operator-facing guide.
+  - The guide explains project creation, active-work indexing, source-map behavior, idempotency, and verification.
+  - The feature-local audit folder records investigation, plan, QA, judgment, and follow-up state.
+verification:
+  - command: uv run --extra dev pytest -q
+    result: disposable project-create smoke passed; 39 passed in 3.38s
+  - command: test -f docs/13-feature-guides/01-project-create-and-active-work.md
+    result: passed
