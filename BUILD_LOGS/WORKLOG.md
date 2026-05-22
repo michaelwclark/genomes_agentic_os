@@ -347,3 +347,7 @@ implemented on codex/build-runner-57 at 4354978; merged as 470e42b; config insta
 ## 58 OTEL And MCP Configuration Contracts
 
 implemented on codex/build-runner-58 at 3412611; merged as 486a7ac; config doctor holdout passed; secret-safe content check passed; pytest 46 passed in 3.16s on merged main; Notion synced to Done.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+implemented on codex/build-runner-59 at be7ff70; merged as 4caefdd; final config command matrix passed; docs/help checks passed; pytest 46 passed in 3.27s on merged main; Notion synced to Done with validation artifact links.

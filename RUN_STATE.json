@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "59",
-  "last_successful_phase": "feature-58-done",
+  "current_active_feature": null,
+  "last_successful_phase": "feature-59-done",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -525,6 +525,11 @@
     },
     {
       "card_id": "368683b4-8dab-8155-963c-e7c671e50f72",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81d1-ad40-f5cb620a10a2",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -1217,10 +1222,11 @@
       "title": "59 Codex Config Documentation And Holdout Validation",
       "card_id": "368683b4-8dab-81d1-ad40-f5cb620a10a2",
       "branch": "codex/build-runner-59",
-      "status": "building",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T07:34:00Z"
+      "status": "done",
+      "merge_commit": "4caefdd",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T07:34:00Z",
+      "completed_at": "2026-05-22T07:46:34Z"
     }
   ],
   "generated_subtasks": []

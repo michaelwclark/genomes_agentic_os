@@ -200,3 +200,11 @@ Plan completed: run temp-root event graph holdout, validate docs repair, validat
 3. Add tests for valid and missing contract keys.
 4. Add docs and a machine-readable contract.
 5. Run merged-main tests and focused doctor/content holdouts.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+1. Refresh CLI/install docs with TOCs, how-to flows, config examples, and SVG diagram.
+2. Execute all config layers through dry-run, apply, re-run, and doctor.
+3. Execute conflict, backup, and missing-config paths.
+4. Add validation log and summary.
+5. Run merged-main tests, docs checks, help checks, and final matrix.

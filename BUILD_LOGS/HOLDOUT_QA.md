@@ -185,3 +185,7 @@ Holdout checks: merged-main pytest, direct config install dry-run on a missing d
 ## 58 OTEL And MCP Configuration Contracts
 
 Holdout checks: merged-main pytest, config doctor on an installed config, and a secret-safe content check across docs, templates, and config operation code.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+Holdout checks: final merged-main config matrix across all layers, conflict/backup and missing-config paths, docs/help content checks, and full pytest suite.

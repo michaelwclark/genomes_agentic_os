@@ -202,3 +202,7 @@ The guarded config installer lives in src/genomes_agentic_os/config_ops.py and i
 ## 58 OTEL And MCP Configuration Contracts
 
 Use agentic-os config doctor for local OTEL/MCP contract validation. The machine-readable contract is templates/agent-config/otel-mcp-contract.yml.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+The closeout guide is docs/10-cli-and-install/codex-config-closeout.md. The validation log is features/59-codex-config-documentation-and-holdout-validation/VALIDATION_LOG.md.

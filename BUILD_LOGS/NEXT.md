@@ -236,3 +236,7 @@ Next queue item: feature 58 OTEL and MCP configuration contracts.
 ## 58 OTEL And MCP Configuration Contracts
 
 Next queue item: feature 59 Codex config documentation and holdout validation.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+No Ready config cards remain. Query the configured Agentic OS Kanban before opening another build-runner window.

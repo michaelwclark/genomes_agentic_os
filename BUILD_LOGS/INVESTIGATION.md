@@ -207,3 +207,7 @@ Mapped the request to the existing CLI/scaffold pattern and added a local config
 ## 58 OTEL And MCP Configuration Contracts
 
 Extended the feature 57 config installer with OTEL env-var references, MCP secret policy, and config doctor validation so docs, templates, and CLI checks share one contract.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+The holdout matrix found a TOML merge-order bug in confirmed conflict merges. Feature 59 fixed it and added a regression assertion before final validation.

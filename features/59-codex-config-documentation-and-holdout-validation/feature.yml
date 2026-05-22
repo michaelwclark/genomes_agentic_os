@@ -4,12 +4,12 @@ prefix: "59"
 slug: 59-codex-config-documentation-and-holdout-validation
 source_url: https://www.notion.so/59-Codex-Config-Documentation-And-Holdout-Validation-368683b48dab81d1ad40f5cb620a10a2
 source_queue: Ready
-status: ready_to_merge
+status: done
 branch: codex/build-runner-59
 base_sha: e4851e4
-merge_sha:
+merge_sha: 4caefdd
 started_at: 2026-05-22T07:34:00Z
-completed_at:
+completed_at: 2026-05-22T07:46:34Z
 acceptance:
   - README and help guides include TOC, how-to flows, config examples, and SVG diagrams where useful
   - every new config command and installer variation is executed and logged
@@ -19,6 +19,8 @@ verification:
   - command: config holdout matrix
     result: passed for all six layers, conflict/backup path, missing-config path, and test suite
   - command: uv run --extra dev pytest -q
-    result: 46 passed in 3.07s
+    result: 46 passed in 3.27s
   - command: docs and help content checks
     result: passed
+  - command: merged main verification
+    result: uv run --extra dev pytest -q passed 46 tests; final config command matrix passed; docs/help checks passed

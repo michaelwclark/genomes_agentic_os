@@ -242,3 +242,7 @@ adds agentic-os config install, a guarded local installer for Codex config.toml 
 ## 58 OTEL And MCP Configuration Contracts
 
 adds OTEL/MCP configuration contracts, validation, and secret-safe template references for Agentic OS Codex config.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+adds the Codex config closeout guide, validation log, CLI/install README updates, SVG flow diagram, and regression coverage for confirmed conflict merges.

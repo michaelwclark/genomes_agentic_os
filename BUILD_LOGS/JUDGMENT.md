@@ -175,3 +175,7 @@ The installer blocks on conflicts by default because config.toml can change sand
 ## 58 OTEL And MCP Configuration Contracts
 
 Telemetry and MCP config are security-sensitive, so templates name environment variables only and doctor output reports remediation without exposing values.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+The validation log is stored in source artifacts and linked from Notion rather than copied wholesale into the card. The closeout fixed a real holdout bug before marking the queue complete.

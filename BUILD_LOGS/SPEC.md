@@ -222,3 +222,7 @@ Source card 368683b4-8dab-81e9-a9f3-ec46415e3796 required a CLI/install path tha
 ## 58 OTEL And MCP Configuration Contracts
 
 Source card 368683b4-8dab-8155-963c-e7c671e50f72 required OTEL expectations, env vars, redaction rules, per-layer defaults, MCP registration points, secret-safe installer references, and validation with remediation.
+
+## 59 Codex Config Documentation And Holdout Validation
+
+Source card 368683b4-8dab-81d1-ad40-f5cb620a10a2 required closeout docs, command-help coverage, config examples, SVG/PNG diagrams where useful, execution logs for every new config command and installer variation, desktop-relevant local validation where possible, and a summarized validation log linked from the card.
