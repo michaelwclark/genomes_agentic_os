@@ -66,7 +66,7 @@ from .source_watch import (
     poll_watch_source,
     run_due_watch_sources,
 )
-from .validate import validate_root
+from .validate import validate_root, validate_source_package
 from .workflow_ops import check_workflow, close_run_log, format_findings
 
 
@@ -445,6 +445,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     validate_parser.set_defaults(handler=handle_validate)
+
+    validate_source_parser = subparsers.add_parser(
+        "validate-source",
+        help="Validate source-package files required before install or sync.",
+    )
+    validate_source_parser.add_argument("--source", default=".", help="Source package root path.")
+    validate_source_parser.set_defaults(handler=handle_validate_source)
 
     docs_parser = subparsers.add_parser("docs", help="Install or update runtime OS documentation.")
     docs_subparsers = docs_parser.add_subparsers(dest="docs_command", required=True)
@@ -868,6 +875,20 @@ def handle_validate(args: argparse.Namespace) -> int:
     result = validate_root(args.root)
     if result.ok:
         print(f"valid: {Path(args.root).expanduser()}")
+        for warning in result.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        return 0
+    for error in result.errors:
+        print(f"error: {error}", file=sys.stderr)
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    return 1
+
+
+def handle_validate_source(args: argparse.Namespace) -> int:
+    result = validate_source_package(args.source)
+    if result.ok:
+        print(f"valid source package: {Path(args.source).expanduser()}")
         for warning in result.warnings:
             print(f"warning: {warning}", file=sys.stderr)
         return 0

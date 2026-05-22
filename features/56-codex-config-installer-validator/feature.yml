@@ -1,0 +1,15 @@
+id: 56
+title: Codex Config Installer Validator
+status: implemented
+branch: codex/build-runner-56
+acceptance:
+  - Add installer validation for intended Codex configuration files in the source package before install/sync.
+  - Distinguish missing optional layer config from missing required config with actionable output.
+  - Include command examples for validating a generated install without mutating it.
+  - Update docs/templates so users understand how validation fits into the install flow.
+artifacts:
+  - src/genomes_agentic_os/validate.py
+  - src/genomes_agentic_os/cli.py
+  - tests/test_installer_validation.py
+  - docs/03-installation/installer-validation.md
+  - docs/03-installation/index.md

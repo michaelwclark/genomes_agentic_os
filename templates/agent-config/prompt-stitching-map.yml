@@ -1,0 +1,64 @@
+id: prompt_stitching_map
+version: 0.1.0
+purpose: >
+  Canonical prompt-file stitching order for Genome's Agentic OS directories.
+universal_files:
+  - BRAIN.md
+  - ROUTER.md
+  - CONTEXT.md
+  - MEMORY.md
+harness_entry_files:
+  codex:
+    - AGENTS.md
+  claude:
+    - CLAUDE.md
+generated_from_templates:
+  - templates/agent-config/BRAIN.md
+  - templates/agent-config/ROUTER.md
+  - templates/agent-config/CONTEXT.md
+  - templates/memory/memory-policy.md
+stitching_order:
+  - id: global_harness
+    load:
+      - ~/.codex/AGENTS.md
+      - ~/.claude/CLAUDE.md
+    notes: Runtime harness files may select tools and global safety defaults.
+  - id: agentic_os_root
+    load:
+      - BRAIN.md
+      - ROUTER.md
+      - CONTEXT.md
+      - MEMORY.md
+    notes: Reusable operating brain and root routing.
+  - id: customer_os_root
+    load:
+      - BRAIN.md
+      - ROUTER.md
+      - CONTEXT.md
+      - MEMORY.md
+      - customer.yml
+    notes: Customer boundaries and approved systems.
+  - id: domain_or_lane
+    load:
+      - ROUTER.md
+      - CONTEXT.md
+      - MEMORY.md
+      - domain.yml
+    notes: Domain-specific routing, source maps, and approval refinements.
+  - id: workflow_or_automation
+    load:
+      - workflow.md
+      - automation.md
+      - quick-reference.md
+      - context-pack.md
+      - permissions.md
+      - runbook.md
+    notes: Task-specific acceptance criteria and execution steps.
+precedence:
+  safety: strictest_rule_wins
+  routing: narrowest_applicable_router_wins
+  memory: strictest_privacy_rule_wins
+  output_destination: workflow_or_automation_over_domain_over_root
+missing_file_behavior:
+  continue: true
+  record_gap_in: run_log_or_closeout
