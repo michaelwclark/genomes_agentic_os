@@ -94,3 +94,7 @@ add future ideas guide, verify references, run pytest, merge, push, close card.
 ## 37 Holdout Command Validation For 09 Future Ideas Intake
 
 run future ideas holdout, run pytest, merge, push, close card.
+
+## 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
+
+add bootstrap guide, verify references, run pytest, merge, push, close card.

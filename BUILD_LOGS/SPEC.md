@@ -128,3 +128,8 @@ destinations.
 ## 37 Holdout Command Validation For 09 Future Ideas Intake
 
 local holdout validation for OS, domain, and project plan capture routing.
+
+## 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
+
+operator guide for guarded Notion bootstrap dry-run/apply, parent page
+verification, and local manifest state.

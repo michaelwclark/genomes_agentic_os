@@ -253,3 +253,8 @@ reference check passed; pytest 39 passed in 3.09s on merged main.
 
 implemented on codex/build-runner-37 at 44df55a; merged as d589ba9; holdout
 passed; pytest 39 passed in 3.07s on merged main.
+
+## 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
+
+implemented on codex/build-runner-38 at 5ac2f13; merged as 8052736; guide
+reference check passed; pytest 39 passed in 3.03s on merged main.

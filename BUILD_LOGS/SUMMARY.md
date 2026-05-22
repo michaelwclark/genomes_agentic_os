@@ -157,3 +157,7 @@ adds the feature 09 future ideas intake guide.
 ## 37 Holdout Command Validation For 09 Future Ideas Intake
 
 adds feature 09 future ideas intake holdout validation.
+
+## 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
+
+adds the feature 10 Notion control plane bootstrap guide.

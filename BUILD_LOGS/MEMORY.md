@@ -105,3 +105,8 @@ promotion to active work.
 ## 37 Holdout Command Validation For 09 Future Ideas Intake
 
 plan capture holdouts should inspect target files for captured titles.
+
+## 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
+
+bootstrap docs should state that apply requires both verified workspace and
+approved parent page ID.

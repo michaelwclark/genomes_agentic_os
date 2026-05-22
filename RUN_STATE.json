@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "38",
+  "current_active_feature": null,
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -315,6 +315,11 @@
     },
     {
       "card_id": "368683b4-8dab-8121-9255-e9faf20dd6e9",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81b0-a74f-cb3bbed1508b",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -754,12 +759,12 @@
       "slug": "38-documentation-and-help-guide-for-10-notion-control-plane-bootstrap",
       "title": "38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap",
       "card_id": "368683b4-8dab-81b0-a74f-cb3bbed1508b",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-38",
-      "merge_commit": null,
-      "last_successful_phase": "started",
+      "merge_commit": "8052736",
+      "last_successful_phase": "done",
       "started_at": "2026-05-22T05:40:41Z",
-      "completed_at": null
+      "completed_at": "2026-05-22T05:51:27Z"
     }
   ],
   "generated_subtasks": []
