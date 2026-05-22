@@ -195,3 +195,7 @@ Verified current Codex behavior against official OpenAI Codex documentation and 
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 Mapped feature 54 config research and layer IDs into a Codex-facing TOML template plus Agentic OS metadata manifest so native profile keys stay separate from OS operational metadata.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+Feature 54 established Codex AGENTS.md discovery and Agentic OS prompt layers. This feature keeps harness entry files thin and moves durable behavior into BRAIN.md, ROUTER.md, CONTEXT.md, and MEMORY.md.

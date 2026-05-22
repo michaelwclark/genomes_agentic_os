@@ -173,3 +173,7 @@ Holdout checks: run the full pytest suite on the merged main branch and assert t
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 Holdout checks: merged-main pytest and a content check for all six profiles, required metadata fields, prompt duplication rule, precedence, and merge behavior.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+Holdout checks: merged-main pytest and a content check for required prompt filenames, universal/harness/generated file classes, migration guidance, nested example, and stitching map layers.

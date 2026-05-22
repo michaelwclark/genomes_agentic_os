@@ -210,3 +210,7 @@ Source card 368683b4-8dab-8146-91cd-f347902c2e5a required an authoritative Codex
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 Source card 368683b4-8dab-8196-9c27-d6c4e1dd970f required concrete Codex profile templates for each Agentic OS layer, with model behavior, skills, prompt files, MCP availability, environment assumptions, telemetry posture, precedence, and merge behavior.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+Source card 368683b4-8dab-8137-96a4-f8b38619482a required canonical prompt-file roles, universal versus harness-specific boundaries, migration guidance, and nested prompt stitching examples for Agentic OS directories.

@@ -224,3 +224,7 @@ Next queue item: feature 55 Codex config profiles per Agentic OS layer.
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 Next queue item: feature 56 universal agent brain convention and prompt stitching.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+Next queue item: feature 57 config.toml installer and directory setup.

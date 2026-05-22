@@ -230,3 +230,7 @@ adds the Codex config.toml options inventory and Agentic OS config layer map for
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 adds Codex config profile templates and Agentic OS profile metadata for global harness, OS root, customer root, domain/lane, workflow/task, and automation layers.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+adds the universal agent brain convention, reusable prompt templates, and prompt stitching map for Codex and Claude oriented Agentic OS directories.

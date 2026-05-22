@@ -163,3 +163,7 @@ Documented Codex-owned behavior only where backed by official docs or local CLI 
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 Kept native Codex settings in TOML and richer Agentic OS metadata in YAML to avoid treating every OS concern as a Codex-native setting.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+The feature was scoped to prompt-stitching docs/templates. A stale branch commit for installer validation was reverted locally before push so the final tree only carries the active card's artifacts.

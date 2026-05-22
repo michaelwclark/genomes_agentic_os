@@ -190,3 +190,7 @@ The canonical Codex config research now lives in docs/07-agent-surfaces/codex-co
 ## 55 Codex Config Profiles Per Agentic OS Layer
 
 The profile metadata source is templates/agent-config/codex-profile-manifest.yml. The Codex-facing template is templates/agent-config/codex-profiles.toml.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+The prompt composition source is docs/07-agent-surfaces/universal-agent-brain.md. The machine-readable stitching order is templates/agent-config/prompt-stitching-map.yml.

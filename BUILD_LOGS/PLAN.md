@@ -176,3 +176,11 @@ Plan completed: run temp-root event graph holdout, validate docs repair, validat
 3. Add Agentic OS profile metadata.
 4. Verify all layers and metadata fields.
 5. Run the full test suite before merge.
+
+## 56 Universal Agent Brain Convention And Prompt Stitching
+
+1. Add the universal agent brain guide.
+2. Add reusable prompt templates.
+3. Add a prompt stitching map.
+4. Verify required file names, file classes, migration guidance, nested examples, and map layers.
+5. Run the full test suite before integration.
