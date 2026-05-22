@@ -1,3 +1,5 @@
 # Judgment
 
-Ready after orchestrator verification.
+No diagram was added because the maturity table is the clearest artifact for
+operators.
+

@@ -3,20 +3,30 @@
 ## Table Of Contents
 
 - [Purpose](#purpose)
+- [Source And Runtime Boundaries](#source-and-runtime-boundaries)
 - [Commands](#commands)
 - [Maturity Levels](#maturity-levels)
-- [Promotion Evidence](#promotion-evidence)
 - [Project Attachment](#project-attachment)
 - [Disposable Validation](#disposable-validation)
-- [Done Signal](#done-signal)
+- [Troubleshooting](#troubleshooting)
+- [Source Artifacts](#source-artifacts)
 
 ## Purpose
 
-Feature 04 keeps automations conservative until their local contract has enough evidence. Operators can check automation readiness, promote maturity through explicit levels, and attach an automation to a project with reviewable file writebacks.
+Feature 04 makes automations safer to introduce and reconfigure. New
+automations start at `observe`, can move to `prepare`, and require file-first
+evidence before higher maturity levels.
+
+## Source And Runtime Boundaries
+
+This repository owns the CLI behavior and templates. The installed OS root owns
+live automation specs, maturity decisions, project attachments, and validation
+evidence.
 
 ## Commands
 
 ```bash
+agentic-os automation create los support production_thread_intake --root ~/agentic_os
 agentic-os automation check los support production_thread_intake --root ~/agentic_os
 agentic-os automation set-maturity los support production_thread_intake prepare --root ~/agentic_os
 agentic-os automation attach los support production_thread_intake --project losmon_replacement --root ~/agentic_os
@@ -24,15 +34,22 @@ agentic-os automation attach los support production_thread_intake --project losm
 
 ## Maturity Levels
 
-Automations start at `observe`. Supported levels are `observe`, `prepare`, `propose`, `execute_approved`, and `execute_guarded`. Promotions beyond the safe start levels require contract evidence.
+| Level | Meaning |
+| --- | --- |
+| `observe` | Watch and report only. This is the default for new automations. |
+| `prepare` | Prepare artifacts or draft actions for review. |
+| `propose` | Suggest actions based on file-first evidence. |
+| `execute_approved` | Execute only after approval evidence exists. |
+| `execute_guarded` | Execute with explicit guardrails and rollback evidence. |
 
-## Promotion Evidence
-
-Before higher-risk promotion, the automation contract should include trigger source/frequency, idempotency key and duplicate handling, read/write permissions, approval gates, default action before approval, outputs, tests, and runbook coverage. `automation check` reports blockers when those are missing.
+Higher levels require the automation spec to contain the contract, permissions,
+outputs, and audit evidence needed for safe operation.
 
 ## Project Attachment
 
-`automation attach` writes local evidence instead of external side effects. It updates the automation record, the project `status.md`, and the project `source-map.md` so future agents can see the relationship.
+`automation attach` links a runtime automation to a project. The project status
+and source map should then expose which automation participates in that project
+and where to inspect it.
 
 ## Disposable Validation
 
@@ -47,6 +64,21 @@ uv run agentic-os automation attach los support production_thread_intake --proje
 uv run agentic-os validate --root "$TMP_ROOT"
 ```
 
-## Done Signal
+## Troubleshooting
 
-Feature 04 is healthy when new automations begin at `observe`, readiness checks surface blockers, safe promotion to `prepare` records a decision, unsafe promotion is blocked without evidence, project attachment updates project/automation files, and validation remains green.
+| Symptom | Likely Cause | Fix |
+| --- | --- | --- |
+| Higher maturity level is refused | Required file-first evidence is missing | Fill contract, permissions, outputs, and audit sections before promoting. |
+| New automation is too powerful | Maturity was manually edited past `observe` | Reset to `observe` or use `set-maturity` with evidence. |
+| Project does not show automation attachment | Attachment command was not run or project slug was wrong | Run `automation attach` with the correct project slug. |
+
+## Source Artifacts
+
+- Source plan: `PLANS/04-automation-maturity-and-reconfiguration.md`
+- Feature audit folder: `features/04-automation-maturity-and-reconfiguration/`
+- Implementation: `src/genomes_agentic_os/automation_ops.py`
+- CLI parser: `src/genomes_agentic_os/cli.py`
+
+No diagram is included. The maturity table and command sequence are the more
+useful operating surface.
+

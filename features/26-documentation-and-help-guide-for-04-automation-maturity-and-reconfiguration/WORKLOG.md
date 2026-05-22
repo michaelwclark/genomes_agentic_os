@@ -1,6 +1,6 @@
 # Worklog
 
-## 2026-05-22
+- Added the automation maturity guide.
+- Updated the feature-guide index.
+- Added Build Runner artifacts.
 
-- Added scoped implementation artifacts.
-- QA completed: guide reference check passed; 39 passed in 4.07s.
