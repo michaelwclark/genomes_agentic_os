@@ -171,3 +171,7 @@ Investigation confirmed feature 15 shipped runtime templates, runtime/integratio
 ## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Investigation confirmed the feature 15 command matrix uses `init --target`, docs update for managed runtime knowledge repair, runtime registry commands, heartbeat dry-runs, schedule dry-runs, integration setup, and local Notion runtime tracking manifests.
+
+## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
+
+Investigation confirmed feature 16 ships connected-system and watch-source commands, runtime source templates, source-watcher skill guidance, source event writes, cursor state, and doctor checks.

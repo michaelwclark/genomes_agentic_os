@@ -146,3 +146,7 @@ Plan completed: inspect feature 15 implementation and artifacts, document runtim
 ## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Plan completed: run temp-root runtime holdout, validate docs repair, validate runtime/heartbeat/schedule/integration/Notion tracking commands, merge, update Notion, and record state.
+
+## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
+
+Plan completed: inspect feature 16 source watch implementation, document commands and registry paths, verify guide references, merge, update Notion, and record Build Runner state.

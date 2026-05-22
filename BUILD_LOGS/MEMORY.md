@@ -166,3 +166,7 @@ Feature 15 runtime operations are documented at docs/13-feature-guides/15-always
 ## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Feature 15 holdout confirms docs update restores managed runtime knowledge, runtime and heartbeat/schedule commands are file-backed, and Notion runtime tracking must be guarded by verified workspace before local apply.
+
+## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
+
+Feature 16 is documented at docs/13-feature-guides/16-connected-source-watch-registry.md. The guide anchors operators on connected systems, source providers, watch sources, cursors, source events, and dry-run/apply behavior.

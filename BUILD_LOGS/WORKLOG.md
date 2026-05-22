@@ -311,3 +311,7 @@ implemented on codex/build-runner-48 at 1aec166; merged as 049b788; guide refere
 ## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 implemented on codex/build-runner-49 at aabab03; merged as d57ccdf; runtime holdout smoke passed; pytest 39 passed in 3.09s on merged main; Notion synced to Done.
+
+## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
+
+implemented on codex/build-runner-50 at 54e2199; merged as daca017; guide reference check passed; pytest 39 passed in 3.08s on merged main; Notion synced to Done.

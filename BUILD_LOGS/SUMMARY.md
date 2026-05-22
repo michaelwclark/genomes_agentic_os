@@ -206,3 +206,7 @@ adds the feature 15 always-on runtime heartbeats, schedules, and integrations gu
 ## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 adds feature 15 runtime holdout validation artifacts.
+
+## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
+
+adds the feature 16 connected source watch registry guide.

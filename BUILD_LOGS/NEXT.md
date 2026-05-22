@@ -200,3 +200,7 @@ Next queue item: feature 49 holdout validation for the same runtime surface.
 ## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Next queue item: feature 50 documentation for the connected source watch registry.
+
+## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
+
+Next queue item: feature 51 holdout validation for the connected source watch registry.
