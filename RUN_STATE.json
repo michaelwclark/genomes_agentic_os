@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "43",
-  "last_successful_phase": "feature-42-merged-and-verified",
+  "current_active_feature": "44",
+  "last_successful_phase": "feature-43-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -864,11 +864,12 @@
       "slug": "43-holdout-command-validation-for-12-factory-template-import-backlog",
       "title": "43 Holdout Command Validation For 12 Factory Template Import Backlog",
       "card_id": "368683b4-8dab-8124-9e27-ff32ccb796d2",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-43",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T06:11:15Z"
+      "merge_commit": "ff6c9ac",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:11:15Z",
+      "completed_at": "2026-05-22T06:20:21Z"
     },
     {
       "prefix": "44",

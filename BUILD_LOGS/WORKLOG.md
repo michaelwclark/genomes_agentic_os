@@ -278,3 +278,8 @@ holdout passed; pytest 39 passed in 3.09s on merged main.
 
 implemented on codex/build-runner-42 at 3a0829e; merged as 8873220; guide
 reference check passed; pytest 39 passed in 3.07s on merged main.
+
+## 43 Holdout Command Validation For 12 Factory Template Import Backlog
+
+implemented on codex/build-runner-43 at 80aa07f; merged as ff6c9ac; factory
+template holdout passed; pytest 39 passed in 3.07s on merged main.

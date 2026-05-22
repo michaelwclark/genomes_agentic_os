@@ -131,3 +131,8 @@ operational domain.
 
 factory template docs should keep source import policy separate from runtime
 template installation paths.
+
+## 43 Holdout Command Validation For 12 Factory Template Import Backlog
+
+factory template holdouts should test source policy docs separately from
+installed runtime template paths.

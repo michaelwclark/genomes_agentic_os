@@ -116,3 +116,7 @@ run room-first installer holdout, run pytest, merge, push, close card.
 
 add factory template guide, verify references, run pytest, merge, push, close
 card.
+
+## 43 Holdout Command Validation For 12 Factory Template Import Backlog
+
+run factory template holdout, run pytest, merge, push, close card.

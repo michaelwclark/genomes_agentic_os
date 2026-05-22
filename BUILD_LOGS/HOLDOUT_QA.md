@@ -118,3 +118,9 @@ router pointer checks, managed room file checks, and full pytest on merged main.
 ## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
 
 guide reference check plus full pytest on merged main.
+
+## 43 Holdout Command Validation For 12 Factory Template Import Backlog
+
+docs update restoration smoke, runtime template family checks, source policy
+doc check, customer-template sanitation scan, root validation, and full pytest
+on merged main.
