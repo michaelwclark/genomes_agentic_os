@@ -162,3 +162,7 @@ preservation, and validation failure for missing required command prompts.
 ## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Feature 15 runtime operations are documented at docs/13-feature-guides/15-always-on-runtime-heartbeats-schedules-and-integrations.md. The guide anchors operators on file-backed heartbeats, schedules, integrations, and guarded Notion runtime tracking.
+
+## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Feature 15 holdout confirms docs update restores managed runtime knowledge, runtime and heartbeat/schedule commands are file-backed, and Notion runtime tracking must be guarded by verified workspace before local apply.

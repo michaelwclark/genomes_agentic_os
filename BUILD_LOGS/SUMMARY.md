@@ -202,3 +202,7 @@ validation.
 ## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 adds the feature 15 always-on runtime heartbeats, schedules, and integrations guide.
+
+## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+adds feature 15 runtime holdout validation artifacts.

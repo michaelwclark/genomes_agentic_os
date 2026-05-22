@@ -182,3 +182,7 @@ restoration, local edit preservation, missing-command validation, and guidance.
 ## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Source card: 368683b4-8dab-8176-bb3c-fb89bfd1d980. Build Runner added the feature 15 runtime operations guide and local completion artifacts.
+
+## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Source card: 368683b4-8dab-8119-809d-e7194b7755ab. Build Runner added holdout validation artifacts for feature 15 runtime heartbeats, schedules, integrations, and guarded Notion runtime tracking.

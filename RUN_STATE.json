@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "49",
-  "last_successful_phase": "feature-48-done",
+  "current_active_feature": "50",
+  "last_successful_phase": "feature-49-done",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -430,6 +430,11 @@
     },
     {
       "card_id": "368683b4-8dab-8176-bb3c-fb89bfd1d980",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8119-809d-e7194b7755ab",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -1001,11 +1006,12 @@
       "slug": "49-holdout-command-validation-for-15-always-on-runtime-heartbeats-schedules-and-integrations",
       "title": "49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations",
       "card_id": "368683b4-8dab-8119-809d-e7194b7755ab",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-49",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T06:34:21Z"
+      "merge_commit": "d57ccdf",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:34:21Z",
+      "completed_at": "2026-05-22T06:49:30Z"
     },
     {
       "prefix": "50",

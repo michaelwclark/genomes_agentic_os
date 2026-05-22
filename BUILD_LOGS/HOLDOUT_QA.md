@@ -145,3 +145,7 @@ full pytest on merged main.
 ## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
 
 Holdout plan: verify the guide points at existing feature 15 artifacts/templates/skills and rerun the full repository pytest suite after merge.
+
+## 49 Holdout Command Validation For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Holdout plan: fresh temp-root install, managed runtime knowledge repair, validate root, runtime doctor, heartbeat dry-run, schedule dry-run, integration setup/doctor, Notion tracking dry-run/apply guard, and full pytest.
