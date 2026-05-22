@@ -127,3 +127,7 @@ close because reference-layer holdout and merged-main validation passed.
 ## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
 
 close because the guide is present and merged-main validation passed.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+close because client playbook holdout and merged-main validation passed.

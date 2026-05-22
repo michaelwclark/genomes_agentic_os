@@ -136,3 +136,8 @@ reference install/context/validate smoke plus full pytest on merged main.
 ## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
 
 guide reference check plus full pytest on merged main.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+playbook install/update/validate smoke, missing-command validation failure, and
+full pytest on merged main.

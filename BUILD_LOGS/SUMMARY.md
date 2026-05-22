@@ -193,3 +193,8 @@ adds feature 13 reference and skill index layer holdout validation.
 ## 46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks
 
 adds the feature 14 client automation and control-plane playbooks guide.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+adds feature 14 client automation and control-plane playbooks holdout
+validation.

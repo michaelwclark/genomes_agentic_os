@@ -134,3 +134,7 @@ run reference-layer holdout, run pytest, merge, push, close card.
 
 add client automation playbook guide, verify references, run pytest, merge,
 push, close card.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+run client playbook holdout, run pytest, merge, push, close card.

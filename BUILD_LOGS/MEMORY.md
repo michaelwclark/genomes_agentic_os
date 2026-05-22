@@ -153,3 +153,8 @@ priority, and style/output references.
 
 client playbook docs should keep automation-fit analysis separate from
 automation creation and preserve verified Notion workspace guardrails.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+client playbook holdouts should verify additive restoration, local edit
+preservation, and validation failure for missing required command prompts.

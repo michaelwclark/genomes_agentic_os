@@ -173,3 +173,8 @@ context packet shared references, decision-log install, and root validation.
 
 operator guide for client automation, control-plane bootstrap, and context audit
 playbooks as runtime command prompts and skills.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+local holdout validation for runtime playbook command/skill install, docs update
+restoration, local edit preservation, missing-command validation, and guidance.

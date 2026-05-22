@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "47",
-  "last_successful_phase": "feature-46-merged-and-verified",
+  "current_active_feature": null,
+  "last_successful_phase": "feature-47-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -942,11 +942,12 @@
       "slug": "47-holdout-command-validation-for-14-client-automation-and-control-plane-playbooks",
       "title": "47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks",
       "card_id": "368683b4-8dab-81f7-b1a3-f4de7c9f9f52",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-47",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T06:23:52Z"
+      "merge_commit": "729c969",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:23:52Z",
+      "completed_at": "2026-05-22T06:32:49Z"
     }
   ],
   "generated_subtasks": []

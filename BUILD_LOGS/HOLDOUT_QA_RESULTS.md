@@ -233,3 +233,8 @@ passed in 3.05s; Notion pending after push.
 
 merged-main guide reference check passed; pytest 39 passed in 3.09s; Notion
 pending after push.
+
+## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+
+branch holdout passed; merged-main playbook smoke passed; pytest 39 passed in
+3.07s; Notion pending after push.
