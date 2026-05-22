@@ -112,3 +112,7 @@ adds the feature 04 automation maturity guide.
 
 adds feature 04 automation maturity holdout validation for evidence gaps,
 promotion guardrails, safe `prepare`, project attachment, and root validation.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+adds the feature 05 customer OS factory guide under `docs/13-feature-guides/`.

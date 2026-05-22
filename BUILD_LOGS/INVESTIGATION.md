@@ -67,3 +67,8 @@ reviewed feature 04 artifacts and automation tests.
 
 validated feature 04 through public automation CLI commands in a disposable OS
 root.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+reviewed feature 05 artifacts, customer CLI implementation, example profile,
+schema, templates, and tests.

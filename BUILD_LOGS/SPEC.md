@@ -79,3 +79,8 @@ operator guide for automation maturity and reconfiguration.
 
 local holdout validation for automation maturity checks, unsafe promotion
 guarding, safe `prepare` promotion, project attachment, and root validation.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+operator guide for customer profile inputs, customer init/update/validate,
+additive updates, customer-safe generation, and validation output.

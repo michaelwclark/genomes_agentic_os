@@ -203,3 +203,8 @@ implemented on codex/build-runner-26 at 009fd1b; merged as 32f7ae7; guide refere
 ## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
 
 implemented on codex/build-runner-27 at 246b608; merged as 80e9edb; automation holdout passed; pytest 39 passed in 3.06s on merged main.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+implemented on codex/build-runner-28 at 8048757; merged as babe5b9; guide
+reference check passed; pytest 39 passed in 3.05s on merged main.

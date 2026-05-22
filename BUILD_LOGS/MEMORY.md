@@ -56,3 +56,8 @@ automation maturity docs should stress conservative levels and local writebacks.
 
 automation maturity holdouts should include both the blocked unsafe promotion
 path and the safe `prepare` path.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+customer OS factory docs should distinguish blocking `core_errors` from
+non-blocking `profile_warnings`, including private source-term warnings.

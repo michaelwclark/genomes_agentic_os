@@ -51,3 +51,7 @@ close because guide is present and merged-main validation passed.
 ## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
 
 close because automation maturity holdout and merged-main validation passed.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+close because the guide is present and merged-main validation passed.

@@ -52,3 +52,7 @@ guide reference check plus full pytest on merged main.
 
 automation create/check, blocked `propose`, safe `prepare`, attach, validate,
 and full pytest on merged main.
+
+## 28 Documentation And Help Guide For 05 Customer Os Factory
+
+guide reference check plus full pytest on merged main.
