@@ -149,3 +149,7 @@ adds the feature 08 LOSMon replacement validation guide under
 ## 35 Holdout Command Validation For 08 Losmon Replacement Validation
 
 adds feature 08 LOSMon replacement holdout validation.
+
+## 36 Documentation And Help Guide For 09 Future Ideas Intake
+
+adds the feature 09 future ideas intake guide.

@@ -86,3 +86,7 @@ card.
 ## 35 Holdout Command Validation For 08 Losmon Replacement Validation
 
 run LOSMon validation holdout, run pytest, merge, push, close card.
+
+## 36 Documentation And Help Guide For 09 Future Ideas Intake
+
+add future ideas guide, verify references, run pytest, merge, push, close card.

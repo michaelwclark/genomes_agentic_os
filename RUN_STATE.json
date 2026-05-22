@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
+  "current_active_feature": "37",
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -290,6 +290,26 @@
     },
     {
       "card_id": "368683b4-8dab-8195-a65f-ca9f13a40d86",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-811d-b268-c15938b0ea98",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8121-9255-e9faf20dd6e9",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81b0-a74f-cb3bbed1508b",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-811d-b268-c15938b0ea98",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -699,6 +719,42 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T05:30:54Z",
       "completed_at": "2026-05-22T05:39:35Z"
+    },
+    {
+      "prefix": "36",
+      "slug": "36-documentation-and-help-guide-for-09-future-ideas-intake",
+      "title": "36 Documentation And Help Guide For 09 Future Ideas Intake",
+      "card_id": "368683b4-8dab-811d-b268-c15938b0ea98",
+      "status": "done",
+      "branch": "codex/build-runner-36",
+      "merge_commit": "5542d24",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T05:40:41Z",
+      "completed_at": "2026-05-22T05:48:05Z"
+    },
+    {
+      "prefix": "37",
+      "slug": "37-holdout-command-validation-for-09-future-ideas-intake",
+      "title": "37 Holdout Command Validation For 09 Future Ideas Intake",
+      "card_id": "368683b4-8dab-8121-9255-e9faf20dd6e9",
+      "status": "building",
+      "branch": "codex/build-runner-37",
+      "merge_commit": null,
+      "last_successful_phase": "started",
+      "started_at": "2026-05-22T05:40:41Z",
+      "completed_at": null
+    },
+    {
+      "prefix": "38",
+      "slug": "38-documentation-and-help-guide-for-10-notion-control-plane-bootstrap",
+      "title": "38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap",
+      "card_id": "368683b4-8dab-81b0-a74f-cb3bbed1508b",
+      "status": "building",
+      "branch": "codex/build-runner-38",
+      "merge_commit": null,
+      "last_successful_phase": "started",
+      "started_at": "2026-05-22T05:40:41Z",
+      "completed_at": null
     }
   ],
   "generated_subtasks": []

@@ -243,3 +243,8 @@ reference check passed; pytest 39 passed in 3.08s on merged main.
 
 implemented on codex/build-runner-35 at 7105ec1; merged as 45a2e72; LOSMon
 holdout passed; pytest 39 passed in 3.70s on merged main.
+
+## 36 Documentation And Help Guide For 09 Future Ideas Intake
+
+implemented on codex/build-runner-36 at f4858cc; merged as 5542d24; guide
+reference check passed; pytest 39 passed in 3.09s on merged main.

@@ -96,3 +96,8 @@ until real read-only validation exists.
 
 LOSMon holdouts should check generated project, three workflows, thread intake,
 three run logs, comparison gap table, repo capture, and root validation.
+
+## 36 Documentation And Help Guide For 09 Future Ideas Intake
+
+future ideas docs should emphasize durable additive capture, not immediate
+promotion to active work.
