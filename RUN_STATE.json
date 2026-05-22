@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
-  "last_successful_phase": "feature-44-merged-and-verified",
+  "current_active_feature": "46",
+  "last_successful_phase": "feature-45-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -365,6 +365,36 @@
     },
     {
       "card_id": "368683b4-8dab-8105-a22e-d88f7d94af55",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8189-ac93-db6147fc385d",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8124-9e27-ff32ccb796d2",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8105-a22e-d88f7d94af55",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8140-9d7d-e99d2bcc1d50",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81d5-a08f-f600797cb9ac",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81f7-b1a3-f4de7c9f9f52",
       "action": "claim-building-and-comment",
       "status": "ok"
     }
@@ -882,6 +912,40 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T06:11:15Z",
       "completed_at": "2026-05-22T06:21:43Z"
+    },
+    {
+      "prefix": "45",
+      "slug": "45-holdout-command-validation-for-13-reference-and-skill-index-layer",
+      "title": "45 Holdout Command Validation For 13 Reference And Skill Index Layer",
+      "card_id": "368683b4-8dab-8140-9d7d-e99d2bcc1d50",
+      "status": "done",
+      "branch": "codex/build-runner-45",
+      "merge_commit": "a2041f5",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:23:52Z",
+      "completed_at": "2026-05-22T06:29:32Z"
+    },
+    {
+      "prefix": "46",
+      "slug": "46-documentation-and-help-guide-for-14-client-automation-and-control-plane-playbooks",
+      "title": "46 Documentation And Help Guide For 14 Client Automation And Control Plane Playbooks",
+      "card_id": "368683b4-8dab-81d5-a08f-f600797cb9ac",
+      "status": "building",
+      "branch": "codex/build-runner-46",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:23:52Z"
+    },
+    {
+      "prefix": "47",
+      "slug": "47-holdout-command-validation-for-14-client-automation-and-control-plane-playbooks",
+      "title": "47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks",
+      "card_id": "368683b4-8dab-81f7-b1a3-f4de7c9f9f52",
+      "status": "building",
+      "branch": "codex/build-runner-47",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:23:52Z"
     }
   ],
   "generated_subtasks": []

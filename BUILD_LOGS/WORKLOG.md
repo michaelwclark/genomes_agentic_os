@@ -288,3 +288,8 @@ template holdout passed; pytest 39 passed in 3.07s on merged main.
 
 implemented on codex/build-runner-44 at 7efe45f; merged as 34078e4; guide
 reference check passed; pytest 39 passed in 3.07s on merged main.
+
+## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
+
+implemented on codex/build-runner-45 at 4dbb504; merged as a2041f5;
+reference-layer holdout passed; pytest 39 passed in 3.05s on merged main.

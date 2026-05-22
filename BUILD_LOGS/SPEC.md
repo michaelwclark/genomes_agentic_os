@@ -163,3 +163,8 @@ source policy docs, customer-template sanitation, and root validation.
 
 operator guide for runtime reference paths, reference files, context builder
 behavior, skill registry alignment, and validation.
+
+## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
+
+local holdout validation for runtime reference install, reference templates,
+context packet shared references, decision-log install, and root validation.

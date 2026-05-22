@@ -142,3 +142,9 @@ installed runtime template paths.
 reference layer docs should tie runtime references to
 `shared_factory/05-knowledge/references/` and skill alignment to the source
 skill registry.
+
+## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
+
+reference-layer holdouts should treat `decision-log.md` as installed and
+validated, while the context packet contract covers naming, tool index, source
+priority, and style/output references.

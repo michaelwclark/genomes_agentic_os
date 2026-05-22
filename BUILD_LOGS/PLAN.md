@@ -125,3 +125,7 @@ run factory template holdout, run pytest, merge, push, close card.
 
 add reference and skill index guide, verify references, run pytest, merge, push,
 close card.
+
+## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
+
+run reference-layer holdout, run pytest, merge, push, close card.

@@ -223,3 +223,8 @@ passed in 3.07s; Notion pending after push.
 
 merged-main guide reference check passed; pytest 39 passed in 3.07s; Notion
 pending after push.
+
+## 45 Holdout Command Validation For 13 Reference And Skill Index Layer
+
+branch holdout passed; merged-main reference-layer smoke passed; pytest 39
+passed in 3.05s; Notion pending after push.
