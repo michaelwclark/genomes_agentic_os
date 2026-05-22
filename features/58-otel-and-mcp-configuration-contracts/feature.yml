@@ -1,0 +1,24 @@
+id: 368683b4-8dab-8155-963c-e7c671e50f72
+title: 58 OTEL And MCP Configuration Contracts
+prefix: "58"
+slug: 58-otel-and-mcp-configuration-contracts
+source_url: https://www.notion.so/58-OTEL-And-MCP-Configuration-Contracts-368683b48dab8155963ce7c671e50f72
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-58
+base_sha: ed36421
+merge_sha:
+started_at: 2026-05-22T07:34:00Z
+completed_at:
+acceptance:
+  - documented otel configuration expectations, env vars, redaction rules, and per-layer defaults
+  - documented MCP registration points for Notion, browser, filesystem/runtime, memory, and customer-specific integrations
+  - installer templates reference secrets by env var name only and never print token values
+  - validation catches missing required MCP/OTEL configuration and reports actionable remediation
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 46 passed in 3.15s
+  - command: config doctor holdout
+    result: passed
+  - command: secret-safe OTEL/MCP content check
+    result: passed
