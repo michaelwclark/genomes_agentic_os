@@ -479,6 +479,17 @@
       "merge_commit": "66152ef",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:57:18Z"
+    },
+    {
+      "prefix": "25",
+      "slug": "25-holdout-command-validation-for-03-workflow-readiness-and-run-closeout",
+      "title": "25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout",
+      "card_id": "368683b4-8dab-8177-af00-f412203139bd",
+      "status": "done",
+      "branch": "codex/build-runner-25",
+      "merge_commit": "e7d381d",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:58:01Z"
     }
   ],
   "generated_subtasks": []

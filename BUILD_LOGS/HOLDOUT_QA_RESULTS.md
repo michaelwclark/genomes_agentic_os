@@ -121,3 +121,7 @@
 ## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
 
 merged-main guide reference check passed; pytest 39 passed in 2.85s; Notion pending after push.
+
+## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
+
+merged-main holdout passed; pytest 39 passed in 2.84s; Notion pending after push.

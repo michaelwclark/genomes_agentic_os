@@ -99,3 +99,7 @@ Feature 23 adds a repeatable local holdout validator for feature 02 routing and 
 ## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
 
 adds the feature 03 workflow readiness and run closeout guide.
+
+## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
+
+adds the feature 03 workflow closeout holdout validator.

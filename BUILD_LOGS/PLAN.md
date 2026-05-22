@@ -39,3 +39,7 @@ Run plan: add feature 02 holdout validator, run validator and pytest, merge with
 ## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
 
 add guide, verify references, run pytest, merge, push, close card.
+
+## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
+
+add validator, run holdout and pytest, merge, push, close card.

@@ -66,3 +66,7 @@
 ## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
 
 operator guide for workflow check and run-log closeout.
+
+## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
+
+local holdout validator for workflow readiness and closeout.

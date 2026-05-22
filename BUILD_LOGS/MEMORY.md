@@ -43,3 +43,7 @@ Routing holdouts should check target path/source text, approval risk text, linke
 ## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
 
 workflow closeout docs should stress validation required for done and local writebacks.
+
+## 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
+
+feature 03 holdouts should check validation-required done closeout and writebacks.
