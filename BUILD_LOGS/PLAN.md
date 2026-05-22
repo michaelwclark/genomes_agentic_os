@@ -150,3 +150,7 @@ Plan completed: run temp-root runtime holdout, validate docs repair, validate ru
 ## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
 
 Plan completed: inspect feature 16 source watch implementation, document commands and registry paths, verify guide references, merge, update Notion, and record Build Runner state.
+
+## 51 Holdout Command Validation For 16 Connected Source Watch Registry
+
+Plan completed: run temp-root connected source holdout, validate docs repair, validate connected-system/watch-source commands, merge, update Notion, and record state.

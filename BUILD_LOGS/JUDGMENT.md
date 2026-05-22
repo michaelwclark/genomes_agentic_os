@@ -143,3 +143,7 @@ Judgment: holdout passed. Notion runtime tracking correctly fails closed without
 ## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
 
 Judgment: documentation-only feature; no runtime code changes were required. The guide preserves file-backed runtime state and dry-run-first source watching.
+
+## 51 Holdout Command Validation For 16 Connected Source Watch Registry
+
+Judgment: holdout passed. Apply writes local source event and cursor state; malformed watch-source metadata fails doctor.

@@ -175,3 +175,7 @@ Investigation confirmed the feature 15 command matrix uses `init --target`, docs
 ## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
 
 Investigation confirmed feature 16 ships connected-system and watch-source commands, runtime source templates, source-watcher skill guidance, source event writes, cursor state, and doctor checks.
+
+## 51 Holdout Command Validation For 16 Connected Source Watch Registry
+
+Investigation confirmed feature 16 uses file-backed connected-system, source-provider, watch-source, watch-cursor, and source-event registries with dry-run/apply command paths.

@@ -210,3 +210,7 @@ adds feature 15 runtime holdout validation artifacts.
 ## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
 
 adds the feature 16 connected source watch registry guide.
+
+## 51 Holdout Command Validation For 16 Connected Source Watch Registry
+
+adds feature 16 connected source watch holdout validation artifacts.

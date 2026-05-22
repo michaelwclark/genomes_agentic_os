@@ -204,3 +204,7 @@ Next queue item: feature 50 documentation for the connected source watch registr
 ## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
 
 Next queue item: feature 51 holdout validation for the connected source watch registry.
+
+## 51 Holdout Command Validation For 16 Connected Source Watch Registry
+
+Next queue item: feature 52 documentation for event graph and chained automations.

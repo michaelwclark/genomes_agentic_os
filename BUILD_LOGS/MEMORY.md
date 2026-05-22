@@ -170,3 +170,7 @@ Feature 15 holdout confirms docs update restores managed runtime knowledge, runt
 ## 50 Documentation And Help Guide For 16 Connected Source Watch Registry
 
 Feature 16 is documented at docs/13-feature-guides/16-connected-source-watch-registry.md. The guide anchors operators on connected systems, source providers, watch sources, cursors, source events, and dry-run/apply behavior.
+
+## 51 Holdout Command Validation For 16 Connected Source Watch Registry
+
+Feature 16 holdout confirms watch-source apply writes source-events and cursor state locally, and doctor catches missing cursor/dedupe metadata.
