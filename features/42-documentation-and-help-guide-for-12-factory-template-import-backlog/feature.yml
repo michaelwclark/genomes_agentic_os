@@ -1,0 +1,22 @@
+id: 368683b4-8dab-8189-ac93-db6147fc385d
+title: 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+prefix: "42"
+slug: 42-documentation-and-help-guide-for-12-factory-template-import-backlog
+source_url: https://www.notion.so/42-Documentation-And-Help-Guide-For-12-Factory-Template-Import-Backlog-368683b48dab8189ac93db6147fc385d
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-42
+base_sha: 0a01614
+merge_sha:
+started_at: 2026-05-22T06:11:15Z
+completed_at:
+acceptance:
+  - guide documents runtime template install location
+  - guide documents copied, adapted, referenced, and rejected import policy
+  - guide documents customer-facing sanitation rules
+  - guide documents additive docs update recovery
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.40s
+  - command: guide source-reference check
+    result: passed
