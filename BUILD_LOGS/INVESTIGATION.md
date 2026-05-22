@@ -45,3 +45,8 @@
 
 - Reviewed feature 02 artifacts, plan, tests, and routing implementation.
 - Guide follows the established `docs/13-feature-guides/` pattern.
+
+## 23 Holdout Command Validation For 02 Routing And Context Builder
+
+- Routing behavior is visible through CLI YAML output, so holdout validation can remain local and command-driven.
+- Validator uses a disposable root and linked repository path.

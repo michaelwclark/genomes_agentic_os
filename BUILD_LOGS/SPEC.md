@@ -55,3 +55,10 @@
 - Feature artifact: `features/22-documentation-and-help-guide-for-02-routing-and-context-builder/SPEC.md`
 - Related completed feature: `features/02-routing-and-context-builder/`
 - Acceptance: operator-facing guide for route/context/here commands, context packet shape, approval risks, source loading, and safe failures.
+
+## 23 Holdout Command Validation For 02 Routing And Context Builder
+
+- Source card: `368683b4-8dab-810a-97b5-e2cbd4b9bba5`
+- Feature artifact: `features/23-holdout-command-validation-for-02-routing-and-context-builder/SPEC.md`
+- Related completed feature: `features/02-routing-and-context-builder/`
+- Acceptance: local holdout validator for route, context build, here context, approval risks, linked-repo detection, low-confidence failure, and root validation.

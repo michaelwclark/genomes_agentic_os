@@ -91,3 +91,7 @@ Feature 21 adds a repeatable local holdout validator for feature 01 project crea
 ## 22 Documentation And Help Guide For 02 Routing And Context Builder
 
 Feature 22 adds the feature 02 routing/context guide under `docs/13-feature-guides/`, documenting route, context build, here commands, source lists, risk output, failure behavior, and validation.
+
+## 23 Holdout Command Validation For 02 Routing And Context Builder
+
+Feature 23 adds a repeatable local holdout validator for feature 02 routing and context packet behavior.

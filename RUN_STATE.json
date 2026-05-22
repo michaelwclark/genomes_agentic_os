@@ -457,6 +457,17 @@
       "merge_commit": "2a7bab8",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:52:42Z"
+    },
+    {
+      "prefix": "23",
+      "slug": "23-holdout-command-validation-for-02-routing-and-context-builder",
+      "title": "23 Holdout Command Validation For 02 Routing And Context Builder",
+      "card_id": "368683b4-8dab-810a-97b5-e2cbd4b9bba5",
+      "status": "done",
+      "branch": "codex/build-runner-23",
+      "merge_commit": "8693aa1",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:53:30Z"
     }
   ],
   "generated_subtasks": []

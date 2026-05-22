@@ -35,3 +35,7 @@ Feature 01 holdout validation should check active-work/project indexes, source-m
 ## 22 Documentation And Help Guide For 02 Routing And Context Builder
 
 Routing/context docs should emphasize read-only defaults and low-confidence failure instead of guessing.
+
+## 23 Holdout Command Validation For 02 Routing And Context Builder
+
+Routing holdouts should check target path/source text, approval risk text, linked-repo `here` detection, low-confidence failure, and root validation.
