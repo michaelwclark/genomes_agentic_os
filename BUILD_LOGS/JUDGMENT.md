@@ -59,3 +59,7 @@ close because the guide is present and merged-main validation passed.
 ## 29 Holdout Command Validation For 05 Customer Os Factory
 
 close because customer factory holdout and merged-main validation passed.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+close because the guide is present and merged-main validation passed.

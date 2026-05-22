@@ -121,3 +121,8 @@ adds the feature 05 customer OS factory guide under `docs/13-feature-guides/`.
 
 adds feature 05 customer factory holdout validation for init, update, validate,
 edit preservation, and private source-owner filtering.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+adds the feature 06 Notion control plane sync guide under
+`docs/13-feature-guides/`.

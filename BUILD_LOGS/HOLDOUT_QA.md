@@ -61,3 +61,7 @@ guide reference check plus full pytest on merged main.
 
 customer init/update/validate, local edit preservation, private source scan, and
 full pytest on merged main.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+guide reference check plus full pytest on merged main.

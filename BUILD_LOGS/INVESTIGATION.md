@@ -77,3 +77,7 @@ schema, templates, and tests.
 
 validated feature 05 through public customer CLI commands using the example
 customer profile in a disposable root.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+reviewed feature 06 artifacts, sync implementation, CLI wiring, and tests.

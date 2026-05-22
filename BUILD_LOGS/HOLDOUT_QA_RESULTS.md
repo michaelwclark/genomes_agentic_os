@@ -146,3 +146,8 @@ pending after push.
 branch customer holdout passed; merged-main customer holdout passed with
 `ok: true`, empty `core_errors`, empty `profile_warnings`, private scan clean,
 and pytest 39 passed in 3.27s; Notion pending after push.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+merged-main guide reference check passed; pytest 39 passed in 3.05s; Notion
+pending after push.

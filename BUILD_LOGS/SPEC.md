@@ -89,3 +89,8 @@ additive updates, customer-safe generation, and validation output.
 
 local holdout validation for customer init, additive update, validation output,
 local edit preservation, and private source-owner filtering.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+operator guide for Notion sync planning, dry run, guarded apply, workspace
+verification, local mapping, and no-op behavior.

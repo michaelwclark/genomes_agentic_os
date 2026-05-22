@@ -66,3 +66,8 @@ non-blocking `profile_warnings`, including private source-term warnings.
 
 customer factory holdouts should scan generated markdown and YAML for private
 source-owner terms after init/update/validate.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+Notion sync docs should keep filesystem source of truth and Notion control
+plane boundaries explicit.

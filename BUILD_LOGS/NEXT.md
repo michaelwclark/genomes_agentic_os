@@ -104,3 +104,8 @@ next Ready prefix is 29 Holdout Command Validation For 05 Customer Os Factory.
 
 next Ready prefix is 30 Documentation And Help Guide For 06 Notion Control
 Plane Sync.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+next Ready prefix is 31 Holdout Command Validation For 06 Notion Control Plane
+Sync.

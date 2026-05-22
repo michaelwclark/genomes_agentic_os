@@ -213,3 +213,8 @@ reference check passed; pytest 39 passed in 3.05s on merged main.
 
 implemented on codex/build-runner-29 at dce321b; merged as 3ebf38f; customer
 holdout passed; pytest 39 passed in 3.27s on merged main.
+
+## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
+
+implemented on codex/build-runner-30 at 4d57e1b; merged as 2e1f035; guide
+reference check passed; pytest 39 passed in 3.05s on merged main.

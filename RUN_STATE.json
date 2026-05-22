@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
+  "current_active_feature": "31",
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -230,6 +230,26 @@
     },
     {
       "card_id": "368683b4-8dab-813d-90ab-d3655d095dcb",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8141-b608-d95c8429d72c",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81a8-8d2c-e29d79d8d60f",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81c8-8d46-d039b508b86d",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8141-b608-d95c8429d72c",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -567,6 +587,42 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T05:05:01Z",
       "completed_at": "2026-05-22T05:15:31Z"
+    },
+    {
+      "prefix": "30",
+      "slug": "30-documentation-and-help-guide-for-06-notion-control-plane-sync",
+      "title": "30 Documentation And Help Guide For 06 Notion Control Plane Sync",
+      "card_id": "368683b4-8dab-8141-b608-d95c8429d72c",
+      "status": "done",
+      "branch": "codex/build-runner-30",
+      "merge_commit": "2e1f035",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T05:17:38Z",
+      "completed_at": "2026-05-22T05:26:02Z"
+    },
+    {
+      "prefix": "31",
+      "slug": "31-holdout-command-validation-for-06-notion-control-plane-sync",
+      "title": "31 Holdout Command Validation For 06 Notion Control Plane Sync",
+      "card_id": "368683b4-8dab-81a8-8d2c-e29d79d8d60f",
+      "status": "building",
+      "branch": "codex/build-runner-31",
+      "merge_commit": null,
+      "last_successful_phase": "started",
+      "started_at": "2026-05-22T05:17:38Z",
+      "completed_at": null
+    },
+    {
+      "prefix": "32",
+      "slug": "32-documentation-and-help-guide-for-07-doctor-validation-and-migrations",
+      "title": "32 Documentation And Help Guide For 07 Doctor Validation And Migrations",
+      "card_id": "368683b4-8dab-81c8-8d46-d039b508b86d",
+      "status": "building",
+      "branch": "codex/build-runner-32",
+      "merge_commit": null,
+      "last_successful_phase": "started",
+      "started_at": "2026-05-22T05:17:38Z",
+      "completed_at": null
     }
   ],
   "generated_subtasks": []
