@@ -159,3 +159,7 @@ Judgment: holdout passed. Event processing supports dry-run, apply, idempotency 
 ## 54 config.toml Options Inventory And Analysis
 
 Documented Codex-owned behavior only where backed by official docs or local CLI help, and labeled Agentic OS layering decisions as OS conventions. Notion writeback was made only after the API reported workspace Genome's Notion.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+Kept native Codex settings in TOML and richer Agentic OS metadata in YAML to avoid treating every OS concern as a Codex-native setting.

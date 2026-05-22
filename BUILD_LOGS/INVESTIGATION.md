@@ -191,3 +191,7 @@ Investigation confirmed feature 17 uses file-backed event graph, chain rules, ru
 ## 54 config.toml Options Inventory And Analysis
 
 Verified current Codex behavior against official OpenAI Codex documentation and local codex-cli 0.131.0-alpha.9. Key surfaces covered: config reference/sample/schema, AGENTS.md guidance, MCP configuration, hooks, sandbox/approval settings, OTEL options, and desktop-vs-CLI unknowns.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+Mapped feature 54 config research and layer IDs into a Codex-facing TOML template plus Agentic OS metadata manifest so native profile keys stay separate from OS operational metadata.

@@ -186,3 +186,7 @@ Feature 17 holdout confirms event process-due apply writes queue work and idempo
 ## 54 config.toml Options Inventory And Analysis
 
 The canonical Codex config research now lives in docs/07-agent-surfaces/codex-config-toml-inventory.md. The reusable layer IDs for profile and installer follow-up work live in templates/agent-config/codex-config-layer-map.yml.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+The profile metadata source is templates/agent-config/codex-profile-manifest.yml. The Codex-facing template is templates/agent-config/codex-profiles.toml.

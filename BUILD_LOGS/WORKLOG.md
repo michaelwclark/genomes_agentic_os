@@ -331,3 +331,7 @@ implemented on codex/build-runner-53 at 417ed30; merged as 0795c63; event graph 
 ## 54 config.toml Options Inventory And Analysis
 
 implemented on codex/build-runner-54 at 1150ce4; merged as 3074bd1; config inventory source-reference check passed; pytest 39 passed in 2.89s on merged main; Notion synced to Done.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+implemented on codex/build-runner-55 at b431359; merged as 1cdd36a; Codex profile content check passed; pytest 39 passed in 2.98s on merged main; Notion synced to Done.

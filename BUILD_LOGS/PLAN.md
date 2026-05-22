@@ -168,3 +168,11 @@ Plan completed: run temp-root event graph holdout, validate docs repair, validat
 1. Add a docs inventory for supported config.toml options, defaults, examples, security notes, and unknown areas.
 2. Add an Agentic OS layer map template for global harness, OS root, customer OS root, domain/lane, workflow/task, and security-sensitive keys.
 3. Verify docs against required source references and run the repo test suite before merge.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+1. Add a profile guide.
+2. Add Codex-facing TOML profiles.
+3. Add Agentic OS profile metadata.
+4. Verify all layers and metadata fields.
+5. Run the full test suite before merge.

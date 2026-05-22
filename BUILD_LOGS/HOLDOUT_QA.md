@@ -169,3 +169,7 @@ Holdout plan: fresh temp-root install, managed event knowledge repair, validate 
 ## 54 config.toml Options Inventory And Analysis
 
 Holdout checks: run the full pytest suite on the merged main branch and assert that the inventory doc plus layer map include all required OpenAI source references, prompt-file names, core config keys, and Agentic OS layer IDs.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+Holdout checks: merged-main pytest and a content check for all six profiles, required metadata fields, prompt duplication rule, precedence, and merge behavior.

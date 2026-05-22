@@ -226,3 +226,7 @@ adds feature 17 event graph holdout validation artifacts.
 ## 54 config.toml Options Inventory And Analysis
 
 adds the Codex config.toml options inventory and Agentic OS config layer map for follow-up profile, installer, MCP, OTEL, and holdout validation work.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+adds Codex config profile templates and Agentic OS profile metadata for global harness, OS root, customer root, domain/lane, workflow/task, and automation layers.

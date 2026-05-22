@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "55",
-  "last_successful_phase": "claimed-build-window-55-57",
+  "current_active_feature": "56",
+  "last_successful_phase": "feature-55-done",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -496,6 +496,11 @@
     {
       "card_id": "368683b4-8dab-81e9-a9f3-ec46415e3796",
       "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8196-9c27-d6c4e1dd970f",
+      "action": "complete-done-and-comment",
       "status": "ok"
     }
   ],
@@ -1139,10 +1144,11 @@
       "title": "55 Codex Config Profiles Per Agentic OS Layer",
       "card_id": "368683b4-8dab-8196-9c27-d6c4e1dd970f",
       "branch": "codex/build-runner-55",
-      "status": "building",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T07:06:46Z"
+      "status": "done",
+      "merge_commit": "1cdd36a",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T07:06:46Z",
+      "completed_at": "2026-05-22T07:29:19Z"
     },
     {
       "prefix": "56",

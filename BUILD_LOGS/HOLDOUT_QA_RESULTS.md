@@ -266,3 +266,7 @@ branch holdout passed; merged-main event graph smoke passed; pytest 39 passed in
 ## 54 config.toml Options Inventory And Analysis
 
 Passed. Branch verification: uv run --extra dev pytest -q returned 39 passed in 3.45s and the config inventory source-reference check passed. Merged-main verification: uv run --extra dev pytest -q returned 39 passed in 2.89s and the source-reference check passed.
+
+## 55 Codex Config Profiles Per Agentic OS Layer
+
+Passed. Branch verification: uv run --extra dev pytest -q returned 39 passed in 3.32s and the Codex profile content check passed. Merged-main verification: uv run --extra dev pytest -q returned 39 passed in 2.98s and the content check passed.
