@@ -16,7 +16,7 @@
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
   "current_active_feature": "55",
-  "last_successful_phase": "feature-54-done",
+  "last_successful_phase": "claimed-build-window-55-57",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -491,6 +491,11 @@
     {
       "card_id": "368683b4-8dab-8146-91cd-f347902c2e5a",
       "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81e9-a9f3-ec46415e3796",
+      "action": "claim-building-and-comment",
       "status": "ok"
     }
   ],
@@ -1149,6 +1154,17 @@
       "merge_commit": null,
       "last_successful_phase": "claimed",
       "started_at": "2026-05-22T07:06:46Z"
+    },
+    {
+      "prefix": "57",
+      "slug": "57-config-toml-installer-and-directory-setup",
+      "title": "57 config.toml Installer And Directory Setup",
+      "card_id": "368683b4-8dab-81e9-a9f3-ec46415e3796",
+      "branch": "codex/build-runner-57",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T07:21:00Z"
     }
   ],
   "generated_subtasks": []
