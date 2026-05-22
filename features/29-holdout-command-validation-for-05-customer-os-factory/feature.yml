@@ -1,0 +1,23 @@
+id: 368683b4-8dab-813d-90ab-d3655d095dcb
+title: 29 Holdout Command Validation For 05 Customer Os Factory
+prefix: "29"
+slug: 29-holdout-command-validation-for-05-customer-os-factory
+source_url: https://www.notion.so/29-Holdout-Command-Validation-For-05-Customer-Os-Factory-368683b48dab813d90abd3655d095dcb
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-29
+base_sha: 0fb3375
+merge_sha:
+started_at: 2026-05-22T05:05:01Z
+completed_at:
+acceptance:
+  - full CLI scaffold suite passes
+  - customer init creates a root from the example profile
+  - customer update is additive and preserves local edits
+  - customer validate reports core_errors separately from profile_warnings
+  - generated customer markdown and YAML omit private source-owner names
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.27s
+  - command: customer init, update, validate, edit-preservation, and private-name scan in a temp root
+    result: passed
