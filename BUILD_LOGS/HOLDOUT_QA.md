@@ -74,3 +74,8 @@ on merged main.
 ## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
 
 guide reference check plus full pytest on merged main.
+
+## 33 Holdout Command Validation For 07 Doctor Validation And Migrations
+
+doctor repair, stale run detection, migration preview/drift/apply, and full
+pytest on merged main.

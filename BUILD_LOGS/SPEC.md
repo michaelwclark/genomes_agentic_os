@@ -104,3 +104,8 @@ apply, local mapping, and no-op dry run.
 
 operator guide for runtime doctor checks, additive managed repairs, migration
 planning, apply, preview rollback notes, and changed-target refusal.
+
+## 33 Holdout Command Validation For 07 Doctor Validation And Migrations
+
+local holdout validation for doctor missing-file repair, stale run findings,
+migration preview, drift refusal, and apply.

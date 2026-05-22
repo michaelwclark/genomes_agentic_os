@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
+  "current_active_feature": "34",
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -260,6 +260,26 @@
     },
     {
       "card_id": "368683b4-8dab-81c8-8d46-d039b508b86d",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81d5-a26d-c7e0b7030cdc",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81c7-a601-e1f42603eba7",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8195-a65f-ca9f13a40d86",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81d5-a26d-c7e0b7030cdc",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -633,6 +653,42 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T05:17:38Z",
       "completed_at": "2026-05-22T05:29:38Z"
+    },
+    {
+      "prefix": "33",
+      "slug": "33-holdout-command-validation-for-07-doctor-validation-and-migrations",
+      "title": "33 Holdout Command Validation For 07 Doctor Validation And Migrations",
+      "card_id": "368683b4-8dab-81d5-a26d-c7e0b7030cdc",
+      "status": "done",
+      "branch": "codex/build-runner-33",
+      "merge_commit": "92485d1",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T05:30:54Z",
+      "completed_at": "2026-05-22T05:36:08Z"
+    },
+    {
+      "prefix": "34",
+      "slug": "34-documentation-and-help-guide-for-08-losmon-replacement-validation",
+      "title": "34 Documentation And Help Guide For 08 Losmon Replacement Validation",
+      "card_id": "368683b4-8dab-81c7-a601-e1f42603eba7",
+      "status": "building",
+      "branch": "codex/build-runner-34",
+      "merge_commit": null,
+      "last_successful_phase": "started",
+      "started_at": "2026-05-22T05:30:54Z",
+      "completed_at": null
+    },
+    {
+      "prefix": "35",
+      "slug": "35-holdout-command-validation-for-08-losmon-replacement-validation",
+      "title": "35 Holdout Command Validation For 08 Losmon Replacement Validation",
+      "card_id": "368683b4-8dab-8195-a65f-ca9f13a40d86",
+      "status": "building",
+      "branch": "codex/build-runner-35",
+      "merge_commit": null,
+      "last_successful_phase": "started",
+      "started_at": "2026-05-22T05:30:54Z",
+      "completed_at": null
     }
   ],
   "generated_subtasks": []

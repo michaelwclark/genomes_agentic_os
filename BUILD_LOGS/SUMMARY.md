@@ -136,3 +136,7 @@ guarded apply, local mapping, and idempotent dry run.
 
 adds the feature 07 doctor validation and migrations guide under
 `docs/13-feature-guides/`.
+
+## 33 Holdout Command Validation For 07 Doctor Validation And Migrations
+
+adds feature 07 doctor and migration holdout validation.

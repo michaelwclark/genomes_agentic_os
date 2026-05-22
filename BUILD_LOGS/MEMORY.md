@@ -81,3 +81,8 @@ run behavior without requiring a live Notion write.
 
 doctor docs should stress that `--fix-missing` is additive only, while
 migration docs should stress stable preview before apply.
+
+## 33 Holdout Command Validation For 07 Doctor Validation And Migrations
+
+doctor/migration holdouts should include missing-plan and changed-target apply
+refusals as well as successful re-plan/apply.

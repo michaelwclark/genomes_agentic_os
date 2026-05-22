@@ -73,3 +73,7 @@ run Notion sync holdout, run pytest, merge, push, close card.
 
 add doctor/migrations guide, verify references, run pytest, merge, push, close
 card.
+
+## 33 Holdout Command Validation For 07 Doctor Validation And Migrations
+
+run doctor/migration holdout, run pytest, merge, push, close card.
