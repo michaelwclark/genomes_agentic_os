@@ -11,3 +11,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [03 - Workflow Readiness And Run Closeout](03-workflow-readiness-and-run-closeout.md) | How to check workflow readiness and close run logs with validation evidence. |
 | [04 - Automation Maturity And Reconfiguration](04-automation-maturity-and-reconfiguration.md) | How automation maturity levels, file-first evidence, and project attachment work. |
 | [05 - Customer Os Factory](05-customer-os-factory.md) | How customer profiles generate customer-safe OS roots, updates, and validation reports. |
+| [06 - Notion Control Plane Sync](06-notion-control-plane-sync.md) | How filesystem state plans guarded Notion control-plane sync and local mapping. |
