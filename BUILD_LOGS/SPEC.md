@@ -143,3 +143,8 @@ wrong-workspace refusal, verified Genome's Notion apply, and manifest writing.
 
 operator guide for room-first profile installation, profile schema, room
 routing, Claude/Codex router pointers, and validation.
+
+## 41 Holdout Command Validation For 11 Room First Installer And Routing
+
+local holdout validation for profile validation, profile install, root
+validation, router pointers, managed room files, and default-domain absence.

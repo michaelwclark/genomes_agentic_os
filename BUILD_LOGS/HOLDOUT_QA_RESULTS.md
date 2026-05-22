@@ -202,3 +202,9 @@ after push.
 
 merged-main guide reference check passed; pytest 39 passed in 3.08s; Notion
 pending after push.
+
+## 41 Holdout Command Validation For 11 Room First Installer And Routing
+
+branch holdout passed; merged-main room-first smoke passed with no Genome
+default operational domains; pytest 39 passed in 3.09s; Notion pending after
+push.

@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "41",
-  "last_successful_phase": "feature-40-merged-and-verified",
+  "current_active_feature": null,
+  "last_successful_phase": "feature-41-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -810,11 +810,12 @@
       "slug": "41-holdout-command-validation-for-11-room-first-installer-and-routing",
       "title": "41 Holdout Command Validation For 11 Room First Installer And Routing",
       "card_id": "368683b4-8dab-81bc-bc87-f2b32cf666e4",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-41",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T05:55:06Z"
+      "merge_commit": "04e97ae",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T05:55:06Z",
+      "completed_at": "2026-05-22T06:09:20Z"
     }
   ],
   "generated_subtasks": []

@@ -120,3 +120,9 @@ personal Notion refusal before accepting verified Genome's Notion apply.
 
 room-first docs should distinguish operational rooms from shared runtime docs
 and keep Claude/Codex pointer behavior tied to `ROUTER.md`.
+
+## 41 Holdout Command Validation For 11 Room First Installer And Routing
+
+room-first holdouts should use profile `tools` entries as mappings, not plain
+strings, and should treat `shared_factory` as shared docs rather than a default
+operational domain.

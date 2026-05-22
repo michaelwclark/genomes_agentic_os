@@ -268,3 +268,8 @@ bootstrap holdout passed; pytest 39 passed in 3.05s on merged main.
 
 implemented on codex/build-runner-40 at e52eec0; merged as f214061; guide
 reference check passed; pytest 39 passed in 3.08s on merged main.
+
+## 41 Holdout Command Validation For 11 Room First Installer And Routing
+
+implemented on codex/build-runner-41 at 5d8b983; merged as 04e97ae; room-first
+holdout passed; pytest 39 passed in 3.09s on merged main.

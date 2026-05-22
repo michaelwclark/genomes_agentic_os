@@ -107,3 +107,7 @@ run Notion bootstrap holdout, run pytest, merge, push, close card.
 
 add room-first installer guide, verify references, run pytest, merge, push,
 close card.
+
+## 41 Holdout Command Validation For 11 Room First Installer And Routing
+
+run room-first installer holdout, run pytest, merge, push, close card.

@@ -128,3 +128,8 @@ disposable OS root after verifying Genome's Notion through the direct API.
 
 reviewed feature 11 artifacts, room profile implementation, CLI wiring,
 scaffold support, validation behavior, and tests.
+
+## 41 Holdout Command Validation For 11 Room First Installer And Routing
+
+validated feature 11 through public profile validate, init, and root validate
+commands in a disposable OS root.
