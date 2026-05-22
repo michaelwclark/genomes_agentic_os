@@ -1,6 +1,7 @@
 # Worklog
 
-## 2026-05-22
+- Ran full tests.
+- Created a disposable root, project, workflow, and run log.
+- Verified missing-validation refusal.
+- Closed the run with validation evidence and validated the runtime root.
 
-- Added scoped implementation artifacts.
-- QA completed: feature 03 holdout validation passed; 39 passed in 3.75s.

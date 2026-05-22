@@ -1,10 +1,5 @@
 # 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
 
-## Goal
+Validate feature 03 in a fresh runtime root, including workflow readiness,
+run-log creation, validation-gated closeout, and runtime validation.
 
-Complete Build Runner card `25` for `features/03-workflow-readiness-and-run-closeout`.
-
-## Acceptance Criteria
-
-- Holdout validation can run without live Notion writes.
-- Validation checks workflow check severities, done-closeout validation requirement, closeout writebacks, and root validation.
