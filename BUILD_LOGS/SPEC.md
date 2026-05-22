@@ -133,3 +133,8 @@ local holdout validation for OS, domain, and project plan capture routing.
 
 operator guide for guarded Notion bootstrap dry-run/apply, parent page
 verification, and local manifest state.
+
+## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
+
+local holdout validation for Notion bootstrap dry-run, parent-page refusal,
+wrong-workspace refusal, verified Genome's Notion apply, and manifest writing.

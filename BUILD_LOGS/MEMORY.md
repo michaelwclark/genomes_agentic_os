@@ -110,3 +110,8 @@ plan capture holdouts should inspect target files for captured titles.
 
 bootstrap docs should state that apply requires both verified workspace and
 approved parent page ID.
+
+## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
+
+bootstrap holdouts should verify both missing-parent refusal and Michael Clark
+personal Notion refusal before accepting verified Genome's Notion apply.

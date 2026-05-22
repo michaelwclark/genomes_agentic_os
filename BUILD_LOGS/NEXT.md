@@ -147,3 +147,8 @@ Plane Bootstrap.
 
 next Ready prefix is 39 Holdout Command Validation For 10 Notion Control Plane
 Bootstrap.
+
+## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
+
+next Ready prefix is 40 Documentation And Help Guide For 11 Room First
+Installer And Routing.

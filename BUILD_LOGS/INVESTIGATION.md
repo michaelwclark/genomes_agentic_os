@@ -118,3 +118,8 @@ validated feature 09 through public plan capture CLI commands.
 
 reviewed feature 10 artifacts, Notion bootstrap implementation, CLI wiring, and
 tests.
+
+## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
+
+validated feature 10 through public Notion bootstrap CLI commands in a
+disposable OS root after verifying Genome's Notion through the direct API.

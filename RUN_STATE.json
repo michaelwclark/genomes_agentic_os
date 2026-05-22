@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
-  "last_successful_phase": "done",
+  "current_active_feature": "40",
+  "last_successful_phase": "feature-39-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -321,6 +321,21 @@
     {
       "card_id": "368683b4-8dab-81b0-a74f-cb3bbed1508b",
       "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8145-9d4a-d8dae4de50bc",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-816d-afc7-c9c44c1bcd1e",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81bc-bc87-f2b32cf666e4",
+      "action": "claim-building-and-comment",
       "status": "ok"
     }
   ],
@@ -765,6 +780,40 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T05:40:41Z",
       "completed_at": "2026-05-22T05:51:27Z"
+    },
+    {
+      "prefix": "39",
+      "slug": "39-holdout-command-validation-for-10-notion-control-plane-bootstrap",
+      "title": "39 Holdout Command Validation For 10 Notion Control Plane Bootstrap",
+      "card_id": "368683b4-8dab-8145-9d4a-d8dae4de50bc",
+      "status": "done",
+      "branch": "codex/build-runner-39",
+      "merge_commit": "1a476dd",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T05:55:06Z",
+      "completed_at": "2026-05-22T06:05:00Z"
+    },
+    {
+      "prefix": "40",
+      "slug": "40-documentation-and-help-guide-for-11-room-first-installer-and-routing",
+      "title": "40 Documentation And Help Guide For 11 Room First Installer And Routing",
+      "card_id": "368683b4-8dab-816d-afc7-c9c44c1bcd1e",
+      "status": "building",
+      "branch": "codex/build-runner-40",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T05:55:06Z"
+    },
+    {
+      "prefix": "41",
+      "slug": "41-holdout-command-validation-for-11-room-first-installer-and-routing",
+      "title": "41 Holdout Command Validation For 11 Room First Installer And Routing",
+      "card_id": "368683b4-8dab-81bc-bc87-f2b32cf666e4",
+      "status": "building",
+      "branch": "codex/build-runner-41",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T05:55:06Z"
     }
   ],
   "generated_subtasks": []

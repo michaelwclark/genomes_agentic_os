@@ -100,3 +100,8 @@ OS/domain/project plan capture and full pytest on merged main.
 ## 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
 
 guide reference check plus full pytest on merged main.
+
+## 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
+
+Notion bootstrap dry-run, missing-parent refusal, wrong-workspace refusal,
+verified apply, manifest check, and full pytest on merged main.
