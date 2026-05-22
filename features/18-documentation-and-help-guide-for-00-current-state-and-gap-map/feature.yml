@@ -1,0 +1,25 @@
+id: 368683b4-8dab-81e6-bdf1-e10a0fce5a68
+title: 18 Documentation And Help Guide For 00 Current State And Gap Map
+prefix: "18"
+slug: 18-documentation-and-help-guide-for-00-current-state-and-gap-map
+source_url: https://www.notion.so/18-Documentation-And-Help-Guide-For-00-Current-State-And-Gap-Map-368683b48dab81e6bdf1e10a0fce5a68
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-18
+base_sha: 6ab0d597a394b195a5ffdb011ae84950ddd94a12
+merge_sha:
+started_at: 2026-05-22T04:41:15Z
+completed_at:
+acceptance:
+  - CLI or command help is checked for applicability.
+  - Rich documentation can onboard a fresh agent or user without prior chat context.
+  - Docs are source-faithful and link relevant files and artifacts.
+  - Diagram decision is recorded.
+baseline_verification:
+  - command: git status --short
+    result: clean worktree at origin/main
+final_verification:
+  - command: rg "shared_factory/05-knowledge/plans|PLANS/00-current-state-and-gap-map.md|uv run agentic-os validate" docs/13-feature-guides/00-current-state-and-gap-map.md
+    result: passed
+  - command: uv run pytest -q
+    result: 39 passed in 3.13s
