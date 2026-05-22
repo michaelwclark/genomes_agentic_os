@@ -11,3 +11,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [03 - Workflow Readiness And Run Closeout](03-workflow-readiness-and-run-closeout.md) | How to check workflow readiness and close run logs with validation evidence. |
 | [04 - Automation Maturity And Reconfiguration](04-automation-maturity-and-reconfiguration.md) | How automation maturity levels, file-first evidence, and project attachment work. |
 | [05 - Customer Os Factory](05-customer-os-factory.md) | How customer profiles generate customer-safe OS roots, updates, and validation reports. |
+| [07 - Doctor Validation And Migrations](07-doctor-validation-and-migrations.md) | How runtime doctor checks, additive repairs, and previewed migrations work. |
