@@ -309,6 +309,7 @@ def test_config_install_preserves_existing_conflicts_until_confirmed(tmp_path: P
     assert 'approval_policy = "on-request"' in merged
     assert (root / "AGENTS.md").is_file()
     assert list(root.glob("config.toml.bak-*"))
+    assert main(["config", "doctor", "--root", str(root), "--layer", "domain_or_lane"]) == 0
 
 
 def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> None:

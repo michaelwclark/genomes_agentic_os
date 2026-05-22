@@ -250,18 +250,20 @@ def merge_config(existing: str, template: str) -> tuple[str, list[str]]:
 
     lines = existing.splitlines()
     ranges = section_ranges(lines)
-    inserts: list[tuple[int, list[str]]] = []
+    inserts: list[tuple[int, int, list[str]]] = []
     for section, section_additions in additions.items():
         if section in ranges:
             insert_at = ranges[section][1]
             payload = ["", "# Agentic OS managed additions", *section_additions]
+            priority = 0 if section is None else 1
         else:
             header = [] if section is None else [f"[{section}]"]
             insert_at = len(lines)
             payload = ["", "# Agentic OS managed additions", *header, *section_additions]
-        inserts.append((insert_at, payload))
+            priority = 0 if section is None else 1
+        inserts.append((insert_at, priority, payload))
 
-    for insert_at, payload in sorted(inserts, key=lambda item: item[0], reverse=True):
+    for insert_at, _priority, payload in sorted(inserts, key=lambda item: (item[0], item[1]), reverse=True):
         lines[insert_at:insert_at] = payload
     return "\n".join(lines).rstrip() + "\n", conflicts
 

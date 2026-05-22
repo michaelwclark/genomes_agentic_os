@@ -4,6 +4,17 @@ The V1 CLI is a scaffold and validation tool. It creates the local filesystem sh
 
 It does not run automations for you yet. It creates the durable places where domain routers, workflow specs, automation specs, context packs, approvals, and run logs live.
 
+## Table Of Contents
+
+- [Install](#install)
+- [Command Flow](#command-flow)
+- [Codex Config Flow](#codex-config-flow)
+- [Smoke Test](#smoke-test)
+- [What The CLI Copies](#what-the-cli-copies)
+- [Rerun Safety](#rerun-safety)
+- [Validation Scope](#validation-scope)
+- [Real Install Checklist](#real-install-checklist)
+
 ## Install
 
 Use a virtual environment so the package and its development dependencies stay isolated from the system Python:
@@ -40,7 +51,44 @@ The CLI flow mirrors the operating model:
 | Create run log | `agentic-os run-log create los feature_dev --root ~/agentic_os` | Records one execution attempt for audit and handoff. |
 | Install docs | `agentic-os docs install --root ~/agentic_os` | Adds runtime templates, operating manual, command prompts, harness skills, and plan backlog. |
 | Update docs | `agentic-os docs update --root ~/agentic_os` | Adds missing template, manual, command, skill, and plan assets without overwriting local edits. |
+| Install Codex config | `agentic-os config install --root ~/agentic_os --layer agentic_os_root --dry-run` | Plans or applies `config.toml` and prompt-file conventions for a directory layer. |
+| Validate Codex config | `agentic-os config doctor --root ~/agentic_os --layer agentic_os_root` | Checks OTEL and MCP configuration contracts with actionable remediation. |
 | Validate | `agentic-os validate --root ~/agentic_os` | Checks the required tree and parseable structured files. |
+
+## Codex Config Flow
+
+![Codex config install flow](../diagrams/codex-config-install-flow.svg)
+
+Use a dry-run before applying config changes:
+
+```bash
+agentic-os config install --root ~/agentic_os --layer agentic_os_root --dry-run
+```
+
+Apply after reviewing the diff:
+
+```bash
+agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply --backup
+```
+
+Validate OTEL and MCP contracts:
+
+```bash
+agentic-os config doctor --root ~/agentic_os --layer agentic_os_root
+```
+
+When an existing `config.toml` contains a conflicting local value, first review
+the blocked apply output. Then confirm only the non-conflicting managed
+additions:
+
+```bash
+agentic-os config install --root ~/agentic_os --layer domain_or_lane --apply --confirm-conflicts --backup
+```
+
+Config examples and the full validation log live in:
+
+- `docs/10-cli-and-install/config-toml-installer.md`
+- `docs/10-cli-and-install/codex-config-closeout.md`
 
 ## Smoke Test
 
