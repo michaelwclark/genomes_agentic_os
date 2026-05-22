@@ -15,3 +15,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [07 - Doctor Validation And Migrations](07-doctor-validation-and-migrations.md) | How runtime doctor checks, additive repairs, and previewed migrations work. |
 | [08 - Losmon Replacement Validation](08-losmon-replacement-validation.md) | How to generate the LOSMon replacement validation package and comparison evidence. |
 | [09 - Future Ideas Intake](09-future-ideas-intake.md) | How OS, domain, and customer ideas are captured into durable runtime files. |
+| [10 - Notion Control Plane Bootstrap](10-notion-control-plane-bootstrap.md) | How to plan and apply the guarded Notion control-plane bootstrap manifest. |
