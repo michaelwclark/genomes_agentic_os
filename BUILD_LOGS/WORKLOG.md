@@ -223,3 +223,8 @@ reference check passed; pytest 39 passed in 3.05s on merged main.
 
 implemented on codex/build-runner-31 at f4e0ebf; merged as bbd124a; Notion sync
 holdout passed; pytest 39 passed in 3.11s on merged main.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+implemented on codex/build-runner-32 at c842dd9; merged as bed6a22; guide
+reference check passed; pytest 39 passed in 3.05s on merged main.

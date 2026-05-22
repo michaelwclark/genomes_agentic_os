@@ -86,3 +86,8 @@ reviewed feature 06 artifacts, sync implementation, CLI wiring, and tests.
 
 validated feature 06 through public Notion sync CLI commands in a disposable
 runtime root.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+reviewed feature 07 artifacts, doctor implementation, migration implementation,
+CLI wiring, and tests.

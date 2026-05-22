@@ -99,3 +99,8 @@ verification, local mapping, and no-op behavior.
 
 local holdout validation for Notion sync planning, workspace refusal, guarded
 apply, local mapping, and no-op dry run.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+operator guide for runtime doctor checks, additive managed repairs, migration
+planning, apply, preview rollback notes, and changed-target refusal.

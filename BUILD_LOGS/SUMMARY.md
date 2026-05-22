@@ -131,3 +131,8 @@ adds the feature 06 Notion control plane sync guide under
 
 adds feature 06 Notion sync holdout validation for planning, workspace refusal,
 guarded apply, local mapping, and idempotent dry run.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+adds the feature 07 doctor validation and migrations guide under
+`docs/13-feature-guides/`.

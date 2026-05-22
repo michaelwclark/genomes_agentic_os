@@ -76,3 +76,8 @@ plane boundaries explicit.
 
 Notion sync holdouts should verify workspace refusal and post-apply no-op dry
 run behavior without requiring a live Notion write.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+doctor docs should stress that `--fix-missing` is additive only, while
+migration docs should stress stable preview before apply.

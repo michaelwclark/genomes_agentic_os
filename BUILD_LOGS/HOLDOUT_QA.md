@@ -70,3 +70,7 @@ guide reference check plus full pytest on merged main.
 
 Notion plan-sync, refused apply, verified apply, no-op dry-run, and full pytest
 on merged main.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+guide reference check plus full pytest on merged main.

@@ -68,3 +68,8 @@ add Notion sync guide, verify references, run pytest, merge, push, close card.
 ## 31 Holdout Command Validation For 06 Notion Control Plane Sync
 
 run Notion sync holdout, run pytest, merge, push, close card.
+
+## 32 Documentation And Help Guide For 07 Doctor Validation And Migrations
+
+add doctor/migrations guide, verify references, run pytest, merge, push, close
+card.
