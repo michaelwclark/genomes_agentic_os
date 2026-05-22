@@ -8,6 +8,14 @@ agentic-os config install --root ~/agentic_os --layer agentic_os_root --dry-run
 agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply --backup
 ```
 
+## Table Of Contents
+
+- [Layers](#layers)
+- [Write Contract](#write-contract)
+- [Prompt Files](#prompt-files)
+- [Validation](#validation)
+- [Config Example](#config-example)
+
 ## Layers
 
 | Layer | Use For |
@@ -47,3 +55,43 @@ prompt files required by the selected layer:
 
 Workflow and automation layers intentionally receive a narrower set because
 their task-specific files carry the execution contract.
+
+## Validation
+
+Run `config doctor` after applying:
+
+```bash
+agentic-os config doctor --root ~/agentic_os --layer agentic_os_root
+```
+
+The doctor checks required sandbox, approval, OTEL, MCP availability, and MCP
+secret-policy keys.
+
+## Config Example
+
+```toml
+model = "gpt-5.2"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[profiles.agentic_os_root]
+model = "gpt-5.2"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[profiles.agentic_os_root.agentic_os]
+layer = "agentic_os_root"
+prompt_files = ["AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"]
+mcp_availability = "source package and local filesystem tools"
+environment = "local filesystem"
+
+[otel]
+log_user_prompt = false
+exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+[mcp_servers.filesystem_runtime]
+command = "agentic-os"
+args = ["config", "doctor"]
+secret_policy = "no inline secrets"
+```
