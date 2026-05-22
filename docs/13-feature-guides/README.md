@@ -12,3 +12,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [04 - Automation Maturity And Reconfiguration](04-automation-maturity-and-reconfiguration.md) | How automation maturity levels, file-first evidence, and project attachment work. |
 | [05 - Customer Os Factory](05-customer-os-factory.md) | How customer profiles generate customer-safe OS roots, updates, and validation reports. |
 | [06 - Notion Control Plane Sync](06-notion-control-plane-sync.md) | How filesystem state plans guarded Notion control-plane sync and local mapping. |
+| [07 - Doctor Validation And Migrations](07-doctor-validation-and-migrations.md) | How runtime doctor checks, additive repairs, and previewed migrations work. |
