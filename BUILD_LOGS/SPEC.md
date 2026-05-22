@@ -84,3 +84,8 @@ guarding, safe `prepare` promotion, project attachment, and root validation.
 
 operator guide for customer profile inputs, customer init/update/validate,
 additive updates, customer-safe generation, and validation output.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+local holdout validation for customer init, additive update, validation output,
+local edit preservation, and private source-owner filtering.

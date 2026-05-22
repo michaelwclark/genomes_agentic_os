@@ -116,3 +116,8 @@ promotion guardrails, safe `prepare`, project attachment, and root validation.
 ## 28 Documentation And Help Guide For 05 Customer Os Factory
 
 adds the feature 05 customer OS factory guide under `docs/13-feature-guides/`.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+adds feature 05 customer factory holdout validation for init, update, validate,
+edit preservation, and private source-owner filtering.

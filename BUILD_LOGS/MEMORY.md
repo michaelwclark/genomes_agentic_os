@@ -61,3 +61,8 @@ path and the safe `prepare` path.
 
 customer OS factory docs should distinguish blocking `core_errors` from
 non-blocking `profile_warnings`, including private source-term warnings.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+customer factory holdouts should scan generated markdown and YAML for private
+source-owner terms after init/update/validate.

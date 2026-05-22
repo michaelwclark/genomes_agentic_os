@@ -140,3 +140,9 @@ project attachment, and root validation passed; merged-main pytest 39 passed in
 
 merged-main guide reference check passed; pytest 39 passed in 3.05s; Notion
 pending after push.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+branch customer holdout passed; merged-main customer holdout passed with
+`ok: true`, empty `core_errors`, empty `profile_warnings`, private scan clean,
+and pytest 39 passed in 3.27s; Notion pending after push.

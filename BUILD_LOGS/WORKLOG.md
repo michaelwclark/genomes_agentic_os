@@ -208,3 +208,8 @@ implemented on codex/build-runner-27 at 246b608; merged as 80e9edb; automation h
 
 implemented on codex/build-runner-28 at 8048757; merged as babe5b9; guide
 reference check passed; pytest 39 passed in 3.05s on merged main.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+implemented on codex/build-runner-29 at dce321b; merged as 3ebf38f; customer
+holdout passed; pytest 39 passed in 3.27s on merged main.

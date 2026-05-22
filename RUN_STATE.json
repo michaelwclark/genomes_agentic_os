@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "29",
+  "current_active_feature": null,
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -225,6 +225,11 @@
     },
     {
       "card_id": "368683b4-8dab-81d1-95c0-c777080cef4d",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-813d-90ab-d3655d095dcb",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -556,12 +561,12 @@
       "slug": "29-holdout-command-validation-for-05-customer-os-factory",
       "title": "29 Holdout Command Validation For 05 Customer Os Factory",
       "card_id": "368683b4-8dab-813d-90ab-d3655d095dcb",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-29",
-      "merge_commit": null,
-      "last_successful_phase": "started",
+      "merge_commit": "3ebf38f",
+      "last_successful_phase": "done",
       "started_at": "2026-05-22T05:05:01Z",
-      "completed_at": null
+      "completed_at": "2026-05-22T05:15:31Z"
     }
   ],
   "generated_subtasks": []

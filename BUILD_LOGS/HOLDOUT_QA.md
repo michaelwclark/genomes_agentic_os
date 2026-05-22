@@ -56,3 +56,8 @@ and full pytest on merged main.
 ## 28 Documentation And Help Guide For 05 Customer Os Factory
 
 guide reference check plus full pytest on merged main.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+customer init/update/validate, local edit preservation, private source scan, and
+full pytest on merged main.

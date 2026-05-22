@@ -72,3 +72,8 @@ root.
 
 reviewed feature 05 artifacts, customer CLI implementation, example profile,
 schema, templates, and tests.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+validated feature 05 through public customer CLI commands using the example
+customer profile in a disposable root.

@@ -56,3 +56,7 @@ run automation maturity holdout, run pytest, merge, push, close card.
 
 add customer OS factory guide, verify references, run pytest, merge, push, close
 card.
+
+## 29 Holdout Command Validation For 05 Customer Os Factory
+
+run customer factory holdout, run pytest, merge, push, close card.
