@@ -21,5 +21,3 @@ Agents should not invent new document shapes when a template exists. They should
 | `planning/` | Feature specs and future-idea capture for OS product work. |
 
 The installed OS should not create root-level `templates/`, `workflows/`, or `automations/` folders for active work. Reusable templates belong in `shared_factory`; active workflow and automation specs belong under the selected domain.
-
-Run `agentic-os validate-source --source <repo>` before install or sync to confirm required Codex config sources are present. Missing profile-layer configs are warning-level until the layer profile templates are installed.

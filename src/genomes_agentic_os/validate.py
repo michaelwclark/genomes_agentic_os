@@ -17,7 +17,6 @@ from .scaffold import (
     METRIC_FILES,
     STANDARD_LANES,
     expand_path,
-    repo_root,
 )
 
 
@@ -145,50 +144,6 @@ class ValidationResult:
         return not self.errors
 
 
-@dataclass(frozen=True)
-class CodexConfigSource:
-    path: str
-    purpose: str
-
-
-@dataclass
-class SourcePackageValidation:
-    root: Path
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-    @property
-    def ok(self) -> bool:
-        return not self.errors
-
-
-REQUIRED_CODEX_CONFIG_SOURCES = (
-    CodexConfigSource(
-        "docs/07-agent-surfaces/codex-config-toml-inventory.md",
-        "operator-facing inventory of Codex config keys, precedence, and install boundaries",
-    ),
-    CodexConfigSource(
-        "templates/agent-config/codex-config-layer-map.yml",
-        "machine-readable map of Codex config layers copied or referenced by installers",
-    ),
-)
-
-OPTIONAL_CODEX_LAYER_CONFIG_SOURCES = (
-    CodexConfigSource(
-        "docs/07-agent-surfaces/codex-config-profiles.md",
-        "profile documentation for layer-specific Codex behavior",
-    ),
-    CodexConfigSource(
-        "templates/agent-config/codex-profiles.toml",
-        "copyable Codex profile templates for global, OS, lane, workflow, and automation layers",
-    ),
-    CodexConfigSource(
-        "templates/agent-config/codex-profile-manifest.yml",
-        "install manifest describing which profile templates are required for each layer",
-    ),
-)
-
-
 def require_file(path: Path, result: ValidationResult) -> None:
     if not path.is_file():
         result.errors.append(f"missing required file: {path}")
@@ -281,42 +236,6 @@ def validate_root(root: str | Path) -> ValidationResult:
                 yaml.safe_load(path.read_text(encoding="utf-8"))
             except yaml.YAMLError as exc:
                 result.errors.append(f"invalid YAML: {path}: {exc}")
-
-    return result
-
-
-def validate_source_package(source: str | Path | None = None) -> SourcePackageValidation:
-    source_root = expand_path(source) if source is not None else repo_root()
-    result = SourcePackageValidation(root=source_root)
-    if not source_root.exists():
-        result.errors.append(f"missing source package root: {source_root}")
-        return result
-    if not source_root.is_dir():
-        result.errors.append(f"source package root is not a directory: {source_root}")
-        return result
-
-    for item in REQUIRED_CODEX_CONFIG_SOURCES:
-        path = source_root / item.path
-        if not path.is_file():
-            result.errors.append(
-                f"missing required Codex config source: {path} ({item.purpose})"
-            )
-
-    for item in OPTIONAL_CODEX_LAYER_CONFIG_SOURCES:
-        path = source_root / item.path
-        if not path.is_file():
-            result.warnings.append(
-                f"missing optional Codex layer config: {path} ({item.purpose})"
-            )
-
-    for item in (*REQUIRED_CODEX_CONFIG_SOURCES, *OPTIONAL_CODEX_LAYER_CONFIG_SOURCES):
-        path = source_root / item.path
-        if path.suffix not in {".yml", ".yaml"} or not path.is_file():
-            continue
-        try:
-            yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            result.errors.append(f"invalid YAML in Codex config source: {path}: {exc}")
 
     return result
 
