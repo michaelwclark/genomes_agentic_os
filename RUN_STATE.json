@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
-  "last_successful_phase": "feature-50-done",
+  "current_active_feature": "51",
+  "last_successful_phase": "claimed-build-window-51-53",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -441,6 +441,21 @@
     {
       "card_id": "368683b4-8dab-81d5-a07f-f16f87bd1ccd",
       "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81ac-82d9-d2460a55ddf7",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81a1-9b98-f20d89463295",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81d8-8e1c-f40ba7dc3ba3",
+      "action": "claim-building-and-comment",
       "status": "ok"
     }
   ],
@@ -1029,6 +1044,39 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T06:34:21Z",
       "completed_at": "2026-05-22T06:50:42Z"
+    },
+    {
+      "prefix": "51",
+      "slug": "51-holdout-command-validation-for-16-connected-source-watch-registry",
+      "title": "51 Holdout Command Validation For 16 Connected Source Watch Registry",
+      "card_id": "368683b4-8dab-81ac-82d9-d2460a55ddf7",
+      "branch": "codex/build-runner-51",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:52:21Z"
+    },
+    {
+      "prefix": "52",
+      "slug": "52-documentation-and-help-guide-for-17-event-graph-and-chained-automations",
+      "title": "52 Documentation And Help Guide For 17 Event Graph And Chained Automations",
+      "card_id": "368683b4-8dab-81a1-9b98-f20d89463295",
+      "branch": "codex/build-runner-52",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:52:21Z"
+    },
+    {
+      "prefix": "53",
+      "slug": "53-holdout-command-validation-for-17-event-graph-and-chained-automations",
+      "title": "53 Holdout Command Validation For 17 Event Graph And Chained Automations",
+      "card_id": "368683b4-8dab-81d8-8e1c-f40ba7dc3ba3",
+      "branch": "codex/build-runner-53",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:52:21Z"
     }
   ],
   "generated_subtasks": []
