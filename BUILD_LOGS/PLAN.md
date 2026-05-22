@@ -27,3 +27,7 @@ Run plan: add feature 01 guide documentation, create prefix 20 audit artifacts, 
 ## 21 Holdout Command Validation For 01 Project Create And Active Work
 
 Run plan: add feature 01 holdout validator, run validator and pytest, merge with `--no-ff`, push, and close the Kanban card.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+Run plan: add feature 02 guide, run guide reference checks and pytest, merge with `--no-ff`, push, and close the Kanban card.

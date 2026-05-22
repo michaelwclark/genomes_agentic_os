@@ -171,3 +171,11 @@
 - Commit: `19f3a49`.
 - Merged to `main` as `d9a5c85`.
 - Orchestrator verification: feature 01 holdout validation passed and `uv run --extra dev pytest -q` returned 39 passed in 2.84s on merged `main`.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-22`.
+- Commit: `24aea0c`.
+- Merged to `main` as `2a7bab8`.
+- Orchestrator verification: guide reference check passed and `uv run --extra dev pytest -q` returned 39 passed in 3.14s on merged `main`.

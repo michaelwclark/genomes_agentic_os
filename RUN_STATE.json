@@ -446,6 +446,17 @@
       "merge_commit": "d9a5c85",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:51:54Z"
+    },
+    {
+      "prefix": "22",
+      "slug": "22-documentation-and-help-guide-for-02-routing-and-context-builder",
+      "title": "22 Documentation And Help Guide For 02 Routing And Context Builder",
+      "card_id": "368683b4-8dab-81ae-a8a2-e0fd6532e46a",
+      "status": "done",
+      "branch": "codex/build-runner-22",
+      "merge_commit": "2a7bab8",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:52:42Z"
     }
   ],
   "generated_subtasks": []

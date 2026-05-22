@@ -27,3 +27,7 @@ Holdout QA checks the feature guide, a disposable `agentic-os project create` fl
 ## 21 Holdout Command Validation For 01 Project Create And Active Work
 
 Holdout QA runs the feature-local validator and full pytest on merged `main`.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+Holdout QA checks guide references and full pytest on merged `main`.

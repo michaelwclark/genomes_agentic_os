@@ -31,3 +31,7 @@ Project-create guidance should emphasize additive writes, active-work discovery,
 ## 21 Holdout Command Validation For 01 Project Create And Active Work
 
 Feature 01 holdout validation should check active-work/project indexes, source-map rows, idempotency, and `lenders` to `los` aliasing.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+Routing/context docs should emphasize read-only defaults and low-confidence failure instead of guessing.

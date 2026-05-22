@@ -48,3 +48,10 @@
 - Feature artifact: `features/21-holdout-command-validation-for-01-project-create-and-active-work/SPEC.md`
 - Related completed feature: `features/01-project-create-and-active-work/`
 - Acceptance: local holdout validator for project creation, indexes, source-map refs, idempotency, aliasing, and root validation.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+- Source card: `368683b4-8dab-81ae-a8a2-e0fd6532e46a`
+- Feature artifact: `features/22-documentation-and-help-guide-for-02-routing-and-context-builder/SPEC.md`
+- Related completed feature: `features/02-routing-and-context-builder/`
+- Acceptance: operator-facing guide for route/context/here commands, context packet shape, approval risks, source loading, and safe failures.

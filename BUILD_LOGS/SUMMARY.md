@@ -87,3 +87,7 @@ Feature 20 adds a guide for feature 01 under `docs/13-feature-guides/`, covering
 ## 21 Holdout Command Validation For 01 Project Create And Active Work
 
 Feature 21 adds a repeatable local holdout validator for feature 01 project creation and active-work behavior.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+Feature 22 adds the feature 02 routing/context guide under `docs/13-feature-guides/`, documenting route, context build, here commands, source lists, risk output, failure behavior, and validation.

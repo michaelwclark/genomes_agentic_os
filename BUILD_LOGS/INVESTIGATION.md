@@ -40,3 +40,8 @@
 
 - Project-create behavior needed a single local holdout command beyond pytest coverage.
 - Validator uses a disposable root and avoids live Notion writes.
+
+## 22 Documentation And Help Guide For 02 Routing And Context Builder
+
+- Reviewed feature 02 artifacts, plan, tests, and routing implementation.
+- Guide follows the established `docs/13-feature-guides/` pattern.
