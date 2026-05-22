@@ -1,0 +1,23 @@
+id: 368683b4-8dab-81a8-8d2c-e29d79d8d60f
+title: 31 Holdout Command Validation For 06 Notion Control Plane Sync
+prefix: "31"
+slug: 31-holdout-command-validation-for-06-notion-control-plane-sync
+source_url: https://www.notion.so/31-Holdout-Command-Validation-For-06-Notion-Control-Plane-Sync-368683b48dab81a88d2ce29d79d8d60f
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-31
+base_sha: 2f9ff73
+merge_sha:
+started_at: 2026-05-22T05:17:38Z
+completed_at:
+acceptance:
+  - full CLI scaffold suite passes
+  - sync planning discovers runtime filesystem objects
+  - apply refuses without verified workspace
+  - apply with Genome's Notion writes deterministic local mapping
+  - subsequent dry run reports no-op actions when sources are unchanged
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.07s
+  - command: temp-root notion plan-sync, refusal, apply, dry-run idempotency smoke
+    result: passed
