@@ -1,3 +1,5 @@
 # Next
 
-No blocking follow-up. The paired holdout card should validate the guide commands against a disposable root.
+- Merge, append shared logs, update RUN_STATE, and mark the card Done.
+- Continue with feature 23 holdout validation.
+

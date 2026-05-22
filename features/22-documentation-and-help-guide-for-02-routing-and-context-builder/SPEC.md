@@ -1,11 +1,14 @@
 # 22 Documentation And Help Guide For 02 Routing And Context Builder
 
-## Goal
+## Scope
 
-Create an operator guide for feature 02 routing and context packet commands.
+Add an operator-facing guide for deterministic routing and context packets.
 
 ## Acceptance Criteria
 
-- Document command usage and expected YAML output.
-- Explain source files, cwd detection, linked repo detection, approval risks, known gaps, and safe failure behavior.
-- Provide disposable validation commands.
+- Every relevant command has a documented example.
+- The guide explains routing inputs, context packet output, source/runtime
+  separation, low-confidence failures, and linked-repository `here` behavior.
+- The guide can onboard a fresh agent without prior chat context.
+- Diagram usage is considered and recorded.
+

@@ -1,7 +1,7 @@
 # Worklog
 
-## 2026-05-22
+- Added `docs/13-feature-guides/02-routing-and-context-builder.md`.
+- Updated `docs/13-feature-guides/README.md`.
+- Added feature 22 Build Runner artifacts.
+- Verified command references and regression tests.
 
-- Added a guide for feature 02.
-- Added the feature 22 audit folder.
-- QA completed: guide reference check passed; 39 passed in 4.13s.

@@ -5,88 +5,123 @@
 - [Purpose](#purpose)
 - [Source And Runtime Boundaries](#source-and-runtime-boundaries)
 - [Commands](#commands)
-- [Context Packet Shape](#context-packet-shape)
-- [How Routing Decides](#how-routing-decides)
+- [Routing Inputs](#routing-inputs)
+- [Context Packet Output](#context-packet-output)
 - [Operator Flow](#operator-flow)
 - [Disposable Validation](#disposable-validation)
-- [Failure Behavior](#failure-behavior)
-- [Done Signal](#done-signal)
+- [Troubleshooting](#troubleshooting)
+- [Source Artifacts](#source-artifacts)
 
 ## Purpose
 
-Feature 02 lets an operator ask the OS where work belongs and which files an agent should load. It reduces reliance on chat history by building deterministic routing and context packets from installed runtime files.
+Feature 02 adds deterministic routing and context-packet assembly. It lets an
+agent ask where work belongs, then load the smallest useful set of source files
+for that target.
 
-Use this guide before dispatching Codex or Claude into a project, workflow, or domain when you need a concrete source list and target path.
+Use this guide when a request needs to be mapped to a domain, project, workflow,
+or linked repository before implementation starts.
 
 ## Source And Runtime Boundaries
 
-This repository owns the routing implementation and tests. The installed OS root owns live routers, project records, workflow context packs, active-work rows, and source maps. Routing commands should read from the installed root and print YAML; they should not write Notion or mutate runtime state by default.
+This repository owns routing implementation and tests. The installed OS root
+owns live routers, project records, workflow records, source maps, and linked
+repository references. Run routing commands against an installed root such as
+`~/agentic_os`.
 
 ## Commands
 
+Route a request:
+
 ```bash
 agentic-os route "Deploy losmon_replacement to production" --root ~/agentic_os
+```
+
+Build a context packet from explicit target fields:
+
+```bash
 agentic-os context build --domain los --project losmon_replacement --root ~/agentic_os
-agentic-os here route "Summarize active work" --root ~/agentic_os
+```
+
+Route from the current working directory:
+
+```bash
+agentic-os here route "Deploy this" --root ~/agentic_os
+```
+
+Build context from the current working directory:
+
+```bash
 agentic-os here context build --root ~/agentic_os
 ```
 
-`route` starts from a request string. `context build` starts from explicit domain/project/workflow arguments. `here` commands infer context from the current directory, either inside the OS root or inside a repository linked from a project source map.
+## Routing Inputs
 
-## Context Packet Shape
+Routing uses deterministic filesystem state:
 
-The command prints YAML with these fields:
+- root and domain `ROUTER.md` files
+- domain `00-control-plane/routing-rules.md`
+- domain `00-control-plane/active-work.md`
+- project `project.yml`, `status.md`, and `source-map.md`
+- workflow records when a workflow is supplied
+- the current working directory when using `here`
 
-```yaml
-domain: los
-lane: engineering
-object_type: project
-target_path: /path/to/agentic_os/los/02-projects/losmon_replacement
-sources_to_load:
-  - /path/to/agentic_os/ROUTER.md
-  - /path/to/agentic_os/los/ROUTER.md
-approval_risks:
-  - production change
-known_gaps: []
-handoff_prompt: Load the listed sources...
-```
+Low-confidence matches fail closed. A request that matches multiple domains or
+no known target should return a routing confidence error instead of guessing.
 
-Operators should treat `sources_to_load` as the minimum context pack for the next agent. `known_gaps` means a referenced file is missing and should be resolved or acknowledged before dispatch.
+## Context Packet Output
 
-## How Routing Decides
+Context packet output includes:
 
-Routing uses installed domains, project records, linked repo paths, and request labels. Project matches win when exactly one project matches the request. Domain matches are accepted only when exactly one domain matches. Multiple matches or no matches fail safely.
+- selected domain, project, workflow, and lane when known
+- `target_path` for the chosen runtime object
+- `sources_to_load`, the exact files an agent should read before acting
+- source repository hints from project source maps when present
 
-Approval risks are keyword based. Requests containing words such as `deploy`, `production`, `delete`, `secret`, `billing`, or `customer` surface approval-risk labels in the packet.
+The packet is designed for agent handoff. It should be small enough to read
+quickly and precise enough to avoid wandering across unrelated runtime state.
 
 ## Operator Flow
 
-1. Ensure the project or workflow exists in the installed OS root.
-2. Run `agentic-os route` for a request or `agentic-os context build` for explicit context.
-3. Review `target_path`, `sources_to_load`, `approval_risks`, and `known_gaps`.
-4. Give the next agent the handoff prompt and source list.
-5. If routing fails as ambiguous, add the domain/project name or use explicit `context build` arguments.
+1. Create or confirm the project record.
+2. Add source references with `agentic-os project create --repo ...` when a
+   linked repository should participate in `here` routing.
+3. Run `agentic-os route` against the user request.
+4. Read the returned `sources_to_load`.
+5. If working inside a linked repository, run `agentic-os here context build`.
+6. Stop on low-confidence routing and clarify the target instead of forcing a
+   destination.
 
 ## Disposable Validation
 
 ```bash
-TMP_ROOT="$(mktemp -d)/agentic_os"
-TMP_REPO="$(mktemp -d)/linked_repo"
+TMP_PARENT="$(mktemp -d)"
+TMP_ROOT="$TMP_PARENT/agentic_os"
+REPO_PATH="$TMP_PARENT/losmon_repo"
+mkdir -p "$REPO_PATH"
 uv run agentic-os init --target "$TMP_ROOT"
-uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT" --repo "$TMP_REPO" --lane engineering
+uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT" --repo "$REPO_PATH"
 uv run agentic-os route "Deploy losmon_replacement to production" --root "$TMP_ROOT"
 uv run agentic-os context build --domain los --project losmon_replacement --root "$TMP_ROOT"
-(
-  cd "$TMP_REPO"
-  uv run --project /Users/genome/projects/genomes_agentic_os agentic-os here context build --root "$TMP_ROOT"
-)
-uv run agentic-os validate --root "$TMP_ROOT"
+(cd "$REPO_PATH" && uv run --project /path/to/genomes_agentic_os agentic-os here context build --root "$TMP_ROOT")
 ```
 
-## Failure Behavior
+## Troubleshooting
 
-Low-confidence routing returns an error instead of guessing. Examples include vague requests such as `Do the thing` or requests that name multiple domains. Use explicit `context build` arguments when the request is intentionally cross-domain.
+| Symptom | Likely Cause | Fix |
+| --- | --- | --- |
+| `routing confidence is low: no domain or project matched` | Request lacks a known domain/project token | Add the project name, use explicit context build flags, or create the missing project record. |
+| `routing confidence is low: request matches multiple domains or projects` | Request is ambiguous | Clarify the domain or project before proceeding. |
+| `here context build` cannot route | Current directory is outside the OS root and outside linked repositories | Add a `--repo` source reference or run the command from a known OS path. |
+| Context packet omits expected files | Source map or project record is incomplete | Re-run `project create` with source refs or repair the project files. |
 
-## Done Signal
+## Source Artifacts
 
-Feature 02 is healthy when routing can classify a project request, context build returns exact source files, `here` works from both OS paths and linked repositories, approval risks appear for sensitive requests, ambiguous requests fail safely, and pytest remains green.
+- Source plan: `PLANS/02-routing-and-context-builder.md`
+- Feature audit folder: `features/02-routing-and-context-builder/`
+- Implementation: `src/genomes_agentic_os/routing.py`
+- CLI parser: `src/genomes_agentic_os/cli.py`
+- Tests: `tests/test_cli_scaffold.py`
+
+No diagram is included. The command flow and troubleshooting table are more
+useful for this guide than an extra image asset.
+
