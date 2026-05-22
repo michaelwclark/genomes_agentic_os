@@ -1,0 +1,19 @@
+id: 368683b4-8dab-8177-af00-f412203139bd
+title: 25 Holdout Command Validation For 03 Workflow Readiness And Run Closeout
+prefix: "25"
+slug: 25-holdout-command-validation-for-03-workflow-readiness-and-run-closeout
+status: done
+source_queue: Ready
+ordering_rule: title-prefix-ascending
+related_feature: features/03-workflow-readiness-and-run-closeout
+branch:
+  target: main
+  feature_branch: codex/build-runner-25
+acceptance:
+  - Holdout validation can run without live Notion writes.
+  - Validation checks workflow check severities, done-closeout validation requirement, closeout writebacks, and root validation.
+verification:
+  - command: python3 features/25-holdout-command-validation-for-03-workflow-readiness-and-run-closeout/scripts/validate_feature_03_holdout.py --repo .
+    result: feature 03 holdout validation passed; 39 passed in 3.75s
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.75s
