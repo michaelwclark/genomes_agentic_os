@@ -1,3 +1,7 @@
 # Holdout QA
 
-Run the commands listed in `feature.yml`, then run full pytest.
+- Confirm command examples cover create, check, set-maturity, and attach.
+- Confirm maturity levels are explained.
+- Confirm no Mermaid diagram was added.
+- Run the repository tests.
+

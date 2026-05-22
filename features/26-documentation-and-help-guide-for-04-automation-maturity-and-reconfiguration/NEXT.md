@@ -1,3 +1,5 @@
 # Next
 
-No blocking follow-up for this card. Continue with the next prefix in Ready order.
+- Merge, record, and mark the card Done.
+- Continue with feature 27 holdout validation.
+

@@ -1,3 +1,5 @@
 # Investigation
 
-Reviewed `features/04-automation-maturity-and-reconfiguration` artifacts, source plan, implementation tests, and command behavior before adding this card.
+Feature 04 introduced automation maturity checks, safe starting levels,
+promotion through `set-maturity`, and `automation attach` project linkage.
+

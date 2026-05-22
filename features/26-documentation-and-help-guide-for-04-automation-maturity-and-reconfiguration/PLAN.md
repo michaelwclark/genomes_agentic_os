@@ -1,5 +1,7 @@
 # Plan
 
-1. Add scoped artifacts for this card.
-2. Add documentation or holdout validation as required by the title.
-3. Run focused validation and full pytest.
+1. Add the feature 04 guide.
+2. Update the feature-guide index.
+3. Record Build Runner artifacts.
+4. Verify command references and tests.
+
