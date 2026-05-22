@@ -1,0 +1,25 @@
+id: 368683b4-8dab-81ac-82d9-d2460a55ddf7
+title: 51 Holdout Command Validation For 16 Connected Source Watch Registry
+prefix: "51"
+slug: 51-holdout-command-validation-for-16-connected-source-watch-registry
+source_url: https://www.notion.so/51-Holdout-Command-Validation-For-16-Connected-Source-Watch-Registry-368683b48dab81ac82d9d2460a55ddf7
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-51
+base_sha: 85a2061
+merge_sha:
+started_at: 2026-05-22T06:56:37Z
+completed_at:
+validates_feature: 16-connected-source-watch-registry
+acceptance:
+  - canonical Build Runner artifact set exists for feature 51
+  - managed watch-source command and template repair is validated with a fresh temporary root
+  - connected-system list and doctor command paths are validated
+  - watch-source create, list, doctor, dry-run, run-due dry-run, and apply command paths are validated
+  - apply mode writes a source event file and cursor state
+  - negative watch-source doctor findings are validated
+verification:
+  - command: temp-root connected source holdout command matrix
+    result: passed; source event and cursor state were written; negative doctor exited 1
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 2.95s
