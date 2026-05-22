@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
-  "last_successful_phase": "feature-53-done",
+  "current_active_feature": "54",
+  "last_successful_phase": "claimed-build-window-54-56",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -471,6 +471,21 @@
     {
       "card_id": "368683b4-8dab-81d8-8e1c-f40ba7dc3ba3",
       "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8146-91cd-f347902c2e5a",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8196-9c27-d6c4e1dd970f",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8137-96a4-f8b38619482a",
+      "action": "claim-building-and-comment",
       "status": "ok"
     }
   ],
@@ -1095,6 +1110,39 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T06:52:21Z",
       "completed_at": "2026-05-22T07:05:10Z"
+    },
+    {
+      "prefix": "54",
+      "slug": "54-config-toml-options-inventory-and-analysis",
+      "title": "54 config.toml Options Inventory And Analysis",
+      "card_id": "368683b4-8dab-8146-91cd-f347902c2e5a",
+      "branch": "codex/build-runner-54",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T07:06:46Z"
+    },
+    {
+      "prefix": "55",
+      "slug": "55-codex-config-profiles-per-agentic-os-layer",
+      "title": "55 Codex Config Profiles Per Agentic OS Layer",
+      "card_id": "368683b4-8dab-8196-9c27-d6c4e1dd970f",
+      "branch": "codex/build-runner-55",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T07:06:46Z"
+    },
+    {
+      "prefix": "56",
+      "slug": "56-universal-agent-brain-convention-and-prompt-stitching",
+      "title": "56 Universal Agent Brain Convention And Prompt Stitching",
+      "card_id": "368683b4-8dab-8137-96a4-f8b38619482a",
+      "branch": "codex/build-runner-56",
+      "status": "building",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T07:06:46Z"
     }
   ],
   "generated_subtasks": []
