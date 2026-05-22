@@ -218,3 +218,8 @@ holdout passed; pytest 39 passed in 3.27s on merged main.
 
 implemented on codex/build-runner-30 at 4d57e1b; merged as 2e1f035; guide
 reference check passed; pytest 39 passed in 3.05s on merged main.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+implemented on codex/build-runner-31 at f4e0ebf; merged as bbd124a; Notion sync
+holdout passed; pytest 39 passed in 3.11s on merged main.

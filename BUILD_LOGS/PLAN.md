@@ -64,3 +64,7 @@ run customer factory holdout, run pytest, merge, push, close card.
 ## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
 
 add Notion sync guide, verify references, run pytest, merge, push, close card.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+run Notion sync holdout, run pytest, merge, push, close card.

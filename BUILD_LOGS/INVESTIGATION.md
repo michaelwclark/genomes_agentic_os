@@ -81,3 +81,8 @@ customer profile in a disposable root.
 ## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
 
 reviewed feature 06 artifacts, sync implementation, CLI wiring, and tests.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+validated feature 06 through public Notion sync CLI commands in a disposable
+runtime root.

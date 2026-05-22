@@ -94,3 +94,8 @@ local edit preservation, and private source-owner filtering.
 
 operator guide for Notion sync planning, dry run, guarded apply, workspace
 verification, local mapping, and no-op behavior.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+local holdout validation for Notion sync planning, workspace refusal, guarded
+apply, local mapping, and no-op dry run.

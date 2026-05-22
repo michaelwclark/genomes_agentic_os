@@ -65,3 +65,8 @@ full pytest on merged main.
 ## 30 Documentation And Help Guide For 06 Notion Control Plane Sync
 
 guide reference check plus full pytest on merged main.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+Notion plan-sync, refused apply, verified apply, no-op dry-run, and full pytest
+on merged main.

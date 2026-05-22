@@ -71,3 +71,8 @@ source-owner terms after init/update/validate.
 
 Notion sync docs should keep filesystem source of truth and Notion control
 plane boundaries explicit.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+Notion sync holdouts should verify workspace refusal and post-apply no-op dry
+run behavior without requiring a live Notion write.

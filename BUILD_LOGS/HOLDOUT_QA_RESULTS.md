@@ -151,3 +151,8 @@ and pytest 39 passed in 3.27s; Notion pending after push.
 
 merged-main guide reference check passed; pytest 39 passed in 3.05s; Notion
 pending after push.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+branch holdout passed; merged-main Notion smoke reported 29 actions with 29
+no-ops after apply; pytest 39 passed in 3.11s; Notion pending after push.

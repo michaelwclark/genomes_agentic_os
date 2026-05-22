@@ -126,3 +126,8 @@ edit preservation, and private source-owner filtering.
 
 adds the feature 06 Notion control plane sync guide under
 `docs/13-feature-guides/`.
+
+## 31 Holdout Command Validation For 06 Notion Control Plane Sync
+
+adds feature 06 Notion sync holdout validation for planning, workspace refusal,
+guarded apply, local mapping, and idempotent dry run.
