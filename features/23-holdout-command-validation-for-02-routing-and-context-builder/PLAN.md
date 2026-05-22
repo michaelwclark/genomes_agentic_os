@@ -1,5 +1,10 @@
 # Plan
 
-1. Add a feature-local validator script.
-2. Exercise route, context build, here context build, low-confidence failure, and root validation.
-3. Run the validator plus full pytest.
+1. Run the repository test suite.
+2. Create an isolated temporary OS root and linked repository folder.
+3. Create a project with the linked repository path.
+4. Run route and context build commands.
+5. Run here context build from inside the linked repository.
+6. Run a low-confidence request and require failure.
+7. Record results and residual risk.
+

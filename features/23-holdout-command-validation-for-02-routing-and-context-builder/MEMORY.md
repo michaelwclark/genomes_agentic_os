@@ -1,3 +1,7 @@
 # Memory
 
-Feature 02 holdout validation should inspect command output for target paths, source files, approval risks, and low-confidence failures.
+- `here context build` succeeds when the current directory matches a project
+  source-map repository path.
+- Low-confidence route requests should return an error containing `routing
+  confidence is low`.
+

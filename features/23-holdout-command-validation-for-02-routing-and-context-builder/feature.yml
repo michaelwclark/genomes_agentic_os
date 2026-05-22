@@ -1,20 +1,22 @@
 id: 368683b4-8dab-810a-97b5-e2cbd4b9bba5
-url: https://www.notion.so/23-Holdout-Command-Validation-For-02-Routing-And-Context-Builder-368683b48dab810a97b5e2cbd4b9bba5
 title: 23 Holdout Command Validation For 02 Routing And Context Builder
 prefix: "23"
 slug: 23-holdout-command-validation-for-02-routing-and-context-builder
-status: done
+source_url: https://www.notion.so/23-Holdout-Command-Validation-For-02-Routing-And-Context-Builder-368683b48dab810a97b5e2cbd4b9bba5
 source_queue: Ready
-ordering_rule: title-prefix-ascending
-related_feature: features/02-routing-and-context-builder
-branch:
-  target: main
-  feature_branch: codex/build-runner-23
+status: ready_to_merge
+branch: codex/build-runner-23
+base_sha: 0ea672a89f2199b1fbef9c97b02d7f56cc82f452
+merge_sha:
+started_at: 2026-05-22T04:48:00Z
+completed_at:
 acceptance:
-  - Holdout validation can run without live Notion writes.
-  - Validation checks route, context build, here context build, approval risks, linked repo detection, low-confidence failure, and root validation.
+  - Route, context build, here context, and low-confidence paths are executed.
+  - Command output is summarized.
+  - Residual risk and docs alignment are recorded.
 verification:
-  - command: python3 features/23-holdout-command-validation-for-02-routing-and-context-builder/scripts/validate_feature_02_holdout.py --repo .
-    result: feature 02 holdout validation passed; 39 passed in 4.23s
   - command: uv run --extra dev pytest -q
-    39 passed in 4.23s
+    result: 39 passed in 3.06s
+  - command: disposable routing/context command matrix
+    result: passed
+

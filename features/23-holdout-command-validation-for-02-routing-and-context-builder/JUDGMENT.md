@@ -1,3 +1,5 @@
 # Judgment
 
-Ready after orchestrator verification. The validator is local-only and repeatable.
+The holdout treats low-confidence failure as success because feature 02's safe
+behavior is to refuse ambiguous or unknown routing rather than infer a target.
+
