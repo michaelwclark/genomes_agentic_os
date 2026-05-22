@@ -178,3 +178,7 @@ Feature 16 holdout confirms watch-source apply writes source-events and cursor s
 ## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
 
 Feature 17 is documented at docs/13-feature-guides/17-event-graph-and-chained-automations.md. Chain rules are file-backed registry entries tested by chain test/doctor, then processed by event process-due.
+
+## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
+
+Feature 17 holdout confirms event process-due apply writes queue work and idempotency state, repeated apply skips duplicates, replay works, dead-letter records are written for broken enabled rules, and run closeout can emit event evidence.

@@ -161,3 +161,7 @@ Holdout plan: fresh temp-root install, managed watch-source knowledge repair, va
 ## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
 
 Holdout plan: verify the guide points at existing feature 17 artifacts/templates/skills/commands, contains no Mermaid, and rerun the full repository pytest suite after merge.
+
+## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
+
+Holdout plan: fresh temp-root install, managed event knowledge repair, validate root, event append, chain doctor/test, process-due dry-run/apply/repeat, replay, dead-letter, run closeout event emission, and full pytest.

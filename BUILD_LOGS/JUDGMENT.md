@@ -151,3 +151,7 @@ Judgment: holdout passed. Apply writes local source event and cursor state; malf
 ## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
 
 Judgment: documentation-only feature; no runtime code changes were required. The guide documents chain rules as file-backed registry edits because there is no chain create command.
+
+## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
+
+Judgment: holdout passed. Event processing supports dry-run, apply, idempotency skip, replay, and dead-letter behavior.
