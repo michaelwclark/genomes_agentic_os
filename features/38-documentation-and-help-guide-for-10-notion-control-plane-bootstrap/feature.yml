@@ -1,0 +1,22 @@
+id: 368683b4-8dab-81b0-a74f-cb3bbed1508b
+title: 38 Documentation And Help Guide For 10 Notion Control Plane Bootstrap
+prefix: "38"
+slug: 38-documentation-and-help-guide-for-10-notion-control-plane-bootstrap
+source_url: https://www.notion.so/38-Documentation-And-Help-Guide-For-10-Notion-Control-Plane-Bootstrap-368683b48dab81b0a74fcb3bbed1508b
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-38
+base_sha: 143bffe
+merge_sha:
+started_at: 2026-05-22T05:40:41Z
+completed_at:
+acceptance:
+  - guide documents bootstrap dry-run and apply commands
+  - guide explains home page, databases, dashboard views, and run seeds
+  - guide explains verified workspace and parent page guardrails
+  - guide documents local manifest path
+verification:
+  - command: rg "notion bootstrap|--dry-run|--apply|verified-workspace|parent-page-id|manifest.yml|Agentic OS" docs/13-feature-guides/10-notion-control-plane-bootstrap.md
+    result: passed
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.24s

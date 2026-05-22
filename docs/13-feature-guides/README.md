@@ -14,3 +14,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [06 - Notion Control Plane Sync](06-notion-control-plane-sync.md) | How filesystem state plans guarded Notion control-plane sync and local mapping. |
 | [07 - Doctor Validation And Migrations](07-doctor-validation-and-migrations.md) | How runtime doctor checks, additive repairs, and previewed migrations work. |
 | [08 - Losmon Replacement Validation](08-losmon-replacement-validation.md) | How to generate the LOSMon replacement validation package and comparison evidence. |
+| [10 - Notion Control Plane Bootstrap](10-notion-control-plane-bootstrap.md) | How to plan and apply the guarded Notion control-plane bootstrap manifest. |
