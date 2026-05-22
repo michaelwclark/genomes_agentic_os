@@ -1,0 +1,18 @@
+id: 368683b4-8dab-81ae-a8a2-e0fd6532e46a
+url: https://www.notion.so/22-Documentation-And-Help-Guide-For-02-Routing-And-Context-Builder-368683b48dab81aea8a2e0fd6532e46a
+title: 22 Documentation And Help Guide For 02 Routing And Context Builder
+prefix: "22"
+slug: 22-documentation-and-help-guide-for-02-routing-and-context-builder
+status: done
+source_queue: Ready
+ordering_rule: title-prefix-ascending
+related_feature: features/02-routing-and-context-builder
+branch:
+  target: main
+  feature_branch: codex/build-runner-22
+acceptance:
+  - Feature 02 has an operator-facing guide.
+  - The guide explains route, context build, here route, here context build, sources, risk output, failure behavior, and validation.
+verification:
+  - command: uv run --extra dev pytest -q
+    result: guide reference check passed; 39 passed in 4.13s
