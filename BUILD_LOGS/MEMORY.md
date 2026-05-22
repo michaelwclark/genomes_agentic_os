@@ -86,3 +86,8 @@ migration docs should stress stable preview before apply.
 
 doctor/migration holdouts should include missing-plan and changed-target apply
 refusals as well as successful re-plan/apply.
+
+## 34 Documentation And Help Guide For 08 Losmon Replacement Validation
+
+LOSMon replacement docs should not imply parity; keep comparison gaps visible
+until real read-only validation exists.

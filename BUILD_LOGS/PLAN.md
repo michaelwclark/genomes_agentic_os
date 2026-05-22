@@ -77,3 +77,8 @@ card.
 ## 33 Holdout Command Validation For 07 Doctor Validation And Migrations
 
 run doctor/migration holdout, run pytest, merge, push, close card.
+
+## 34 Documentation And Help Guide For 08 Losmon Replacement Validation
+
+add LOSMon validation guide, verify references, run pytest, merge, push, close
+card.

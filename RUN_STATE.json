@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "34",
+  "current_active_feature": "35",
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -280,6 +280,11 @@
     },
     {
       "card_id": "368683b4-8dab-81d5-a26d-c7e0b7030cdc",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81c7-a601-e1f42603eba7",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -671,12 +676,12 @@
       "slug": "34-documentation-and-help-guide-for-08-losmon-replacement-validation",
       "title": "34 Documentation And Help Guide For 08 Losmon Replacement Validation",
       "card_id": "368683b4-8dab-81c7-a601-e1f42603eba7",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-34",
-      "merge_commit": null,
-      "last_successful_phase": "started",
+      "merge_commit": "06450de",
+      "last_successful_phase": "done",
       "started_at": "2026-05-22T05:30:54Z",
-      "completed_at": null
+      "completed_at": "2026-05-22T05:37:50Z"
     },
     {
       "prefix": "35",

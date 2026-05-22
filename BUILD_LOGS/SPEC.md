@@ -109,3 +109,8 @@ planning, apply, preview rollback notes, and changed-target refusal.
 
 local holdout validation for doctor missing-file repair, stale run findings,
 migration preview, drift refusal, and apply.
+
+## 34 Documentation And Help Guide For 08 Losmon Replacement Validation
+
+operator guide for generating and interpreting the LOSMon replacement
+validation package.
