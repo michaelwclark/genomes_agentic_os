@@ -234,3 +234,7 @@ adds Codex config profile templates and Agentic OS profile metadata for global h
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 adds the universal agent brain convention, reusable prompt templates, and prompt stitching map for Codex and Claude oriented Agentic OS directories.
+
+## 57 config.toml Installer And Directory Setup
+
+adds agentic-os config install, a guarded local installer for Codex config.toml and prompt-file conventions across Agentic OS layers.

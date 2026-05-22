@@ -4,12 +4,12 @@ prefix: "57"
 slug: 57-config-toml-installer-and-directory-setup
 source_url: https://www.notion.so/57-config-toml-Installer-And-Directory-Setup-368683b48dab81e9a9f3ec46415e3796
 source_queue: Ready
-status: ready_to_merge
+status: done
 branch: codex/build-runner-57
 base_sha: 8cb1a82
-merge_sha:
+merge_sha: 470e42b
 started_at: 2026-05-22T07:21:00Z
-completed_at:
+completed_at: 2026-05-22T07:33:21Z
 acceptance:
   - installer supports dry-run, apply, backup, idempotent re-run, and user-preserving merge behavior
   - new OS, customer, domain, workflow, and automation directories receive config.toml and prompt files
@@ -17,6 +17,8 @@ acceptance:
   - tests cover creation, merge, conflict, missing-directory, and repeated-run behavior
 verification:
   - command: uv run --extra dev pytest -q
-    result: 44 passed in 2.96s
+    result: 44 passed in 3.10s
   - command: agentic-os config install dry-run holdout
     result: passed
+  - command: merged main verification
+    result: uv run --extra dev pytest -q passed 44 tests; config install dry-run holdout passed

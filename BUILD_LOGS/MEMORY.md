@@ -194,3 +194,7 @@ The profile metadata source is templates/agent-config/codex-profile-manifest.yml
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 The prompt composition source is docs/07-agent-surfaces/universal-agent-brain.md. The machine-readable stitching order is templates/agent-config/prompt-stitching-map.yml.
+
+## 57 config.toml Installer And Directory Setup
+
+The guarded config installer lives in src/genomes_agentic_os/config_ops.py and is exposed as agentic-os config install. The operator guide is docs/10-cli-and-install/config-toml-installer.md.

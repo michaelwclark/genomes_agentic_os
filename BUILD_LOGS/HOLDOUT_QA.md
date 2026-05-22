@@ -177,3 +177,7 @@ Holdout checks: merged-main pytest and a content check for all six profiles, req
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 Holdout checks: merged-main pytest and a content check for required prompt filenames, universal/harness/generated file classes, migration guidance, nested example, and stitching map layers.
+
+## 57 config.toml Installer And Directory Setup
+
+Holdout checks: merged-main pytest, direct config install dry-run on a missing directory, and a guard that stale feature 56 installer-validator artifacts are absent.

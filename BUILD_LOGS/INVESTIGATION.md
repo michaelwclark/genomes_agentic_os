@@ -199,3 +199,7 @@ Mapped feature 54 config research and layer IDs into a Codex-facing TOML templat
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 Feature 54 established Codex AGENTS.md discovery and Agentic OS prompt layers. This feature keeps harness entry files thin and moves durable behavior into BRAIN.md, ROUTER.md, CONTEXT.md, and MEMORY.md.
+
+## 57 config.toml Installer And Directory Setup
+
+Mapped the request to the existing CLI/scaffold pattern and added a local config operation instead of a standalone script. The command writes only filesystem artifacts and does not treat Notion as runtime storage.

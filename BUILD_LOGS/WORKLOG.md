@@ -339,3 +339,7 @@ implemented on codex/build-runner-55 at b431359; merged as 1cdd36a; Codex profil
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 implemented on codex/build-runner-56 at 83514dd; integrated on main as 16c0075; universal agent brain content check passed; pytest 39 passed in 3.00s on merged main; unrelated stale branch commit was reverted locally before push; Notion synced to Done.
+
+## 57 config.toml Installer And Directory Setup
+
+implemented on codex/build-runner-57 at 4354978; merged as 470e42b; config install dry-run holdout passed; pytest 44 passed in 3.10s on merged main; scoped-clean guard passed; Notion synced to Done.

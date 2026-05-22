@@ -274,3 +274,7 @@ Passed. Branch verification: uv run --extra dev pytest -q returned 39 passed in 
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 Passed. Branch verification: uv run --extra dev pytest -q returned 39 passed in 3.23s and the universal agent brain content check passed. Merged-main verification: uv run --extra dev pytest -q returned 39 passed in 3.00s and the content check passed.
+
+## 57 config.toml Installer And Directory Setup
+
+Passed. Branch verification: uv run --extra dev pytest -q returned 44 passed in 2.96s and config install dry-run holdout passed. Merged-main verification: uv run --extra dev pytest -q returned 44 passed in 3.10s; config install dry-run holdout passed; scoped-clean guard passed.

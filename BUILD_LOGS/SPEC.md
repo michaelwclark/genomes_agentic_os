@@ -214,3 +214,7 @@ Source card 368683b4-8dab-8196-9c27-d6c4e1dd970f required concrete Codex profile
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 Source card 368683b4-8dab-8137-96a4-f8b38619482a required canonical prompt-file roles, universal versus harness-specific boundaries, migration guidance, and nested prompt stitching examples for Agentic OS directories.
+
+## 57 config.toml Installer And Directory Setup
+
+Source card 368683b4-8dab-81e9-a9f3-ec46415e3796 required a CLI/install path that writes or updates config.toml files for new and existing Agentic OS directories with dry-run, apply, backup, idempotent merge, conflict handling, and tests.

@@ -167,3 +167,7 @@ Kept native Codex settings in TOML and richer Agentic OS metadata in YAML to avo
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 The feature was scoped to prompt-stitching docs/templates. A stale branch commit for installer validation was reverted locally before push so the final tree only carries the active card's artifacts.
+
+## 57 config.toml Installer And Directory Setup
+
+The installer blocks on conflicts by default because config.toml can change sandbox, approval, MCP, and telemetry behavior. Confirmed conflicts preserve local values while applying non-conflicting additions.

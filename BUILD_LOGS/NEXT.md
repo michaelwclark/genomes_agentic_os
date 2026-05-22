@@ -228,3 +228,7 @@ Next queue item: feature 56 universal agent brain convention and prompt stitchin
 ## 56 Universal Agent Brain Convention And Prompt Stitching
 
 Next queue item: feature 57 config.toml installer and directory setup.
+
+## 57 config.toml Installer And Directory Setup
+
+Next queue item: feature 58 OTEL and MCP configuration contracts.

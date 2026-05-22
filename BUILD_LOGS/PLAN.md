@@ -184,3 +184,11 @@ Plan completed: run temp-root event graph holdout, validate docs repair, validat
 3. Add a prompt stitching map.
 4. Verify required file names, file classes, migration guidance, nested examples, and map layers.
 5. Run the full test suite before integration.
+
+## 57 config.toml Installer And Directory Setup
+
+1. Add config_ops for templates, merge planning, backups, diffs, and conflicts.
+2. Add agentic-os config install.
+3. Add tests for creation, dry-run, idempotency, conflicts, backups, missing directory, and prompt-file layers.
+4. Add installer documentation.
+5. Run merged-main tests and direct holdout.
