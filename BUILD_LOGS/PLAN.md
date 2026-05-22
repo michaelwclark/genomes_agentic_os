@@ -47,3 +47,7 @@ add validator, run holdout and pytest, merge, push, close card.
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 add guide, verify references, run pytest, merge, push, close card.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+run automation maturity holdout, run pytest, merge, push, close card.

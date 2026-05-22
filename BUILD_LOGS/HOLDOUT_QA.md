@@ -47,3 +47,8 @@ feature-local validator plus full pytest on merged main.
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 guide reference check plus full pytest on merged main.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+automation create/check, blocked `propose`, safe `prepare`, attach, validate,
+and full pytest on merged main.

@@ -107,3 +107,8 @@ adds the feature 03 workflow closeout holdout validator.
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 adds the feature 04 automation maturity guide.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+adds feature 04 automation maturity holdout validation for evidence gaps,
+promotion guardrails, safe `prepare`, project attachment, and root validation.

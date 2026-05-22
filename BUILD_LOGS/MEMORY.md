@@ -51,3 +51,8 @@ feature 03 holdouts should check validation-required done closeout and writeback
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 automation maturity docs should stress conservative levels and local writebacks.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+automation maturity holdouts should include both the blocked unsafe promotion
+path and the safe `prepare` path.

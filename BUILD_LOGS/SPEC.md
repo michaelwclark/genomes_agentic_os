@@ -74,3 +74,8 @@ local holdout validator for workflow readiness and closeout.
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 operator guide for automation maturity and reconfiguration.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+local holdout validation for automation maturity checks, unsafe promotion
+guarding, safe `prepare` promotion, project attachment, and root validation.

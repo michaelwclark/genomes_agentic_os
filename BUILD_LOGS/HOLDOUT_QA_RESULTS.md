@@ -129,3 +129,9 @@ merged-main holdout passed; pytest 39 passed in 2.84s; Notion pending after push
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 merged-main guide reference check passed; pytest 39 passed in 3.12s; Notion pending after push.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+branch holdout passed; blocked `propose` returned exit code 2; safe `prepare`,
+project attachment, and root validation passed; merged-main pytest 39 passed in
+3.06s; Notion pending after push.

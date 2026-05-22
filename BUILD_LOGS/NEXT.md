@@ -91,3 +91,7 @@ next Ready prefix is 26 Documentation And Help Guide For 04 Automation Maturity 
 ## 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
 
 next Ready prefix is 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration.
+
+## 27 Holdout Command Validation For 04 Automation Maturity And Reconfiguration
+
+next Ready prefix is 28 Documentation And Help Guide For 05 Customer Os Factory.
