@@ -1,0 +1,23 @@
+id: 368683b4-8dab-8145-9d4a-d8dae4de50bc
+title: 39 Holdout Command Validation For 10 Notion Control Plane Bootstrap
+prefix: "39"
+slug: 39-holdout-command-validation-for-10-notion-control-plane-bootstrap
+source_url: https://www.notion.so/39-Holdout-Command-Validation-For-10-Notion-Control-Plane-Bootstrap-368683b48dab81459d4ad8dae4de50bc
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-39
+base_sha: d759c1d
+merge_sha:
+started_at: 2026-05-22T05:55:06Z
+completed_at:
+acceptance:
+  - full CLI scaffold suite passes
+  - bootstrap dry-run includes Agentic OS home page and databases
+  - apply without parent page id is refused
+  - Michael Clark personal Notion workspace is refused
+  - verified Genome's Notion apply writes local manifest
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.20s
+  - command: temp-root notion bootstrap dry-run/apply smoke
+    result: passed
