@@ -158,3 +158,7 @@ automation creation and preserve verified Notion workspace guardrails.
 
 client playbook holdouts should verify additive restoration, local edit
 preservation, and validation failure for missing required command prompts.
+
+## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Feature 15 runtime operations are documented at docs/13-feature-guides/15-always-on-runtime-heartbeats-schedules-and-integrations.md. The guide anchors operators on file-backed heartbeats, schedules, integrations, and guarded Notion runtime tracking.

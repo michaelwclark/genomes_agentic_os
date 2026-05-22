@@ -131,3 +131,7 @@ close because the guide is present and merged-main validation passed.
 ## 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
 
 close because client playbook holdout and merged-main validation passed.
+
+## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Judgment: documentation-only feature; no runtime code changes were required. Guide references were checked against existing files and command text.

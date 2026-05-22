@@ -141,3 +141,7 @@ guide reference check plus full pytest on merged main.
 
 playbook install/update/validate smoke, missing-command validation failure, and
 full pytest on merged main.
+
+## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+Holdout plan: verify the guide points at existing feature 15 artifacts/templates/skills and rerun the full repository pytest suite after merge.

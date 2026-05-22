@@ -198,3 +198,7 @@ adds the feature 14 client automation and control-plane playbooks guide.
 
 adds feature 14 client automation and control-plane playbooks holdout
 validation.
+
+## 48 Documentation And Help Guide For 15 Always On Runtime Heartbeats Schedules And Integrations
+
+adds the feature 15 always-on runtime heartbeats, schedules, and integrations guide.
