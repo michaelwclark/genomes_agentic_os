@@ -1,0 +1,21 @@
+id: 368683b4-8dab-812f-a145-c9ae5900ff10
+url: https://www.notion.so/19-Holdout-Command-Validation-For-00-Current-State-And-Gap-Map-368683b48dab812fa145c9ae5900ff10
+title: 19 Holdout Command Validation For 00 Current State And Gap Map
+prefix: "19"
+slug: 19-holdout-command-validation-for-00-current-state-and-gap-map
+status: done
+source_queue: Ready
+ordering_rule: title-prefix-ascending
+related_feature: features/00-current-state-and-gap-map
+branch:
+  target: main
+  feature_branch: codex/build-runner-19
+acceptance:
+  - Holdout validation can run without live Notion writes.
+  - Validation checks feature 00 artifacts, RUN_STATE references, and installed runtime backlog files.
+  - The command is documented in the feature audit folder.
+verification:
+  - command: python features/19-holdout-command-validation-for-00-current-state-and-gap-map/scripts/validate_feature_00_holdout.py --repo .
+    result: holdout validation passed; 39 passed in 2.95s
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 2.95s
