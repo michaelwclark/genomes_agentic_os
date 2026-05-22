@@ -162,3 +162,9 @@ Plan completed: inspect feature 17 implementation, document event/chain commands
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 Plan completed: run temp-root event graph holdout, validate docs repair, validate event/chain processing, merge, update Notion, and record state.
+
+## 54 config.toml Options Inventory And Analysis
+
+1. Add a docs inventory for supported config.toml options, defaults, examples, security notes, and unknown areas.
+2. Add an Agentic OS layer map template for global harness, OS root, customer OS root, domain/lane, workflow/task, and security-sensitive keys.
+3. Verify docs against required source references and run the repo test suite before merge.

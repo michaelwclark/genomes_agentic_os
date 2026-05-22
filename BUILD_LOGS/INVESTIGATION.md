@@ -187,3 +187,7 @@ Investigation confirmed feature 17 ships event and chain commands, event ledger 
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 Investigation confirmed feature 17 uses file-backed event graph, chain rules, run queue, processing results, event cursors, dead letters, and run closeout event emission.
+
+## 54 config.toml Options Inventory And Analysis
+
+Verified current Codex behavior against official OpenAI Codex documentation and local codex-cli 0.131.0-alpha.9. Key surfaces covered: config reference/sample/schema, AGENTS.md guidance, MCP configuration, hooks, sandbox/approval settings, OTEL options, and desktop-vs-CLI unknowns.

@@ -165,3 +165,7 @@ Holdout plan: verify the guide points at existing feature 17 artifacts/templates
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 Holdout plan: fresh temp-root install, managed event knowledge repair, validate root, event append, chain doctor/test, process-due dry-run/apply/repeat, replay, dead-letter, run closeout event emission, and full pytest.
+
+## 54 config.toml Options Inventory And Analysis
+
+Holdout checks: run the full pytest suite on the merged main branch and assert that the inventory doc plus layer map include all required OpenAI source references, prompt-file names, core config keys, and Agentic OS layer IDs.

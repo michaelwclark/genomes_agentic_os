@@ -222,3 +222,7 @@ adds the feature 17 event graph and chained automations guide.
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 adds feature 17 event graph holdout validation artifacts.
+
+## 54 config.toml Options Inventory And Analysis
+
+adds the Codex config.toml options inventory and Agentic OS config layer map for follow-up profile, installer, MCP, OTEL, and holdout validation work.

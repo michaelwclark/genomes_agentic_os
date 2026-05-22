@@ -216,3 +216,7 @@ Next queue item: feature 53 holdout validation for the event graph and chained a
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 Next queue item: query the Ready queue and claim the next lowest incomplete prefix.
+
+## 54 config.toml Options Inventory And Analysis
+
+Next queue item: feature 55 Codex config profiles per Agentic OS layer.

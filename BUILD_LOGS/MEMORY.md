@@ -182,3 +182,7 @@ Feature 17 is documented at docs/13-feature-guides/17-event-graph-and-chained-au
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 Feature 17 holdout confirms event process-due apply writes queue work and idempotency state, repeated apply skips duplicates, replay works, dead-letter records are written for broken enabled rules, and run closeout can emit event evidence.
+
+## 54 config.toml Options Inventory And Analysis
+
+The canonical Codex config research now lives in docs/07-agent-surfaces/codex-config-toml-inventory.md. The reusable layer IDs for profile and installer follow-up work live in templates/agent-config/codex-config-layer-map.yml.

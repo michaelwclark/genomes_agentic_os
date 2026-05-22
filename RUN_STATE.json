@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "54",
-  "last_successful_phase": "claimed-build-window-54-56",
+  "current_active_feature": "55",
+  "last_successful_phase": "feature-54-done",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -486,6 +486,11 @@
     {
       "card_id": "368683b4-8dab-8137-96a4-f8b38619482a",
       "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8146-91cd-f347902c2e5a",
+      "action": "complete-done-and-comment",
       "status": "ok"
     }
   ],
@@ -1117,10 +1122,11 @@
       "title": "54 config.toml Options Inventory And Analysis",
       "card_id": "368683b4-8dab-8146-91cd-f347902c2e5a",
       "branch": "codex/build-runner-54",
-      "status": "building",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T07:06:46Z"
+      "status": "done",
+      "merge_commit": "3074bd1",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T07:06:46Z",
+      "completed_at": "2026-05-22T07:20:00Z"
     },
     {
       "prefix": "55",

@@ -202,3 +202,7 @@ Source card: 368683b4-8dab-81a1-9b98-f20d89463295. Build Runner added the featur
 ## 53 Holdout Command Validation For 17 Event Graph And Chained Automations
 
 Source card: 368683b4-8dab-81d8-8e1c-f40ba7dc3ba3. Build Runner added holdout validation artifacts for feature 17 event graph and chained automations.
+
+## 54 config.toml Options Inventory And Analysis
+
+Source card 368683b4-8dab-8146-91cd-f347902c2e5a required an authoritative Codex config.toml inventory that separates documented Codex behavior from Agentic OS conventions. The completed scope adds the source-linked inventory plus a machine-readable layer map for profile and installer follow-up work.
