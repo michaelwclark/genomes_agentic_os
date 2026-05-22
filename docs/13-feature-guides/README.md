@@ -8,4 +8,5 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [00 - Current State And Gap Map](00-current-state-and-gap-map.md) | How the initial gap-map backlog became the source package plan mirror and runtime plan backlog. |
 | [01 - Project Create And Active Work](01-project-create-and-active-work.md) | How project creation writes durable runtime project state and active-work references. |
 | [02 - Routing And Context Builder](02-routing-and-context-builder.md) | How deterministic routing and context packets select the right domain, project, workflow, and source files. |
+| [03 - Workflow Readiness And Run Closeout](03-workflow-readiness-and-run-closeout.md) | How to check workflow readiness and close run logs with validation evidence. |
 
