@@ -120,3 +120,8 @@ card.
 ## 43 Holdout Command Validation For 12 Factory Template Import Backlog
 
 run factory template holdout, run pytest, merge, push, close card.
+
+## 44 Documentation And Help Guide For 13 Reference And Skill Index Layer
+
+add reference and skill index guide, verify references, run pytest, merge, push,
+close card.

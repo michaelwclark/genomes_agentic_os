@@ -283,3 +283,8 @@ reference check passed; pytest 39 passed in 3.07s on merged main.
 
 implemented on codex/build-runner-43 at 80aa07f; merged as ff6c9ac; factory
 template holdout passed; pytest 39 passed in 3.07s on merged main.
+
+## 44 Documentation And Help Guide For 13 Reference And Skill Index Layer
+
+implemented on codex/build-runner-44 at 7efe45f; merged as 34078e4; guide
+reference check passed; pytest 39 passed in 3.07s on merged main.

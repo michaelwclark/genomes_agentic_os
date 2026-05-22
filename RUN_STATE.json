@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "44",
-  "last_successful_phase": "feature-43-merged-and-verified",
+  "current_active_feature": null,
+  "last_successful_phase": "feature-44-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -876,11 +876,12 @@
       "slug": "44-documentation-and-help-guide-for-13-reference-and-skill-index-layer",
       "title": "44 Documentation And Help Guide For 13 Reference And Skill Index Layer",
       "card_id": "368683b4-8dab-8105-a22e-d88f7d94af55",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-44",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T06:11:15Z"
+      "merge_commit": "34078e4",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:11:15Z",
+      "completed_at": "2026-05-22T06:21:43Z"
     }
   ],
   "generated_subtasks": []

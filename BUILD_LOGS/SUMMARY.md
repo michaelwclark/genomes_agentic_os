@@ -181,3 +181,7 @@ adds the feature 12 factory template import backlog guide.
 ## 43 Holdout Command Validation For 12 Factory Template Import Backlog
 
 adds feature 12 factory template import backlog holdout validation.
+
+## 44 Documentation And Help Guide For 13 Reference And Skill Index Layer
+
+adds the feature 13 reference and skill index layer guide.

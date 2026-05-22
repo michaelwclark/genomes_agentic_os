@@ -136,3 +136,9 @@ template installation paths.
 
 factory template holdouts should test source policy docs separately from
 installed runtime template paths.
+
+## 44 Documentation And Help Guide For 13 Reference And Skill Index Layer
+
+reference layer docs should tie runtime references to
+`shared_factory/05-knowledge/references/` and skill alignment to the source
+skill registry.
