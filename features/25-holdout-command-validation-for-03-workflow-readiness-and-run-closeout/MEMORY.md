@@ -1,3 +1,4 @@
 # Memory
 
-Keep future work for this lane tied back to `features/03-workflow-readiness-and-run-closeout` and local command evidence.
+- `run-log close --status done` must include at least one `--validation` item.
+
