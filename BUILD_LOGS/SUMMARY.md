@@ -95,3 +95,7 @@ Feature 22 adds the feature 02 routing/context guide under `docs/13-feature-guid
 ## 23 Holdout Command Validation For 02 Routing And Context Builder
 
 Feature 23 adds a repeatable local holdout validator for feature 02 routing and context packet behavior.
+
+## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
+
+adds the feature 03 workflow readiness and run closeout guide.

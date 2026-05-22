@@ -39,3 +39,7 @@ Routing/context docs should emphasize read-only defaults and low-confidence fail
 ## 23 Holdout Command Validation For 02 Routing And Context Builder
 
 Routing holdouts should check target path/source text, approval risk text, linked-repo `here` detection, low-confidence failure, and root validation.
+
+## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
+
+workflow closeout docs should stress validation required for done and local writebacks.

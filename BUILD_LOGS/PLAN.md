@@ -35,3 +35,7 @@ Run plan: add feature 02 guide, run guide reference checks and pytest, merge wit
 ## 23 Holdout Command Validation For 02 Routing And Context Builder
 
 Run plan: add feature 02 holdout validator, run validator and pytest, merge with `--no-ff`, push, and close the Kanban card.
+
+## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
+
+add guide, verify references, run pytest, merge, push, close card.

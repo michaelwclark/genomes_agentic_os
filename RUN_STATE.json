@@ -468,6 +468,17 @@
       "merge_commit": "8693aa1",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:53:30Z"
+    },
+    {
+      "prefix": "24",
+      "slug": "24-documentation-and-help-guide-for-03-workflow-readiness-and-run-closeout",
+      "title": "24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout",
+      "card_id": "368683b4-8dab-81c3-9f1e-ca04e1003a86",
+      "status": "done",
+      "branch": "codex/build-runner-24",
+      "merge_commit": "66152ef",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:57:18Z"
     }
   ],
   "generated_subtasks": []

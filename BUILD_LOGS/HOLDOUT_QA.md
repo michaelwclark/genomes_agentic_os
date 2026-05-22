@@ -35,3 +35,7 @@ Holdout QA checks guide references and full pytest on merged `main`.
 ## 23 Holdout Command Validation For 02 Routing And Context Builder
 
 Holdout QA runs the feature-local validator and full pytest on merged `main`.
+
+## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
+
+guide reference check plus full pytest on merged main.

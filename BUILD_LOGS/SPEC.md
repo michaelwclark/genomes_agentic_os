@@ -62,3 +62,7 @@
 - Feature artifact: `features/23-holdout-command-validation-for-02-routing-and-context-builder/SPEC.md`
 - Related completed feature: `features/02-routing-and-context-builder/`
 - Acceptance: local holdout validator for route, context build, here context, approval risks, linked-repo detection, low-confidence failure, and root validation.
+
+## 24 Documentation And Help Guide For 03 Workflow Readiness And Run Closeout
+
+operator guide for workflow check and run-log closeout.
