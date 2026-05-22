@@ -145,3 +145,7 @@ adds feature 07 doctor and migration holdout validation.
 
 adds the feature 08 LOSMon replacement validation guide under
 `docs/13-feature-guides/`.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+adds feature 08 LOSMon replacement holdout validation.

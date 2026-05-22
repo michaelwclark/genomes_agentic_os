@@ -238,3 +238,8 @@ passed; pytest 39 passed in 3.07s on merged main.
 
 implemented on codex/build-runner-34 at b79456e; merged as 06450de; guide
 reference check passed; pytest 39 passed in 3.08s on merged main.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+implemented on codex/build-runner-35 at 7105ec1; merged as 45a2e72; LOSMon
+holdout passed; pytest 39 passed in 3.70s on merged main.

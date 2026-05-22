@@ -15,7 +15,7 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "35",
+  "current_active_feature": null,
   "last_successful_phase": "done",
   "board_sync_writes": [
     {
@@ -285,6 +285,11 @@
     },
     {
       "card_id": "368683b4-8dab-81c7-a601-e1f42603eba7",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8195-a65f-ca9f13a40d86",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -688,12 +693,12 @@
       "slug": "35-holdout-command-validation-for-08-losmon-replacement-validation",
       "title": "35 Holdout Command Validation For 08 Losmon Replacement Validation",
       "card_id": "368683b4-8dab-8195-a65f-ca9f13a40d86",
-      "status": "building",
+      "status": "done",
       "branch": "codex/build-runner-35",
-      "merge_commit": null,
-      "last_successful_phase": "started",
+      "merge_commit": "45a2e72",
+      "last_successful_phase": "done",
       "started_at": "2026-05-22T05:30:54Z",
-      "completed_at": null
+      "completed_at": "2026-05-22T05:39:35Z"
     }
   ],
   "generated_subtasks": []

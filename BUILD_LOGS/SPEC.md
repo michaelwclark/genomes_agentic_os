@@ -114,3 +114,8 @@ migration preview, drift refusal, and apply.
 
 operator guide for generating and interpreting the LOSMon replacement
 validation package.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+local holdout validation for LOSMon package generation, required runtime
+objects, comparison artifact, run logs, and root validation.

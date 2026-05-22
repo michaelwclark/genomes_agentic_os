@@ -171,3 +171,9 @@ after push.
 
 merged-main guide reference check passed; pytest 39 passed in 3.08s; Notion
 pending after push.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+branch holdout passed; merged-main LOSMon smoke reported 3 run logs, comparison
+artifact with gaps, and valid root; pytest 39 passed in 3.70s; Notion pending
+after push.

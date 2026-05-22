@@ -99,3 +99,8 @@ validated feature 07 through public doctor and migration CLI commands.
 ## 34 Documentation And Help Guide For 08 Losmon Replacement Validation
 
 reviewed feature 08 artifacts, LOSMon implementation, CLI wiring, and tests.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+validated feature 08 through public LOSMon CLI commands and direct artifact
+checks.

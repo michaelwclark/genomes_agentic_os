@@ -91,3 +91,8 @@ refusals as well as successful re-plan/apply.
 
 LOSMon replacement docs should not imply parity; keep comparison gaps visible
 until real read-only validation exists.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+LOSMon holdouts should check generated project, three workflows, thread intake,
+three run logs, comparison gap table, repo capture, and root validation.

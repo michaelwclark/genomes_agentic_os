@@ -83,3 +83,8 @@ pytest on merged main.
 ## 34 Documentation And Help Guide For 08 Losmon Replacement Validation
 
 guide reference check plus full pytest on merged main.
+
+## 35 Holdout Command Validation For 08 Losmon Replacement Validation
+
+LOSMon validate smoke, root validate, artifact checks, and full pytest on merged
+main.
