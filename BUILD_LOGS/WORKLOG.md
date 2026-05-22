@@ -273,3 +273,8 @@ reference check passed; pytest 39 passed in 3.08s on merged main.
 
 implemented on codex/build-runner-41 at 5d8b983; merged as 04e97ae; room-first
 holdout passed; pytest 39 passed in 3.09s on merged main.
+
+## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+
+implemented on codex/build-runner-42 at 3a0829e; merged as 8873220; guide
+reference check passed; pytest 39 passed in 3.07s on merged main.

@@ -114,3 +114,7 @@ guide reference check plus full pytest on merged main.
 
 profile validate/init/root validate smoke, default operational domain absence,
 router pointer checks, managed room file checks, and full pytest on merged main.
+
+## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+
+guide reference check plus full pytest on merged main.

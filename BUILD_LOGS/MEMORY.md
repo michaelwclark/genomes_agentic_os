@@ -126,3 +126,8 @@ and keep Claude/Codex pointer behavior tied to `ROUTER.md`.
 room-first holdouts should use profile `tools` entries as mappings, not plain
 strings, and should treat `shared_factory` as shared docs rather than a default
 operational domain.
+
+## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+
+factory template docs should keep source import policy separate from runtime
+template installation paths.

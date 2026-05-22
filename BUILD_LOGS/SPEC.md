@@ -148,3 +148,8 @@ routing, Claude/Codex router pointers, and validation.
 
 local holdout validation for profile validation, profile install, root
 validation, router pointers, managed room files, and default-domain absence.
+
+## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+
+operator guide for factory-derived templates, runtime template paths, import
+classification, customer-facing sanitation, and additive docs update.

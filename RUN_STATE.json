@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": null,
-  "last_successful_phase": "feature-41-merged-and-verified",
+  "current_active_feature": "43",
+  "last_successful_phase": "feature-42-merged-and-verified",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -335,6 +335,36 @@
     },
     {
       "card_id": "368683b4-8dab-81bc-bc87-f2b32cf666e4",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8145-9d4a-d8dae4de50bc",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-816d-afc7-c9c44c1bcd1e",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81bc-bc87-f2b32cf666e4",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8189-ac93-db6147fc385d",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8124-9e27-ff32ccb796d2",
+      "action": "claim-building-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-8105-a22e-d88f7d94af55",
       "action": "claim-building-and-comment",
       "status": "ok"
     }
@@ -816,6 +846,40 @@
       "last_successful_phase": "done",
       "started_at": "2026-05-22T05:55:06Z",
       "completed_at": "2026-05-22T06:09:20Z"
+    },
+    {
+      "prefix": "42",
+      "slug": "42-documentation-and-help-guide-for-12-factory-template-import-backlog",
+      "title": "42 Documentation And Help Guide For 12 Factory Template Import Backlog",
+      "card_id": "368683b4-8dab-8189-ac93-db6147fc385d",
+      "status": "done",
+      "branch": "codex/build-runner-42",
+      "merge_commit": "8873220",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:11:15Z",
+      "completed_at": "2026-05-22T06:18:46Z"
+    },
+    {
+      "prefix": "43",
+      "slug": "43-holdout-command-validation-for-12-factory-template-import-backlog",
+      "title": "43 Holdout Command Validation For 12 Factory Template Import Backlog",
+      "card_id": "368683b4-8dab-8124-9e27-ff32ccb796d2",
+      "status": "building",
+      "branch": "codex/build-runner-43",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:11:15Z"
+    },
+    {
+      "prefix": "44",
+      "slug": "44-documentation-and-help-guide-for-13-reference-and-skill-index-layer",
+      "title": "44 Documentation And Help Guide For 13 Reference And Skill Index Layer",
+      "card_id": "368683b4-8dab-8105-a22e-d88f7d94af55",
+      "status": "building",
+      "branch": "codex/build-runner-44",
+      "merge_commit": null,
+      "last_successful_phase": "claimed",
+      "started_at": "2026-05-22T06:11:15Z"
     }
   ],
   "generated_subtasks": []

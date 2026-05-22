@@ -173,3 +173,7 @@ adds the feature 11 room-first installer and routing guide.
 ## 41 Holdout Command Validation For 11 Room First Installer And Routing
 
 adds feature 11 room-first installer and routing holdout validation.
+
+## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+
+adds the feature 12 factory template import backlog guide.

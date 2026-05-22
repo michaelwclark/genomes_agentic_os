@@ -111,3 +111,8 @@ close card.
 ## 41 Holdout Command Validation For 11 Room First Installer And Routing
 
 run room-first installer holdout, run pytest, merge, push, close card.
+
+## 42 Documentation And Help Guide For 12 Factory Template Import Backlog
+
+add factory template guide, verify references, run pytest, merge, push, close
+card.
