@@ -1,0 +1,17 @@
+id: 368683b4-8dab-816b-a832-e7645cda260e
+title: 26 Documentation And Help Guide For 04 Automation Maturity And Reconfiguration
+prefix: "26"
+slug: 26-documentation-and-help-guide-for-04-automation-maturity-and-reconfiguration
+status: done
+source_queue: Ready
+ordering_rule: title-prefix-ascending
+related_feature: features/04-automation-maturity-and-reconfiguration
+branch:
+  target: main
+  feature_branch: codex/build-runner-26
+acceptance:
+  - Feature 04 has an operator-facing guide.
+  - The guide explains automation check, maturity levels, promotion evidence, attachment writebacks, and validation commands.
+verification:
+  - command: uv run --extra dev pytest -q
+    result: guide reference check passed; 39 passed in 4.07s
