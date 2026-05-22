@@ -93,3 +93,9 @@
 - Branch QA: holdout validator passed and `uv run --extra dev pytest -q` returned 39 passed in 2.95s.
 - Orchestrator merged-main QA: holdout validator passed and `uv run --extra dev pytest -q` returned 39 passed in 2.84s.
 - Notion completion write/comment pending after push.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+- Branch QA: guide reference checks passed and `uv run pytest -q` returned 39 passed in 2.89s.
+- Orchestrator merged-main QA: disposable project-create smoke passed and `uv run --extra dev pytest -q` returned 39 passed in 2.86s.
+- Notion completion write/comment pending after push.

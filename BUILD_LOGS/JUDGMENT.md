@@ -19,3 +19,7 @@ Close the feature because the operator guide and audit artifacts are present, te
 ## 19 Holdout Command Validation For 00 Current State And Gap Map
 
 Close the feature because it supplies a deterministic local holdout command, avoids live Notion writes, and passes merged-main verification.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+Close the feature because the operator guide and audit artifacts are present, project-create smoke checks pass, and the change is additive documentation only.

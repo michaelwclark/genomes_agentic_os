@@ -79,3 +79,7 @@ Feature 18 adds a guide for feature 00 under `docs/13-feature-guides/`, giving o
 ## 19 Holdout Command Validation For 00 Current State And Gap Map
 
 Feature 19 adds a repeatable local holdout validator for feature 00 under `features/19-holdout-command-validation-for-00-current-state-and-gap-map/scripts/validate_feature_00_holdout.py`. It checks feature artifacts, source plan sections, runner state, and a disposable installed runtime.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+Feature 20 adds a guide for feature 01 under `docs/13-feature-guides/`, covering project creation, active-work discovery, source references, idempotency, aliasing, and validation.

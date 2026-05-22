@@ -30,3 +30,8 @@
 
 - Existing tests covered runtime plan installation, but no single local command checked the feature 00 acceptance contract.
 - RUN_STATE uses `status: done` in the current runner file, so the validator accepts either `status` or `state` as done for compatibility.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+- Reviewed feature 01 plan and closeout artifacts.
+- Confirmed the guide should document command use, generated files, active-work discovery, source-map behavior, idempotency, and validation.

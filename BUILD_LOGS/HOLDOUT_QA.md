@@ -19,3 +19,7 @@ Holdout QA checks feature guide references, absence of Mermaid content, full pyt
 ## 19 Holdout Command Validation For 00 Current State And Gap Map
 
 Holdout QA runs the feature-local validator and the full pytest suite on merged `main`.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+Holdout QA checks the feature guide, a disposable `agentic-os project create` flow, installed-root validation, source-map evidence, active-work evidence, and full pytest.

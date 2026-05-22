@@ -34,3 +34,10 @@
 - Feature artifact: `features/19-holdout-command-validation-for-00-current-state-and-gap-map/SPEC.md`
 - Related completed feature: `features/00-current-state-and-gap-map/`
 - Acceptance: local holdout validation for feature 00 artifacts, RUN_STATE done record, source plan sections, and disposable runtime plan installation without live Notion writes.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+- Source card: `368683b4-8dab-81a4-925d-c2c18e7f5034`
+- Feature artifact: `features/20-documentation-and-help-guide-for-01-project-create-and-active-work/SPEC.md`
+- Related completed feature: `features/01-project-create-and-active-work/`
+- Acceptance: operator-facing guide for `agentic-os project create`, active-work/project indexes, source-map refs, idempotency, validation, and domain alias behavior.

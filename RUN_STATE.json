@@ -424,6 +424,17 @@
       "merge_commit": "5499740",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:46:17Z"
+    },
+    {
+      "prefix": "20",
+      "slug": "20-documentation-and-help-guide-for-01-project-create-and-active-work",
+      "title": "20 Documentation And Help Guide For 01 Project Create And Active Work",
+      "card_id": "368683b4-8dab-81a4-925d-c2c18e7f5034",
+      "status": "done",
+      "branch": "codex/build-runner-20",
+      "merge_commit": "983b842",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:47:34Z"
     }
   ],
   "generated_subtasks": []

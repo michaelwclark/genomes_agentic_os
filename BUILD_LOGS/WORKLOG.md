@@ -155,3 +155,11 @@
 - Commit: `5c2b89d`.
 - Merged to `main` as `5499740`.
 - Orchestrator verification: holdout validator passed and `uv run --extra dev pytest -q` returned 39 passed in 2.84s on merged `main`.
+
+## 20 Documentation And Help Guide For 01 Project Create And Active Work
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-20`.
+- Commit: `c843425`.
+- Merged to `main` as `983b842`.
+- Orchestrator verification: disposable project-create smoke passed and `uv run --extra dev pytest -q` returned 39 passed in 2.86s on merged `main`.
