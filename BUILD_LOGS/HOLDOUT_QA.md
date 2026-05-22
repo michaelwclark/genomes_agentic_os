@@ -157,3 +157,7 @@ Holdout plan: verify the guide points at existing feature 16 artifacts/templates
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 Holdout plan: fresh temp-root install, managed watch-source knowledge repair, validate root, connected-system list/doctor, watch-source create/list/doctor/dry-run/apply, negative doctor, and full pytest.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+Holdout plan: verify the guide points at existing feature 17 artifacts/templates/skills/commands, contains no Mermaid, and rerun the full repository pytest suite after merge.

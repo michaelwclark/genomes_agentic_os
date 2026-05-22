@@ -174,3 +174,7 @@ Feature 16 is documented at docs/13-feature-guides/16-connected-source-watch-reg
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 Feature 16 holdout confirms watch-source apply writes source-events and cursor state locally, and doctor catches missing cursor/dedupe metadata.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+Feature 17 is documented at docs/13-feature-guides/17-event-graph-and-chained-automations.md. Chain rules are file-backed registry entries tested by chain test/doctor, then processed by event process-due.

@@ -214,3 +214,7 @@ adds the feature 16 connected source watch registry guide.
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 adds feature 16 connected source watch holdout validation artifacts.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+adds the feature 17 event graph and chained automations guide.

@@ -208,3 +208,7 @@ Next queue item: feature 51 holdout validation for the connected source watch re
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 Next queue item: feature 52 documentation for event graph and chained automations.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+Next queue item: feature 53 holdout validation for the event graph and chained automations surface.

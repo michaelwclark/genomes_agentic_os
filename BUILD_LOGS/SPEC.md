@@ -194,3 +194,7 @@ Source card: 368683b4-8dab-81d5-a07f-f16f87bd1ccd. Build Runner added the featur
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 Source card: 368683b4-8dab-81ac-82d9-d2460a55ddf7. Build Runner added holdout validation artifacts for feature 16 connected source watching.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+Source card: 368683b4-8dab-81a1-9b98-f20d89463295. Build Runner added the feature 17 event graph and chained automations guide.

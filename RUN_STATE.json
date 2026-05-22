@@ -15,8 +15,8 @@
   "ordering_rule": "title-prefix-ascending",
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
-  "current_active_feature": "52",
-  "last_successful_phase": "feature-51-done",
+  "current_active_feature": "53",
+  "last_successful_phase": "feature-52-done",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -460,6 +460,11 @@
     },
     {
       "card_id": "368683b4-8dab-81ac-82d9-d2460a55ddf7",
+      "action": "complete-done-and-comment",
+      "status": "ok"
+    },
+    {
+      "card_id": "368683b4-8dab-81a1-9b98-f20d89463295",
       "action": "complete-done-and-comment",
       "status": "ok"
     }
@@ -1068,10 +1073,11 @@
       "title": "52 Documentation And Help Guide For 17 Event Graph And Chained Automations",
       "card_id": "368683b4-8dab-81a1-9b98-f20d89463295",
       "branch": "codex/build-runner-52",
-      "status": "building",
-      "merge_commit": null,
-      "last_successful_phase": "claimed",
-      "started_at": "2026-05-22T06:52:21Z"
+      "status": "done",
+      "merge_commit": "58faedd",
+      "last_successful_phase": "done",
+      "started_at": "2026-05-22T06:52:21Z",
+      "completed_at": "2026-05-22T07:01:18Z"
     },
     {
       "prefix": "53",

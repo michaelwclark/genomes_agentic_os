@@ -179,3 +179,7 @@ Investigation confirmed feature 16 ships connected-system and watch-source comma
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 Investigation confirmed feature 16 uses file-backed connected-system, source-provider, watch-source, watch-cursor, and source-event registries with dry-run/apply command paths.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+Investigation confirmed feature 17 ships event and chain commands, event ledger and chain rule runtime files, processing results, dead letters, and run closeout event emission.

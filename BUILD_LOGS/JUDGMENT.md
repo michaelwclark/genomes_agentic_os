@@ -147,3 +147,7 @@ Judgment: documentation-only feature; no runtime code changes were required. The
 ## 51 Holdout Command Validation For 16 Connected Source Watch Registry
 
 Judgment: holdout passed. Apply writes local source event and cursor state; malformed watch-source metadata fails doctor.
+
+## 52 Documentation And Help Guide For 17 Event Graph And Chained Automations
+
+Judgment: documentation-only feature; no runtime code changes were required. The guide documents chain rules as file-backed registry edits because there is no chain create command.
