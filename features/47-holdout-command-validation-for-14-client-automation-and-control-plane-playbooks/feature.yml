@@ -1,0 +1,24 @@
+id: 368683b4-8dab-81f7-b1a3-f4de7c9f9f52
+title: 47 Holdout Command Validation For 14 Client Automation And Control Plane Playbooks
+prefix: "47"
+slug: 47-holdout-command-validation-for-14-client-automation-and-control-plane-playbooks
+source_url: https://www.notion.so/47-Holdout-Command-Validation-For-14-Client-Automation-And-Control-Plane-Playbooks-368683b48dab81f7b1a3f4de7c9f9f52
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-47
+base_sha: e14cb93
+merge_sha:
+started_at: 2026-05-22T06:23:52Z
+completed_at:
+acceptance:
+  - full CLI scaffold suite passes
+  - runtime playbook commands and skills install
+  - docs update restores a missing managed playbook command
+  - docs update preserves a local command edit
+  - validation fails when a required playbook command is missing
+  - playbook text preserves automation-fit and source-of-truth guidance
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.46s
+  - command: temp-root playbook install/update/validate smoke
+    result: passed
