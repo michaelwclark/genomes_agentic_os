@@ -81,3 +81,9 @@
 - `uv run --extra dev pytest -q`: `33 passed in 2.00s` on merged `main`.
 - Temp-root reference install/context/validate smoke passed.
 - Notion completion write/comment returned HTTP 200.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+- Worker QA: guide reference checks passed and `uv run pytest -q` returned 39 passed in 3.13s.
+- Orchestrator merged-main QA: `uv run --extra dev pytest -q` returned 39 passed in 2.85s.
+- Notion completion write/comment pending after push.

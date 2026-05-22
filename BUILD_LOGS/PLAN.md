@@ -11,3 +11,7 @@ Run plan: add project scaffold renderers, wire `agentic-os project create`, add 
 ## 02 Routing And Context Builder
 
 Run plan: add routing module, wire route/context/here CLI commands, add tests for request routing, context sources, here detection, ambiguity, and approval risks, verify, merge, push, and close the card.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+Run plan: add feature 00 guide documentation, create prefix 18 audit artifacts, run pytest, merge with `--no-ff`, push, and close the Kanban card.

@@ -15,3 +15,7 @@
 
 - Deterministic routing can use project `sources.repo` to map external cwd values back into the installed OS project tree.
 - Route commands are read-only by default; context packets are printed YAML.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+Feature guide docs currently live under `docs/13-feature-guides/`. Feature 00 documentation should explain source/runtime boundaries and the plan mirror path rather than introducing new runtime commands.

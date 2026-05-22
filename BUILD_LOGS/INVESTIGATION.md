@@ -19,3 +19,9 @@
 - Existing routers, context files, active-work files, and project records provide enough local source material for deterministic routing.
 - Feature 01 project `sources.repo` metadata is the linked-repo detection anchor.
 - Low-confidence routes should error rather than guess.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+- Reviewed feature 00 audit artifacts and `PLANS/00-current-state-and-gap-map.md`.
+- Confirmed documentation should be a feature guide, not a runtime behavior change.
+- Worker implementation placed the guide under `docs/13-feature-guides/` and avoided runtime code changes.

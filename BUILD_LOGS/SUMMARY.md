@@ -71,3 +71,7 @@ Connected systems and watch sources are now provider-agnostic, file-backed, doct
 ## 17 Event Graph And Chained Automations
 
 The OS now has a file-backed event graph with event envelopes, ledger index, chain-rule tests, dry-run processing, idempotent queue writes, dead-letter records, and run-close event emission.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+Feature 18 adds a guide for feature 00 under `docs/13-feature-guides/`, giving operators a compact explanation of the state/gap map, source/runtime boundaries, validation commands, troubleshooting, and source artifacts.

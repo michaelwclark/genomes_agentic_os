@@ -11,3 +11,7 @@ Holdout QA checks full tests, temp-root `agentic-os project create los losmon_re
 ## 02 Routing And Context Builder
 
 Holdout QA checks full tests, temp-root project routing, linked-repo `here context build`, and temp-root validation.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+Holdout QA checks feature guide references, absence of Mermaid content, full pytest, and merged-main verification.

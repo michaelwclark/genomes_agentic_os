@@ -16,9 +16,7 @@
   "target_branch": "main",
   "base_sha": "34ca009e108860f935d2452e41fb05a7a664a12f",
   "current_active_feature": null,
-  "last_successful_phase": {
-    "00-current-state-and-gap-map": "done"
-  },
+  "last_successful_phase": "done",
   "board_sync_writes": [
     {
       "card_id": "366683b4-8dab-8175-bceb-c1e204696b64",
@@ -404,6 +402,17 @@
       "merge_commit": "9e0a22d",
       "last_successful_phase": "done",
       "completed_at": "2026-05-21T23:04:38Z"
+    },
+    {
+      "prefix": "18",
+      "slug": "18-documentation-and-help-guide-for-00-current-state-and-gap-map",
+      "title": "18 Documentation And Help Guide For 00 Current State And Gap Map",
+      "card_id": "368683b4-8dab-81e6-bdf1-e10a0fce5a68",
+      "status": "done",
+      "branch": "codex/build-runner-18",
+      "merge_commit": "f878d4f",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:45:05Z"
     }
   ],
   "generated_subtasks": []

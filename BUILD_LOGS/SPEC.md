@@ -20,3 +20,10 @@
 - Feature artifact: `features/02-routing-and-context-builder/SPEC.md`
 - Source plan: `PLANS/02-routing-and-context-builder.md`
 - Acceptance: route/context/here commands build deterministic, read-only context packets.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+- Source card: `368683b4-8dab-81e6-bdf1-e10a0fce5a68`
+- Feature artifact: `features/18-documentation-and-help-guide-for-00-current-state-and-gap-map/SPEC.md`
+- Related completed feature: `features/00-current-state-and-gap-map/`
+- Acceptance: operator-facing guide for feature 00, source/runtime artifact map, validation commands, and Build Runner sequencing notes.

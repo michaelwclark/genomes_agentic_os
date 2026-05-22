@@ -139,3 +139,11 @@
 - Commit: `da6f0a1`.
 - Merged and pushed to `main` as `9e0a22d`.
 - Full READY queue is complete.
+
+## 18 Documentation And Help Guide For 00 Current State And Gap Map
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-18`.
+- Commit: `dd3cd87`.
+- Merged to `main` as `f878d4f`.
+- Orchestrator verification: `uv run --extra dev pytest -q` returned 39 passed in 2.85s on merged `main`.
