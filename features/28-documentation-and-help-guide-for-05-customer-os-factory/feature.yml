@@ -1,0 +1,23 @@
+id: 368683b4-8dab-81d1-95c0-c777080cef4d
+title: 28 Documentation And Help Guide For 05 Customer Os Factory
+prefix: "28"
+slug: 28-documentation-and-help-guide-for-05-customer-os-factory
+source_url: https://www.notion.so/28-Documentation-And-Help-Guide-For-05-Customer-Os-Factory-368683b48dab81d195c0c777080cef4d
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-28
+base_sha: 0fb3375
+merge_sha:
+started_at: 2026-05-22T05:05:01Z
+completed_at:
+acceptance:
+  - customer OS factory guide explains init, update, and validate commands
+  - guide documents source/runtime boundaries and profile inputs
+  - guide explains approved domains, workflows, automations, and private filtering
+  - guide documents additive update behavior
+  - guide explains core_errors and profile_warnings
+verification:
+  - command: rg "customer init|customer update|customer validate|core_errors|profile_warnings|private source" docs/13-feature-guides/05-customer-os-factory.md
+    result: passed
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.39s
