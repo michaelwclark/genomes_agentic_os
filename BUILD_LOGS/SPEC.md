@@ -41,3 +41,10 @@
 - Feature artifact: `features/20-documentation-and-help-guide-for-01-project-create-and-active-work/SPEC.md`
 - Related completed feature: `features/01-project-create-and-active-work/`
 - Acceptance: operator-facing guide for `agentic-os project create`, active-work/project indexes, source-map refs, idempotency, validation, and domain alias behavior.
+
+## 21 Holdout Command Validation For 01 Project Create And Active Work
+
+- Source card: `368683b4-8dab-81d7-894c-d76bd3c484b4`
+- Feature artifact: `features/21-holdout-command-validation-for-01-project-create-and-active-work/SPEC.md`
+- Related completed feature: `features/01-project-create-and-active-work/`
+- Acceptance: local holdout validator for project creation, indexes, source-map refs, idempotency, aliasing, and root validation.

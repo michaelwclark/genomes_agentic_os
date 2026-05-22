@@ -83,3 +83,7 @@ Feature 19 adds a repeatable local holdout validator for feature 00 under `featu
 ## 20 Documentation And Help Guide For 01 Project Create And Active Work
 
 Feature 20 adds a guide for feature 01 under `docs/13-feature-guides/`, covering project creation, active-work discovery, source references, idempotency, aliasing, and validation.
+
+## 21 Holdout Command Validation For 01 Project Create And Active Work
+
+Feature 21 adds a repeatable local holdout validator for feature 01 project creation and active-work behavior.

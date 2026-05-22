@@ -35,3 +35,8 @@
 
 - Reviewed feature 01 plan and closeout artifacts.
 - Confirmed the guide should document command use, generated files, active-work discovery, source-map behavior, idempotency, and validation.
+
+## 21 Holdout Command Validation For 01 Project Create And Active Work
+
+- Project-create behavior needed a single local holdout command beyond pytest coverage.
+- Validator uses a disposable root and avoids live Notion writes.

@@ -27,3 +27,7 @@ Feature 00 holdout checks should avoid live Notion writes and prefer local sourc
 ## 20 Documentation And Help Guide For 01 Project Create And Active Work
 
 Project-create guidance should emphasize additive writes, active-work discovery, source-map references, and `lenders` to `los` alias behavior.
+
+## 21 Holdout Command Validation For 01 Project Create And Active Work
+
+Feature 01 holdout validation should check active-work/project indexes, source-map rows, idempotency, and `lenders` to `los` aliasing.

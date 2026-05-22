@@ -435,6 +435,17 @@
       "merge_commit": "983b842",
       "last_successful_phase": "done",
       "completed_at": "2026-05-22T04:47:34Z"
+    },
+    {
+      "prefix": "21",
+      "slug": "21-holdout-command-validation-for-01-project-create-and-active-work",
+      "title": "21 Holdout Command Validation For 01 Project Create And Active Work",
+      "card_id": "368683b4-8dab-81d7-894c-d76bd3c484b4",
+      "status": "done",
+      "branch": "codex/build-runner-21",
+      "merge_commit": "d9a5c85",
+      "last_successful_phase": "done",
+      "completed_at": "2026-05-22T04:51:54Z"
     }
   ],
   "generated_subtasks": []

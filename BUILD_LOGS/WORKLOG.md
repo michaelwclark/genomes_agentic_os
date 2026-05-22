@@ -163,3 +163,11 @@
 - Commit: `c843425`.
 - Merged to `main` as `983b842`.
 - Orchestrator verification: disposable project-create smoke passed and `uv run --extra dev pytest -q` returned 39 passed in 2.86s on merged `main`.
+
+## 21 Holdout Command Validation For 01 Project Create And Active Work
+
+- Claimed Notion card as `Building`.
+- Implemented on branch `codex/build-runner-21`.
+- Commit: `19f3a49`.
+- Merged to `main` as `d9a5c85`.
+- Orchestrator verification: feature 01 holdout validation passed and `uv run --extra dev pytest -q` returned 39 passed in 2.84s on merged `main`.
