@@ -1,0 +1,23 @@
+id: 368683b4-8dab-8121-9255-e9faf20dd6e9
+title: 37 Holdout Command Validation For 09 Future Ideas Intake
+prefix: "37"
+slug: 37-holdout-command-validation-for-09-future-ideas-intake
+source_url: https://www.notion.so/37-Holdout-Command-Validation-For-09-Future-Ideas-Intake-368683b48dab81219255e9faf20dd6e9
+source_queue: Ready
+status: ready_to_merge
+branch: codex/build-runner-37
+base_sha: 143bffe
+merge_sha:
+started_at: 2026-05-22T05:40:41Z
+completed_at:
+acceptance:
+  - full CLI scaffold suite passes
+  - OS ideas write to shared future ideas
+  - domain ideas append to raw inbox
+  - customer/project ideas append to project status
+  - root validation remains valid
+verification:
+  - command: uv run --extra dev pytest -q
+    result: 39 passed in 3.98s
+  - command: temp-root plan capture OS/domain/project smoke
+    result: passed
