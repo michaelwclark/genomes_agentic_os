@@ -9,7 +9,7 @@ Use this skill to append events, inspect the event ledger, test chain rules, and
 3. Use dry-run chain processing before queue writes.
 4. Check idempotency and max chain depth before enabling a rule.
 5. Write dead-letter records when an enabled rule cannot be processed.
-6. Summarize pending follow-up from durable events and queue items, not chat history.
+6. Run `agentic-os event summary --limit <N>` to summarize pending follow-up from durable events and queue items, not chat history.
 
 ## Done
 

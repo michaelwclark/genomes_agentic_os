@@ -8,8 +8,24 @@ from typing import Any
 
 import yaml
 
-from .customer import render_agent_router
-from .scaffold import create_domain_structure, ensure_dir, expand_path, install_docs, validate_name, write_file_once
+from .scaffold import (
+    DEFAULT_PROJECTS_SOURCE,
+    agent_entrypoint,
+    claude_adapter,
+    create_domain_structure,
+    ensure_customer_update_contract,
+    ensure_projects_link,
+    ensure_update_metadata,
+    ensure_visible_capability_surface,
+    expand_path,
+    install_docs,
+    root_context,
+    root_rules,
+    root_tools,
+    validate_name,
+    write_file_once,
+    write_root_marker,
+)
 
 
 def load_os_profile(path: str | Path) -> dict[str, Any]:
@@ -136,19 +152,35 @@ External, production, destructive, billing, legal, secrets, and customer-visible
 """
 
 
-def install_profile_os(target: str | Path, profile_path: str | Path) -> dict[str, Any]:
+def install_profile_os(
+    target: str | Path,
+    profile_path: str | Path,
+    *,
+    projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
+    include_legacy_agent: bool = False,
+) -> dict[str, Any]:
     profile = load_os_profile(profile_path)
     root = expand_path(target)
     result = _Result()
     root.mkdir(parents=True, exist_ok=True)
+    write_root_marker(root, result, projects_source)
+    ensure_projects_link(root, result, projects_source)
+    ensure_visible_capability_surface(root, result)
+    ensure_update_metadata(root, result)
+    ensure_customer_update_contract(root, result)
     write_file_once(root / "README.md", f"# {profile.get('os', {}).get('display_name', 'Agentic OS')}\n", result)
     write_file_once(root / "ROUTER.md", profile_root_router(profile), result)
-    for filename in ("AGENTS.md", "CLAUDE.md", "AGENT.md"):
-        write_file_once(root / filename, render_agent_router(), result)
+    write_file_once(root / "AGENTS.md", agent_entrypoint("this profile-installed Agentic OS root"), result)
+    write_file_once(root / "CLAUDE.md", claude_adapter(), result)
+    write_file_once(root / "CONTEXT.md", root_context(), result)
+    write_file_once(root / "RULES.md", root_rules(), result)
+    write_file_once(root / "TOOLS.md", root_tools(), result)
+    if include_legacy_agent:
+        write_file_once(root / "AGENT.md", "# Legacy Agent Adapter\n\nLoad `AGENTS.md` first.\n", result)
     write_file_once(root / "profile.yml", yaml.safe_dump(profile, sort_keys=False), result)
     install_docs(root)
     for room in profile["rooms"]:
-        create_domain_structure(root, room["slug"], result)
+        create_domain_structure(root, room["slug"], result, include_legacy_agent=include_legacy_agent)
         write_room_profile_file(root / room["slug"] / "CONTEXT.md", room_context(room), result)
         write_room_profile_file(root / room["slug"] / "ROUTER.md", room_router(room), result)
     return {"root": str(root), "rooms": room_slugs(profile)}

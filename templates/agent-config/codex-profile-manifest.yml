@@ -26,7 +26,10 @@ profiles:
       - shell-hygiene
     prompt_files:
       - AGENTS.md
-      - BRAIN.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
     mcp_availability: user-approved global MCPs only
     environment_assumptions:
@@ -45,9 +48,10 @@ profiles:
       - run-logger
     prompt_files:
       - AGENTS.md
-      - BRAIN.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
     mcp_availability: filesystem, git, and verified Notion control plane
     environment_assumptions:
@@ -65,9 +69,10 @@ profiles:
       - handoff-checks
     prompt_files:
       - AGENTS.md
-      - BRAIN.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
       - customer.yml
     mcp_availability: customer-approved systems only
@@ -86,8 +91,12 @@ profiles:
       - workflow-readiness
       - automation-qualifier
     prompt_files:
+      - AGENTS.md
+      - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
       - domain.yml
     mcp_availability: domain-approved systems only
@@ -105,12 +114,17 @@ profiles:
       - qa-planning
       - run-closeout
     prompt_files:
+      - AGENTS.md
+      - CLAUDE.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
+      - MEMORY.md
       - workflow.md
       - quick-reference.md
       - context-pack.md
       - runbook.md
-      - CONTEXT.md
-      - MEMORY.md
     mcp_availability: workflow-approved systems only
     environment_assumptions:
       - workflow folder
@@ -127,11 +141,17 @@ profiles:
       - runtime-operator
       - integration-setup
     prompt_files:
+      - AGENTS.md
+      - CLAUDE.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
+      - MEMORY.md
       - automation.md
       - permissions.md
       - failure-modes.md
       - tests.md
-      - MEMORY.md
     mcp_availability: explicit automation contract only
     environment_assumptions:
       - runtime registry

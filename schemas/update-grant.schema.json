@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS Update Grant",
+  "type": "object",
+  "required": ["schema_version", "provider", "status", "remotes", "public_keys", "allowed_capabilities"],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "provider": { "type": "string" },
+    "status": { "type": "string" },
+    "expires_at": { "type": "string" },
+    "remotes": {
+      "type": "object",
+      "required": ["update", "backup"],
+      "properties": {
+        "update": { "$ref": "#/$defs/remote" },
+        "backup": { "$ref": "#/$defs/remote" }
+      }
+    },
+    "public_keys": {
+      "type": "object",
+      "required": ["update", "backup"],
+      "properties": {
+        "update": { "type": "string" },
+        "backup": { "type": "string" }
+      }
+    },
+    "allowed_capabilities": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "remote": {
+      "type": "object",
+      "required": ["name", "url", "access"],
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "access": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

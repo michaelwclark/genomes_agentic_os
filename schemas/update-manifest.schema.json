@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS Update Manifest",
+  "type": "object",
+  "required": ["version", "channel"],
+  "properties": {
+    "version": { "type": "string" },
+    "channel": { "type": "string" },
+    "policy": { "type": "string" },
+    "safe_additive_paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "path", "summary"],
+        "properties": {
+          "type": { "type": "string" },
+          "path": { "type": "string" },
+          "summary": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

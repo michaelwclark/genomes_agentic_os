@@ -3,9 +3,10 @@ version: 0.1.0
 purpose: >
   Canonical prompt-file stitching order for Genome's Agentic OS directories.
 universal_files:
-  - BRAIN.md
   - ROUTER.md
   - CONTEXT.md
+  - RULES.md
+  - TOOLS.md
   - MEMORY.md
 harness_entry_files:
   codex:
@@ -13,9 +14,12 @@ harness_entry_files:
   claude:
     - CLAUDE.md
 generated_from_templates:
-  - templates/agent-config/BRAIN.md
+  - templates/agent-config/AGENTS.md
+  - templates/agent-config/CLAUDE.md
   - templates/agent-config/ROUTER.md
   - templates/agent-config/CONTEXT.md
+  - templates/agent-config/RULES.md
+  - templates/agent-config/TOOLS.md
   - templates/memory/memory-policy.md
 stitching_order:
   - id: global_harness
@@ -25,16 +29,18 @@ stitching_order:
     notes: Runtime harness files may select tools and global safety defaults.
   - id: agentic_os_root
     load:
-      - BRAIN.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
-    notes: Reusable operating brain and root routing.
+    notes: Harness-neutral entrypoint, root routing, rules, and visible tools.
   - id: customer_os_root
     load:
-      - BRAIN.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
       - customer.yml
     notes: Customer boundaries and approved systems.
@@ -42,6 +48,8 @@ stitching_order:
     load:
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
       - domain.yml
     notes: Domain-specific routing, source maps, and approval refinements.

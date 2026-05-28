@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS MCP Server Registry",
+  "type": "object",
+  "required": ["mcp_servers"],
+  "properties": {
+    "mcp_servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "use_when", "boundary", "install_scope"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "use_when": { "type": "string" },
+          "boundary": { "type": "string" },
+          "install_scope": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "provider": "fake",
+  "status": "pending",
+  "expires_at": "",
+  "remotes": {
+    "update": {
+      "name": "agentic-os-update",
+      "url": "",
+      "access": "read-only"
+    },
+    "backup": {
+      "name": "agentic-os-backup",
+      "url": "",
+      "access": "write"
+    }
+  },
+  "public_keys": {
+    "update": "",
+    "backup": ""
+  },
+  "allowed_capabilities": []
+}

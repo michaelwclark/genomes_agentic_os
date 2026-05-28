@@ -24,3 +24,6 @@ notion_tracking:
   database: Heartbeats
   status_field: Last Status
   run_relation: Runs
+runtime_policy:
+  dry_run_first: true
+  provider_execution_enabled: false

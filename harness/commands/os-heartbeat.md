@@ -16,7 +16,9 @@ agentic-os schedule run-due --root ~/agentic_os --dry-run
 
 - Dry-run before any scheduled or provider-backed execution.
 - Treat heartbeat logs as source-of-truth evidence for what ran.
-- Use `schedule run-due` to queue intended work; do not directly execute external effects from chat.
+- Use `schedule run-due` to queue due work only; schedules use `next_due_at`, `last_queued_at`, and `idempotency_key` to avoid duplicate queue rows.
+- Queue rows use `status` values `queued`, `approval-needed`, `running`, `blocked`, `done`, and `failed`; dry-run is represented by `dry_run: true`, not by an unsafe provider action.
+- Do not directly execute external effects from chat.
 - Link successful or blocked runs into Notion only through the guarded runtime tracking command.
 
 ## Expected Files

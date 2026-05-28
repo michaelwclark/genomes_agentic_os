@@ -1,6 +1,6 @@
 # Codex profile template for Genome's Agentic OS.
 # Keep OS metadata in codex-profile-manifest.yml. Keep durable prompt behavior
-# in BRAIN.md, ROUTER.md, CONTEXT.md, and MEMORY.md.
+# in AGENTS.md, ROUTER.md, CONTEXT.md, RULES.md, TOOLS.md, and MEMORY.md.
 
 [profiles.global_user_harness]
 model = "gpt-5.2"

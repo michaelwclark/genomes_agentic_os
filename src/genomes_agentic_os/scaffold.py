@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 import shutil
+
+import yaml
+
+from .capability_registry import (
+    REGISTRY_FILES,
+    VISIBLE_CAPABILITY_DIRECTORIES,
+    inventory_markdown,
+    registry_file_payloads,
+)
+from .mcp_catalog import mcp_tools_markdown
 
 
 DEFAULT_DOMAINS = (
@@ -16,6 +27,13 @@ DEFAULT_DOMAINS = (
     "shared_factory",
     "archive",
 )
+
+ROOT_MARKER_FILENAME = ".agentic_root"
+PROJECTS_LINK_NAME = "projects"
+DEFAULT_PROJECTS_SOURCE = "~/projects"
+SOURCE_PACKAGE_VERSION = "0.1.0"
+DEFAULT_UPDATE_CHANNEL = "stable"
+DEFAULT_UPDATE_POLICY = "operator_approved"
 
 DOMAIN_ALIASES = {
     "lenders": "los",
@@ -192,6 +210,151 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     result.created.append(path)
 
 
+def root_marker_content(projects_source: str | Path = DEFAULT_PROJECTS_SOURCE) -> str:
+    source = str(projects_source).replace('"', '\\"')
+    return f"""# Agentic OS root marker
+
+kind = "genomes_agentic_os_root"
+version = "1"
+source_package_version = "{SOURCE_PACKAGE_VERSION}"
+projects_source = "{source}"
+projects_link = "{PROJECTS_LINK_NAME}"
+update_channel = "{DEFAULT_UPDATE_CHANNEL}"
+update_policy = "{DEFAULT_UPDATE_POLICY}"
+update_registry = "registries/updates.yml"
+"""
+
+
+def write_root_marker(root: Path, result: ScaffoldResult, projects_source: str | Path = DEFAULT_PROJECTS_SOURCE) -> None:
+    write_file_once(root / ROOT_MARKER_FILENAME, root_marker_content(projects_source), result)
+
+
+def update_lock_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "source_package": "genomes-agentic-os",
+        "installed_version": SOURCE_PACKAGE_VERSION,
+        "update_channel": DEFAULT_UPDATE_CHANNEL,
+        "update_policy": DEFAULT_UPDATE_POLICY,
+        "status": "installed",
+    }
+
+
+def update_policy_markdown() -> str:
+    return """# Update Policy
+
+Updates are additive by default. Local edits, customer files, prompts, source
+code, logs, and secrets are not collected or overwritten by automated update
+commands.
+
+## Approval Required
+
+- Executable changes
+- Hook changes
+- MCP server registration changes
+- Rule or permission changes
+- Any destructive operation
+
+## Safe Without Additional Approval
+
+- Missing templates
+- Missing docs
+- Missing registry entries
+- Missing command definitions
+"""
+
+
+def updates_registry_payload() -> dict[str, object]:
+    return {
+        "updates": {
+            "installed_version": SOURCE_PACKAGE_VERSION,
+            "channel": DEFAULT_UPDATE_CHANNEL,
+            "policy": DEFAULT_UPDATE_POLICY,
+            "latest_known_version": SOURCE_PACKAGE_VERSION,
+            "status_ref": "registries/update-status.yml",
+        }
+    }
+
+
+def ensure_update_metadata(root: Path, result: ScaffoldResult) -> None:
+    write_file_once(root / "agentic-os.lock.json", json.dumps(update_lock_payload(), indent=2) + "\n", result)
+    write_file_once(root / "UPDATE_POLICY.md", update_policy_markdown(), result)
+    write_file_once(root / "registries" / "updates.yml", yaml.safe_dump(updates_registry_payload(), sort_keys=False), result)
+
+
+def customer_identity_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "install_id": "local",
+        "license": {
+            "status": "inactive",
+            "activated_at": "",
+            "key_hash": "",
+        },
+        "update_grant": {
+            "status": "not_registered",
+            "path": "registries/update-grant.json",
+        },
+    }
+
+
+def backup_policy_payload() -> dict[str, object]:
+    return {
+        "backup_policy": {
+            "enabled": True,
+            "include": [
+                ".agentic_root",
+                "AGENTS.md",
+                "ROUTER.md",
+                "CONTEXT.md",
+                "RULES.md",
+                "TOOLS.md",
+                "registries/",
+                "shared_factory/00-control-plane/",
+            ],
+            "exclude": [
+                "logs/",
+                "security/ssh/*",
+                "**/.env",
+                "**/*secret*",
+                "**/*token*",
+            ],
+            "remote": {
+                "name": "agentic-os-backup",
+                "url": "",
+            },
+        }
+    }
+
+
+def ensure_customer_update_contract(root: Path, result: ScaffoldResult) -> None:
+    ensure_dir(root / "security", result)
+    ensure_dir(root / "security" / "ssh", result)
+    ensure_dir(root / "logs", result)
+    ensure_dir(root / "logs" / "updates", result)
+    ensure_dir(root / "logs" / "backups", result)
+    write_file_once(root / "registries" / "customer-identity.json", json.dumps(customer_identity_payload(), indent=2) + "\n", result)
+    write_file_once(
+        root / "registries" / "backup-policy.yml",
+        yaml.safe_dump(backup_policy_payload(), sort_keys=False),
+        result,
+    )
+
+
+def ensure_projects_link(
+    root: Path,
+    result: ScaffoldResult,
+    projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
+) -> None:
+    link_path = root / PROJECTS_LINK_NAME
+    if link_path.is_symlink() or link_path.exists():
+        result.skipped.append(link_path)
+        return
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    link_path.symlink_to(expand_path(projects_source), target_is_directory=True)
+    result.created.append(link_path)
+
+
 def append_once(path: Path, content: str, result: ScaffoldResult) -> None:
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if content in existing:
@@ -230,6 +393,30 @@ def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
 
 def copy_tree_missing(source: Path, destination: Path) -> ScaffoldResult:
     return copy_tree(source, destination)
+
+
+def ensure_visible_capability_directories(root: Path, result: ScaffoldResult) -> None:
+    for directory in VISIBLE_CAPABILITY_DIRECTORIES:
+        ensure_dir(root / directory, result)
+
+
+def ensure_capability_registries(root: Path, result: ScaffoldResult) -> None:
+    for relative_path, payload in registry_file_payloads().items():
+        write_file_once(root / relative_path, yaml.safe_dump(payload, sort_keys=False), result)
+    write_file_once(root / "INVENTORY.md", inventory_markdown(), result)
+
+
+def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> None:
+    ensure_visible_capability_directories(root, result)
+    ensure_capability_registries(root, result)
+
+
+def mirror_visible_commands_and_skills(root: Path) -> ScaffoldResult:
+    result = ScaffoldResult()
+    harness_root = harness_source_dir()
+    result.extend(copy_tree_missing(harness_root / "commands", root / "commands"))
+    result.extend(copy_tree_missing(harness_root / "skills", root / "skills"))
+    return result
 
 
 def titleize_name(name: str) -> str:
@@ -280,8 +467,13 @@ Each domain uses the same numbered operating lanes:
 
 ## Agent Entry Point
 
-Start with `ROUTER.md` in this directory, then follow the domain router in the selected domain.
-`AGENTS.md`, `CLAUDE.md`, and `AGENT.md` are compatibility pointers to `ROUTER.md`.
+Start with `AGENTS.md` in this directory. It tells every harness to read
+`ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`, route to the narrowest
+directory, and repeat the same local read loop before acting.
+
+`CLAUDE.md` is a Claude adapter that includes `AGENTS.md`. `AGENT.md` is not
+generated by default; create it only for a compatibility harness that proves it
+needs that exact filename.
 """
 
 
@@ -293,6 +485,8 @@ def root_router() -> str:
     return f"""# Agent Router
 
 Use this file before touching work inside the installed Agentic OS.
+After choosing a domain or narrower layer, change to that directory and read its
+`ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` before acting.
 
 ## Routing Table
 
@@ -303,11 +497,13 @@ Use this file before touching work inside the installed Agentic OS.
 ## Operating Rules
 
 - Pick a domain before creating projects, workflows, automations, or run logs.
+- Repeat the route-read-cd loop after changing directories.
 - Do not create new root-level work folders for active work.
 - Put workflow specs in `<domain>/03-workflows/<lane>/<workflow>/`.
 - Put automation specs in `<domain>/04-automations/<lane>/<automation>/`.
 - Put execution records in `<domain>/06-runs-and-logs/runs/`.
 - Use `shared_factory` for reusable templates, schemas, and cross-domain operating patterns.
+- Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read `shared_factory/05-knowledge/host-tool-registry.<host>.yml` when it exists.
 - Use `archive` only for inactive or historical material.
 
 ## Standard Lanes
@@ -320,12 +516,154 @@ External writes, customer-visible output, production changes, destructive action
 """
 
 
-def router_pointer() -> str:
-    return """# Agent Router
+def agent_entrypoint(scope: str = "this Agentic OS layer") -> str:
+    return f"""# Agent Entry Point
 
-Source of truth: `ROUTER.md`.
+This is the harness-neutral entry point for {scope}.
 
-Load `ROUTER.md` before taking action. This compatibility file exists for tools that discover this filename automatically.
+## Required Loop
+
+1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` in this directory.
+2. Classify the request against `ROUTER.md`.
+3. If the router points to a narrower directory, change to that directory.
+4. Repeat the local read and routing loop until no narrower route applies.
+5. Act only after loading the final layer's context, rules, and tool registry.
+6. Record unclear routes, missing tools, and durable follow-up in the run log or closeout artifact.
+
+## Context Precedence
+
+- User instructions override local defaults.
+- Narrower `RULES.md` files override broader rules unless the broader rule is stricter for safety, privacy, production, billing, legal, or customer-visible work.
+- `TOOLS.md` is the visible tool contract. Harness-specific install folders only implement that contract.
+"""
+
+
+def claude_adapter() -> str:
+    return "@AGENTS.md\n"
+
+
+def legacy_agent_adapter() -> str:
+    return """# Legacy Agent Adapter
+
+Load `AGENTS.md` first, then follow the local route-read-cd loop.
+"""
+
+
+def root_context() -> str:
+    domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in DEFAULT_DOMAINS)
+    return f"""# Local Context
+
+This installed root is the entry layer for Genome's Agentic OS runtime. It
+routes work into domain rooms, shared factory materials, workflows,
+automations, projects, run logs, and archived material.
+
+## Domains
+
+{domains}
+
+## What To Load
+
+| Need | Read First | Read When Needed | Skip By Default |
+| --- | --- | --- | --- |
+| Route new work | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md` | domain router | unrelated domains |
+| Shared template or skill work | `shared_factory/05-knowledge/` index files | relevant template, command, skill, or plan | active domain state |
+| Shell or runtime work | host tool registry under `shared_factory/05-knowledge/` | installed command docs | customer data |
+| Resume active domain work | routed domain `CONTEXT.md` and active work files | project status, workflow context pack, run logs | unrelated projects |
+
+## Done Means
+
+- Work was routed to the narrowest correct layer.
+- Source evidence and validation are recorded.
+- Approval gates in `RULES.md` were followed.
+- Missing route or tool information was recorded before handoff.
+"""
+
+
+def root_rules() -> str:
+    return """# Rules
+
+These root rules apply unless a narrower layer provides a stricter rule.
+
+## Approval Gates
+
+- External writes require explicit approval.
+- Customer-visible output requires explicit approval.
+- Production changes require explicit approval.
+- Destructive actions require explicit approval.
+- Secrets, billing, and legal records require explicit approval.
+
+## Operating Rules
+
+- Route before acting.
+- Prefer the narrowest applicable domain, project, workflow, automation, or run log.
+- Preserve source links and validation evidence.
+- Keep secrets out of prompts, logs, docs, generated config, and run artifacts.
+- Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read the host tool registry when it exists.
+
+## Precedence
+
+Narrower rules override broader rules unless the broader rule is stricter for
+safety, privacy, production, billing, legal, or customer-visible work.
+"""
+
+
+def root_tools() -> str:
+    return f"""# Tools
+
+This root registry names the visible tool surface for the installed Agentic OS.
+Harness-specific folders and config files implement this contract; they are not
+the source of truth by themselves.
+
+## Skills
+
+| Skill | Use When | Source |
+| --- | --- | --- |
+| `os-navigator` | Route work through installed OS rooms. | `shared_factory/05-knowledge/skills/os-navigator/` |
+| `workflow-builder` | Create or improve reusable workflows. | `shared_factory/05-knowledge/skills/workflow-builder/` |
+| `automation-qualifier` | Decide whether a process is safe to automate. | `shared_factory/05-knowledge/skills/automation-qualifier/` |
+| `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
+
+## Commands
+
+| Command | Use When | Notes |
+| --- | --- | --- |
+| `/make-skill` | Create or improve a reusable skill. | Declared in `registries/commands.yml`. |
+| `/make-domain` | Create a routed OS domain or room. | Declared in `registries/commands.yml`. |
+| `/make-automation` | Create a guarded automation spec. | Declared in `registries/commands.yml`. |
+| `/make-workflow` | Create a reusable workflow contract. | Declared in `registries/commands.yml`. |
+| `/orchestrate` | Decompose, delegate, verify, and merge feature work. | Declared in `registries/commands.yml`. |
+| `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
+| `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
+| `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
+| `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
+
+## MCP Servers
+
+{mcp_tools_markdown()}
+
+## Plugins And Libraries
+
+| Name | Use When | Notes |
+| --- | --- | --- |
+|  |  |  |
+
+## Local Wrappers
+
+| Wrapper | Use When | Path |
+| --- | --- | --- |
+| host tool registry | Shell, terminal, runtime, package-manager, and cleanup work. | `shared_factory/05-knowledge/host-tool-registry.<host>.yml` |
+
+## When To Use What
+
+- Use skills for repeatable agent workflows.
+- Use commands for deterministic filesystem or runtime operations.
+- Use MCP servers only when the current layer's rules and source boundaries allow them.
+
+## Missing Or Disabled
+
+| Capability | Needed For | Status |
+| --- | --- | --- |
+|  |  |  |
 """
 
 
@@ -383,8 +721,10 @@ storage:
 context_loading:
   map_file: ROUTER.md
   room_file: CONTEXT.md
+  rules_file: RULES.md
+  tools_file: TOOLS.md
   reference_file: REFERENCES.md
-  default_rule: read the map and room file first, then load only task-specific references
+  default_rule: read the map, context, rules, and tools first, then load only task-specific references
   skip_by_default:
     - unrelated domains
     - unrelated projects
@@ -404,6 +744,8 @@ def domain_readme(domain: str) -> str:
 ## Context Files
 
 - `CONTEXT.md` defines how this domain works and what good output looks like.
+- `RULES.md` defines safety, approval, and local operating constraints.
+- `TOOLS.md` lists intended local and inherited skills, commands, MCP servers, plugins, and wrappers.
 - `REFERENCES.md` points to source systems, docs, repos, tools, and recurring examples.
 
 ## Active Outcomes
@@ -478,8 +820,10 @@ Classify the request into one of this domain's operating lanes, then choose the 
 
 ## Routing Rules
 
+- Read `AGENTS.md`, then `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`.
+- If a project, workflow, automation, or run-log directory narrows the route, change there and repeat the local context-file load before acting.
 - Read `00-control-plane/routing-rules.md` before creating a new workflow or automation.
-- Read `CONTEXT.md` and `REFERENCES.md` before doing domain-specific work.
+- Read `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `REFERENCES.md` before doing domain-specific work.
 - Use `03-workflows` when judgment, context assembly, or approval gates are central.
 - Use `04-automations` when a trigger can safely run a repeatable action with declared permissions.
 - Use `shared_factory` when a pattern should be reused by multiple domains.
@@ -521,7 +865,7 @@ This file teaches agents how work inside `{domain}` should be understood before 
 
 ## Process
 
-1. Read `ROUTER.md`, this file, and the matching row in `## What To Load`.
+1. Read `ROUTER.md`, this file, `RULES.md`, `TOOLS.md`, and the matching row in `## What To Load`.
 2. Check `00-control-plane/active-work.md` before creating new work.
 3. Reuse an existing project, workflow, automation, or run log when one fits.
 4. Read only the references required for the routed task.
@@ -586,6 +930,85 @@ This file teaches agents how work inside `{domain}` should be understood before 
 ## Update Rule
 
 Update this file when a stable domain rule, source system, work style preference, routing pattern, tool trigger, or repeated failure mode becomes durable.
+"""
+
+
+def domain_rules(domain: str) -> str:
+    display_name = titleize_name(domain)
+    return f"""# Rules: {display_name}
+
+These rules apply to work routed into `{domain}` unless a narrower project,
+workflow, or automation defines a stricter rule.
+
+## Approval Gates
+
+- External writes require explicit approval.
+- Customer-visible output requires explicit approval.
+- Production changes require explicit approval.
+- Destructive actions require explicit approval.
+- Secrets, billing, and legal records require explicit approval.
+
+## Operating Rules
+
+- Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` before acting in this domain.
+- Check `00-control-plane/active-work.md` before creating new active work.
+- Record material execution in `06-runs-and-logs/`.
+- Preserve source links and validation evidence.
+- Keep secrets out of run logs, docs, prompts, and generated config.
+
+## Precedence
+
+Narrower rules override these rules unless this file is stricter for safety,
+privacy, production, billing, legal, or customer-visible work.
+"""
+
+
+def domain_tools(domain: str, *, public_customer: bool = False) -> str:
+    display_name = titleize_name(domain)
+    mcp_markdown = mcp_tools_markdown(domain, include_inactive=not public_customer, public_customer=public_customer)
+    return f"""# Tools: {display_name}
+
+This registry names the intended skills, commands, MCP servers, plugins,
+libraries, and wrappers for `{domain}`.
+
+## Skills
+
+| Skill | Use When | Source |
+| --- | --- | --- |
+| `os-navigator` | Route domain work to the correct project, workflow, automation, or run log. | inherited from `shared_factory` |
+| `workflow-builder` | Create or refine repeatable workflows. | inherited from `shared_factory` |
+| `automation-qualifier` | Decide whether a repeatable process should become an automation. | inherited from `shared_factory` |
+
+## Commands
+
+| Command | Use When | Notes |
+| --- | --- | --- |
+| `agentic-os project create` | Create a domain project. | Use after checking active work. |
+| `agentic-os workflow create` | Create a reusable workflow. | Use when the pattern should repeat. |
+| `agentic-os automation create` | Create a guarded automation spec. | Start in observe or prepare mode. |
+| `agentic-os validate` | Validate domain and root structure. | Run before handoff after structural changes. |
+
+## MCP Servers
+
+{mcp_markdown}
+
+## Plugins And Libraries
+
+| Name | Use When | Notes |
+| --- | --- | --- |
+|  |  |  |
+
+## Local Wrappers
+
+| Wrapper | Use When | Path |
+| --- | --- | --- |
+|  |  |  |
+
+## Missing Or Disabled
+
+| Capability | Needed For | Status |
+| --- | --- | --- |
+|  |  |  |
 """
 
 
@@ -935,27 +1358,52 @@ def render_template(content: str, replacements: dict[str, str]) -> str:
     return content
 
 
-def ensure_root_files(root: Path, result: ScaffoldResult) -> None:
+def ensure_root_files(
+    root: Path,
+    result: ScaffoldResult,
+    projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
+    *,
+    include_legacy_agent: bool = False,
+) -> None:
     ensure_dir(root, result)
+    write_root_marker(root, result, projects_source)
+    ensure_projects_link(root, result, projects_source)
+    ensure_visible_capability_surface(root, result)
+    ensure_update_metadata(root, result)
+    ensure_customer_update_contract(root, result)
     write_file_once(root / "README.md", root_readme(), result)
     router = root_router()
     write_file_once(root / "ROUTER.md", router, result)
-    write_file_once(root / "AGENTS.md", router_pointer(), result)
-    write_file_once(root / "CLAUDE.md", router_pointer(), result)
-    write_file_once(root / "AGENT.md", router_pointer(), result)
+    write_file_once(root / "AGENTS.md", agent_entrypoint("the installed Agentic OS root"), result)
+    write_file_once(root / "CLAUDE.md", claude_adapter(), result)
+    write_file_once(root / "CONTEXT.md", root_context(), result)
+    write_file_once(root / "RULES.md", root_rules(), result)
+    write_file_once(root / "TOOLS.md", root_tools(), result)
+    if include_legacy_agent:
+        write_file_once(root / "AGENT.md", legacy_agent_adapter(), result)
 
 
-def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) -> None:
+def create_domain_structure(
+    os_root: Path,
+    domain: str,
+    result: ScaffoldResult,
+    *,
+    include_legacy_agent: bool = False,
+    public_customer_tools: bool = False,
+) -> None:
     domain = validate_name(domain, "domain")
     domain_root = os_root / domain
     ensure_dir(domain_root, result)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
     router = domain_router(domain)
     write_file_once(domain_root / "ROUTER.md", router, result)
-    write_file_once(domain_root / "AGENTS.md", router_pointer(), result)
-    write_file_once(domain_root / "CLAUDE.md", router_pointer(), result)
-    write_file_once(domain_root / "AGENT.md", router_pointer(), result)
+    write_file_once(domain_root / "AGENTS.md", agent_entrypoint(f"the `{domain}` domain"), result)
+    write_file_once(domain_root / "CLAUDE.md", claude_adapter(), result)
     write_file_once(domain_root / "CONTEXT.md", domain_context(domain), result)
+    write_file_once(domain_root / "RULES.md", domain_rules(domain), result)
+    write_file_once(domain_root / "TOOLS.md", domain_tools(domain, public_customer=public_customer_tools), result)
+    if include_legacy_agent:
+        write_file_once(domain_root / "AGENT.md", legacy_agent_adapter(), result)
     write_file_once(domain_root / "REFERENCES.md", domain_references(domain), result)
     write_file_once(domain_root / "domain.yml", domain_config(domain), result)
 
@@ -1013,24 +1461,30 @@ def create_domain_structure(os_root: Path, domain: str, result: ScaffoldResult) 
     )
 
 
-def ensure_default_domains(os_root: Path, result: ScaffoldResult) -> None:
+def ensure_default_domains(os_root: Path, result: ScaffoldResult, *, include_legacy_agent: bool = False) -> None:
     for domain in DEFAULT_DOMAINS:
-        create_domain_structure(os_root, domain, result)
+        create_domain_structure(os_root, domain, result, include_legacy_agent=include_legacy_agent)
     result.extend(copy_tree_missing(template_source_dir(), os_root / "shared_factory" / "05-knowledge" / "templates"))
     result.extend(install_docs(os_root))
 
 
-def init_os(target: str | Path) -> ScaffoldResult:
+def init_os(
+    target: str | Path,
+    *,
+    projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
+    include_legacy_agent: bool = False,
+) -> ScaffoldResult:
     root = expand_path(target)
     result = ScaffoldResult()
-    ensure_root_files(root, result)
-    ensure_default_domains(root, result)
+    ensure_root_files(root, result, projects_source, include_legacy_agent=include_legacy_agent)
+    ensure_default_domains(root, result, include_legacy_agent=include_legacy_agent)
     return result
 
 
 def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
+    result.extend(mirror_visible_commands_and_skills(os_root))
     result.extend(
         copy_tree(
             template_source_dir(),
@@ -1070,12 +1524,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     return result
 
 
-def create_domain(root: str | Path, domain: str) -> ScaffoldResult:
+def create_domain(root: str | Path, domain: str, *, include_legacy_agent: bool = False) -> ScaffoldResult:
     domain = normalize_domain(domain)
     os_root = expand_path(root)
-    result = init_os(os_root)
+    result = init_os(os_root, include_legacy_agent=include_legacy_agent)
     if domain not in DEFAULT_DOMAINS:
-        create_domain_structure(os_root, domain, result)
+        create_domain_structure(os_root, domain, result, include_legacy_agent=include_legacy_agent)
     return result
 
 

@@ -17,6 +17,10 @@ summary: ""
 payload_ref:
   type: link | file | registry
   href: ""
+provider_adapter:
+  id: <provider_id>
+  type: composio | mcp | connector | direct_api | webhook | cli | sdk | script
+  mode: registry_dry_run | registry_apply | provider_poll | provider_trigger
 privacy:
   contains_secret: false
   contains_customer_data: false

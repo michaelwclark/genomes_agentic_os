@@ -1,7 +1,9 @@
 event_id: <event_id>
 chain_rule_id: <chain_rule_id>
-status: dry-run | queued | skipped | dead-letter
+status: dry-run | queued | approval-needed | skipped | dead-letter
 reason: ""
+idempotency_key: <idempotency_key>
+queue_item_id: null
 queue_item: null
 processed_at: <iso8601>
 path: null

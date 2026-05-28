@@ -3,10 +3,20 @@ kind: heartbeat
 ref: granola_recent_notes_sync
 status: queued
 created_at: 2026-05-21T00:00:00Z
+updated_at: 2026-05-21T00:00:00Z
 dry_run: true
 execution_target: script
 approval_state: not_required
+idempotency_key: heartbeat:granola_recent_notes_sync:20260521T000000Z-granola_recent_notes_sync
+due_at:
+last_queued_at:
+next_due_at:
 log: shared_factory/06-runs-and-logs/heartbeats/20260521T000000Z-granola_recent_notes_sync.yml
+evidence:
+  - type: run_log
+    path: shared_factory/06-runs-and-logs/heartbeats/20260521T000000Z-granola_recent_notes_sync.yml
+blocked_reason:
+dispatch_log:
 notion_tracking:
   database: Runs
   relation_field: Heartbeat

@@ -16,21 +16,53 @@ otel:
 mcp_registration_points:
   notion:
     required_identity: Genome's Notion
-    env_var_names:
-      - GENOMES_NOTION_PAT
-      - GENOMES_NOTION_CONNECTOR
-  browser:
-    credential_policy: use_authenticated_session
+    url: https://mcp.notion.com/mcp
+    install_scope: every layer
+  genomes_brain:
+    url: http://127.0.0.1:3155/mcp
+    install_scope: every layer
+    credential_policy: no secrets in memory writes
+  github:
+    url: https://api.githubcopilot.com/mcp/
+    bearer_token_env_var: GITHUB_PAT_TOKEN
+    install_scope: every layer
+    credential_policy: least-privilege PAT by env var only
+  context_mode:
+    command: /Users/genome/.local/bin/context-mode
+    install_scope: every layer
+    credential_policy: no inline secrets
+  sentry:
+    url: https://mcp.sentry.dev/mcp
+    install_scope: los layers only
+    credential_policy: provider-managed auth or env var names only
+  datadog:
+    url: https://mcp.datadoghq.com/api/unstable/mcp-server/mcp
+    install_scope: los layers only
+    credential_policy: provider-managed auth or env var names only
+  supabase:
+    url: https://mcp.supabase.com/mcp
+    install_scope: clarks_consulting layers only
+    credential_policy: provider-managed auth or env var names only
+  composio:
+    install_scope: visible only until an approved generated MCP URL is available
+    credential_policy: generated MCP URLs and COMPOSIO_API_KEY are secret; env var names only
+    notes: Generate layer-specific MCP URLs through Composio before installing.
+  orgo:
+    install_scope: visible only until an approved Orgo MCP bridge is available
+    credential_policy: ORGO_API_KEY is secret; env var names only
+    notes: Orgo is a runtime execution target first; only register an MCP server after approving the bridge endpoint.
+  playwright:
+    command: npx
+    args:
+      - "@playwright/mcp@latest"
+    install_scope: visible only until a browser automation layer opts in
+    credential_policy: use authenticated browser state only when approved
   filesystem_runtime:
     command: agentic-os
     args:
       - config
       - doctor
     secret_policy: no inline secrets
-  memory:
-    credential_policy: no secrets in memory writes
-  customer_integration:
-    credential_policy: customer-approved env var names only
 validation:
   command: agentic-os config doctor
   reports:

@@ -37,9 +37,10 @@ agentic_os_layers:
     config_path: ~/agentic_os/.codex/config.toml
     prompt_files:
       - AGENTS.md
-      - BRAIN.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
     intended_settings:
       - OS operating profile
       - shared skills and tooling
@@ -49,9 +50,10 @@ agentic_os_layers:
     config_path: <customer_os>/.codex/config.toml
     prompt_files:
       - AGENTS.md
-      - BRAIN.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
     intended_settings:
       - customer data boundary
       - customer MCP servers
@@ -63,6 +65,8 @@ agentic_os_layers:
       - AGENTS.md
       - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
     intended_settings:
       - domain routing
       - model/reasoning profile
@@ -72,7 +76,10 @@ agentic_os_layers:
     config_path: <workflow>/.codex/config.toml
     prompt_files:
       - AGENTS.md
+      - ROUTER.md
       - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
       - MEMORY.md
     intended_settings:
       - temporary profile override

@@ -10,7 +10,8 @@ Use when normalized events should deterministically enqueue follow-up work.
 4. Verify idempotency key, max chain depth, cooldown, approval gate, and route/context contract.
 5. Process with `agentic-os event process-due --dry-run` before `--apply`.
 6. Dead-letter failed events with a failure reason and next action.
+7. Confirm duplicate source events use the same chain idempotency key and do not create duplicate queue items.
 
 ## Output
 
-Return matching rule, queue item preview, idempotency key, approval status, and replay instructions.
+Return matching rule, queue item preview, idempotency key, max-depth result, approval status, and replay instructions.

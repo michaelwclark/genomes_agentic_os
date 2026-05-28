@@ -9,7 +9,8 @@ Use when a source change, run closeout, approval, external action, or agent outp
 3. Record an idempotency key and correlation ID.
 4. Append the event to `shared_factory/06-runs-and-logs/events/`.
 5. Run `agentic-os event process-due --dry-run` before applying chain rules.
+6. Use `agentic-os event summary --limit <N>` when handing context to a fresh agent.
 
 ## Output
 
-Return the event file, ledger entry, matched chain rules, dry-run queue items, and next action.
+Return the event file, ledger entry, matched chain rules, dry-run queue items, pending follow-up summary, and next action.

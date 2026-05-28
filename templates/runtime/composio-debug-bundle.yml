@@ -1,0 +1,18 @@
+id: composio_debug_bundle
+display_name: Composio debug bundle
+provider: composio
+status: user_supplied
+owner: OS User
+purpose:
+  - support_debug_correlation
+  - provider_account_selection
+credential_refs:
+  env_vars:
+    - COMPOSIO_DEBUG_PROJECT_ID
+    - COMPOSIO_DEBUG_ORG_ID
+    - COMPOSIO_DEBUG_ORG_MEMBER_EMAIL
+    - COMPOSIO_DEBUG_USER_ID
+notes:
+  - These are support/debug correlation IDs, not API credentials.
+  - Keep them out of public logs and public documentation.
+  - Each OS user should set their own values in their local shell environment.

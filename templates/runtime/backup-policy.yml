@@ -1,0 +1,20 @@
+backup_policy:
+  enabled: true
+  include:
+    - .agentic_root
+    - AGENTS.md
+    - ROUTER.md
+    - CONTEXT.md
+    - RULES.md
+    - TOOLS.md
+    - registries/
+    - shared_factory/00-control-plane/
+  exclude:
+    - logs/
+    - security/ssh/*
+    - "**/.env"
+    - "**/*secret*"
+    - "**/*token*"
+  remote:
+    name: agentic-os-backup
+    url: ""

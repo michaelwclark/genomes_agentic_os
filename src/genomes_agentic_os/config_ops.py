@@ -10,6 +10,8 @@ import re
 import shutil
 from typing import Any
 
+from .capability_registry import command_entries, hook_entries, library_entries, plugin_entries, rule_entries, skill_entries
+from .mcp_catalog import MCP_SERVERS, config_mcp_ids, mcp_config_payload, mcp_tools_markdown
 from .scaffold import expand_path
 
 
@@ -20,38 +22,165 @@ OTEL_ENV_VARS = (
 )
 MCP_REGISTRATION_POINTS = (
     "notion",
-    "browser",
+    "genomes_brain",
+    "github",
+    "context_mode",
+    "sentry",
+    "datadog",
+    "supabase",
+    "playwright",
     "filesystem_runtime",
-    "memory",
-    "customer_integration",
 )
-PROMPT_POINTER = """# Agent Entry Point
+BASE_PROMPT_FILES = ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
 
-Load `BRAIN.md`, `ROUTER.md`, `CONTEXT.md`, and `MEMORY.md` before acting.
-This compatibility file exists for harness discovery.
+
+def markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    return "\n".join(lines)
+
+
+def tools_prompt_template() -> str:
+    skills = markdown_table(
+        ("Skill", "Use When", "Source"),
+        [
+            (f"`{entry['id']}`", entry["description"], entry["source"])
+            for entry in skill_entries()
+        ],
+    )
+    commands = markdown_table(
+        ("Command", "Use When", "Source"),
+        [
+            (f"`{entry['command']}`", entry["description"], entry["source"])
+            for entry in command_entries()
+        ],
+    )
+    libraries = markdown_table(
+        ("Name", "Use When", "Source"),
+        [
+            (f"`{entry['id']}`", entry["description"], entry.get("source", ""))
+            for entry in library_entries()
+        ],
+    )
+    plugins = markdown_table(
+        ("Plugin", "Use When", "Status"),
+        [
+            (f"`{entry['id']}`", entry["description"], entry["status"])
+            for entry in plugin_entries()
+        ],
+    )
+    hooks = markdown_table(
+        ("Hook", "Use When", "Status"),
+        [
+            (f"`{entry['id']}`", entry["description"], entry["status"])
+            for entry in hook_entries()
+        ],
+    )
+    rules = markdown_table(
+        ("Rule", "Use When", "Source"),
+        [
+            (f"`{entry['id']}`", entry["description"], entry["source"])
+            for entry in rule_entries()
+        ],
+    )
+    return f"""# Tools
+
+List the visible capabilities intended for this layer. Registry-backed installs
+mirror this file from `registries/*.yml`; harness-specific folders implement
+the contract but do not replace it.
+
+## Skills
+
+{skills}
+
+## Commands
+
+{commands}
+
+## MCP Servers
+
+{mcp_tools_markdown()}
+
+## Plugins And Libraries
+
+### Plugins
+
+{plugins}
+
+### Libraries
+
+{libraries}
+
+## Local Wrappers
+
+| Wrapper | Use When | Notes |
+| --- | --- | --- |
+| `host-tool-registry` | Shell, runtime, package-manager, and cleanup work. | Read the host registry before non-trivial host work. |
+
+## Hooks
+
+{hooks}
+
+## Rules
+
+{rules}
+
+## Missing Or Disabled
+
+Record missing or disabled capabilities here instead of silently falling back
+to hidden harness-specific state.
 """
 
+
 PROMPT_TEMPLATES = {
-    "AGENTS.md": PROMPT_POINTER,
-    "CLAUDE.md": PROMPT_POINTER,
-    "BRAIN.md": """# Agent Brain
+    "AGENTS.md": """# Agent Entry Point
 
-Shared operating behavior for this Agentic OS directory.
+This file is the harness-neutral entrypoint for this Agentic OS layer.
 
-- Follow the strictest approval rule in the stitched context.
-- Preserve source truth and validation evidence.
-- Keep durable behavior here, not duplicated in harness entry files.
+## Startup Loop
+
+1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` in this directory.
+2. Classify the request against `ROUTER.md`.
+3. If the router points to a narrower directory, `cd` there and repeat this loop.
+4. Act only after loading the final routed layer.
+5. Record routing gaps, missing tools, and durable next actions in the run log or closeout artifact.
+
+## Precedence
+
+- Active user instructions win.
+- The final routed layer is the working context.
+- The strictest safety, approval, privacy, and destructive-action rule wins across all loaded `RULES.md` files.
+- Use `TOOLS.md` as the visible tool contract before assuming a skill, MCP server, command, plugin, wrapper, or library is available.
+
+Read `MEMORY.md` when present before writing durable memory.
 """,
+    "CLAUDE.md": "@AGENTS.md\n",
     "ROUTER.md": """# Agent Router
 
 Route work to the narrowest correct domain, workflow, automation, or run log
 before creating or changing artifacts.
+
+Read `CONTEXT.md`, `RULES.md`, and `TOOLS.md`; when this router points to a
+narrower directory, change into that directory and repeat the same read-route
+loop.
 """,
     "CONTEXT.md": """# Local Context
 
-Describe the local room, source systems, approval constraints, and output
-expectations for this directory.
+Describe the local room, source systems, routing hints, and output expectations
+for this directory. Keep constraints in `RULES.md` and available capabilities in
+`TOOLS.md`.
 """,
+    "RULES.md": """# Rules
+
+Record local constraints, approval gates, safety boundaries, coding rules, and
+operating rules for this layer.
+
+The strictest applicable rule wins across parent and child layers.
+""",
+    "TOOLS.md": tools_prompt_template(),
     "MEMORY.md": """# Memory Policy
 
 Record only durable, useful, non-secret learnings. Follow the strictest privacy
@@ -63,37 +192,37 @@ rule from the stitched context.
 LAYERS: dict[str, dict[str, Any]] = {
     "global_harness": {
         "profile": "global_user_harness",
-        "prompt_files": ("AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"),
+        "prompt_files": BASE_PROMPT_FILES,
         "mcp": "user-approved only",
         "sandbox": "workspace-write",
     },
     "agentic_os_root": {
         "profile": "agentic_os_root",
-        "prompt_files": ("AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"),
+        "prompt_files": BASE_PROMPT_FILES,
         "mcp": "source package and local filesystem tools",
         "sandbox": "workspace-write",
     },
     "customer_os_root": {
         "profile": "customer_os_root",
-        "prompt_files": ("AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"),
+        "prompt_files": BASE_PROMPT_FILES,
         "mcp": "approved customer systems only",
         "sandbox": "workspace-write",
     },
     "domain_or_lane": {
         "profile": "domain_or_lane",
-        "prompt_files": ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"),
+        "prompt_files": BASE_PROMPT_FILES,
         "mcp": "domain-approved systems only",
         "sandbox": "workspace-write",
     },
     "workflow_or_task": {
         "profile": "workflow_or_task",
-        "prompt_files": ("AGENTS.md", "CLAUDE.md", "CONTEXT.md", "MEMORY.md"),
+        "prompt_files": BASE_PROMPT_FILES,
         "mcp": "workflow-approved systems only",
         "sandbox": "workspace-write",
     },
     "automation": {
         "profile": "automation",
-        "prompt_files": ("AGENTS.md", "CLAUDE.md", "CONTEXT.md", "MEMORY.md"),
+        "prompt_files": BASE_PROMPT_FILES,
         "mcp": "explicit automation contract only",
         "sandbox": "workspace-write",
     },
@@ -147,7 +276,29 @@ class ConfigDoctorFinding:
         }
 
 
-def config_template(layer: str) -> str:
+def toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    if isinstance(value, str):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return str(value)
+
+
+def mcp_server_template(server_id: str) -> str:
+    server = MCP_SERVERS[server_id]
+    lines = [f"[mcp_servers.{server.id}]"]
+    for key, value in mcp_config_payload(server).items():
+        lines.append(f"{key} = {toml_value(value)}")
+    return "\n".join(lines)
+
+
+def mcp_servers_template(layer: str, root: str | Path | None = None) -> str:
+    return "\n\n".join(mcp_server_template(server_id) for server_id in config_mcp_ids(layer, root))
+
+
+def config_template(layer: str, root: str | Path | None = None) -> str:
     config = LAYERS[layer]
     profile = config["profile"]
     return f"""# Agentic OS Codex config template
@@ -157,6 +308,8 @@ def config_template(layer: str) -> str:
 model = "gpt-5.2"
 approval_policy = "on-request"
 sandbox_mode = "{config['sandbox']}"
+project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
+project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
 
 [profiles.{profile}]
 model = "gpt-5.2"
@@ -166,6 +319,9 @@ sandbox_mode = "{config['sandbox']}"
 [profiles.{profile}.agentic_os]
 layer = "{layer}"
 prompt_files = {toml_array(config['prompt_files'])}
+context_contract = "route-read-cd-repeat"
+rules_file = "RULES.md"
+tool_registry_file = "TOOLS.md"
 mcp_availability = "{config['mcp']}"
 environment = "local filesystem"
 
@@ -178,11 +334,13 @@ headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
 command = "agentic-os"
 args = ["config", "doctor"]
 secret_policy = "no inline secrets"
+
+{mcp_servers_template(layer, root)}
 """
 
 
 def toml_array(values: tuple[str, ...]) -> str:
-    return "[" + ", ".join(f'"{value}"' for value in values) + "]"
+    return toml_value(values)
 
 
 def parse_toml_keys(content: str) -> dict[tuple[str | None, str], str]:
@@ -299,7 +457,7 @@ def install_config(
 
     root_path = expand_path(root)
     config_path = root_path / CONFIG_FILENAME
-    template = config_template(layer)
+    template = config_template(layer, root_path)
     existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     planned, conflicts = merge_config(existing, template)
     result = ConfigInstallResult(root=root_path, layer=layer, dry_run=dry_run, conflicts=conflicts)
@@ -364,9 +522,16 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
     content = config_path.read_text(encoding="utf-8")
     keys = parse_toml_keys(content)
     profile = LAYERS[layer]["profile"]
+    expected_mcp_ids = ("filesystem_runtime", *config_mcp_ids(layer, root_path))
     required = [
         (None, "approval_policy", "Add an approval_policy matching the layer contract."),
         (None, "sandbox_mode", "Add a sandbox_mode matching the layer contract."),
+        (None, "project_root_markers", "Add project_root_markers with .agentic_root so the installed OS root is discoverable."),
+        (
+            None,
+            "project_doc_fallback_filenames",
+            "Add fallback filenames for ROUTER.md, CONTEXT.md, RULES.md, TOOLS.md, and MEMORY.md.",
+        ),
         ("otel", "log_user_prompt", "Add [otel] log_user_prompt = false unless explicit approval allows prompt logging."),
         (
             "otel",
@@ -380,17 +545,74 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
             "Declare the MCP availability boundary for this layer.",
         ),
         (
+            f"profiles.{profile}.agentic_os",
+            "context_contract",
+            "Declare context_contract = \"route-read-cd-repeat\" for the shared harness contract.",
+        ),
+        (
+            f"profiles.{profile}.agentic_os",
+            "rules_file",
+            "Point the layer profile at RULES.md.",
+        ),
+        (
+            f"profiles.{profile}.agentic_os",
+            "tool_registry_file",
+            "Point the layer profile at TOOLS.md.",
+        ),
+        (
             "mcp_servers.filesystem_runtime",
             "secret_policy",
             "Declare secret_policy = \"no inline secrets\" for MCP registration blocks.",
         ),
     ]
+    for server_id in expected_mcp_ids:
+        section = f"mcp_servers.{server_id}"
+        if server_id == "filesystem_runtime":
+            continue
+        server = MCP_SERVERS[server_id]
+        if server.url:
+            required.append((section, "url", f"Register the {server.display_name} MCP URL for this layer."))
+        if server.command:
+            required.append((section, "command", f"Register the {server.display_name} MCP command for this layer."))
+        if server.bearer_token_env_var:
+            required.append(
+                (
+                    section,
+                    "bearer_token_env_var",
+                    f"Reference {server.bearer_token_env_var} by name; do not inline bearer tokens.",
+                )
+            )
+        required.append((section, "secret_policy", "Declare secret_policy for MCP registration blocks."))
     for section, key, remediation in required:
         if (section, key) not in keys:
             label = f"[{section}] {key}" if section else key
             findings.append(ConfigDoctorFinding("blocker", config_path, f"missing required config key: {label}", remediation))
 
-    secret_markers = ("secret=", "token=", "password=", "GENOMES_NOTION_PAT=", "GENOMES_NOTION_CONNECTOR=")
+    markers = keys.get((None, "project_root_markers"), "")
+    if markers and ".agentic_root" not in markers:
+        findings.append(
+            ConfigDoctorFinding(
+                "blocker",
+                config_path,
+                "project_root_markers does not include .agentic_root",
+                "Add .agentic_root to project_root_markers so Codex can discover the installed OS root.",
+            )
+        )
+
+    secret_markers = (
+        "secret=",
+        "token=",
+        "password=",
+        "GENOMES_NOTION_PAT=",
+        "GENOMES_NOTION_CONNECTOR=",
+        "GITHUB_PAT_TOKEN=",
+        "SENTRY_AUTH_TOKEN=",
+        "DATADOG_API_KEY=",
+        "SUPABASE_ACCESS_TOKEN=",
+        "COMPOSIO_API_KEY=",
+        "COMPOSIO_MCP_URL=",
+        "ORGO_API_KEY=",
+    )
     lowered = content.lower()
     for marker in secret_markers:
         if marker.lower() in lowered:

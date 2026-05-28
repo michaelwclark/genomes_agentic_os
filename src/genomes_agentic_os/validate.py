@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .scaffold import (
     CONTROL_PLANE_FILES,
     DEFAULT_DOMAINS,
@@ -31,6 +32,8 @@ ROOT_FILES = (
     "CONTEXT.md",
     "RULES.md",
     "TOOLS.md",
+    "agentic-os.lock.json",
+    "UPDATE_POLICY.md",
 )
 
 LEGACY_ROOT_FOLDERS = (
@@ -91,6 +94,8 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/chain-rule.yml",
     "templates/runtime/event-processing-result.yml",
     "templates/runtime/dead-letter-event.yml",
+    "templates/runtime/update-grant.json",
+    "templates/runtime/backup-policy.yml",
     "templates/agent-config/AGENTS.md",
     "templates/agent-config/CLAUDE.md",
     "templates/agent-config/ROUTER.md",
@@ -323,6 +328,74 @@ def validate_watch_registries(root: Path, result: ValidationResult) -> None:
                 result.errors.append(f"watch source {source_id} trigger rule {rule_id} missing idempotency key: {sources_path}")
 
 
+def validate_capability_registries(root: Path, result: ValidationResult) -> None:
+    registry_root = root / "registries"
+    capabilities_path = registry_root / "capabilities.yml"
+    if not capabilities_path.is_file():
+        return
+
+    typed_ids: dict[str, set[str]] = {}
+    for capability_type, collection in CAPABILITY_COLLECTIONS.items():
+        relative_path = REGISTRY_FILES[collection]
+        path = root / relative_path
+        if not path.is_file():
+            continue
+        typed_ids[capability_type] = {
+            str(entry.get("id"))
+            for entry in load_registry(path, collection)
+            if entry.get("id")
+        }
+
+    for entry in load_registry(capabilities_path, "capabilities"):
+        capability_id = str(entry.get("id") or "<missing>")
+        capability_type = str(entry.get("type") or "")
+        ref = str(entry.get("ref") or "")
+        if capability_type not in CAPABILITY_COLLECTIONS:
+            result.errors.append(f"capability {capability_id} has unknown type {capability_type!r}: {capabilities_path}")
+            continue
+        if not ref:
+            result.errors.append(f"capability {capability_id} missing ref: {capabilities_path}")
+            continue
+        if ref not in typed_ids.get(capability_type, set()):
+            registry_name = CAPABILITY_COLLECTIONS[capability_type]
+            result.errors.append(
+                f"capability {capability_id} references missing {capability_type} {ref!r} in {REGISTRY_FILES[registry_name]}"
+            )
+
+
+def validate_update_backup_contract(root: Path, result: ValidationResult) -> None:
+    backup_policy = load_control_yaml(root / "registries" / "backup-policy.yml", result).get("backup_policy") or {}
+    if backup_policy:
+        if not backup_policy.get("include"):
+            result.errors.append(f"backup policy missing include list: {root / 'registries' / 'backup-policy.yml'}")
+        if not backup_policy.get("exclude"):
+            result.errors.append(f"backup policy missing exclude list: {root / 'registries' / 'backup-policy.yml'}")
+
+    grant_path = root / "registries" / "update-grant.json"
+    if not grant_path.is_file():
+        return
+    try:
+        grant = json.loads(grant_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        result.errors.append(f"invalid JSON: {grant_path}: {exc}")
+        return
+    remotes = grant.get("remotes") or {}
+    if not (remotes.get("update") or {}).get("url"):
+        result.errors.append(f"update grant missing update remote URL: {grant_path}")
+    if not (remotes.get("backup") or {}).get("url"):
+        result.errors.append(f"update grant missing backup remote URL: {grant_path}")
+    if (remotes.get("update") or {}).get("url") == (remotes.get("backup") or {}).get("url"):
+        result.errors.append(f"update and backup remotes must be separate: {grant_path}")
+    for key_name in ("update_ed25519", "backup_ed25519"):
+        key_path = root / "security" / "ssh" / key_name
+        if not key_path.is_file():
+            result.errors.append(f"missing private key for update grant: {key_path}")
+            continue
+        mode = key_path.stat().st_mode & 0o777
+        if mode != 0o600:
+            result.errors.append(f"private key must use mode 0600: {key_path}")
+
+
 def validate_root(root: str | Path) -> ValidationResult:
     os_root = expand_path(root)
     result = ValidationResult(root=os_root)
@@ -337,6 +410,20 @@ def validate_root(root: str | Path) -> ValidationResult:
         require_file(os_root / filename, result)
     validate_claude_adapter(os_root / "CLAUDE.md", result)
     warn_legacy_agent(os_root / "AGENT.md", result)
+
+    for directory in VISIBLE_CAPABILITY_DIRECTORIES:
+        require_dir(os_root / directory, result)
+    require_file(os_root / "INVENTORY.md", result)
+    for relative_path in REGISTRY_FILES.values():
+        require_file(os_root / relative_path, result)
+    require_file(os_root / "registries" / "updates.yml", result)
+    require_file(os_root / "registries" / "customer-identity.json", result)
+    require_file(os_root / "registries" / "backup-policy.yml", result)
+    require_dir(os_root / "security" / "ssh", result)
+    require_dir(os_root / "logs" / "updates", result)
+    require_dir(os_root / "logs" / "backups", result)
+    validate_capability_registries(os_root, result)
+    validate_update_backup_contract(os_root, result)
 
     projects_link = os_root / PROJECTS_LINK_NAME
     if not projects_link.exists() and not projects_link.is_symlink():

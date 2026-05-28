@@ -10,6 +10,7 @@ then:
     route_to: shared_factory
     workflow: review_event
     context_profile: event_context
+    execution_target: codex
     maturity: prepare
 approval:
   required: false
@@ -17,7 +18,7 @@ limits:
   max_chain_depth: 3
   cooldown: 10_minutes
 idempotency:
-  key: "{event_id}:{rule_id}"
+  key: "{event_idempotency_key}:{rule_id}"
 outputs:
   run_queue: shared_factory/00-control-plane/run-queue.yml
   event_log: shared_factory/06-runs-and-logs/events/

@@ -9,26 +9,46 @@ from typing import Any
 
 import yaml
 
+from .capability_registry import REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, inventory_markdown
 from .scaffold import (
     AUTOMATION_FILES,
+    ROOT_MARKER_FILENAME,
     WORKFLOW_FILES,
+    agent_entrypoint,
     automation_logs_readme,
     automation_scaffold_content,
+    claude_adapter,
     create_domain_structure,
+    ensure_customer_update_contract,
     ensure_dir,
+    ensure_update_metadata,
     expand_path,
     template_source_dir,
     validate_name,
     write_file_once,
+    write_root_marker,
     workflow_examples_readme,
     workflow_runs_readme,
     workflow_scaffold_content,
 )
+from .mcp_catalog import mcp_tools_markdown
 from .validate import ValidationResult, validate_domain
 
 
 PRIVATE_TERMS = ("genome", "clark", "clarks_consulting", "los", "lenders")
-CUSTOMER_ROOT_FILES = ("README.md", "ROUTER.md", "AGENTS.md", "CLAUDE.md", "AGENT.md", "customer.yml")
+CUSTOMER_ROOT_FILES = (
+    ROOT_MARKER_FILENAME,
+    "README.md",
+    "ROUTER.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTEXT.md",
+    "RULES.md",
+    "TOOLS.md",
+    "agentic-os.lock.json",
+    "UPDATE_POLICY.md",
+    "customer.yml",
+)
 
 
 @dataclass
@@ -145,7 +165,9 @@ def render_customer_router(profile: dict[str, Any]) -> str:
     rows = "\n".join(f"| `{domain}` | `{domain}/ROUTER.md` |" for domain in customer["approved_domains"])
     return f"""# Customer Router
 
-Read this file first, then load only the domain router and context files needed for the request.
+Read this file first, then load only the domain router and context files needed
+for the request. After routing to a domain, read that domain's `ROUTER.md`,
+`CONTEXT.md`, `RULES.md`, and `TOOLS.md`, then repeat the routing decision.
 
 ## Routing Table
 
@@ -162,11 +184,125 @@ Read this file first, then load only the domain router and context files needed 
 
 
 def render_agent_router() -> str:
-    return """# Agent Router
+    return agent_entrypoint("this customer Agentic OS root")
 
-Source of truth: `ROUTER.md`.
 
-Load `ROUTER.md`, then follow the relevant domain router and context file before acting.
+def render_customer_context(profile: dict[str, Any]) -> str:
+    customer = profile_customer(profile)
+    domains = "\n".join(f"- `{domain}`" for domain in customer["approved_domains"])
+    return f"""# Customer Context
+
+This root is a customer-specific Agentic OS install. Use only the approved
+domains, source systems, and approval rules in this install.
+
+## Customer
+
+| Field | Value |
+| --- | --- |
+| Slug | `{customer['slug']}` |
+| Display Name | {customer['display_name']} |
+| Notion Workspace | {customer.get('notion_workspace', '')} |
+
+## Approved Domains
+
+{domains}
+
+## What To Load
+
+| Need | Read First | Read When Needed | Skip By Default |
+| --- | --- | --- | --- |
+| Route work | `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md` | selected domain router | unapproved domains |
+| Domain work | selected domain context files | source maps, project status, run logs | unrelated domains |
+| Customer-visible output | `RULES.md`, approval policy, source map | human approval record | private source packages |
+
+## Done Means
+
+- Work stays inside customer-approved domains and systems.
+- Approval gates are followed before external or customer-visible actions.
+- Source evidence and validation are recorded.
+"""
+
+
+def render_customer_rules(profile: dict[str, Any]) -> str:
+    customer = profile_customer(profile)
+    return f"""# Rules
+
+These rules apply to the customer OS root for `{customer['display_name']}` unless a narrower layer provides a stricter rule.
+
+## Approval Gates
+
+- External writes require explicit approval.
+- Customer-visible output requires explicit approval.
+- Production changes require explicit approval.
+- Destructive actions require explicit approval.
+- Secrets, billing, and legal records require explicit approval.
+
+## Operating Rules
+
+- This install is for `{customer['display_name']}` only.
+- Use only customer-approved domains and source systems.
+- Do not copy private source-package terms, internal client names, or unrelated tenant data into customer artifacts.
+- Route before acting.
+- Preserve source links and validation evidence.
+- Keep secrets out of prompts, logs, docs, generated config, and run artifacts.
+
+## Precedence
+
+Narrower rules override these rules unless this file is stricter for safety, privacy, production, billing, legal, or customer-visible work.
+"""
+
+
+def render_customer_tools(profile: dict[str, Any]) -> str:
+    customer = profile_customer(profile)
+    return f"""# Tools
+
+This registry names the visible tool surface for `{customer['display_name']}`.
+
+## Skills
+
+| Skill | Use When | Source |
+| --- | --- | --- |
+| `os-navigator` | Route customer work to the correct domain, workflow, automation, or run log. | shared skill registry |
+| `workflow-builder` | Create or improve reusable workflows. | shared skill registry |
+| `automation-qualifier` | Decide whether a process is safe to automate. | shared skill registry |
+| `context-pack-builder` | Assemble focused customer-safe context packs. | shared skill registry |
+| `run-logger` | Capture execution evidence. | shared skill registry |
+
+## Commands
+
+| Command | Use When | Notes |
+| --- | --- | --- |
+| `agentic-os customer validate` | Validate this customer OS. | Run before handoff after structural changes. |
+| `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
+| `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
+
+## MCP Servers
+
+{mcp_tools_markdown(approved_domains=customer["approved_domains"], include_inactive=False, public_customer=True)}
+
+## Plugins And Libraries
+
+| Name | Use When | Notes |
+| --- | --- | --- |
+|  |  |  |
+
+## Local Wrappers
+
+| Wrapper | Use When | Path |
+| --- | --- | --- |
+| host tool registry | Shell, terminal, runtime, package-manager, and cleanup work. | inherited from the installed OS when present |
+
+## When To Use What
+
+- Use skills for repeatable customer-safe workflows.
+- Use commands for deterministic filesystem or runtime operations.
+- Use MCP servers only when the current layer's rules and source boundaries allow them.
+
+## Missing Or Disabled
+
+Only list or use tools approved for `{customer['display_name']}`. Record missing
+customer tools in this file instead of silently falling back to another
+workspace.
 """
 
 
@@ -212,6 +348,109 @@ Updates add missing standards, templates, domains, workflows, and automations. T
         write_file_once(shared / "customer" / filename, (template_source_dir() / "customer" / filename).read_text(encoding="utf-8"), result)
 
 
+def public_customer_registry_payloads() -> dict[str, dict[str, Any]]:
+    commands = [
+        {"id": "customer-validate", "command": "agentic-os customer validate", "description": "Validate this customer OS.", "source": "agentic-os customer validate"},
+        {"id": "route", "command": "agentic-os route", "description": "Route a request to the right customer-approved domain.", "source": "agentic-os route"},
+        {"id": "context-build", "command": "agentic-os context build", "description": "Build a focused context packet.", "source": "agentic-os context build"},
+        {"id": "update-register", "command": "agentic-os update register", "description": "Register local public keys for approved updates and backups.", "source": "agentic-os update register"},
+        {"id": "backup-run", "command": "agentic-os backup run", "description": "Plan or record a customer OS backup.", "source": "agentic-os backup run"},
+    ]
+    skills = [
+        {"id": "os-navigator", "name": "OS Navigator", "description": "Route customer work to the right local domain.", "source": "shared skill registry"},
+        {"id": "workflow-builder", "name": "Workflow Builder", "description": "Create or improve customer-approved workflows.", "source": "shared skill registry"},
+        {"id": "automation-qualifier", "name": "Automation Qualifier", "description": "Check whether a customer process is safe to automate.", "source": "shared skill registry"},
+    ]
+    mcp_servers = [
+        {
+            "id": "notion",
+            "name": "Notion",
+            "use_when": "Approved customer control-plane reads and writes.",
+            "boundary": "Verify the intended customer workspace before writing.",
+            "install_scope": "approved customer layers only",
+        },
+        {
+            "id": "agentic_memory",
+            "name": "Agentic Memory",
+            "use_when": "Durable non-secret memory reads and writes approved by local policy.",
+            "boundary": "No secrets or unapproved customer data.",
+            "install_scope": "approved customer layers only",
+        },
+        {
+            "id": "github",
+            "name": "GitHub",
+            "use_when": "Approved repository, issue, and backup/update remote operations.",
+            "boundary": "Use least-privilege credentials; never store token values in the OS.",
+            "install_scope": "approved customer layers only",
+        },
+    ]
+    libraries = [
+        {"id": "context_mode", "name": "Context Mode", "description": "Large-output and file analysis without overloading context.", "source": "local analysis tool"},
+        {"id": "unified_memory", "name": "Unified Memory", "description": "Durable non-secret memory plane.", "source": "approved memory service"},
+    ]
+    hooks = [
+        {"id": "memory-write-router", "name": "Memory Write Router", "description": "Routes non-secret memory writes through policy.", "status": "available"},
+        {"id": "quiet-pr-watch", "name": "Quiet PR Watch", "description": "Writes PR check status artifacts instead of chat polling.", "status": "available"},
+    ]
+    plugins = [
+        {"id": "browser", "name": "Browser", "description": "Browser automation for approved local or customer-visible validation.", "status": "visible"},
+    ]
+    rules = [
+        {"id": "route-read-cd-repeat", "name": "Route, read, cd, repeat", "description": "Read local routing, context, rules, and tools before acting.", "source": "AGENTS.md"},
+        {"id": "strictest-rule-wins", "name": "Strictest rule wins", "description": "The strictest applicable safety rule wins.", "source": "RULES.md"},
+        {"id": "no-secret-registry-values", "name": "No secret registry values", "description": "Reference secret environment variable names only.", "source": "RULES.md"},
+    ]
+    collections = {
+        "commands": commands,
+        "skills": skills,
+        "mcp_servers": mcp_servers,
+        "libraries": libraries,
+        "hooks": hooks,
+        "plugins": plugins,
+        "rules": rules,
+    }
+    capabilities = []
+    type_map = {
+        "commands": "command",
+        "skills": "skill",
+        "mcp_servers": "mcp_server",
+        "libraries": "library",
+        "hooks": "hook",
+        "plugins": "plugin",
+        "rules": "rule",
+    }
+    for collection, entries in collections.items():
+        for entry in entries:
+            capabilities.append(
+                {
+                    "id": f"{type_map[collection]}:{entry['id']}",
+                    "type": type_map[collection],
+                    "ref": entry["id"],
+                    "name": entry.get("name") or entry.get("command") or entry["id"],
+                    "description": entry.get("description") or entry.get("use_when") or "",
+                }
+            )
+    return {
+        "capabilities": {"capabilities": capabilities},
+        "commands": {"commands": commands},
+        "skills": {"skills": skills},
+        "mcp_servers": {"mcp_servers": mcp_servers},
+        "libraries": {"libraries": libraries},
+        "hooks": {"hooks": hooks},
+        "plugins": {"plugins": plugins},
+        "rules": {"rules": rules},
+    }
+
+
+def ensure_public_customer_capability_surface(root: Path, result: CustomerResult) -> None:
+    for directory in VISIBLE_CAPABILITY_DIRECTORIES:
+        ensure_dir(root / directory, result)
+    payloads = public_customer_registry_payloads()
+    for registry_name, relative_path in REGISTRY_FILES.items():
+        write_file_once(root / relative_path, yaml.safe_dump(payloads[registry_name], sort_keys=False), result)
+    write_file_once(root / "INVENTORY.md", inventory_markdown(payloads), result)
+
+
 def parse_bundle_item(item: Any, default_domain: str) -> tuple[str, str, str]:
     if isinstance(item, str):
         parts = item.split("/")
@@ -237,7 +476,7 @@ def parse_bundle_item(item: Any, default_domain: str) -> tuple[str, str, str]:
 
 def create_customer_domain(root: Path, domain: str) -> CustomerResult:
     result = CustomerResult()
-    create_domain_structure(root, domain, result)
+    create_domain_structure(root, domain, result, public_customer_tools=True)
     return result
 
 
@@ -283,10 +522,17 @@ def customer_init(customer_slug: str, profile_path: str | Path, target: str | Pa
     root = expand_path(target)
     result = CustomerResult()
     root.mkdir(parents=True, exist_ok=True)
+    write_root_marker(root, result)
+    ensure_public_customer_capability_surface(root, result)
+    ensure_update_metadata(root, result)
+    ensure_customer_update_contract(root, result)
     write_file_once(root / "README.md", render_customer_readme(profile), result)
     write_file_once(root / "ROUTER.md", render_customer_router(profile), result)
-    for filename in ("AGENTS.md", "CLAUDE.md", "AGENT.md"):
-        write_file_once(root / filename, render_agent_router(), result)
+    write_file_once(root / "AGENTS.md", render_agent_router(), result)
+    write_file_once(root / "CLAUDE.md", claude_adapter(), result)
+    write_file_once(root / "CONTEXT.md", render_customer_context(profile), result)
+    write_file_once(root / "RULES.md", render_customer_rules(profile), result)
+    write_file_once(root / "TOOLS.md", render_customer_tools(profile), result)
     write_file_once(root / "customer.yml", yaml.safe_dump(profile, sort_keys=False), result)
     write_customer_assets(root, profile, result)
     apply_customer_profile(root, profile, result)
@@ -300,6 +546,15 @@ def customer_update(customer_slug: str, root: str | Path) -> dict[str, Any]:
         raise ValueError(f"customer.yml is missing: {profile_path}")
     profile = normalize_profile(customer_slug, yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {})
     result = CustomerResult()
+    write_root_marker(os_root, result)
+    ensure_public_customer_capability_surface(os_root, result)
+    ensure_update_metadata(os_root, result)
+    ensure_customer_update_contract(os_root, result)
+    write_file_once(os_root / "AGENTS.md", render_agent_router(), result)
+    write_file_once(os_root / "CLAUDE.md", claude_adapter(), result)
+    write_file_once(os_root / "CONTEXT.md", render_customer_context(profile), result)
+    write_file_once(os_root / "RULES.md", render_customer_rules(profile), result)
+    write_file_once(os_root / "TOOLS.md", render_customer_tools(profile), result)
     write_customer_assets(os_root, profile, result)
     apply_customer_profile(os_root, profile, result)
     return {"root": str(os_root), "customer": profile_customer(profile)["slug"], **result.as_dict()}
@@ -327,6 +582,12 @@ def customer_validate(root: str | Path) -> dict[str, Any]:
     for filename in CUSTOMER_ROOT_FILES:
         if not (os_root / filename).is_file():
             core_errors.append(f"missing customer root file: {os_root / filename}")
+    for filename in ("customer-identity.json", "backup-policy.yml"):
+        if not (os_root / "registries" / filename).is_file():
+            core_errors.append(f"missing customer registry file: {os_root / 'registries' / filename}")
+    for directory in ("security/ssh", "logs/updates", "logs/backups"):
+        if not (os_root / directory).is_dir():
+            core_errors.append(f"missing customer runtime folder: {os_root / directory}")
     profile_path = os_root / "customer.yml"
     profile: dict[str, Any] = {}
     if profile_path.is_file():

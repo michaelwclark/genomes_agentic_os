@@ -12,7 +12,24 @@ cursor:
 dedupe:
   idempotency_key: "{source_type}:{source_id}:{event_id}"
 filters: {}
-trigger_rules: []
+trigger_rules:
+  - id: <trigger_rule_id>
+    enabled: false
+    when:
+      event_type: <source_type>.polled
+      fields: {}
+    then:
+      emit_event:
+        type: os.observation
+      enqueue:
+        work_type: review
+        route_to: shared_factory
+        context_profile: source_event
+        maturity: observe
+    approval:
+      required: false
+    idempotency:
+      key: "{event_id}:{rule_id}"
 route:
   command: agentic-os route
   context_command: agentic-os context build

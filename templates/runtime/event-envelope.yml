@@ -18,6 +18,7 @@ correlation:
   correlation_id: <correlation_id>
   parent_event_id: null
   run_id: null
+  chain_depth: 0
 idempotency_key: <dedupe_key>
 summary: ""
 payload_ref:

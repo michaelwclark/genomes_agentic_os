@@ -25,4 +25,5 @@ agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace
 - Never print credential values.
 - Track only credential state and required environment variable names.
 - Stop if the verified Notion workspace is Michael Clark's personal Notion or any non-Genome workspace.
-- Keep setup in `planned` or `dry-run` until health checks and approval gates are satisfied.
+- Keep provider-backed setup in `planned`, `dry-run`, `blocked`, or `approval-needed` until health checks and approval gates are satisfied.
+- Runtime tracking should plan `Integrations`, `Execution Targets`, `Heartbeats`, `Schedules`, `Run Queue`, `Approvals`, and `Runs`; apply only after Genome's Notion is verified.

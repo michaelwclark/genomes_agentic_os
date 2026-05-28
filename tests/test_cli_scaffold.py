@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import tomllib
 
 import pytest
 import yaml
@@ -52,6 +53,15 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "CONTEXT.md").is_file()
     assert (root / "RULES.md").is_file()
     assert (root / "TOOLS.md").is_file()
+    assert (root / "agentic-os.lock.json").is_file()
+    assert (root / "UPDATE_POLICY.md").is_file()
+    assert (root / "registries" / "updates.yml").is_file()
+    assert (root / "registries" / "customer-identity.json").is_file()
+    assert (root / "registries" / "backup-policy.yml").is_file()
+    assert not (root / "registries" / "update-grant.json").exists()
+    assert (root / "security" / "ssh").is_dir()
+    assert (root / "logs" / "updates").is_dir()
+    assert (root / "logs" / "backups").is_dir()
     assert not (root / "AGENT.md").exists()
     assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
     root_agents = (root / "AGENTS.md").read_text(encoding="utf-8")
@@ -59,6 +69,37 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert "CONTEXT.md" in root_agents
     assert "RULES.md" in root_agents
     assert "TOOLS.md" in root_agents
+    for directory in ("bin", "commands", "skills", "mcp", "plugins", "libraries", "hooks", "rules", "registries"):
+        assert (root / directory).is_dir()
+    for registry_name in (
+        "capabilities.yml",
+        "commands.yml",
+        "skills.yml",
+        "mcp-servers.yml",
+        "libraries.yml",
+        "hooks.yml",
+        "plugins.yml",
+        "rules.yml",
+    ):
+        assert (root / "registries" / registry_name).is_file()
+    inventory = (root / "INVENTORY.md").read_text(encoding="utf-8")
+    assert "## Commands" in inventory
+    assert "`make-skill`" in inventory
+    assert "`orchestrate`" in inventory
+    commands = yaml.safe_load((root / "registries" / "commands.yml").read_text(encoding="utf-8"))
+    assert {entry["command"] for entry in commands["commands"]} >= {
+        "/make-skill",
+        "/make-domain",
+        "/make-automation",
+        "/make-workflow",
+        "/orchestrate",
+    }
+    mcp_servers = yaml.safe_load((root / "registries" / "mcp-servers.yml").read_text(encoding="utf-8"))
+    assert {"context_mode", "genomes_brain"} <= {entry["id"] for entry in mcp_servers["mcp_servers"]}
+    libraries = yaml.safe_load((root / "registries" / "libraries.yml").read_text(encoding="utf-8"))
+    assert {"context_mode", "unified_memory"} <= {entry["id"] for entry in libraries["libraries"]}
+    assert (root / "commands" / "os-route.md").is_file()
+    assert (root / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
@@ -125,6 +166,8 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-processing-result.yml"
     ).is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "dead-letter-event.yml").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "update-grant.json").is_file()
+    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "backup-policy.yml").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "index.html").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
@@ -191,6 +234,126 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
+    assert not validate_root(root).errors
+
+
+def test_validate_fails_when_declared_capability_is_missing_from_registry(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    capabilities_path = root / "registries" / "capabilities.yml"
+    capabilities = yaml.safe_load(capabilities_path.read_text(encoding="utf-8"))
+    capabilities["capabilities"].append(
+        {
+            "id": "command:missing-command",
+            "type": "command",
+            "ref": "missing-command",
+            "name": "Missing Command",
+            "description": "This command is intentionally absent from the command registry.",
+        }
+    )
+    capabilities_path.write_text(yaml.safe_dump(capabilities, sort_keys=False), encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert not result.ok
+    assert any("missing command 'missing-command'" in error for error in result.errors)
+
+
+def test_update_channel_check_plan_apply_and_phone_home_are_local_and_safe(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    manifest = tmp_path / "manifest.yml"
+
+    assert main(["init", "--target", str(root)]) == 0
+    local_command = root / "commands" / "os-route.md"
+    local_command.write_text("# local command edit\n", encoding="utf-8")
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "version": "0.2.0",
+                "channel": "stable",
+                "policy": "operator_approved",
+                "safe_additive_paths": ["templates", "registries", "commands"],
+                "changes": [
+                    {"type": "template", "path": "templates/runtime/example.yml", "summary": "safe addition"},
+                    {"type": "rule", "path": "RULES.md", "summary": "risky rule change"},
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["update", "check", "--root", str(root), "--manifest", str(manifest)]) == 0
+    check = yaml.safe_load(capsys.readouterr().out)
+    assert check["update_available"] is True
+    assert check["mutated"] is False
+    assert not (root / "registries" / "update-plan.yml").exists()
+
+    assert main(["update", "plan", "--root", str(root), "--manifest", str(manifest)]) == 0
+    planned = yaml.safe_load(capsys.readouterr().out)
+    assert Path(planned["plan_path"]).is_file()
+    assert planned["plan"]["approval_required"] is True
+
+    assert main(["update", "apply", "--root", str(root)]) == 2
+    blocked = yaml.safe_load(capsys.readouterr().out)
+    assert blocked["blocked"] is True
+    assert "risky changes require approval" == blocked["status"]["reason"]
+
+    assert main(["update", "apply", "--root", str(root), "--approve-risky"]) == 0
+    applied = yaml.safe_load(capsys.readouterr().out)
+    assert applied["applied"] is True
+    assert local_command.read_text(encoding="utf-8") == "# local command edit\n"
+
+    assert main(["update", "phone-home", "--root", str(root)]) == 0
+    payload = yaml.safe_load(capsys.readouterr().out)
+    assert payload["install"]["root_name"] == "agentic_os"
+    assert payload["privacy"]["excludes"] == ["prompts", "customer files", "source code", "logs", "secrets"]
+    assert "logs" not in payload["health"]["registry_counts"]
+
+
+def test_license_register_update_pull_and_backup_use_local_grants(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    raw_key = "license-key-should-not-print"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["license", "activate", "--root", str(root), "--key", raw_key]) == 0
+    activated_output = capsys.readouterr().out
+    assert raw_key not in activated_output
+    activated = yaml.safe_load(activated_output)
+    assert activated["license"]["status"] == "active"
+    assert len(activated["license"]["key_hash"]) == 64
+    identity = (root / "registries" / "customer-identity.json").read_text(encoding="utf-8")
+    assert raw_key not in identity
+
+    assert main(["update", "register", "--root", str(root)]) == 0
+    registered = yaml.safe_load(capsys.readouterr().out)
+    assert Path(registered["grant_path"]).is_file()
+    assert "public_keys" in registered
+    assert "private_keys" in registered
+    assert raw_key not in yaml.safe_dump(registered)
+    assert (root / "security" / "ssh" / "update_ed25519").stat().st_mode & 0o777 == 0o600
+    assert (root / "security" / "ssh" / "backup_ed25519").stat().st_mode & 0o777 == 0o600
+
+    assert main(["update", "pull", "--root", str(root), "--dry-run"]) == 0
+    planned_pull = yaml.safe_load(capsys.readouterr().out)
+    assert planned_pull["status"] == "planned"
+    assert Path(planned_pull["log_path"]).is_file()
+
+    assert main(["update", "pull", "--root", str(root), "--apply"]) == 0
+    pulled = yaml.safe_load(capsys.readouterr().out)
+    assert pulled["status"] == "pulled"
+
+    assert main(["backup", "run", "--root", str(root), "--dry-run"]) == 0
+    backup_plan = yaml.safe_load(capsys.readouterr().out)
+    assert backup_plan["status"] == "planned"
+    assert backup_plan["include"]
+    assert backup_plan["exclude"]
+
+    assert main(["backup", "run", "--root", str(root), "--apply"]) == 0
+    backup = yaml.safe_load(capsys.readouterr().out)
+    assert backup["status"] == "completed"
+    assert Path(backup["log_path"]).is_file()
     assert not validate_root(root).errors
 
 
@@ -369,6 +532,11 @@ def test_config_install_apply_creates_config_and_prompt_files(tmp_path: Path) ->
     for filename in ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"):
         assert (root / filename).is_file()
     assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    tools = (root / "TOOLS.md").read_text(encoding="utf-8")
+    assert "`/orchestrate`" in tools
+    assert "`context_mode`" in tools
+    assert "`unified_memory`" in tools
+    assert "`route-read-cd-repeat`" in tools
     assert not (root / "BRAIN.md").exists()
 
 
@@ -382,6 +550,43 @@ def test_config_doctor_accepts_installed_otel_and_mcp_contract(tmp_path: Path) -
     assert "AGENTIC_OS_OTEL_HEADERS" in content
     assert "GENOMES_NOTION_PAT=" not in content
     assert main(["config", "doctor", "--root", str(root), "--layer", "agentic_os_root"]) == 0
+
+
+def test_config_install_places_mcp_servers_by_layer(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["config", "install", "--root", str(root), "--layer", "agentic_os_root", "--apply"]) == 0
+    root_config = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
+    root_servers = root_config["mcp_servers"]
+    assert {"notion", "genomes_brain", "github", "context_mode", "filesystem_runtime"} <= set(root_servers)
+    assert "sentry" not in root_servers
+    assert "datadog" not in root_servers
+    assert "supabase" not in root_servers
+    assert "composio" not in root_servers
+    assert "orgo" not in root_servers
+    assert "playwright" not in root_servers
+    assert root_servers["github"]["bearer_token_env_var"] == "GITHUB_PAT_TOKEN"
+    assert "GITHUB_PAT_TOKEN=" not in (root / "config.toml").read_text(encoding="utf-8")
+    tools = (root / "TOOLS.md").read_text(encoding="utf-8")
+    for server_id in ("notion", "genomes_brain", "github", "context_mode", "sentry", "datadog", "supabase", "composio", "orgo", "playwright"):
+        assert f"`{server_id}`" in tools
+
+    los_root = root / "los"
+    assert main(["config", "install", "--root", str(los_root), "--layer", "domain_or_lane", "--apply"]) == 0
+    los_servers = tomllib.loads((los_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+    assert {"notion", "genomes_brain", "github", "context_mode", "sentry", "datadog"} <= set(los_servers)
+    assert "supabase" not in los_servers
+    assert "composio" not in los_servers
+    assert "orgo" not in los_servers
+    assert main(["config", "doctor", "--root", str(los_root), "--layer", "domain_or_lane"]) == 0
+
+    clarks_root = root / "clarks_consulting"
+    assert main(["config", "install", "--root", str(clarks_root), "--layer", "domain_or_lane", "--apply"]) == 0
+    clarks_servers = tomllib.loads((clarks_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+    assert {"notion", "genomes_brain", "github", "context_mode", "supabase"} <= set(clarks_servers)
+    assert "sentry" not in clarks_servers
+    assert "datadog" not in clarks_servers
+    assert main(["config", "doctor", "--root", str(clarks_root), "--layer", "domain_or_lane"]) == 0
 
 
 def test_config_doctor_reports_missing_required_otel_and_mcp_keys(tmp_path: Path) -> None:
@@ -1477,7 +1682,97 @@ def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys
     assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
     repeated = yaml.safe_load(capsys.readouterr().out)
     assert repeated["actions"][0]["results"][0]["status"] == "skipped"
+    assert main(["event", "summary", "--root", str(root), "--limit", "5"]) == 0
+    summary = yaml.safe_load(capsys.readouterr().out)
+    assert summary["last_events"][0]["id"] == event["id"]
+    assert summary["pending_follow_up"][0]["work_type"] == "documentation_update"
+    assert summary["processing_results"]
     assert main(["validate", "--root", str(root)]) == 0
+
+
+def test_event_graph_duplicate_event_envelopes_do_not_duplicate_queue_work(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert (
+        main(
+            [
+                "event",
+                "append",
+                "--root",
+                str(root),
+                "--type",
+                "github.pull_request.merged",
+                "--source",
+                "github:genomes_agentic_os:pull/123",
+            ]
+        )
+        == 0
+    )
+    event = yaml.safe_load(capsys.readouterr().out)
+    event_path = Path(event["path"])
+    duplicate = yaml.safe_load(event_path.read_text(encoding="utf-8"))
+    duplicate["id"] = "evt_duplicate_pr_123"
+    duplicate["observed_at"] = "2026-05-28T00:00:01Z"
+    duplicate_path = event_path.parent / "evt_duplicate_pr_123.yml"
+    duplicate_path.write_text(yaml.safe_dump(duplicate, sort_keys=False), encoding="utf-8")
+
+    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
+    data["chain_rules"][0]["enabled"] = True
+    data["chain_rules"][0]["when"]["filters"] = {}
+    chain_rules.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
+    processed = yaml.safe_load(capsys.readouterr().out)
+    statuses = [action["results"][0]["status"] for action in processed["actions"]]
+    assert statuses == ["queued", "skipped"]
+    assert processed["actions"][1]["results"][0]["reason"] == "idempotency key already processed"
+
+    run_queue = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    assert len(run_queue["run_queue"]) == 1
+
+
+def test_event_graph_max_depth_and_approval_needed_outputs(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["event", "append", "--root", str(root), "--type", "github.check_suite.failed", "--source", "github:check:1"]) == 0
+    event = yaml.safe_load(capsys.readouterr().out)
+    event_path = Path(event["path"])
+    envelope = yaml.safe_load(event_path.read_text(encoding="utf-8"))
+    envelope["correlation"]["chain_depth"] = 2
+    event_path.write_text(yaml.safe_dump(envelope, sort_keys=False), encoding="utf-8")
+
+    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
+    ci_rule = next(rule for rule in data["chain_rules"] if rule["id"] == "ci_failure_investigation")
+    ci_rule["enabled"] = True
+    ci_rule["limits"]["max_chain_depth"] = 2
+    chain_rules.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
+    max_depth = yaml.safe_load(capsys.readouterr().out)
+    assert max_depth["actions"][0]["results"][0]["status"] == "skipped"
+    assert "max chain depth reached" in max_depth["actions"][0]["results"][0]["reason"]
+
+    assert main(["event", "append", "--root", str(root), "--type", "os.run.closed.needs_approval", "--source", "run:needs-approval"]) == 0
+    capsys.readouterr()
+    data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
+    approval_rule = next(rule for rule in data["chain_rules"] if rule["id"] == "run_needs_approval_to_approval_item")
+    approval_rule["enabled"] = True
+    chain_rules.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
+    approval = yaml.safe_load(capsys.readouterr().out)
+    approval_result = next(
+        result
+        for action in approval["actions"]
+        for result in action["results"]
+        if result["chain_rule_id"] == "run_needs_approval_to_approval_item"
+    )
+    assert approval_result["status"] == "approval-needed"
+    assert approval_result["queue_item"]["approval_state"] == "required"
 
 
 def test_event_graph_dead_letter_and_run_close_emit_events(tmp_path: Path, capsys) -> None:
@@ -1509,6 +1804,22 @@ def test_event_graph_dead_letter_and_run_close_emit_events(tmp_path: Path, capsy
     processed = yaml.safe_load(capsys.readouterr().out)
     assert processed["actions"][0]["results"][0]["status"] == "dead-letter"
     assert list((root / "shared_factory" / "06-runs-and-logs" / "events" / "dead-letter").glob("*.yml"))
+
+    data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
+    data["chain_rules"][-1]["then"] = {
+        "enqueue": {
+            "work_type": "failure_review",
+            "route_to": "shared_factory",
+            "workflow": "review_failed_event",
+            "context_profile": "event_context",
+            "maturity": "prepare",
+        }
+    }
+    chain_rules.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    assert main(["event", "replay", processed["actions"][0]["event_id"], "--root", str(root), "--dry-run"]) == 0
+    replay = yaml.safe_load(capsys.readouterr().out)
+    assert replay["results"][0]["status"] == "dry-run"
+    assert replay["results"][0]["queue_item"]["work_type"] == "failure_review"
 
     assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
     assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0

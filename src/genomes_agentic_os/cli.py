@@ -26,6 +26,7 @@ from .event_graph import (
     list_events,
     process_due,
     replay_event,
+    summarize_events,
     test_chain_rule,
 )
 from .losmon import format_losmon_result, losmon_validate
@@ -45,10 +46,12 @@ from .runtime_ops import (
     integration_setup,
     runtime_doctor,
     runtime_init,
+    runtime_run_next,
     schedule_create,
     schedule_run_due,
 )
 from .scaffold import (
+    DEFAULT_PROJECTS_SOURCE,
     create_automation,
     create_domain,
     create_project,
@@ -68,6 +71,19 @@ from .source_watch import (
     poll_watch_source,
     run_due_watch_sources,
 )
+from .update_ops import (
+    activate_license,
+    backup_run,
+    format_update_result,
+    phone_home_payload,
+    update_apply,
+    update_check,
+    update_plan,
+    update_pull,
+    update_register,
+    update_rollback,
+    update_status,
+)
 from .validate import validate_root
 from .workflow_ops import check_workflow, close_run_log, format_findings
 
@@ -82,6 +98,16 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init", help="Create the base installed OS tree.")
     init_parser.add_argument("--target", default=DEFAULT_ROOT, help="Installed OS target path.")
     init_parser.add_argument("--profile", help="Room-first OS profile YAML.")
+    init_parser.add_argument(
+        "--projects-source",
+        default=DEFAULT_PROJECTS_SOURCE,
+        help="Source projects directory to symlink into the installed OS root.",
+    )
+    init_parser.add_argument(
+        "--include-legacy-agent",
+        action="store_true",
+        help="Also create AGENT.md compatibility adapters for harnesses that require that exact filename.",
+    )
     init_parser.set_defaults(handler=handle_init)
 
     domain_parser = subparsers.add_parser("domain", help="Manage domains.")
@@ -89,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
     domain_create = domain_subparsers.add_parser("create", help="Create a domain scaffold.")
     domain_create.add_argument("name")
     domain_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    domain_create.add_argument(
+        "--include-legacy-agent",
+        action="store_true",
+        help="Also create AGENT.md compatibility adapters for harnesses that require that exact filename.",
+    )
     domain_create.set_defaults(handler=handle_domain_create)
 
     profile_parser = subparsers.add_parser("profile", help="Manage room-first OS profiles.")
@@ -237,6 +268,66 @@ def build_parser() -> argparse.ArgumentParser:
     customer_validate_parser.add_argument("--root", required=True)
     customer_validate_parser.set_defaults(handler=handle_customer_validate)
 
+    update_parser = subparsers.add_parser("update", help="Check, plan, apply, and report installed OS updates.")
+    update_subparsers = update_parser.add_subparsers(dest="update_command", required=True)
+    update_check_parser = update_subparsers.add_parser("check", help="Check for available updates without mutating files.")
+    update_check_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_check_parser.add_argument("--manifest", help="Update manifest YAML or JSON file.")
+    update_check_parser.set_defaults(handler=handle_update_check)
+    update_register_parser = update_subparsers.add_parser(
+        "register",
+        help="Generate local update/backup SSH keys and write an update grant.",
+    )
+    update_register_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_register_parser.set_defaults(handler=handle_update_register)
+    update_pull_parser = update_subparsers.add_parser("pull", help="Plan or record an operator-pushed update pull.")
+    update_pull_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_pull_mode = update_pull_parser.add_mutually_exclusive_group()
+    update_pull_mode.add_argument("--dry-run", action="store_true", default=True)
+    update_pull_mode.add_argument("--apply", action="store_true")
+    update_pull_parser.set_defaults(handler=handle_update_pull)
+    update_plan_parser = update_subparsers.add_parser("plan", help="Write an inspectable update plan.")
+    update_plan_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_plan_parser.add_argument("--manifest", help="Update manifest YAML or JSON file.")
+    update_plan_parser.set_defaults(handler=handle_update_plan)
+    update_apply_parser = update_subparsers.add_parser("apply", help="Apply safe additive update changes.")
+    update_apply_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_apply_parser.add_argument("--plan", help="Previously reviewed update plan YAML file.")
+    update_apply_parser.add_argument("--approve-risky", action="store_true", help="Allow approved risky changes in the plan.")
+    update_apply_parser.set_defaults(handler=handle_update_apply)
+    update_rollback_parser = update_subparsers.add_parser("rollback", help="Record rollback against the latest update snapshot.")
+    update_rollback_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_rollback_parser.add_argument("--snapshot", help="Specific update snapshot to record.")
+    update_rollback_parser.set_defaults(handler=handle_update_rollback)
+    update_status_parser = update_subparsers.add_parser("status", help="Show local update status.")
+    update_status_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_status_parser.set_defaults(handler=handle_update_status)
+    update_phone_home_parser = update_subparsers.add_parser(
+        "phone-home",
+        help="Emit a heartbeat-safe operational metadata payload.",
+    )
+    update_phone_home_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_phone_home_parser.set_defaults(handler=handle_update_phone_home)
+
+    license_parser = subparsers.add_parser("license", help="Manage customer OS license metadata.")
+    license_subparsers = license_parser.add_subparsers(dest="license_command", required=True)
+    license_activate_parser = license_subparsers.add_parser(
+        "activate",
+        help="Activate a customer license without printing or storing the raw key.",
+    )
+    license_activate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    license_activate_parser.add_argument("--key", required=True, help="Customer license key.")
+    license_activate_parser.set_defaults(handler=handle_license_activate)
+
+    backup_parser = subparsers.add_parser("backup", help="Plan or run GitHub-backed OS state backups.")
+    backup_subparsers = backup_parser.add_subparsers(dest="backup_command", required=True)
+    backup_run_parser = backup_subparsers.add_parser("run", help="Plan or record a backup run.")
+    backup_run_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    backup_run_mode = backup_run_parser.add_mutually_exclusive_group()
+    backup_run_mode.add_argument("--dry-run", action="store_true", default=True)
+    backup_run_mode.add_argument("--apply", action="store_true")
+    backup_run_parser.set_defaults(handler=handle_backup_run)
+
     config_parser = subparsers.add_parser("config", help="Install or update Codex config.toml conventions.")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
     config_install = config_subparsers.add_parser("install", help="Install or merge config.toml for an OS directory.")
@@ -296,6 +387,13 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_doctor_parser = runtime_subparsers.add_parser("doctor", help="Check runtime registry health.")
     runtime_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_doctor_parser.set_defaults(handler=handle_runtime_doctor)
+    runtime_run_next_parser = runtime_subparsers.add_parser("run-next", help="Dispatch the next safe queued runtime item.")
+    runtime_run_next_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_run_next_parser.add_argument("--item-id", help="Specific queue item id to inspect or dispatch.")
+    runtime_run_next_mode = runtime_run_next_parser.add_mutually_exclusive_group()
+    runtime_run_next_mode.add_argument("--dry-run", action="store_true", default=True)
+    runtime_run_next_mode.add_argument("--apply", action="store_true")
+    runtime_run_next_parser.set_defaults(handler=handle_runtime_run_next)
 
     heartbeat_parser = subparsers.add_parser("heartbeat", help="Manage runtime heartbeats.")
     heartbeat_subparsers = heartbeat_parser.add_subparsers(dest="heartbeat_command", required=True)
@@ -436,6 +534,10 @@ def build_parser() -> argparse.ArgumentParser:
     event_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     event_list.add_argument("--limit", type=int, default=20)
     event_list.set_defaults(handler=handle_event_list)
+    event_summary = event_subparsers.add_parser("summary", help="Summarize recent events and pending follow-up.")
+    event_summary.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    event_summary.add_argument("--limit", type=int, default=20)
+    event_summary.set_defaults(handler=handle_event_summary)
     event_process = event_subparsers.add_parser("process-due", help="Process matching chain rules.")
     event_process.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     event_process_mode = event_process.add_mutually_exclusive_group(required=True)
@@ -497,14 +599,25 @@ def print_result(result) -> None:
 
 def handle_init(args: argparse.Namespace) -> int:
     if args.profile:
-        print(format_profile_result(install_profile_os(args.target, args.profile)))
+        print(
+            format_profile_result(
+                install_profile_os(
+                    args.target,
+                    args.profile,
+                    projects_source=args.projects_source,
+                    include_legacy_agent=args.include_legacy_agent,
+                )
+            )
+        )
         return 0
-    print_result(init_os(args.target))
+    print_result(
+        init_os(args.target, projects_source=args.projects_source, include_legacy_agent=args.include_legacy_agent)
+    )
     return 0
 
 
 def handle_domain_create(args: argparse.Namespace) -> int:
-    print_result(create_domain(args.root, args.name))
+    print_result(create_domain(args.root, args.name, include_legacy_agent=args.include_legacy_agent))
     return 0
 
 
@@ -660,6 +773,57 @@ def handle_customer_validate(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def handle_update_check(args: argparse.Namespace) -> int:
+    print(format_update_result(update_check(args.root, manifest=args.manifest)))
+    return 0
+
+
+def handle_update_register(args: argparse.Namespace) -> int:
+    print(format_update_result(update_register(args.root)))
+    return 0
+
+
+def handle_update_pull(args: argparse.Namespace) -> int:
+    print(format_update_result(update_pull(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_update_plan(args: argparse.Namespace) -> int:
+    print(format_update_result(update_plan(args.root, manifest=args.manifest)))
+    return 0
+
+
+def handle_update_apply(args: argparse.Namespace) -> int:
+    result = update_apply(args.root, plan=args.plan, approve_risky=args.approve_risky)
+    print(format_update_result(result))
+    return 2 if result.get("blocked") else 0
+
+
+def handle_update_rollback(args: argparse.Namespace) -> int:
+    print(format_update_result(update_rollback(args.root, snapshot=args.snapshot)))
+    return 0
+
+
+def handle_update_status(args: argparse.Namespace) -> int:
+    print(format_update_result(update_status(args.root)))
+    return 0
+
+
+def handle_update_phone_home(args: argparse.Namespace) -> int:
+    print(format_update_result(phone_home_payload(args.root)))
+    return 0
+
+
+def handle_license_activate(args: argparse.Namespace) -> int:
+    print(format_update_result(activate_license(args.root, key=args.key)))
+    return 0
+
+
+def handle_backup_run(args: argparse.Namespace) -> int:
+    print(format_update_result(backup_run(args.root, dry_run=not args.apply)))
+    return 0
+
+
 def handle_config_install(args: argparse.Namespace) -> int:
     result = install_config(
         args.root,
@@ -724,6 +888,12 @@ def handle_runtime_doctor(args: argparse.Namespace) -> int:
     result = runtime_doctor(args.root)
     print(format_runtime_result(result))
     return 0 if result["ok"] else 1
+
+
+def handle_runtime_run_next(args: argparse.Namespace) -> int:
+    result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
+    print(format_runtime_result(result))
+    return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
 
 
 def handle_heartbeat_list(args: argparse.Namespace) -> int:
@@ -875,6 +1045,11 @@ def handle_event_append(args: argparse.Namespace) -> int:
 
 def handle_event_list(args: argparse.Namespace) -> int:
     print(format_event_graph_result(list_events(args.root, limit=args.limit)))
+    return 0
+
+
+def handle_event_summary(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(summarize_events(args.root, limit=args.limit)))
     return 0
 
 

@@ -19,7 +19,7 @@ owns.
 
 | Need | Load | Skip By Default |
 | --- | --- | --- |
-| Understand the room | `BRAIN.md`, `ROUTER.md`, `CONTEXT.md` | unrelated domains |
+| Understand the room | `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md` | unrelated domains |
 | Resume active work | project status, run logs, source map | archived work |
 | Run a workflow | workflow quick reference, context pack, runbook | unrelated automations |
 | Review an automation | automation spec, permissions, tests | unrelated workflows |
@@ -29,6 +29,7 @@ owns.
 - Work was routed to the correct local surface.
 - Source evidence and validation are recorded.
 - Approval rules were followed.
+- Missing tools or route gaps were recorded.
 - Durable next steps or learnings were captured where appropriate.
 
 ## Update Rule
