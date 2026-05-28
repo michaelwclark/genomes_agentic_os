@@ -1,0 +1,90 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The round-3 fixes close the original disabled-record, pre-doctor emission, and forbidden-field ambiguities. However, the spec introduces a new enforceability gap by naming JSON Schema encodings that do not correctly address nested fields, and it overclaims all-or-nothing adapter promotion while using sequential os.replace calls.",
+  "falsifiability": {
+    "failureCondition": "A disabled normalized record containing doctor.last_run_status passes schema validation, or a crash during adapter promotion leaves only some live adapters updated.",
+    "observableSignal": "The validator accepts a malformed disabled fixture, or SHA256 snapshots show mixed old and new adapter files after a mid-promotion injected fault.",
+    "measurementMethod": "Add two tests: one JSON Schema fixture with status disabled plus nested doctor.last_run_status, and one fault hook after the first os.replace in step 8 that compares all adapter hashes.",
+    "threshold": "Both malformed disabled fixture rejection and zero partial adapter promotion states are required",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i9",
+      "severity": "severe",
+      "category": "unenforceable_validation",
+      "title": "Nested schema paths are encoded as dotted required keys",
+      "description": "The normalized schema section says disabled records forbid doctor.last_run_status using `{ not: { required: [\"doctor.last_run_status\"] } }`. JSON Schema `required` checks literal property names at the current object level; it does not interpret dotted field paths. If implementers follow the spec literally, the load-bearing disabled-record invariant can fail open for nested doctor fields.",
+      "suggestedFix": "Specify the actual nested schema shape, for example forbidding a `doctor` object that has `last_run_status`, and requiring `doctor: { required: [\"last_run_status\"] }` for non-disabled records.",
+      "lineRef": "Capability Records: declared vs normalized / Normalized status-keyed if/then/else"
+    },
+    {
+      "id": "i10",
+      "severity": "moderate",
+      "category": "hidden_assumption",
+      "title": "Adapter promotion is not actually all-or-nothing",
+      "description": "Step 8 calls `os.replace` for each adapter and then writes generated registry artifacts, but labels the phase all-or-nothing. A crash after replacing `.codex/config.toml` and before replacing `CLAUDE.md` can leave a mixed adapter set. AC14 only faults before promotion, so it does not test the partial-promotion state the text claims to prevent.",
+      "suggestedFix": "Either narrow the claim to per-file atomicity and add a recovery rule for mixed adapter generations, or implement a generation directory/symlink swap and test faults after each promoted file.",
+      "lineRef": "Harness adapter generation / Install contract step 8 / AC14"
+    }
+  ],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "The declared versus normalized schema split still prevents hand-edited registries from requiring generated hashes."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "The status lifecycle remains clearly separated between operator intent in declared registries and derived normalized state."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The per-type required field table remains in place and is now more precise about presence rules."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "The three-gate secret protection model is preserved and remains enforceable enough for this spec level."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Dry-run write redirection to a stable output tree is still explicit and testable."
+    },
+    {
+      "issueId": "i6",
+      "review": "PARTIAL",
+      "rationale": "The intended disabled-record invariant is now specified, but the nested JSON Schema encoding is not enforceable as written."
+    },
+    {
+      "issueId": "i7",
+      "review": "SATISFIED",
+      "rationale": "The pre-doctor adapter emission window is closed by single post-doctor staging emission."
+    },
+    {
+      "issueId": "i8",
+      "review": "SATISFIED",
+      "rationale": "Forbidden fields now unambiguously mean absent, with an explicit present-but-empty failing fixture."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The declared versus normalized schema boundary is a strong foundation and should be preserved.",
+      "lineRef": "Capability Records: declared vs normalized"
+    },
+    {
+      "id": "p2",
+      "summary": "Disabled records being visible in INVENTORY.md while excluded from adapter outputs is the right operator-facing behavior.",
+      "lineRef": "Disabled records appear in capabilities.yml, agentic-os.lock.json, and INVENTORY.md"
+    },
+    {
+      "id": "p3",
+      "summary": "The AC13 counter-fixture for installed without content_hash is valuable because it catches one-sided schema regressions.",
+      "lineRef": "Acceptance Criteria / AC13"
+    }
+  ]
+}

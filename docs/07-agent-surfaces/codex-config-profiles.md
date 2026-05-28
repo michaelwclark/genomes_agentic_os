@@ -16,23 +16,25 @@ Use this guide with:
 
 | Profile | Directory Layer | Model Behavior | Skills | Prompt Files | MCP Availability | Environment | Logging / Telemetry |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `global_user_harness` | user harness runtime | Conservative defaults; do not assume repo context. | Skill discovery, memory refresh, shell hygiene. | `AGENTS.md`, `BRAIN.md`, `MEMORY.md` | User-approved global MCPs only. | User home and configured project roots. | Minimal; do not log secrets or full prompts. |
-| `agentic_os_root` | reusable OS source or installed OS root | Product/source-aware; prefer templates, schemas, and commands. | build-runner, os-doctor, workflow-builder, run-logger. | `AGENTS.md`, `BRAIN.md`, `ROUTER.md`, `CONTEXT.md`, `MEMORY.md` | Filesystem, Git, Notion control-plane access after workspace verification. | Repository or installed `~/agentic_os`. | Normal run logs; OTEL prompt logging disabled unless explicitly approved. |
-| `customer_os_root` | customer-specific OS root | Customer-boundary aware; preserve approved domains. | customer validation, source-map review, handoff checks. | `AGENTS.md`, `BRAIN.md`, `ROUTER.md`, `CONTEXT.md`, `MEMORY.md`, `customer.yml` | Customer-approved systems only. | Customer OS root and approved repos. | Customer-safe summaries only; no private source leakage. |
-| `domain_or_lane` | domain, room, or lane directory | Narrow routing and source-map behavior. | routing, context-pack, workflow readiness, automation qualifier. | `ROUTER.md`, `CONTEXT.md`, `MEMORY.md`, `domain.yml` | Domain-approved systems only. | Domain folder plus linked project/workflow folders. | Domain run logs and activity logs. |
-| `workflow_or_task` | workflow, project task, or run directory | Task-specific execution with explicit acceptance criteria. | context-pack builder, QA planning, run closeout. | workflow files, `CONTEXT.md`, `MEMORY.md` | Workflow-approved systems only. | Workflow folder, run artifacts, linked sources. | Run log evidence and validation results. |
-| `automation` | automation directory | Guarded, repeatable, idempotent operation. | automation qualifier, runtime operator, integration setup. | `automation.md`, `permissions.md`, `failure-modes.md`, `tests.md`, `MEMORY.md` | Explicit automation contract only. | Runtime registry, logs, and approved connected systems. | Structured runtime records; keep prompt logging disabled by default. |
+| `global_user_harness` | user harness runtime | Conservative defaults; do not assume repo context. | Skill discovery, memory refresh, shell hygiene. | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md` | User-approved global MCPs only. | User home and configured project roots. | Minimal; do not log secrets or full prompts. |
+| `agentic_os_root` | reusable OS source or installed OS root | Product/source-aware; prefer templates, schemas, and commands. | build-runner, os-doctor, workflow-builder, run-logger. | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md` | Filesystem, Git, Notion control-plane access after workspace verification. | Repository or installed `~/agentic_os`. | Normal run logs; OTEL prompt logging disabled unless explicitly approved. |
+| `customer_os_root` | customer-specific OS root | Customer-boundary aware; preserve approved domains. | customer validation, source-map review, handoff checks. | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `customer.yml` | Customer-approved systems only. | Customer OS root and approved repos. | Customer-safe summaries only; no private source leakage. |
+| `domain_or_lane` | domain, room, or lane directory | Narrow routing and source-map behavior. | routing, context-pack, workflow readiness, automation qualifier. | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `domain.yml` | Domain-approved systems only. | Domain folder plus linked project/workflow folders. | Domain run logs and activity logs. |
+| `workflow_or_task` | workflow, project task, or run directory | Task-specific execution with explicit acceptance criteria. | context-pack builder, QA planning, run closeout. | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, workflow files | Workflow-approved systems only. | Workflow folder, run artifacts, linked sources. | Run log evidence and validation results. |
+| `automation` | automation directory | Guarded, repeatable, idempotent operation. | automation qualifier, runtime operator, integration setup. | `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, automation files | Explicit automation contract only. | Runtime registry, logs, and approved connected systems. | Structured runtime records; keep prompt logging disabled by default. |
 
 ## Prompt Duplication Rule
 
 Profiles should not duplicate long behavior text. Keep durable behavior in the
-universal brain convention:
+shared context-file convention:
 
-- `BRAIN.md` for shared behavior.
+- `AGENTS.md` for the route-read-cd-repeat bootstrap.
 - `ROUTER.md` for routing.
 - `CONTEXT.md` for local operating context.
+- `RULES.md` for approval, safety, and local constraints.
+- `TOOLS.md` for visible capabilities.
 - `MEMORY.md` for memory policy.
-- `AGENTS.md` and `CLAUDE.md` as short harness entry points.
+- `CLAUDE.md` as a short adapter that includes `AGENTS.md`.
 
 Profiles may point to these files and select runtime posture; they should not
 copy the same instructions into every directory.

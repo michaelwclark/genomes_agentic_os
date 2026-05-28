@@ -89,6 +89,12 @@ List recent events:
 agentic-os event list --root ~/agentic_os --limit 20
 ```
 
+Summarize recent events and pending follow-up:
+
+```bash
+agentic-os event summary --root ~/agentic_os --limit 20
+```
+
 List chain rules:
 
 ```bash
@@ -144,7 +150,7 @@ registry, and run queue path.
 - `idempotency`
 
 `event-cursors.yml` stores processed idempotency keys. It prevents repeated
-apply runs from adding duplicate queue items.
+apply runs and duplicate event envelopes from adding duplicate queue items.
 
 `run-queue.yml` receives queue items created by apply-mode chain processing.
 
@@ -187,6 +193,10 @@ return skipped results instead of duplicating queue work.
 `event replay <event_id> --dry-run` reruns matching logic for one event. Use it
 after editing a rule, recovering from a dead letter, or checking whether a
 previous event should now produce a different queue item.
+
+`event summary --limit <N>` reads only durable event files, processing results,
+dead letters, and the run queue. Use it when a fresh agent needs the last N
+events and pending follow-up without relying on chat history.
 
 ## Dead Letters
 
@@ -232,8 +242,9 @@ uv run --extra dev pytest -q
 ```
 
 The test suite covers event append, ledger index creation, chain rule testing,
-dry-run processing, apply-mode queue writes, idempotency skips, dead-letter
-records, and run closeout event emission.
+dry-run processing, apply-mode queue writes, duplicate-event idempotency,
+max-depth skips, approval-needed queue output, event summaries, dead-letter
+records, replay after repair, and run closeout event emission.
 
 ## Troubleshooting
 

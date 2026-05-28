@@ -1,0 +1,13 @@
+{
+  "duelId": "2026-05-24-55a89b92",
+  "startedAt": "2026-05-24T19:23:46.166Z",
+  "endedAt": "2026-05-24T19:23:49.461Z",
+  "termination": "NON_PASS_COST",
+  "finalArtifact": "latest-spec.md",
+  "totalRounds": 0,
+  "totalCostUsd": 0,
+  "budgetCapUsd": 20,
+  "writerModel": "opus",
+  "writerRunner": "claude-cli",
+  "criticRunner": "codex-cli"
+}

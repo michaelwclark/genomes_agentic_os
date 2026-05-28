@@ -1,0 +1,80 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The spec is directionally coherent, but several severe invariants remain unenforceable as written. Most importantly, install status, registry authority, and adapter extraction still rely on prose-level guarantees instead of precise state transitions and validation surfaces.",
+  "falsifiability": {
+    "failureCondition": "A generated Claude or Codex adapter contains an enabled command, rule, MCP, or skill reference that cannot be traced to exactly one canonical registry record, yet install or doctor still passes.",
+    "observableSignal": "The adapter includes active behavior absent from the canonical registry graph while inventory and lockfile outputs still claim the install is valid.",
+    "measurementMethod": "Create a fixture with a Markdown adapter template that emits an extra slash command and prose rule reference, run install plus doctor, then parse the generated adapter with the declared extractor and compare extracted active items against registry IDs.",
+    "threshold": "Zero unregistered active adapter items permitted",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i7",
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Lockfile trust boundary is undefined",
+      "description": "The spec says the lockfile records installed capability IDs, source fingerprints, adapter outputs, and doctor summaries, but it does not define whether the lockfile is authoritative evidence or merely a generated report. If a stale or hand-edited lockfile exists, the installer and doctor behavior is ambiguous. This matters because the lockfile is part of the claimed installed runtime state.",
+      "suggestedFix": "Declare the lockfile generated-only and never authoritative for current validity; doctor must recompute registry, artifact, adapter, and check state before comparing against lockfile drift.",
+      "lineRef": "Acceptance Criteria 8 / Architecture"
+    },
+    {
+      "id": "i8",
+      "severity": "moderate",
+      "category": "missing_category",
+      "title": "Capability lifecycle statuses are missing",
+      "description": "The spec names `installed` and active behavior but does not define the complete allowed status enum or lifecycle transitions. Without explicit statuses such as declared, linked, generated, active, broken, disabled, and removed, validation code cannot distinguish an intended disabled capability from a failed install. This will make inventory and doctor output inconsistent.",
+      "suggestedFix": "Add a lifecycle state table with allowed status values, transition triggers, and which statuses may appear in inventory, adapters, and lockfile summaries.",
+      "lineRef": "Architecture / Capability record discussion"
+    }
+  ],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "UNSATISFIED",
+      "rationale": "The current spec still uses installed and active without a precise write order or transition model, so failed installs can still be advertised inconsistently."
+    },
+    {
+      "issueId": "i2",
+      "review": "UNSATISFIED",
+      "rationale": "The spec does not yet pick a single authoritative source between per-type registries and capabilities.yml, nor define digest enforcement for independent edits."
+    },
+    {
+      "issueId": "i3",
+      "review": "UNSATISFIED",
+      "rationale": "Round-trip adapter checks are asserted, but Markdown extraction rules and the definition of adapter-introduced behavior remain unspecified."
+    },
+    {
+      "issueId": "i4",
+      "review": "UNSATISFIED",
+      "rationale": "Local override boundaries are still absent, so local config could alter safety-relevant behavior without a clear policy violation."
+    },
+    {
+      "issueId": "i5",
+      "review": "UNSATISFIED",
+      "rationale": "The phases still mix fresh install, managed upgrade, and legacy migration behavior without a mode table or separate failure policy."
+    },
+    {
+      "issueId": "i6",
+      "review": "UNSATISFIED",
+      "rationale": "Schema language, schema file locations, and contributor validation commands are still not specified."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec correctly makes hidden harness folders generated adapters rather than source of truth.",
+      "lineRef": "Vision"
+    },
+    {
+      "id": "p2",
+      "summary": "The phase breakdown is practical and keeps schema, adapter generation, doctor, and migration work separated enough to implement incrementally.",
+      "lineRef": "Phases"
+    },
+    {
+      "id": "p3",
+      "summary": "The secret-handling rule is explicit: MCP records may name env vars but must not contain literal secrets.",
+      "lineRef": "Architecture / Acceptance Criteria 5"
+    }
+  ]
+}

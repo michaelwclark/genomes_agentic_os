@@ -18,7 +18,7 @@ Each harness needs:
 
 Codex should receive:
 
-- `AGENTS.md` project rules that point to the installed root's `ROUTER.md`.
+- `AGENTS.md` project rules that load `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`, then repeat after routing.
 - Skills for workflow execution and OS bootstrapping.
 - Optional hooks or scripts for context pack validation.
 - Clear instruction to preserve user worktree changes.
@@ -27,7 +27,7 @@ Codex should receive:
 
 Claude should receive:
 
-- `CLAUDE.md` global or project rules that point to the same `ROUTER.md` contract as Codex.
+- `CLAUDE.md` global or project adapters that include `AGENTS.md` instead of duplicating the shared contract.
 - Skills or commands matching the Codex workflow names.
 - Memory policy references.
 - Context loading conventions that mirror Codex.

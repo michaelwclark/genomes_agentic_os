@@ -109,6 +109,10 @@ Preview one source poll:
 agentic-os watch-source poll agentic_os_kanban --root ~/agentic_os --dry-run
 ```
 
+Dry-run output includes the selected provider adapter metadata and any matching
+trigger action previews. It must not write source event files, event-ledger
+events, cursor state, or run-queue items.
+
 Poll enabled sources and write local source events:
 
 ```bash
@@ -154,6 +158,10 @@ ID and timestamp.
 mode. Downstream event graph and chain commands can consume those files without
 querying the external source again.
 
+Inline `trigger_rules` can convert a source event into a local event-ledger
+event, a run-queue item, or both. This gives source watchers a deterministic
+handoff path without relying on chat history.
+
 ## Creating A Watch Source
 
 The default `watch-source create` command creates a Notion database source
@@ -189,6 +197,11 @@ state.
 `shared_factory/06-runs-and-logs/source-events/` and records the cursor in
 `shared_factory/00-control-plane/watch-cursors.yml`.
 
+If an enabled trigger rule matches, apply mode can also emit an event under
+`shared_factory/06-runs-and-logs/events/` and enqueue work in
+`shared_factory/00-control-plane/run-queue.yml`. Queue writes are idempotent by
+the trigger rule's idempotency key.
+
 `watch-source run-due --apply` polls every enabled source and skips disabled
 sources. Use `run-due --dry-run` before apply when operating a new registry.
 
@@ -200,7 +213,9 @@ missing expected workspace verification or health-check metadata.
 
 `watch-source doctor` fails closed when a source is missing its connected
 system, source type, external reference, cursor type or state reference,
-dedupe idempotency key, or route command/context/fallback values.
+dedupe idempotency key, or route command/context/fallback values. Enabled
+sources must also keep at least one trigger rule, and enabled trigger rules
+must declare an ID, event type, action, and idempotency key.
 
 These checks are structural. Provider-specific live reads should be added
 behind explicit integration approval and should preserve the same dry-run first
@@ -225,9 +240,10 @@ For source-package development, run:
 uv run --extra dev pytest -q
 ```
 
-The test suite covers registry initialization, watch source creation, doctor
-checks, dry-run polling, apply-mode event writes, cursor state, docs update
-repair, and negative doctor findings.
+The test suite covers registry initialization, watch source creation, provider
+example coverage, doctor checks, dry-run polling, safe dedupe template
+expansion, apply-mode event writes, cursor state, trigger event/queue actions,
+docs update repair, and negative doctor findings.
 
 ## Troubleshooting
 

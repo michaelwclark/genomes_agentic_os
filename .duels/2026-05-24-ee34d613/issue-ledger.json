@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "duelId": "2026-05-24-ee34d613",
+  "lastUpdatedRound": 7,
+  "entries": [
+    {
+      "id": "i1",
+      "raisedInRound": 1,
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Installed status is not coherently defined",
+      "description": "The Vision says a capability is installed only when it has registry records, visible files or links, generated adapters, and passing doctor checks recorded in the lockfile. But the deterministic generation flow writes registries and capabilities.yml before doctor runs, and the capability record includes status values such as installed and broken without defining when transitions occur. Under failure, the system can advertise installed capabilities before the evidence required by the definition exists.",
+      "currentStatus": "OPEN",
+      "history": [
+        {
+          "round": 1,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "OPEN",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "PARTIAL"
+        },
+        {
+          "round": 7,
+          "fromStatus": "OPEN",
+          "toStatus": "OPEN",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "PARTIAL"
+        }
+      ]
+    },
+    {
+      "id": "i2",
+      "raisedInRound": 1,
+      "severity": "severe",
+      "category": "hidden_assumption",
+      "title": "Registry source of truth conflicts with generated normalized registry",
+      "description": "The spec says specialized registries are source-controlled or generated from package declarations, then normalized into capabilities.yml. The Risks section says capabilities.yml should be generated or digest-checked if edited independently, but this remains undecided. If both specialized registries and capabilities.yml can be edited or generated, there is no single authoritative write path to enforce drift prevention.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 1,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        },
+        {
+          "round": 7,
+          "fromStatus": "RESOLVED",
+          "toStatus": "RESOLVED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i3",
+      "raisedInRound": 1,
+      "severity": "severe",
+      "category": "unenforceable_validation",
+      "title": "Adapter gate cannot validate all adapter-introduced behavior",
+      "description": "The adapter gate compares emitted adapter items against capability ids and types, but adapters such as AGENTS.md and CLAUDE.md may introduce behavior through prose rules, command snippets, or referenced files that do not map cleanly to a typed item set. The spec does not define how candidate adapter sets are extracted from Markdown adapters or what counts as a command, hook, rule, or skill reference. This makes the strongest alignment guarantee only partially enforceable.",
+      "currentStatus": "OPEN",
+      "history": [
+        {
+          "round": 1,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "OPEN",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "PARTIAL"
+        },
+        {
+          "round": 7,
+          "fromStatus": "OPEN",
+          "toStatus": "OPEN",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "PARTIAL"
+        }
+      ]
+    },
+    {
+      "id": "i4",
+      "raisedInRound": 1,
+      "severity": "moderate",
+      "category": "missing_category",
+      "title": "Local override semantics are underspecified",
+      "description": "The spec allows `agentic-os.local.json` overrides for local paths and disabled capabilities, and includes local overrides in lockfile digest inputs. It does not define whether local overrides can change visibility, customer_safe, harness targets, launch commands, env requirements, or doctor behavior. Without this boundary, local config could silently bypass package intent or customer safety enforcement.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 1,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        },
+        {
+          "round": 7,
+          "fromStatus": "RESOLVED",
+          "toStatus": "RESOLVED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i5",
+      "raisedInRound": 1,
+      "severity": "moderate",
+      "category": "invariant_gap",
+      "title": "Fresh install and migration enforcement are conflated",
+      "description": "Acceptance criteria require strict install failures for missing registries and adapter-introduced items, while P3 says migration tooling will propose records and report gaps before enforcing strict install failure on legacy installs. The spec does not separate fresh installs, managed upgrades, and legacy migrations as different modes with different failure behavior. That ambiguity can make migration either destructive or too permissive.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 1,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        },
+        {
+          "round": 7,
+          "fromStatus": "RESOLVED",
+          "toStatus": "RESOLVED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i6",
+      "raisedInRound": 1,
+      "severity": "moderate",
+      "category": "missing_category",
+      "title": "Schema ownership and validation format are missing",
+      "description": "The spec requires YAML schemas for every registry type but does not specify where schemas live, what schema language is used, or how package authors validate records before install. Without schema location and invocation rules, the validation contract is not reproducible by contributors or automation.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 1,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        },
+        {
+          "round": 7,
+          "fromStatus": "RESOLVED",
+          "toStatus": "RESOLVED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i7",
+      "raisedInRound": 3,
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Lockfile trust boundary is undefined",
+      "description": "The spec says the lockfile records installed capability IDs, source fingerprints, adapter outputs, and doctor summaries, but it does not define whether the lockfile is authoritative evidence or merely a generated report. If a stale or hand-edited lockfile exists, the installer and doctor behavior is ambiguous. This matters because the lockfile is part of the claimed installed runtime state.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 3,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        },
+        {
+          "round": 7,
+          "fromStatus": "RESOLVED",
+          "toStatus": "RESOLVED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i8",
+      "raisedInRound": 3,
+      "severity": "moderate",
+      "category": "missing_category",
+      "title": "Capability lifecycle statuses are missing",
+      "description": "The spec names `installed` and active behavior but does not define the complete allowed status enum or lifecycle transitions. Without explicit statuses such as declared, linked, generated, active, broken, disabled, and removed, validation code cannot distinguish an intended disabled capability from a failed install. This will make inventory and doctor output inconsistent.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 3,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 5,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        },
+        {
+          "round": 7,
+          "fromStatus": "RESOLVED",
+          "toStatus": "RESOLVED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i9",
+      "raisedInRound": 5,
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Adapter activation has a circular gate",
+      "description": "The lifecycle says a capability moves to `generated` after adapter and inventory generation, then to `active` only after doctor passes. It also says adapter behavior remains disabled until the current doctor run passes, while adapter extractors must verify enabled entries map to registry records. This creates an ambiguous two-phase adapter contract: either adapters contain enabled behavior before doctor, violating the gate, or they contain disabled behavior and extractor evidence cannot prove the final active adapter state.",
+      "currentStatus": "OPEN",
+      "history": [
+        {
+          "round": 5,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 7,
+          "fromStatus": "OPEN",
+          "toStatus": "OPEN",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "PARTIAL"
+        }
+      ]
+    },
+    {
+      "id": "i10",
+      "raisedInRound": 5,
+      "severity": "moderate",
+      "category": "unenforceable_validation",
+      "title": "Markdown active syntax remains underdefined",
+      "description": "The spec now requires generated blocks and says active slash commands, rule includes, skill references, MCP references, and hook references may only appear inside them. It does not enumerate the exact Markdown patterns that count as reserved active syntax, especially for natural-language rule directives in `AGENTS.md` and `CLAUDE.md`. Without a concrete grammar or pattern table, extractor tests can miss behavior introduced through prose instructions.",
+      "currentStatus": "RESOLVED",
+      "history": [
+        {
+          "round": 5,
+          "toStatus": "OPEN"
+        },
+        {
+          "round": 7,
+          "fromStatus": "OPEN",
+          "toStatus": "RESOLVED",
+          "writerDisposition": "ACCEPTED",
+          "criticReview": "SATISFIED"
+        }
+      ]
+    },
+    {
+      "id": "i11",
+      "raisedInRound": 7,
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Final adapter render depends on pre-final active status",
+      "description": "Pass B says final adapters contain enabled entries only for capabilities whose final lifecycle status is `active`. But the lifecycle says a capability becomes `active` only after final adapter render and extraction pass. Under a literal implementation, there is no well-defined set to render: either the installer renders nothing because no capability is active yet, or it marks records active before proving the final adapter projection.",
+      "currentStatus": "OPEN",
+      "history": [
+        {
+          "round": 7,
+          "toStatus": "OPEN"
+        }
+      ]
+    },
+    {
+      "id": "i12",
+      "raisedInRound": 7,
+      "severity": "severe",
+      "category": "unenforceable_validation",
+      "title": "Non-reserved Markdown prose can still carry harness behavior",
+      "description": "The spec says arbitrary imperative prose outside generated blocks is allowed and is not treated as generated harness behavior. That is not enforceable for AGENTS.md and CLAUDE.md, because those files are instruction surfaces where prose itself can change agent behavior without using slash commands or explicit include syntax. This leaves a bypass for unregistered rules that avoid the reserved grammar.",
+      "currentStatus": "OPEN",
+      "history": [
+        {
+          "round": 7,
+          "toStatus": "OPEN"
+        }
+      ]
+    }
+  ]
+}

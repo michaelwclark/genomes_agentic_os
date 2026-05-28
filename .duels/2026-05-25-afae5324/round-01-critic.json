@@ -1,0 +1,85 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The spec has strong mechanisms for policy evaluation, redaction, and rollback, but several core invariants are contradicted or left unenforced. The largest blockers are the heartbeat/apply contradiction, telemetry opt-in ambiguity, and missing coverage for agent rule/config changes that can alter customer behavior without being executable code.",
+  "falsifiability": {
+    "failureCondition": "A stable customer install receives a manifest containing a customer-visible agent rule or registry behavior change and applies it automatically without an explicit permit or approval token.",
+    "observableSignal": "The update run records AUTO_APPLY for a PlanItem that changes rules, prompts, agent instructions, registries, or policy-affecting config while no matching approval artifact exists.",
+    "measurementMethod": "Create a fixture customer root on stable with safe_additive policy, generate a manifest that changes AGENTS.md, CLAUDE.md, MEMORY.md, registries/capabilities.yml, or equivalent rule/config files, run update plan/apply, and inspect decisions.json plus byte diffs after apply.",
+    "threshold": "Fail if any rule/config/customer-visible behavior file is applied automatically without an explicit approval decision tied to its migration id.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i1",
+      "severity": "showstopper",
+      "category": "invariant_gap",
+      "title": "Heartbeat apply semantics contradict P3",
+      "description": "The spec says the heartbeat job only checks and writes notification records, never applies updates, and autonomous apply is not in v1. P3 exit criteria then require ten stable customer installs to auto-apply a migration on their next heartbeat-driven check. Those cannot both be true, and this ambiguity affects the core automation path.",
+      "suggestedFix": "Choose one v1 invariant: either heartbeat never applies and P3 requires a separate scheduled apply job/CLI invocation, or define an autonomous apply mode with its policy flag, lock behavior, and tests.",
+      "lineRef": "P3 exit criteria; Risks #7; What's NOT in v0"
+    },
+    {
+      "id": "i2",
+      "severity": "severe",
+      "category": "hidden_assumption",
+      "title": "Telemetry opt-in is not actually opt-in",
+      "description": "The Vision says telemetry is opt-in by channel, but the channel table says stable telemetry is opt-in with default ON. Customer installs also default to stable, which means a new customer install may phone home unless a user opts out. That is not opt-in under an adversarial reading and conflicts with the privacy posture.",
+      "suggestedFix": "Make telemetry default OFF for all customer installs unless UPDATE_POLICY.md frontmatter explicitly enables heartbeat_url and telemetry_enabled: true, or define stable-channel selection at provisioning as the explicit opt-in event.",
+      "lineRef": "Vision; Channels and defaults"
+    },
+    {
+      "id": "i3",
+      "severity": "severe",
+      "category": "missing_category",
+      "title": "Agent rule and config changes are not gated",
+      "description": "The risky-change list gates executables, hooks, MCP configs, and permission grants, but omits agent instructions, rules, skills, schemas, prompts, and behavior-driving registries. In this repository, non-executable text files can materially change agent behavior and customer-visible outcomes. A malicious or mistaken safe_additive update could alter behavior without tripping the explicit approval categories.",
+      "suggestedFix": "Add PlanItem categories for rule_change, instruction_change, skill_change, schema_change, and behavior_registry_change; require approval on customer roots unless UPDATE_POLICY.md explicitly permits the exact migration id.",
+      "lineRef": "Deterministic policy evaluator; Acceptance Criteria #4; Customer Safety Rules"
+    },
+    {
+      "id": "i4",
+      "severity": "severe",
+      "category": "conceptual_bug",
+      "title": "Unsigned manifests can still drive v1 auto-apply",
+      "description": "The architecture opens by saying installs read a signed manifest, but the phases make signing checksum-only in P1 and warn-only in P3/v1. Since stable customer roots can auto-apply safe_additive updates, an attacker who controls or tampers with the manifest source can still cause changes while signature verification is non-enforcing. Checksums inside the manifest do not protect against a compromised manifest.",
+      "suggestedFix": "Require manifest signature enforcement before any customer auto-apply path ships, or restrict v1 auto-apply to manifests fetched from a pinned git tag/commit with an independently pinned expected manifest SHA in the lockfile.",
+      "lineRef": "Vision; P1; P3; What's NOT in v0"
+    },
+    {
+      "id": "i5",
+      "severity": "moderate",
+      "category": "invariant_gap",
+      "title": "Rollback for additive new files is underspecified",
+      "description": "Rollback guarantees restoring every file in manifest.sha256.json to its pre-apply SHA, but additive updates may create files that had no pre-apply SHA. The spec also says rollback must not delete operator-created work unless the file was explicitly generated by the update. Without a tombstone or pre-state marker, rollback cannot distinguish update-created files from user-created files at the same path after a crash or partial apply.",
+      "suggestedFix": "Record pre-state per path as one of exists{sha,mode,mtime} or absent, and on rollback delete only paths recorded as absent and created by a completed PlanItem whose content still matches the update-written SHA.",
+      "lineRef": "Apply executor; Rollback; Acceptance Criteria #7"
+    },
+    {
+      "id": "i6",
+      "severity": "moderate",
+      "category": "unenforceable_validation",
+      "title": "Customer approval artifacts lack freshness rules",
+      "description": "Permits in UPDATE_POLICY.md and approval tokens satisfy risky updates, but the spec only says doctor warns on stale permits. It does not define expiry, replay protection, token versioning, or whether a permit remains valid after a migration changes contents but keeps the same id. This weakens approval from an intentional per-change gate into a potentially permanent bypass.",
+      "suggestedFix": "Require approval artifacts to bind migration id, manifest version or manifest SHA, install_id/customer_id, expiry, and risk category; make stale or mismatched permits blockers for apply, not doctor warnings.",
+      "lineRef": "P3 approval workflow; Deterministic policy evaluator"
+    }
+  ],
+  "ledgerReview": [],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec correctly makes the policy evaluator pure and places a second match-or-refuse check in the executor before applying PlanItems.",
+      "lineRef": "Deterministic policy evaluator; Apply executor"
+    },
+    {
+      "id": "p2",
+      "summary": "The heartbeat redaction model is stronger than a filter because it constructs a strict schema from named fields and revalidates before send.",
+      "lineRef": "Redactor as schema, not filter"
+    },
+    {
+      "id": "p3",
+      "summary": "The rollback-first apply flow has the right commit-point idea by writing the lockfile last and refusing concurrent applies with a file lock.",
+      "lineRef": "Apply executor: ordered, idempotent, rollback-first"
+    }
+  ]
+}

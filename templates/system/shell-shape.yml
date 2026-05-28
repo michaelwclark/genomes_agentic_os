@@ -1,0 +1,44 @@
+id: shell_shape
+display_name: Shared Shell Shape
+version: 1
+goals:
+  - Keep local and remote hosts familiar.
+  - Make available tools explicit to agents.
+  - Separate interactive terminal behavior from automation-safe shell state.
+  - Keep secrets out of repo-managed files.
+zsh:
+  zshenv:
+    role: non_interactive_env
+    should_contain:
+      - PATH needed by Codex/Claude/automation
+      - API keys and host-local secrets
+    should_not_contain:
+      - aliases
+      - prompt setup
+      - interactive-only iTerm2 behavior
+  zshrc:
+    role: interactive_shell
+    should_contain:
+      - oh-my-zsh setup
+      - aliases
+      - zoxide/fzf
+      - iTerm2 shell integration guarded to iTerm2 sessions
+  oh_my_zsh_custom:
+    role: reusable_helpers
+    examples:
+      - killport
+      - portpids
+terminal:
+  mac_local:
+    primary: iTerm2
+    dynamic_profiles: true
+    shell_integration: true
+  remote_hosts:
+    target_feel: same_cli_tools_and_helpers
+    avoid:
+      - macOS-only assumptions
+      - iTerm2-only escape sequences in automation
+agent_registry:
+  required: true
+  location_pattern: ~/agentic_os/shared_factory/05-knowledge/host-tool-registry.<host>.yml
+

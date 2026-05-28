@@ -16,8 +16,8 @@ This inventory records which durable patterns from `/Users/genome/projects/facto
 
 | Source Pattern | Adaptation |
 | --- | --- |
-| Layer 1 map | Root `ROUTER.md` plus `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` pointer files. |
-| Layer 2 room contracts | Domain/room `CONTEXT.md` and `ROUTER.md`. |
+| Layer 1 map | Root `AGENTS.md`, `CLAUDE.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`. |
+| Layer 2 room contracts | Domain/room `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`. |
 | Workspace stage pipelines | Workflow runbooks, stage context templates, and closeout logs. |
 | Client automation playbook | Customer automation brief, fit matrix, handoff checklist, and automation maturity rules. |
 

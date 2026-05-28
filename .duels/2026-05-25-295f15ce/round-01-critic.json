@@ -1,0 +1,76 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The spec is directionally strong but has enforceability contradictions around computed fields, status transitions, and required schema fields. These are fixable, but as written P1 can fail before it can generate the very fields it requires.",
+  "falsifiability": {
+    "failureCondition": "A fresh install using hand-written per-type registries without precomputed source.content_hash fails schema validation before install can compute hashes.",
+    "observableSignal": "agentic-os install exits non-zero during registry schema validation on otherwise valid hand-authored records, pointing at missing source.content_hash.",
+    "measurementMethod": "Create a minimal fixture registry with one declared command record omitting source.content_hash, run the documented install sequence, and observe whether hash computation occurs before schema validation or the install aborts.",
+    "threshold": "Install must either accept pre-install records without computed fields or compute and inject hashes before final schema validation; aborting at step 3 is failure.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i1",
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Computed hash is required before it can exist",
+      "description": "The canonical schema says every listed field is required, including source.content_hash, and step 3 validates every per-type registry file against that schema. But source.content_hash is described as computed during install in step 2, while the same per-type registries are initially hand-written. This makes a clean P1 registry either invalid before install or forces humans to maintain generated hashes by hand.",
+      "suggestedFix": "Split schemas into declared input records and normalized generated records, or mark computed fields like source.content_hash as generated-only and validate them after normalization.",
+      "lineRef": "Capability Record / Install contract steps 2-4"
+    },
+    {
+      "id": "i2",
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Status lifecycle conflicts with registry source of truth",
+      "description": "The spec says per-type registries are the only declaration surface and every record includes status, but it also says the installer refuses to mark a capability installed until doctor passes and records failing capabilities as broken. It does not define whether the installer mutates hand-edited registries, writes status only to generated capabilities.yml, or treats status as derived runtime state. Without that boundary, AC5 cannot be implemented deterministically.",
+      "suggestedFix": "Define status as derived in generated capabilities.yml and lock files, with declaration status limited to declared or disabled; alternatively explicitly allow installer writeback to per-type registries and specify ordering.",
+      "lineRef": "Capability Record / Registries as composition surface / Install contract step 6"
+    },
+    {
+      "id": "i3",
+      "severity": "severe",
+      "category": "unenforceable_validation",
+      "title": "One required schema shape overfits all capability types",
+      "description": "The canonical schema says every listed field is required unless noted, including install.command, install.args, provides.tools, requires.commands, and harness_targets. That shape is plausible for MCPs and executable commands but not for rules, pure documentation skills, libraries, or hooks that may not expose tools or have a PATH command. This will either force meaningless placeholder values or cause valid capability types to fail schema validation.",
+      "suggestedFix": "Define a shared base schema plus per-type required fields, with empty maps/lists allowed only where semantically valid and explicitly documented.",
+      "lineRef": "Capability Record (canonical schema)"
+    },
+    {
+      "id": "i4",
+      "severity": "moderate",
+      "category": "hidden_assumption",
+      "title": "Secret grep can miss realistic registry leaks",
+      "description": "AC11 only specifies a regex for key names followed by scalar-looking values. YAML secrets can appear in list values, nested env maps, quoted multi-line strings, command args, URLs with credentials, or innocuous keys like value. The current gate is useful as a smoke test but not enough to support the stronger claim that MCP records never contain literal secrets.",
+      "suggestedFix": "Keep the regex gate but add structural validation: env requirements must be names only, command args must reject credential-like URL patterns, and registry values should be scanned with entropy and allowlist rules.",
+      "lineRef": "Acceptance Criteria 11 / MCP Servers"
+    },
+    {
+      "id": "i5",
+      "severity": "moderate",
+      "category": "missing_category",
+      "title": "Dry-run write semantics are undefined",
+      "description": "Several validations depend on install --dry-run producing deterministic outputs and diffs, but the install contract defines real writes to registries, adapters, lock files, and status. It is not specified whether dry-run writes to a temp tree, prints a plan, or materializes generated files somewhere stable. This makes AC2 and AC6 hard to test consistently.",
+      "suggestedFix": "Specify dry-run output behavior explicitly, preferably by rendering all generated files into a temporary output directory and diffing that directory against expected paths.",
+      "lineRef": "Acceptance Criteria 2 and 6 / Validations"
+    }
+  ],
+  "ledgerReview": [],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec correctly separates visible registry state from generated harness adapters and names deterministic generation as an enforceable invariant.",
+      "lineRef": "Vision / Harness adapter generation"
+    },
+    {
+      "id": "p2",
+      "summary": "The sentinel-preserving adapter rule is concrete enough to protect hand-curated AGENTS.md and CLAUDE.md content.",
+      "lineRef": "Harness adapter generation"
+    },
+    {
+      "id": "p3",
+      "summary": "The phased scope is appropriately bounded and includes hard stop conditions when a phase exceeds its two-week cap.",
+      "lineRef": "Phases"
+    }
+  ]
+}

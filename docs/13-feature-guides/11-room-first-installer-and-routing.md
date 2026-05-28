@@ -121,12 +121,11 @@ skills, not operator work domains.
 
 The root `ROUTER.md` maps each room slug to that room's `ROUTER.md`.
 
-Claude and Codex pointer files continue to use the same root router contract:
+Claude and Codex use the same route-read-cd-repeat contract:
 
 ```text
-AGENTS.md -> ROUTER.md
-CLAUDE.md -> ROUTER.md
-AGENT.md -> ROUTER.md
+AGENTS.md -> ROUTER.md + CONTEXT.md + RULES.md + TOOLS.md
+CLAUDE.md -> @AGENTS.md
 ```
 
 Inside a room, `CONTEXT.md` records purpose, inputs, output folders, tools,

@@ -1,0 +1,76 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The prior showstopper contradictions around heartbeat/apply and approved autoapply are now resolved. One phase-level validation gap remains: P1 claims a matching token APPROVED_APPLY happy path even though token signature verification is explicitly deferred to P3, making the P1 exit criteria internally unenforceable as written.",
+  "falsifiability": {
+    "failureCondition": "A P1 implementation follows the phase plan exactly, with signed approval token verification stubbed, then attempts the required rule_change APPROVED_APPLY token happy path.",
+    "observableSignal": "The evaluator either blocks the token because signature verification is unavailable, or accepts a token without enforcing the approval artifact contract.",
+    "measurementMethod": "Run the P1 integration fixture for a customer-style rule_change with a registries/approvals token and assert both the PolicyDecision and the signature verification path; inspect the test double to confirm whether signature verification is real or bypassed.",
+    "threshold": "P1 must either produce APPROVED_APPLY with real signature verification or explicitly use a policy_permit/operator-root exception documented in the P1 exit criteria.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i8",
+      "severity": "moderate",
+      "category": "invariant_gap",
+      "title": "P1 approval-token happy path conflicts with deferred signatures",
+      "description": "P1 exit criteria require a matching-token APPROVED_APPLY happy path on a rule_change item, but P1 also says signature verification is stubbed and signed TrustEvidence is not yet possible. The approval artifact contract says tokens require ed25519 signatures and invalid or missing signatures are BLOCKED. As written, P1 cannot both satisfy the token happy path and preserve the approval contract unless it implements token verification earlier or uses a different approval artifact kind.",
+      "suggestedFix": "Either move approval token verification into P1, or change the P1 exit criterion to use an operator-root or in-policy permit path with the exact exception stated. Keep signed approval tokens as a P3 exit criterion if verification remains deferred.",
+      "lineRef": "Phases › P1 exit criteria; Approval artifact contract; Phases › P3"
+    }
+  ],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "Heartbeat and autoapply are now separate jobs, and the autoapply path has explicit opt-in scheduling plus a plan-wide gate that accepts both AUTO_APPLY and APPROVED_APPLY."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "Telemetry remains default OFF and requires both telemetry_enabled true and heartbeat_url before any non-noop telemetry adapter is wired."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The risky taxonomy now explicitly covers rules, instructions, skills, schemas, and behavior-driving registries, with unknown paths failing strict classification."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "Apply now requires TrustEvidence signed or sha_pinned, and stable autoapply requires signed manifests unless the install explicitly elects sha_pinned trust mode."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Rollback now records absence tombstones and only deletes update-created files when their current SHA still matches the recorded post-apply SHA."
+    },
+    {
+      "issueId": "i6",
+      "review": "SATISFIED",
+      "rationale": "Approval artifacts now bind manifest SHA, target, category, expiry, and signature, with mismatches producing BLOCKED rather than warnings."
+    },
+    {
+      "issueId": "i7",
+      "review": "SATISFIED",
+      "rationale": "The new APPROVED_APPLY variant gives approved risky migrations a concrete terminal decision accepted by both executor and autoapply gate."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The manifest-pull architecture correctly rejects unmanaged remote command execution and keeps apply under install-local policy control.",
+      "lineRef": "Vision"
+    },
+    {
+      "id": "p2",
+      "summary": "The closed PolicyDecision union and BLOCKED-on-mismatched-approval rule make approval failures loud and testable.",
+      "lineRef": "Architecture › Deterministic policy evaluator"
+    },
+    {
+      "id": "p3",
+      "summary": "The heartbeat versus autoapply split is now enforceable, including an explicit no-network/no-apply telemetry default path.",
+      "lineRef": "Architecture › Heartbeat vs apply"
+    }
+  ]
+}

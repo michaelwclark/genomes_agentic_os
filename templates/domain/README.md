@@ -7,10 +7,11 @@ Use this when creating a new top-level operating boundary such as `personal`, `c
 - `ROUTER.md`
 - `AGENTS.md`
 - `CLAUDE.md`
-- `AGENT.md`
+- `CONTEXT.md`
+- `RULES.md`
+- `TOOLS.md`
 - `README.md`
 - `domain.yml`
-- `CONTEXT.md`
 - `REFERENCES.md`
 - `00-control-plane/active-work.md`
 - `00-control-plane/decisions.md`

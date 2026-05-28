@@ -6,6 +6,30 @@ Source: https://github.com/mksglu/context-mode
 
 Status: candidate experiment, not yet approved for full-time Genome's Agentic OS usage.
 
+Final decision: graduate Context Mode into the working default for Genome's Agentic OS on `bigmac` and `genomesbox`.
+
+Final report date: 2026-05-27.
+
+Final measured status:
+
+- `bigmac`: Context Mode ON for Claude and Codex; `94.1 MB` kept out of context, `15.7 MB/day`, across 2 tools.
+- `genomesbox`: Context Mode ON for Claude and Codex; `45.0 MB` kept out of context, `7.5 MB/day`, across 2 tools.
+
+Decision rationale:
+
+- The savings are material and continued to accumulate over multiple days.
+- Claude plugin, Codex MCP, and Codex hooks remained enabled on both primary hosts.
+- No Context Mode-specific breakage was captured during the experiment.
+- The kill switch was tested and remains available via `agentic-os-context-mode`.
+- Composio remains a separate routing/tooling experiment and should not block Context Mode graduation.
+
+Follow-up operating rule:
+
+- Keep Context Mode ON by default on `bigmac` and `genomesbox`.
+- Keep the kill switch installed.
+- Treat future Composio routing work as a separate Tool Router / MCP routing design problem.
+- Do not keep recurring Context Mode experiment check-ins running after this final report.
+
 ## Current Implementation Status
 
 Updated: 2026-05-20.
@@ -46,6 +70,23 @@ Related concurrent experiment:
 - Treat Composio as a confounding variable for Context Mode results because it may change tool names, routing behavior, MCP payload shape, auth behavior, and failure modes.
 - If Context Mode appears to save less context, break tools, or miss MCP payloads, separate whether the cause is Context Mode itself or the Composio MCP path.
 - For ON/OFF comparisons, record whether Composio was enabled, which MCP tools were routed through it, and whether failures happened in native MCP, Composio, or Context Mode hooks.
+
+## Results Log
+
+Notion should carry the running experiment log. Each row should capture:
+
+- Date/time
+- Host: `bigmac` or `genomesbox`
+- Harness: Claude or Codex
+- Context Mode state: ON, OFF, hooks-only, MCP-only, or purged
+- Composio state: ON, OFF, partial, or unknown
+- `ctx stats` summary
+- Token/context observation
+- Failure or friction observed
+- Benefit observed
+- Decision impact: promote, keep testing, keep optional, or remove
+
+Use this log before deciding whether Context Mode graduates into a full-time Genome's Agentic OS default.
 
 ## Summary
 

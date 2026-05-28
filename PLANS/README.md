@@ -47,6 +47,10 @@ The missing work is the operating loop: projects, cwd-aware routing, automatic c
 | `15-always-on-runtime-heartbeats-schedules-and-integrations.md` | Add heartbeats, schedule runners, execution targets, Orgo.io setup, Composio, AgentMail, Granola, and Notion tracking. | P0 |
 | `16-connected-source-watch-registry.md` | Register connected systems and watch sources across Composio, MCPs, connectors, direct APIs, webhooks, and polling. | P0 |
 | `17-event-graph-and-chained-automations.md` | Add file-backed event envelopes, event ledger, chain rules, and chained workflow dispatch. | P0 |
+| `18-visible-capability-registry.md` | Make installed OS capabilities visible through top-level registries and inventory files. | P0 |
+| `19-update-channel-and-customer-fleet.md` | Define future update channels, status reporting, phone-home policy, and customer fleet safety. | P1 |
+| `20-operator-pushed-customer-updates-and-backups.md` | Build the simpler V1 customer update path with customer-generated SSH keys, Genome billing checks, GitHub update pulls, backup pushes, and operator-pushed releases. | P0 |
+| `21-harness-context-contract-and-config-toml.md` | Normalize Codex/Claude context loading around `config.toml`, `AGENTS.md`, `CLAUDE.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`. | P0 |
 
 ## Status Vocabulary
 

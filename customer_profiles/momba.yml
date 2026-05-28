@@ -1,0 +1,77 @@
+customer:
+  slug: momba
+  display_name: The Momba Group
+  owner: Mike and Keith
+  notion_workspace: Genome's Notion for demo; customer workspace later
+  approved_domains:
+    - recruiting_operations
+    - sales
+    - client_delivery
+  source_systems:
+    - name: email
+      role: primary command surface and intake source
+      access: read_write
+      demo_notes: AgentMail inbox represents the future shared inbox or provider API.
+    - name: supabase
+      role: unified data layer for candidates, jobs, matches, events, and automation runs
+      access: read_write
+      demo_notes: Supabase is the durable state plane, not a chatbot transcript.
+    - name: notion
+      role: human control dashboard, approvals, status, and audit trail
+      access: read_write
+      demo_notes: Dashboard can be moved into Momba's workspace after access is granted.
+    - name: trackerrms
+      role: ATS and source of truth for recruiting workflow
+      access: planned
+      demo_notes: Production connector target.
+    - name: apollo
+      role: sales sourcing and enrichment
+      access: planned
+      demo_notes: Production connector target.
+    - name: linkedin_recruiter
+      role: sourcing and InMail surface
+      access: planned
+      demo_notes: Production connector target through approved API or intermediary.
+  default_workflows:
+    - domain: recruiting_operations
+      lane: operations
+      name: email_intake_to_candidate_record
+    - domain: recruiting_operations
+      lane: operations
+      name: candidate_job_match_scorecard
+    - domain: client_delivery
+      lane: operations
+      name: call_prep_briefing
+    - domain: recruiting_operations
+      lane: operations
+      name: candidate_materials_pack
+    - domain: sales
+      lane: sales
+      name: proactive_follow_up_monitor
+  default_automations:
+    - domain: recruiting_operations
+      lane: operations
+      name: inbound_email_router
+      trigger: email
+    - domain: recruiting_operations
+      lane: operations
+      name: match_and_scorecard_worker
+      trigger: candidate_or_job_created
+    - domain: client_delivery
+      lane: operations
+      name: call_prep_worker
+      trigger: calendar_event_upcoming
+    - domain: sales
+      lane: sales
+      name: stale_thread_nudge_worker
+      trigger: schedule
+  approval_policy:
+    external_writes_require_approval: true
+    customer_visible_output_requires_approval: true
+    production_changes_require_approval: true
+    destructive_actions_require_approval: true
+    demo_mode_all_external_tool_writes_are_simulated: true
+  demo_positioning:
+    buyer_fear: They are nervous that 20k buys an unclear pile of scripts.
+    proof: Show a visible operating system with an inbox trigger, state database, dashboard, audit log, and handoff structure.
+    promise: Email remains the primary interface. Notion is visibility. Supabase is durable state. Orgo is the managed runtime. Composio centralizes tool auth.

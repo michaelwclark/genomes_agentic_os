@@ -12,3 +12,7 @@ These specs define what the scaffold should become and what the current installa
 | [Notion Scaffold Spec](notion-scaffold-spec.md) | Notion control-plane page and database model. |
 | [Install Surface](install-surface.md) | Filesystem, Claude, Codex, Notion, and future runtime targets. |
 | [Running OS Roadmap](running-os-roadmap.md) | Build backlog for projects, automations, context buildup, routing updates, cleanup, Notion sync, and metrics. |
+| [Capability Registry](capability-registry.md) | Visible OS inventory and registry model for MCPs, skills, commands, plugins, libraries, hooks, and rules. |
+| [Update Channel](update-channel.md) | Future-state channel, policy, phone-home, rollback, and customer fleet update model. |
+| [Operator-Pushed Customer Updates](operator-pushed-customer-updates.md) | Simpler V1 customer update and backup model using customer-generated SSH keys, Genome billing checks, GitHub remotes, and operator-pushed releases. |
+| [Harness Context Contract](harness-context-contract.md) | Shared `config.toml` plus markdown context-file contract for AGENTS, Claude adapters, routers, rules, tools, and route-read-cd-repeat behavior. |

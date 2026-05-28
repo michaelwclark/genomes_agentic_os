@@ -1,0 +1,5 @@
+{"ts":"2026-05-24T19:23:46.166Z","type":"duel_start","duelId":"2026-05-24-55a89b92","ideaPath":"spec/capability-registry.md","contextPath":"","maxRounds":4,"maxCostPerArm":20,"maxTotalCost":20,"writerModel":"opus","writerRunner":"claude-cli","criticRunner":"codex-cli"}
+{"ts":"2026-05-24T19:23:46.166Z","type":"round_start","duelId":"2026-05-24-55a89b92","roundNumber":0,"role":"writer","model":"opus"}
+{"ts":"2026-05-24T19:23:46.167Z","type":"pre_call_gate","duelId":"2026-05-24-55a89b92","roundNumber":0,"initialCallUpperBound":0,"decision":"proceed","reservedUsd":0}
+{"ts":"2026-05-24T19:23:49.460Z","type":"call_completed","duelId":"2026-05-24-55a89b92","roundNumber":0,"attempt":"initial","tokensIn":0,"tokensOut":0,"durationMs":3293,"costUsd":0,"terminalReason":"error"}
+{"ts":"2026-05-24T19:23:49.461Z","type":"duel_end","duelId":"2026-05-24-55a89b92","termination":"NON_PASS_COST","totalRounds":0,"totalCostUsd":0,"finalArtifact":"latest-spec.md"}

@@ -33,10 +33,13 @@ Genome's Agentic OS implements that as:
 
 ```text
 ~/agentic_os/
+  .agentic_root
   ROUTER.md
   AGENTS.md
   CLAUDE.md
-  AGENT.md
+  CONTEXT.md
+  RULES.md
+  TOOLS.md
   README.md
   personal/
   clarks_consulting/
@@ -52,8 +55,9 @@ Each domain is a room with its own router, context, references, control plane, i
   ROUTER.md
   AGENTS.md
   CLAUDE.md
-  AGENT.md
   CONTEXT.md
+  RULES.md
+  TOOLS.md
   REFERENCES.md
   README.md
   domain.yml
@@ -196,7 +200,8 @@ The custom UI is not the OS. It is one possible control surface over the same fo
 
 This repo now encodes the source guidance by generating:
 
-- `ROUTER.md` as the source of truth with `AGENTS.md`, `CLAUDE.md`, and `AGENT.md` pointers so Claude and Codex use the same router model without duplicate content.
+- `AGENTS.md` as the shared route-read-cd-repeat bootstrap, with `CLAUDE.md` as a short `@AGENTS.md` adapter.
+- `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` as the local context-file contract for each routed layer.
 - Domain `CONTEXT.md` and `REFERENCES.md` so each room has persistent local memory.
 - Workflow `outcome-brief.md`, `alignment-questions.md`, `prd.md`, `implementation-plan.md`, `dispatch-handoff.md`, `progress.md`, and `quick-reference.md`.
 - Automation worthiness and ask-before-acting guardrails.

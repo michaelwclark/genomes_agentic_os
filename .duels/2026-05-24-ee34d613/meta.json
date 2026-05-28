@@ -1,0 +1,12 @@
+{
+  "duelId": "2026-05-24-ee34d613",
+  "startedAt": "2026-05-24T19:24:58.955Z",
+  "endedAt": "2026-05-24T19:37:18.229Z",
+  "termination": "NON_PASS_MAX_ROUNDS",
+  "finalArtifact": "latest-spec.md",
+  "totalRounds": 7,
+  "totalCostUsd": 0,
+  "budgetCapUsd": 20,
+  "writerRunner": "codex-cli",
+  "criticRunner": "codex-cli"
+}

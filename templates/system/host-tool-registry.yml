@@ -1,0 +1,46 @@
+host: <host_name>
+owner: <owner_or_team>
+last_verified: <YYYY-MM-DD>
+shell:
+  default: zsh
+  startup_files:
+    zshenv: ~/.zshenv
+    zshrc: ~/.zshrc
+    oh_my_zsh_custom: ~/.oh-my-zsh/custom
+  notes: []
+terminal:
+  local_terminal: iterm2 | terminal | ssh | other
+  interactive_only:
+    - imgcat
+    - imgls
+    - it2copy
+    - it2dl
+package_managers:
+  - name: homebrew
+    command: brew
+    scope: user
+tools:
+  - command: rg
+    category: search
+    path: <path>
+    version: <version>
+    agent_use: Prefer for text search.
+    interactive_only: false
+  - command: fzf
+    category: picker
+    path: <path>
+    version: <version>
+    agent_use: Human-facing interactive picker; avoid in unattended scripts.
+    interactive_only: true
+health_checks:
+  - command: context-mode doctor
+    purpose: Verify context-mode runtime, hooks, and storage.
+  - command: zsh -n ~/.zshrc
+    purpose: Validate interactive zsh config syntax.
+cleanup:
+  safe:
+    - brew cleanup --prune=30
+  requires_confirmation:
+    - rm -rf
+    - git clean
+

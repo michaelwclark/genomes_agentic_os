@@ -185,3 +185,57 @@ Manual/live validation to run later:
    - Run-queue item id.
    - Trigger action status.
    - Confirmation that duplicate apply does not create duplicate source-event or run-queue work.
+
+## Plan 17: Event Graph And Chained Automations
+
+Source-package validation already completed:
+
+- `uv run pytest tests/test_cli_scaffold.py -q -k 'event_graph'` passed with 4 tests.
+- `uv run pytest -q` passed with 57 tests.
+- Temp-root smoke validation passed for event append, process-due dry-run, chain test, chain doctor, and root validation.
+
+Manual/live validation to run later:
+
+1. Run a real Genome Notion work-item/source-watch event through dry-run first.
+
+   ```bash
+   agentic-os watch-source poll <source_id> --root ~/agentic_os --dry-run
+   ```
+
+   Apply only after the emitted event and queue preview are correct.
+
+2. Run a synthetic PR-merged event against the live install.
+
+   ```bash
+   agentic-os event append --root ~/agentic_os --type github.pull_request.merged --source github:genomes_agentic_os:pull/<pr>
+   agentic-os event process-due --root ~/agentic_os --dry-run
+   agentic-os event summary --root ~/agentic_os --limit 20
+   ```
+
+   Evidence to capture:
+
+   - Event file path.
+   - Matched chain rule.
+   - Exactly one pending follow-up queue item.
+   - Confirmation that duplicate processing does not create duplicate queue work.
+
+3. Exercise an approval-required chain on the live install.
+
+   Evidence to capture:
+
+   - Queue item status stays `approval-needed`.
+   - Approval state is `required`.
+   - No external execution occurs.
+
+4. Inspect a dead-letter and replay flow manually.
+
+   Evidence to capture:
+
+   - Dead-letter file includes event ID, chain rule ID, failure reason, and next action.
+   - After rule repair, `agentic-os event replay <event_id> --root ~/agentic_os --dry-run` returns the expected queue preview.
+
+5. Validate the live installed OS root after live event graph checks.
+
+   ```bash
+   agentic-os validate --root ~/agentic_os
+   ```

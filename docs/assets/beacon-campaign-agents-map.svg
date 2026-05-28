@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Beacon campaign AGENTS.md workspace map</title>
+  <desc id="desc">A diagram showing a campaign folder with AGENTS.md routing Codex to overview, reference, worklog, drafts, handoff, and results files.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="13" markerHeight="13" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,5 L0,10 Z" fill="#334155"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#0f172a" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <rect width="1800" height="1180" fill="#f8fafc"/>
+  <rect x="80" y="70" width="1640" height="1040" rx="28" fill="#ffffff" stroke="#d7e0ea" stroke-width="2"/>
+
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="140" y="145" font-size="44" font-weight="700" fill="#0f172a">One AGENTS.md gives Codex the campaign map</text>
+    <text x="140" y="195" font-size="24" fill="#475569">The prompt stays short because the folder tells the assistant where context lives.</text>
+
+    <rect x="145" y="290" width="310" height="142" rx="18" fill="#e0f2fe" stroke="#0284c7" stroke-width="2.5" filter="url(#shadow)"/>
+    <text x="180" y="342" font-size="28" font-weight="700" fill="#0f172a">Prompt</text>
+    <text x="180" y="383" font-size="21" fill="#334155">Help me work on</text>
+    <text x="180" y="414" font-size="21" font-weight="700" fill="#0f172a">the Beacon campaign</text>
+
+    <rect x="575" y="260" width="360" height="202" rx="20" fill="#fef3c7" stroke="#d97706" stroke-width="2.5" filter="url(#shadow)"/>
+    <text x="615" y="315" font-size="32" font-weight="700" fill="#0f172a">AGENTS.md</text>
+    <text x="615" y="357" font-size="21" fill="#334155">Start here every session</text>
+    <text x="615" y="388" font-size="21" fill="#334155">Read the current state</text>
+    <text x="615" y="419" font-size="21" fill="#334155">Load only useful files</text>
+
+    <rect x="1065" y="290" width="315" height="142" rx="18" fill="#dcfce7" stroke="#16a34a" stroke-width="2.5" filter="url(#shadow)"/>
+    <text x="1100" y="342" font-size="28" font-weight="700" fill="#0f172a">Codex</text>
+    <text x="1100" y="383" font-size="21" fill="#334155">Reads the map before</text>
+    <text x="1100" y="414" font-size="21" fill="#334155">writing campaign assets</text>
+
+    <line x1="455" y1="361" x2="563" y2="361" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+    <line x1="935" y1="361" x2="1053" y2="361" stroke="#334155" stroke-width="4" marker-end="url(#arrow)"/>
+
+    <text x="140" y="565" font-size="30" font-weight="700" fill="#0f172a">Context folders</text>
+    <text x="140" y="600" font-size="21" fill="#64748b">Each area answers a different question.</text>
+
+    <rect x="140" y="650" width="250" height="150" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="168" y="695" font-size="23" font-weight="700" fill="#0f172a">00-overview</text>
+    <text x="168" y="733" font-size="18" fill="#334155">Where are we?</text>
+    <text x="168" y="764" font-size="18" fill="#64748b">OVERVIEW.md</text>
+
+    <rect x="430" y="650" width="250" height="150" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="458" y="695" font-size="23" font-weight="700" fill="#0f172a">01-reference</text>
+    <text x="458" y="733" font-size="18" fill="#334155">What rules apply?</text>
+    <text x="458" y="764" font-size="18" fill="#64748b">APPROVED-CLAIMS.md</text>
+
+    <rect x="720" y="650" width="250" height="150" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="748" y="695" font-size="23" font-weight="700" fill="#0f172a">02-worklog</text>
+    <text x="748" y="733" font-size="18" fill="#334155">What changed?</text>
+    <text x="748" y="764" font-size="18" fill="#64748b">WORKLOG.md</text>
+
+    <rect x="1010" y="650" width="250" height="150" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="1038" y="695" font-size="23" font-weight="700" fill="#0f172a">03-drafts</text>
+    <text x="1038" y="733" font-size="18" fill="#334155">What are we making?</text>
+    <text x="1038" y="764" font-size="18" fill="#64748b">EMAIL-SEQUENCE.md</text>
+
+    <rect x="1300" y="650" width="250" height="150" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="1328" y="695" font-size="23" font-weight="700" fill="#0f172a">04-handoff</text>
+    <text x="1328" y="733" font-size="18" fill="#334155">Who needs this next?</text>
+    <text x="1328" y="764" font-size="18" fill="#64748b">SALES-HANDOFF.md</text>
+
+    <path d="M1222 432 C1200 520 1000 575 265 640" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+    <path d="M1222 432 C1190 530 1050 594 555 640" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+    <path d="M1222 432 C1210 530 1090 602 845 640" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+    <path d="M1222 432 C1220 550 1175 600 1135 640" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+    <path d="M1222 432 C1280 548 1365 595 1425 640" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+
+    <rect x="260" y="910" width="1280" height="105" rx="18" fill="#eef2ff" stroke="#4f46e5" stroke-width="2"/>
+    <text x="300" y="953" font-size="24" font-weight="700" fill="#0f172a">Outcome</text>
+    <text x="300" y="988" font-size="21" fill="#334155">Codex can say what stage the campaign is in, what is missing, what changed, and what to do next.</text>
+  </g>
+</svg>

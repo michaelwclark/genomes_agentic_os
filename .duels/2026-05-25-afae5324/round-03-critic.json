@@ -1,0 +1,71 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The Writer closed the original privacy, trust, rollback, and taxonomy gaps, but introduced a new core automation contradiction. P3 requires approved migrations to run through autoapply, while the autoapply and executor rules still refuse REQUIRES_APPROVAL items even when approval artifacts are present.",
+  "falsifiability": {
+    "failureCondition": "A stable customer install has autonomous_apply true, a signed trusted manifest, and a valid install-bound approval token for a migration, but the autoapply job refuses to apply the migration because its PolicyDecision is REQUIRES_APPROVAL rather than AUTO_APPLY.",
+    "observableSignal": "The run writes blocked.json or exits non-zero for the approved migration, and no migration marker appears under 06-runs-and-logs/updates/<ts>/migrations/<id>.json despite the approval token matching all required bindings.",
+    "measurementMethod": "Create a tmp customer root with autonomous_apply true, a trusted signed manifest containing one migration PlanItem, and a valid approval token matching migration_id, manifest_sha, install_id, risk_category, and expires_at. Run update.autoapply.job and assert whether the migration marker is written and decisions.json records the approval as satisfied.",
+    "threshold": "PASS only if the approved migration applies exactly once and any missing or mismatched approval blocks the whole run",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i7",
+      "severity": "showstopper",
+      "category": "invariant_gap",
+      "title": "Approved migrations cannot autoapply",
+      "description": "The spec now says P3 customer installs with autonomous_apply true apply an approved migration through the autoapply job. But the autoapply job is constrained so every PlanItem must evaluate to AUTO_APPLY, and any REQUIRES_APPROVAL refuses the whole apply. Risky migrations are defined to produce REQUIRES_APPROVAL unless approved, so a valid approval token still cannot satisfy the autoapply path as written.",
+      "suggestedFix": "Define a separate terminal decision such as APPROVED_APPLY, or define PolicyDecision REQUIRES_APPROVAL as converting to AUTO_APPLY/SATISFIED_APPROVAL after exact approval binding validation. Then update autoapply and executor rules to allow only AUTO_APPLY plus approval-satisfied risky items, while still refusing missing or mismatched approvals.",
+      "lineRef": "Architecture > Heartbeat vs apply; Deterministic policy evaluator; Apply executor; P3 exit criteria"
+    }
+  ],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "PARTIAL",
+      "rationale": "Heartbeat and apply are now structurally split, but the replacement autoapply path contradicts the approval-required migration path, so the original automation invariant is not fully satisfied."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "Telemetry is explicitly default OFF, gated by both telemetry_enabled and heartbeat_url, and backed by a noop-adapter integration test."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The risky taxonomy now includes rules, instructions, skills, schemas, and behavior-driving registries with customer-default approval gates and CI classification linting."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "TrustEvidence is explicit, untrusted manifests cannot apply on non-dev channels, and stable autoapply requires signing unless sha_pinned trust mode is explicitly elected."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Rollback now records absence tombstones and uses post-apply SHA checks before deleting update-created files, preserving local edits."
+    },
+    {
+      "issueId": "i6",
+      "review": "SATISFIED",
+      "rationale": "Approval artifacts now bind migration id, manifest SHA, target identity, risk category, expiry, and signature rules, with mismatch cases producing BLOCKED decisions."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The telemetry design is now enforceable because the noop adapter is wired unless both explicit policy keys are present.",
+      "lineRef": "Vision; Channels and defaults; AC #13"
+    },
+    {
+      "id": "p2",
+      "summary": "The rollback model correctly handles additive files with absence tombstones and SHA-guarded deletion.",
+      "lineRef": "Apply executor; Rollback semantics; AC #7"
+    },
+    {
+      "id": "p3",
+      "summary": "The PlanItem taxonomy treats behavior-driving text as risky rather than assuming only executable files can change system behavior.",
+      "lineRef": "Risky Change Taxonomy; AC #4"
+    }
+  ]
+}

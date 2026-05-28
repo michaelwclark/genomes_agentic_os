@@ -1,0 +1,84 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The Writer resolved the original five ledger issues well enough, but v1 introduces a new severe schema/lifecycle contradiction for disabled records. The normalized schema requires content_hash for every normalized record while the install pipeline explicitly short-circuits disabled records before hash computation and then passes them through to final normalized validation.",
+  "falsifiability": {
+    "failureCondition": "A declared capability with status disabled is included in a per-type registry and install reaches final normalized-schema validation.",
+    "observableSignal": "The install either fails normalized validation because source.content_hash is missing, or it computes/copies disabled capability content despite saying disabled records short-circuit.",
+    "measurementMethod": "Create a fixture registry with one disabled skill record that has install.target but no source.content_hash, run agentic-os install --dry-run, then inspect whether capabilities.yml validates and whether the disabled capability was copied or hashed contrary to the lifecycle text.",
+    "threshold": "install must complete with the disabled record represented according to exactly one explicit rule: excluded entirely, or included with a schema-valid disabled shape",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i6",
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Disabled normalized records still require content_hash",
+      "description": "The normalized schema says source.content_hash is required for capabilities.yml and lock entries. But the install contract says records with status disabled are skipped before source resolution and hash computation, then pass through as status disabled. That leaves disabled normalized records unable to satisfy final normalized validation unless the implementation violates the short-circuit rule by hashing them anyway.",
+      "suggestedFix": "Choose one invariant explicitly: either exclude disabled records from capabilities.yml and lock, or define a disabled-normalized schema branch where source.content_hash and doctor.last_run_status are not required. Add an AC fixture for a disabled record.",
+      "lineRef": "Capability Records: declared vs normalized; Status lifecycle; Install contract steps 3-4 and 8"
+    },
+    {
+      "id": "i7",
+      "severity": "moderate",
+      "category": "invariant_gap",
+      "title": "Pre-doctor adapter emission can leave empty adapters",
+      "description": "Step 5 writes harness adapters before doctor has converted records from declared to installed, while emitters exclude every status other than installed. In a real install, an interruption or doctor crash between steps 5 and 7 can leave .codex/config.toml, CLAUDE.md, and AGENTS.md regenerated with the new run's installed set missing or empty. That contradicts the goal of deterministic adapters reflecting known-good installed capabilities.",
+      "suggestedFix": "Make adapter writes atomic and final-only: emit to a staging tree during steps 5-7, then promote generated adapters only after final normalized validation succeeds. If step 5 is only a dry-run consistency check, rename it as validation and forbid writes to live adapters.",
+      "lineRef": "Install contract steps 5-7"
+    },
+    {
+      "id": "i8",
+      "severity": "moderate",
+      "category": "unenforceable_validation",
+      "title": "Forbidden fields are ambiguously allowed when empty",
+      "description": "The per-type table says some fields are forbidden, but the prose says empty maps/lists are permitted where the table says optional or forbidden. That makes forbidden mean either absent-only or present-but-empty depending on the implementer. JSON Schema enforcement will diverge unless the spec states the exact accepted shape.",
+      "suggestedFix": "Define forbidden as 'property must be absent' or rename it to 'must be omitted or empty' and encode that exact rule in AC2-style fixtures for rule, library, and skill records.",
+      "lineRef": "Per-type required field table"
+    }
+  ],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "Declared and normalized schemas remove the requirement for humans to provide computed hashes before install."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "The spec now clearly separates operator intent in per-type registries from derived status in generated outputs."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The per-type table and discriminator fixtures make heterogeneous capability validation enforceable, despite the new forbidden-field ambiguity raised separately."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "The three-gate secret model is meaningfully stronger than the original scalar regex and includes concrete failing fixtures."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Dry-run now has a concrete redirected output tree and doctor checks run against that materialized tree."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The declared-versus-normalized schema split is the right architectural boundary and makes install-time derived state testable.",
+      "lineRef": "Capability Records: declared vs normalized"
+    },
+    {
+      "id": "p2",
+      "summary": "The acceptance criteria are unusually concrete and map cleanly to unit and integration tests.",
+      "lineRef": "Acceptance Criteria and Validations"
+    },
+    {
+      "id": "p3",
+      "summary": "The secret-protection section uses layered controls rather than relying on one brittle grep pattern.",
+      "lineRef": "Secret protection (defense in depth)"
+    }
+  ]
+}

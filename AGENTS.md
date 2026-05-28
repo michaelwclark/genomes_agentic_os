@@ -19,6 +19,13 @@ This repo defines Genome's Agentic OS: the reusable source package for scaffoldi
 | `~/agentic_os` | Installed operating system for live work. |
 | `~/projects/*` | Product/client/code repositories operated by the OS. |
 
+## System Shell And Host Tools
+
+- Treat host-level shell setup as part of the OS product surface.
+- Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read the host tool registry when it exists.
+- Source templates live in `templates/system/`; installed host registries live at `~/agentic_os/shared_factory/05-knowledge/host-tool-registry.<host>.yml`.
+- Keep interactive-only tools, such as iTerm2 utilities and fuzzy pickers, separate from automation-safe commands.
+
 ## Edit Style
 
 - Add concrete files rather than vague planning notes.

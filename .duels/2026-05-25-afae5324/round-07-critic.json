@@ -1,0 +1,71 @@
+{
+  "verdict": "PASS",
+  "verdictRationale": "The current spec closes the remaining P1 approval-token contradiction by splitting approval artifacts into signed_token and policy_permit, then binding signature requirements to operator_pubkey presence. Prior severe and showstopper issues remain resolved under regression sweep: heartbeat never applies, autoapply has a separate explicit job, risky approved items become APPROVED_APPLY, telemetry remains default-off, and untrusted manifests cannot apply on non-dev channels.",
+  "falsifiability": {
+    "failureCondition": "A P1 install with no operator_pubkey either accepts a signed_token artifact or rejects a matching unsigned policy_permit for a risky rule_change item.",
+    "observableSignal": "The evaluator output contradicts the artifact-kind signature matrix, causing either signed_token to become APPROVED_APPLY in P1 or policy_permit to become BLOCKED despite exact non-signature bindings.",
+    "measurementMethod": "Run the AC #17 evaluator matrix in unit tests over signed_token and policy_permit with operator_pubkey set and unset, then run the P1 integration fixture with a rule_change item, one matching unsigned permits[] entry, and one matching token file.",
+    "threshold": "All four signature-matrix cases match AC #17 exactly, and the P1 integration shows policy_permit APPROVED_APPLY while signed_token is BLOCKED approval_unsigned.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "Heartbeat and autoapply are now separate jobs, and the P3 path uses autoapply rather than heartbeat-driven apply."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "Telemetry remains default OFF and requires both telemetry_enabled true and heartbeat_url before any network adapter is wired."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The risky taxonomy now covers rules, instructions, skills, schemas, and behavior-driving registries, with unknown paths failing strict classification."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "Apply is gated on TrustEvidence signed or sha_pinned, with untrusted manifests blocked on non-dev channels."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Rollback now records absence tombstones and uses post-apply SHA checks before deleting update-created files."
+    },
+    {
+      "issueId": "i6",
+      "review": "SATISFIED",
+      "rationale": "Approval artifacts bind manifest_sha, target, category, and expiry, making replay against future manifests explicitly blocked."
+    },
+    {
+      "issueId": "i7",
+      "review": "SATISFIED",
+      "rationale": "The evaluator has an APPROVED_APPLY terminal decision, and the executor plus autoapply gate accept both AUTO_APPLY and APPROVED_APPLY."
+    },
+    {
+      "issueId": "i8",
+      "review": "SATISFIED",
+      "rationale": "P1 no longer requires signed-token success; it uses unsigned policy_permit mode when operator_pubkey is unset and explicitly blocks signed_token artifacts until P3."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec keeps manifest-pull as the core update model and avoids remote command execution or control-plane push into customer installs.",
+      "lineRef": "Vision"
+    },
+    {
+      "id": "p2",
+      "summary": "The PolicyDecision union is closed and executor acceptance is limited to AUTO_APPLY and APPROVED_APPLY, which makes approval behavior testable.",
+      "lineRef": "Deterministic policy evaluator"
+    },
+    {
+      "id": "p3",
+      "summary": "Telemetry is schema-constructed, strict-validated, size-bounded, and default-off, preserving the stated customer privacy posture.",
+      "lineRef": "Redactor as schema, not filter"
+    }
+  ]
+}

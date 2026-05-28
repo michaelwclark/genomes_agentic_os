@@ -43,7 +43,7 @@ runtime precedence to Codex.
 | Providers | `[model_providers]`, `model_provider`, `oss_provider`, `model_catalog_json`, `chatgpt_base_url` | Built-ins include OpenAI and local/alternate providers in sample config. | Do not put customer provider secrets in project templates. Reference env vars. |
 | Profiles | `profile`, `[profiles.<name>]`, `profiles.<name>.*` | A startup profile is equivalent to `--profile`. Profile keys can override supported config keys. | Define reusable Agentic OS profiles for global, OS root, customer root, domain, workflow, and automation layers. |
 | Project trust | `[projects.<path>]`, `trust_level` | Trusted projects can load project `.codex/` layers. Untrusted projects skip project `.codex/` layers, hooks, and rules. | Mark installed OS roots and known project worktrees intentionally. Avoid broad trust globs. |
-| Instructions | `project_doc_fallback_filenames`, `project_doc_max_bytes`, `project_root_markers`, `model_instructions_file`, `experimental_compact_prompt_file` | `AGENTS.md` is native. Fallback filenames are only checked after override/base names. Default project doc cap is 32 KiB. | Keep `AGENTS.md` as the Codex-native entrypoint. Treat `BRAIN.md`, `ROUTER.md`, and `CONTEXT.md` as Agentic OS files included by convention or fallback config. |
+| Instructions | `project_doc_fallback_filenames`, `project_doc_max_bytes`, `project_root_markers`, `model_instructions_file`, `experimental_compact_prompt_file` | `AGENTS.md` is native. Fallback filenames are only checked after override/base names. Default project doc cap is 32 KiB. | Keep `AGENTS.md` as the Codex-native entrypoint. It should explicitly load `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`. |
 | Approval | `approval_policy`, `approvals_reviewer`, granular approval tables | CLI exposes `untrusted`, `on-request`, `never`; `on-failure` is deprecated in local help. | Global defaults should use `on-request` or stricter; automations can use `never` only inside external safeguards. |
 | Sandbox | `sandbox_mode`, `[sandbox_workspace_write]`, `default_permissions`, `[permissions.<name>]`, `[windows]` | CLI supports `read-only`, `workspace-write`, and `danger-full-access`. Network in `workspace-write` is controlled separately. | Match OS layer risk: read-only for discovery, workspace-write for normal repo work, danger only for trusted automation surfaces. |
 | Filesystem/network permissions | `permissions.<name>.filesystem`, `permissions.<name>.network`, `permissions.<name>.workspace_roots` | Permission profiles can define reusable filesystem and network policy. Deny rules win on conflicts. | Prefer named profiles for customer/domain/workflow scopes instead of repeating sandbox tables. |
@@ -78,11 +78,11 @@ guidance.
 Agentic OS should use these roles:
 
 - `AGENTS.md`: Codex-native operating instructions.
-- `CLAUDE.md`: Claude-native operating instructions with the same workflow
-  contract as `AGENTS.md`.
-- `BRAIN.md`: universal facts, defaults, and durable decisions.
+- `CLAUDE.md`: Claude adapter that includes `AGENTS.md`.
 - `ROUTER.md`: routing rules for domains, lanes, workflows, and tools.
 - `CONTEXT.md`: current operating context assembled for a room/domain/workflow.
+- `RULES.md`: approval, safety, privacy, and local operating constraints.
+- `TOOLS.md`: visible skills, commands, MCP servers, plugins, wrappers, and libraries.
 - `MEMORY.md`: durable memory handoff or local feature memory, not a substitute
   for the OS memory substrate.
 
@@ -149,7 +149,7 @@ trust_level = "trusted"
 Project fallback prompt files:
 
 ```toml
-project_doc_fallback_filenames = ["BRAIN.md", "ROUTER.md", "CONTEXT.md"]
+project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
 project_doc_max_bytes = 65536
 ```
 

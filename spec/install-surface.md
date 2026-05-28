@@ -16,10 +16,13 @@ Default installed roots:
 
 ```text
 ~/agentic_os/
+  .agentic_root
   ROUTER.md
   AGENTS.md
   CLAUDE.md
-  AGENT.md
+  CONTEXT.md
+  RULES.md
+  TOOLS.md
   personal/
   clarks_consulting/
   los/
@@ -38,8 +41,8 @@ Each root contains the standard domain router and numbered folders from `00-cont
 
 Codex install should provide:
 
-- Project or global `AGENTS.md` pointer instructions.
-- Installed root and domain `ROUTER.md` routers, with `AGENTS.md` pointers for Codex discovery.
+- Project or global `AGENTS.md` route bootstrap instructions.
+- Installed root and domain `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` files for the route-read-cd-repeat loop.
 - Runtime skill specs under `shared_factory/05-knowledge/skills/`.
 - Runtime command prompts under `shared_factory/05-knowledge/commands/`.
 - Optional validation scripts for context packs and specs.
@@ -49,7 +52,7 @@ Codex install should provide:
 
 Claude install should provide:
 
-- `CLAUDE.md` pointers to the same `ROUTER.md` instructions.
+- `CLAUDE.md` adapters that include `AGENTS.md` instead of duplicating instructions.
 - Matching skill and command specs under `shared_factory/05-knowledge/skills/` and `commands/`.
 - Same domain routing, workflow names, and output contracts as Codex.
 - Memory policy references.

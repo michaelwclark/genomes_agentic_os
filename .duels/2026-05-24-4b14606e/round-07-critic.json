@@ -1,0 +1,66 @@
+{
+  "verdict": "PASS",
+  "verdictRationale": "The v3 spec closes the two remaining verification ambiguities with enforceable digest canonicalization and registry-fragment merge semantics. Under adversarial reading, the severe safety invariants now have concrete policy, manifest, planning, re-gating, and validation hooks rather than prose-only intent.",
+  "falsifiability": {
+    "failureCondition": "A registry additive update with a valid artifact fragment but an existing unrelated local registry entry is rejected or overwrites the local entry.",
+    "observableSignal": "The planned or applied registry file either drops a pre-existing local key or changes its value after merge.",
+    "measurementMethod": "Create a local registry with one customer-added key, apply a manifest fragment adding a different key, then compare parsed pre/post registries and assert all pre-existing keys retain identical values.",
+    "threshold": "zero pre-existing local keys deleted or changed",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "The manifest now requires explicit files[] entries and per-write traceability, and planning refuses writes without exactly one matching file entry."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "Missing or inconsistent customer policy now fails closed as pinned_version for apply while non-writing commands remain available."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The approval artifact is now plan-bound by install id, manifest digest, plan digest, operation ids, and expiration."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "Path safety is explicit, repeated before writes, and covers containment, symlink escapes, local-only targets, and registry path restrictions."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "UPDATE_POLICY.md has required canonical YAML frontmatter, field enums, consistency rules, and fail-closed behavior for prose-only or invalid policy."
+    },
+    {
+      "issueId": "i6",
+      "review": "SATISFIED",
+      "rationale": "The spec now defines RFC 8785 canonicalization over the manifest with only manifest_digest and signature omitted, including duplicate-key and signature byte-range handling."
+    },
+    {
+      "issueId": "i7",
+      "review": "SATISFIED",
+      "rationale": "The registry merge digest now applies to the canonical artifact fragment, while merge invariants preserve local entries and block conflicts."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec keeps Notion mirror-only and preserves local check, plan, apply, rollback, and status without a Notion dependency.",
+      "lineRef": "Control Plane / Acceptance Criteria"
+    },
+    {
+      "id": "p2",
+      "summary": "The pre-write re-gate is strong: it repeats path, checksum, artifact, policy, approval, and registry invariant checks immediately before writes.",
+      "lineRef": "Apply Flow step 9"
+    },
+    {
+      "id": "p3",
+      "summary": "Telemetry is constrained by an explicit allowlist and fails closed before sending if any forbidden key appears.",
+      "lineRef": "Phone Home Contract"
+    }
+  ]
+}

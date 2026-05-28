@@ -18,6 +18,7 @@ Agents should not invent new document shapes when a template exists. They should
 | `automation/` | Triggered process specs, permissions, and failure policies. |
 | `notion/` | Notion control-plane mapping, page structure, and bootstrap templates. |
 | `memory/` | Memory policy for durable agent context. |
+| `system/` | Host tool registries and shared shell/terminal shape for local and remote machines. |
 | `planning/` | Feature specs and future-idea capture for OS product work. |
 
 The installed OS should not create root-level `templates/`, `workflows/`, or `automations/` folders for active work. Reusable templates belong in `shared_factory`; active workflow and automation specs belong under the selected domain.

@@ -9,7 +9,10 @@ Each client OS should be a domain overlay on the core model, not a full fork.
   ROUTER.md
   AGENTS.md
   CLAUDE.md
-  AGENT.md
+  CONTEXT.md
+  RULES.md
+  TOOLS.md
+  REFERENCES.md
   README.md
   domain.yml
   00-control-plane/
