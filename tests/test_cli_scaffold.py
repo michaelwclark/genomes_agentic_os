@@ -12,8 +12,14 @@ from genomes_agentic_os.validate import validate_root
 
 def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
+    projects_source = tmp_path / "projects"
+    projects_source.mkdir()
 
-    assert main(["init", "--target", str(root)]) == 0
+    assert main(["init", "--target", str(root), "--projects-source", str(projects_source)]) == 0
+
+    assert (root / ".agentic_root").is_file()
+    assert (root / "projects").is_symlink()
+    assert (root / "projects").resolve() == projects_source.resolve()
 
     for domain in ("personal", "clarks_consulting", "los", "shared_factory", "archive"):
         domain_root = root / domain
@@ -21,9 +27,11 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "ROUTER.md").is_file()
         assert (domain_root / "AGENTS.md").is_file()
         assert (domain_root / "CLAUDE.md").is_file()
-        assert (domain_root / "AGENT.md").is_file()
         assert (domain_root / "CONTEXT.md").is_file()
+        assert (domain_root / "RULES.md").is_file()
+        assert (domain_root / "TOOLS.md").is_file()
         assert (domain_root / "REFERENCES.md").is_file()
+        assert not (domain_root / "AGENT.md").exists()
         assert (domain_root / "00-control-plane" / "routing-rules.md").is_file()
         assert (domain_root / "01-inbox" / "triage.md").is_file()
         assert (domain_root / "03-workflows" / "README.md").is_file()
@@ -41,7 +49,16 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "ROUTER.md").is_file()
     assert (root / "AGENTS.md").is_file()
     assert (root / "CLAUDE.md").is_file()
-    assert (root / "AGENT.md").is_file()
+    assert (root / "CONTEXT.md").is_file()
+    assert (root / "RULES.md").is_file()
+    assert (root / "TOOLS.md").is_file()
+    assert not (root / "AGENT.md").exists()
+    assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    root_agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "ROUTER.md" in root_agents
+    assert "CONTEXT.md" in root_agents
+    assert "RULES.md" in root_agents
+    assert "TOOLS.md" in root_agents
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
@@ -174,6 +191,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / "shared_factory" / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
+    assert not validate_root(root).errors
 
 
 def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
@@ -227,6 +245,106 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     assert validate_root(root).ok
 
 
+def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    first = yaml.safe_load(capsys.readouterr().out)
+    assert first["queued"][0]["status"] == "queued"
+    assert first["queued"][0]["created"] is True
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    second = yaml.safe_load(capsys.readouterr().out)
+    assert second["queued"] == []
+    assert second["skipped"][0]["reason"] == "not due"
+
+    queue_path = root / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    assert len(queue["items"]) == 1
+    assert queue["run_queue"] == queue["items"]
+    item_id = queue["items"][0]["id"]
+
+    assert main(["runtime", "run-next", "--root", str(root), "--item-id", item_id, "--dry-run"]) == 0
+    dry_run = yaml.safe_load(capsys.readouterr().out)
+    assert dry_run["status"] == "would-run"
+    queue_after_dry_run = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    assert queue_after_dry_run["items"][0]["status"] == "queued"
+
+    assert main(["runtime", "run-next", "--root", str(root), "--item-id", item_id, "--apply"]) == 0
+    dispatched = yaml.safe_load(capsys.readouterr().out)
+    assert dispatched["status"] == "done"
+    assert Path(dispatched["log"]).is_file()
+    queue_after_apply = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    assert queue_after_apply["items"][0]["status"] == "done"
+    assert queue_after_apply["items"][0]["dispatch_log"]
+
+
+def test_runtime_gates_approval_needed_and_provider_targets(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+
+    registry_path = root / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["schedules"] = [
+        {
+            "id": "approval_required_review",
+            "display_name": "Approval Required Review",
+            "enabled": True,
+            "cadence": "hourly",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+            "runtime_policy": {"approval_required": True},
+        },
+        {
+            "id": "orgo_browser_check",
+            "display_name": "Orgo Browser Check",
+            "enabled": True,
+            "cadence": "hourly",
+            "timezone": "America/Chicago",
+            "execution_target": "orgo_desktop",
+            "command": "agentic-os validate --root <root>",
+        },
+    ]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+    by_ref = {item["ref"]: item for item in result["queued"]}
+    assert by_ref["approval_required_review"]["status"] == "approval-needed"
+    assert by_ref["approval_required_review"]["approval_state"] == "required"
+    assert by_ref["orgo_browser_check"]["status"] == "blocked"
+    assert "execution target is not active" in by_ref["orgo_browser_check"]["blocked_reason"]
+
+    assert main(["runtime", "run-next", "--root", str(root), "--item-id", by_ref["approval_required_review"]["id"], "--apply"]) == 0
+    run_next = yaml.safe_load(capsys.readouterr().out)
+    assert run_next["status"] == "approval-needed"
+    assert run_next["external_effect"] == "none"
+
+
+def test_runtime_doctor_reports_invalid_schedule_semantics(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+
+    registry_path = root / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["schedules"][0]["cadence"] = "every_zero_hours"
+    registry["schedules"][0]["timezone"] = "Missing/Timezone"
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    assert main(["runtime", "doctor", "--root", str(root)]) == 1
+    doctor = yaml.safe_load(capsys.readouterr().out)
+    messages = "\n".join(finding["message"] for finding in doctor["findings"])
+    assert "unsupported cadence" in messages
+
+
 def test_config_install_dry_run_does_not_create_missing_directory(tmp_path: Path) -> None:
     root = tmp_path / "new_workflow"
 
@@ -244,9 +362,14 @@ def test_config_install_apply_creates_config_and_prompt_files(tmp_path: Path) ->
     assert config.is_file()
     content = config.read_text(encoding="utf-8")
     assert 'layer = "agentic_os_root"' in content
-    assert 'prompt_files = ["AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"]' in content
-    for filename in ("AGENTS.md", "CLAUDE.md", "BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"):
+    assert (
+        'prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]'
+        in content
+    )
+    for filename in ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"):
         assert (root / filename).is_file()
+    assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert not (root / "BRAIN.md").exists()
 
 
 def test_config_doctor_accepts_installed_otel_and_mcp_contract(tmp_path: Path) -> None:
@@ -267,6 +390,19 @@ def test_config_doctor_reports_missing_required_otel_and_mcp_keys(tmp_path: Path
     (root / "config.toml").write_text('model = "gpt-5.2"\n', encoding="utf-8")
 
     assert main(["config", "doctor", "--root", str(root), "--layer", "agentic_os_root"]) == 1
+
+
+def test_validate_requires_root_rules_and_tools(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    (root / "RULES.md").unlink()
+    (root / "TOOLS.md").unlink()
+
+    result = validate_root(root)
+    assert not result.ok
+    assert any("RULES.md" in error for error in result.errors)
+    assert any("TOOLS.md" in error for error in result.errors)
 
 
 def test_config_install_is_idempotent_on_repeated_apply(tmp_path: Path) -> None:
@@ -314,10 +450,10 @@ def test_config_install_preserves_existing_conflicts_until_confirmed(tmp_path: P
 
 def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> None:
     cases = {
-        "customer_os_root": ("BRAIN.md", "ROUTER.md", "CONTEXT.md", "MEMORY.md"),
-        "domain_or_lane": ("ROUTER.md", "CONTEXT.md", "MEMORY.md"),
-        "workflow_or_task": ("CONTEXT.md", "MEMORY.md"),
-        "automation": ("CONTEXT.md", "MEMORY.md"),
+        "customer_os_root": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
+        "domain_or_lane": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
+        "workflow_or_task": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
+        "automation": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
     }
 
     for layer, expected_files in cases.items():
@@ -338,8 +474,10 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
     assert (domain_root / "ROUTER.md").is_file()
     assert (domain_root / "AGENTS.md").is_file()
     assert (domain_root / "CLAUDE.md").is_file()
-    assert (domain_root / "AGENT.md").is_file()
     assert (domain_root / "CONTEXT.md").is_file()
+    assert (domain_root / "RULES.md").is_file()
+    assert (domain_root / "TOOLS.md").is_file()
+    assert not (domain_root / "AGENT.md").exists()
     assert (domain_root / "REFERENCES.md").is_file()
     domain_config = (domain_root / "domain.yml").read_text(encoding="utf-8")
     assert domain_config.startswith("id: client_delivery")
@@ -1119,6 +1257,28 @@ def test_watch_source_registry_create_doctor_poll_and_run_due(tmp_path: Path, ca
     assert main(["validate", "--root", str(root)]) == 0
 
 
+def test_connected_system_defaults_cover_plan_16_source_examples(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["connected-system", "list", "--root", str(root)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+    systems = {system["system"]: system for system in result["connected_systems"]}
+
+    assert {
+        "notion",
+        "slack",
+        "jira",
+        "linear",
+        "email",
+        "github",
+        "granola",
+        "agentmail",
+        "filesystem",
+    }.issubset(systems)
+    assert systems["slack"]["selected_provider"] == "composio"
+    assert systems["filesystem"]["selected_provider"] == "filesystem"
+
+
 def test_watch_source_doctor_catches_missing_cursor_and_provider(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
@@ -1145,6 +1305,122 @@ def test_watch_source_doctor_catches_missing_cursor_and_provider(tmp_path: Path,
     assert main(["connected-system", "doctor", "notion_genome", "--root", str(root)]) == 1
     system_doctor = yaml.safe_load(capsys.readouterr().out)
     assert any("missing providers" in finding["message"] for finding in system_doctor["findings"])
+
+
+def test_watch_source_doctor_catches_enabled_source_without_trigger_rules(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["watch-source", "create", "agentic_os_kanban", "--root", str(root), "--enabled"]) == 0
+    capsys.readouterr()
+    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
+    data["watch_sources"][0]["trigger_rules"] = []
+    watch_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["watch-source", "doctor", "agentic_os_kanban", "--root", str(root)]) == 1
+    doctor = yaml.safe_load(capsys.readouterr().out)
+    assert any(finding["message"] == "enabled source missing trigger_rules" for finding in doctor["findings"])
+    assert main(["validate", "--root", str(root)]) == 1
+    captured = capsys.readouterr()
+    assert "enabled without trigger_rules" in captured.err
+
+
+def test_watch_source_dedupe_templates_use_external_refs_safely(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert (
+        main(
+            [
+                "watch-source",
+                "create",
+                "agentic_os_kanban",
+                "--root",
+                str(root),
+                "--external-ref",
+                "database_id=db1",
+                "--external-ref",
+                "page_id=page1",
+                "--external-ref",
+                "last_edited_time=2026-05-28T00:00:00Z",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
+    data["watch_sources"][0]["dedupe"] = {
+        "idempotency_key": "{source_type}:{database_id}:{page_id}:{last_edited_time}:{unknown_field}"
+    }
+    watch_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["watch-source", "poll", "agentic_os_kanban", "--root", str(root), "--dry-run"]) == 0
+    poll = yaml.safe_load(capsys.readouterr().out)
+    key = poll["events"][0]["dedupe"]["idempotency_key"]
+    assert key == "notion_database:db1:page1:2026-05-28T00:00:00Z:{unknown_field}"
+
+
+def test_watch_source_trigger_rules_emit_event_and_enqueue_work(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert (
+        main(
+            [
+                "watch-source",
+                "create",
+                "local_dropbox",
+                "--root",
+                str(root),
+                "--connected-system",
+                "filesystem_local",
+                "--source-type",
+                "filesystem_glob",
+                "--external-ref",
+                "glob=*.md",
+                "--enabled",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
+    data["watch_sources"][0]["trigger_rules"] = [
+        {
+            "id": "local_dropbox_to_review",
+            "display_name": "Local dropbox to review",
+            "enabled": True,
+            "when": {"event_type": "filesystem_glob.polled", "fields": {"source_type": "filesystem_glob"}},
+            "then": {
+                "emit_event": {"type": "os.source.observed"},
+                "enqueue": {
+                    "work_type": "source_review",
+                    "route_to": "shared_factory",
+                    "workflow": "review_source_event",
+                    "context_profile": "source_event",
+                    "maturity": "prepare",
+                },
+            },
+            "approval": {"required": False},
+            "idempotency": {"key": "{source_id}:local_dropbox_to_review"},
+        }
+    ]
+    watch_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    assert main(["watch-source", "poll", "local_dropbox", "--root", str(root), "--apply"]) == 0
+    poll = yaml.safe_load(capsys.readouterr().out)
+    assert {action["action"] for action in poll["trigger_actions"]} == {"emit_event", "enqueue"}
+    assert next(action for action in poll["trigger_actions"] if action["action"] == "emit_event")["path"]
+
+    queue = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    assert queue["run_queue"][0]["kind"] == "source_trigger"
+    assert queue["run_queue"][0]["work_type"] == "source_review"
+
+    assert main(["watch-source", "poll", "local_dropbox", "--root", str(root), "--apply"]) == 0
+    repeated = yaml.safe_load(capsys.readouterr().out)
+    enqueue = next(action for action in repeated["trigger_actions"] if action["action"] == "enqueue")
+    assert enqueue["status"] == "skipped"
+    assert len(list((root / "shared_factory" / "06-runs-and-logs" / "source-events").glob("*.yml"))) == 1
 
 
 def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys) -> None:
@@ -1693,14 +1969,17 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
 
     required_sections = {
         root / "ROUTER.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
-        root / "AGENTS.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
-        root / "CLAUDE.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
-        root / "AGENT.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
+        root / "CLAUDE.md": ("@AGENTS.md",),
+        root / "CONTEXT.md": ("# Local Context", "## What To Load", "## Done Means"),
+        root / "RULES.md": ("# Rules", "## Approval Gates", "## Operating Rules"),
+        root / "TOOLS.md": ("# Tools", "## Skills", "## Commands", "## MCP Servers"),
         root / "los" / "ROUTER.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
-        root / "los" / "AGENTS.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
-        root / "los" / "CLAUDE.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
-        root / "los" / "AGENT.md": ("# Agent Router", "Source of truth: `ROUTER.md`.", "Load `ROUTER.md`"),
+        root / "los" / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
+        root / "los" / "CLAUDE.md": ("@AGENTS.md",),
         root / "los" / "CONTEXT.md": ("# Context: LOS", "## What To Load", "## Tools And Skills", "## Done Means"),
+        root / "los" / "RULES.md": ("# Rules: LOS", "## Approval Gates", "## Operating Rules"),
+        root / "los" / "TOOLS.md": ("# Tools: LOS", "## Skills", "## Commands", "## MCP Servers"),
         root / "los" / "REFERENCES.md": ("# References: LOS", "## Source Systems", "## Known Gaps"),
         root / "los" / "03-workflows" / "README.md": ("# Workflows: LOS", "## Lane Directories", "## Workflow Folder Format"),
         root / "los" / "03-workflows" / "engineering" / "README.md": (
@@ -1762,6 +2041,7 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
 
     for path, sections in required_sections.items():
         content = path.read_text(encoding="utf-8")
-        assert content.startswith("# "), path
+        if path.name != "CLAUDE.md":
+            assert content.startswith("# "), path
         for section in sections:
             assert section in content, path

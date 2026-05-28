@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import os
 from pathlib import Path
+import re
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
+from .validate import validate_root
 
 RUNTIME_REGISTRY = "shared_factory/00-control-plane/runtime-registry.yml"
 INTEGRATION_REGISTRY = "shared_factory/00-control-plane/integration-registry.yml"
@@ -32,6 +35,10 @@ RUNTIME_REQUIRED_TARGETS = {
     "notion_api",
 }
 REQUIRED_INTEGRATIONS = {"orgo", "composio", "agentmail", "granola", "notion"}
+RUN_QUEUE_STATES = ("dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped")
+APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expired", "blocked")
+TERMINAL_RUN_QUEUE_STATES = {"dry-run", "blocked", "done", "failed", "skipped"}
+SAFE_DISPATCH_TARGETS = {"script"}
 
 
 def _now() -> str:
@@ -56,6 +63,189 @@ def _title(value: str) -> str:
 def _local_id(record_key: str) -> str:
     digest = hashlib.sha256(record_key.encode()).hexdigest()[:16]
     return f"local-runtime-{digest}"
+
+
+def _digest(value: str, length: int = 12) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:length]
+
+
+def _parse_time(value: str | None, *, field: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"invalid {field}: {value}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _timezone(timezone_name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"invalid timezone: {timezone_name}") from exc
+
+
+def _cadence_delta(cadence: str) -> timedelta | None:
+    if cadence == "manual":
+        return None
+    if cadence == "hourly":
+        return timedelta(hours=1)
+    if cadence == "daily":
+        return timedelta(days=1)
+    if cadence == "weekly":
+        return timedelta(days=7)
+    match = re.fullmatch(r"every_(\d+)_(minute|minutes|hour|hours)", cadence)
+    if match:
+        amount = int(match.group(1))
+        if amount <= 0:
+            raise ValueError(f"invalid cadence: {cadence}")
+        unit = match.group(2)
+        if unit.startswith("minute"):
+            return timedelta(minutes=amount)
+        return timedelta(hours=amount)
+    raise ValueError(f"unsupported cadence: {cadence}")
+
+
+def _next_due_after(base: datetime, cadence: str, timezone_name: str) -> str | None:
+    delta = _cadence_delta(cadence)
+    if delta is None:
+        return None
+    zone = _timezone(timezone_name)
+    local_base = base.astimezone(zone)
+    return _iso(local_base + delta)
+
+
+def _due_window_start(now: datetime, cadence: str, timezone_name: str) -> str:
+    zone = _timezone(timezone_name)
+    local_now = now.astimezone(zone)
+    if cadence == "hourly":
+        local_window = local_now.replace(minute=0, second=0, microsecond=0)
+    elif cadence == "daily":
+        local_window = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif cadence == "weekly":
+        start = local_now - timedelta(days=local_now.weekday())
+        local_window = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        match = re.fullmatch(r"every_(\d+)_(minute|minutes|hour|hours)", cadence)
+        if not match:
+            raise ValueError(f"unsupported cadence: {cadence}")
+        amount = int(match.group(1))
+        if amount <= 0:
+            raise ValueError(f"invalid cadence: {cadence}")
+        unit = match.group(2)
+        if unit.startswith("minute"):
+            minute = (local_now.minute // amount) * amount
+            local_window = local_now.replace(minute=minute, second=0, microsecond=0)
+        else:
+            hour = (local_now.hour // amount) * amount
+            local_window = local_now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return _iso(local_window)
+
+
+def _is_due(schedule: dict[str, Any], now: datetime) -> bool:
+    if not schedule.get("enabled", False):
+        return False
+    cadence = str(schedule.get("cadence") or "")
+    if _cadence_delta(cadence) is None:
+        return False
+    _timezone(str(schedule.get("timezone") or "UTC"))
+    next_due = _parse_time(schedule.get("next_due_at"), field=f"{schedule.get('id', '<unknown>')}.next_due_at")
+    return next_due is None or next_due <= now
+
+
+def _requires_approval(record: dict[str, Any]) -> bool:
+    if record.get("approval_required") is True:
+        return True
+    approval_policy = record.get("approval_policy") or {}
+    if isinstance(approval_policy, dict) and any(bool(value) for value in approval_policy.values()):
+        return True
+    runtime_policy = record.get("runtime_policy") or {}
+    if isinstance(runtime_policy, dict) and runtime_policy.get("approval_required") is True:
+        return True
+    return False
+
+
+def _approval_state(record: dict[str, Any], *, dry_run: bool) -> str:
+    if dry_run or not _requires_approval(record):
+        return "not_required"
+    return "required"
+
+
+def _queue_status(record: dict[str, Any], *, dry_run: bool, enabled: bool = True) -> str:
+    if not enabled:
+        return "blocked"
+    if dry_run:
+        return "dry-run"
+    if _requires_approval(record):
+        return "approval-needed"
+    return "queued"
+
+
+def _normalized_queue(data: dict[str, Any]) -> dict[str, Any]:
+    queue = deepcopy(data) if data else deepcopy(DEFAULT_RUN_QUEUE)
+    items = queue.get("items")
+    run_queue = queue.get("run_queue")
+    if not isinstance(items, list):
+        items = run_queue if isinstance(run_queue, list) else []
+    if not isinstance(run_queue, list):
+        run_queue = items
+    merged = []
+    seen = set()
+    for item in [*items, *run_queue]:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("idempotency_key") or item.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    queue["items"] = merged
+    queue["run_queue"] = merged
+    queue["states"] = list(RUN_QUEUE_STATES)
+    queue["approval_states"] = list(APPROVAL_STATES)
+    return queue
+
+
+def _write_queue(path: Path, data: dict[str, Any]) -> None:
+    _write_yaml(path, _normalized_queue(data))
+
+
+def _execution_targets_by_id(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return _items_by_id(registry.get("execution_targets") or [])
+
+
+def _runtime_gate(record: dict[str, Any], registry: dict[str, Any], *, dry_run: bool, enabled: bool = True) -> dict[str, str | None]:
+    status = _queue_status(record, dry_run=dry_run, enabled=enabled)
+    approval_state = _approval_state(record, dry_run=dry_run)
+    blocked_reason = None
+    target_id = str(record.get("execution_target") or "script")
+    target = _execution_targets_by_id(registry).get(target_id)
+    if not target:
+        return {"status": "blocked", "approval_state": "blocked", "blocked_reason": f"unknown execution target: {target_id}"}
+    if not dry_run and target.get("status") != "active":
+        return {
+            "status": "blocked",
+            "approval_state": "blocked",
+            "blocked_reason": f"execution target is not active: {target_id}",
+        }
+    if not dry_run and target_id not in SAFE_DISPATCH_TARGETS:
+        return {
+            "status": "blocked",
+            "approval_state": "blocked",
+            "blocked_reason": f"provider execution is disabled by default: {target_id}",
+        }
+    if status == "blocked":
+        approval_state = "blocked"
+        blocked_reason = "runtime item is disabled"
+    return {"status": status, "approval_state": approval_state, "blocked_reason": blocked_reason}
 
 
 DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
@@ -165,7 +355,7 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "id": "granola_recent_notes_sync",
             "display_name": "Granola recent notes sync",
             "domain": "shared_factory",
-            "enabled": True,
+            "enabled": False,
             "cadence": "every_2_hours",
             "execution_target": "script",
             "integration": "granola",
@@ -212,6 +402,8 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os validate --root <root>",
             "outputs": ["shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
         }
     ],
 }
@@ -335,8 +527,10 @@ DEFAULT_RUN_QUEUE: dict[str, Any] = {
     "version": "0.1.0",
     "managed_by": "agentic-os runtime",
     "updated_at": None,
-    "states": ["queued", "running", "blocked", "done", "failed", "dry-run"],
+    "states": list(RUN_QUEUE_STATES),
+    "approval_states": list(APPROVAL_STATES),
     "items": [],
+    "run_queue": [],
 }
 
 
@@ -389,7 +583,7 @@ def _integration_registry(root: Path) -> dict[str, Any]:
 
 
 def _queue(root: Path) -> dict[str, Any]:
-    return _load_yaml(_runtime_path(root, RUN_QUEUE), DEFAULT_RUN_QUEUE)
+    return _normalized_queue(_load_yaml(_runtime_path(root, RUN_QUEUE), DEFAULT_RUN_QUEUE))
 
 
 def _items_by_id(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -403,12 +597,34 @@ def _find_item(items: list[dict[str, Any]], item_id: str, kind: str) -> dict[str
     return item
 
 
-def _append_queue_item(root: Path, item: dict[str, Any]) -> Path:
+def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str, Any], bool]:
     path = _runtime_path(root, RUN_QUEUE)
     queue = _queue(root)
-    queue.setdefault("items", []).append(item)
-    _write_yaml(path, queue)
-    return path
+    items = queue.setdefault("items", [])
+    idempotency_key = item.get("idempotency_key")
+    existing = None
+    if idempotency_key:
+        existing = next((candidate for candidate in items if candidate.get("idempotency_key") == idempotency_key), None)
+    if existing:
+        existing.update({key: value for key, value in item.items() if key != "created_at"})
+        existing["updated_at"] = _now()
+        written = existing
+        created = False
+    else:
+        item.setdefault("created_at", _now())
+        item.setdefault("updated_at", item["created_at"])
+        items.append(item)
+        written = item
+        created = True
+    queue["run_queue"] = items
+    _write_queue(path, queue)
+    return path, written, created
+
+
+def append_run_queue_item(root: str | Path, item: dict[str, Any]) -> dict[str, Any]:
+    os_root = expand_path(root)
+    path, written, created = _append_queue_item(os_root, item)
+    return {"run_queue": str(path), "queue_item": written, "created": created}
 
 
 def runtime_init(root: str | Path) -> dict[str, Any]:
@@ -443,37 +659,64 @@ def heartbeat_run(root: str | Path, heartbeat_id: str, *, dry_run: bool = True) 
     os_root = expand_path(root)
     registry = _registry(os_root)
     heartbeat = _find_item(registry.get("heartbeats") or [], heartbeat_id, "heartbeat")
-    if not dry_run and not heartbeat.get("enabled", False):
-        raise ValueError(f"heartbeat is disabled: {heartbeat_id}")
-    run_id = f"{_stamp()}-{heartbeat_id}"
-    status = "dry-run" if dry_run else "queued"
+    enabled = bool(heartbeat.get("enabled", False))
+    created_at = _now()
+    run_id = f"{_stamp()}-{_digest(f'{heartbeat_id}:{created_at}', 8)}-{heartbeat_id}"
+    gate = _runtime_gate(heartbeat, registry, dry_run=dry_run, enabled=enabled or dry_run)
+    status = str(gate["status"])
+    approval_state = str(gate["approval_state"])
+    idempotency_key = f"heartbeat:{heartbeat_id}:{run_id}"
+    external_effect = "none"
+    if status == "queued":
+        external_effect = "queued for approved execution"
+    elif status == "approval-needed":
+        external_effect = "none; approval required before execution"
     log = {
         "run_id": run_id,
         "kind": "heartbeat",
         "heartbeat_id": heartbeat_id,
         "status": status,
+        "approval_state": approval_state,
         "dry_run": dry_run,
-        "created_at": _now(),
+        "created_at": created_at,
+        "idempotency_key": idempotency_key,
         "execution_target": heartbeat.get("execution_target"),
         "integration": heartbeat.get("integration"),
         "success_means": heartbeat.get("success_means") or [],
-        "external_effect": "none" if dry_run else "queued for approved execution",
+        "external_effect": external_effect,
     }
+    if gate.get("blocked_reason"):
+        log["blocked_reason"] = gate["blocked_reason"]
     log_path = _runtime_path(os_root, HEARTBEAT_LOG_DIR) / f"{run_id}.yml"
     _write_yaml(log_path, log)
-    queue_path = _append_queue_item(
+    queue_path, queue_item, queue_created = _append_queue_item(
         os_root,
         {
             "id": run_id,
             "kind": "heartbeat",
             "ref": heartbeat_id,
             "status": status,
-            "created_at": _now(),
+            "approval_state": approval_state,
+            "created_at": created_at,
             "dry_run": dry_run,
+            "idempotency_key": idempotency_key,
+            "execution_target": heartbeat.get("execution_target"),
+            "integration": heartbeat.get("integration"),
             "log": str(log_path.relative_to(os_root)),
+            "evidence": [{"type": "run_log", "path": str(log_path.relative_to(os_root))}],
+            "blocked_reason": gate.get("blocked_reason"),
         },
     )
-    return {"root": str(os_root), "status": status, "heartbeat": heartbeat, "log": str(log_path), "run_queue": str(queue_path)}
+    return {
+        "root": str(os_root),
+        "status": status,
+        "approval_state": approval_state,
+        "heartbeat": heartbeat,
+        "log": str(log_path),
+        "run_queue": str(queue_path),
+        "queue_item": queue_item,
+        "queue_created": queue_created,
+    }
 
 
 def schedule_create(
@@ -485,6 +728,8 @@ def schedule_create(
     command: str | None = None,
 ) -> dict[str, Any]:
     schedule_id = validate_name(schedule_id, "schedule_id")
+    _cadence_delta(cadence)
+    _timezone(timezone_name)
     os_root = expand_path(root)
     registry = _registry(os_root)
     schedules = registry.setdefault("schedules", [])
@@ -501,6 +746,8 @@ def schedule_create(
         "command": command or "agentic-os validate --root <root>",
         "outputs": ["shared_factory/06-runs-and-logs/runs/"],
         "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
+        "next_due_at": None,
+        "last_queued_at": None,
     }
     schedules.append(schedule)
     _write_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), registry)
@@ -511,22 +758,217 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
     os_root = expand_path(root)
     registry = _registry(os_root)
     queued = []
+    skipped = []
+    now = datetime.now(timezone.utc)
+    registry_changed = False
     for schedule in registry.get("schedules") or []:
+        schedule_id = schedule.get("id")
         if not schedule.get("enabled", False):
+            skipped.append({"schedule": schedule_id, "reason": "disabled"})
             continue
-        item_id = f"{_stamp()}-{schedule['id']}"
+        try:
+            due = _is_due(schedule, now)
+        except ValueError as exc:
+            skipped.append({"schedule": schedule_id, "reason": str(exc), "status": "blocked"})
+            continue
+        if not due:
+            skipped.append({"schedule": schedule_id, "reason": "not due", "next_due_at": schedule.get("next_due_at")})
+            continue
+        due_at = schedule.get("next_due_at") or _due_window_start(
+            now,
+            str(schedule.get("cadence")),
+            str(schedule.get("timezone") or "UTC"),
+        )
+        idempotency_key = f"schedule:{schedule_id}:{due_at}"
+        item_id = f"queue_{_digest(idempotency_key)}"
+        gate = _runtime_gate(schedule, registry, dry_run=dry_run)
+        status = str(gate["status"])
+        approval_state = str(gate["approval_state"])
+        run_id = f"{_stamp()}-{_digest(idempotency_key, 8)}-{schedule_id}"
+        log_path = _runtime_path(os_root, RUNTIME_SETUP_RUN_DIR) / run_id / "run-log.yml"
+        log = {
+            "run_id": run_id,
+            "kind": "schedule",
+            "schedule_id": schedule_id,
+            "status": status,
+            "approval_state": approval_state,
+            "dry_run": dry_run,
+            "created_at": _now(),
+            "due_at": due_at,
+            "idempotency_key": idempotency_key,
+            "command": schedule.get("command"),
+            "external_effect": "none" if dry_run or status in {"approval-needed", "blocked"} else "queued for approved execution",
+        }
+        if gate.get("blocked_reason"):
+            log["blocked_reason"] = gate["blocked_reason"]
+        _write_yaml(log_path, log)
         item = {
             "id": item_id,
             "kind": "schedule",
-            "ref": schedule["id"],
-            "status": "dry-run" if dry_run else "queued",
-            "created_at": _now(),
+            "ref": schedule_id,
+            "status": status,
+            "approval_state": approval_state,
+            "created_at": log["created_at"],
             "dry_run": dry_run,
+            "due_at": due_at,
+            "idempotency_key": idempotency_key,
+            "execution_target": schedule.get("execution_target"),
             "command": schedule.get("command"),
+            "log": str(log_path.relative_to(os_root)),
+            "evidence": [{"type": "run_log", "path": str(log_path.relative_to(os_root))}],
+            "blocked_reason": gate.get("blocked_reason"),
         }
-        _append_queue_item(os_root, item)
-        queued.append(item)
-    return {"root": str(os_root), "status": "dry-run" if dry_run else "queued", "queued": queued}
+        _, written_item, created = _append_queue_item(os_root, item)
+        queued.append({**written_item, "created": created})
+        if not dry_run:
+            schedule["last_queued_at"] = _iso(now)
+            schedule["next_due_at"] = _next_due_after(
+                _parse_time(due_at, field=f"{schedule_id}.due_at") or now,
+                str(schedule.get("cadence")),
+                str(schedule.get("timezone") or "UTC"),
+            )
+            registry_changed = True
+    if registry_changed:
+        _write_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), registry)
+    return {
+        "root": str(os_root),
+        "status": "dry-run" if dry_run else "queued",
+        "queued": queued,
+        "skipped": skipped,
+    }
+
+
+def _dispatchable_item(items: list[dict[str, Any]], item_id: str | None) -> dict[str, Any] | None:
+    if item_id:
+        return next((item for item in items if item.get("id") == item_id), None)
+    return next((item for item in items if item.get("status") == "queued"), None)
+
+
+def _dispatch_blocker(item: dict[str, Any], registry: dict[str, Any]) -> str | None:
+    if item.get("status") != "queued":
+        return f"queue item is not queued: {item.get('status')}"
+    if item.get("approval_state") == "required":
+        return "approval is required before dispatch"
+    target_id = str(item.get("execution_target") or "script")
+    target = _execution_targets_by_id(registry).get(target_id)
+    if not target:
+        return f"unknown execution target: {target_id}"
+    if target.get("status") != "active":
+        return f"execution target is not active: {target_id}"
+    if target_id not in SAFE_DISPATCH_TARGETS:
+        return f"provider execution is disabled by default: {target_id}"
+    if not item.get("command"):
+        return "queue item has no local script command"
+    return None
+
+
+def _run_local_script(root: Path, command: str) -> dict[str, Any]:
+    normalized = command.replace("<root>", str(root)).strip()
+    if normalized in {f"agentic-os validate --root {root}", f"agentic-os validate --root {str(root)}"}:
+        validation = validate_root(root)
+        return {
+            "supported": True,
+            "ok": validation.ok,
+            "command": normalized,
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+        }
+    return {
+        "supported": False,
+        "ok": False,
+        "command": normalized,
+        "errors": ["unsupported local script command"],
+        "warnings": [],
+    }
+
+
+def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
+    os_root = expand_path(root)
+    registry = _registry(os_root)
+    queue_path = _runtime_path(os_root, RUN_QUEUE)
+    queue = _queue(os_root)
+    items = queue.setdefault("items", [])
+    item = _dispatchable_item(items, item_id)
+    if item is None:
+        return {"root": str(os_root), "status": "idle", "dry_run": dry_run, "message": "no queued runtime work"}
+
+    if item.get("status") == "approval-needed":
+        return {
+            "root": str(os_root),
+            "status": "approval-needed",
+            "dry_run": dry_run,
+            "queue_item": item,
+            "blocked_reason": "approval is required before dispatch",
+            "external_effect": "none",
+        }
+
+    blocker = _dispatch_blocker(item, registry)
+    if blocker:
+        result = {
+            "root": str(os_root),
+            "status": "blocked",
+            "dry_run": dry_run,
+            "queue_item": item,
+            "blocked_reason": blocker,
+            "external_effect": "none",
+        }
+        if not dry_run:
+            item["status"] = "blocked"
+            item["blocked_reason"] = blocker
+            item["updated_at"] = _now()
+            queue["run_queue"] = items
+            _write_queue(queue_path, queue)
+        return result
+
+    run_id = f"{_stamp()}-{_digest(str(item.get('id')), 8)}-dispatch"
+    log_path = _runtime_path(os_root, RUNTIME_SETUP_RUN_DIR) / run_id / "run-log.yml"
+    if dry_run:
+        return {
+            "root": str(os_root),
+            "status": "would-run",
+            "dry_run": True,
+            "queue_item": item,
+            "log": str(log_path),
+            "external_effect": "none",
+        }
+
+    started_at = _now()
+    execution = _run_local_script(os_root, str(item.get("command")))
+    finished_at = _now()
+    status = "done" if execution["supported"] and execution["ok"] else "failed"
+    log = {
+        "run_id": run_id,
+        "kind": "runtime_dispatch",
+        "queue_item_id": item.get("id"),
+        "status": status,
+        "approval_state": item.get("approval_state", "not_required"),
+        "dry_run": False,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "execution_target": item.get("execution_target"),
+        "command": execution["command"],
+        "evidence": execution,
+        "external_effect": "local script validation only",
+    }
+    _write_yaml(log_path, log)
+    item["status"] = status
+    item["started_at"] = started_at
+    item["finished_at"] = finished_at
+    item["dispatch_log"] = str(log_path.relative_to(os_root))
+    item["updated_at"] = finished_at
+    item.setdefault("evidence", []).append({"type": "dispatch_log", "path": str(log_path.relative_to(os_root))})
+    if status == "failed":
+        item["error"] = "; ".join(execution["errors"]) or "runtime dispatch failed"
+    queue["run_queue"] = items
+    _write_queue(queue_path, queue)
+    return {
+        "root": str(os_root),
+        "status": status,
+        "dry_run": False,
+        "queue_item": item,
+        "log": str(log_path),
+        "external_effect": "local script validation only",
+    }
 
 
 def integration_list(root: str | Path) -> dict[str, Any]:
@@ -540,9 +982,11 @@ def integration_setup(root: str | Path, integration_id: str, *, dry_run: bool = 
     os_root = expand_path(root)
     registry = _integration_registry(os_root)
     integration = _find_item(registry.get("integrations") or [], integration_id, "integration")
+    approval_state = _approval_state({"approval_policy": {gate: True for gate in integration.get("approval_gates") or []}}, dry_run=dry_run)
     result = {
         "root": str(os_root),
         "status": "dry-run" if dry_run else "setup-recorded",
+        "approval_state": approval_state,
         "integration": integration,
         "external_effect": "none" if dry_run else "local setup run log written",
     }
@@ -552,14 +996,15 @@ def integration_setup(root: str | Path, integration_id: str, *, dry_run: bool = 
     log_path = _runtime_path(os_root, RUNTIME_SETUP_RUN_DIR) / run_id / "run-log.yml"
     _write_yaml(
         log_path,
-        {
-            "run_id": run_id,
-            "kind": "integration_setup",
-            "integration_id": integration_id,
-            "status": "setup-recorded",
-            "created_at": _now(),
-            "setup_tasks": integration.get("setup_tasks") or [],
-            "approval_gates": integration.get("approval_gates") or [],
+            {
+                "run_id": run_id,
+                "kind": "integration_setup",
+                "integration_id": integration_id,
+                "status": "setup-recorded",
+                "approval_state": approval_state,
+                "created_at": _now(),
+                "setup_tasks": integration.get("setup_tasks") or [],
+                "approval_gates": integration.get("approval_gates") or [],
         },
     )
     result["log"] = str(log_path)
@@ -610,10 +1055,24 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
         for key in ("id", "display_name", "domain", "cadence", "execution_target", "integration", "approval_policy", "success_means"):
             if key not in heartbeat:
                 findings.append({"severity": "blocker", "path": str(registry_path), "message": f"heartbeat missing {key}: {heartbeat.get('id', '<unknown>')}"})
+        try:
+            _cadence_delta(str(heartbeat.get("cadence") or ""))
+        except ValueError as exc:
+            findings.append({"severity": "blocker", "path": str(registry_path), "message": f"{heartbeat.get('id', '<unknown>')} {exc}"})
     for schedule in registry.get("schedules") or []:
         for key in ("id", "display_name", "enabled", "cadence", "timezone", "execution_target", "command"):
             if key not in schedule:
                 findings.append({"severity": "blocker", "path": str(registry_path), "message": f"schedule missing {key}: {schedule.get('id', '<unknown>')}"})
+        try:
+            _cadence_delta(str(schedule.get("cadence") or ""))
+            _timezone(str(schedule.get("timezone") or ""))
+            _parse_time(schedule.get("next_due_at"), field=f"{schedule.get('id', '<unknown>')}.next_due_at")
+        except ValueError as exc:
+            findings.append({"severity": "blocker", "path": str(registry_path), "message": f"{schedule.get('id', '<unknown>')} {exc}"})
+        else:
+            next_due = _parse_time(schedule.get("next_due_at"), field=f"{schedule.get('id', '<unknown>')}.next_due_at")
+            if schedule.get("enabled") and next_due and next_due < datetime.now(timezone.utc):
+                findings.append({"severity": "fix-soon", "path": str(registry_path), "message": f"schedule is past due: {schedule.get('id')}"})
 
     integration_ids = set(_items_by_id(integration_registry.get("integrations") or []))
     missing_integrations = sorted(REQUIRED_INTEGRATIONS - integration_ids)
@@ -624,6 +1083,27 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
             if not integration.get(key):
                 findings.append({"severity": "blocker", "path": str(integration_path), "message": f"integration missing {key}: {integration.get('id', '<unknown>')}"})
         findings.extend(_credential_findings(integration_path, integration))
+    queue = _normalized_queue(_load_yaml(queue_path, DEFAULT_RUN_QUEUE))
+    queue_states = set(queue.get("states") or [])
+    missing_states = sorted(set(RUN_QUEUE_STATES) - queue_states)
+    for state in missing_states:
+        findings.append({"severity": "blocker", "path": str(queue_path), "message": f"missing run queue state: {state}"})
+    approval_states = set(queue.get("approval_states") or [])
+    missing_approval_states = sorted(set(APPROVAL_STATES) - approval_states)
+    for state in missing_approval_states:
+        findings.append({"severity": "blocker", "path": str(queue_path), "message": f"missing approval state: {state}"})
+    for item in queue.get("items") or []:
+        item_id = item.get("id", "<unknown>")
+        status = item.get("status")
+        approval_state = item.get("approval_state")
+        if status not in RUN_QUEUE_STATES:
+            findings.append({"severity": "blocker", "path": str(queue_path), "message": f"run queue item has invalid status: {item_id}"})
+        if approval_state not in APPROVAL_STATES:
+            findings.append({"severity": "blocker", "path": str(queue_path), "message": f"run queue item has invalid approval_state: {item_id}"})
+        if status == "approval-needed" and approval_state != "required":
+            findings.append({"severity": "blocker", "path": str(queue_path), "message": f"approval-needed item must have approval_state required: {item_id}"})
+        if status not in TERMINAL_RUN_QUEUE_STATES and not item.get("idempotency_key"):
+            findings.append({"severity": "fix-soon", "path": str(queue_path), "message": f"non-terminal queue item lacks idempotency_key: {item_id}"})
     if not findings:
         findings.append({"severity": "observation", "path": str(os_root), "message": "runtime registries and heartbeat log folders are present"})
     return {"root": str(os_root), "ok": not any(finding["severity"] == "blocker" for finding in findings), "findings": findings}
@@ -651,7 +1131,7 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
     runtime_registry = _load_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), DEFAULT_RUNTIME_REGISTRY)
     integration_registry = _load_yaml(_runtime_path(os_root, INTEGRATION_REGISTRY), DEFAULT_INTEGRATION_REGISTRY)
-    queue = _load_yaml(_runtime_path(os_root, RUN_QUEUE), DEFAULT_RUN_QUEUE)
+    queue = _queue(os_root)
     records = []
     for target in runtime_registry.get("execution_targets") or []:
         records.append({"kind": "execution_target", "key": target["id"], "title": target["display_name"], "action": "create-or-update"})
@@ -662,14 +1142,21 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
     for integration in integration_registry.get("integrations") or []:
         records.append({"kind": "integration", "key": integration["id"], "title": integration["display_name"], "action": "create-or-update"})
     for item in queue.get("items") or []:
-        records.append({"kind": "run_queue_item", "key": item["id"], "title": item["ref"], "action": "create-or-update"})
+        records.append(
+            {
+                "kind": "run_queue_item",
+                "key": item["id"],
+                "title": item.get("ref") or item.get("work_type") or item["id"],
+                "action": "create-or-update",
+            }
+        )
     for log_path in sorted(_runtime_path(os_root, HEARTBEAT_LOG_DIR).glob("*.yml"))[-20:]:
         records.append({"kind": "heartbeat_run", "key": log_path.stem, "title": log_path.stem, "path": str(log_path), "action": "create-or-update"})
     return {
         "root": str(os_root),
         "workspace": target_workspace(os_root),
         "manifest_path": str(_runtime_path(os_root, NOTION_RUNTIME_MANIFEST)),
-        "databases": ["Integrations", "Heartbeats", "Schedules", "Runs"],
+        "databases": ["Integrations", "Execution Targets", "Heartbeats", "Schedules", "Run Queue", "Approvals", "Runs"],
         "records": records,
     }
 
@@ -679,6 +1166,7 @@ def apply_runtime_tracking(root: str | Path, *, verified_workspace: str | None) 
     workspace = verify_workspace(os_root, verified_workspace)
     plan = build_runtime_tracking_plan(os_root)
     manifest_path = _runtime_path(os_root, NOTION_RUNTIME_MANIFEST)
+    database_ids = {database: _local_id(f"database:{workspace}:{database}") for database in plan["databases"]}
     records = []
     for record in plan["records"]:
         record_key = f"{record['kind']}:{record['key']}"
@@ -687,10 +1175,11 @@ def apply_runtime_tracking(root: str | Path, *, verified_workspace: str | None) 
         "workspace": workspace,
         "updated_at": _now(),
         "databases": plan["databases"],
+        "database_ids": database_ids,
         "records": records,
     }
     _write_yaml(manifest_path, manifest)
-    return {**plan, "applied": True, "records": records}
+    return {**plan, "applied": True, "database_ids": database_ids, "records": records}
 
 
 def format_runtime_result(result: dict[str, Any]) -> str:

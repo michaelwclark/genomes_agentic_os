@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from .event_graph import append_event, ensure_event_state
+from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
 
 
@@ -45,6 +47,35 @@ def write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def default_connected_systems() -> dict[str, Any]:
+    def system(
+        system_id: str,
+        display_name: str,
+        system_name: str,
+        provider_priority: list[str],
+        *,
+        credential_envs: list[str] | None = None,
+        expected_workspace: str | None = None,
+        read_permissions: list[str] | None = None,
+        write_permissions: list[str] | None = None,
+        status: str = "planned",
+    ) -> dict[str, Any]:
+        return {
+            "id": system_id,
+            "display_name": display_name,
+            "system": system_name,
+            "status": status,
+            "owner": "OS Owner",
+            "provider_priority": provider_priority,
+            "credential_refs": {"env_vars": credential_envs or [], "account_aliases": []},
+            "workspace_verification": {
+                "required": expected_workspace is not None,
+                "expected_workspace": expected_workspace,
+            },
+            "permissions": {"read": read_permissions or [], "write": write_permissions or []},
+            "approval_required_for": ["external_write", "customer_visible_output"],
+            "health_check": {"command": f"agentic-os connected-system doctor {system_id}"},
+        }
+
     return {
         "connected_systems": [
             {
@@ -60,6 +91,75 @@ def default_connected_systems() -> dict[str, Any]:
                 "approval_required_for": ["external_write", "customer_visible_output"],
                 "health_check": {"command": "agentic-os connected-system doctor notion_genome"},
             },
+            system(
+                "slack_genome",
+                "Genome Slack",
+                "slack",
+                ["composio", "slack_mcp", "slack_connector", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY"],
+                expected_workspace="Genome",
+                read_permissions=["channels:history", "groups:history"],
+                write_permissions=["chat:write"],
+            ),
+            system(
+                "jira_genome",
+                "Genome Jira",
+                "jira",
+                ["composio", "jira_mcp", "jira_connector", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY"],
+                expected_workspace="Genome",
+                read_permissions=["issue.read", "project.read"],
+                write_permissions=["issue.write"],
+            ),
+            system(
+                "linear_genome",
+                "Genome Linear",
+                "linear",
+                ["composio", "linear_mcp", "linear_connector", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY"],
+                expected_workspace="Genome",
+                read_permissions=["issues:read", "teams:read"],
+                write_permissions=["issues:write"],
+            ),
+            system(
+                "email_genome",
+                "Genome Email",
+                "email",
+                ["composio", "gmail_mcp", "email_connector", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY"],
+                expected_workspace="Genome",
+                read_permissions=["mail.read"],
+                write_permissions=["mail.send"],
+            ),
+            system(
+                "github_genome",
+                "Genome GitHub",
+                "github",
+                ["composio", "github_mcp", "github_cli", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY", "GITHUB_TOKEN"],
+                expected_workspace="Genome",
+                read_permissions=["repo:read", "pull_request:read"],
+                write_permissions=["issues:write", "pull_request:write"],
+            ),
+            system(
+                "granola_local",
+                "Granola Notes",
+                "granola",
+                ["composio", "granola_local", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY"],
+                read_permissions=["notes:read"],
+                write_permissions=[],
+            ),
+            system(
+                "agentmail_genome",
+                "Genome AgentMail",
+                "agentmail",
+                ["composio", "agentmail_api", "direct_api"],
+                credential_envs=["COMPOSIO_API_KEY", "AGENTMAIL_API_KEY"],
+                expected_workspace="Genome",
+                read_permissions=["inbox.read"],
+                write_permissions=["message.send"],
+            ),
             {
                 "id": "filesystem_local",
                 "display_name": "Local Filesystem",
@@ -83,6 +183,19 @@ def default_source_providers() -> dict[str, Any]:
             {"id": "composio", "type": "composio", "status": "planned", "supports": ["oauth", "triggers", "tools"]},
             {"id": "notion_mcp", "type": "mcp", "status": "planned", "supports": ["notion"]},
             {"id": "notion_connector", "type": "connector", "status": "planned", "supports": ["notion"]},
+            {"id": "slack_mcp", "type": "mcp", "status": "planned", "supports": ["slack", "poll"]},
+            {"id": "slack_connector", "type": "connector", "status": "planned", "supports": ["slack", "trigger"]},
+            {"id": "jira_mcp", "type": "mcp", "status": "planned", "supports": ["jira", "poll"]},
+            {"id": "jira_connector", "type": "connector", "status": "planned", "supports": ["jira", "trigger"]},
+            {"id": "linear_mcp", "type": "mcp", "status": "planned", "supports": ["linear", "poll"]},
+            {"id": "linear_connector", "type": "connector", "status": "planned", "supports": ["linear", "trigger"]},
+            {"id": "gmail_mcp", "type": "mcp", "status": "planned", "supports": ["email", "poll"]},
+            {"id": "email_connector", "type": "connector", "status": "planned", "supports": ["email", "trigger"]},
+            {"id": "github_mcp", "type": "mcp", "status": "planned", "supports": ["github", "poll"]},
+            {"id": "github_cli", "type": "cli", "status": "planned", "supports": ["github", "poll"]},
+            {"id": "granola_local", "type": "script", "status": "planned", "supports": ["granola", "poll"]},
+            {"id": "agentmail_api", "type": "direct_api", "status": "planned", "supports": ["agentmail", "poll"]},
+            {"id": "webhook", "type": "webhook", "status": "planned", "supports": ["trigger"]},
             {"id": "direct_api", "type": "direct_api", "status": "planned", "supports": ["http_api"]},
             {"id": "filesystem", "type": "script", "status": "available", "supports": ["file_watch", "poll"]},
         ]
@@ -167,6 +280,28 @@ def parse_external_refs(values: list[str] | None) -> dict[str, str]:
     return refs
 
 
+class SafeFormatDict(dict[str, Any]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def format_template(template: str, values: dict[str, Any]) -> str:
+    return template.format_map(SafeFormatDict({key: "" if value is None else value for key, value in values.items()}))
+
+
+def default_trigger_rule(source_id: str, source_type: str, route_to: str) -> dict[str, Any]:
+    return {
+        "id": f"{source_id}_observed",
+        "display_name": f"{source_id.replace('_', ' ').title()} observed",
+        "enabled": False,
+        "when": {"event_type": f"{source_type}.polled", "fields": {}},
+        "then": {"emit_event": {"type": "os.observation"}},
+        "approval": {"required": False},
+        "idempotency": {"key": "{event_id}:{rule_id}"},
+        "route": {"fallback_domain": route_to},
+    }
+
+
 def create_watch_source(
     root: str | Path,
     source_id: str,
@@ -200,7 +335,7 @@ def create_watch_source(
         "cursor": {"type": "last_seen_event_id", "state_ref": str(WATCH_CURSORS_FILE)},
         "dedupe": {"idempotency_key": "{source_type}:{source_id}:{event_id}"},
         "filters": {},
-        "trigger_rules": [],
+        "trigger_rules": [default_trigger_rule(source_id, source_type, route_to)],
         "route": {
             "command": "agentic-os route",
             "context_command": "agentic-os context build",
@@ -265,6 +400,20 @@ def doctor_watch_source(root: str | Path, source_id: str) -> dict[str, Any]:
         findings.append({"severity": "blocker", "message": "missing route command, context_command, or fallback_domain"})
     if source.get("enabled") and source.get("watch_method") not in {"poll", "manual_replay", "file_watch"}:
         findings.append({"severity": "fix-soon", "message": "enabled source uses unproven watch_method"})
+    trigger_rules = source.get("trigger_rules") or []
+    if source.get("enabled") and not trigger_rules:
+        findings.append({"severity": "blocker", "message": "enabled source missing trigger_rules"})
+    for rule in [rule for rule in trigger_rules if isinstance(rule, dict)]:
+        rule_id = rule.get("id")
+        if rule.get("enabled") and not rule_id:
+            findings.append({"severity": "blocker", "message": "enabled trigger rule missing id"})
+        if rule.get("enabled") and not (rule.get("when") or {}).get("event_type"):
+            findings.append({"severity": "blocker", "message": f"enabled trigger rule {rule_id} missing event_type"})
+        then = rule.get("then") or {}
+        if rule.get("enabled") and not (then.get("emit_event") or then.get("enqueue")):
+            findings.append({"severity": "blocker", "message": f"enabled trigger rule {rule_id} missing action"})
+        if rule.get("enabled") and not (rule.get("idempotency") or {}).get("key"):
+            findings.append({"severity": "blocker", "message": f"enabled trigger rule {rule_id} missing idempotency key"})
     return {
         "source_id": source_id,
         "ok": not any(finding["severity"] == "blocker" for finding in findings),
@@ -272,16 +421,47 @@ def doctor_watch_source(root: str | Path, source_id: str) -> dict[str, Any]:
     }
 
 
-def source_event_id(source_id: str, observed_at: str) -> str:
-    digest = hashlib.sha256(f"{source_id}:{observed_at}".encode()).hexdigest()[:10]
+def source_event_key(source: dict[str, Any], provider_id: str | None) -> str:
+    return yaml.safe_dump(
+        {
+            "watch_source_id": source.get("id"),
+            "source_type": source.get("source_type"),
+            "external_ref": source.get("external_ref") or {},
+            "cursor_type": (source.get("cursor") or {}).get("type"),
+            "provider": provider_id,
+            "synthetic_event": "poll",
+        },
+        sort_keys=True,
+    )
+
+
+def source_event_id(source_id: str, event_key: str) -> str:
+    digest = hashlib.sha256(f"{source_id}:{event_key}".encode()).hexdigest()[:10]
     return f"src_evt_{digest}"
+
+
+def selected_provider_record(root: str | Path, provider_id: str | None) -> dict[str, Any] | None:
+    if provider_id is None:
+        return None
+    return find_by_id(source_providers(root), provider_id)
 
 
 def normalized_source_event(root: str | Path, source: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     system = find_by_id(connected_systems(root), str(source.get("connected_system", ""))) or {}
     observed_at = utc_now()
-    event_id = source_event_id(str(source["id"]), observed_at)
     selected_provider = select_provider(root, system) if system else None
+    event_key = source_event_key(source, selected_provider)
+    event_id = source_event_id(str(source["id"]), event_key)
+    provider = selected_provider_record(root, selected_provider)
+    format_values = {
+        **(source.get("external_ref") or {}),
+        "event_id": event_id,
+        "event_key": event_key,
+        "source_id": source.get("id"),
+        "source_type": source.get("source_type"),
+        "observed_at": observed_at,
+        "provider": selected_provider,
+    }
     return {
         "id": event_id,
         "schema_version": 1,
@@ -292,17 +472,20 @@ def normalized_source_event(root: str | Path, source: dict[str, Any], *, dry_run
             "connected_system": source.get("connected_system"),
             "provider": selected_provider,
             "source_type": source.get("source_type"),
+            "external_ref": source.get("external_ref") or {},
         },
         "dedupe": {
-            "idempotency_key": str((source.get("dedupe") or {}).get("idempotency_key", "")).format(
-                source_type=source.get("source_type"),
-                source_id=source.get("id"),
-                event_id=event_id,
-            )
+            "idempotency_key": format_template(str((source.get("dedupe") or {}).get("idempotency_key", "")), format_values)
         },
         "route": source.get("route") or {},
         "summary": f"Dry-run poll for {source.get('display_name') or source['id']}" if dry_run else f"Polled {source['id']}",
         "payload_ref": {"type": "registry", "path": str(WATCH_SOURCES_FILE)},
+        "event_key": event_key,
+        "provider_adapter": {
+            "id": selected_provider,
+            "type": (provider or {}).get("type"),
+            "mode": "registry_dry_run" if dry_run else "registry_apply",
+        },
         "dry_run": dry_run,
     }
 
@@ -325,6 +508,7 @@ def record_cursor(root: str | Path, source_id: str, event: dict[str, Any]) -> No
         "watch_source_id": source_id,
         "cursor_type": "event_id",
         "last_value": event["id"],
+        "last_idempotency_key": (event.get("dedupe") or {}).get("idempotency_key"),
         "updated_at": event["observed_at"],
     }
     if existing:
@@ -332,6 +516,117 @@ def record_cursor(root: str | Path, source_id: str, event: dict[str, Any]) -> No
     else:
         cursors.append(cursor)
     write_yaml(path, data)
+
+
+def trigger_rule_matches(rule: dict[str, Any], event: dict[str, Any]) -> bool:
+    when = rule.get("when") or {}
+    if when.get("event_type") and when.get("event_type") != event.get("event_type"):
+        return False
+    source = event.get("source") or {}
+    fields = when.get("fields") or {}
+    for key, value in fields.items():
+        if event.get(key) == value or source.get(key) == value:
+            continue
+        return False
+    return True
+
+
+def trigger_format_values(rule: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    source = event.get("source") or {}
+    return {
+        "event_id": event.get("id"),
+        "rule_id": rule.get("id"),
+        "source_id": source.get("watch_source_id"),
+        "source_type": source.get("source_type"),
+        "provider": source.get("provider"),
+        **(source.get("external_ref") or {}),
+    }
+
+
+def trigger_idempotency_key(rule: dict[str, Any], event: dict[str, Any]) -> str:
+    template = ((rule.get("idempotency") or {}).get("key")) or "{event_id}:{rule_id}"
+    return format_template(str(template).replace("{event.id}", "{event_id}").replace("{rule.id}", "{rule_id}"), trigger_format_values(rule, event))
+
+
+def queue_item_for_trigger(rule: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    enqueue = ((rule.get("then") or {}).get("enqueue")) or {}
+    approval_required = bool((rule.get("approval") or {}).get("required"))
+    key = trigger_idempotency_key(rule, event)
+    return {
+        "id": f"queue_{hashlib.sha256(key.encode()).hexdigest()[:12]}",
+        "kind": "source_trigger",
+        "ref": rule["id"],
+        "source_event_id": event["id"],
+        "watch_source_id": (event.get("source") or {}).get("watch_source_id"),
+        "trigger_rule_id": rule["id"],
+        "status": "approval-needed" if approval_required else "queued",
+        "approval_state": "required" if approval_required else "not_required",
+        "work_type": enqueue.get("work_type", "review"),
+        "route_to": enqueue.get("route_to", ((rule.get("route") or {}).get("fallback_domain")) or "shared_factory"),
+        "workflow": enqueue.get("workflow"),
+        "context_profile": enqueue.get("context_profile", "default"),
+        "maturity": enqueue.get("maturity", "observe"),
+        "idempotency_key": key,
+        "created_at": utc_now(),
+        "evidence": [{"type": "source_event", "path": event.get("path")}],
+    }
+
+
+def apply_trigger_rules(
+    root: str | Path,
+    source: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    dry_run: bool,
+    event_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    os_root = expand_path(root)
+    if not dry_run:
+        ensure_event_state(os_root)
+    for rule in [rule for rule in source.get("trigger_rules") or [] if isinstance(rule, dict)]:
+        if not rule.get("enabled") or not trigger_rule_matches(rule, event):
+            continue
+        then = rule.get("then") or {}
+        emit = then.get("emit_event") or {}
+        if emit:
+            event_type = emit.get("type", "os.observation")
+            action = {
+                "trigger_rule_id": rule.get("id"),
+                "action": "emit_event",
+                "event_type": event_type,
+                "status": "dry-run" if dry_run else "emitted",
+            }
+            if not dry_run:
+                emitted = append_event(
+                    os_root,
+                    event_type=event_type,
+                    source_ref=f"source-watch:{(event.get('source') or {}).get('watch_source_id')}:{event['id']}",
+                    summary=event.get("summary", ""),
+                    payload_ref={"type": "file", "href": str(event_path)} if event_path else event.get("payload_ref"),
+                    correlation_id=event["id"],
+                )
+                action["event_id"] = emitted["id"]
+                action["path"] = emitted["path"]
+            actions.append(action)
+        if then.get("enqueue"):
+            item = queue_item_for_trigger(rule, event)
+            action = {
+                "trigger_rule_id": rule.get("id"),
+                "action": "enqueue",
+                "status": "dry-run" if dry_run else "queued",
+                "queue_item": item,
+            }
+            if not dry_run:
+                queued = append_run_queue_item(os_root, item)
+                action["queue_item"] = queued["queue_item"]
+                action["run_queue"] = queued["run_queue"]
+                action["created"] = queued["created"]
+                if not queued["created"]:
+                    action["status"] = "skipped"
+                    action["reason"] = "idempotency key already queued"
+            actions.append(action)
+    return actions
 
 
 def poll_watch_source(root: str | Path, source_id: str, *, dry_run: bool = True) -> dict[str, Any]:
@@ -343,9 +638,15 @@ def poll_watch_source(root: str | Path, source_id: str, *, dry_run: bool = True)
         return {"source_id": source_id, "ok": False, "dry_run": dry_run, "findings": doctor["findings"], "events": []}
     event = normalized_source_event(root, source, dry_run=dry_run)
     result = {"source_id": source_id, "ok": True, "dry_run": dry_run, "events": [event]}
+    event_path = None
     if not dry_run:
-        result["written"] = [str(write_source_event(root, event))]
+        event_path = write_source_event(root, event)
+        event["path"] = str(event_path)
+        result["written"] = [str(event_path)]
         record_cursor(root, source_id, event)
+    trigger_actions = apply_trigger_rules(root, source, event, dry_run=dry_run, event_path=event_path)
+    if trigger_actions:
+        result["trigger_actions"] = trigger_actions
     return result
 
 

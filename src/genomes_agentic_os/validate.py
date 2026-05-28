@@ -15,17 +15,22 @@ from .scaffold import (
     INBOX_FILES,
     KNOWLEDGE_FILES,
     METRIC_FILES,
+    PROJECTS_LINK_NAME,
+    ROOT_MARKER_FILENAME,
     STANDARD_LANES,
     expand_path,
 )
 
 
 ROOT_FILES = (
+    ROOT_MARKER_FILENAME,
     "README.md",
     "ROUTER.md",
     "AGENTS.md",
     "CLAUDE.md",
-    "AGENT.md",
+    "CONTEXT.md",
+    "RULES.md",
+    "TOOLS.md",
 )
 
 LEGACY_ROOT_FOLDERS = (
@@ -66,6 +71,8 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/customer/customer-handoff-checklist.md",
     "templates/planning/feature-spec.md",
     "templates/planning/future-idea.md",
+    "templates/system/host-tool-registry.yml",
+    "templates/system/shell-shape.yml",
     "templates/runtime/heartbeat.yml",
     "templates/runtime/schedule.yml",
     "templates/runtime/execution-target.yml",
@@ -84,6 +91,17 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/chain-rule.yml",
     "templates/runtime/event-processing-result.yml",
     "templates/runtime/dead-letter-event.yml",
+    "templates/agent-config/AGENTS.md",
+    "templates/agent-config/CLAUDE.md",
+    "templates/agent-config/ROUTER.md",
+    "templates/agent-config/CONTEXT.md",
+    "templates/agent-config/RULES.md",
+    "templates/agent-config/TOOLS.md",
+    "templates/agent-config/codex-config-layer-map.yml",
+    "templates/agent-config/codex-profile-manifest.yml",
+    "templates/agent-config/codex-profiles.toml",
+    "templates/agent-config/prompt-stitching-map.yml",
+    "templates/agent-config/otel-mcp-contract.yml",
     "operating-manual/README.md",
     "operating-manual/index.html",
     "operating-manual/manual-manifest.yml",
@@ -108,6 +126,7 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-runtime-init.md",
     "commands/os-heartbeat.md",
     "commands/os-integration-setup.md",
+    "commands/system-tool-registry.md",
     "plans/README.md",
     "plans/00-current-state-and-gap-map.md",
     "plans/09-future-ideas-intake.md",
@@ -154,16 +173,32 @@ def require_dir(path: Path, result: ValidationResult) -> None:
         result.errors.append(f"missing required folder: {path}")
 
 
+def validate_claude_adapter(path: Path, result: ValidationResult) -> None:
+    if not path.is_file():
+        return
+    content = path.read_text(encoding="utf-8").strip()
+    if content != "@AGENTS.md":
+        result.errors.append(f"CLAUDE.md must be an @AGENTS.md adapter: {path}")
+
+
+def warn_legacy_agent(path: Path, result: ValidationResult) -> None:
+    if path.exists():
+        result.warnings.append(f"legacy AGENT.md present without compatibility mode: {path}")
+
+
 def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     require_dir(domain_root, result)
     require_file(domain_root / "README.md", result)
     require_file(domain_root / "ROUTER.md", result)
     require_file(domain_root / "AGENTS.md", result)
     require_file(domain_root / "CLAUDE.md", result)
-    require_file(domain_root / "AGENT.md", result)
     require_file(domain_root / "CONTEXT.md", result)
+    require_file(domain_root / "RULES.md", result)
+    require_file(domain_root / "TOOLS.md", result)
     require_file(domain_root / "REFERENCES.md", result)
     require_file(domain_root / "domain.yml", result)
+    validate_claude_adapter(domain_root / "CLAUDE.md", result)
+    warn_legacy_agent(domain_root / "AGENT.md", result)
 
     for directory in DOMAIN_DIRECTORIES:
         require_dir(domain_root / directory, result)
@@ -197,6 +232,97 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     require_file(domain_root / "08-archive" / "README.md", result)
 
 
+def load_control_yaml(path: Path, result: ValidationResult) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        result.errors.append(f"invalid YAML: {path}: {exc}")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def validate_watch_registries(root: Path, result: ValidationResult) -> None:
+    control = root / "shared_factory" / "00-control-plane"
+    connected_path = control / "connected-systems.yml"
+    providers_path = control / "source-providers.yml"
+    sources_path = control / "watch-sources.yml"
+    if not any(path.exists() for path in (connected_path, providers_path, sources_path)):
+        return
+
+    providers = load_control_yaml(providers_path, result).get("source_providers") or []
+    provider_status = {
+        str(provider.get("id")): provider.get("status")
+        for provider in providers
+        if isinstance(provider, dict) and provider.get("id")
+    }
+    systems = load_control_yaml(connected_path, result).get("connected_systems") or []
+    systems_by_id = {
+        str(system.get("id")): system for system in systems if isinstance(system, dict) and system.get("id")
+    }
+
+    for system in systems_by_id.values():
+        system_id = system.get("id")
+        priority = [str(provider) for provider in system.get("provider_priority") or []]
+        if not priority:
+            result.errors.append(f"connected system {system_id} missing provider_priority: {connected_path}")
+            continue
+        missing = [provider for provider in priority if provider not in provider_status]
+        if missing:
+            result.errors.append(f"connected system {system_id} references missing providers {', '.join(missing)}: {connected_path}")
+        if not any(provider_status.get(provider) != "unavailable" for provider in priority if provider in provider_status):
+            result.errors.append(f"connected system {system_id} has no healthy provider: {connected_path}")
+
+    sources = load_control_yaml(sources_path, result).get("watch_sources") or []
+    for source in [source for source in sources if isinstance(source, dict)]:
+        source_id = source.get("id") or "<missing>"
+        system_id = str(source.get("connected_system") or "")
+        system = systems_by_id.get(system_id)
+        if not system:
+            result.errors.append(f"watch source {source_id} references missing connected_system: {sources_path}")
+        elif not any(provider_status.get(provider) != "unavailable" for provider in system.get("provider_priority") or []):
+            result.errors.append(f"watch source {source_id} connected_system has no healthy provider: {sources_path}")
+        if not source.get("source_type"):
+            result.errors.append(f"watch source {source_id} missing source_type: {sources_path}")
+        if not source.get("external_ref"):
+            result.errors.append(f"watch source {source_id} missing external_ref: {sources_path}")
+        cursor = source.get("cursor") or {}
+        if not cursor.get("type") or not cursor.get("state_ref"):
+            result.errors.append(f"watch source {source_id} missing cursor type or state_ref: {sources_path}")
+        if not (source.get("dedupe") or {}).get("idempotency_key"):
+            result.errors.append(f"watch source {source_id} missing dedupe idempotency_key: {sources_path}")
+        route = source.get("route") or {}
+        if not route.get("command") or not route.get("context_command") or not route.get("fallback_domain"):
+            result.errors.append(f"watch source {source_id} missing route command, context_command, or fallback_domain: {sources_path}")
+        outputs = source.get("outputs") or {}
+        if not outputs.get("source_events_dir") or not outputs.get("run_queue_ref"):
+            result.errors.append(f"watch source {source_id} missing source_events_dir or run_queue_ref: {sources_path}")
+        if source.get("enabled") and source.get("watch_method") not in {"poll", "manual_replay", "file_watch"}:
+            result.errors.append(f"watch source {source_id} has unsafe enabled watch_method: {sources_path}")
+        trigger_rules = source.get("trigger_rules") or []
+        if source.get("enabled") and not trigger_rules:
+            result.errors.append(f"watch source {source_id} enabled without trigger_rules: {sources_path}")
+        for rule in trigger_rules:
+            if isinstance(rule, str):
+                continue
+            if not isinstance(rule, dict):
+                result.errors.append(f"watch source {source_id} has invalid trigger rule: {sources_path}")
+                continue
+            if not rule.get("enabled"):
+                continue
+            rule_id = rule.get("id") or "<missing>"
+            if not rule.get("id"):
+                result.errors.append(f"watch source {source_id} enabled trigger rule missing id: {sources_path}")
+            if not (rule.get("when") or {}).get("event_type"):
+                result.errors.append(f"watch source {source_id} trigger rule {rule_id} missing event_type: {sources_path}")
+            then = rule.get("then") or {}
+            if not (then.get("emit_event") or then.get("enqueue")):
+                result.errors.append(f"watch source {source_id} trigger rule {rule_id} missing action: {sources_path}")
+            if not (rule.get("idempotency") or {}).get("key"):
+                result.errors.append(f"watch source {source_id} trigger rule {rule_id} missing idempotency key: {sources_path}")
+
+
 def validate_root(root: str | Path) -> ValidationResult:
     os_root = expand_path(root)
     result = ValidationResult(root=os_root)
@@ -209,6 +335,14 @@ def validate_root(root: str | Path) -> ValidationResult:
 
     for filename in ROOT_FILES:
         require_file(os_root / filename, result)
+    validate_claude_adapter(os_root / "CLAUDE.md", result)
+    warn_legacy_agent(os_root / "AGENT.md", result)
+
+    projects_link = os_root / PROJECTS_LINK_NAME
+    if not projects_link.exists() and not projects_link.is_symlink():
+        result.errors.append(f"missing projects link: {projects_link}")
+    elif not projects_link.is_symlink():
+        result.warnings.append(f"projects path is not a symlink: {projects_link}")
 
     profile_domains = profile_domain_names(os_root)
     domains_to_validate = profile_domains or list(DEFAULT_DOMAINS)
@@ -218,6 +352,7 @@ def validate_root(root: str | Path) -> ValidationResult:
     shared_knowledge = os_root / "shared_factory" / "05-knowledge"
     for filename in SHARED_KNOWLEDGE_FILES:
         require_file(shared_knowledge / filename, result)
+    validate_watch_registries(os_root, result)
 
     for folder in LEGACY_ROOT_FOLDERS:
         path = os_root / folder
