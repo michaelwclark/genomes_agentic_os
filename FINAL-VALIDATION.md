@@ -239,3 +239,108 @@ Manual/live validation to run later:
    ```bash
    agentic-os validate --root ~/agentic_os
    ```
+
+## Plan 18: Visible Capability Registry
+
+Source-package validation already completed:
+
+- `uv run pytest -q` passed with 62 tests.
+- Fresh `agentic-os init` generates `INVENTORY.md` plus `registries/` (capabilities,
+  commands, skills, mcp-servers, libraries, hooks, plugins, rules), and
+  `agentic-os validate` fails when a declared capability is missing from its registry.
+
+Deferred by design (not required by the plan's acceptance criteria; tracked for a later slice):
+
+1. `agentic-os init` does not auto-generate the `.codex/config.toml` harness adapter.
+   The adapter is produced by the explicit, registry-backed `agentic-os config install`
+   step. Wire `install_config` into `init` later if init-time generation is wanted.
+2. Root `TOOLS.md` is written from a static template at init; the registry-driven
+   `tools_prompt_template()` is only applied by `config install`. Consider consolidating
+   so root `TOOLS.md` always reflects live registry entries.
+3. Naming: the spec references `registries/mcp.yml`; the implementation uses
+   `registries/mcp-servers.yml` (consistent across code, tests, and validation).
+   Reconcile the spec name or the constant in a future cleanup.
+
+Manual/live validation to run later (against `~/agentic_os`, after approval):
+
+- Run `agentic-os docs update --root ~/agentic_os`, then confirm `INVENTORY.md` and
+  `registries/` appear without overwriting local edits.
+- `agentic-os validate --root ~/agentic_os` reports no declared-but-missing capabilities.
+
+## Plan 19: Update Channel And Customer Fleet
+
+Source-package validation already completed:
+
+- `uv run pytest -q` passed with 62 tests.
+- `update check/plan/apply/rollback/status/phone-home` are local and file-backed; risky
+  change types (executable, hook, mcp, rule, permission) are blocked unless
+  `--approve-risky`; phone-home emits metadata-only payloads (counts and booleans, never
+  prompts, source code, logs, or secrets).
+
+Deferred by design (spec/build-order granularity beyond the plan's acceptance criteria):
+
+1. Post-update doctor checks appear in the update plan output, but `update apply` does not
+   yet invoke `doctor()`. Run `agentic-os doctor --root <root>` manually after an apply
+   until this is wired.
+2. `doctor` does not yet surface update-channel health fields (installed version, last
+   check, pending updates, rollback availability, telemetry status). `validate` already
+   reports update/backup grant health.
+3. `update rollback` records rollback intent plus a state snapshot (lock + status); it does
+   not yet restore changed file contents. Destructive restore remains operator-driven in V1.
+4. Update status is local only; mirroring update results into the Notion control plane is a
+   later layer.
+
+Manual/live validation to run later:
+
+- `agentic-os update check --root ~/agentic_os` and `update plan` against a real manifest;
+  confirm non-mutating, and that a subsequent `update apply` does not overwrite local edits.
+- `agentic-os update phone-home --root ~/agentic_os`; confirm the payload contains no
+  prompts, source code, logs, secrets, or customer data.
+
+## Plan 20: Operator-Pushed Customer Updates And Backups
+
+Source-package validation already completed:
+
+- `uv run pytest -q` passed with 62 tests.
+- License activation stores only a SHA-256 hash (never the raw key); `update register`
+  generates separate update/backup ed25519 keypairs at mode `0600` and writes only public
+  keys into the grant; `backup run` records a local run log under `logs/backups/`.
+
+Finished in this pass (acceptance-criteria gaps closed; +2 tests):
+
+1. `update register` now blocks with a clear error and exit code `2` when the customer
+   license/billing status is not active, creating no keypair or grant in that case;
+   activating a license unblocks it. (`src/genomes_agentic_os/update_ops.py`; test
+   `test_update_register_blocks_when_billing_is_inactive`.)
+2. The default backup policy now excludes `projects/` in addition to `logs/`,
+   `security/ssh/*`, `**/.env`, and secret/token patterns.
+   (`src/genomes_agentic_os/scaffold.py`; test
+   `test_backup_policy_excludes_projects_keys_and_secrets`.)
+
+Deferred by design (the plan's Notes defer these to a future layer; not in the
+acceptance-criteria list):
+
+1. `agentic-os fleet push <customer_slug>` (operator push over SSH/execution target) is not
+   implemented.
+2. Grant-expiry checking in `validate`/`doctor` (grant presence, separate remotes, and
+   `0600` key permissions are already validated).
+3. The provisioning client is a local fake (`fake_provisioning_response`); real MCP/GitHub
+   provisioning is future work.
+
+Manual/live validation to run later:
+
+- On a real customer root: `license activate`, then `update register`; confirm only public
+  keys are provisioned and private keys remain local at mode `0600`.
+- Confirm `update register` is blocked before license activation.
+- `agentic-os backup run --root ~/agentic_os --dry-run`; confirm `projects/`, private keys,
+  env files, and secrets are excluded before any real `--apply` push.
+
+## Plan 21: Harness Context Contract And Codex Config
+
+Status: complete; no deferred items.
+
+- Fresh installs create `.agentic_root`, `AGENTS.md`, `CLAUDE.md` (an `@AGENTS.md` adapter),
+  `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`; `AGENT.md` is not created unless
+  `--include-legacy-agent` is passed.
+- Domain, customer, and profile scaffolds follow the same context-file contract, and
+  `agentic-os validate` enforces the root file set.

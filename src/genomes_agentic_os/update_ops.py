@@ -267,6 +267,12 @@ Host agentic-os-backup
 
 def update_register(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
+    identity = read_customer_identity(os_root)
+    if identity.get("license", {}).get("status") != "active":
+        raise ValueError(
+            "billing inactive: activate a customer license before registering update access "
+            "(run `agentic-os license activate`)"
+        )
     _update_private, _update_public, update_public_key = ensure_keypair(os_root, "update_ed25519")
     _backup_private, _backup_public, backup_public_key = ensure_keypair(os_root, "backup_ed25519")
     grant = {

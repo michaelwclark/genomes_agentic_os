@@ -313,6 +313,7 @@ def backup_policy_payload() -> dict[str, object]:
                 "shared_factory/00-control-plane/",
             ],
             "exclude": [
+                "projects/",
                 "logs/",
                 "security/ssh/*",
                 "**/.env",

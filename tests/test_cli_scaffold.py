@@ -357,6 +357,35 @@ def test_license_register_update_pull_and_backup_use_local_grants(tmp_path: Path
     assert not validate_root(root).errors
 
 
+def test_update_register_blocks_when_billing_is_inactive(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    # No license activated yet -> billing inactive -> registration must be blocked
+    # without generating any keypair or grant.
+    assert main(["update", "register", "--root", str(root)]) == 2
+    assert not (root / "registries" / "update-grant.json").is_file()
+    assert not (root / "security" / "ssh" / "update_ed25519").exists()
+
+    # Activating the license flips billing active and unblocks registration.
+    assert main(["license", "activate", "--root", str(root), "--key", "fake-key"]) == 0
+    assert main(["update", "register", "--root", str(root)]) == 0
+    assert (root / "registries" / "update-grant.json").is_file()
+
+
+def test_backup_policy_excludes_projects_keys_and_secrets(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    policy = yaml.safe_load((root / "registries" / "backup-policy.yml").read_text(encoding="utf-8"))
+    excludes = policy["backup_policy"]["exclude"]
+    # AC: backup excludes private keys, env files, secrets, raw customer data, and projects/ by default.
+    assert "projects/" in excludes
+    assert "security/ssh/*" in excludes
+    assert "**/.env" in excludes
+    assert any("secret" in pattern for pattern in excludes)
+
+
 def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
