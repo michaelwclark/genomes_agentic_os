@@ -1,68 +1,91 @@
-# Documentation Index
+# Genome's Agentic OS — Handbook
 
-These docs explain how to structure, install, and operate an agentic operating system. They are written as implementation guidance for humans and agents that need to run the same process repeatedly without rediscovering context.
+The complete guide to installing, operating, and extending **Genome's Agentic OS** —
+a Python CLI (`agentic-os`) that scaffolds a domain-first filesystem "operating
+system" for AI-assisted work. It is a concrete implementation of the **Model
+Workspace Protocol** ([arXiv:2603.16021](https://arxiv.org/abs/2603.16021)):
+numbered folders are stages, markdown files carry context, local scripts do the
+mechanical work, and one agent reads the right files at the right moment.
 
-Start with the README when you need the product pitch and quick install path. Use this index when you need the operating manual.
+> **The promise:** stop rebuilding operating context from scratch in every chat.
 
-## Reading Path
+**Validated baseline (2026-05-29):** 44/45 CLI commands functional · 2 deliberate
+guardrail exits · 0 crashes · 60/60 tests pass. Re-validate with
+`bash .agentic-atlas/tools/validate-cli.sh` and `.venv/bin/python -m pytest -q`.
 
-| If You Need To Understand | Read |
+---
+
+## Runs from either harness
+
+The OS is **harness-neutral**: the CLI, specs, routing, and run logs are identical
+whether you drive it from **Claude** or **Codex**. Only install/config and the
+invocation surface differ. Every page carries a compact **"Running this from Claude
+vs Codex"** callout for its task; the full mechanics live on
+[13 · Agent Surfaces](13-agent-surfaces.md).
+
+## How to read this
+
+| If you are… | Start here |
 | --- | --- |
-| Why the OS exists | [00 - Rationale](00-rationale/README.md) |
-| How work moves through the OS | [01 - Operating Model](01-operating-model/README.md) |
-| Where domains, workflows, automations, and run logs live | [02 - Information Architecture](02-information-architecture/README.md) |
-| How the CLI scaffolds a working install | [10 - CLI And Install](10-cli-and-install/README.md) |
-| How Notion fits without becoming the runtime database | [03 - Control Plane](03-control-plane/README.md) |
-| How to author executable workflow specs | [04 - Workflows](04-workflows/README.md) |
-| How to author guarded automations | [05 - Automations](05-automations/README.md) |
-| How memory and context packs reduce prompt mass | [06 - Memory And Context](06-memory-and-context/README.md) |
-| How Claude and Codex should execute the same process | [07 - Agent Surfaces](07-agent-surfaces/README.md) |
-| How the Cliefnotes source material maps into this OS | [11 - Cliefnotes Operating Guide](11-cliefnotes-operating-guide/README.md) |
-| Which factory patterns should be imported into product templates | [12 - Factory Patterns](12-factory-patterns/README.md) |
-| How hosts declare shell shape and agent-readable tool inventory | [13 - System Shell And Host Tools](13-system-shell/README.md) |
-| When filesystem, Notion, or a database should own state | [09 - Storage Model](09-storage-model/README.md) |
+| **New** | [00 · Overview](00-overview.md) → [01 · Install & Quickstart](01-install-and-quickstart.md) → [03 · Operating Model](03-operating-model.md) |
+| **An operator** (running daily work) | [03 · Operating Model](03-operating-model.md) → [05 · Routing](05-routing-and-context.md) → [06 · Workflows](06-workflows.md) → [08 · Runs](08-runs-and-run-logs.md) |
+| **A builder** (extending the OS) | [02 · Architecture](02-architecture.md) → [`.agentic-atlas/`](../.agentic-atlas/START-HERE.md) (the architecture map + "how to extend without making a mess") |
+| **An agent resuming work** | [`.agentic-atlas/START-HERE.md`](../.agentic-atlas/START-HERE.md) — the validated inventory, so you don't re-analyze the repo |
 
-## Sections
+---
 
-| Doc | Purpose |
+## The handbook
+
+### Foundations
+| Page | What it covers |
 | --- | --- |
-| [00 - Rationale](00-rationale/README.md) | Why this exists and what improvement it should create. |
-| [01 - Operating Model](01-operating-model/README.md) | The loop every domain, workflow, and automation follows. |
-| [02 - Information Architecture](02-information-architecture/README.md) | How to organize domains, lanes, workflows, and automations. |
-| [03 - Control Plane](03-control-plane/README.md) | How Notion acts as the human cockpit. |
-| [04 - Workflows](04-workflows/README.md) | How reusable workflow specs should be written and executed. |
-| [05 - Automations](05-automations/README.md) | How recurring and event-driven automations should be specified. |
-| [06 - Memory And Context](06-memory-and-context/README.md) | How agents should build and reuse context without bloating prompts. |
-| [07 - Agent Surfaces](07-agent-surfaces/README.md) | How Claude and Codex should be installed into the OS. |
-| [08 - Client OS Patterns](08-client-os-patterns/README.md) | How client-specific systems differ without changing the core model. |
-| [09 - Storage Model](09-storage-model/README.md) | Filesystem, Notion, database, and vector/memory boundaries. |
-| [10 - CLI And Install](10-cli-and-install/README.md) | How to install the CLI, scaffold an OS root, and smoke-test the result. |
-| [11 - Cliefnotes Operating Guide](11-cliefnotes-operating-guide/README.md) | Source-derived system guide for folder architecture, routers, workflow formats, automations, data flow, and setup. |
-| [12 - Factory Patterns](12-factory-patterns/README.md) | How factory workspace blueprints, constraints, and builder skills map into Agentic OS templates. |
-| [13 - System Shell And Host Tools](13-system-shell/README.md) | How hosts track shell shape, terminal behavior, installed tools, and agent system-work expectations. |
-| [Diagrams](diagrams/README.md) | SVG diagrams for value flow, lifecycle, data flow, and storage boundaries. |
+| [00 · Overview](00-overview.md) | What the OS is, the MWP paper, the five-layer model, the object hierarchy, V1 scope. |
+| [01 · Install & Quickstart](01-install-and-quickstart.md) | Install the CLI, `init` an OS, smoke-test, create your first domain/project, first route. |
+| [02 · Architecture](02-architecture.md) | Five-layer model, the Python package map, DI model, the file-backed event model, deterministic routing, conventions. |
+| [03 · Operating Model](03-operating-model.md) | The intake → route → context → execute → validate → close → learn loop. |
+| [04 · Information Architecture](04-information-architecture.md) | Domains, lanes, the numbered `00–08` folders, the context-file set, naming rules. |
 
-## Object Vocabulary
-
-| Object | Meaning |
+### The operating loop
+| Page | What it covers |
 | --- | --- |
-| Domain | Operating boundary with its own context, workflows, automations, approvals, and Notion mapping. |
-| Lane | Functional grouping inside a domain, such as engineering, support, operations, or finance. |
-| Workflow | Repeatable process for judgment-heavy work. |
-| Automation | Triggered workflow with permissions, idempotency, and audit requirements. |
-| Context pack | Compact source-linked facts an agent loads before execution. |
-| Run log | Durable evidence of one workflow, automation, or skill execution. |
-| Control plane | Human-facing cockpit for intake, status, approvals, and dashboards. |
+| [05 · Routing & Context](05-routing-and-context.md) | `route` / `here` / `context build`, the `ContextPacket`, deterministic risk detection. |
+| [06 · Workflows](06-workflows.md) | Authoring workflow specs, the readiness files/sections, `workflow check`. |
+| [07 · Automations](07-automations.md) | The maturity ladder, readiness, `automation check` / `set-maturity` / `attach`. |
+| [08 · Runs & Run Logs](08-runs-and-run-logs.md) | `run-log create` / `close`, the audit-evidence gate, activity propagation. |
 
-## Operating Promise
+### Runtime, events & integration
+| Page | What it covers |
+| --- | --- |
+| [09 · Runtime & Always-On](09-runtime-and-always-on.md) | `runtime` / `heartbeat` / `schedule` / `integration` — and the honest "no scheduler yet" gap. |
+| [10 · Events & Chains](10-events-and-chains.md) | The file-backed event ledger + declarative chain rules (the reaction model). |
+| [11 · Connected Sources](11-connected-sources.md) | `connected-system` / `watch-source` registries and polling (contracts, not live yet). |
+| [12 · Control Plane (Notion)](12-control-plane-notion.md) | `notion` sync/bootstrap as the human cockpit over the filesystem (plan-only in V1). |
 
-Every installed OS should make these questions cheap to answer:
+### Surfaces, config & operations
+| Page | What it covers |
+| --- | --- |
+| [13 · Agent Surfaces](13-agent-surfaces.md) | **The deep Claude-vs-Codex page** — shared core, the `@AGENTS.md` adapter, skills/commands, `config.toml` layers + profiles. |
+| [14 · Config, Update & Backup](14-config-update-backup.md) | `.agentic_root`, `config`, `update` / `backup` / `license` / `migrate` — keeping an install current and recoverable. |
+| [15 · Customer OS Factory](15-customer-os-factory.md) | `customer init/validate` + profiles/rooms — spinning up an isolated client OS. |
+| [16 · Health, Doctor & Validation](16-health-doctor-validation.md) | `doctor`, the subsystem doctors, `validate`, the capability registry, the monitoring gap. |
 
-1. What is this work item?
-2. Which domain owns it?
-3. Which workflow or automation should run?
-4. What context is required?
-5. What actions are allowed?
-6. What validation proves the result?
-7. What state changed?
-8. What needs approval or follow-up?
+### Reference
+| Page | What it covers |
+| --- | --- |
+| [17 · CLI Reference](17-cli-reference.md) | The navigable command map (links into the exhaustive atlas reference). |
+| [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) | Common errors + fixes, the exit-code reference, and the honest known-limitations list. |
+
+---
+
+## Supplementary & deep references
+
+- **[Feature guides](13-feature-guides/)** — deeper, feature-by-feature implementation guides and gap maps.
+- **[Tutorials](tutorials/)** — worked, scenario-based walkthroughs.
+- **[The Atlas](../.agentic-atlas/START-HERE.md)** — the agent-facing, validated inventory: architecture map, command reference, harness-modes, gap register, backlog, and the re-runnable validation + diagram tools.
+- **[`_archive/`](_archive/)** — the previous conceptual docs (superseded by the pages above; kept for history).
+
+## About the diagrams
+
+Diagrams are authored as Mermaid `.mmd` sources (gitignored, per repo policy) and
+committed as rendered **PNG** under [`diagrams/`](diagrams/). Regenerate after any
+edit with `bash .agentic-atlas/tools/render-diagrams.sh`.
