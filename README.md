@@ -4,6 +4,11 @@ Genome's Agentic OS is the source package for creating a local operating system 
 
 The goal is simple: stop rebuilding operating context from scratch in every chat.
 
+> **New here?** Read the handbook in [`docs/`](docs/README.md). Maintainers and
+> agents: start at [`.agentic-atlas/START-HERE.md`](.agentic-atlas/START-HERE.md) —
+> the validated inventory, architecture map, command reference, gap register, and
+> backlog, so you never re-analyze the repo from scratch.
+
 ## What This Creates
 
 The CLI scaffolds an installed OS root, usually at `~/agentic_os`. The installed root is domain-first. The top level is not `workflows/` or `automations/`; those are lanes inside each domain.
@@ -112,12 +117,13 @@ The result is less prompt mass, fewer missed approvals, cleaner handoffs, and wo
 
 ## Core Model
 
-Genome's Agentic OS separates source, runtime state, work repositories, and the human control plane.
+Genome's Agentic OS separates source, the installed OS, agent harnesses, work repositories, the human control plane, and future runtime state.
 
 | Layer | Source Of Truth | Purpose |
 | --- | --- | --- |
 | Product package | This repository | Reusable specs, templates, schemas, examples, diagrams, and CLI scaffold logic. |
 | Installed OS | `~/agentic_os` | Live domain roots, routers, workflow specs, automation specs, context packs, run logs, and memory policy. |
+| Agent harnesses | Claude & Codex | Read the OS specs and execute workflows. Harness-neutral — same specs, same run logs from either (`CLAUDE.md`→`@AGENTS.md` for Claude; layered `config.toml` for Codex). See [docs/13-agent-surfaces.md](docs/13-agent-surfaces.md). |
 | Work repos | `~/projects/*` | Product, client, content, or code repositories operated by the OS. |
 | Notion control plane | Genome's Notion or an explicitly selected client workspace | Human cockpit for intake, approvals, status, dashboards, and review. |
 | Future active state plane | Database or queue | High-volume mutable state, locking, dedupe, replay, matching, and event history. |
