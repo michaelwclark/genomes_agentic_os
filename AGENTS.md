@@ -2,6 +2,20 @@
 
 This repo defines Genome's Agentic OS: the reusable source package for scaffolding installed operating systems for agentic workflows.
 
+## 🗺️ Start at the Atlas
+
+**Before analyzing this repo, read [`.agentic-atlas/START-HERE.md`](.agentic-atlas/START-HERE.md).**
+The `.agentic-atlas/` folder is the canonical, validated inventory so you don't
+re-derive the system from scratch:
+
+- [`.agentic-atlas/architecture/system-architecture.md`](.agentic-atlas/architecture/system-architecture.md) — architecture + how to extend without making a mess.
+- [`.agentic-atlas/architecture/command-reference.md`](.agentic-atlas/architecture/command-reference.md) — every command and flag, with real examples.
+- [`.agentic-atlas/gap-register.md`](.agentic-atlas/gap-register.md) — what's designed-but-not-running and which services are missing.
+- [`.agentic-atlas/backlog.md`](.agentic-atlas/backlog.md) — prioritized features/fixes/upgrades.
+- [`.agentic-atlas/tools/`](.agentic-atlas/tools/) — re-runnable validation + diagram-render scripts.
+
+The human-facing handbook lives in [`docs/`](docs/) and is built from and validated against the atlas.
+
 ## Working Principles
 
 - Treat this repo as product source, not the live installed OS.

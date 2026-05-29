@@ -1,8 +1,8 @@
 # Diagrams
 
-Diagrams in this repo should be SVG or PNG.
+Committed diagrams are **PNG** (or hand-authored SVG). The repo stays Mermaid-free at the committed level: handbook diagrams are authored as Mermaid `.mmd` **sources that are gitignored** and rendered to PNG by `.agentic-atlas/tools/render-diagrams.sh` (which drives the local Chrome). The intended publishing targets include Notion and agent-readable markdown, and PNG/SVG assets preserve consistently across those surfaces.
 
-Do not use Mermaid for durable documentation here. The intended publishing targets include Notion and agent-readable markdown, and SVG/PNG assets are easier to preserve consistently across those surfaces.
+Handbook page diagrams are named `<page-slug>-<name>.png` and live here alongside the legacy standalone SVGs listed below. Regenerate every PNG after editing any `.mmd` with `bash .agentic-atlas/tools/render-diagrams.sh`.
 
 ## Available Diagrams
 
@@ -18,7 +18,7 @@ Do not use Mermaid for durable documentation here. The intended publishing targe
 
 ## Authoring Rules
 
-- Keep diagrams hand-authored as SVG unless there is a strong reason to use PNG.
+- Author handbook diagrams as Mermaid `.mmd` (gitignored) and commit the rendered PNG; legacy standalone diagrams may remain hand-authored SVG.
 - Keep text generic and public-safe.
 - Do not embed secrets, private workspace names, private channel names, or private project names.
 - Keep diagrams readable in GitHub, Notion exports, and local Markdown previews.

@@ -50,6 +50,7 @@ from .runtime_ops import (
     schedule_create,
     schedule_run_due,
 )
+from .supervisor import format_supervise_result, supervise_tick
 from .scaffold import (
     DEFAULT_PROJECTS_SOURCE,
     create_automation,
@@ -394,6 +395,15 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_run_next_mode.add_argument("--dry-run", action="store_true", default=True)
     runtime_run_next_mode.add_argument("--apply", action="store_true")
     runtime_run_next_parser.set_defaults(handler=handle_runtime_run_next)
+    runtime_supervise_parser = runtime_subparsers.add_parser(
+        "supervise",
+        help="Run one supervisor tick across the runtime surface (heartbeats, schedules, sources, events, run queue) plus a health check.",
+    )
+    runtime_supervise_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_supervise_mode = runtime_supervise_parser.add_mutually_exclusive_group()
+    runtime_supervise_mode.add_argument("--dry-run", action="store_true", default=True)
+    runtime_supervise_mode.add_argument("--apply", action="store_true")
+    runtime_supervise_parser.set_defaults(handler=handle_runtime_supervise)
 
     heartbeat_parser = subparsers.add_parser("heartbeat", help="Manage runtime heartbeats.")
     heartbeat_subparsers = heartbeat_parser.add_subparsers(dest="heartbeat_command", required=True)
@@ -894,6 +904,12 @@ def handle_runtime_run_next(args: argparse.Namespace) -> int:
     result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
     print(format_runtime_result(result))
     return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
+
+
+def handle_runtime_supervise(args: argparse.Namespace) -> int:
+    result = supervise_tick(args.root, dry_run=not args.apply)
+    print(format_supervise_result(result))
+    return 0 if result["ok"] else 1
 
 
 def handle_heartbeat_list(args: argparse.Namespace) -> int:
