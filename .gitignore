@@ -15,3 +15,7 @@ __pycache__/
 *.log
 *.code-workspace
 tmp/
+
+# Mermaid diagram sources are build inputs only; we commit the rendered PNGs.
+# (Repo stays Mermaid-free per AGENTS.md; regenerate with .agentic-atlas/tools/render-diagrams.sh)
+*.mmd
