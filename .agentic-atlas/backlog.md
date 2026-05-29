@@ -15,8 +15,8 @@
 
 | ID | Type | Item | Why | Gap | Status |
 | --- | --- | --- | --- | --- | --- |
-| F-001 | 🟩 | **Scheduler/supervisor** (launchd/systemd/cron) that ticks heartbeats, `schedule run-due --apply`, `watch-source run-due --apply`, `event process-due --apply`, `runtime run-next --apply`, `doctor` | Without it, "always-on" is on-demand; nothing fires by itself | [A](gap-register.md#a-always-on-runtime--the-headline-gap-s1) | todo |
-| F-002 | 🟩 | **`agentic-os runtime supervise`** — a dry-run planner + single-tick executor the supervisor calls | Gives one auditable entrypoint for the loop; testable without a daemon | [A](gap-register.md) | todo |
+| F-001 | 🟩 | **Scheduler/supervisor** (launchd/cron) that ticks the runtime surface | Without it, "always-on" is on-demand; nothing fires by itself | [A](gap-register.md#a-always-on-runtime--the-headline-gap-s1) | **done** — `installers/install-scheduler.sh` renders a launchd agent (macOS) / crontab line that runs `runtime supervise --apply` on a cadence; dry-run by default, `--uninstall` supported. *Not auto-installed — operator runs it per host.* |
+| F-002 | 🟩 | **`agentic-os runtime supervise`** — a dry-run planner + single-tick executor the supervisor calls | Gives one auditable entrypoint for the loop; testable without a daemon | **done** — `src/genomes_agentic_os/supervisor.py` composes heartbeats → schedules → watch-sources → events → run-queue + read-only health; dry-run default; isolated steps; 3 tests in `tests/test_runtime_supervise.py`. |
 | F-003 | 🟩 | **`agentic-os doctor --all`** — aggregate every subsystem doctor into one health report; emit event on regression | Turns point-in-time checks into monitorable health | [C](gap-register.md#c-no-monitored-health--only-point-in-time-doctors-s2) | todo |
 
 ## P1 — Close the value gaps
@@ -43,8 +43,8 @@
 ## Notes for whoever picks these up
 
 - **Validate first, always.** Re-run `bash .agentic-atlas/tools/validate-cli.sh`
-  and `.venv/bin/python -m pytest -q` before and after. Baseline today: 45/45
-  commands functional, 60/60 tests pass.
+  and `.venv/bin/python -m pytest -q` before and after. Baseline: 47/48
+  commands OK (2 intentional guardrail exits), 65/65 tests pass.
 - **Match the architecture.** New commands follow the §9 recipe in
   [`architecture/system-architecture.md`](architecture/system-architecture.md):
   parser + thin handler in `cli.py`, logic in a `*_ops.py`, template in

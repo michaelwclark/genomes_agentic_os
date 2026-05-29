@@ -4,34 +4,37 @@
 > *does* today, established by running the CLI (see
 > [`validation/RESULTS.md`](validation/RESULTS.md)) and reading the source. Each
 > gap has evidence, impact, and a recommendation. Items here feed
-> [`backlog.md`](backlog.md). Last validated: 2026-05-28 (60/60 tests pass; 45/45
-> commands functional).
+> [`backlog.md`](backlog.md). Last validated: 2026-05-29 (65/65 tests pass; 47/48
+> commands OK, 2 intentional guardrail exits).
 
 Severity: **S1** blocks the "running OS" promise · **S2** materially limits value ·
 **S3** polish / friction.
 
 ---
 
-## A. Always-on runtime — the headline gap (S1)
+## A. Always-on runtime — RESOLVED (was the S1 headline gap)
 
-**The OS has a full runtime *surface* but no runtime *process*.** `runtime`,
-`heartbeat`, `schedule`, `watch-source`, `event process-due`, and `runtime
-run-next` all exist and work, but every one is **manual / dry-run-by-default**.
-Nothing executes them on a cadence.
+**Shipped (2026-05-29).** The OS now has both a single-tick executor and an
+installable driver, turning the runtime surface from on-demand into genuinely
+schedulable:
 
-- **Evidence:** `grep -rniE 'cron|launchd|systemd|daemon|apscheduler'` over `src/`
-  and `installers/` returns nothing. `spec/product-spec.md` non-goals: *"does not
-  execute automations, schedule jobs, or manage long-running state."* The runtime
-  commands default to `--dry-run`; effects need explicit `--apply`.
-- **Impact:** heartbeats don't beat, schedules don't fire, sources aren't polled,
-  queued runs aren't dispatched, chain reactions don't process — unless a human
-  types the command. "Always-on" is currently "on-demand."
-- **Recommendation:** ship a thin **supervisor** (launchd plist on macOS / systemd
-  unit / cron) that periodically runs, in order: `heartbeat run … --apply`,
-  `schedule run-due --apply`, `watch-source run-due --apply`, `event process-due --apply`,
-  `runtime run-next --apply`, then `doctor`. Provide an installer
-  (`installers/install-scheduler.sh`) and a `agentic-os runtime supervise` dry-run
-  planner. This is the single highest-leverage item to make the OS "live."
+- **`agentic-os runtime supervise [--dry-run|--apply]`** (`src/genomes_agentic_os/supervisor.py`)
+  runs one tick across the whole runtime surface, in order — heartbeats → schedules
+  → watch-sources → events → run-queue — then a read-only health check. Dry-run by
+  default; steps are **isolated** (one failing subsystem never aborts the tick);
+  exits 1 if any mutating step raises. Covered by `tests/test_runtime_supervise.py`.
+- **`installers/install-scheduler.sh`** renders a **launchd agent** (macOS) or a
+  **crontab line** (other platforms) that calls `runtime supervise --apply` on a
+  cadence (default 15 min), logging to `shared_factory/06-runs-and-logs/`. Dry-run
+  by default; `--uninstall` supported. Plist template:
+  `templates/runtime/supervisor.launchd.plist.template`.
+
+- **Residual (S3):** the scheduler is **not auto-installed** — an operator runs
+  `install-scheduler.sh --apply` per host (deliberate: installing a background
+  agent is an explicit, per-machine choice). And the *value* of each tick still
+  depends on the subsystems (e.g., live source polling needs the adapters in
+  [Gap F](#f-integrations--connected-sources-are-contracts-not-connections-s2)).
+  Backlog: F-001 ✅, F-002 ✅.
 
 ---
 
@@ -146,7 +149,7 @@ Nothing executes them on a cadence.
 
 | Service | Purpose | Today | Target |
 | --- | --- | --- | --- |
-| **Scheduler/supervisor** | tick heartbeats, schedules, polling, queue dispatch, chain processing | ❌ none | launchd/systemd/cron (Gap A) |
+| **Scheduler/supervisor** | tick heartbeats, schedules, polling, queue dispatch, chain processing | ✅ `runtime supervise` + `install-scheduler.sh` | enable per host: `install-scheduler.sh --apply` (Gap A) |
 | **Notion sync job** | project files → cockpit | ⚠️ plan-only | `notion sync --apply` on cadence (Gap B) |
 | **Health monitor** | aggregate doctors, alert on regression | ⚠️ manual one-shots | `doctor --all` each tick (Gap C) |
 | **Backup job** | snapshot installed OS | ⚠️ `backup run` manual + needs grant | scheduled `backup run --apply` |

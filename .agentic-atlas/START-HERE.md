@@ -6,8 +6,8 @@
 > build next. Read this page first; follow the links; trust them over re-derivation
 > (but re-validate if a fact looks stale — see the timestamp below).
 
-**Last full validation: 2026-05-28** · CLI: **45/45 commands functional** ·
-Tests: **60/60 pass** · Diagram pipeline: **verified (Mermaid→PNG)**.
+**Last full validation: 2026-05-29** · CLI: **47/48 commands OK** (2 intentional guardrail exits) ·
+Tests: **65/65 pass** · Diagram pipeline: **verified (Mermaid→PNG)**.
 
 ---
 

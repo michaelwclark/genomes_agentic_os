@@ -1,14 +1,14 @@
 # 09 · Runtime & Always-On
 
-> **Purpose:** understand what the Agentic OS runtime surface *is* (file-backed
-> registries, heartbeats, schedules, integrations, a run queue) and what it
-> **is not yet** (an autonomous daemon that ticks without you). This page is the
-> honest account of both halves.
+> **Purpose:** understand the Agentic OS runtime surface (file-backed registries,
+> heartbeats, schedules, integrations, a run queue) and how to make it **tick on a
+> cadence**. There is no bespoke daemon — an external scheduler calls one
+> auditable tick command (`runtime supervise`), installed by a small script.
 >
-> **You'll use:** `agentic-os runtime {init,doctor,run-next}`,
+> **You'll use:** `agentic-os runtime {init,doctor,run-next,supervise}`,
 > `agentic-os heartbeat {list,run,doctor}`,
 > `agentic-os schedule {create,run-due}`,
-> `agentic-os integration {list,setup,doctor}`.
+> `agentic-os integration {list,setup,doctor}`, `installers/install-scheduler.sh`.
 >
 > **Prereqs:** an installed OS root
 > ([01 · Install & Quickstart](01-install-and-quickstart.md)); runtime registries
@@ -33,25 +33,28 @@ directly — there is no in-memory state, no database, no network call at the
 registry layer. This is the MWP philosophy applied to operations: the filesystem
 *is* the runtime state.
 
-### Critical honesty: "always-on" is currently on-demand
+### How it ticks: on-demand by default, schedulable via the supervisor
 
-**The OS has a full runtime surface but no runtime process.** Every command below
-is invoked manually, or previewed via dry-run. Nothing ticks by itself.
+By itself, every command below is **invoked manually or previewed via dry-run** —
+the registry layer has no daemon. What turns the surface into an always-on engine
+is the **supervisor** plus an **external scheduler**:
 
-- `heartbeat run` only fires when you type it.
-- `schedule run-due` only enqueues due items when you type it.
-- `watch-source poll` only polls when you type it.
-- `event process-due` only processes chained events when you type it.
-- `runtime run-next` only dispatches the next queue item when you type it (with
-  `--apply`).
+- **`agentic-os runtime supervise`** runs *one tick* across the whole surface, in
+  order — heartbeats → schedules → watch-sources → events → run-queue — then a
+  read-only health check. Dry-run by default; `--apply` commits. Steps are
+  **isolated**: one failing subsystem never aborts the tick.
+- **`installers/install-scheduler.sh`** installs a **launchd agent** (macOS) or a
+  **crontab line** (other platforms) that calls `runtime supervise --apply` on a
+  cadence (default 15 min). It is dry-run by default and **not auto-installed** —
+  enabling a background agent is an explicit, per-host choice.
 
-This is Gap A in the [gap register](../.agentic-atlas/gap-register.md), rated S1
-(highest priority). The recommended fix — a thin supervisor (launchd plist on
-macOS, systemd unit on Linux, or a cron entry) that runs the loop above on a
-cadence — is backlogged as **F-001**. Until F-001 ships, treat the runtime surface
-as a set of well-designed levers, not an engine that runs itself.
+So "always-on" is opt-in per machine: install the scheduler and the OS ticks
+itself; skip it and the same commands stay on-demand levers. This closes the old
+Gap A (F-001 + F-002) in the
+[gap register](../.agentic-atlas/gap-register.md) — see
+[the supervisor section](#the-supervisor-what-makes-it-always-on) below for setup.
 
-![Runtime registries (runtime-registry.yml, integration-registry.yml, run-queue.yml, heartbeat logs) fed by CLI commands; a dashed supervisor loop showing what F-001 would add (heartbeat run, schedule run-due, watch-source poll, event process-due, runtime run-next, doctor) is marked NOT YET SHIPPED](diagrams/runtime-registries.png)
+![Runtime registries (runtime-registry.yml, integration-registry.yml, run-queue.yml, heartbeat logs) fed by manual CLI commands; the shipped supervisor loop — runtime supervise, installed via install-scheduler.sh — composes one tick of heartbeat run, schedule run-due, watch-source run-due, event process-due, runtime run-next, and a read-only health check on a cadence](diagrams/runtime-registries.png)
 
 ---
 
@@ -409,32 +412,48 @@ findings:
 
 ---
 
-## The F-001 supervisor loop (what would make this "always-on")
+## The supervisor: what makes it always-on
 
-When F-001 ships, a thin supervisor — a launchd plist on macOS, a systemd unit
-on Linux, or a crontab entry — would run the following sequence on each cadence
-tick (suggested: every 5–15 minutes):
+A single command runs the whole loop, and a small installer schedules it.
+
+### One tick — `runtime supervise`
 
 ```bash
-# F-001 supervisor sequence (not yet implemented)
-agentic-os heartbeat run <each-enabled-heartbeat-id> --root ~/agentic_os --apply
-agentic-os schedule run-due --root ~/agentic_os --apply
-agentic-os watch-source run-due --root ~/agentic_os --apply
-agentic-os event process-due --root ~/agentic_os --apply
-agentic-os runtime run-next --root ~/agentic_os --apply
-agentic-os doctor --root ~/agentic_os
+# Preview a tick (dry-run is the default — touches nothing):
+agentic-os runtime supervise --root ~/agentic_os
+
+# Run a real tick (commit effects):
+agentic-os runtime supervise --root ~/agentic_os --apply
 ```
 
-The gap register also calls for:
+`runtime supervise` composes the surface in order — heartbeats → schedules →
+watch-sources → events → run-queue — then a read-only health check, printing an
+auditable per-step report (`ok`, `health_ok`, and a summary per step). Each step
+is **isolated**: if one subsystem raises, the tick records it, continues the rest,
+and the command exits 1 so a scheduler can alert.
 
-- `installers/install-scheduler.sh` — a one-command installer that writes the
-  platform-appropriate supervisor unit
-- `agentic-os runtime supervise --dry-run` — a planner that shows what the
-  supervisor would do without touching anything
+### Schedule it — `install-scheduler.sh`
 
-Until then, operators can run these commands manually or wire them into an
-external scheduler themselves. The registries, queue, and log contracts are
-all stable; the supervisor is drop-in.
+```bash
+# Preview what would be installed (dry-run; changes nothing):
+bash installers/install-scheduler.sh --root ~/agentic_os --interval-minutes 15
+
+# Install the background driver:
+bash installers/install-scheduler.sh --root ~/agentic_os --interval-minutes 15 --apply
+
+# Remove it later:
+bash installers/install-scheduler.sh --uninstall --apply
+```
+
+On macOS this writes a **launchd agent** to `~/Library/LaunchAgents/` (rendered from
+`templates/runtime/supervisor.launchd.plist.template`); on other platforms it adds a
+**crontab line**. Either way it calls `runtime supervise --apply` on the cadence,
+logging to `shared_factory/06-runs-and-logs/supervisor.{out,err}.log`. It is
+**dry-run by default and never auto-installed** — turning on a background agent is a
+deliberate, per-host choice.
+
+> **Manual fallback:** run `runtime supervise --apply` by hand, or wire it into any
+> scheduler you prefer. The registry, queue, and log contracts are stable.
 
 ---
 

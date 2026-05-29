@@ -577,6 +577,27 @@ Status: **OK** (rc 0, dry-run mode)
 
 ---
 
+### `runtime supervise`
+
+Run one supervisor tick across the whole runtime surface — heartbeats → schedules → watch-sources → events → run-queue — then a read-only health check. Dry-run by default. This is the single command an external scheduler calls (`installers/install-scheduler.sh`).
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+| `--dry-run` | No (default) | Preview the tick; touches nothing |
+| `--apply` | No | Commit each step's effects |
+
+Steps are isolated — one failing subsystem does not abort the tick. Exits 1 if any mutating step raises. Reads/Writes: composes the runtime/event/source subsystems; health is read-only. Impl: `src/genomes_agentic_os/supervisor.py`.
+
+```bash
+agentic-os runtime supervise --root /tmp/aos-ref            # dry-run
+agentic-os runtime supervise --root /tmp/aos-ref --apply    # real tick
+```
+
+Status: **OK** (rc 0; rc 1 only if a step raises)
+
+---
+
 ### `heartbeat list`
 
 List all configured heartbeats in the runtime registry.
