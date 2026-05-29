@@ -471,6 +471,7 @@ created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/ru
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/schedule.yml
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/source-event.yml
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/source-provider.yml
+created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/supervisor.launchd.plist.template
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/trigger-rule.yml
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/update-grant.json
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/templates/runtime/watch-cursor.yml
@@ -973,17 +974,17 @@ decision_log: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log create acme launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T005116Z-acme-launch_blog
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T005116Z-acme-launch_blog/artifacts
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T005116Z-acme-launch_blog/run-log.md
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/artifacts
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/run-log.md
 ```
 
-## 14-run-log_close_20260529T005116Z-acme-launch_blog
+## 14-run-log_close_20260529T150010Z-acme-launch_blog
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260529T005116Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260529T150010Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T005116Z-acme-launch_blog/run-log.md
+run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/run-log.md
 status: done
 workflow_or_automation: launch_blog
 activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.md
@@ -1024,7 +1025,7 @@ skipped:
 - /private/tmp/aos-validate/root/shared_factory/00-control-plane
 - /private/tmp/aos-validate/root/shared_factory/06-runs-and-logs/runs
 docs_created: 0
-docs_skipped: 258
+docs_skipped: 259
 ```
 
 ## 18-runtime_doctor
@@ -1054,7 +1055,95 @@ dry_run: true
 message: no queued runtime work
 ```
 
-## 20-heartbeat_list
+## 20-runtime_supervise_dry
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --dry-run
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+tick: '2026-05-29T15:00:10Z'
+root: /tmp/aos-validate/root
+dry_run: true
+ok: true
+health_ok: true
+steps:
+- step: heartbeats
+  ok: true
+  summary:
+    ok: true
+    ran_count: 0
+- step: schedules
+  ok: true
+  summary:
+    status: dry-run
+    queued_count: 1
+    skipped_count: 0
+- step: watch_sources
+  ok: true
+  summary:
+    dry_run: true
+    actions_count: 0
+- step: events
+  ok: true
+  summary:
+    dry_run: true
+    actions_count: 0
+- step: run_queue
+  ok: true
+  summary:
+    status: idle
+    dry_run: true
+- step: health
+  ok: true
+  summary:
+    ok: true
+    findings_count: 2
+```
+
+## 21-runtime_supervise_apply
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --apply
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+tick: '2026-05-29T15:00:11Z'
+root: /tmp/aos-validate/root
+dry_run: false
+ok: true
+health_ok: true
+steps:
+- step: heartbeats
+  ok: true
+  summary:
+    ok: true
+    ran_count: 0
+- step: schedules
+  ok: true
+  summary:
+    status: queued
+    queued_count: 1
+    skipped_count: 0
+- step: watch_sources
+  ok: true
+  summary:
+    dry_run: false
+    actions_count: 0
+- step: events
+  ok: true
+  summary:
+    dry_run: false
+    actions_count: 0
+- step: run_queue
+  ok: true
+  summary:
+    status: done
+    dry_run: false
+- step: health
+  ok: true
+  summary:
+    ok: true
+    findings_count: 2
+```
+
+## 22-heartbeat_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os heartbeat list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1104,7 +1193,7 @@ heartbeats:
     notify: Genome
 ```
 
-## 21-heartbeat_doctor
+## 23-heartbeat_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os heartbeat doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1120,7 +1209,7 @@ findings:
   message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
 ```
 
-## 22-schedule_create_demo
+## 24-schedule_create_demo
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os schedule create demo --cadence daily --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1145,7 +1234,7 @@ schedule:
 registry: /private/tmp/aos-validate/root/shared_factory/00-control-plane/runtime-registry.yml
 ```
 
-## 23-schedule_run-due_dry
+## 25-schedule_run-due_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os schedule run-due --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1153,46 +1242,31 @@ registry: /private/tmp/aos-validate/root/shared_factory/00-control-plane/runtime
 root: /private/tmp/aos-validate/root
 status: dry-run
 queued:
-- id: queue_f780fc7fe05e
-  kind: schedule
-  ref: daily_agentic_os_doctor
-  status: dry-run
-  approval_state: not_required
-  created_at: '2026-05-29T00:51:17.522130+00:00'
-  dry_run: true
-  due_at: '2026-05-28T05:00:00Z'
-  idempotency_key: schedule:daily_agentic_os_doctor:2026-05-28T05:00:00Z
-  execution_target: script
-  command: agentic-os validate --root <root>
-  log: shared_factory/06-runs-and-logs/runs/20260529T005117Z-f780fc7f-daily_agentic_os_doctor/run-log.yml
-  evidence:
-  - type: run_log
-    path: shared_factory/06-runs-and-logs/runs/20260529T005117Z-f780fc7f-daily_agentic_os_doctor/run-log.yml
-  blocked_reason: null
-  updated_at: '2026-05-29T00:51:17.522130+00:00'
-  created: true
-- id: queue_8d1df5318143
+- id: queue_c9d6182106f2
   kind: schedule
   ref: demo
   status: dry-run
   approval_state: not_required
-  created_at: '2026-05-29T00:51:17.523731+00:00'
+  created_at: '2026-05-29T15:00:11.370100+00:00'
   dry_run: true
-  due_at: '2026-05-28T05:00:00Z'
-  idempotency_key: schedule:demo:2026-05-28T05:00:00Z
+  due_at: '2026-05-29T05:00:00Z'
+  idempotency_key: schedule:demo:2026-05-29T05:00:00Z
   execution_target: script
   command: agentic-os validate --root <root>
-  log: shared_factory/06-runs-and-logs/runs/20260529T005117Z-8d1df531-demo/run-log.yml
+  log: shared_factory/06-runs-and-logs/runs/20260529T150011Z-c9d61821-demo/run-log.yml
   evidence:
   - type: run_log
-    path: shared_factory/06-runs-and-logs/runs/20260529T005117Z-8d1df531-demo/run-log.yml
+    path: shared_factory/06-runs-and-logs/runs/20260529T150011Z-c9d61821-demo/run-log.yml
   blocked_reason: null
-  updated_at: '2026-05-29T00:51:17.523731+00:00'
+  updated_at: '2026-05-29T15:00:11.370100+00:00'
   created: true
-skipped: []
+skipped:
+- schedule: daily_agentic_os_doctor
+  reason: not due
+  next_due_at: '2026-05-30T05:00:00Z'
 ```
 
-## 24-integration_list
+## 26-integration_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os integration list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1348,7 +1422,7 @@ integrations:
     - Last Runtime Sync
 ```
 
-## 25-integration_doctor
+## 27-integration_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os integration doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1361,7 +1435,7 @@ findings:
   message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
 ```
 
-## 26-event_list
+## 28-event_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os event list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1370,7 +1444,7 @@ events: []
 ledger: /private/tmp/aos-validate/root/shared_factory/06-runs-and-logs/events/event-ledger-index.md
 ```
 
-## 27-event_summary
+## 29-event_summary
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os event summary --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1383,7 +1457,7 @@ ledger: /private/tmp/aos-validate/root/shared_factory/06-runs-and-logs/events/ev
 run_queue: /private/tmp/aos-validate/root/shared_factory/00-control-plane/run-queue.yml
 ```
 
-## 28-event_process-due_dry
+## 30-event_process-due_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os event process-due --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1392,7 +1466,7 @@ dry_run: true
 actions: []
 ```
 
-## 29-chain_list
+## 31-chain_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os chain list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1534,7 +1608,7 @@ chain_rules:
     key: '{event_idempotency_key}:ci_failure_investigation'
 ```
 
-## 30-chain_doctor
+## 32-chain_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os chain doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1543,7 +1617,7 @@ ok: true
 findings: []
 ```
 
-## 31-connected-system_list
+## 33-connected-system_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os connected-system list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1797,7 +1871,7 @@ connected_systems:
   selected_provider: filesystem
 ```
 
-## 32-watch-source_list
+## 34-watch-source_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os watch-source list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1805,7 +1879,7 @@ connected_systems:
 watch_sources: []
 ```
 
-## 33-notion_plan-sync
+## 35-notion_plan-sync
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os notion plan-sync --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1880,12 +1954,12 @@ actions:
   fingerprint: 2467a03437db66b972d87026ae73645a3b653003aea3a2c2dfbc7ca0ce8850a3
 - action: create
   kind: run
-  key: acme/20260529T005116Z-acme-launch_blog
-  title: 20260529T005116Z-acme-launch_blog
-  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T005116Z-acme-launch_blog/run-log.md
-  record_key: run:acme/20260529T005116Z-acme-launch_blog
+  key: acme/20260529T150010Z-acme-launch_blog
+  title: 20260529T150010Z-acme-launch_blog
+  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/run-log.md
+  record_key: run:acme/20260529T150010Z-acme-launch_blog
   notion_id: null
-  fingerprint: 63543aa239e5103bbef0e33a4bb46751d1792a11e5e07a3e842c84b9dba13418
+  fingerprint: eac113422133a5db14db4ab6920abe85e2fa45e4c6df3f0efea98f143fc8b4d8
 - action: create
   kind: domain
   key: archive
@@ -2088,7 +2162,7 @@ actions:
   fingerprint: 3f54d9f32209e3892fde5623695664d72bb67804868f11eeb99402ce73487f36
 ```
 
-## 34-config_doctor_layer
+## 36-config_doctor_layer
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config doctor --root /tmp/aos-validate/root --layer agentic_os_root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2104,7 +2178,7 @@ findings:
     --layer agentic_os_root --dry-run, review the diff, then rerun with --apply.
 ```
 
-## 35-config_install_dry
+## 37-config_install_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config install --root /tmp/aos-validate/root --layer agentic_os_root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2232,7 +2306,19 @@ diff: '--- /private/tmp/aos-validate/root/config.toml:before
   '
 ```
 
-## 36-update_register
+## 38-license_activate
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os license activate --key VALIDATION-TEST-KEY --root /tmp/aos-validate/root
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+root: /private/tmp/aos-validate/root
+license:
+  status: active
+  activated_at: '2026-05-29T15:00:12Z'
+  key_hash: 98f9006c28109fe76a6960274702c0b357b598b264e22716aa50ba6e18296bab
+```
+
+## 39-update_register
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update register --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2250,14 +2336,14 @@ remotes:
     url: git@github.com:genome/local-agentic-os-backups.git
     access: write
 public_keys:
-  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlHhLMpo1elQzVvOXwiKc+pB3Vvu+VPCEht+Js0NVYW
+  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINVAU7Mvqs0ZicWukSugjz1CzJcxczDNovdUzrt7beeA
     agentic-os-update_ed25519
-  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDfJ43rE+ucSnsDqpH3RU+UxCcx9po2CIsxrVGbEsa4m
+  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMMDfm54lwWAbCx2SdR3WkeoW9d1ANZT0UtMAp9/IVBk
     agentic-os-backup_ed25519
 private_keys: stored locally under security/ssh with mode 0600
 ```
 
-## 37-update_check
+## 40-update_check
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update check --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2272,7 +2358,7 @@ mutated: false
 risky_changes: []
 ```
 
-## 38-update_status
+## 41-update_status
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update status --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2288,16 +2374,16 @@ status:
 plan_path: ''
 ```
 
-## 39-backup_run_dry
+## 42-backup_run_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os backup run --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 root: /private/tmp/aos-validate/root
-log_path: /private/tmp/aos-validate/root/logs/backups/backup-20260529005118.yml
+log_path: /private/tmp/aos-validate/root/logs/backups/backup-20260529150012.yml
 status: planned
 dry_run: true
-created_at: '2026-05-29T00:51:18Z'
+created_at: '2026-05-29T15:00:12Z'
 remote:
   name: agentic-os-backup
   url: git@github.com:genome/local-agentic-os-backups.git
@@ -2312,6 +2398,7 @@ include:
 - registries/
 - shared_factory/00-control-plane/
 exclude:
+- projects/
 - logs/
 - security/ssh/*
 - '**/.env'
@@ -2320,7 +2407,7 @@ exclude:
 manifest: []
 ```
 
-## 40-migrate_plan
+## 43-migrate_plan
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os migrate plan --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2361,7 +2448,7 @@ migrations:
 plan_path: /private/tmp/aos-validate/root/.migrations/notion-sync-readme-v1.yml
 ```
 
-## 41-losmon_validate
+## 44-losmon_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os losmon validate --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2374,13 +2461,13 @@ created_or_verified:
 - /private/tmp/aos-validate/root/los/03-workflows/operations/deploy_planning
 - /private/tmp/aos-validate/root/los/04-automations/support/thread_intake
 run_logs:
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T005119Z-los-pr_review/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T005119Z-los-failing_ci_triage/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T005119Z-los-deploy_planning/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T150012Z-los-pr_review/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T150012Z-los-failing_ci_triage/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T150012Z-los-deploy_planning/run-log.md
 comparison: /private/tmp/aos-validate/root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
 ```
 
-## 42-plan_capture
+## 45-plan_capture
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os plan capture --title weekly report automation --summary automate the weekly report --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2390,7 +2477,7 @@ kind: os
 status: captured
 ```
 
-## 43-docs_install
+## 46-docs_install
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os docs install --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2398,7 +2485,7 @@ status: captured
 no changes
 ```
 
-## 44-customer_init_example
+## 47-customer_init_example
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os customer init acme_ops --profile /Users/genome/projects/genomes_agentic_os/customer_profiles/example-customer.yml --target /tmp/aos-validate/customer
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2700,7 +2787,7 @@ skipped:
 - /private/tmp/aos-validate/customer/support/08-archive/README.md
 ```
 
-## 45-customer_validate
+## 48-customer_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os customer validate --root /tmp/aos-validate/customer
 # CWD: /Users/genome/projects/genomes_agentic_os

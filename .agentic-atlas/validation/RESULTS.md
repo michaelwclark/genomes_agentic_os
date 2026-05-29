@@ -19,40 +19,43 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 | 12 | OK | 0 | automation attach -> launch |
 | 13 | OK | 0 | automation set-maturity prepare |
 | 14 | OK | 0 | run-log create |
-| 15 | OK | 0 | run-log close (20260529T005116Z-acme-launch_blog) |
+| 15 | OK | 0 | run-log close (20260529T150010Z-acme-launch_blog) |
 | 16 | OK | 0 | profile create |
 | 17 | OK | 0 | profile validate |
 | 18 | OK | 0 | runtime init |
 | 19 | OK | 0 | runtime doctor |
 | 20 | OK | 0 | runtime run-next (dry) |
-| 21 | OK | 0 | heartbeat list |
-| 22 | OK | 0 | heartbeat doctor |
-| 23 | OK | 0 | schedule create demo |
-| 24 | OK | 0 | schedule run-due (dry) |
-| 25 | OK | 0 | integration list |
-| 26 | OK | 0 | integration doctor |
-| 27 | OK | 0 | event list |
-| 28 | OK | 0 | event summary |
-| 29 | OK | 0 | event process-due (dry) |
-| 30 | OK | 0 | chain list |
-| 31 | OK | 0 | chain doctor |
-| 32 | OK | 0 | connected-system list |
-| 33 | OK | 0 | watch-source list |
-| 34 | OK | 0 | notion plan-sync |
-| 35 | GUARDED | 1 | config doctor (layer) |
-| 36 | OK | 0 | config install (dry) |
-| 37 | OK | 0 | update register |
-| 38 | OK | 0 | update check |
-| 39 | OK | 0 | update status |
-| 40 | OK | 0 | backup run (dry) |
-| 41 | OK | 0 | migrate plan |
-| 42 | OK | 0 | losmon validate |
-| 43 | OK | 0 | plan capture |
-| 44 | OK | 0 | docs install |
-| 45 | OK | 0 | customer init (example) |
-| 46 | OK | 0 | customer validate |
+| 21 | OK | 0 | runtime supervise (dry) |
+| 22 | OK | 0 | runtime supervise (apply) |
+| 23 | OK | 0 | heartbeat list |
+| 24 | OK | 0 | heartbeat doctor |
+| 25 | OK | 0 | schedule create demo |
+| 26 | OK | 0 | schedule run-due (dry) |
+| 27 | OK | 0 | integration list |
+| 28 | OK | 0 | integration doctor |
+| 29 | OK | 0 | event list |
+| 30 | OK | 0 | event summary |
+| 31 | OK | 0 | event process-due (dry) |
+| 32 | OK | 0 | chain list |
+| 33 | OK | 0 | chain doctor |
+| 34 | OK | 0 | connected-system list |
+| 35 | OK | 0 | watch-source list |
+| 36 | OK | 0 | notion plan-sync |
+| 37 | GUARDED | 1 | config doctor (layer) |
+| 38 | OK | 0 | config install (dry) |
+| 39 | OK | 0 | license activate |
+| 40 | OK | 0 | update register |
+| 41 | OK | 0 | update check |
+| 42 | OK | 0 | update status |
+| 43 | OK | 0 | backup run (dry) |
+| 44 | OK | 0 | migrate plan |
+| 45 | OK | 0 | losmon validate |
+| 46 | OK | 0 | plan capture |
+| 47 | OK | 0 | docs install |
+| 48 | OK | 0 | customer init (example) |
+| 49 | OK | 0 | customer validate |
 
 ## Totals
 
-- OK: 44
+- OK: 47
 - GUARDED: 2

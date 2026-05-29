@@ -1,0 +1,112 @@
+"""Single-tick runtime supervisor.
+
+Composes the runtime subsystems into one auditable "tick" so an external
+scheduler (launchd / systemd / cron) can drive the OS without a bespoke daemon.
+This is the file-first answer to "the OS has a runtime surface but nothing makes
+it tick": the scheduler calls `agentic-os runtime supervise --apply` on a
+cadence, and this module runs each subsystem once, in order, collecting an
+auditable report.
+
+Design notes:
+- **Dry-run by default**, matching the rest of the runtime surface. Pass
+  `dry_run=False` (CLI `--apply`) to allow real effects.
+- **Composition, not reinvention.** Each step calls the existing per-subsystem
+  op; this module only orders them and assembles the report. New subsystems get
+  one line here.
+- **Isolated steps.** A failing step is recorded and the tick continues, so one
+  broken subsystem never silences the others.
+- **Health is read-only and always collected** (it never mutates), so a tick
+  doubles as a heartbeat for monitoring.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+import yaml
+
+from .event_graph import process_due
+from .runtime_ops import (
+    heartbeat_list,
+    heartbeat_run,
+    runtime_doctor,
+    runtime_run_next,
+    schedule_run_due,
+)
+from .source_watch import run_due_watch_sources
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _summarize(result: dict[str, Any]) -> dict[str, Any]:
+    """Pull a compact summary from a subsystem result dict.
+
+    Keeps the supervise report readable: scalar status fields plus a count for
+    every list-valued field, dropping verbose nested payloads.
+    """
+    summary: dict[str, Any] = {}
+    if not isinstance(result, dict):
+        return summary
+    for key in ("ok", "status", "dry_run"):
+        if key in result:
+            summary[key] = result[key]
+    for key, value in result.items():
+        if isinstance(value, list):
+            summary[f"{key}_count"] = len(value)
+    return summary
+
+
+def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
+    """Run one supervisor tick across the runtime surface.
+
+    Order: heartbeats -> schedules -> watch sources -> events -> run queue,
+    then a read-only health check. Returns an auditable report; `ok` is true
+    when every mutating step completed without raising.
+    """
+    steps: list[dict[str, Any]] = []
+
+    def _run(step: str, fn: Callable[[], dict[str, Any]]) -> None:
+        try:
+            steps.append({"step": step, "ok": True, "summary": _summarize(fn())})
+        except Exception as exc:  # report and continue; never abort the tick
+            steps.append({"step": step, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+    def _heartbeats() -> dict[str, Any]:
+        ran: list[dict[str, Any]] = []
+        for heartbeat in heartbeat_list(root).get("heartbeats", []):
+            heartbeat_id = heartbeat.get("id")
+            if not heartbeat_id or heartbeat.get("enabled") is False:
+                continue
+            ran.append({"id": heartbeat_id, "result": _summarize(heartbeat_run(root, heartbeat_id, dry_run=dry_run))})
+        return {"ok": True, "ran": ran}
+
+    _run("heartbeats", _heartbeats)
+    _run("schedules", lambda: schedule_run_due(root, dry_run=dry_run))
+    _run("watch_sources", lambda: run_due_watch_sources(root, dry_run=dry_run))
+    _run("events", lambda: process_due(root, dry_run=dry_run))
+    _run("run_queue", lambda: runtime_run_next(root, dry_run=dry_run))
+
+    # Health is read-only — collected every tick, never gates mutation.
+    try:
+        health = runtime_doctor(root)
+    except Exception as exc:
+        health = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    steps.append({"step": "health", "ok": bool(health.get("ok")), "summary": _summarize(health)})
+
+    mutating_ok = all(step["ok"] for step in steps if step["step"] != "health")
+    return {
+        "tick": _utc_now(),
+        "root": str(Path(root).expanduser()),
+        "dry_run": dry_run,
+        "ok": mutating_ok,
+        "health_ok": bool(health.get("ok")),
+        "steps": steps,
+    }
+
+
+def format_supervise_result(result: dict[str, Any]) -> str:
+    return yaml.safe_dump(result, sort_keys=False).strip()

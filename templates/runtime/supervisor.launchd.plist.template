@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent template for the Agentic OS runtime supervisor.
+  Rendered and installed by installers/install-scheduler.sh.
+  Placeholders ({{...}}) are substituted at install time; do not hand-edit the
+  rendered copy in ~/Library/LaunchAgents — re-run the installer instead.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{AGENTIC_OS}}</string>
+    <string>runtime</string>
+    <string>supervise</string>
+    <string>--root</string>
+    <string>{{ROOT}}</string>
+    <string>--apply</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>{{INTERVAL_SECONDS}}</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{OUT_LOG}}</string>
+  <key>StandardErrorPath</key>
+  <string>{{ERR_LOG}}</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

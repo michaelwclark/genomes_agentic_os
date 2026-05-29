@@ -84,6 +84,8 @@ echo "---- RUNTIME / ALWAYS-ON SURFACE ----"
 run "runtime init"                   "$AOS" runtime init --root "$ROOT"
 run "runtime doctor"                 "$AOS" runtime doctor --root "$ROOT"
 run "runtime run-next (dry)"         "$AOS" runtime run-next --root "$ROOT" --dry-run
+run "runtime supervise (dry)"        "$AOS" runtime supervise --root "$ROOT" --dry-run
+run "runtime supervise (apply)"      "$AOS" runtime supervise --root "$ROOT" --apply
 run "heartbeat list"                 "$AOS" heartbeat list --root "$ROOT"
 run "heartbeat doctor"               "$AOS" heartbeat doctor --root "$ROOT"
 run "schedule create demo"           "$AOS" schedule create demo --cadence daily --root "$ROOT"
@@ -105,6 +107,7 @@ echo "---- CONFIG (Codex) ----"
 run "config doctor (layer)"          "$AOS" config doctor --root "$ROOT" --layer agentic_os_root
 run "config install (dry)"           "$AOS" config install --root "$ROOT" --layer agentic_os_root --dry-run
 echo "---- UPDATE / BACKUP / LICENSE ----"
+run "license activate"               "$AOS" license activate --key "VALIDATION-TEST-KEY" --root "$ROOT"
 run "update register"                "$AOS" update register --root "$ROOT"
 run "update check"                   "$AOS" update check --root "$ROOT"
 run "update status"                  "$AOS" update status --root "$ROOT"
