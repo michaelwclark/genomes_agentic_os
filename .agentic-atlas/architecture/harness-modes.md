@@ -47,30 +47,31 @@ short callout.
 | Aspect | Claude | Codex |
 | --- | --- | --- |
 | **Entry adapter** | `CLAUDE.md` is a one-line include: `@AGENTS.md` | `AGENTS.md` directly + a layered `config.toml` |
-| **Config mechanism** | global/project `CLAUDE.md` adapters; skills & slash-commands installed to the harness | `config.toml` with `profiles.*` (`model`, `model_reasoning_effort`, `approval_policy`, `sandbox_mode`) across 5 OS layers |
-| **Config command** | (adapter is just `@AGENTS.md`; skills/commands provisioned to harness dirs) | `agentic-os config install --layer <layer> --dry-run/--apply` writes the right `config.toml` |
+| **Config mechanism** | global/project `CLAUDE.md` adapters; skills & slash-commands installed to the harness | `config.toml` with `profiles.*` (`model`, `model_reasoning_effort`, `approval_policy`, `sandbox_mode`) across seven layer tokens |
+| **Config command** | (adapter is just `@AGENTS.md`; skills/commands provisioned to harness dirs) | `agentic-os config install --layer <layer> --dry-run/--apply` writes one layer; `config install-tree` repairs a routed OS tree |
 | **MCP registration** | via Claude's MCP config | via `config.toml` `mcp_servers.*` (registration points: notion, genomes_brain, github, context_mode, sentry, datadog, supabase, playwright, filesystem_runtime) |
 | **Invocation surface** | slash-commands (`/os-route`, `/os-doctor`, …) + skills (`workflow-builder`, `os-navigator`, …) | profiles + the same skills/commands surfaced through `TOOLS.md`; or call `agentic-os …` directly |
 | **Telemetry** | Claude-side | `config.toml` OTEL env (`AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT`, `AGENTIC_OS_OTEL_HEADERS`) |
 
-### Codex config.toml layer model (6 config layers + Codex precedence)
+### Codex config.toml layer model (7 config layers + Codex precedence)
 
 > **CLI tokens vs descriptive keys:** the `config install --layer` flag accepts
-> exactly six tokens — `agentic_os_root`, `automation`, `customer_os_root`,
-> `domain_or_lane`, `global_harness`, `workflow_or_task`. (`codex-config-layer-map.yml`
+> exactly seven tokens — `agentic_os_root`, `automation`, `customer_os_root`,
+> `domain_or_lane`, `global_harness`, `project`, `workflow_or_task`. (`codex-config-layer-map.yml`
 > documents the global layer under the descriptive key `global_user_harness`, but
 > the CLI token is `global_harness`.)
 
-Codex precedence (highest→lowest): CLI override → `--profile` → project `.codex/config.toml` → `~/.codex/config.toml` → `/etc/codex/config.toml` → built-in defaults.
+Codex precedence (highest→lowest): CLI override → `--profile` → layer-local `config.toml` → `~/.codex/config.toml` → `/etc/codex/config.toml` → built-in defaults.
 
 | OS layer | `config.toml` path | Governs |
 | --- | --- | --- |
 | `global_harness` | `~/.codex/config.toml` | default profile, personal model defaults, trusted-project registry, global MCP, global safety hooks |
-| `agentic_os_root` | `~/agentic_os/.codex/config.toml` | OS operating profile, shared skills/tooling, memory/control-plane conventions, Notion guardrails |
-| `customer_os_root` | `<customer_os>/.codex/config.toml` | customer data boundary, customer MCP, customer approval policy, telemetry posture |
-| `domain_or_lane` | `<domain_or_lane>/.codex/config.toml` | domain routing, model/reasoning profile, tool allow-list, validation hooks |
-| `workflow_or_task` | `<workflow>/.codex/config.toml` | temporary profile override, workflow-specific context + validation |
-| `automation` | `<automation>/.codex/config.toml` | automation-scoped profile + approval/sandbox posture for one automation |
+| `agentic_os_root` | `~/agentic_os/config.toml` | OS operating profile, shared skills/tooling, memory/control-plane conventions, Notion guardrails |
+| `customer_os_root` | `<customer_os>/config.toml` | customer data boundary, customer MCP, customer approval policy, telemetry posture |
+| `domain_or_lane` | `<domain_or_lane>/config.toml` | domain routing, model/reasoning profile, tool allow-list, validation hooks |
+| `project` | `<domain>/02-projects/<project>/config.toml` | project-specific source links, local rules, approved tools, and source maps |
+| `workflow_or_task` | `<workflow>/config.toml` | temporary profile override, workflow-specific context + validation |
+| `automation` | `<automation>/config.toml` | automation-scoped profile + approval/sandbox posture for one automation |
 
 Security-sensitive keys (require care on install): `approval_policy`,
 `approvals_reviewer`, `sandbox_mode`, `default_permissions`, `permissions`,
@@ -85,7 +86,7 @@ command / profile below — that's what makes the callout non-boilerplate.
 
 | Doc page / task | Claude: command / skill | Codex: equivalent |
 | --- | --- | --- |
-| Install & quickstart | install skills + `CLAUDE.md`=`@AGENTS.md` | `agentic-os config install --layer global_harness` then `agentic_os_root` |
+| Install & quickstart | install skills + `CLAUDE.md`=`@AGENTS.md` | `agentic-os config install --layer global_harness`, then `agentic-os config install-tree --root ~/agentic_os --dry-run` for repair previews |
 | Routing & context | `/os-route`, `os-navigator` skill | `agentic-os route` / `here route`; `domain_or_lane` profile |
 | Workflows | `/os-create-workflow`, `workflow-builder` skill | `agentic-os workflow check`; author from `templates/workflow/` |
 | Automations | `os-create-automation`, `automation-qualifier` skill | `agentic-os automation check/set-maturity` |

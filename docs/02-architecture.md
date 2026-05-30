@@ -108,7 +108,7 @@ There is **no DI framework and no module-level mutable global**. The pattern is
 - **`--root`** is the primary injected dependency. Every ops function takes `root`
   explicitly; nothing reads a global "current OS."
 - **`.agentic_root`** (TOML marker at the OS root) carries install-scoped config
-  (`update_channel`, `update_policy`, `projects_source`). It is read from `root`
+  (`update_channel`, `update_policy`, and project link scope). It is read from `root`
   on demand — never cached in a singleton.
 - **`config.toml`** (Codex) and **profile YAML** are *data dependencies* resolved
   once at the CLI handler edge and passed down — never re-read deep in the call tree.

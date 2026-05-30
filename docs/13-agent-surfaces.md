@@ -4,7 +4,8 @@
 > runs from Claude vs Codex. Every other page's "Running this from Claude vs
 > Codex" callout links here for the full picture.
 >
-> **You'll use:** `agentic-os config install`, `agentic-os config doctor`,
+> **You'll use:** `agentic-os config install`, `agentic-os config install-tree`,
+> `agentic-os config doctor`,
 > `CLAUDE.md`/`AGENTS.md` adapters, `config.toml` layers, skills, and
 > slash-commands.
 > **Prereqs:** an installed OS root ([01 · Install & Quickstart](01-install-and-quickstart.md)).
@@ -82,6 +83,26 @@ That line pulls in the shared context contract. Claude resolves the include, loa
 route-read-cd-repeat loop. No OS logic lives in `CLAUDE.md`; local edits survive
 regeneration.
 
+### Project-local surface
+
+Every project under `<domain>/02-projects/<project>/` has the same local
+contract:
+
+- `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`
+  explain the project for Claude, Codex, and any compatible harness.
+- `config.toml` gives Codex the project layer posture.
+- `config/*.yml` stores machine-readable project profile, workflows, output
+  artifacts, validation, worktrees, memory, MCP, and tool defaults.
+- `ideas/` captures project-scoped notes before they become tickets, workflows,
+  or feature artifacts.
+- `src/` is the canonical source symlink when a local repo is known.
+- `worktrees/` contains visible symlinks to active branch checkouts, backed by
+  `worktrees/index.yml` for routing.
+
+Use Markdown for narrative context, rules, decisions, and idea capture. Use YAML
+for values that the CLI or agents should parse. When a file needs both, use
+Markdown with YAML front matter.
+
 ### Skills (18 total)
 
 Skills are installed into the harness skill directory and surfaced in `TOOLS.md`
@@ -152,22 +173,24 @@ Codex reads `AGENTS.md` directly (no adapter indirection). A layered
 `config.toml` provides the runtime posture that `CLAUDE.md` doesn't need to
 supply.
 
-### The six config.toml layers
+### The seven config.toml layers
 
-`config install` writes a `config.toml` for one OS layer at a time. The CLI
-`--layer` flag accepts these exact tokens:
+Scaffold commands write the matching `config.toml` when they create an OS root,
+domain, project, workflow, or automation. `config install` can repair or merge one
+layer at a time. The CLI `--layer` flag accepts these exact tokens:
 
 | CLI layer token | `config.toml` path | Governs |
 |---|---|---|
 | `global_harness` | `~/.codex/config.toml` | Default profile, personal model defaults, trusted-project registry, global MCP, global safety hooks |
-| `agentic_os_root` | `~/agentic_os/.codex/config.toml` | OS operating profile, shared skills/tooling, memory/control-plane conventions, Notion guardrails |
-| `customer_os_root` | `<customer_os>/.codex/config.toml` | Customer data boundary, customer MCP, customer approval policy, telemetry posture |
-| `domain_or_lane` | `<domain_or_lane>/.codex/config.toml` | Domain routing, model/reasoning profile, tool allow-list, validation hooks |
-| `automation` | `<automation>/.codex/config.toml` | Automation-scoped posture and context |
-| `workflow_or_task` | `<workflow>/.codex/config.toml` | Temporary profile override, workflow-specific context and validation |
+| `agentic_os_root` | `~/agentic_os/config.toml` | OS operating profile, shared skills/tooling, memory/control-plane conventions, Notion guardrails |
+| `customer_os_root` | `<customer_os>/config.toml` | Customer data boundary, customer MCP, customer approval policy, telemetry posture |
+| `domain_or_lane` | `<domain_or_lane>/config.toml` | Domain routing, model/reasoning profile, tool allow-list, validation hooks |
+| `project` | `<domain>/02-projects/<project>/config.toml` | Project source boundary, project context, validation hooks |
+| `workflow_or_task` | `<workflow>/config.toml` | Temporary profile override, workflow-specific context and validation |
+| `automation` | `<automation>/config.toml` | Automation-scoped posture and context |
 
 **Codex precedence (highest → lowest):** CLI override → `--profile` → project
-`.codex/config.toml` → `~/.codex/config.toml` → `/etc/codex/config.toml` →
+layer `config.toml` → `~/.codex/config.toml` → `/etc/codex/config.toml` →
 built-in defaults.
 
 > **Note on naming:** The conceptual "global user harness" layer maps to the CLI
@@ -216,8 +239,8 @@ only` for credentials.
 
 ### The `config` subcommand
 
-`config` has exactly two subcommands: `install` and `doctor`. There is no
-`config layers` or other subcommand.
+`config` has three subcommands: `install`, `install-tree`, and `doctor`. There is
+no `config layers` or `config list` subcommand.
 
 #### `config install`
 
@@ -231,34 +254,41 @@ agentic-os config install --layer <layer> [--root <path>] [--dry-run | --apply]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--layer` | required | One of the six layer tokens above |
+| `--layer` | required | One of the seven layer tokens above |
 | `--root` | `~/agentic_os` | Directory that should receive `config.toml` |
-| `--dry-run` | default | Preview changes; exit 0 even when blocked |
+| `--dry-run` | default | Preview changes without writing files |
 | `--apply` | — | Write changes to disk |
 | `--backup` | — | Back up existing `config.toml` before applying |
 | `--confirm-conflicts` | — | Apply non-conflicting additions; preserve conflicting keys |
 
-Exits **2** when blocked by unresolved conflicts (even on `--dry-run`). Exits **0**
-on success or clean dry-run.
+Exits **2** when apply is blocked by unresolved conflicts. Dry-run reports
+conflicts without writing files. Exits **0** on success or clean dry-run.
 
-**Real output — `config install --dry-run` (example #35):**
+**Real output — `config install --dry-run` on a missing layer:**
 
 ```text
-# CMD: agentic-os config install --root /tmp/aos-validate/root \
+# CMD: agentic-os config install --root /tmp/aos-validate/config-layer \
 #       --layer agentic_os_root --dry-run
-root: /private/tmp/aos-validate/root
+root: /private/tmp/aos-validate/config-layer
 layer: agentic_os_root
 dry_run: true
 created:
-- /private/tmp/aos-validate/root/config.toml
-- /private/tmp/aos-validate/root/MEMORY.md
+- /private/tmp/aos-validate/config-layer
+- /private/tmp/aos-validate/config-layer/config.toml
+- /private/tmp/aos-validate/config-layer/AGENTS.md
+- /private/tmp/aos-validate/config-layer/CLAUDE.md
+- /private/tmp/aos-validate/config-layer/ROUTER.md
+- /private/tmp/aos-validate/config-layer/CONTEXT.md
+- /private/tmp/aos-validate/config-layer/RULES.md
+- /private/tmp/aos-validate/config-layer/TOOLS.md
+- /private/tmp/aos-validate/config-layer/MEMORY.md
 updated: []
 skipped: []
 backups: []
 conflicts: []
 blocked: false
-diff: '--- /private/tmp/aos-validate/root/config.toml:before
-  +++ /private/tmp/aos-validate/root/config.toml:after
+diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
+  +++ /private/tmp/aos-validate/config-layer/config.toml:after
   @@ -0,0 +1,50 @@
   +# Agentic OS Codex config template
   +# Layer: agentic_os_root
@@ -298,6 +328,20 @@ After reviewing the diff, apply:
 agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply --backup
 ```
 
+#### `config install-tree`
+
+Discovers the routed OS tree and installs or repairs every matching layer:
+installed root, domains, projects, workflows, and automations. Dry-run remains
+the default.
+
+```
+agentic-os config install-tree [--root <path>] [--dry-run | --apply]
+                              [--backup] [--confirm-conflicts]
+```
+
+Use this after importing or repairing an existing tree; normal scaffold commands
+already create config for newly created layers.
+
 #### `config doctor`
 
 Validates `config.toml` OTEL and MCP contracts for a layer.
@@ -306,26 +350,23 @@ Validates `config.toml` OTEL and MCP contracts for a layer.
 agentic-os config doctor --layer <layer> [--root <path>]
 ```
 
-Exits **1** when `ok: false`. The most common cause — `config.toml` is missing —
-is the normal pre-install state, not an error condition. Exit **0** when ok.
+Exits **1** when `ok: false`. The most common repair case is a legacy or imported
+directory where `config.toml` is missing. Exit **0** when ok.
 
-**Real output — `config doctor` (example #34):**
+**Real output — `config doctor` on a scaffolded root (example #37):**
 
 ```text
 # CMD: agentic-os config doctor --root /tmp/aos-validate/root \
 #       --layer agentic_os_root
-ok: false
+ok: true
 root: /private/tmp/aos-validate/root
 layer: agentic_os_root
-findings:
-- severity: blocker
-  path: /private/tmp/aos-validate/root/config.toml
-  message: config.toml is missing
-  remediation: Run agentic-os config install --root /private/tmp/aos-validate/root
-    --layer agentic_os_root --dry-run, review the diff, then rerun with --apply.
+findings: []
 ```
 
-The remediation text is the correct workflow: dry-run first, review, then apply.
+If a layer is missing config, the remediation text will point to the same
+workflow: dry-run first, review, then apply `config install` for one layer or
+`config install-tree` for the routed tree.
 
 ---
 
@@ -338,7 +379,7 @@ hunting through the installed `TOOLS.md`.
 
 | Doc page / task | Claude: command / skill | Codex: equivalent |
 |---|---|---|
-| Install & quickstart | install skills + `CLAUDE.md`=`@AGENTS.md` | `agentic-os config install --layer global_harness` then `agentic_os_root` |
+| Install & quickstart | install skills + `CLAUDE.md`=`@AGENTS.md` | `agentic-os config install --layer global_harness`, then `config install-tree` for repairs |
 | Routing & context | `/os-route`, `os-navigator` skill | `agentic-os route` / `here route`; `domain_or_lane` profile |
 | Workflows | `/os-create-workflow`, `workflow-builder` skill | `agentic-os workflow check`; author from `templates/workflow/` |
 | Automations | `/os-create-automation`, `automation-qualifier` skill | `agentic-os automation check/set-maturity` |
@@ -363,13 +404,13 @@ The full skill and command definitions live in `harness/skills/` and
 - **`global_harness`, not `global_user_harness`.** The CLI `--layer` token for
   the global Codex config is `global_harness`. The term "global user harness" is
   used conceptually in some docs, but passing `--layer global_user_harness` to the
-  CLI will exit 2 with an argparse error. Always use the token from the six-row
+  CLI will exit 2 with an argparse error. Always use the token from the layer
   table above.
 - **Exit codes are meaningful.** `config install` exits 0 on success or clean
-  dry-run; exits 2 when blocked by conflicts. `config doctor` exits 0 when ok;
-  exits 1 when `ok: false` (including the normal pre-install state where
-  `config.toml` is absent). Do not treat a `doctor` exit 1 as a fatal error during
-  fresh setup — it is the expected signal to run `config install`.
+  dry-run; exits 2 when apply is blocked by conflicts. `config doctor` exits 0
+  when ok; exits 1 when `ok: false` (including a missing `config.toml`). Treat a
+  `doctor` exit 1 as a repair signal: run `config install` for one layer or
+  `config install-tree` for the routed tree.
 - **Dry-run is the default.** `config install` never writes files unless you pass
   `--apply`. The diff in the dry-run output is the ground truth for what will
   change. Read it.
@@ -384,9 +425,9 @@ The full skill and command definitions live in `harness/skills/` and
 - **Filesystem is the source of truth.** The installed `TOOLS.md`, `AGENTS.md`,
   `ROUTER.md`, etc. govern what both harnesses see at runtime. If the installed
   files disagree with this doc, the files win. Run `config doctor` to check.
-- **`config` has only `install` and `doctor`.** There is no `config layers`,
-  `config list`, or `config show` subcommand. To inspect the current state, read
-  the `config.toml` file directly or run `config doctor`.
+- **`config` has `install`, `install-tree`, and `doctor`.** There is no
+  `config layers`, `config list`, or `config show` subcommand. To inspect the
+  current state, read the `config.toml` file directly or run `config doctor`.
 - **snake_case everywhere.** Layer tokens, domain names, workflow slugs: all
   snake_case. `domain_or_lane`, not `domain-or-lane`.
 

@@ -10,7 +10,6 @@ Real stdout/stderr from a working install — safe to quote verbatim in docs.
 # ---
 created: /private/tmp/aos-validate/root
 created: /private/tmp/aos-validate/root/.agentic_root
-created: /private/tmp/aos-validate/root/projects
 created: /private/tmp/aos-validate/root/bin
 created: /private/tmp/aos-validate/root/commands
 created: /private/tmp/aos-validate/root/skills
@@ -29,6 +28,11 @@ created: /private/tmp/aos-validate/root/registries/hooks.yml
 created: /private/tmp/aos-validate/root/registries/plugins.yml
 created: /private/tmp/aos-validate/root/registries/rules.yml
 created: /private/tmp/aos-validate/root/INVENTORY.md
+created: /private/tmp/aos-validate/root/hooks/README.md
+created: /private/tmp/aos-validate/root/hooks/context-mode-cache-heal.mjs
+created: /private/tmp/aos-validate/root/hooks/harness-emit-trace.sh
+created: /private/tmp/aos-validate/root/hooks/memory-session-start.sh
+created: /private/tmp/aos-validate/root/hooks/memory-stop.sh
 created: /private/tmp/aos-validate/root/agentic-os.lock.json
 created: /private/tmp/aos-validate/root/UPDATE_POLICY.md
 created: /private/tmp/aos-validate/root/registries/updates.yml
@@ -46,6 +50,8 @@ created: /private/tmp/aos-validate/root/CLAUDE.md
 created: /private/tmp/aos-validate/root/CONTEXT.md
 created: /private/tmp/aos-validate/root/RULES.md
 created: /private/tmp/aos-validate/root/TOOLS.md
+created: /private/tmp/aos-validate/root/config.toml
+created: /private/tmp/aos-validate/root/MEMORY.md
 created: /private/tmp/aos-validate/root/personal
 created: /private/tmp/aos-validate/root/personal/README.md
 created: /private/tmp/aos-validate/root/personal/ROUTER.md
@@ -56,6 +62,8 @@ created: /private/tmp/aos-validate/root/personal/RULES.md
 created: /private/tmp/aos-validate/root/personal/TOOLS.md
 created: /private/tmp/aos-validate/root/personal/REFERENCES.md
 created: /private/tmp/aos-validate/root/personal/domain.yml
+created: /private/tmp/aos-validate/root/personal/config.toml
+created: /private/tmp/aos-validate/root/personal/MEMORY.md
 created: /private/tmp/aos-validate/root/personal/00-control-plane
 created: /private/tmp/aos-validate/root/personal/01-inbox
 created: /private/tmp/aos-validate/root/personal/02-projects
@@ -128,6 +136,8 @@ created: /private/tmp/aos-validate/root/clarks_consulting/RULES.md
 created: /private/tmp/aos-validate/root/clarks_consulting/TOOLS.md
 created: /private/tmp/aos-validate/root/clarks_consulting/REFERENCES.md
 created: /private/tmp/aos-validate/root/clarks_consulting/domain.yml
+created: /private/tmp/aos-validate/root/clarks_consulting/config.toml
+created: /private/tmp/aos-validate/root/clarks_consulting/MEMORY.md
 created: /private/tmp/aos-validate/root/clarks_consulting/00-control-plane
 created: /private/tmp/aos-validate/root/clarks_consulting/01-inbox
 created: /private/tmp/aos-validate/root/clarks_consulting/02-projects
@@ -200,6 +210,8 @@ created: /private/tmp/aos-validate/root/los/RULES.md
 created: /private/tmp/aos-validate/root/los/TOOLS.md
 created: /private/tmp/aos-validate/root/los/REFERENCES.md
 created: /private/tmp/aos-validate/root/los/domain.yml
+created: /private/tmp/aos-validate/root/los/config.toml
+created: /private/tmp/aos-validate/root/los/MEMORY.md
 created: /private/tmp/aos-validate/root/los/00-control-plane
 created: /private/tmp/aos-validate/root/los/01-inbox
 created: /private/tmp/aos-validate/root/los/02-projects
@@ -272,6 +284,8 @@ created: /private/tmp/aos-validate/root/shared_factory/RULES.md
 created: /private/tmp/aos-validate/root/shared_factory/TOOLS.md
 created: /private/tmp/aos-validate/root/shared_factory/REFERENCES.md
 created: /private/tmp/aos-validate/root/shared_factory/domain.yml
+created: /private/tmp/aos-validate/root/shared_factory/config.toml
+created: /private/tmp/aos-validate/root/shared_factory/MEMORY.md
 created: /private/tmp/aos-validate/root/shared_factory/00-control-plane
 created: /private/tmp/aos-validate/root/shared_factory/01-inbox
 created: /private/tmp/aos-validate/root/shared_factory/02-projects
@@ -344,6 +358,8 @@ created: /private/tmp/aos-validate/root/archive/RULES.md
 created: /private/tmp/aos-validate/root/archive/TOOLS.md
 created: /private/tmp/aos-validate/root/archive/REFERENCES.md
 created: /private/tmp/aos-validate/root/archive/domain.yml
+created: /private/tmp/aos-validate/root/archive/config.toml
+created: /private/tmp/aos-validate/root/archive/MEMORY.md
 created: /private/tmp/aos-validate/root/archive/00-control-plane
 created: /private/tmp/aos-validate/root/archive/01-inbox
 created: /private/tmp/aos-validate/root/archive/02-projects
@@ -630,6 +646,11 @@ created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/skills/sourc
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/skills/source-watcher/SKILL.md
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/skills/workflow-builder
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/skills/workflow-builder/SKILL.md
+created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/hooks/README.md
+created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/hooks/context-mode-cache-heal.mjs
+created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/hooks/harness-emit-trace.sh
+created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/hooks/memory-session-start.sh
+created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/hooks/memory-stop.sh
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/plans/00-current-state-and-gap-map.md
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/plans/01-project-create-and-active-work.md
 created: /private/tmp/aos-validate/root/shared_factory/05-knowledge/plans/02-routing-and-context-builder.md
@@ -723,6 +744,8 @@ created: /private/tmp/aos-validate/root/acme/RULES.md
 created: /private/tmp/aos-validate/root/acme/TOOLS.md
 created: /private/tmp/aos-validate/root/acme/REFERENCES.md
 created: /private/tmp/aos-validate/root/acme/domain.yml
+created: /private/tmp/aos-validate/root/acme/config.toml
+created: /private/tmp/aos-validate/root/acme/MEMORY.md
 created: /private/tmp/aos-validate/root/acme/00-control-plane
 created: /private/tmp/aos-validate/root/acme/01-inbox
 created: /private/tmp/aos-validate/root/acme/02-projects
@@ -793,18 +816,69 @@ created: /private/tmp/aos-validate/root/acme/08-archive/README.md
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 created: /private/tmp/aos-validate/root/acme/02-projects/launch
-created: /private/tmp/aos-validate/root/acme/02-projects/launch/artifacts
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/README.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/project.yml
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/status.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/decisions.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/artifacts
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/ideas
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/ROUTER.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/CONTEXT.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/RULES.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/TOOLS.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/MEMORY.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/README.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/index.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/ideas/README.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/ideas/raw-ideas.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/project-profile.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/workflows.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/output-artifacts.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/validation.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/worktrees.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/memory.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/mcps.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/tools.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/config.toml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/CLAUDE.md
 updated: /private/tmp/aos-validate/root/acme/02-projects/README.md
 updated: /private/tmp/aos-validate/root/acme/02-projects/README.md
 updated: /private/tmp/aos-validate/root/acme/00-control-plane/active-work.md
 ```
 
-## 07-route_a_request
+## 07-project_link-source_acme_launch
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os project link-source acme launch --root /tmp/aos-validate/root --repo /tmp/aos-validate/source-repo
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/src
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/project.yml
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
+```
+
+## 08-project_onboard_acme_launch
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os project onboard acme launch --root /tmp/aos-validate/root
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+no changes
+```
+
+## 09-project_worktree_add_acme_launch
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os project worktree add acme launch source_worktree --root /tmp/aos-validate/root --path /tmp/aos-validate/source-worktree
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/source_worktree
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/index.yml
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/config/worktrees.yml
+```
+
+## 10-route_a_request
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os route ship the launch blog post --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -824,17 +898,31 @@ sources_to_load:
 - /private/tmp/aos-validate/root/acme/REFERENCES.md
 - /private/tmp/aos-validate/root/acme/00-control-plane/active-work.md
 - /private/tmp/aos-validate/root/acme/05-knowledge/memory-policy.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/ROUTER.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/CONTEXT.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/RULES.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/TOOLS.md
 - /private/tmp/aos-validate/root/acme/02-projects/launch/project.yml
 - /private/tmp/aos-validate/root/acme/02-projects/launch/status.md
 - /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
 - /private/tmp/aos-validate/root/acme/02-projects/launch/decisions.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/project-profile.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/workflows.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/output-artifacts.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/validation.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/worktrees.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/memory.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/mcps.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/tools.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/index.yml
 approval_risks: []
 known_gaps: []
 handoff_prompt: Load the listed sources, work in /private/tmp/aos-validate/root/acme/02-projects/launch,
   follow approval rules, and record validation before closeout.
 ```
 
-## 08-context_build_--domain
+## 11-context_build_--domain
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os context build --domain acme --project launch --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -854,17 +942,31 @@ sources_to_load:
 - /private/tmp/aos-validate/root/acme/REFERENCES.md
 - /private/tmp/aos-validate/root/acme/00-control-plane/active-work.md
 - /private/tmp/aos-validate/root/acme/05-knowledge/memory-policy.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/ROUTER.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/CONTEXT.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/RULES.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/TOOLS.md
 - /private/tmp/aos-validate/root/acme/02-projects/launch/project.yml
 - /private/tmp/aos-validate/root/acme/02-projects/launch/status.md
 - /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
 - /private/tmp/aos-validate/root/acme/02-projects/launch/decisions.md
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/project-profile.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/workflows.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/output-artifacts.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/validation.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/worktrees.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/memory.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/mcps.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/config/tools.yml
+- /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/index.yml
 approval_risks: []
 known_gaps: []
 handoff_prompt: Load the listed sources, work in /private/tmp/aos-validate/root/acme/02-projects/launch,
   follow approval rules, and record validation before closeout.
 ```
 
-## 09-here_route_cwd-aware
+## 12-here_route_cwd-aware
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os here route update the launch project
 # CWD: /tmp/aos-validate/root/acme
@@ -872,7 +974,7 @@ handoff_prompt: Load the listed sources, work in /private/tmp/aos-validate/root/
 error: routing confidence is low: no domain or project matched
 ```
 
-## 09-workflow_check_templated
+## 12-workflow_check_templated
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os workflow check acme engineering launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -898,7 +1000,7 @@ findings:
   message: supporting workflow README is missing
 ```
 
-## 10-automation_check_templated
+## 13-automation_check_templated
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os automation check acme marketing weekly_report --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -947,7 +1049,7 @@ findings:
   message: 'missing required evidence: outputs'
 ```
 
-## 11-automation_attach_-_launch
+## 14-automation_attach_-_launch
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os automation attach acme marketing weekly_report --project launch --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -958,7 +1060,7 @@ project_status: /private/tmp/aos-validate/root/acme/02-projects/launch/status.md
 source_map: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
 ```
 
-## 12-automation_set-maturity_prepare
+## 15-automation_set-maturity_prepare
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os automation set-maturity acme marketing weekly_report prepare --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -969,28 +1071,28 @@ new_level: prepare
 decision_log: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
 ```
 
-## 13-run-log_create
+## 16-run-log_create
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log create acme launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/artifacts
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/run-log.md
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260530T043555Z-acme-launch_blog
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260530T043555Z-acme-launch_blog/artifacts
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260530T043555Z-acme-launch_blog/run-log.md
 ```
 
-## 14-run-log_close_20260529T150010Z-acme-launch_blog
+## 17-run-log_close_20260530T043555Z-acme-launch_blog
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260529T150010Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260530T043555Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/run-log.md
+run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260530T043555Z-acme-launch_blog/run-log.md
 status: done
 workflow_or_automation: launch_blog
 activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.md
 ```
 
-## 15-profile_create
+## 18-profile_create
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os profile create --target /tmp/aos-validate/os.yml
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -998,7 +1100,7 @@ activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.
 profile: /private/tmp/aos-validate/os.yml
 ```
 
-## 16-profile_validate
+## 19-profile_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os profile validate /tmp/aos-validate/os.yml
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1009,7 +1111,7 @@ rooms:
 ok: true
 ```
 
-## 17-runtime_init
+## 20-runtime_init
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime init --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1025,10 +1127,10 @@ skipped:
 - /private/tmp/aos-validate/root/shared_factory/00-control-plane
 - /private/tmp/aos-validate/root/shared_factory/06-runs-and-logs/runs
 docs_created: 0
-docs_skipped: 259
+docs_skipped: 269
 ```
 
-## 18-runtime_doctor
+## 21-runtime_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1044,7 +1146,7 @@ findings:
   message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
 ```
 
-## 19-runtime_run-next_dry
+## 22-runtime_run-next_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime run-next --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1055,12 +1157,12 @@ dry_run: true
 message: no queued runtime work
 ```
 
-## 20-runtime_supervise_dry
+## 23-runtime_supervise_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-05-29T15:00:10Z'
+tick: '2026-05-30T04:35:56Z'
 root: /tmp/aos-validate/root
 dry_run: true
 ok: true
@@ -1099,12 +1201,12 @@ steps:
     findings_count: 2
 ```
 
-## 21-runtime_supervise_apply
+## 24-runtime_supervise_apply
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --apply
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-05-29T15:00:11Z'
+tick: '2026-05-30T04:35:56Z'
 root: /tmp/aos-validate/root
 dry_run: false
 ok: true
@@ -1143,7 +1245,7 @@ steps:
     findings_count: 2
 ```
 
-## 22-heartbeat_list
+## 25-heartbeat_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os heartbeat list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1193,7 +1295,7 @@ heartbeats:
     notify: Genome
 ```
 
-## 23-heartbeat_doctor
+## 26-heartbeat_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os heartbeat doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1209,7 +1311,7 @@ findings:
   message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
 ```
 
-## 24-schedule_create_demo
+## 27-schedule_create_demo
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os schedule create demo --cadence daily --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1234,7 +1336,7 @@ schedule:
 registry: /private/tmp/aos-validate/root/shared_factory/00-control-plane/runtime-registry.yml
 ```
 
-## 25-schedule_run-due_dry
+## 28-schedule_run-due_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os schedule run-due --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1247,18 +1349,18 @@ queued:
   ref: demo
   status: dry-run
   approval_state: not_required
-  created_at: '2026-05-29T15:00:11.370100+00:00'
+  created_at: '2026-05-30T04:35:56.651187+00:00'
   dry_run: true
   due_at: '2026-05-29T05:00:00Z'
   idempotency_key: schedule:demo:2026-05-29T05:00:00Z
   execution_target: script
   command: agentic-os validate --root <root>
-  log: shared_factory/06-runs-and-logs/runs/20260529T150011Z-c9d61821-demo/run-log.yml
+  log: shared_factory/06-runs-and-logs/runs/20260530T043556Z-c9d61821-demo/run-log.yml
   evidence:
   - type: run_log
-    path: shared_factory/06-runs-and-logs/runs/20260529T150011Z-c9d61821-demo/run-log.yml
+    path: shared_factory/06-runs-and-logs/runs/20260530T043556Z-c9d61821-demo/run-log.yml
   blocked_reason: null
-  updated_at: '2026-05-29T15:00:11.370100+00:00'
+  updated_at: '2026-05-30T04:35:56.651187+00:00'
   created: true
 skipped:
 - schedule: daily_agentic_os_doctor
@@ -1266,7 +1368,7 @@ skipped:
   next_due_at: '2026-05-30T05:00:00Z'
 ```
 
-## 26-integration_list
+## 29-integration_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os integration list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1422,7 +1524,7 @@ integrations:
     - Last Runtime Sync
 ```
 
-## 27-integration_doctor
+## 30-integration_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os integration doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1435,7 +1537,7 @@ findings:
   message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
 ```
 
-## 28-event_list
+## 31-event_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os event list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1444,7 +1546,7 @@ events: []
 ledger: /private/tmp/aos-validate/root/shared_factory/06-runs-and-logs/events/event-ledger-index.md
 ```
 
-## 29-event_summary
+## 32-event_summary
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os event summary --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1457,7 +1559,7 @@ ledger: /private/tmp/aos-validate/root/shared_factory/06-runs-and-logs/events/ev
 run_queue: /private/tmp/aos-validate/root/shared_factory/00-control-plane/run-queue.yml
 ```
 
-## 30-event_process-due_dry
+## 33-event_process-due_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os event process-due --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1466,7 +1568,7 @@ dry_run: true
 actions: []
 ```
 
-## 31-chain_list
+## 34-chain_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os chain list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1608,7 +1710,7 @@ chain_rules:
     key: '{event_idempotency_key}:ci_failure_investigation'
 ```
 
-## 32-chain_doctor
+## 35-chain_doctor
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os chain doctor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1617,7 +1719,7 @@ ok: true
 findings: []
 ```
 
-## 33-connected-system_list
+## 36-connected-system_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os connected-system list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1871,7 +1973,7 @@ connected_systems:
   selected_provider: filesystem
 ```
 
-## 34-watch-source_list
+## 37-watch-source_list
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os watch-source list --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1879,7 +1981,7 @@ connected_systems:
 watch_sources: []
 ```
 
-## 35-notion_plan-sync
+## 38-notion_plan-sync
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os notion plan-sync --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -1919,7 +2021,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
   record_key: decisions:acme
   notion_id: null
-  fingerprint: 536045691663bbc7e55a4e3930e8510976da8dce011f436b02888c2e8a880642
+  fingerprint: a79352274bea31718443b22648694969bbb20896362c0f44f00d4c905f559961
 - action: create
   kind: metrics
   key: acme
@@ -1935,7 +2037,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/02-projects/launch/project.yml
   record_key: project:acme/launch
   notion_id: null
-  fingerprint: 15c87fe3d7ab4f340abe9287df8e82dedca7c70c6a50ad76c1ad6fbb0a26ed87
+  fingerprint: c2a042c4ab5ee34ed5b660d07e967ef939420b4a0b0f78f3b37613342f39c0a2
 - action: create
   kind: workflow
   key: acme/engineering/launch_blog
@@ -1954,12 +2056,12 @@ actions:
   fingerprint: 2467a03437db66b972d87026ae73645a3b653003aea3a2c2dfbc7ca0ce8850a3
 - action: create
   kind: run
-  key: acme/20260529T150010Z-acme-launch_blog
-  title: 20260529T150010Z-acme-launch_blog
-  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260529T150010Z-acme-launch_blog/run-log.md
-  record_key: run:acme/20260529T150010Z-acme-launch_blog
+  key: acme/20260530T043555Z-acme-launch_blog
+  title: 20260530T043555Z-acme-launch_blog
+  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260530T043555Z-acme-launch_blog/run-log.md
+  record_key: run:acme/20260530T043555Z-acme-launch_blog
   notion_id: null
-  fingerprint: eac113422133a5db14db4ab6920abe85e2fa45e4c6df3f0efea98f143fc8b4d8
+  fingerprint: 89fbae80a81c38145bc765c68a41948ab1355561310b271dffba60691f393bad
 - action: create
   kind: domain
   key: archive
@@ -2162,41 +2264,43 @@ actions:
   fingerprint: 3f54d9f32209e3892fde5623695664d72bb67804868f11eeb99402ce73487f36
 ```
 
-## 36-config_doctor_layer
+## 39-config_doctor_layer
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config doctor --root /tmp/aos-validate/root --layer agentic_os_root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-ok: false
+ok: true
 root: /private/tmp/aos-validate/root
 layer: agentic_os_root
-findings:
-- severity: blocker
-  path: /private/tmp/aos-validate/root/config.toml
-  message: config.toml is missing
-  remediation: Run agentic-os config install --root /private/tmp/aos-validate/root
-    --layer agentic_os_root --dry-run, review the diff, then rerun with --apply.
+findings: []
 ```
 
-## 37-config_install_dry
+## 40-config_install_dry
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config install --root /tmp/aos-validate/root --layer agentic_os_root --dry-run
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config install --root /tmp/aos-validate/config-layer --layer agentic_os_root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-root: /private/tmp/aos-validate/root
+root: /private/tmp/aos-validate/config-layer
 layer: agentic_os_root
 dry_run: true
 created:
-- /private/tmp/aos-validate/root/config.toml
-- /private/tmp/aos-validate/root/MEMORY.md
+- /private/tmp/aos-validate/config-layer
+- /private/tmp/aos-validate/config-layer/config.toml
+- /private/tmp/aos-validate/config-layer/AGENTS.md
+- /private/tmp/aos-validate/config-layer/CLAUDE.md
+- /private/tmp/aos-validate/config-layer/ROUTER.md
+- /private/tmp/aos-validate/config-layer/CONTEXT.md
+- /private/tmp/aos-validate/config-layer/RULES.md
+- /private/tmp/aos-validate/config-layer/TOOLS.md
+- /private/tmp/aos-validate/config-layer/MEMORY.md
 updated: []
 skipped: []
 backups: []
 conflicts: []
 blocked: false
-diff: '--- /private/tmp/aos-validate/root/config.toml:before
+diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
 
-  +++ /private/tmp/aos-validate/root/config.toml:after
+  +++ /private/tmp/aos-validate/config-layer/config.toml:after
 
   @@ -0,0 +1,50 @@
 
@@ -2306,7 +2410,383 @@ diff: '--- /private/tmp/aos-validate/root/config.toml:before
   '
 ```
 
-## 38-license_activate
+## 41-config_install-tree_dry
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config install-tree --root /tmp/aos-validate/root --dry-run
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+root: /private/tmp/aos-validate/root
+dry_run: true
+blocked: false
+targets:
+- root: /private/tmp/aos-validate/root
+  layer: agentic_os_root
+  reason: .agentic_root layer
+- root: /private/tmp/aos-validate/root/acme
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/archive
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/clarks_consulting
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/los
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/personal
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/shared_factory
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/acme/02-projects/launch
+  layer: project
+  reason: project.yml
+- root: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog
+  layer: workflow_or_task
+  reason: workflow.md
+- root: /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report
+  layer: automation
+  reason: automation.md
+installations:
+- root: /private/tmp/aos-validate/root
+  layer: agentic_os_root
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/acme
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/archive
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/clarks_consulting
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/los
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/personal
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/shared_factory
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/acme/02-projects/launch
+  layer: project
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog
+  layer: workflow_or_task
+  dry_run: true
+  created:
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/config.toml
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/AGENTS.md
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/CLAUDE.md
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/ROUTER.md
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/CONTEXT.md
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/RULES.md
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/TOOLS.md
+  - /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/MEMORY.md
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: '--- /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/config.toml:before
+
+    +++ /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/config.toml:after
+
+    @@ -0,0 +1,50 @@
+
+    +# Agentic OS Codex config template
+
+    +# Layer: workflow_or_task
+
+    +# Local edits are preserved by the installer. Review diffs before applying.
+
+    +
+
+    +model = "gpt-5.2"
+
+    +approval_policy = "on-request"
+
+    +sandbox_mode = "workspace-write"
+
+    +project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml",
+    "package.json"]
+
+    +project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md",
+    "MEMORY.md"]
+
+    +
+
+    +[profiles.workflow_or_task]
+
+    +model = "gpt-5.2"
+
+    +approval_policy = "on-request"
+
+    +sandbox_mode = "workspace-write"
+
+    +
+
+    +[profiles.workflow_or_task.agentic_os]
+
+    +layer = "workflow_or_task"
+
+    +prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md",
+    "TOOLS.md", "MEMORY.md"]
+
+    +context_contract = "route-read-cd-repeat"
+
+    +rules_file = "RULES.md"
+
+    +tool_registry_file = "TOOLS.md"
+
+    +mcp_availability = "workflow-approved systems only"
+
+    +environment = "local filesystem"
+
+    +
+
+    +[otel]
+
+    +log_user_prompt = false
+
+    +exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+
+    +headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+    +
+
+    +[mcp_servers.filesystem_runtime]
+
+    +command = "agentic-os"
+
+    +args = ["config", "doctor"]
+
+    +secret_policy = "no inline secrets"
+
+    +
+
+    +[mcp_servers.notion]
+
+    +url = "https://mcp.notion.com/mcp"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    +
+
+    +[mcp_servers.genomes_brain]
+
+    +url = "http://127.0.0.1:3155/mcp"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    +
+
+    +[mcp_servers.github]
+
+    +url = "https://api.githubcopilot.com/mcp/"
+
+    +bearer_token_env_var = "GITHUB_PAT_TOKEN"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    +
+
+    +[mcp_servers.context_mode]
+
+    +command = "/Users/genome/.local/bin/context-mode"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    '
+- root: /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report
+  layer: automation
+  dry_run: true
+  created:
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/config.toml
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/AGENTS.md
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/CLAUDE.md
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/ROUTER.md
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/CONTEXT.md
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/RULES.md
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/TOOLS.md
+  - /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/MEMORY.md
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: '--- /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/config.toml:before
+
+    +++ /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/config.toml:after
+
+    @@ -0,0 +1,50 @@
+
+    +# Agentic OS Codex config template
+
+    +# Layer: automation
+
+    +# Local edits are preserved by the installer. Review diffs before applying.
+
+    +
+
+    +model = "gpt-5.2"
+
+    +approval_policy = "on-request"
+
+    +sandbox_mode = "workspace-write"
+
+    +project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml",
+    "package.json"]
+
+    +project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md",
+    "MEMORY.md"]
+
+    +
+
+    +[profiles.automation]
+
+    +model = "gpt-5.2"
+
+    +approval_policy = "on-request"
+
+    +sandbox_mode = "workspace-write"
+
+    +
+
+    +[profiles.automation.agentic_os]
+
+    +layer = "automation"
+
+    +prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md",
+    "TOOLS.md", "MEMORY.md"]
+
+    +context_contract = "route-read-cd-repeat"
+
+    +rules_file = "RULES.md"
+
+    +tool_registry_file = "TOOLS.md"
+
+    +mcp_availability = "explicit automation contract only"
+
+    +environment = "local filesystem"
+
+    +
+
+    +[otel]
+
+    +log_user_prompt = false
+
+    +exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+
+    +headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+    +
+
+    +[mcp_servers.filesystem_runtime]
+
+    +command = "agentic-os"
+
+    +args = ["config", "doctor"]
+
+    +secret_policy = "no inline secrets"
+
+    +
+
+    +[mcp_servers.notion]
+
+    +url = "https://mcp.notion.com/mcp"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    +
+
+    +[mcp_servers.genomes_brain]
+
+    +url = "http://127.0.0.1:3155/mcp"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    +
+
+    +[mcp_servers.github]
+
+    +url = "https://api.githubcopilot.com/mcp/"
+
+    +bearer_token_env_var = "GITHUB_PAT_TOKEN"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    +
+
+    +[mcp_servers.context_mode]
+
+    +command = "/Users/genome/.local/bin/context-mode"
+
+    +secret_policy = "no inline secrets; env var names only"
+
+    '
+```
+
+## 42-license_activate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os license activate --key VALIDATION-TEST-KEY --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2314,11 +2794,11 @@ diff: '--- /private/tmp/aos-validate/root/config.toml:before
 root: /private/tmp/aos-validate/root
 license:
   status: active
-  activated_at: '2026-05-29T15:00:12Z'
+  activated_at: '2026-05-30T04:35:57Z'
   key_hash: 98f9006c28109fe76a6960274702c0b357b598b264e22716aa50ba6e18296bab
 ```
 
-## 39-update_register
+## 43-update_register
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update register --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2336,14 +2816,14 @@ remotes:
     url: git@github.com:genome/local-agentic-os-backups.git
     access: write
 public_keys:
-  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINVAU7Mvqs0ZicWukSugjz1CzJcxczDNovdUzrt7beeA
+  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOHosmZO9RZBIlDcX05psBtJJ3MCa6DRBVA16WXc4Ja/
     agentic-os-update_ed25519
-  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMMDfm54lwWAbCx2SdR3WkeoW9d1ANZT0UtMAp9/IVBk
+  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBosc7KiHTcTPhyfx2DY4e1bEvN9jfvL0vKGoH97n4zM
     agentic-os-backup_ed25519
 private_keys: stored locally under security/ssh with mode 0600
 ```
 
-## 40-update_check
+## 44-update_check
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update check --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2358,7 +2838,7 @@ mutated: false
 risky_changes: []
 ```
 
-## 41-update_status
+## 45-update_status
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update status --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2374,16 +2854,16 @@ status:
 plan_path: ''
 ```
 
-## 42-backup_run_dry
+## 46-backup_run_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os backup run --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 root: /private/tmp/aos-validate/root
-log_path: /private/tmp/aos-validate/root/logs/backups/backup-20260529150012.yml
+log_path: /private/tmp/aos-validate/root/logs/backups/backup-20260530043558.yml
 status: planned
 dry_run: true
-created_at: '2026-05-29T15:00:12Z'
+created_at: '2026-05-30T04:35:58Z'
 remote:
   name: agentic-os-backup
   url: git@github.com:genome/local-agentic-os-backups.git
@@ -2407,7 +2887,7 @@ exclude:
 manifest: []
 ```
 
-## 43-migrate_plan
+## 47-migrate_plan
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os migrate plan --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2448,7 +2928,7 @@ migrations:
 plan_path: /private/tmp/aos-validate/root/.migrations/notion-sync-readme-v1.yml
 ```
 
-## 44-losmon_validate
+## 48-losmon_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os losmon validate --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2461,13 +2941,13 @@ created_or_verified:
 - /private/tmp/aos-validate/root/los/03-workflows/operations/deploy_planning
 - /private/tmp/aos-validate/root/los/04-automations/support/thread_intake
 run_logs:
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T150012Z-los-pr_review/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T150012Z-los-failing_ci_triage/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260529T150012Z-los-deploy_planning/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260530T043558Z-los-pr_review/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260530T043558Z-los-failing_ci_triage/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260530T043558Z-los-deploy_planning/run-log.md
 comparison: /private/tmp/aos-validate/root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
 ```
 
-## 45-plan_capture
+## 49-plan_capture
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os plan capture --title weekly report automation --summary automate the weekly report --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2477,7 +2957,7 @@ kind: os
 status: captured
 ```
 
-## 46-docs_install
+## 50-docs_install
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os docs install --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2485,7 +2965,7 @@ status: captured
 no changes
 ```
 
-## 47-customer_init_example
+## 51-customer_init_example
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os customer init acme_ops --profile /Users/genome/projects/genomes_agentic_os/customer_profiles/example-customer.yml --target /tmp/aos-validate/customer
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2529,6 +3009,8 @@ created:
 - /private/tmp/aos-validate/customer/CONTEXT.md
 - /private/tmp/aos-validate/customer/RULES.md
 - /private/tmp/aos-validate/customer/TOOLS.md
+- /private/tmp/aos-validate/customer/config.toml
+- /private/tmp/aos-validate/customer/MEMORY.md
 - /private/tmp/aos-validate/customer/customer.yml
 - /private/tmp/aos-validate/customer/customer/README.md
 - /private/tmp/aos-validate/customer/customer/handoff-checklist.md
@@ -2549,6 +3031,8 @@ created:
 - /private/tmp/aos-validate/customer/support/TOOLS.md
 - /private/tmp/aos-validate/customer/support/REFERENCES.md
 - /private/tmp/aos-validate/customer/support/domain.yml
+- /private/tmp/aos-validate/customer/support/config.toml
+- /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support/00-control-plane
 - /private/tmp/aos-validate/customer/support/01-inbox
 - /private/tmp/aos-validate/customer/support/02-projects
@@ -2629,6 +3113,14 @@ created:
 - /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/approval-rules.md
 - /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/output-contract.md
 - /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/runbook.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/config.toml
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/AGENTS.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/ROUTER.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/RULES.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/TOOLS.md
+- /private/tmp/aos-validate/customer/support/03-workflows/support/intake_triage/MEMORY.md
 - /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake
 - /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/logs
 - /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/logs/README.md
@@ -2639,8 +3131,40 @@ created:
 - /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/failure-modes.md
 - /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/runbook.md
 - /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/tests.md
-updated: []
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/config.toml
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/AGENTS.md
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/ROUTER.md
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/RULES.md
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/TOOLS.md
+- /private/tmp/aos-validate/customer/support/04-automations/support/thread_intake/MEMORY.md
+updated:
+- /private/tmp/aos-validate/customer/support/config.toml
+- /private/tmp/aos-validate/customer/support/config.toml
+- /private/tmp/aos-validate/customer/support/config.toml
+- /private/tmp/aos-validate/customer/support/config.toml
+- /private/tmp/aos-validate/customer/support/config.toml
 skipped:
+- /private/tmp/aos-validate/customer/AGENTS.md
+- /private/tmp/aos-validate/customer/CLAUDE.md
+- /private/tmp/aos-validate/customer/ROUTER.md
+- /private/tmp/aos-validate/customer/CONTEXT.md
+- /private/tmp/aos-validate/customer/RULES.md
+- /private/tmp/aos-validate/customer/TOOLS.md
+- /private/tmp/aos-validate/customer/support/AGENTS.md
+- /private/tmp/aos-validate/customer/support/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/ROUTER.md
+- /private/tmp/aos-validate/customer/support/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/RULES.md
+- /private/tmp/aos-validate/customer/support/TOOLS.md
+- /private/tmp/aos-validate/customer/support/AGENTS.md
+- /private/tmp/aos-validate/customer/support/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/ROUTER.md
+- /private/tmp/aos-validate/customer/support/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/RULES.md
+- /private/tmp/aos-validate/customer/support/TOOLS.md
+- /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support
 - /private/tmp/aos-validate/customer/support/README.md
 - /private/tmp/aos-validate/customer/support/ROUTER.md
@@ -2651,6 +3175,13 @@ skipped:
 - /private/tmp/aos-validate/customer/support/TOOLS.md
 - /private/tmp/aos-validate/customer/support/REFERENCES.md
 - /private/tmp/aos-validate/customer/support/domain.yml
+- /private/tmp/aos-validate/customer/support/AGENTS.md
+- /private/tmp/aos-validate/customer/support/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/ROUTER.md
+- /private/tmp/aos-validate/customer/support/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/RULES.md
+- /private/tmp/aos-validate/customer/support/TOOLS.md
+- /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support/00-control-plane
 - /private/tmp/aos-validate/customer/support/01-inbox
 - /private/tmp/aos-validate/customer/support/02-projects
@@ -2713,6 +3244,13 @@ skipped:
 - /private/tmp/aos-validate/customer/support/07-metrics/baselines.md
 - /private/tmp/aos-validate/customer/support/07-metrics/scorecards.md
 - /private/tmp/aos-validate/customer/support/08-archive/README.md
+- /private/tmp/aos-validate/customer/support/AGENTS.md
+- /private/tmp/aos-validate/customer/support/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/ROUTER.md
+- /private/tmp/aos-validate/customer/support/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/RULES.md
+- /private/tmp/aos-validate/customer/support/TOOLS.md
+- /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support
 - /private/tmp/aos-validate/customer/support/README.md
 - /private/tmp/aos-validate/customer/support/ROUTER.md
@@ -2723,6 +3261,13 @@ skipped:
 - /private/tmp/aos-validate/customer/support/TOOLS.md
 - /private/tmp/aos-validate/customer/support/REFERENCES.md
 - /private/tmp/aos-validate/customer/support/domain.yml
+- /private/tmp/aos-validate/customer/support/AGENTS.md
+- /private/tmp/aos-validate/customer/support/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/ROUTER.md
+- /private/tmp/aos-validate/customer/support/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/RULES.md
+- /private/tmp/aos-validate/customer/support/TOOLS.md
+- /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support/00-control-plane
 - /private/tmp/aos-validate/customer/support/01-inbox
 - /private/tmp/aos-validate/customer/support/02-projects
@@ -2785,9 +3330,16 @@ skipped:
 - /private/tmp/aos-validate/customer/support/07-metrics/baselines.md
 - /private/tmp/aos-validate/customer/support/07-metrics/scorecards.md
 - /private/tmp/aos-validate/customer/support/08-archive/README.md
+- /private/tmp/aos-validate/customer/support/AGENTS.md
+- /private/tmp/aos-validate/customer/support/CLAUDE.md
+- /private/tmp/aos-validate/customer/support/ROUTER.md
+- /private/tmp/aos-validate/customer/support/CONTEXT.md
+- /private/tmp/aos-validate/customer/support/RULES.md
+- /private/tmp/aos-validate/customer/support/TOOLS.md
+- /private/tmp/aos-validate/customer/support/MEMORY.md
 ```
 
-## 48-customer_validate
+## 52-customer_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os customer validate --root /tmp/aos-validate/customer
 # CWD: /Users/genome/projects/genomes_agentic_os

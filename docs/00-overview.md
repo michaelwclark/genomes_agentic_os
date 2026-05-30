@@ -180,8 +180,10 @@ Be precise about the current state:
   and discovers the OS automatically. Use the **`/os-route`** command or the
   **`os-navigator`** skill for the first routing step.
 - **Codex:** run `agentic-os init` from the terminal, then open a Codex session;
-  it reads `AGENTS.md` via the `agentic_os_root` profile in `~/.codex/config.toml`
-  (installed with `agentic-os config install --layer agentic_os_root`).
+  it reads `AGENTS.md` via the `agentic_os_root` profile in
+  `~/agentic_os/config.toml` (created by `agentic-os init` and repairable with
+  `agentic-os config install-tree --root ~/agentic_os --dry-run`, then `--apply`
+  after review).
 
 Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 

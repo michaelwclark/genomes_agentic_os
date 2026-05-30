@@ -152,9 +152,9 @@ issues. Use `connected-system list` first to see available IDs.
 ### `config doctor --layer <layer>`
 
 Validates the Codex `config.toml` for the specified layer. Reports a `blocker`
-finding (and exits 1) when `config.toml` is absent — the expected state before
-`config install` has been run. Valid `--layer` values match those accepted by
-`config install` (e.g. `agentic_os_root`, `global_user_harness`, `project`).
+finding (and exits 1) when `config.toml` is absent or incomplete. Valid
+`--layer` values match those accepted by `config install` (e.g.
+`agentic_os_root`, `global_harness`, `project`).
 
 ---
 
@@ -269,7 +269,7 @@ Exits 0. Clean chain rules, no findings.
 
 ---
 
-### `agentic-os config doctor --layer agentic_os_root` — before `config install`
+### `agentic-os config doctor --layer agentic_os_root` — missing config
 
 ```text
 ok: false
@@ -283,8 +283,9 @@ findings:
     --layer agentic_os_root --dry-run, review the diff, then rerun with --apply.
 ```
 
-Exits 1. `config.toml` absent is a `blocker` — this is the normal state before
-`config install` has been run, not a crash.
+Exits 1. `config.toml` absent is a `blocker` and repair signal, not a crash.
+Fresh scaffolded layers should already have config; use `config install` for one
+layer or `config install-tree` for a routed OS tree repair.
 
 ---
 
@@ -348,9 +349,9 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`ok: true` does not mean no findings.** `fix-soon`, `cleanup`, and
   `observation` findings do not change `ok`. Read the full findings list, not
   just the exit code.
-- **`config doctor` exits 1 by design before `config install`.** A missing
-  `config.toml` is a `blocker`, so exit 1 is normal until you have run
-  `config install`. Do not treat it as a crash.
+- **`config doctor` exits 1 by design when config is missing or incomplete.** A
+  missing `config.toml` is a `blocker`, so treat exit 1 as a repair signal. Run
+  `config install` for one layer or `config install-tree` for the routed tree.
 - **`validate` does not enforce schemas (Gap D).** Passing `validate` means the
   filesystem shape is correct and all YAML/JSON parses; it does not mean your
   heartbeat or chain-rule files conform to the 18 schemas in `schemas/`.

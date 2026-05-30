@@ -106,6 +106,32 @@ profiles:
     logging_telemetry_posture:
       otel_log_user_prompt: false
       notes: Use domain run logs and activity logs.
+  project:
+    layer: project
+    intended_model_behavior: project-source-and-rules-aware
+    skills:
+      - routing
+      - context-pack-builder
+      - source-map-review
+    prompt_files:
+      - AGENTS.md
+      - CLAUDE.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
+      - MEMORY.md
+      - project.yml
+      - source-map.md
+      - status.md
+    mcp_availability: project-approved systems only
+    environment_assumptions:
+      - project folder under 02-projects
+      - optional src symlink to local repository
+      - project-local artifacts and worktrees
+    logging_telemetry_posture:
+      otel_log_user_prompt: false
+      notes: Use project status, source map, and linked run logs.
   workflow_or_task:
     layer: workflow_or_task
     intended_model_behavior: acceptance-criteria-driven

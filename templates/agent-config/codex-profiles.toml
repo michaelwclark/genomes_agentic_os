@@ -26,6 +26,12 @@ model_reasoning_effort = "medium"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
+[profiles.project]
+model = "gpt-5.2"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
 [profiles.workflow_or_task]
 model = "gpt-5.2"
 model_reasoning_effort = "medium"

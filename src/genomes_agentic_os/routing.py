@@ -86,6 +86,8 @@ def project_records(root: Path) -> list[dict[str, Any]]:
             data = read_yaml(config)
             project = str(data.get("id") or config.parent.name)
             sources = data.get("sources") if isinstance(data.get("sources"), dict) else {}
+            worktree_index = read_yaml(config.parent / "worktrees" / "index.yml")
+            worktrees = worktree_index.get("worktrees") if isinstance(worktree_index.get("worktrees"), list) else []
             records.append(
                 {
                     "domain": domain,
@@ -93,6 +95,7 @@ def project_records(root: Path) -> list[dict[str, Any]]:
                     "lane": str(data.get("lane") or ""),
                     "path": config.parent,
                     "repo": str(sources.get("repo") or ""),
+                    "worktrees": [entry for entry in worktrees if isinstance(entry, dict)],
                 }
             )
     return records
@@ -120,15 +123,23 @@ def detect_from_cwd(root: Path, cwd: Path) -> dict[str, str]:
 
     for record in project_records(root):
         repo = record["repo"]
-        if not repo:
-            continue
-        repo_path = Path(repo).expanduser()
-        if safe_relative(cwd, repo_path) is not None:
+        repo_path = Path(repo).expanduser() if repo else None
+        if repo_path and safe_relative(cwd, repo_path) is not None:
             return {
                 "domain": record["domain"],
                 "project": record["project"],
                 "lane": record["lane"],
             }
+        for worktree in record.get("worktrees", []):
+            path_value = str(worktree.get("path") or "")
+            if not path_value:
+                continue
+            if safe_relative(cwd, Path(path_value).expanduser()) is not None:
+                return {
+                    "domain": record["domain"],
+                    "project": record["project"],
+                    "lane": record["lane"],
+                }
     return {}
 
 
@@ -217,10 +228,24 @@ def build_context(
         detected_lane = detected_lane or str(project_config.get("lane") or "")
         sources.extend(
             [
+                project_root / "AGENTS.md",
+                project_root / "ROUTER.md",
+                project_root / "CONTEXT.md",
+                project_root / "RULES.md",
+                project_root / "TOOLS.md",
                 project_root / "project.yml",
                 project_root / "status.md",
                 project_root / "source-map.md",
                 project_root / "decisions.md",
+                project_root / "config" / "project-profile.yml",
+                project_root / "config" / "workflows.yml",
+                project_root / "config" / "output-artifacts.yml",
+                project_root / "config" / "validation.yml",
+                project_root / "config" / "worktrees.yml",
+                project_root / "config" / "memory.yml",
+                project_root / "config" / "mcps.yml",
+                project_root / "config" / "tools.yml",
+                project_root / "worktrees" / "index.yml",
             ]
         )
 

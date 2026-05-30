@@ -12,10 +12,10 @@ from typing import Any
 
 from .capability_registry import command_entries, hook_entries, library_entries, plugin_entries, rule_entries, skill_entries
 from .mcp_catalog import MCP_SERVERS, config_mcp_ids, mcp_config_payload, mcp_tools_markdown
-from .scaffold import expand_path
 
 
 CONFIG_FILENAME = "config.toml"
+ROOT_MARKER_FILENAME = ".agentic_root"
 OTEL_ENV_VARS = (
     "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT",
     "AGENTIC_OS_OTEL_HEADERS",
@@ -32,6 +32,10 @@ MCP_REGISTRATION_POINTS = (
     "filesystem_runtime",
 )
 BASE_PROMPT_FILES = ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
+
+
+def expand_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
 
 
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
@@ -214,6 +218,12 @@ LAYERS: dict[str, dict[str, Any]] = {
         "mcp": "domain-approved systems only",
         "sandbox": "workspace-write",
     },
+    "project": {
+        "profile": "project",
+        "prompt_files": BASE_PROMPT_FILES,
+        "mcp": "project-approved systems only",
+        "sandbox": "workspace-write",
+    },
     "workflow_or_task": {
         "profile": "workflow_or_task",
         "prompt_files": BASE_PROMPT_FILES,
@@ -257,6 +267,37 @@ class ConfigInstallResult:
             "conflicts": self.conflicts,
             "blocked": self.blocked,
             "diff": self.diff,
+        }
+
+
+@dataclass(frozen=True)
+class ConfigTreeTarget:
+    root: Path
+    layer: str
+    reason: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"root": str(self.root), "layer": self.layer, "reason": self.reason}
+
+
+@dataclass
+class ConfigTreeInstallResult:
+    root: Path
+    dry_run: bool
+    targets: list[ConfigTreeTarget] = field(default_factory=list)
+    installations: list[ConfigInstallResult] = field(default_factory=list)
+
+    @property
+    def blocked(self) -> bool:
+        return any(installation.blocked for installation in self.installations)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "root": str(self.root),
+            "dry_run": self.dry_run,
+            "blocked": self.blocked,
+            "targets": [target.as_dict() for target in self.targets],
+            "installations": [installation.as_dict() for installation in self.installations],
         }
 
 
@@ -498,6 +539,57 @@ def install_config(
         prompt_path.write_text(PROMPT_TEMPLATES[filename], encoding="utf-8")
         result.created.append(prompt_path)
 
+    return result
+
+
+def discover_config_tree_targets(root: str | Path) -> list[ConfigTreeTarget]:
+    root_path = expand_path(root)
+    if not (root_path / ROOT_MARKER_FILENAME).is_file():
+        raise ValueError(f"config install-tree requires an installed OS root with {ROOT_MARKER_FILENAME}: {root_path}")
+
+    candidates: list[ConfigTreeTarget] = [
+        ConfigTreeTarget(root_path, "agentic_os_root", ".agentic_root layer"),
+    ]
+    if root_path.exists():
+        for domain_config_path in sorted(root_path.glob("*/domain.yml")):
+            candidates.append(ConfigTreeTarget(domain_config_path.parent, "domain_or_lane", "domain.yml"))
+        for project_config_path in sorted(root_path.glob("*/02-projects/*/project.yml")):
+            candidates.append(ConfigTreeTarget(project_config_path.parent, "project", "project.yml"))
+        for workflow_path in sorted(root_path.glob("*/03-workflows/*/*/workflow.md")):
+            candidates.append(ConfigTreeTarget(workflow_path.parent, "workflow_or_task", "workflow.md"))
+        for automation_path in sorted(root_path.glob("*/04-automations/*/*/automation.md")):
+            candidates.append(ConfigTreeTarget(automation_path.parent, "automation", "automation.md"))
+
+    targets: list[ConfigTreeTarget] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate.root in seen:
+            continue
+        seen.add(candidate.root)
+        targets.append(candidate)
+    return targets
+
+
+def install_config_tree(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    backup: bool = False,
+    confirm_conflicts: bool = False,
+) -> ConfigTreeInstallResult:
+    root_path = expand_path(root)
+    targets = discover_config_tree_targets(root_path)
+    result = ConfigTreeInstallResult(root=root_path, dry_run=dry_run, targets=targets)
+    for target in targets:
+        result.installations.append(
+            install_config(
+                target.root,
+                layer=target.layer,
+                dry_run=dry_run,
+                backup=backup,
+                confirm_conflicts=confirm_conflicts,
+            )
+        )
     return result
 
 

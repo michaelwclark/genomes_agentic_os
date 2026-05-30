@@ -85,10 +85,12 @@ quickly and precise enough to avoid wandering across unrelated runtime state.
 1. Create or confirm the project record.
 2. Add source references with `agentic-os project create --repo ...` when a
    linked repository should participate in `here` routing.
-3. Run `agentic-os route` against the user request.
-4. Read the returned `sources_to_load`.
-5. If working inside a linked repository, run `agentic-os here context build`.
-6. Stop on low-confidence routing and clarify the target instead of forcing a
+3. Register branch checkouts with `agentic-os project worktree add ... --path ...`
+   when a visible project worktree should also participate in `here` routing.
+4. Run `agentic-os route` against the user request.
+5. Read the returned `sources_to_load`.
+6. If working inside a linked repository or registered worktree, run `agentic-os here context build`.
+7. Stop on low-confidence routing and clarify the target instead of forcing a
    destination.
 
 ## Disposable Validation
@@ -97,12 +99,16 @@ quickly and precise enough to avoid wandering across unrelated runtime state.
 TMP_PARENT="$(mktemp -d)"
 TMP_ROOT="$TMP_PARENT/agentic_os"
 REPO_PATH="$TMP_PARENT/losmon_repo"
+WORKTREE_PATH="$TMP_PARENT/losmon_feature"
 mkdir -p "$REPO_PATH"
+mkdir -p "$WORKTREE_PATH/src"
 uv run agentic-os init --target "$TMP_ROOT"
 uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT" --repo "$REPO_PATH"
+uv run agentic-os project worktree add los losmon_replacement feature_branch --root "$TMP_ROOT" --path "$WORKTREE_PATH"
 uv run agentic-os route "Deploy losmon_replacement to production" --root "$TMP_ROOT"
 uv run agentic-os context build --domain los --project losmon_replacement --root "$TMP_ROOT"
 (cd "$REPO_PATH" && uv run --project /path/to/genomes_agentic_os agentic-os here context build --root "$TMP_ROOT")
+(cd "$WORKTREE_PATH/src" && uv run --project /path/to/genomes_agentic_os agentic-os here context build --root "$TMP_ROOT")
 ```
 
 ## Troubleshooting
@@ -111,7 +117,7 @@ uv run agentic-os context build --domain los --project losmon_replacement --root
 | --- | --- | --- |
 | `routing confidence is low: no domain or project matched` | Request lacks a known domain/project token | Add the project name, use explicit context build flags, or create the missing project record. |
 | `routing confidence is low: request matches multiple domains or projects` | Request is ambiguous | Clarify the domain or project before proceeding. |
-| `here context build` cannot route | Current directory is outside the OS root and outside linked repositories | Add a `--repo` source reference or run the command from a known OS path. |
+| `here context build` cannot route | Current directory is outside the OS root, canonical source repo, and registered worktrees | Add a `--repo` source reference, register the worktree, or run the command from a known OS path. |
 | Context packet omits expected files | Source map or project record is incomplete | Re-run `project create` with source refs or repair the project files. |
 
 ## Source Artifacts
@@ -124,4 +130,3 @@ uv run agentic-os context build --domain los --project losmon_replacement --root
 
 No diagram is included. The command flow and troubleshooting table are more
 useful for this guide than an extra image asset.
-

@@ -59,6 +59,11 @@ run "doctor --fix-missing"           "$AOS" doctor --root "$ROOT" --fix-missing
 echo "---- DOMAIN / PROJECT / ROUTING ----"
 run "domain create acme"             "$AOS" domain create acme --root "$ROOT"
 run "project create acme launch"     "$AOS" project create acme launch --root "$ROOT"
+mkdir -p "$WORK/source-repo"
+run "project link-source acme launch" "$AOS" project link-source acme launch --root "$ROOT" --repo "$WORK/source-repo"
+run "project onboard acme launch"    "$AOS" project onboard acme launch --root "$ROOT"
+mkdir -p "$WORK/source-worktree"
+run "project worktree add acme launch" "$AOS" project worktree add acme launch source_worktree --root "$ROOT" --path "$WORK/source-worktree"
 run "route a request"                "$AOS" route "ship the launch blog post" --root "$ROOT"
 run "context build --domain"         "$AOS" context build --domain acme --project launch --root "$ROOT"
 ( cd "$ROOT/acme" && run "here route (cwd-aware)" "$AOS" here route "update the launch project" )
@@ -105,7 +110,8 @@ echo "---- NOTION CONTROL PLANE (plan only) ----"
 run "notion plan-sync"               "$AOS" notion plan-sync --root "$ROOT"
 echo "---- CONFIG (Codex) ----"
 run "config doctor (layer)"          "$AOS" config doctor --root "$ROOT" --layer agentic_os_root
-run "config install (dry)"           "$AOS" config install --root "$ROOT" --layer agentic_os_root --dry-run
+run "config install (dry)"           "$AOS" config install --root "$WORK/config-layer" --layer agentic_os_root --dry-run
+run "config install-tree (dry)"      "$AOS" config install-tree --root "$ROOT" --dry-run
 echo "---- UPDATE / BACKUP / LICENSE ----"
 run "license activate"               "$AOS" license activate --key "VALIDATION-TEST-KEY" --root "$ROOT"
 run "update register"                "$AOS" update register --root "$ROOT"
@@ -124,7 +130,8 @@ run "customer validate"              "$AOS" customer validate --root "$WORK/cust
 echo "=========================================================="
 echo "SUMMARY:"
 awk -F'\t' '{c[$2]++} END {for (k in c) printf "  %-9s %d\n", k, c[k]}' "$RESULTS"
-echo "TOTAL: $n commands"
+total=$(wc -l < "$RESULTS" | tr -d ' ')
+echo "TOTAL: $total commands"
 
 # Regenerate durable markdown results matrix.
 {

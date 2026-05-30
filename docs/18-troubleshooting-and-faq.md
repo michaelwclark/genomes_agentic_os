@@ -182,7 +182,7 @@ current license state.
 
 ### Q: `config doctor` exits 1 with "config.toml is missing"
 
-**Exact output (real, from `34-config_doctor_layer`):**
+**Example missing-config output:**
 
 ```text
 ok: false
@@ -196,9 +196,9 @@ findings:
     --layer agentic_os_root --dry-run, review the diff, then rerun with --apply.
 ```
 
-**Why it happens.** This is the **normal pre-install state** — `config doctor`
-exit 1 when `config.toml` has not been installed yet. It is not an error in the
-CLI; it is the CLI correctly reporting that installation is incomplete.
+**Why it happens.** This is the **normal missing-config state** for a legacy,
+imported, or partially repaired directory. New scaffold commands create
+`config.toml`; `config doctor` exits 1 when the target layer is still missing it.
 
 **Fix.** Run `config install` as the `remediation` field instructs:
 
@@ -211,6 +211,13 @@ agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply
 ```
 
 After install, `config doctor` should exit 0 with `ok: true`.
+
+For an existing OS tree with several missing configs, use the tree repair path:
+
+```bash
+agentic-os config install-tree --root ~/agentic_os --dry-run
+agentic-os config install-tree --root ~/agentic_os --apply
+```
 
 ---
 

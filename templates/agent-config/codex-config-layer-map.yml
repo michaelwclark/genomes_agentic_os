@@ -34,7 +34,7 @@ agentic_os_layers:
       - global MCP servers
       - global safety hooks
   agentic_os_root:
-    config_path: ~/agentic_os/.codex/config.toml
+    config_path: ~/agentic_os/config.toml
     prompt_files:
       - AGENTS.md
       - ROUTER.md
@@ -47,7 +47,7 @@ agentic_os_layers:
       - filesystem memory/control-plane conventions
       - Notion workspace guardrails
   customer_os_root:
-    config_path: <customer_os>/.codex/config.toml
+    config_path: <customer_os>/config.toml
     prompt_files:
       - AGENTS.md
       - ROUTER.md
@@ -60,7 +60,7 @@ agentic_os_layers:
       - customer approval policy
       - customer telemetry posture
   domain_or_lane:
-    config_path: <domain_or_lane>/.codex/config.toml
+    config_path: <domain_or_lane>/config.toml
     prompt_files:
       - AGENTS.md
       - ROUTER.md
@@ -72,8 +72,22 @@ agentic_os_layers:
       - model/reasoning profile
       - tool allow-list
       - validation hooks
+  project:
+    config_path: <domain>/02-projects/<project>/config.toml
+    prompt_files:
+      - AGENTS.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
+      - MEMORY.md
+    intended_settings:
+      - project source links
+      - project-local rules
+      - project tool allow-list
+      - project validation hooks
   workflow_or_task:
-    config_path: <workflow>/.codex/config.toml
+    config_path: <workflow>/config.toml
     prompt_files:
       - AGENTS.md
       - ROUTER.md

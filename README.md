@@ -124,7 +124,7 @@ Genome's Agentic OS separates source, the installed OS, agent harnesses, work re
 | Product package | This repository | Reusable specs, templates, schemas, examples, diagrams, and CLI scaffold logic. |
 | Installed OS | `~/agentic_os` | Live domain roots, routers, workflow specs, automation specs, context packs, run logs, and memory policy. |
 | Agent harnesses | Claude & Codex | Read the OS specs and execute workflows. Harness-neutral — same specs, same run logs from either (`CLAUDE.md`→`@AGENTS.md` for Claude; layered `config.toml` for Codex). See [docs/13-agent-surfaces.md](docs/13-agent-surfaces.md). |
-| Work repos | `~/projects/*` | Product, client, content, or code repositories operated by the OS. |
+| Work repos | `~/projects/*`, linked from domain project folders | Product, client, content, or code repositories operated by the OS. |
 | Notion control plane | Genome's Notion or an explicitly selected client workspace | Human cockpit for intake, approvals, status, dashboards, and review. |
 | Future active state plane | Database or queue | High-volume mutable state, locking, dedupe, replay, matching, and event history. |
 
@@ -240,6 +240,7 @@ agentic-os workflow create los engineering feature_dev --root "$tmpdir/os"
 agentic-os automation create los support production_thread_intake --root "$tmpdir/os"
 agentic-os run-log create los feature_dev --root "$tmpdir/os"
 agentic-os validate --root "$tmpdir/os"
+agentic-os config doctor --root "$tmpdir/os" --layer agentic_os_root
 find "$tmpdir/os" -maxdepth 4 -type f | sort
 ```
 
@@ -255,9 +256,13 @@ agentic-os init --target ~/agentic_os
 | --- | --- |
 | `agentic-os init --target ~/agentic_os` | Domain-first installed OS with root/domain routers and the standard numbered lanes. |
 | `agentic-os domain create <name> --root ~/agentic_os` | Additional top-level domain with the same router, control plane, inbox, workflow, automation, knowledge, run, metric, and archive structure. |
+| `agentic-os project create <domain> <project> --root ~/agentic_os` | Project folder with local agent files, `config/*.yml`, `ideas/`, `worktrees/`, `artifacts/`, and optional `src` link. |
+| `agentic-os project onboard <domain> <project> --root ~/agentic_os` | Repairs the project-local agent/config/idea/worktree surface for existing projects. |
+| `agentic-os project worktree add <domain> <project> <name> --path <path>` | Registers a visible worktree symlink and cwd routing target under the project. |
 | `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with outcome brief, alignment questions, PRD, implementation plan, handoff, progress, spec, context pack, approvals, output contract, runbook, examples, and runs folder. |
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os` | Timestamped run folder under the domain's `06-runs-and-logs/runs/`. |
+| `agentic-os config install-tree --root ~/agentic_os --dry-run` | Previews missing Codex `config.toml` and prompt-file repairs across the installed root, domains, projects, workflows, and automations. Add `--apply` after review. |
 | `agentic-os docs install --root ~/agentic_os` | Runtime templates, operating manual, command prompts, harness skills, and plans under `shared_factory/05-knowledge/`. |
 | `agentic-os docs update --root ~/agentic_os` | Adds missing runtime template, manual, command prompt, harness skill, and plan assets without overwriting local edits. |
 | `agentic-os validate --root ~/agentic_os` | Required domain-first folder checks plus JSON/YAML parseability. |
@@ -268,8 +273,10 @@ agentic-os init --target ~/agentic_os
 - Creates `.agentic_root` so harness config can discover the installed OS boundary.
 - Creates the default domain roots: `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive`.
 - Creates root and domain `AGENTS.md`, `CLAUDE.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` files.
+- Creates layer-aware Codex `config.toml` files at the root and domain layers; projects, workflows, and automations receive their own config when created.
 - Creates domain `REFERENCES.md` files for source maps.
 - Creates each domain's numbered operating lanes from `00-control-plane` through `08-archive`.
+- Creates project-scoped `src` symlinks under `domain/02-projects/<project>/` when a local `--repo` path is supplied.
 - Creates workflow and automation folders with the support files needed to run, validate, approve, and audit them.
 - Copies repository templates into `shared_factory/05-knowledge/templates/`.
 - Copies the operating manual into `shared_factory/05-knowledge/operating-manual/`.

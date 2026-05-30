@@ -16,12 +16,12 @@
 | **Exit 0** | Success |
 | **Exit 1** | Health check "not ok" (doctor / validate) |
 | **Exit 2** | argparse usage error OR deliberate handled refusal (e.g. `here route` when routing confidence is low; `config install` when blocked by conflicts) |
-| **Dry-run default** | Several mutating commands default to `--dry-run`. Pass `--apply` to commit changes. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`. |
+| **Dry-run default** | Several mutating commands default to `--dry-run`. Pass `--apply` to commit changes. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
 | **`run-log close --status done`** | Requires `--validation` evidence; missing evidence is a guardrail, not a crash. |
-| **`config` subcommands** | Only `install` and `doctor`. No `config layers` subcommand exists. |
+| **`config` subcommands** | `install`, `install-tree`, and `doctor`. No `config layers` subcommand exists. |
 | **Automation maturity levels** | `observe`, `prepare`, `propose`, `execute_approved`, `execute_guarded` |
-| **Config layers** | `agentic_os_root`, `automation`, `customer_os_root`, `domain_or_lane`, `global_harness`, `workflow_or_task` |
+| **Config layers** | `agentic_os_root`, `automation`, `customer_os_root`, `domain_or_lane`, `global_harness`, `project`, `workflow_or_task` |
 
 ---
 
@@ -35,10 +35,10 @@ Create the base installed OS tree (and optionally a profile-first layout).
 |---|---|---|
 | `--target` | No (default: `~/agentic_os`) | Destination path for the new OS root |
 | `--profile` | No | Room-first OS profile YAML; activates profile install path |
-| `--projects-source` | No | Source projects directory to symlink into the OS root |
+| `--projects-source` | No | Deprecated compatibility flag; project repository links live under domain project folders |
 | `--include-legacy-agent` | No | Also create `AGENT.md` compatibility shims for harnesses requiring that exact filename |
 
-Reads: `--projects-source` directory. Writes: full OS directory tree at `--target`.
+Writes: full OS directory tree at `--target`.
 
 ```bash
 agentic-os init --target /tmp/aos-ref
@@ -170,11 +170,78 @@ Create a project scaffold inside a domain.
 | `--status` | No (default: `active`) | One of: `active`, `waiting`, `blocked`, `done` |
 | `--lane` | No | Primary operating lane for this project |
 
-Writes: `<root>/<domain>/02-projects/<project>/` with `project.yml`, `status.md`, `decisions.md`, `source-map.md`; updates domain `README.md` and `active-work.md`.
+Writes: `<root>/<domain>/02-projects/<project>/` with `project.yml`, `status.md`, `decisions.md`, `source-map.md`, `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, `worktrees/`, and `artifacts/`; creates `src` when `--repo` is a local path; updates domain `README.md` and `active-work.md`.
 
 ```bash
 agentic-os project create acme launch --root /tmp/aos-ref \
   --repo https://github.com/example/launch --status active
+```
+
+Status: **OK** (rc 0)
+
+---
+
+### `project onboard`
+
+Create or repair the project-local agent/config surface for an existing project.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `domain` | Yes | Domain slug |
+| `project` | Yes | Project slug (snake_case) |
+| `--root` | No | Installed OS root path |
+
+Writes missing project-local `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, `worktrees/`, and `config.toml`. Existing local edits are preserved unless the file is an older generic scaffold.
+
+```bash
+agentic-os project onboard acme launch --root /tmp/aos-ref
+```
+
+Status: **OK** (rc 0)
+
+---
+
+### `project worktree add`
+
+Register an existing local git worktree as a visible project link and routing target.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `domain` | Yes | Domain slug |
+| `project` | Yes | Project slug (snake_case) |
+| `name` | Yes | Visible worktree name (snake_case) |
+| `--path` | Yes | Existing worktree directory to link |
+| `--root` | No | Installed OS root path |
+| `--force` | No | Replace an existing worktree symlink that points elsewhere |
+
+Writes: `<project>/worktrees/<name>` as a symlink, updates `<project>/worktrees/index.yml`, and mirrors the registered list into `<project>/config/worktrees.yml`. Cwd-aware routing treats the real worktree path as part of the project.
+
+```bash
+agentic-os project worktree add acme launch source_worktree \
+  --root /tmp/aos-ref --path /tmp/source-worktree
+```
+
+Status: **OK** (rc 0)
+
+---
+
+### `project link-source` / `project src`
+
+Create or repair a project-scoped `src` symlink to a local repository.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `domain` | Yes | Domain slug |
+| `project` | Yes | Project slug (snake_case) |
+| `--root` | No | Installed OS root path |
+| `--repo` | No | Local repository path; defaults to `project.yml` `sources.repo` |
+| `--force` | No | Replace an existing `src` symlink that points elsewhere |
+
+Writes: `<root>/<domain>/02-projects/<project>/src`, and updates `project.yml` plus `source-map.md` when `--repo` is supplied. Remote repository URLs are rejected because `src` must be a filesystem symlink.
+
+```bash
+agentic-os project link-source acme launch --root /tmp/aos-ref --repo /tmp/source-repo
+agentic-os project src acme launch --root /tmp/aos-ref
 ```
 
 Status: **OK** (rc 0)
@@ -1112,7 +1179,7 @@ Status: not individually validated in RESULTS.md. Note: `--apply` exits 2 when w
 
 ## 10. Codex config: `config`
 
-Only two subcommands exist: `install` and `doctor`. There is no `config layers` subcommand.
+Subcommands: `install`, `install-tree`, and `doctor`. There is no `config layers` subcommand.
 
 ### `config install`
 
@@ -1121,13 +1188,13 @@ Install or merge `config.toml` for an OS directory. Dry-run by default.
 | Arg / Flag | Required | Description |
 |---|---|---|
 | `--root` | No | Directory that should receive `config.toml` |
-| `--layer` | Yes | Config layer — one of: `agentic_os_root`, `automation`, `customer_os_root`, `domain_or_lane`, `global_harness`, `workflow_or_task` |
+| `--layer` | Yes | Config layer — one of: `agentic_os_root`, `automation`, `customer_os_root`, `domain_or_lane`, `global_harness`, `project`, `workflow_or_task` |
 | `--dry-run` | No (default) | Preview changes |
 | `--apply` | No | Apply changes |
 | `--backup` | No | Back up existing `config.toml` before applying |
 | `--confirm-conflicts` | No | Apply non-conflicting additions while preserving conflicting keys |
 
-Exits 2 when blocked by conflicts (even on dry-run showing a blocked state). Reads/Writes: `config.toml` and `MEMORY.md` at `--root`.
+Exits 2 when apply is blocked by unresolved conflicts. Dry-run reports conflicts without writing files. Reads/Writes: `config.toml` and `MEMORY.md` at `--root`.
 
 ```bash
 agentic-os config install --root /tmp/aos-ref --layer agentic_os_root --dry-run
@@ -1149,6 +1216,29 @@ Status: **OK** (rc 0, dry-run)
 
 ---
 
+### `config install-tree`
+
+Install or merge `config.toml` across the routed OS tree. It targets the root,
+domains with `domain.yml`, projects with `project.yml`, workflows with
+`workflow.md`, and automations with `automation.md`. Dry-run by default.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+| `--dry-run` | No (default) | Preview changes |
+| `--apply` | No | Apply changes |
+| `--backup` | No | Back up existing `config.toml` files before applying |
+| `--confirm-conflicts` | No | Apply non-conflicting additions while preserving conflicting keys |
+
+```bash
+agentic-os config install-tree --root /tmp/aos-ref --dry-run
+agentic-os config install-tree --root /tmp/aos-ref --apply
+```
+
+Status: **OK** (rc 0, dry-run)
+
+---
+
 ### `config doctor`
 
 Validate `config.toml` OTEL and MCP contracts.
@@ -1164,19 +1254,16 @@ Exits 1 when `ok: false` (e.g. `config.toml` is missing). Reads: `config.toml`.
 agentic-os config doctor --root /tmp/aos-ref --layer agentic_os_root
 ```
 
-Real output (not ok):
+Real output (scaffolded root):
 ```text
-ok: false
+ok: true
 root: /tmp/aos-ref
 layer: agentic_os_root
-findings:
-- severity: blocker
-  path: /tmp/aos-ref/config.toml
-  message: config.toml is missing
-  remediation: Run agentic-os config install ...
+findings: []
 ```
 
-Status: **GUARDED** (rc 1 — exits 1 when `config.toml` absent; this is the normal "not yet installed" state)
+Status: **OK** on a fresh scaffolded root; **GUARDED** (rc 1) when `config.toml`
+is absent or incomplete.
 
 ---
 
@@ -1507,8 +1594,8 @@ Status: **OK** (rc 0)
 
 | Status | Count | Notes |
 |---|---|---|
-| **OK** | 44 | Exits 0 as expected |
-| **GUARDED** | 2 | `here route` (rc 2, low confidence); `config doctor` (rc 1, config.toml absent) |
-| Total validated | 46 | See `.agentic-atlas/validation/RESULTS.md` for full matrix |
+| **OK** | 52 | Exits 0 as expected |
+| **GUARDED** | 1 | `here route` (rc 2, low confidence) |
+| Total validated | 53 | See `.agentic-atlas/validation/RESULTS.md` for full matrix |
 
-Commands not in the 46-invocation matrix (`room`, `here context build`, `connected-system doctor`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap/track-runtime`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `license activate`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.
+Commands not in the 53-invocation matrix (`room`, `here context build`, `connected-system doctor`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap/track-runtime`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.

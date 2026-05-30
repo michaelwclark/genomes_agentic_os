@@ -95,16 +95,16 @@ belong in `scaffold.py`, not a new `utils.py`.
 
 | Module | LOC | Responsibility |
 | --- | --- | --- |
-| `scaffold.py` | 1981 | **Filesystem scaffolding.** Domain/lane/file constants (`DEFAULT_DOMAINS`, `STANDARD_LANES`, `WORKFLOW_FILES`, `AUTOMATION_FILES`), `.agentic_root` marker, template rendering, `init`/domain/project creation. The backbone. |
+| `scaffold.py` | 2105 | **Filesystem scaffolding.** Domain/lane/file constants (`DEFAULT_DOMAINS`, `STANDARD_LANES`, `WORKFLOW_FILES`, `AUTOMATION_FILES`), `.agentic_root` marker, template rendering, `init`/domain/project creation. The backbone. |
 | `runtime_ops.py` | 1186 | **Runtime registries.** Heartbeats, schedules, integrations, the run-queue, and `run-next` dispatch. File-backed; dry-run by default. |
-| `cli.py` | 1117 | **Composition root.** `build_parser()` declares every command; `handle_*` functions adapt args → ops calls; `main()` dispatches. The one place wiring lives. |
+| `cli.py` | 1176 | **Composition root.** `build_parser()` declares every command; `handle_*` functions adapt args → ops calls; `main()` dispatches. The one place wiring lives. |
 | `source_watch.py` | 665 | **Connected sources.** `connected-system` + `watch-source` registries, cursors, polling. |
-| `config_ops.py` | 628 | **Codex `config.toml`.** Per-layer install/doctor with conflict-aware merge. |
-| `customer.py` | 619 | **Customer-OS factory.** Renders a client OS (router/context/rules/tools/assets) from a profile. |
+| `config_ops.py` | 720 | **Codex `config.toml`.** Per-layer install/doctor plus routed tree install with conflict-aware merge. |
+| `customer.py` | 734 | **Customer-OS factory.** Renders a client OS (router/context/rules/tools/assets) from a profile. |
 | `event_graph.py` | 582 | **Event ledger + chains.** Append-only event log, declarative chain rules, idempotency keys, chain-depth loop guard, run-queue emission. |
-| `validate.py` | 480 | **Structural validation.** Confirms an installed root has the expected shape; parses YAML/JSON. |
+| `validate.py` | 510 | **Structural validation.** Confirms an installed root has the expected shape; parses YAML/JSON. |
 | `update_ops.py` | 454 | **Update & backup.** Grants/keys, plan/apply/rollback, `phone-home` heartbeat payload. |
-| `capability_registry.py` | 291 | **Visible capability registry.** Commands, skills, MCP servers, libraries, hooks, plugins, rules → registry YAML + inventory markdown. |
+| `capability_registry.py` | 331 | **Visible capability registry.** Commands, skills, MCP servers, libraries, hooks, plugins, rules → registry YAML + inventory markdown. |
 | `routing.py` | 283 | **Deterministic routing.** `ContextPacket` assembly, `route_request`, `context_from_here`, `RISK_KEYWORDS` approval detection. No LLM. |
 | `automation_ops.py` | 282 | **Automation maturity.** Readiness checks + the `observe→prepare→propose→execute_approved→execute_guarded` ladder + project attachment. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
@@ -126,7 +126,7 @@ There is **no DI framework and no module-level mutable global**. The pattern is
 - The **`--root`** path is the primary injected dependency. Every ops function
   takes `root` explicitly; nothing reads a global "current OS."
 - The **`.agentic_root`** marker file (TOML) carries install-scoped config
-  (`update_channel`, `update_policy`, `projects_source`). It is read from the
+  (`update_channel`, `update_policy`, and project link scope). It is read from the
   root, never cached in a singleton.
 - The **`config.toml`** (Codex) and **profile YAML** are *data dependencies*
   resolved once at the edge (a CLI handler) and passed down — never re-read deep

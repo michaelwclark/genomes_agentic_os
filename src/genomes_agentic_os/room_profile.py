@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,11 +9,12 @@ import yaml
 
 from .scaffold import (
     DEFAULT_PROJECTS_SOURCE,
+    ScaffoldResult,
     agent_entrypoint,
     claude_adapter,
     create_domain_structure,
     ensure_customer_update_contract,
-    ensure_projects_link,
+    ensure_codex_config,
     ensure_update_metadata,
     ensure_visible_capability_surface,
     expand_path,
@@ -161,10 +161,9 @@ def install_profile_os(
 ) -> dict[str, Any]:
     profile = load_os_profile(profile_path)
     root = expand_path(target)
-    result = _Result()
+    result = ScaffoldResult()
     root.mkdir(parents=True, exist_ok=True)
     write_root_marker(root, result, projects_source)
-    ensure_projects_link(root, result, projects_source)
     ensure_visible_capability_surface(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
@@ -177,6 +176,7 @@ def install_profile_os(
     write_file_once(root / "TOOLS.md", root_tools(), result)
     if include_legacy_agent:
         write_file_once(root / "AGENT.md", "# Legacy Agent Adapter\n\nLoad `AGENTS.md` first.\n", result)
+    ensure_codex_config(root, "agentic_os_root", result)
     write_file_once(root / "profile.yml", yaml.safe_dump(profile, sort_keys=False), result)
     install_docs(root)
     for room in profile["rooms"]:
@@ -229,10 +229,3 @@ rooms:
 
 def format_profile_result(result: dict[str, Any]) -> str:
     return yaml.safe_dump(result, sort_keys=False).strip()
-
-
-@dataclass
-class _Result:
-    created: list[Path] = field(default_factory=list)
-    skipped: list[Path] = field(default_factory=list)
-    updated: list[Path] = field(default_factory=list)

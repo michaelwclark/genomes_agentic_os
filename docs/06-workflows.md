@@ -205,7 +205,7 @@ directly for a structured authoring flow.
 **Codex:** `agentic-os workflow create <domain> <lane> <name>` scaffolds the
 files; then fill each file in your editor or via Codex edit instructions.
 Validate with `agentic-os workflow check <domain> <lane> <name>`. The
-`workflow_or_task` config layer (`<workflow>/.codex/config.toml`) can carry
+`workflow_or_task` config layer (`<workflow>/config.toml`) can carry
 workflow-specific model and tool overrides.
 
 Both harnesses use the same files, the same `workflow check` command, and the

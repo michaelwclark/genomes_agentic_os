@@ -1,5 +1,13 @@
 # 21 - Harness Context Contract And Codex Config
 
+## Status
+
+Implemented on 2026-05-30. The source package now generates `AGENTS.md`,
+`CLAUDE.md` adapters, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`,
+`MEMORY.md`, and layer-local `config.toml` across the installed root, domains,
+projects, workflows, and automations. `agentic-os config install-tree` repairs
+the routed tree, and validation enforces the root/domain/project contract.
+
 ## Intent
 
 Normalize the installed OS prompt surface so Codex, Claude, and future harnesses

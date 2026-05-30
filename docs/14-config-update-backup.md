@@ -4,11 +4,12 @@
 > with an operator-approved, additive, reversible posture that requires no
 > destructive action by default.
 >
-> **You'll use:** `agentic-os update {check,register,pull,plan,apply,rollback,status,phone-home}`,
+> **You'll use:** `agentic-os config install-tree`,
+> `agentic-os update {check,register,pull,plan,apply,rollback,status,phone-home}`,
 > `agentic-os backup run`, `agentic-os license activate`, `agentic-os migrate {plan,apply}`.
 >
 > **Prereqs:** a working OS root ([01 · Install & Quickstart](01-install-and-quickstart.md)).
-> Config (Codex `config.toml` layers, `config install`, `config doctor`) is documented
+> Config (Codex `config.toml` layers, `config install`, `config install-tree`, `config doctor`) is documented
 > fully in [13 · Agent Surfaces](13-agent-surfaces.md) — this page keeps config brief.
 
 ---
@@ -22,7 +23,7 @@ source of truth for install-scoped identity and update behavior:
 | --- | --- |
 | `update_channel` | Which channel to track (`stable` is the default). |
 | `update_policy` | Approval requirement (`operator_approved` is the default). |
-| `projects_source` | Where project definitions come from. |
+| `project_link_scope` | Project repository symlinks are scoped to `domain/02-projects/<project>/src`. |
 
 The marker is read on every CLI call — it is never cached in a singleton. The lock
 file `agentic-os.lock.json` in the root carries `installed_version` and echoes the
@@ -327,7 +328,7 @@ plan_path: /private/tmp/aos-validate/root/.migrations/notion-sync-readme-v1.yml
   through `register → check → plan → apply`.
 - **Codex:** run `agentic-os update register --root ~/agentic_os` then each
   subsequent subcommand in sequence. The `agentic_os_root` profile in
-  `~/agentic_os/.codex/config.toml` governs approval policy and sandbox posture.
+  `~/agentic_os/config.toml` governs approval policy and sandbox posture.
 
 Full mechanics and harness config: [13 · Agent Surfaces](13-agent-surfaces.md).
 
@@ -361,7 +362,7 @@ Full mechanics and harness config: [13 · Agent Surfaces](13-agent-surfaces.md).
 ## Related
 
 - [01 · Install & Quickstart](01-install-and-quickstart.md) — initial install that creates the root.
-- [13 · Agent Surfaces](13-agent-surfaces.md) — Codex `config.toml` layer model and `config install`/`config doctor` in full.
+- [13 · Agent Surfaces](13-agent-surfaces.md) — Codex `config.toml` layer model and `config install`/`install-tree`/`config doctor` in full.
 - [15 · Customer OS Factory](15-customer-os-factory.md) — `customer update` and per-customer backup posture.
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — post-apply doctor checks.
 - [17 · CLI Reference](17-cli-reference.md) — full flag index.

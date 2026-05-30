@@ -157,9 +157,9 @@ project_doc_max_bytes = 65536
 Use project-local Codex config only for trusted project behavior:
 
 ```toml
-# ~/agentic_os/los/projects/los-qa-automation/.codex/config.toml
+# ~/agentic_os/los/02-projects/los-qa-automation/config.toml
 
-log_dir = "./.codex/logs"
+log_dir = "./logs"
 
 [mcp_servers.playwright]
 command = "npx"
@@ -224,7 +224,7 @@ It starts at `~/agentic_os`.
 | Signal | Route |
 | --- | --- |
 | `FLYWL-*` Jira key | `los/` |
-| LOS application feature | `los/projects/` |
+| LOS application feature | `los/02-projects/` |
 | OS template or installer work | `shared_factory/` |
 | Consulting deliverable | `clarks_consulting/` |
 
@@ -312,7 +312,7 @@ At this point the agent has not touched application code. It has only resolved t
 The project router points into the source checkout:
 
 ```markdown
-# ~/agentic_os/los/projects/los-app-los-django/ROUTER.md
+# ~/agentic_os/los/02-projects/los-app-los-django/ROUTER.md
 
 ## Source
 
@@ -330,7 +330,7 @@ and `PLAN.md` exist.
 `AGENTS.md` sets project behavior:
 
 ```markdown
-# ~/agentic_os/los/projects/los-app-los-django/AGENTS.md
+# ~/agentic_os/los/02-projects/los-app-los-django/AGENTS.md
 
 ## Working expectations
 
@@ -396,13 +396,13 @@ Does this feature need automated browser or API QA coverage?
 If yes, the agent routes to:
 
 ```text
-~/agentic_os/los/projects/los-qa-automation/
+~/agentic_os/los/02-projects/los-qa-automation/
 ```
 
 That folder has its own context. It should not inherit Django implementation habits as if it were the same repo. It should inherit the ticket context, then switch operating modes.
 
 ````markdown
-# ~/agentic_os/los/projects/los-qa-automation/ROUTER.md
+# ~/agentic_os/los/02-projects/los-qa-automation/ROUTER.md
 
 ## Source
 
@@ -415,13 +415,13 @@ That folder has its own context. It should not inherit Django implementation hab
 For `FLYWL-*` QA work, first read the Django feature context:
 
 ```text
-~/agentic_os/los/projects/los-app-los-django/src/.features/<ticket-slug>/
+~/agentic_os/los/02-projects/los-app-los-django/src/.features/<ticket-slug>/
 ```
 
 Then create the QA context folder:
 
 ```text
-~/agentic_os/los/projects/los-qa-automation/src/.features/<ticket-slug>/
+~/agentic_os/los/02-projects/los-qa-automation/src/.features/<ticket-slug>/
 ```
 
 The QA context folder should link back to the Django context, Jira, and merged PR.
@@ -430,7 +430,7 @@ The QA context folder should link back to the Django context, Jira, and merged P
 Now the QA agent knows where the old context lives before it starts writing tests.
 
 ```markdown
-# ~/agentic_os/los/projects/los-qa-automation/AGENTS.md
+# ~/agentic_os/los/02-projects/los-qa-automation/AGENTS.md
 
 ## Working expectations
 
@@ -451,7 +451,7 @@ be updated automatically in the future.
 `TOOLS.md` makes the context shift explicit:
 
 ````markdown
-# ~/agentic_os/los/projects/los-qa-automation/TOOLS.md
+# ~/agentic_os/los/02-projects/los-qa-automation/TOOLS.md
 
 ## Test tools
 

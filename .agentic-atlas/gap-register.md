@@ -4,8 +4,8 @@
 > *does* today, established by running the CLI (see
 > [`validation/RESULTS.md`](validation/RESULTS.md)) and reading the source. Each
 > gap has evidence, impact, and a recommendation. Items here feed
-> [`backlog.md`](backlog.md). Last validated: 2026-05-29 (65/65 tests pass; 47/48
-> commands OK, 2 intentional guardrail exits).
+> [`backlog.md`](backlog.md). Last validated: 2026-05-30 (74/74 tests pass; 52
+> commands OK, 1 intentional guardrail exit).
 
 Severity: **S1** blocks the "running OS" promise · **S2** materially limits value ·
 **S3** polish / friction.

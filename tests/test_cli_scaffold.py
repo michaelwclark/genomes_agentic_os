@@ -8,6 +8,8 @@ import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
+from genomes_agentic_os.routing import context_from_here
+from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES
 from genomes_agentic_os.validate import validate_root
 
 
@@ -19,18 +21,19 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert main(["init", "--target", str(root), "--projects-source", str(projects_source)]) == 0
 
     assert (root / ".agentic_root").is_file()
-    assert (root / "projects").is_symlink()
-    assert (root / "projects").resolve() == projects_source.resolve()
+    assert not (root / "projects").exists()
 
     for domain in ("personal", "clarks_consulting", "los", "shared_factory", "archive"):
         domain_root = root / domain
         assert domain_root.is_dir()
+        assert (domain_root / "config.toml").is_file()
         assert (domain_root / "ROUTER.md").is_file()
         assert (domain_root / "AGENTS.md").is_file()
         assert (domain_root / "CLAUDE.md").is_file()
         assert (domain_root / "CONTEXT.md").is_file()
         assert (domain_root / "RULES.md").is_file()
         assert (domain_root / "TOOLS.md").is_file()
+        assert (domain_root / "MEMORY.md").is_file()
         assert (domain_root / "REFERENCES.md").is_file()
         assert not (domain_root / "AGENT.md").exists()
         assert (domain_root / "00-control-plane" / "routing-rules.md").is_file()
@@ -48,11 +51,13 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "08-archive" / "README.md").is_file()
 
     assert (root / "ROUTER.md").is_file()
+    assert (root / "config.toml").is_file()
     assert (root / "AGENTS.md").is_file()
     assert (root / "CLAUDE.md").is_file()
     assert (root / "CONTEXT.md").is_file()
     assert (root / "RULES.md").is_file()
     assert (root / "TOOLS.md").is_file()
+    assert (root / "MEMORY.md").is_file()
     assert (root / "agentic-os.lock.json").is_file()
     assert (root / "UPDATE_POLICY.md").is_file()
     assert (root / "registries" / "updates.yml").is_file()
@@ -86,6 +91,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert "## Commands" in inventory
     assert "`make-skill`" in inventory
     assert "`orchestrate`" in inventory
+    assert "`config-install-tree`" in inventory
     commands = yaml.safe_load((root / "registries" / "commands.yml").read_text(encoding="utf-8"))
     assert {entry["command"] for entry in commands["commands"]} >= {
         "/make-skill",
@@ -98,6 +104,19 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert {"context_mode", "genomes_brain"} <= {entry["id"] for entry in mcp_servers["mcp_servers"]}
     libraries = yaml.safe_load((root / "registries" / "libraries.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "unified_memory"} <= {entry["id"] for entry in libraries["libraries"]}
+    hooks = yaml.safe_load((root / "registries" / "hooks.yml").read_text(encoding="utf-8"))
+    assert {"memory-session-start", "memory-stop", "harness-trace-emitter", "context-mode-cache-heal"} <= {
+        entry["id"] for entry in hooks["hooks"]
+    }
+    for hook_name in (
+        "memory-session-start.sh",
+        "memory-stop.sh",
+        "harness-emit-trace.sh",
+        "context-mode-cache-heal.mjs",
+    ):
+        hook_path = root / "hooks" / hook_name
+        assert hook_path.is_file()
+        assert hook_path.stat().st_mode & 0o111
     assert (root / "commands" / "os-route.md").is_file()
     assert (root / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
@@ -686,6 +705,7 @@ def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> No
     cases = {
         "customer_os_root": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
         "domain_or_lane": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
+        "project": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
         "workflow_or_task": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
         "automation": ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"),
     }
@@ -696,6 +716,62 @@ def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> No
         assert (root / "config.toml").is_file()
         for filename in ("AGENTS.md", "CLAUDE.md", *expected_files):
             assert (root / filename).is_file()
+
+
+def test_config_install_tree_covers_domain_project_workflow_and_automation_layers(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    capsys.readouterr()
+
+    assert main(["config", "install-tree", "--root", str(root), "--dry-run"]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+    targets = {(target["root"], target["layer"]) for target in result["targets"]}
+
+    assert (str(root), "agentic_os_root") in targets
+    assert (str(root / "los"), "domain_or_lane") in targets
+    assert (str(root / "los" / "02-projects" / "losmon_replacement"), "project") in targets
+    assert (str(root / "los" / "03-workflows" / "engineering" / "feature_dev"), "workflow_or_task") in targets
+    assert (str(root / "los" / "04-automations" / "support" / "production_thread_intake"), "automation") in targets
+
+
+def test_config_install_tree_requires_installed_root(tmp_path: Path) -> None:
+    root = tmp_path / "missing_os"
+
+    assert main(["config", "install-tree", "--root", str(root), "--dry-run"]) == 2
+
+
+def test_config_install_tree_apply_writes_and_doctors_discovered_layers(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
+    capsys.readouterr()
+
+    targets = {
+        root: "agentic_os_root",
+        root / "los": "domain_or_lane",
+        root / "los" / "02-projects" / "losmon_replacement": "project",
+        root / "los" / "03-workflows" / "engineering" / "feature_dev": "workflow_or_task",
+        root / "los" / "04-automations" / "support" / "production_thread_intake": "automation",
+    }
+    for target in targets:
+        (target / "config.toml").unlink()
+    assert all(not (target / "config.toml").exists() for target in targets)
+
+    assert main(["config", "install-tree", "--root", str(root), "--apply"]) == 0
+    capsys.readouterr()
+
+    for target, layer in targets.items():
+        config = target / "config.toml"
+        assert config.is_file()
+        assert f'layer = "{layer}"' in config.read_text(encoding="utf-8")
+        assert main(["config", "doctor", "--root", str(target), "--layer", layer]) == 0
 
 
 def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None:
@@ -750,6 +826,8 @@ def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
     assert (workflow_root / "examples" / "README.md").is_file()
     assert (workflow_root / "runs").is_dir()
     assert (workflow_root / "runs" / "README.md").is_file()
+    assert (workflow_root / "config.toml").is_file()
+    assert (workflow_root / "AGENTS.md").is_file()
 
     assert (
         main(
@@ -775,6 +853,8 @@ def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
     assert (automation_root / "tests.md").is_file()
     assert (automation_root / "logs").is_dir()
     assert (automation_root / "logs" / "README.md").is_file()
+    assert (automation_root / "config.toml").is_file()
+    assert (automation_root / "AGENTS.md").is_file()
 
     assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
     run_logs = list((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
@@ -862,6 +942,8 @@ def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:
 
 def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
 
     assert (
         main(
@@ -873,7 +955,7 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
                 "--root",
                 str(root),
                 "--repo",
-                "/Users/genome/projects/losmon",
+                str(repo),
                 "--notion",
                 "https://notion.so/example",
                 "--jira",
@@ -892,14 +974,183 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert (project_root / "decisions.md").is_file()
     assert (project_root / "source-map.md").is_file()
     assert (project_root / "artifacts").is_dir()
-    assert "repo: /Users/genome/projects/losmon" in (project_root / "project.yml").read_text(encoding="utf-8")
-    assert "| Repo | /Users/genome/projects/losmon |" in (project_root / "source-map.md").read_text(
-        encoding="utf-8"
-    )
+    assert (project_root / "config").is_dir()
+    assert (project_root / "ideas" / "raw-ideas.md").is_file()
+    assert (project_root / "worktrees" / "index.yml").is_file()
+    for filename in PROJECT_CONFIG_FILES:
+        assert (project_root / "config" / filename).is_file()
+    assert (project_root / "config.toml").is_file()
+    assert (project_root / "AGENTS.md").is_file()
+    assert (project_root / "src").is_symlink()
+    assert (project_root / "src").resolve() == repo.resolve()
+    agents = (project_root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "config/*.yml" in agents
+    assert "worktrees/index.yml" in agents
+    output_artifacts = yaml.safe_load((project_root / "config" / "output-artifacts.yml").read_text(encoding="utf-8"))
+    assert output_artifacts["output_artifacts"]["feature_root"] == "src/.features/{ticket_or_slug}"
+    assert f"repo: {repo}" in (project_root / "project.yml").read_text(encoding="utf-8")
+    assert f"| Repo | {repo} |" in (project_root / "source-map.md").read_text(encoding="utf-8")
     assert "`losmon_replacement`" in (root / "los" / "02-projects" / "README.md").read_text(encoding="utf-8")
     assert "`losmon_replacement`" in (root / "los" / "00-control-plane" / "active-work.md").read_text(
         encoding="utf-8"
     )
+    assert validate_root(root).ok
+
+
+def test_project_create_does_not_symlink_remote_repo_urls(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert (
+        main(
+            [
+                "project",
+                "create",
+                "los",
+                "remote_project",
+                "--root",
+                str(root),
+                "--repo",
+                "https://github.com/example/repo.git",
+            ]
+        )
+        == 0
+    )
+
+    project_root = root / "los" / "02-projects" / "remote_project"
+    assert not (project_root / "src").exists()
+    assert validate_root(root).ok
+
+
+def test_project_link_source_adds_src_and_repo_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    assert main(["project", "create", "los", "linked_project", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "link-source",
+                "los",
+                "linked_project",
+                "--root",
+                str(root),
+                "--repo",
+                str(repo),
+            ]
+        )
+        == 0
+    )
+
+    project_root = root / "los" / "02-projects" / "linked_project"
+    assert (project_root / "src").is_symlink()
+    assert (project_root / "src").resolve() == repo.resolve()
+    assert f"repo: {repo}" in (project_root / "project.yml").read_text(encoding="utf-8")
+    assert f"| Repo | {repo} |" in (project_root / "source-map.md").read_text(encoding="utf-8")
+    assert validate_root(root).ok
+
+
+def test_project_src_alias_uses_existing_repo_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    assert main(["project", "create", "los", "linked_project", "--root", str(root), "--repo", str(repo)]) == 0
+    project_root = root / "los" / "02-projects" / "linked_project"
+    (project_root / "src").unlink()
+
+    assert main(["project", "src", "los", "linked_project", "--root", str(root)]) == 0
+
+    assert (project_root / "src").is_symlink()
+    assert (project_root / "src").resolve() == repo.resolve()
+    assert validate_root(root).ok
+
+
+def test_project_link_source_rejects_remote_repo_urls(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "remote_project", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "link-source",
+                "los",
+                "remote_project",
+                "--root",
+                str(root),
+                "--repo",
+                "https://github.com/example/repo.git",
+            ]
+        )
+        == 2
+    )
+
+    assert not (root / "los" / "02-projects" / "remote_project" / "src").exists()
+
+
+def test_project_onboard_repairs_project_config_ideas_and_worktrees(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "repairable_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "repairable_project"
+    (project_root / "config" / "tools.yml").unlink()
+    (project_root / "ideas" / "raw-ideas.md").unlink()
+    (project_root / "worktrees" / "index.yml").unlink()
+
+    assert main(["project", "onboard", "los", "repairable_project", "--root", str(root)]) == 0
+
+    assert (project_root / "config" / "tools.yml").is_file()
+    assert (project_root / "ideas" / "raw-ideas.md").is_file()
+    assert (project_root / "worktrees" / "index.yml").is_file()
+    assert validate_root(root).ok
+
+
+def test_project_worktree_add_registers_visible_link_and_routes_from_target(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    worktree = tmp_path / "launch_feature"
+    nested = worktree / "app"
+    nested.mkdir(parents=True)
+
+    assert main(["project", "create", "los", "linked_project", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "worktree",
+                "add",
+                "los",
+                "linked_project",
+                "launch_feature",
+                "--path",
+                str(worktree),
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    project_root = root / "los" / "02-projects" / "linked_project"
+    link_path = project_root / "worktrees" / "launch_feature"
+    assert link_path.is_symlink()
+    assert link_path.resolve() == worktree.resolve()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"] == [
+        {
+            "id": "launch_feature",
+            "path": str(worktree.resolve()),
+            "link": "worktrees/launch_feature",
+            "status": "active",
+        }
+    ]
+    config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
+    assert config["worktrees"]["registered"] == index["worktrees"]
+    packet = context_from_here(root, cwd=nested)
+    assert packet.domain == "los"
+    assert packet.object_type == "project"
+    assert packet.target_path == project_root.resolve()
     assert validate_root(root).ok
 
 

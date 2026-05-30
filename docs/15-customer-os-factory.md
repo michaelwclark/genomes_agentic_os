@@ -287,10 +287,10 @@ the context files generated inside the OS:
   of the operator's full registry).
 
 When Codex operates inside a customer OS root it picks up the `customer_os_root`
-config layer from `<customer_os>/.codex/config.toml`. That layer sets the customer
+config layer from `<customer_os>/config.toml`. That layer sets the customer
 data boundary, customer-scoped MCP servers, and approval policy — overriding the
 operator-level Codex config for all work done inside that root. See
-[13 · Agent Surfaces](13-agent-surfaces.md) for the full five-layer config model.
+[13 · Agent Surfaces](13-agent-surfaces.md) for the full layer config model.
 
 ---
 

@@ -14,7 +14,7 @@ from .automation_ops import (
     set_automation_maturity,
 )
 from .config_ops import LAYERS as CONFIG_LAYERS
-from .config_ops import doctor_config, install_config
+from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
 from .doctor import doctor, format_doctor_result
 from .event_graph import (
@@ -60,6 +60,9 @@ from .scaffold import (
     create_workflow,
     install_docs,
     init_os,
+    link_project_source,
+    onboard_project,
+    register_project_worktree,
 )
 from .source_watch import (
     create_watch_source,
@@ -102,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument(
         "--projects-source",
         default=DEFAULT_PROJECTS_SOURCE,
-        help="Source projects directory to symlink into the installed OS root.",
+        help="Deprecated compatibility flag; project repo links now live under domain 02-projects entries.",
     )
     init_parser.add_argument(
         "--include-legacy-agent",
@@ -156,6 +159,32 @@ def build_parser() -> argparse.ArgumentParser:
     project_create.add_argument("--status", default="active", choices=("active", "waiting", "blocked", "done"))
     project_create.add_argument("--lane", help="Primary operating lane for this project.")
     project_create.set_defaults(handler=handle_project_create)
+    project_link_source = project_subparsers.add_parser(
+        "link-source",
+        aliases=["src"],
+        help="Create or repair a project-local src symlink to a local repository.",
+    )
+    project_link_source.add_argument("domain")
+    project_link_source.add_argument("project")
+    project_link_source.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_link_source.add_argument("--repo", help="Local repository path. Defaults to project.yml sources.repo.")
+    project_link_source.add_argument("--force", action="store_true", help="Replace an existing src symlink that points elsewhere.")
+    project_link_source.set_defaults(handler=handle_project_link_source)
+    project_onboard = project_subparsers.add_parser("onboard", help="Create or repair the project-local agent/config surface.")
+    project_onboard.add_argument("domain")
+    project_onboard.add_argument("project")
+    project_onboard.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_onboard.set_defaults(handler=handle_project_onboard)
+    project_worktree = project_subparsers.add_parser("worktree", help="Manage visible project worktree links.")
+    project_worktree_subparsers = project_worktree.add_subparsers(dest="project_worktree_command", required=True)
+    project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree symlink.")
+    project_worktree_add.add_argument("domain")
+    project_worktree_add.add_argument("project")
+    project_worktree_add.add_argument("name")
+    project_worktree_add.add_argument("--path", required=True, help="Existing worktree directory to link.")
+    project_worktree_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_worktree_add.add_argument("--force", action="store_true", help="Replace an existing worktree symlink that points elsewhere.")
+    project_worktree_add.set_defaults(handler=handle_project_worktree_add)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -344,6 +373,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply non-conflicting additions while preserving existing conflicting keys.",
     )
     config_install.set_defaults(handler=handle_config_install)
+    config_install_tree = config_subparsers.add_parser(
+        "install-tree",
+        help="Install or merge config.toml across the routed OS root, domains, projects, workflows, and automations.",
+    )
+    config_install_tree.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    config_install_tree_mode = config_install_tree.add_mutually_exclusive_group()
+    config_install_tree_mode.add_argument("--dry-run", action="store_true", default=True)
+    config_install_tree_mode.add_argument("--apply", action="store_true")
+    config_install_tree.add_argument("--backup", action="store_true", help="Back up existing config.toml files before applying.")
+    config_install_tree.add_argument(
+        "--confirm-conflicts",
+        action="store_true",
+        help="Apply non-conflicting additions while preserving existing conflicting keys.",
+    )
+    config_install_tree.set_defaults(handler=handle_config_install_tree)
     config_doctor = config_subparsers.add_parser("doctor", help="Validate config.toml OTEL and MCP contracts.")
     config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
@@ -673,6 +717,30 @@ def handle_project_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_link_source(args: argparse.Namespace) -> int:
+    print_result(link_project_source(args.root, args.domain, args.project, repo=args.repo, force=args.force))
+    return 0
+
+
+def handle_project_onboard(args: argparse.Namespace) -> int:
+    print_result(onboard_project(args.root, args.domain, args.project))
+    return 0
+
+
+def handle_project_worktree_add(args: argparse.Namespace) -> int:
+    print_result(
+        register_project_worktree(
+            args.root,
+            args.domain,
+            args.project,
+            args.name,
+            path=args.path,
+            force=args.force,
+        )
+    )
+    return 0
+
+
 def handle_workflow_create(args: argparse.Namespace) -> int:
     print_result(create_workflow(args.root, args.domain, args.lane, args.name))
     return 0
@@ -838,6 +906,17 @@ def handle_config_install(args: argparse.Namespace) -> int:
     result = install_config(
         args.root,
         layer=args.layer,
+        dry_run=not args.apply,
+        backup=args.backup,
+        confirm_conflicts=args.confirm_conflicts,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 2 if result.blocked else 0
+
+
+def handle_config_install_tree(args: argparse.Namespace) -> int:
+    result = install_config_tree(
+        args.root,
         dry_run=not args.apply,
         backup=args.backup,
         confirm_conflicts=args.confirm_conflicts,

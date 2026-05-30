@@ -40,6 +40,18 @@ Common flags:
 
 The project name must use lowercase letters, numbers, and underscores. The domain alias `lenders` normalizes to `los`.
 
+Repair an existing project layer:
+
+```bash
+agentic-os project onboard <domain> <project> --root ~/agentic_os
+```
+
+Register a visible branch worktree:
+
+```bash
+agentic-os project worktree add <domain> <project> <name> --root ~/agentic_os --path <existing-worktree>
+```
+
 ## Files Created
 
 A project is written under `<root>/<domain>/02-projects/<project>/`:
@@ -50,8 +62,24 @@ project.yml
 status.md
 decisions.md
 source-map.md
+AGENTS.md
+ROUTER.md
+CONTEXT.md
+RULES.md
+TOOLS.md
+MEMORY.md
+config.toml
 artifacts/
+config/
+ideas/
+worktrees/
 ```
+
+`config/` holds parsed project defaults such as workflow profiles, output
+artifact locations, validation commands, MCP boundaries, tools, memory policy,
+and registered worktrees. `ideas/` is the project-scoped capture area.
+`worktrees/` contains visible symlinks and `worktrees/index.yml`, which routing
+uses to recognize commands run from real worktree paths.
 
 The command also updates these domain indexes:
 
@@ -81,8 +109,12 @@ before making manual edits.
 TMP_ROOT="$(mktemp -d)/agentic_os"
 uv run agentic-os init --target "$TMP_ROOT"
 uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT" --repo /tmp/losmon --notion https://notion.example/project --jira FLYWL
+mkdir -p /tmp/losmon-feature
+uv run agentic-os project worktree add los losmon_replacement feature_branch --root "$TMP_ROOT" --path /tmp/losmon-feature
 uv run agentic-os validate --root "$TMP_ROOT"
 test -f "$TMP_ROOT/los/02-projects/losmon_replacement/project.yml"
+test -f "$TMP_ROOT/los/02-projects/losmon_replacement/config/output-artifacts.yml"
+test -L "$TMP_ROOT/los/02-projects/losmon_replacement/worktrees/feature_branch"
 grep -q "losmon_replacement" "$TMP_ROOT/los/00-control-plane/active-work.md"
 grep -q "/tmp/losmon" "$TMP_ROOT/los/02-projects/losmon_replacement/source-map.md"
 ```
@@ -99,4 +131,4 @@ test ! -d "$TMP_ROOT/lenders"
 
 ## Done Signal
 
-Feature 01 is healthy when project creation creates the project folder, updates active-work and project indexes, preserves existing files on rerun, records supplied source references, normalizes `lenders` to `los`, and leaves `agentic-os validate` passing.
+Feature 01 is healthy when project creation creates the project folder, project-local agent/config/ideas/worktree surfaces, updates active-work and project indexes, preserves existing files on rerun, records supplied source references, normalizes `lenders` to `los`, routes from registered worktree paths, and leaves `agentic-os validate` passing.

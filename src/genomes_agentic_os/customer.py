@@ -36,8 +36,15 @@ from .validate import ValidationResult, validate_domain
 
 
 PRIVATE_TERMS = ("genome", "clark", "clarks_consulting", "los", "lenders")
+CUSTOMER_CONFIG_PROFILES = {
+    "customer_os_root": "customer_os_root",
+    "domain_or_lane": "domain_or_lane",
+    "workflow_or_task": "workflow_or_task",
+    "automation": "automation",
+}
 CUSTOMER_ROOT_FILES = (
     ROOT_MARKER_FILENAME,
+    "config.toml",
     "README.md",
     "ROUTER.md",
     "AGENTS.md",
@@ -45,6 +52,7 @@ CUSTOMER_ROOT_FILES = (
     "CONTEXT.md",
     "RULES.md",
     "TOOLS.md",
+    "MEMORY.md",
     "agentic-os.lock.json",
     "UPDATE_POLICY.md",
     "customer.yml",
@@ -306,6 +314,107 @@ workspace.
 """
 
 
+def customer_layer_tools() -> str:
+    return f"""# Tools
+
+This registry names the visible tool surface for this customer-approved layer.
+
+## Skills
+
+| Skill | Use When | Source |
+| --- | --- | --- |
+| `os-navigator` | Route customer work to the correct local layer. | shared skill registry |
+| `workflow-builder` | Create or improve reusable workflows. | shared skill registry |
+| `automation-qualifier` | Decide whether a process is safe to automate. | shared skill registry |
+
+## Commands
+
+| Command | Use When | Notes |
+| --- | --- | --- |
+| `agentic-os customer validate` | Validate this customer OS. | Run before handoff after structural changes. |
+| `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
+
+## MCP Servers
+
+{mcp_tools_markdown(approved_domains=(), include_inactive=False, public_customer=True)}
+
+## Missing Or Disabled
+
+Record missing customer-approved tools here instead of falling back to another workspace.
+"""
+
+
+def customer_layer_config(layer: str) -> str:
+    profile = CUSTOMER_CONFIG_PROFILES[layer]
+    return f"""# Agentic OS Codex config template
+# Layer: {layer}
+# Customer-safe local layer. Do not inline secrets.
+
+model = "gpt-5.2"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
+project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+
+[profiles.{profile}]
+model = "gpt-5.2"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[profiles.{profile}.agentic_os]
+layer = "{layer}"
+prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+context_contract = "route-read-cd-repeat"
+rules_file = "RULES.md"
+tool_registry_file = "TOOLS.md"
+mcp_availability = "approved customer systems only"
+environment = "local filesystem"
+
+[otel]
+log_user_prompt = false
+exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+[mcp_servers.filesystem_runtime]
+command = "agentic-os"
+args = ["customer", "validate"]
+secret_policy = "no inline secrets"
+"""
+
+
+def has_private_marker(content: str) -> bool:
+    lowered = content.lower()
+    return any(re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", lowered) for term in PRIVATE_TERMS)
+
+
+def write_customer_safe_file(path: Path, content: str, result: CustomerResult) -> None:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        result.created.append(path)
+        return
+    if existing == content:
+        result.skipped.append(path)
+        return
+    if has_private_marker(existing):
+        path.write_text(content, encoding="utf-8")
+        result.updated.append(path)
+        return
+    result.skipped.append(path)
+
+
+def ensure_customer_codex_layer(root: Path, layer: str, result: CustomerResult) -> None:
+    write_customer_safe_file(root / "config.toml", customer_layer_config(layer), result)
+    write_customer_safe_file(root / "AGENTS.md", agent_entrypoint("this customer-approved Agentic OS layer"), result)
+    write_customer_safe_file(root / "CLAUDE.md", claude_adapter(), result)
+    write_customer_safe_file(root / "ROUTER.md", "# Agent Router\n\nRoute to the narrowest customer-approved local layer before acting.\n", result)
+    write_customer_safe_file(root / "CONTEXT.md", "# Local Context\n\nUse only customer-approved local context and source systems for this layer.\n", result)
+    write_customer_safe_file(root / "RULES.md", render_customer_rules({"customer": {"display_name": "this customer", "approved_domains": []}}), result)
+    write_customer_safe_file(root / "TOOLS.md", customer_layer_tools(), result)
+    write_customer_safe_file(root / "MEMORY.md", "# Memory Policy\n\nRecord only durable, non-secret, customer-approved learnings.\n", result)
+
+
 def render_customer_asset(template_name: str, profile: dict[str, Any]) -> str:
     customer = profile_customer(profile)
     template = (template_source_dir() / "customer" / template_name).read_text(encoding="utf-8")
@@ -477,6 +586,7 @@ def parse_bundle_item(item: Any, default_domain: str) -> tuple[str, str, str]:
 def create_customer_domain(root: Path, domain: str) -> CustomerResult:
     result = CustomerResult()
     create_domain_structure(root, domain, result, public_customer_tools=True)
+    ensure_customer_codex_layer(root / domain, "domain_or_lane", result)
     return result
 
 
@@ -490,6 +600,7 @@ def create_customer_workflow(root: Path, domain: str, lane: str, name: str) -> C
     write_file_once(workflow_root / "runs" / "README.md", workflow_runs_readme(domain, lane, name), result)
     for filename in WORKFLOW_FILES:
         write_file_once(workflow_root / filename, workflow_scaffold_content(domain, lane, name, filename), result)
+    ensure_customer_codex_layer(workflow_root, "workflow_or_task", result)
     return result
 
 
@@ -501,6 +612,7 @@ def create_customer_automation(root: Path, domain: str, lane: str, name: str) ->
     write_file_once(automation_root / "logs" / "README.md", automation_logs_readme(domain, lane, name), result)
     for filename in AUTOMATION_FILES:
         write_file_once(automation_root / filename, automation_scaffold_content(domain, lane, name, filename), result)
+    ensure_customer_codex_layer(automation_root, "automation", result)
     return result
 
 
@@ -533,6 +645,7 @@ def customer_init(customer_slug: str, profile_path: str | Path, target: str | Pa
     write_file_once(root / "CONTEXT.md", render_customer_context(profile), result)
     write_file_once(root / "RULES.md", render_customer_rules(profile), result)
     write_file_once(root / "TOOLS.md", render_customer_tools(profile), result)
+    ensure_customer_codex_layer(root, "customer_os_root", result)
     write_file_once(root / "customer.yml", yaml.safe_dump(profile, sort_keys=False), result)
     write_customer_assets(root, profile, result)
     apply_customer_profile(root, profile, result)
@@ -555,6 +668,7 @@ def customer_update(customer_slug: str, root: str | Path) -> dict[str, Any]:
     write_file_once(os_root / "CONTEXT.md", render_customer_context(profile), result)
     write_file_once(os_root / "RULES.md", render_customer_rules(profile), result)
     write_file_once(os_root / "TOOLS.md", render_customer_tools(profile), result)
+    ensure_customer_codex_layer(os_root, "customer_os_root", result)
     write_customer_assets(os_root, profile, result)
     apply_customer_profile(os_root, profile, result)
     return {"root": str(os_root), "customer": profile_customer(profile)["slug"], **result.as_dict()}

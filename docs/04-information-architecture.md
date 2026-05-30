@@ -41,7 +41,6 @@ Running `agentic-os init` (default target: `~/agentic_os`) produces:
   RULES.md               ← OS-wide approval and safety rules
   TOOLS.md               ← skill and command inventory (rendered by capability_registry)
   README.md
-  projects               ← symlink to ~/projects (configurable via --projects-source)
   registries/            ← capabilities.yml, commands.yml, skills.yml, …
   personal/
   clarks_consulting/
@@ -91,7 +90,7 @@ scaffolder:
 | --- | --- | --- |
 | `00-control-plane/` | Active work, routing, approvals, and decisions. | `active-work.md`, `decisions.md`, `routing-rules.md`, `approval-rules.md` |
 | `01-inbox/` | Raw capture and triage — where unprocessed input lands first. | `raw-ideas.md`, `triage.md` |
-| `02-projects/` | One folder per active project. | `README.md` |
+| `02-projects/` | One folder per active project; local repositories are linked as each project's `src/`. | `README.md` |
 | `03-workflows/` | Repeatable human-and-agent workflow specs, divided by lane. | `README.md` + one sub-folder per standard lane |
 | `04-automations/` | Trigger-driven automation specs and logs, divided by lane. | `README.md` + one sub-folder per standard lane |
 | `05-knowledge/` | Source maps, glossary, memory policy, and reference material. | `source-map.md`, `glossary.md`, `memory-policy.md` |

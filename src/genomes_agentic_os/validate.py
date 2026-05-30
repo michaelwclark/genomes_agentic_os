@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
+from .config_ops import CONFIG_FILENAME
 from .scaffold import (
     CONTROL_PLANE_FILES,
     DEFAULT_DOMAINS,
@@ -16,7 +17,7 @@ from .scaffold import (
     INBOX_FILES,
     KNOWLEDGE_FILES,
     METRIC_FILES,
-    PROJECTS_LINK_NAME,
+    PROJECT_CONFIG_FILES,
     ROOT_MARKER_FILENAME,
     STANDARD_LANES,
     expand_path,
@@ -25,6 +26,7 @@ from .scaffold import (
 
 ROOT_FILES = (
     ROOT_MARKER_FILENAME,
+    CONFIG_FILENAME,
     "README.md",
     "ROUTER.md",
     "AGENTS.md",
@@ -32,6 +34,7 @@ ROOT_FILES = (
     "CONTEXT.md",
     "RULES.md",
     "TOOLS.md",
+    "MEMORY.md",
     "agentic-os.lock.json",
     "UPDATE_POLICY.md",
 )
@@ -191,8 +194,64 @@ def warn_legacy_agent(path: Path, result: ValidationResult) -> None:
         result.warnings.append(f"legacy AGENT.md present without compatibility mode: {path}")
 
 
+def validate_agent_layer(layer_root: Path, result: ValidationResult) -> None:
+    for filename in (CONFIG_FILENAME, "AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"):
+        require_file(layer_root / filename, result)
+    validate_claude_adapter(layer_root / "CLAUDE.md", result)
+    warn_legacy_agent(layer_root / "AGENT.md", result)
+
+
+def validate_project_worktrees(project_root: Path, result: ValidationResult) -> None:
+    index_path = project_root / "worktrees" / "index.yml"
+    data = load_control_yaml(index_path, result)
+    worktrees = data.get("worktrees")
+    if worktrees is None:
+        result.errors.append(f"project worktree index missing worktrees list: {index_path}")
+        return
+    if not isinstance(worktrees, list):
+        result.errors.append(f"project worktree index worktrees must be a list: {index_path}")
+        return
+
+    seen_ids: set[str] = set()
+    for entry in worktrees:
+        if not isinstance(entry, dict):
+            result.errors.append(f"project worktree entry must be a mapping: {index_path}")
+            continue
+        worktree_id = str(entry.get("id") or "")
+        path_value = str(entry.get("path") or "")
+        link_value = str(entry.get("link") or "")
+        if not worktree_id or not path_value or not link_value:
+            result.errors.append(f"project worktree entry missing id, path, or link: {index_path}")
+            continue
+        if worktree_id in seen_ids:
+            result.errors.append(f"duplicate project worktree id {worktree_id!r}: {index_path}")
+        seen_ids.add(worktree_id)
+        link_path = project_root / link_value
+        if not link_path.is_symlink():
+            result.errors.append(f"project worktree link is missing or not a symlink: {link_path}")
+        target_path = Path(path_value).expanduser()
+        if not target_path.exists():
+            result.warnings.append(f"project worktree target is missing: {target_path}")
+
+
+def validate_project_layer(project_root: Path, result: ValidationResult) -> None:
+    validate_agent_layer(project_root, result)
+    for filename in ("README.md", "project.yml", "status.md", "source-map.md", "decisions.md"):
+        require_file(project_root / filename, result)
+    for directory in ("artifacts", "config", "ideas", "worktrees"):
+        require_dir(project_root / directory, result)
+    for filename in PROJECT_CONFIG_FILES:
+        require_file(project_root / "config" / filename, result)
+    require_file(project_root / "ideas" / "README.md", result)
+    require_file(project_root / "ideas" / "raw-ideas.md", result)
+    require_file(project_root / "worktrees" / "README.md", result)
+    require_file(project_root / "worktrees" / "index.yml", result)
+    validate_project_worktrees(project_root, result)
+
+
 def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     require_dir(domain_root, result)
+    require_file(domain_root / CONFIG_FILENAME, result)
     require_file(domain_root / "README.md", result)
     require_file(domain_root / "ROUTER.md", result)
     require_file(domain_root / "AGENTS.md", result)
@@ -200,6 +259,7 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     require_file(domain_root / "CONTEXT.md", result)
     require_file(domain_root / "RULES.md", result)
     require_file(domain_root / "TOOLS.md", result)
+    require_file(domain_root / "MEMORY.md", result)
     require_file(domain_root / "REFERENCES.md", result)
     require_file(domain_root / "domain.yml", result)
     validate_claude_adapter(domain_root / "CLAUDE.md", result)
@@ -235,6 +295,13 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
         require_file(domain_root / "07-metrics" / filename, result)
 
     require_file(domain_root / "08-archive" / "README.md", result)
+
+    for project_config in sorted((domain_root / "02-projects").glob("*/project.yml")):
+        validate_project_layer(project_config.parent, result)
+    for workflow_spec in sorted((domain_root / "03-workflows").glob("*/*/workflow.md")):
+        validate_agent_layer(workflow_spec.parent, result)
+    for automation_spec in sorted((domain_root / "04-automations").glob("*/*/automation.md")):
+        validate_agent_layer(automation_spec.parent, result)
 
 
 def load_control_yaml(path: Path, result: ValidationResult) -> dict:
@@ -363,6 +430,23 @@ def validate_capability_registries(root: Path, result: ValidationResult) -> None
             )
 
 
+def validate_registered_hooks(root: Path, result: ValidationResult) -> None:
+    hooks_path = root / REGISTRY_FILES["hooks"]
+    if not hooks_path.is_file():
+        return
+    for entry in load_registry(hooks_path, "hooks"):
+        source = str(entry.get("source") or "")
+        if not source.startswith("hooks/"):
+            continue
+        path = root / source
+        if not path.is_file():
+            result.errors.append(f"registered hook file is missing: {path}")
+            continue
+        mode = path.stat().st_mode & 0o777
+        if not mode & 0o111:
+            result.errors.append(f"registered hook file is not executable: {path}")
+
+
 def validate_update_backup_contract(root: Path, result: ValidationResult) -> None:
     backup_policy = load_control_yaml(root / "registries" / "backup-policy.yml", result).get("backup_policy") or {}
     if backup_policy:
@@ -423,13 +507,8 @@ def validate_root(root: str | Path) -> ValidationResult:
     require_dir(os_root / "logs" / "updates", result)
     require_dir(os_root / "logs" / "backups", result)
     validate_capability_registries(os_root, result)
+    validate_registered_hooks(os_root, result)
     validate_update_backup_contract(os_root, result)
-
-    projects_link = os_root / PROJECTS_LINK_NAME
-    if not projects_link.exists() and not projects_link.is_symlink():
-        result.errors.append(f"missing projects link: {projects_link}")
-    elif not projects_link.is_symlink():
-        result.warnings.append(f"projects path is not a symlink: {projects_link}")
 
     profile_domains = profile_domain_names(os_root)
     domains_to_validate = profile_domains or list(DEFAULT_DOMAINS)

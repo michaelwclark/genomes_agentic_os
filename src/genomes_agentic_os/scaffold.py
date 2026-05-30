@@ -14,9 +14,11 @@ import yaml
 from .capability_registry import (
     REGISTRY_FILES,
     VISIBLE_CAPABILITY_DIRECTORIES,
+    hook_entries,
     inventory_markdown,
     registry_file_payloads,
 )
+from .config_ops import install_config
 from .mcp_catalog import mcp_tools_markdown
 
 
@@ -29,7 +31,7 @@ DEFAULT_DOMAINS = (
 )
 
 ROOT_MARKER_FILENAME = ".agentic_root"
-PROJECTS_LINK_NAME = "projects"
+# Backward-compatible default for the deprecated --projects-source flag.
 DEFAULT_PROJECTS_SOURCE = "~/projects"
 SOURCE_PACKAGE_VERSION = "0.1.0"
 DEFAULT_UPDATE_CHANNEL = "stable"
@@ -55,6 +57,17 @@ PROJECT_STATUSES = (
     "waiting",
     "blocked",
     "done",
+)
+
+PROJECT_CONFIG_FILES = (
+    "project-profile.yml",
+    "workflows.yml",
+    "output-artifacts.yml",
+    "validation.yml",
+    "worktrees.yml",
+    "memory.yml",
+    "mcps.yml",
+    "tools.yml",
 )
 
 CONTROL_PLANE_FILES = (
@@ -210,15 +223,20 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     result.created.append(path)
 
 
-def root_marker_content(projects_source: str | Path = DEFAULT_PROJECTS_SOURCE) -> str:
-    source = str(projects_source).replace('"', '\\"')
+def ensure_codex_config(root: Path, layer: str, result: ScaffoldResult) -> None:
+    config_result = install_config(root, layer=layer, dry_run=False, confirm_conflicts=True)
+    result.created.extend(config_result.created)
+    result.updated.extend(config_result.updated)
+    result.skipped.extend(config_result.skipped)
+
+
+def root_marker_content(_projects_source: str | Path = DEFAULT_PROJECTS_SOURCE) -> str:
     return f"""# Agentic OS root marker
 
 kind = "genomes_agentic_os_root"
 version = "1"
 source_package_version = "{SOURCE_PACKAGE_VERSION}"
-projects_source = "{source}"
-projects_link = "{PROJECTS_LINK_NAME}"
+project_link_scope = "domain_project_src"
 update_channel = "{DEFAULT_UPDATE_CHANNEL}"
 update_policy = "{DEFAULT_UPDATE_POLICY}"
 update_registry = "registries/updates.yml"
@@ -342,20 +360,6 @@ def ensure_customer_update_contract(root: Path, result: ScaffoldResult) -> None:
     )
 
 
-def ensure_projects_link(
-    root: Path,
-    result: ScaffoldResult,
-    projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
-) -> None:
-    link_path = root / PROJECTS_LINK_NAME
-    if link_path.is_symlink() or link_path.exists():
-        result.skipped.append(link_path)
-        return
-    link_path.parent.mkdir(parents=True, exist_ok=True)
-    link_path.symlink_to(expand_path(projects_source), target_is_directory=True)
-    result.created.append(link_path)
-
-
 def append_once(path: Path, content: str, result: ScaffoldResult) -> None:
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if content in existing:
@@ -410,6 +414,9 @@ def ensure_capability_registries(root: Path, result: ScaffoldResult) -> None:
 def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> None:
     ensure_visible_capability_directories(root, result)
     ensure_capability_registries(root, result)
+    hooks_root = harness_source_dir() / "hooks"
+    if hooks_root.is_dir():
+        result.extend(copy_tree_missing(hooks_root, root / "hooks"))
 
 
 def mirror_visible_commands_and_skills(root: Path) -> ScaffoldResult:
@@ -417,6 +424,9 @@ def mirror_visible_commands_and_skills(root: Path) -> ScaffoldResult:
     harness_root = harness_source_dir()
     result.extend(copy_tree_missing(harness_root / "commands", root / "commands"))
     result.extend(copy_tree_missing(harness_root / "skills", root / "skills"))
+    hooks_root = harness_root / "hooks"
+    if hooks_root.is_dir():
+        result.extend(copy_tree_missing(hooks_root, root / "hooks"))
     return result
 
 
@@ -609,6 +619,10 @@ safety, privacy, production, billing, legal, or customer-visible work.
 
 
 def root_tools() -> str:
+    hooks = "\n".join(
+        f"| `{entry['id']}` | {entry['description']} | `{entry.get('source', '')}` |"
+        for entry in hook_entries()
+    )
     return f"""# Tools
 
 This root registry names the visible tool surface for the installed Agentic OS.
@@ -636,7 +650,10 @@ the source of truth by themselves.
 | `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
 | `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
+| `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
+| `agentic-os project worktree add` | Register a visible worktree link inside a project. | Keeps the real checkout outside the OS. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
+| `agentic-os config install-tree` | Install Codex config across routed OS layers. | Dry-run by default. |
 
 ## MCP Servers
 
@@ -653,6 +670,12 @@ the source of truth by themselves.
 | Wrapper | Use When | Path |
 | --- | --- | --- |
 | host tool registry | Shell, terminal, runtime, package-manager, and cleanup work. | `shared_factory/05-knowledge/host-tool-registry.<host>.yml` |
+
+## Hooks
+
+| Hook | Use When | Source |
+| --- | --- | --- |
+{hooks}
 
 ## When To Use What
 
@@ -1368,7 +1391,6 @@ def ensure_root_files(
 ) -> None:
     ensure_dir(root, result)
     write_root_marker(root, result, projects_source)
-    ensure_projects_link(root, result, projects_source)
     ensure_visible_capability_surface(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
@@ -1382,6 +1404,7 @@ def ensure_root_files(
     write_file_once(root / "TOOLS.md", root_tools(), result)
     if include_legacy_agent:
         write_file_once(root / "AGENT.md", legacy_agent_adapter(), result)
+    ensure_codex_config(root, "agentic_os_root", result)
 
 
 def create_domain_structure(
@@ -1407,6 +1430,7 @@ def create_domain_structure(
         write_file_once(domain_root / "AGENT.md", legacy_agent_adapter(), result)
     write_file_once(domain_root / "REFERENCES.md", domain_references(domain), result)
     write_file_once(domain_root / "domain.yml", domain_config(domain), result)
+    ensure_codex_config(domain_root, "domain_or_lane", result)
 
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
@@ -1510,6 +1534,14 @@ def install_docs(root: str | Path) -> ScaffoldResult:
             os_root / "shared_factory" / "05-knowledge" / "skills",
         )
     )
+    hooks_root = harness_source_dir() / "hooks"
+    if hooks_root.is_dir():
+        result.extend(
+            copy_tree(
+                hooks_root,
+                os_root / "shared_factory" / "05-knowledge" / "hooks",
+            )
+        )
     result.extend(
         copy_tree(
             plans_source_dir(),
@@ -1554,6 +1586,7 @@ Describe the project outcome, boundaries, source systems, and active workflows.
 
 - `status.md` records current state and next action.
 - `source-map.md` records repos, Notion pages, Jira projects, and other source links.
+- `src/` points to the local repository when `--repo` is a local path.
 - `decisions.md` records durable project decisions.
 - `artifacts/` stores project-specific outputs that do not belong in a workflow run.
 """
@@ -1631,6 +1664,264 @@ def project_source_map(project: str, repo: str | None, notion: str | None, jira:
 """
 
 
+def project_agents(domain: str, project: str) -> str:
+    return f"""# Agent Entry Point: {project}
+
+This is the project-local entrypoint for `{domain}/02-projects/{project}`.
+
+## Required Loop
+
+1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `project.yml`, and `config/*.yml`.
+2. Decide whether the request belongs in project state, `src/`, a registered worktree, `ideas/`, or `artifacts/`.
+3. If source work is required, use `src/` for the canonical checkout or `worktrees/<name>` for an active branch-specific checkout.
+4. Follow local `RULES.md` and tool boundaries before touching source files.
+5. Record durable ideas in `ideas/`, outputs in `artifacts/`, and execution evidence in the domain run log.
+
+## Source Priority
+
+- `project.yml` and `source-map.md` identify the project and canonical sources.
+- `config/output-artifacts.yml` declares feature artifact roots such as `src/.features/{{ticket_or_slug}}`.
+- `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
+"""
+
+
+def project_router(domain: str, project: str) -> str:
+    return f"""# Agent Router: {project}
+
+Route project work to the narrowest local surface before acting.
+
+| Request Type | Route |
+| --- | --- |
+| New idea, product thought, rough note | `ideas/raw-ideas.md` |
+| Project status or next action | `status.md` |
+| Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
+| Feature implementation | `src/` or a registered `worktrees/<name>` link |
+| Feature artifact or generated output | `artifacts/` or configured source artifact root |
+| Durable decision | `decisions.md` |
+
+## Worktree Rule
+
+Use `worktrees/index.yml` before assuming where active branch checkouts live.
+Register visible worktrees with `agentic-os project worktree add {domain} {project} <name> --path <path>`.
+"""
+
+
+def project_context(domain: str, project: str) -> str:
+    return f"""# Context: {project}
+
+This project layer is the operating surface for `{domain}/02-projects/{project}`.
+It connects project state, source links, worktrees, ideas, output artifacts, and local rules.
+
+## Load Order
+
+1. `project.yml`
+2. `source-map.md`
+3. `config/project-profile.yml`
+4. `config/workflows.yml`, `config/output-artifacts.yml`, and `config/validation.yml`
+5. `worktrees/index.yml` when source work may use a branch checkout
+
+## Markdown vs YAML
+
+- Markdown files explain intent, decisions, source maps, and human-readable context.
+- YAML files under `config/` are for parsed defaults, paths, validation commands, MCP boundaries, and tool declarations.
+- Use Markdown with YAML front matter for hybrid specs, ideas, and ticket drafts when both narrative and machine-readable metadata are needed.
+"""
+
+
+def project_rules(domain: str, project: str) -> str:
+    return f"""# Rules: {project}
+
+These rules apply to `{domain}/02-projects/{project}` unless a narrower source
+checkout or feature artifact defines a stricter rule.
+
+## Operating Rules
+
+- Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
+- Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
+- Use `ideas/` for project-scoped idea capture before promoting work into a workflow, ticket, or feature artifact.
+- Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
+- Follow the strictest applicable parent, project, source-repo, and workflow rule.
+"""
+
+
+def project_tools(domain: str, project: str) -> str:
+    return f"""# Tools: {project}
+
+This registry names project-local capabilities for `{domain}/02-projects/{project}`.
+
+## Commands
+
+| Command | Use When | Notes |
+| --- | --- | --- |
+| `agentic-os project src` | Create or repair the canonical `src` link. | The link stays scoped inside this project folder. |
+| `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
+| `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
+| `agentic-os context build --project {project}` | Build a deterministic project context packet. | Use for handoffs. |
+| `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
+
+## Local Paths
+
+| Path | Use When |
+| --- | --- |
+| `src/` | Canonical source checkout for this project. |
+| `worktrees/` | Visible links to active worktrees. |
+| `config/` | Parsed project defaults and tool/workflow configuration. |
+| `ideas/` | Project-scoped idea capture. |
+| `artifacts/` | Project outputs that do not belong in a run log. |
+"""
+
+
+def project_memory_policy(project: str) -> str:
+    return f"""# Memory Policy: {project}
+
+Record durable, non-secret project learnings here when they are useful for
+future work in this project. Keep temporary branch status in `status.md` or
+`worktrees/index.yml`.
+"""
+
+
+def project_config_file_content(domain: str, project: str, status: str, lane: str | None, filename: str) -> str:
+    lane_value = lane or ""
+    if filename == "project-profile.yml":
+        return yaml.safe_dump(
+            {
+                "project": {
+                    "id": project,
+                    "domain": domain,
+                    "status": status,
+                    "lane": lane_value,
+                    "entrypoint": "AGENTS.md",
+                    "canonical_source": "src",
+                    "ideas": "ideas",
+                    "artifacts": "artifacts",
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "workflows.yml":
+        return yaml.safe_dump(
+            {
+                "workflows": {
+                    "default_lane": lane_value,
+                    "feature_development": {
+                        "artifacts_ref": "config/output-artifacts.yml",
+                        "validation_ref": "config/validation.yml",
+                    },
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "output-artifacts.yml":
+        return yaml.safe_dump(
+            {
+                "output_artifacts": {
+                    "feature_root": "src/.features/{ticket_or_slug}",
+                    "project_artifacts": "artifacts",
+                    "run_logs": "../../06-runs-and-logs/runs",
+                    "front_matter": True,
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "validation.yml":
+        return yaml.safe_dump(
+            {
+                "validation": {
+                    "source_root": "src",
+                    "commands": [],
+                    "required_before_handoff": ["agentic-os validate --root <os-root>"],
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "worktrees.yml":
+        return yaml.safe_dump(
+            {
+                "worktrees": {
+                    "directory": "worktrees",
+                    "index": "worktrees/index.yml",
+                    "link_policy": "symlink_to_external_worktree",
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "memory.yml":
+        return yaml.safe_dump(
+            {
+                "memory": {
+                    "local_file": "MEMORY.md",
+                    "policy": "non_secret_durable_project_learnings_only",
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "mcps.yml":
+        return yaml.safe_dump(
+            {
+                "mcps": {
+                    "availability": "project-approved systems only",
+                    "declared_in": "TOOLS.md",
+                    "codex_config": "config.toml",
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "tools.yml":
+        return yaml.safe_dump(
+            {
+                "tools": {
+                    "registry": "TOOLS.md",
+                    "commands": [
+                        "agentic-os project src",
+                        "agentic-os project onboard",
+                        "agentic-os project worktree add",
+                        "agentic-os context build",
+                        "agentic-os validate",
+                    ],
+                }
+            },
+            sort_keys=False,
+        )
+    raise ValueError(f"unknown project config file: {filename}")
+
+
+def worktrees_readme(project: str) -> str:
+    return f"""# Worktrees: {project}
+
+This folder contains visible links to active project worktrees. The source
+checkouts stay where they already live; this folder makes them discoverable from
+the project operating surface.
+
+Register a worktree:
+
+```bash
+agentic-os project worktree add <domain> {project} <name> --path <path>
+```
+
+`index.yml` is the machine-readable list used by routing.
+"""
+
+
+def worktrees_index(project: str) -> str:
+    return yaml.safe_dump({"project": project, "worktrees": []}, sort_keys=False)
+
+
+def ideas_readme(project: str) -> str:
+    return f"""# Ideas: {project}
+
+Capture project-scoped ideas here before promoting them into tickets, workflows,
+feature artifacts, or implementation plans.
+"""
+
+
+def ideas_raw(project: str) -> str:
+    return f"""# Raw Ideas: {project}
+
+| Date | Source | Idea | Next Step |
+| --- | --- | --- | --- |
+"""
+
+
 def ensure_project_index(projects_readme: Path, domain: str, project: str, status: str, result: ScaffoldResult) -> None:
     table = "\n## Project Index\n\n| Project | Status | Folder |\n| --- | --- | --- |\n"
     if "## Project Index" not in projects_readme.read_text(encoding="utf-8"):
@@ -1658,6 +1949,320 @@ def append_project_source_refs(source_map: Path, repo: str | None, notion: str |
         append_once(source_map, row, result)
 
 
+def write_project_file(path: Path, content: str, result: ScaffoldResult, *, replace_markers: tuple[str, ...] = ()) -> None:
+    if not path.exists():
+        write_file_once(path, content, result)
+        return
+    existing = path.read_text(encoding="utf-8")
+    if existing == content:
+        result.skipped.append(path)
+        return
+    if replace_markers and any(marker in existing for marker in replace_markers):
+        path.write_text(content, encoding="utf-8")
+        result.updated.append(path)
+        return
+    result.skipped.append(path)
+
+
+def ensure_project_operating_surface(
+    project_root: Path,
+    domain: str,
+    project: str,
+    status: str,
+    lane: str | None,
+    result: ScaffoldResult,
+) -> None:
+    ensure_dir(project_root / "artifacts", result)
+    ensure_dir(project_root / "config", result)
+    ensure_dir(project_root / "ideas", result)
+    ensure_dir(project_root / "worktrees", result)
+    write_project_file(
+        project_root / "AGENTS.md",
+        project_agents(domain, project),
+        result,
+        replace_markers=("This file is the harness-neutral entrypoint for this Agentic OS layer",),
+    )
+    write_project_file(
+        project_root / "ROUTER.md",
+        project_router(domain, project),
+        result,
+        replace_markers=("Route work to the narrowest correct domain, workflow, automation, or run log",),
+    )
+    write_project_file(
+        project_root / "CONTEXT.md",
+        project_context(domain, project),
+        result,
+        replace_markers=("Describe the local room, source systems, routing hints",),
+    )
+    write_project_file(
+        project_root / "RULES.md",
+        project_rules(domain, project),
+        result,
+        replace_markers=("Record local constraints, approval gates, safety boundaries",),
+    )
+    write_project_file(
+        project_root / "TOOLS.md",
+        project_tools(domain, project),
+        result,
+        replace_markers=("List the visible capabilities intended for this layer",),
+    )
+    write_project_file(
+        project_root / "MEMORY.md",
+        project_memory_policy(project),
+        result,
+        replace_markers=("Record only durable, useful, non-secret learnings",),
+    )
+    write_file_once(project_root / "worktrees" / "README.md", worktrees_readme(project), result)
+    write_file_once(project_root / "worktrees" / "index.yml", worktrees_index(project), result)
+    write_file_once(project_root / "ideas" / "README.md", ideas_readme(project), result)
+    write_file_once(project_root / "ideas" / "raw-ideas.md", ideas_raw(project), result)
+    for filename in PROJECT_CONFIG_FILES:
+        write_file_once(
+            project_root / "config" / filename,
+            project_config_file_content(domain, project, status, lane, filename),
+            result,
+        )
+    ensure_codex_config(project_root, "project", result)
+
+
+def is_remote_repo_reference(repo: str) -> bool:
+    return "://" in repo or repo.startswith("git@")
+
+
+def local_repo_link_target(repo: str | None) -> Path | None:
+    if not repo or is_remote_repo_reference(repo):
+        return None
+    candidate = Path(repo).expanduser()
+    if not candidate.is_absolute() and not candidate.exists() and not str(repo).startswith("."):
+        return None
+    return expand_path(repo)
+
+
+def ensure_project_source_link(
+    project_root: Path,
+    repo: str | None,
+    result: ScaffoldResult,
+    *,
+    replace: bool = False,
+    fail_on_conflict: bool = False,
+) -> None:
+    target = local_repo_link_target(repo)
+    if target is None:
+        return
+    link_path = project_root / "src"
+    if link_path.is_symlink():
+        if link_path.resolve() == target:
+            result.skipped.append(link_path)
+            return
+        if not replace:
+            if fail_on_conflict:
+                raise ValueError(f"project src already points elsewhere: {link_path}")
+            result.skipped.append(link_path)
+            return
+        link_path.unlink()
+        link_path.symlink_to(target, target_is_directory=True)
+        result.updated.append(link_path)
+        return
+    if link_path.exists():
+        if fail_on_conflict:
+            raise ValueError(f"project src exists and is not a symlink: {link_path}")
+        result.skipped.append(link_path)
+        return
+    link_path.symlink_to(target, target_is_directory=True)
+    result.created.append(link_path)
+
+
+def project_repo_from_config(project_root: Path) -> str:
+    config = project_root / "project.yml"
+    data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    sources = data.get("sources") if isinstance(data.get("sources"), dict) else {}
+    return str(sources.get("repo") or "")
+
+
+def set_project_repo(project_root: Path, repo: str, result: ScaffoldResult) -> None:
+    config = project_root / "project.yml"
+    data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"project config must be a YAML mapping: {config}")
+    sources = data.get("sources")
+    if not isinstance(sources, dict):
+        sources = {}
+        data["sources"] = sources
+    if sources.get("repo") == repo:
+        result.skipped.append(config)
+        return
+    sources["repo"] = repo
+    config.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    result.updated.append(config)
+
+
+def link_project_source(
+    root: str | Path,
+    domain: str,
+    project: str,
+    *,
+    repo: str | None = None,
+    force: bool = False,
+) -> ScaffoldResult:
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    os_root = expand_path(root)
+    project_root = os_root / domain / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+
+    result = ScaffoldResult()
+    repo = repo or project_repo_from_config(project_root)
+    if not repo:
+        raise ValueError("repo is required because project.yml has no sources.repo")
+    if local_repo_link_target(repo) is None:
+        raise ValueError(f"repo must be a local path to create a project src symlink: {repo}")
+
+    ensure_project_source_link(project_root, repo, result, replace=force, fail_on_conflict=True)
+    set_project_repo(project_root, repo, result)
+    append_project_source_refs(project_root / "source-map.md", repo, None, None, result)
+    data = yaml.safe_load((project_root / "project.yml").read_text(encoding="utf-8")) or {}
+    ensure_project_operating_surface(
+        project_root,
+        domain,
+        project,
+        str(data.get("status") or "active"),
+        str(data.get("lane") or "") or None,
+        result,
+    )
+    return result
+
+
+def onboard_project(root: str | Path, domain: str, project: str) -> ScaffoldResult:
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    os_root = expand_path(root)
+    project_root = os_root / domain / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+    data = yaml.safe_load((project_root / "project.yml").read_text(encoding="utf-8")) or {}
+    result = ScaffoldResult()
+    ensure_project_operating_surface(
+        project_root,
+        domain,
+        project,
+        str(data.get("status") or "active"),
+        str(data.get("lane") or "") or None,
+        result,
+    )
+    return result
+
+
+def project_worktree_index_path(project_root: Path) -> Path:
+    return project_root / "worktrees" / "index.yml"
+
+
+def load_project_worktree_index(project_root: Path, project: str) -> dict[str, object]:
+    index_path = project_worktree_index_path(project_root)
+    if not index_path.is_file():
+        return {"project": project, "worktrees": []}
+    data = yaml.safe_load(index_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        return {"project": project, "worktrees": []}
+    worktrees = data.get("worktrees")
+    if not isinstance(worktrees, list):
+        data["worktrees"] = []
+    data.setdefault("project", project)
+    return data
+
+
+def write_project_worktree_index(project_root: Path, data: dict[str, object], result: ScaffoldResult) -> None:
+    index_path = project_worktree_index_path(project_root)
+    before = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
+    after = yaml.safe_dump(data, sort_keys=False)
+    if before == after:
+        result.skipped.append(index_path)
+        return
+    index_path.write_text(after, encoding="utf-8")
+    result.updated.append(index_path) if before else result.created.append(index_path)
+
+
+def sync_project_worktree_config(project_root: Path, index_data: dict[str, object], result: ScaffoldResult) -> None:
+    config_path = project_root / "config" / "worktrees.yml"
+    before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    after = yaml.safe_dump(
+        {
+            "worktrees": {
+                "directory": "worktrees",
+                "index": "worktrees/index.yml",
+                "link_policy": "symlink_to_external_worktree",
+                "registered": index_data.get("worktrees") or [],
+            }
+        },
+        sort_keys=False,
+    )
+    if before == after:
+        result.skipped.append(config_path)
+        return
+    config_path.write_text(after, encoding="utf-8")
+    result.updated.append(config_path) if before else result.created.append(config_path)
+
+
+def register_project_worktree(
+    root: str | Path,
+    domain: str,
+    project: str,
+    name: str,
+    *,
+    path: str | Path,
+    force: bool = False,
+) -> ScaffoldResult:
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    name = validate_name(name, "worktree")
+    os_root = expand_path(root)
+    project_root = os_root / domain / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+    target = expand_path(path)
+    if not target.is_dir():
+        raise ValueError(f"worktree path must be an existing directory: {target}")
+
+    result = onboard_project(os_root, domain, project)
+    link_path = project_root / "worktrees" / name
+    if link_path.is_symlink():
+        if link_path.resolve() == target:
+            result.skipped.append(link_path)
+        elif force:
+            link_path.unlink()
+            link_path.symlink_to(target, target_is_directory=True)
+            result.updated.append(link_path)
+        else:
+            raise ValueError(f"worktree link already points elsewhere: {link_path}")
+    elif link_path.exists():
+        raise ValueError(f"worktree link exists and is not a symlink: {link_path}")
+    else:
+        link_path.symlink_to(target, target_is_directory=True)
+        result.created.append(link_path)
+
+    index_data = load_project_worktree_index(project_root, project)
+    entries = [entry for entry in index_data.get("worktrees", []) if isinstance(entry, dict)]
+    entry = {
+        "id": name,
+        "path": str(target),
+        "link": f"worktrees/{name}",
+        "status": "active",
+    }
+    replaced = False
+    for offset, existing in enumerate(entries):
+        if existing.get("id") == name:
+            if existing != entry:
+                entries[offset] = entry
+            replaced = True
+            break
+    if not replaced:
+        entries.append(entry)
+    index_data["worktrees"] = entries
+    write_project_worktree_index(project_root, index_data, result)
+    sync_project_worktree_config(project_root, index_data, result)
+    return result
+
+
 def create_project(
     root: str | Path,
     domain: str,
@@ -1680,12 +2285,13 @@ def create_project(
     domain_root = expand_path(root) / domain
     project_root = domain_root / "02-projects" / project
     ensure_dir(project_root, result)
-    ensure_dir(project_root / "artifacts", result)
     write_file_once(project_root / "README.md", project_readme(domain, project, status, lane), result)
     write_file_once(project_root / "project.yml", project_config(domain, project, status, lane, repo, notion, jira), result)
     write_file_once(project_root / "status.md", project_status(project, status), result)
     write_file_once(project_root / "decisions.md", project_decisions(project), result)
     write_file_once(project_root / "source-map.md", project_source_map(project, repo, notion, jira), result)
+    ensure_project_source_link(project_root, repo, result)
+    ensure_project_operating_surface(project_root, domain, project, status, lane, result)
 
     ensure_project_index(domain_root / "02-projects" / "README.md", domain, project, status, result)
     ensure_active_work(domain_root / "00-control-plane" / "active-work.md", project, status, result)
@@ -1831,6 +2437,7 @@ def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> Scaf
     write_file_once(workflow_root / "runs" / "README.md", workflow_runs_readme(domain, lane, name), result)
     for filename in WORKFLOW_FILES:
         write_file_once(workflow_root / filename, workflow_scaffold_content(domain, lane, name, filename), result)
+    ensure_codex_config(workflow_root, "workflow_or_task", result)
     return result
 
 
@@ -1941,6 +2548,7 @@ def create_automation(root: str | Path, domain: str, lane: str, name: str) -> Sc
     write_file_once(automation_root / "logs" / "README.md", automation_logs_readme(domain, lane, name), result)
     for filename in AUTOMATION_FILES:
         write_file_once(automation_root / filename, automation_scaffold_content(domain, lane, name, filename), result)
+    ensure_codex_config(automation_root, "automation", result)
     return result
 
 

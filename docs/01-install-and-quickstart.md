@@ -90,7 +90,7 @@ Defaults to `~/agentic_os` when `--target` is omitted.
 | --- | --- | --- | --- |
 | `--target` | No | `~/agentic_os` | Where to create the OS root. |
 | `--profile` | No | — | Room-first profile YAML; activates the profile install path instead of the default layout. |
-| `--projects-source` | No | — | Directory to symlink into the OS root as the projects source. |
+| `--projects-source` | No | — | Deprecated compatibility flag. Project repository links live under domain project folders. |
 | `--include-legacy-agent` | No | off | Also creates `AGENT.md` compatibility shims for harnesses that require that exact filename. |
 
 ```bash
@@ -102,7 +102,6 @@ Real output (abbreviated):
 ```text
 created: .../agentic_os
 created: .../agentic_os/.agentic_root
-created: .../agentic_os/projects
 created: .../agentic_os/bin
 created: .../agentic_os/commands
 created: .../agentic_os/skills
@@ -114,9 +113,11 @@ created: .../agentic_os/rules
 created: .../agentic_os/registries
 ...
 created: .../agentic_os/README.md
+created: .../agentic_os/config.toml
 created: .../agentic_os/ROUTER.md
 created: .../agentic_os/AGENTS.md
 created: .../agentic_os/CLAUDE.md
+created: .../agentic_os/MEMORY.md
 ...
 ```
 
@@ -243,7 +244,7 @@ A project lives inside a domain under `02-projects/`.
 | `--lane` | No | — | Primary operating lane. |
 
 ```bash
-agentic-os project create acme launch --root ~/agentic_os
+agentic-os project create acme launch --root ~/agentic_os --repo ~/projects/acme/launch
 ```
 
 Real output:
@@ -251,14 +252,52 @@ Real output:
 ```text
 created: .../agentic_os/acme/02-projects/launch
 created: .../agentic_os/acme/02-projects/launch/artifacts
+created: .../agentic_os/acme/02-projects/launch/config
+created: .../agentic_os/acme/02-projects/launch/ideas
+created: .../agentic_os/acme/02-projects/launch/worktrees
 created: .../agentic_os/acme/02-projects/launch/README.md
 created: .../agentic_os/acme/02-projects/launch/project.yml
 created: .../agentic_os/acme/02-projects/launch/status.md
 created: .../agentic_os/acme/02-projects/launch/decisions.md
 created: .../agentic_os/acme/02-projects/launch/source-map.md
+created: .../agentic_os/acme/02-projects/launch/AGENTS.md
+created: .../agentic_os/acme/02-projects/launch/config/output-artifacts.yml
+created: .../agentic_os/acme/02-projects/launch/worktrees/index.yml
+created: .../agentic_os/acme/02-projects/launch/src
 updated: .../agentic_os/acme/02-projects/README.md
 updated: .../agentic_os/acme/00-control-plane/active-work.md
 ```
+
+For an older project folder, repair the local agent/config/idea/worktree surface:
+
+```bash
+agentic-os project onboard acme launch --root ~/agentic_os
+```
+
+For an existing project, create or repair only the project-scoped source link:
+
+```bash
+agentic-os project link-source acme launch --root ~/agentic_os --repo ~/projects/acme/launch
+```
+
+If `project.yml` already has `sources.repo`, the short alias can use it:
+
+```bash
+agentic-os project src acme launch --root ~/agentic_os
+```
+
+Both forms write `acme/02-projects/launch/src`; they do not create a root-level
+`~/agentic_os/projects` link.
+
+To make an active branch checkout visible from the project folder:
+
+```bash
+agentic-os project worktree add acme launch feature_123 --root ~/agentic_os --path ~/worktrees/launch-feature-123
+```
+
+This creates `acme/02-projects/launch/worktrees/feature_123`, updates
+`worktrees/index.yml`, and lets `agentic-os here context build` route correctly
+from inside the real worktree path.
 
 ### Route your first request
 
@@ -313,11 +352,11 @@ follow the packet.
   (`CLAUDE.md` is already a `@AGENTS.md` adapter that surfaces domain context).
   Route requests with `/os-route "<request>"` or the **`os-navigator`** skill.
 - **Codex:** after `init`, run
-  `agentic-os config install --layer global_user_harness` then
-  `agentic-os config install --root ~/agentic_os --layer agentic_os_root --dry-run`
-  (review the diff, then rerun with `--apply`) to write `config.toml`. The
-  `agentic_os_root` profile governs model, tool allow-list, and prompt-file
-  conventions for the installed root.
+  `agentic-os config install --layer global_harness --root ~/.codex --dry-run`
+  for user-level harness defaults if needed. The installed OS root and routed
+  layers already receive `config.toml` during scaffold; use
+  `agentic-os config install-tree --root ~/agentic_os --dry-run` to preview a
+  tree repair and rerun with `--apply` after reviewing the diff.
 
 Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 

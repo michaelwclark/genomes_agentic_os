@@ -23,7 +23,7 @@ never change.
 | **Exit 0** | Success. |
 | **Exit 1** | Health check "not ok" — `doctor` / `validate` commands report a problem. Fix it and re-run. |
 | **Exit 2** | Argparse usage error **or** deliberate handled refusal — e.g. `here route` when routing confidence is low, `config install` when blocked by conflicts. Exit 2 is not a crash; it is the OS saying "I won't guess." |
-| **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`. |
+| **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
 | **`config` subcommands** | Exactly `install` and `doctor` — no `config layers` subcommand exists. |
 
@@ -56,6 +56,9 @@ atlas command reference for the full flag table and real captured output.
 | --- | --- | --- | --- |
 | `domain create <slug>` | Scaffold a new domain directory | [04 · Information Architecture](04-information-architecture.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `project create <domain> <slug>` | Scaffold a project inside a domain | [04 · Information Architecture](04-information-architecture.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
+| `project link-source <domain> <slug>` / `project src <domain> <slug>` | Create or repair a project-local `src` symlink to a local repository | [01 · Install & Quickstart](01-install-and-quickstart.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
+| `project onboard <domain> <slug>` | Repair missing project-local agent/config/ideas/worktree files | [13 · Agent Surfaces](13-agent-surfaces.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
+| `project worktree add <domain> <slug> <name> --path <path>` | Register a visible worktree symlink and routing index entry | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `route <request>` | Deterministically route a free-text request to a domain/project | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `context build --domain <d>` | Build a `ContextPacket` without a request string | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `here route <request>` | Route from the current working directory (exits 2 on low confidence) | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
@@ -137,11 +140,12 @@ atlas command reference for the full flag table and real captured output.
 
 | Command(s) | What it does | Handbook | Atlas |
 | --- | --- | --- | --- |
-| `config install --layer <l>` | Install or merge `config.toml` at a named layer (dry-run by default; exits 2 on conflicts) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
+| `config install --layer <l>` | Install or merge `config.toml` at a named layer (dry-run by default; apply exits 2 on conflicts) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
+| `config install-tree` | Install or repair `config.toml` across the routed OS tree (root, domains, projects, workflows, automations) | [13 · Agent Surfaces](13-agent-surfaces.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
 | `config doctor --layer <l>` | Validate `config.toml` OTEL and MCP contracts (exits 1 when absent) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
 
 Valid `--layer` values: `agentic_os_root`, `automation`, `customer_os_root`,
-`domain_or_lane`, `global_harness`, `workflow_or_task`.
+`domain_or_lane`, `global_harness`, `project`, `workflow_or_task`.
 
 ### Update, backup & license
 
@@ -195,6 +199,7 @@ agentic-os automation set-maturity acme support ticket_intake prepare \
   --root ~/agentic_os
 
 # Install a config layer for Codex, then verify it
+agentic-os config install-tree --root ~/agentic_os --dry-run
 agentic-os config install --layer domain_or_lane --root ~/agentic_os/acme --dry-run
 agentic-os config install --layer domain_or_lane --root ~/agentic_os/acme --apply --backup
 agentic-os config doctor --layer domain_or_lane --root ~/agentic_os/acme
@@ -229,12 +234,12 @@ Tested by `.agentic-atlas/tools/validate-cli.sh` against a scratch root:
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| **OK** | 44 | Exits 0 as expected |
-| **GUARDED** | 2 | `here route` (exit 2, low confidence by design); `config doctor` (exit 1, `config.toml` absent by design) |
+| **OK** | 52 | Exits 0 as expected |
+| **GUARDED** | 1 | `here route` (exit 2, low confidence by design) |
 | Crashes / tracebacks | 0 | None |
-| **Total validated** | 46 | Full matrix: [`.agentic-atlas/validation/RESULTS.md`](../.agentic-atlas/validation/RESULTS.md) |
+| **Total validated** | 53 | Full matrix: [`.agentic-atlas/validation/RESULTS.md`](../.agentic-atlas/validation/RESULTS.md) |
 
-Commands not yet in the 46-invocation matrix (e.g. `room`, `watch-source create`,
+Commands not yet in the 53-invocation matrix (e.g. `room`, `watch-source create`,
 `notion sync`, `update apply`, `customer update`) are structurally sound — argparse
 definitions and handlers exist — but lack captured real-output evidence. They are
 listed here for navigation; treat them with normal care and run `--dry-run` first.
@@ -266,8 +271,8 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **Exit 2 is not a crash.** `here route` exits 2 when cwd does not map confidently
   to a known domain. `cd` into the domain directory or use `route` with `--root`
   instead.
-- **`config` has exactly two subcommands.** There is no `config layers` or
-  `config list`. The only subcommands are `install` and `doctor`.
+- **`config` has three subcommands.** There is no `config layers` or
+  `config list`. The subcommands are `install`, `install-tree`, and `doctor`.
 - **`backup run` requires `update register` first.** Running `backup run` without a
   prior `update register` will fail — register generates the update grant that
   backup depends on.
