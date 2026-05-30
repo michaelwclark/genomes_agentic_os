@@ -10,7 +10,7 @@ import re
 import shutil
 from typing import Any
 
-from .capability_registry import command_entries, hook_entries, library_entries, plugin_entries, rule_entries, skill_entries
+from .capability_registry import HARNESS_DIRECTORY, command_entries, hook_entries, library_entries, plugin_entries, rule_entries, skill_entries
 from .mcp_catalog import MCP_SERVERS, config_mcp_ids, mcp_config_payload, mcp_tools_markdown
 
 
@@ -547,18 +547,24 @@ def discover_config_tree_targets(root: str | Path) -> list[ConfigTreeTarget]:
     if not (root_path / ROOT_MARKER_FILENAME).is_file():
         raise ValueError(f"config install-tree requires an installed OS root with {ROOT_MARKER_FILENAME}: {root_path}")
 
+    harness_root = root_path / HARNESS_DIRECTORY
+    agentic_root = harness_root if harness_root.is_dir() else root_path
     candidates: list[ConfigTreeTarget] = [
-        ConfigTreeTarget(root_path, "agentic_os_root", ".agentic_root layer"),
+        ConfigTreeTarget(agentic_root, "agentic_os_root", ".agentic_root harness layer"),
     ]
     if root_path.exists():
-        for domain_config_path in sorted(root_path.glob("*/domain.yml")):
-            candidates.append(ConfigTreeTarget(domain_config_path.parent, "domain_or_lane", "domain.yml"))
-        for project_config_path in sorted(root_path.glob("*/02-projects/*/project.yml")):
-            candidates.append(ConfigTreeTarget(project_config_path.parent, "project", "project.yml"))
-        for workflow_path in sorted(root_path.glob("*/03-workflows/*/*/workflow.md")):
-            candidates.append(ConfigTreeTarget(workflow_path.parent, "workflow_or_task", "workflow.md"))
-        for automation_path in sorted(root_path.glob("*/04-automations/*/*/automation.md")):
-            candidates.append(ConfigTreeTarget(automation_path.parent, "automation", "automation.md"))
+        domain_roots = {domain_config_path.parent for domain_config_path in root_path.glob("*/domain.yml")}
+        shared_factory_root = harness_root / "shared_factory"
+        if (shared_factory_root / "domain.yml").is_file():
+            domain_roots.add(shared_factory_root)
+        for domain_root in sorted(domain_roots):
+            candidates.append(ConfigTreeTarget(domain_root, "domain_or_lane", "domain.yml"))
+            for project_config_path in sorted(domain_root.glob("02-projects/*/project.yml")):
+                candidates.append(ConfigTreeTarget(project_config_path.parent, "project", "project.yml"))
+            for workflow_path in sorted(domain_root.glob("03-workflows/*/*/workflow.md")):
+                candidates.append(ConfigTreeTarget(workflow_path.parent, "workflow_or_task", "workflow.md"))
+            for automation_path in sorted(domain_root.glob("04-automations/*/*/automation.md")):
+                candidates.append(ConfigTreeTarget(automation_path.parent, "automation", "automation.md"))
 
     targets: list[ConfigTreeTarget] = []
     seen: set[Path] = set()

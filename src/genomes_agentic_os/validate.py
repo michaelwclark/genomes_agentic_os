@@ -20,12 +20,18 @@ from .scaffold import (
     PROJECT_CONFIG_FILES,
     ROOT_MARKER_FILENAME,
     STANDARD_LANES,
+    domain_path,
     expand_path,
+    harness_path,
+    shared_factory_path,
 )
 
 
 ROOT_FILES = (
     ROOT_MARKER_FILENAME,
+)
+
+HARNESS_ROOT_FILES = (
     CONFIG_FILENAME,
     "README.md",
     "ROUTER.md",
@@ -51,6 +57,18 @@ LEGACY_ROOT_FOLDERS = (
     "config",
     "templates",
     "lenders",
+    "shared_factory",
+    "bin",
+    "commands",
+    "skills",
+    "mcp",
+    "plugins",
+    "libraries",
+    "hooks",
+    "rules",
+    "registries",
+    "logs",
+    "security",
 )
 
 
@@ -316,7 +334,7 @@ def load_control_yaml(path: Path, result: ValidationResult) -> dict:
 
 
 def validate_watch_registries(root: Path, result: ValidationResult) -> None:
-    control = root / "shared_factory" / "00-control-plane"
+    control = shared_factory_path(root, "00-control-plane")
     connected_path = control / "connected-systems.yml"
     providers_path = control / "source-providers.yml"
     sources_path = control / "watch-sources.yml"
@@ -396,8 +414,7 @@ def validate_watch_registries(root: Path, result: ValidationResult) -> None:
 
 
 def validate_capability_registries(root: Path, result: ValidationResult) -> None:
-    registry_root = root / "registries"
-    capabilities_path = registry_root / "capabilities.yml"
+    capabilities_path = root / REGISTRY_FILES["capabilities"]
     if not capabilities_path.is_file():
         return
 
@@ -436,7 +453,7 @@ def validate_registered_hooks(root: Path, result: ValidationResult) -> None:
         return
     for entry in load_registry(hooks_path, "hooks"):
         source = str(entry.get("source") or "")
-        if not source.startswith("hooks/"):
+        if not source.startswith("harness/hooks/"):
             continue
         path = root / source
         if not path.is_file():
@@ -448,14 +465,15 @@ def validate_registered_hooks(root: Path, result: ValidationResult) -> None:
 
 
 def validate_update_backup_contract(root: Path, result: ValidationResult) -> None:
-    backup_policy = load_control_yaml(root / "registries" / "backup-policy.yml", result).get("backup_policy") or {}
+    backup_policy_path = harness_path(root, "registries", "backup-policy.yml")
+    backup_policy = load_control_yaml(backup_policy_path, result).get("backup_policy") or {}
     if backup_policy:
         if not backup_policy.get("include"):
-            result.errors.append(f"backup policy missing include list: {root / 'registries' / 'backup-policy.yml'}")
+            result.errors.append(f"backup policy missing include list: {backup_policy_path}")
         if not backup_policy.get("exclude"):
-            result.errors.append(f"backup policy missing exclude list: {root / 'registries' / 'backup-policy.yml'}")
+            result.errors.append(f"backup policy missing exclude list: {backup_policy_path}")
 
-    grant_path = root / "registries" / "update-grant.json"
+    grant_path = harness_path(root, "registries", "update-grant.json")
     if not grant_path.is_file():
         return
     try:
@@ -471,7 +489,7 @@ def validate_update_backup_contract(root: Path, result: ValidationResult) -> Non
     if (remotes.get("update") or {}).get("url") == (remotes.get("backup") or {}).get("url"):
         result.errors.append(f"update and backup remotes must be separate: {grant_path}")
     for key_name in ("update_ed25519", "backup_ed25519"):
-        key_path = root / "security" / "ssh" / key_name
+        key_path = harness_path(root, "security", "ssh", key_name)
         if not key_path.is_file():
             result.errors.append(f"missing private key for update grant: {key_path}")
             continue
@@ -492,20 +510,23 @@ def validate_root(root: str | Path) -> ValidationResult:
 
     for filename in ROOT_FILES:
         require_file(os_root / filename, result)
-    validate_claude_adapter(os_root / "CLAUDE.md", result)
-    warn_legacy_agent(os_root / "AGENT.md", result)
+    harness_root = harness_path(os_root)
+    for filename in HARNESS_ROOT_FILES:
+        require_file(harness_root / filename, result)
+    validate_claude_adapter(harness_root / "CLAUDE.md", result)
+    warn_legacy_agent(harness_root / "AGENT.md", result)
 
     for directory in VISIBLE_CAPABILITY_DIRECTORIES:
         require_dir(os_root / directory, result)
-    require_file(os_root / "INVENTORY.md", result)
+    require_file(harness_path(os_root, "INVENTORY.md"), result)
     for relative_path in REGISTRY_FILES.values():
         require_file(os_root / relative_path, result)
-    require_file(os_root / "registries" / "updates.yml", result)
-    require_file(os_root / "registries" / "customer-identity.json", result)
-    require_file(os_root / "registries" / "backup-policy.yml", result)
-    require_dir(os_root / "security" / "ssh", result)
-    require_dir(os_root / "logs" / "updates", result)
-    require_dir(os_root / "logs" / "backups", result)
+    require_file(harness_path(os_root, "registries", "updates.yml"), result)
+    require_file(harness_path(os_root, "registries", "customer-identity.json"), result)
+    require_file(harness_path(os_root, "registries", "backup-policy.yml"), result)
+    require_dir(harness_path(os_root, "security", "ssh"), result)
+    require_dir(harness_path(os_root, "logs", "updates"), result)
+    require_dir(harness_path(os_root, "logs", "backups"), result)
     validate_capability_registries(os_root, result)
     validate_registered_hooks(os_root, result)
     validate_update_backup_contract(os_root, result)
@@ -513,9 +534,11 @@ def validate_root(root: str | Path) -> ValidationResult:
     profile_domains = profile_domain_names(os_root)
     domains_to_validate = profile_domains or list(DEFAULT_DOMAINS)
     for domain in domains_to_validate:
-        validate_domain(os_root / domain, result)
+        validate_domain(domain_path(os_root, domain), result)
+    if not profile_domains:
+        validate_domain(shared_factory_path(os_root), result)
 
-    shared_knowledge = os_root / "shared_factory" / "05-knowledge"
+    shared_knowledge = shared_factory_path(os_root, "05-knowledge")
     for filename in SHARED_KNOWLEDGE_FILES:
         require_file(shared_knowledge / filename, result)
     validate_watch_registries(os_root, result)

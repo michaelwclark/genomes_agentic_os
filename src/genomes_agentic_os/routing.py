@@ -8,7 +8,16 @@ from typing import Any
 
 import yaml
 
-from .scaffold import DEFAULT_DOMAINS, STANDARD_LANES, expand_path, normalize_domain, validate_name
+from .scaffold import (
+    DEFAULT_DOMAINS,
+    SHARED_FACTORY_DOMAIN,
+    domain_path,
+    expand_path,
+    harness_path,
+    normalize_domain,
+    shared_factory_path,
+    validate_name,
+)
 
 
 RISK_KEYWORDS = {
@@ -24,6 +33,26 @@ RISK_KEYWORDS = {
     "legal": "billing or legal record",
     "merge": "production change",
 }
+
+IDEA_CAPTURE_PHRASES = (
+    "add an idea",
+    "capture an idea",
+    "idea for",
+    "rough idea",
+    "new idea",
+    "add idea",
+)
+
+ESCALATION_PHRASES = (
+    "create a project",
+    "create project",
+    "create workflow",
+    "create automation",
+    "implementation branch",
+    "open a pr",
+    "make a pr",
+    "jira",
+)
 
 
 @dataclass
@@ -70,6 +99,8 @@ def read_yaml(path: Path) -> dict[str, Any]:
 
 def existing_domains(root: Path) -> list[str]:
     domains = [domain for domain in DEFAULT_DOMAINS if (root / domain).is_dir()]
+    if shared_factory_path(root).is_dir():
+        domains.append(SHARED_FACTORY_DOMAIN)
     extra = [
         path.name
         for path in sorted(root.iterdir())
@@ -81,7 +112,7 @@ def existing_domains(root: Path) -> list[str]:
 def project_records(root: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for domain in existing_domains(root):
-        projects_root = root / domain / "02-projects"
+        projects_root = domain_path(root, domain) / "02-projects"
         for config in sorted(projects_root.glob("*/project.yml")):
             data = read_yaml(config)
             project = str(data.get("id") or config.parent.name)
@@ -101,6 +132,13 @@ def project_records(root: Path) -> list[dict[str, Any]]:
     return records
 
 
+def is_idea_capture_request(request: str) -> bool:
+    text = request.lower()
+    return any(phrase in text for phrase in IDEA_CAPTURE_PHRASES) and not any(
+        phrase in text for phrase in ESCALATION_PHRASES
+    )
+
+
 def approval_risks(request: str) -> list[str]:
     text = request.lower()
     risks = sorted({risk for keyword, risk in RISK_KEYWORDS.items() if keyword in text})
@@ -110,6 +148,14 @@ def approval_risks(request: str) -> list[str]:
 def detect_from_cwd(root: Path, cwd: Path) -> dict[str, str]:
     relative = safe_relative(cwd, root)
     if relative is not None and relative.parts:
+        if len(relative.parts) >= 2 and relative.parts[0] == "harness" and relative.parts[1] == SHARED_FACTORY_DOMAIN:
+            context = {"domain": SHARED_FACTORY_DOMAIN}
+            if len(relative.parts) >= 4 and relative.parts[2] == "02-projects":
+                context["project"] = relative.parts[3]
+            if len(relative.parts) >= 5 and relative.parts[2] == "03-workflows":
+                context["lane"] = relative.parts[3]
+                context["workflow"] = relative.parts[4]
+            return context
         domain = relative.parts[0]
         if domain in existing_domains(root):
             context = {"domain": domain}
@@ -148,6 +194,8 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
     domain_hits = []
     for domain in existing_domains(root):
         labels = {domain, domain.replace("_", " "), domain.replace("_", "-")}
+        if domain == SHARED_FACTORY_DOMAIN:
+            labels.update({"shared factory", "harness", "agentic os"})
         if any(label.lower() in text for label in labels):
             domain_hits.append(domain)
 
@@ -170,7 +218,7 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
 
 def find_workflow(root: Path, domain: str, workflow: str, lane: str | None = None) -> tuple[str, Path]:
     workflow = validate_name(workflow, "workflow")
-    domain_root = root / domain / "03-workflows"
+    domain_root = domain_path(root, domain) / "03-workflows"
     if lane:
         lane = validate_name(lane, "lane")
         candidate = domain_root / lane / workflow
@@ -192,20 +240,21 @@ def build_context(
     project: str | None = None,
     workflow: str | None = None,
     lane: str | None = None,
+    inbox: bool = False,
     risks: list[str] | None = None,
 ) -> ContextPacket:
     os_root = expand_path(root)
     domain = normalize_domain(domain)
-    domain_root = os_root / domain
+    domain_root = domain_path(os_root, domain)
     if not domain_root.is_dir():
         raise ValueError(f"domain not found: {domain}")
 
     sources = [
-        os_root / "ROUTER.md",
-        os_root / "shared_factory" / "05-knowledge" / "references" / "naming-conventions.md",
-        os_root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md",
-        os_root / "shared_factory" / "05-knowledge" / "references" / "source-priority.md",
-        os_root / "shared_factory" / "05-knowledge" / "references" / "style-and-output-rules.md",
+        harness_path(os_root, "ROUTER.md"),
+        shared_factory_path(os_root, "05-knowledge", "references", "naming-conventions.md"),
+        shared_factory_path(os_root, "05-knowledge", "references", "tool-index.md"),
+        shared_factory_path(os_root, "05-knowledge", "references", "source-priority.md"),
+        shared_factory_path(os_root, "05-knowledge", "references", "style-and-output-rules.md"),
         domain_root / "ROUTER.md",
         domain_root / "CONTEXT.md",
         domain_root / "REFERENCES.md",
@@ -217,7 +266,20 @@ def build_context(
     known_gaps: list[str] = []
     detected_lane = lane or ""
 
-    if project:
+    if inbox:
+        target = domain_root / "01-inbox"
+        object_type = "inbox"
+        sources.extend(
+            [
+                domain_root / "01-inbox" / "raw-ideas.md",
+                domain_root / "01-inbox" / "triage.md",
+                domain_root / "00-control-plane" / "routing-rules.md",
+                domain_root / "00-control-plane" / "state-index.md",
+                domain_root / "MEMORY.md",
+            ]
+        )
+
+    if project and not inbox:
         project = validate_name(project, "project")
         project_root = domain_root / "02-projects" / project
         if not project_root.is_dir():
@@ -249,7 +311,7 @@ def build_context(
             ]
         )
 
-    if workflow:
+    if workflow and not inbox:
         detected_lane, workflow_root = find_workflow(os_root, domain, workflow, detected_lane or None)
         target = workflow_root
         object_type = "workflow"
@@ -280,7 +342,18 @@ def build_context(
 def route_request(root: str | Path, request: str, *, cwd: str | Path | None = None) -> ContextPacket:
     os_root = expand_path(root)
     cwd_path = Path(cwd).expanduser().resolve() if cwd else Path.cwd()
-    context = detect_from_cwd(os_root, cwd_path)
+    inbox = is_idea_capture_request(request)
+    context = {}
+    if inbox:
+        try:
+            context = detect_from_request(os_root, request)
+            context = {"domain": context["domain"]}
+        except ValueError:
+            cwd_context = detect_from_cwd(os_root, cwd_path)
+            if cwd_context:
+                context = {"domain": cwd_context["domain"]}
+    if not context:
+        context = detect_from_cwd(os_root, cwd_path)
     if not context:
         context = detect_from_request(os_root, request)
     return build_context(
@@ -289,6 +362,7 @@ def route_request(root: str | Path, request: str, *, cwd: str | Path | None = No
         project=context.get("project"),
         workflow=context.get("workflow"),
         lane=context.get("lane"),
+        inbox=inbox,
         risks=approval_risks(request),
     )
 

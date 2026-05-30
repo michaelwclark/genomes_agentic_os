@@ -10,7 +10,16 @@ from typing import Any
 
 import yaml
 
-from .scaffold import expand_path, normalize_domain, validate_name, write_file_once
+from .scaffold import (
+    append_control_signal,
+    append_domain_memory,
+    domain_path,
+    expand_path,
+    normalize_domain,
+    shared_factory_path,
+    validate_name,
+    write_file_once,
+)
 
 
 def slugify_title(title: str) -> str:
@@ -60,6 +69,23 @@ def append_once(path: Path, content: str) -> None:
     path.write_text(f"{existing}{separator}{content}", encoding="utf-8")
 
 
+def classify_control_signal(title: str, summary: str, *, project: bool = False) -> tuple[str, str, str]:
+    text = f"{title} {summary}".lower()
+    if any(keyword in text for keyword in ("research", "investigate", "discovery", "analysis", "spike")):
+        return ("Research", "research", "Research captured for control-plane visibility.")
+    if project:
+        if any(keyword in text for keyword in ("bug", "fix", "defect", "regression")):
+            return ("Project Activity", "bugfix", "Project bugfix captured for control-plane visibility.")
+        if any(keyword in text for keyword in ("feature", "build", "implement", "ship")):
+            return ("Project Activity", "feature", "Project feature work captured for control-plane visibility.")
+        return ("Project Activity", "captured", "Project-scoped idea captured.")
+    if any(keyword in text for keyword in ("workflow", "runbook", "process")):
+        return ("Workflow Opportunities", "candidate", "Workflow opportunity captured before promotion.")
+    if any(keyword in text for keyword in ("automation", "heartbeat", "scheduled", "disabled", "enable")):
+        return ("Automation Status", "candidate", "Automation opportunity captured before promotion.")
+    return ("Ideas", "captured", "Domain idea captured before promotion.")
+
+
 def capture_plan(
     root: str | Path,
     *,
@@ -73,7 +99,7 @@ def capture_plan(
     if kind not in {"os", "domain", "customer"}:
         raise ValueError(f"kind must be one of os, domain, customer: {kind!r}")
     if kind == "os":
-        plans_root = os_root / "shared_factory" / "05-knowledge" / "plans"
+        plans_root = shared_factory_path(os_root, "05-knowledge", "plans")
         target = plans_root / "future-ideas" / f"{slugify_title(title)}.md"
         write_file_once(target, render_future_idea(title, summary, "shared_factory plans"), _Result())
         append_once(plans_root / "README.md", f"| `{target.relative_to(plans_root)}` | captured | {title} |\n")
@@ -82,22 +108,60 @@ def capture_plan(
     if not domain:
         raise ValueError("domain is required for domain or customer plan capture")
     domain = normalize_domain(domain)
+    domain_root = domain_path(os_root, domain)
     if project:
         project = validate_name(project, "project")
-        target = os_root / domain / "02-projects" / project / "status.md"
+        target = domain_root / "02-projects" / project / "status.md"
         if not target.is_file():
             raise ValueError(f"project status file is missing: {target}")
+        signal_section, signal_status, signal_notes = classify_control_signal(title, summary, project=True)
         append_once(
             target,
-            f"\n## Future Idea: {title}\n\n- Kind: `{kind}`\n- Summary: {summary}\n- Status: captured\n",
+            f"\n## Future Idea: {title}\n\n- Kind: `{kind}`\n- Summary: {summary}\n- Status: {signal_status}\n",
         )
-        return {"target": str(target), "kind": kind, "status": "captured"}
+        append_once(
+            domain_root / "00-control-plane" / "active-work.md",
+            f"| `{project}` | `{signal_status}` | OS Owner | Triage project signal `{title}`. | `02-projects/{project}/status.md` |\n",
+        )
+        append_control_signal(
+            domain_root,
+            signal_section,
+            f"`{project}` {signal_status}: {title}",
+            signal_status,
+            f"`02-projects/{project}/status.md`",
+            signal_notes,
+            _Result(),
+        )
+        append_domain_memory(domain_root, f"Captured project signal `{title}` for `{project}` with status `{signal_status}`; first record is in `02-projects/{project}/status.md`.", _Result())
+        return {"target": str(target), "kind": kind, "status": signal_status}
 
-    target = os_root / domain / "01-inbox" / "raw-ideas.md"
+    target = domain_root / "01-inbox" / "raw-ideas.md"
     if not target.is_file():
         raise ValueError(f"domain inbox file is missing: {target}")
-    append_once(target, f"\n## {title}\n\n- Kind: `{kind}`\n- Summary: {summary}\n- Status: captured\n")
-    return {"target": str(target), "kind": kind, "status": "captured"}
+    signal_section, signal_status, signal_notes = classify_control_signal(title, summary, project=False)
+    append_once(target, f"\n## {title}\n\n- Kind: `{kind}`\n- Summary: {summary}\n- Status: {signal_status}\n")
+    append_once(
+        domain_root / "01-inbox" / "triage.md",
+        (
+            f"| {datetime.now(timezone.utc).date().isoformat()} | {title} | `{domain}` |  | idea_capture | low | "
+            f"{signal_status} | `01-inbox/raw-ideas.md` |\n"
+        ),
+    )
+    append_once(
+        domain_root / "00-control-plane" / "active-work.md",
+        f"| `{title}` | `{signal_status}` | OS Owner | Triage domain signal. | `01-inbox/raw-ideas.md` |\n",
+    )
+    append_control_signal(
+        domain_root,
+        signal_section,
+        title,
+        signal_status,
+        "`01-inbox/raw-ideas.md`",
+        signal_notes,
+        _Result(),
+    )
+    append_domain_memory(domain_root, f"Captured domain signal `{title}` with status `{signal_status}`; first record is in `01-inbox/raw-ideas.md`.", _Result())
+    return {"target": str(target), "kind": kind, "status": signal_status}
 
 
 def format_plan_result(result: dict[str, Any]) -> str:

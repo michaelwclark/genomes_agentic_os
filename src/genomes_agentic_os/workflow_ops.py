@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .scaffold import WORKFLOW_FILES, expand_path, normalize_domain, validate_name
+from .scaffold import WORKFLOW_FILES, domain_path, expand_path, normalize_domain, validate_name
 
 
 CLOSE_STATUSES = ("done", "waiting", "failed", "needs_approval")
@@ -76,7 +76,7 @@ def workflow_root(root: str | Path, domain: str, lane: str, workflow: str) -> Pa
     domain = normalize_domain(domain)
     lane = validate_name(lane, "lane")
     workflow = validate_name(workflow, "workflow")
-    return expand_path(root) / domain / "03-workflows" / lane / workflow
+    return domain_path(root, domain) / "03-workflows" / lane / workflow
 
 
 def check_workflow(root: str | Path, domain: str, lane: str, workflow: str) -> list[WorkflowFinding]:
@@ -143,7 +143,7 @@ def update_run_field(content: str, field: str, value: str) -> str:
 
 
 def find_run(root: Path, domain: str, run_id: str) -> Path:
-    runs_root = root / domain / "06-runs-and-logs" / "runs"
+    runs_root = domain_path(root, domain) / "06-runs-and-logs" / "runs"
     candidate = runs_root / run_id / "run-log.md"
     if candidate.is_file():
         return candidate
@@ -156,7 +156,7 @@ def find_run(root: Path, domain: str, run_id: str) -> Path:
 
 
 def append_activity_log(root: Path, domain: str, status: str, run_id: str, next_action: str) -> None:
-    log_path = root / domain / "06-runs-and-logs" / "activity-log.md"
+    log_path = domain_path(root, domain) / "06-runs-and-logs" / "activity-log.md"
     row = (
         f"| {datetime.now(timezone.utc).date().isoformat()} | agentic-os | close run `{run_id}` | "
         f"`{status}` | {next_action or ''} |\n"
@@ -167,7 +167,7 @@ def append_activity_log(root: Path, domain: str, status: str, run_id: str, next_
 
 
 def append_workflow_progress(root: Path, domain: str, workflow: str, status: str, run_id: str, next_action: str) -> None:
-    matches = sorted((root / domain / "03-workflows").glob(f"*/{workflow}/progress.md"))
+    matches = sorted((domain_path(root, domain) / "03-workflows").glob(f"*/{workflow}/progress.md"))
     if len(matches) != 1:
         return
     row = (
@@ -183,7 +183,7 @@ def append_project_status(root: Path, domain: str, project: str | None, status: 
     if not project:
         return
     project = validate_name(project, "project")
-    status_path = root / domain / "02-projects" / project / "status.md"
+    status_path = domain_path(root, domain) / "02-projects" / project / "status.md"
     if not status_path.is_file():
         return
     row = (
@@ -274,5 +274,5 @@ def close_run_log(
         "run_log": str(run_path),
         "status": status,
         "workflow_or_automation": workflow_or_automation,
-        "activity_log": str(os_root / domain / "06-runs-and-logs" / "activity-log.md"),
+        "activity_log": str(domain_path(os_root, domain) / "06-runs-and-logs" / "activity-log.md"),
     }

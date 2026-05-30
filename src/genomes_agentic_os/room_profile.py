@@ -18,6 +18,7 @@ from .scaffold import (
     ensure_update_metadata,
     ensure_visible_capability_surface,
     expand_path,
+    harness_path,
     install_docs,
     root_context,
     root_rules,
@@ -167,16 +168,17 @@ def install_profile_os(
     ensure_visible_capability_surface(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
-    write_file_once(root / "README.md", f"# {profile.get('os', {}).get('display_name', 'Agentic OS')}\n", result)
-    write_file_once(root / "ROUTER.md", profile_root_router(profile), result)
-    write_file_once(root / "AGENTS.md", agent_entrypoint("this profile-installed Agentic OS root"), result)
-    write_file_once(root / "CLAUDE.md", claude_adapter(), result)
-    write_file_once(root / "CONTEXT.md", root_context(), result)
-    write_file_once(root / "RULES.md", root_rules(), result)
-    write_file_once(root / "TOOLS.md", root_tools(), result)
+    harness_root = harness_path(root)
+    write_file_once(harness_root / "README.md", f"# {profile.get('os', {}).get('display_name', 'Agentic OS')}\n", result)
+    write_file_once(harness_root / "ROUTER.md", profile_root_router(profile), result)
+    write_file_once(harness_root / "AGENTS.md", agent_entrypoint("this profile-installed Agentic OS root harness"), result)
+    write_file_once(harness_root / "CLAUDE.md", claude_adapter(), result)
+    write_file_once(harness_root / "CONTEXT.md", root_context(), result)
+    write_file_once(harness_root / "RULES.md", root_rules(), result)
+    write_file_once(harness_root / "TOOLS.md", root_tools(), result)
     if include_legacy_agent:
-        write_file_once(root / "AGENT.md", "# Legacy Agent Adapter\n\nLoad `AGENTS.md` first.\n", result)
-    ensure_codex_config(root, "agentic_os_root", result)
+        write_file_once(harness_root / "AGENT.md", "# Legacy Agent Adapter\n\nLoad `AGENTS.md` first.\n", result)
+    ensure_codex_config(harness_root, "agentic_os_root", result)
     write_file_once(root / "profile.yml", yaml.safe_dump(profile, sort_keys=False), result)
     install_docs(root)
     for room in profile["rooms"]:

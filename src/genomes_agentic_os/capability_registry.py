@@ -10,27 +10,29 @@ import yaml
 from .mcp_catalog import MCP_SERVERS, all_visible_mcp_ids
 
 
+HARNESS_DIRECTORY = "harness"
+
 VISIBLE_CAPABILITY_DIRECTORIES = (
-    "bin",
-    "commands",
-    "skills",
-    "mcp",
-    "plugins",
-    "libraries",
-    "hooks",
-    "rules",
-    "registries",
+    "harness/bin",
+    "harness/commands",
+    "harness/skills",
+    "harness/mcp",
+    "harness/plugins",
+    "harness/libraries",
+    "harness/hooks",
+    "harness/rules",
+    "harness/registries",
 )
 
 REGISTRY_FILES = {
-    "capabilities": "registries/capabilities.yml",
-    "commands": "registries/commands.yml",
-    "skills": "registries/skills.yml",
-    "mcp_servers": "registries/mcp-servers.yml",
-    "libraries": "registries/libraries.yml",
-    "hooks": "registries/hooks.yml",
-    "plugins": "registries/plugins.yml",
-    "rules": "registries/rules.yml",
+    "capabilities": "harness/registries/capabilities.yml",
+    "commands": "harness/registries/commands.yml",
+    "skills": "harness/registries/skills.yml",
+    "mcp_servers": "harness/registries/mcp-servers.yml",
+    "libraries": "harness/registries/libraries.yml",
+    "hooks": "harness/registries/hooks.yml",
+    "plugins": "harness/registries/plugins.yml",
+    "rules": "harness/registries/rules.yml",
 }
 
 CAPABILITY_COLLECTIONS = {
@@ -50,7 +52,7 @@ def command_entries() -> list[dict[str, str]]:
             "id": "make-skill",
             "command": "/make-skill",
             "description": "Create or update a reusable Agentic OS skill.",
-            "source": "commands/os-create-workflow.md",
+            "source": "harness/commands/os-create-workflow.md",
         },
         {
             "id": "make-domain",
@@ -62,19 +64,19 @@ def command_entries() -> list[dict[str, str]]:
             "id": "make-automation",
             "command": "/make-automation",
             "description": "Create a guarded automation spec and supporting files.",
-            "source": "commands/os-create-automation.md",
+            "source": "harness/commands/os-create-automation.md",
         },
         {
             "id": "make-workflow",
             "command": "/make-workflow",
             "description": "Create a reusable workflow spec and run contract.",
-            "source": "commands/os-create-workflow.md",
+            "source": "harness/commands/os-create-workflow.md",
         },
         {
             "id": "orchestrate",
             "command": "/orchestrate",
             "description": "Plan, decompose, delegate, verify, and merge feature work.",
-            "source": "skills/orchestrate/SKILL.md",
+            "source": "harness/skills/orchestrate/SKILL.md",
         },
         {
             "id": "validate",
@@ -115,25 +117,25 @@ def skill_entries() -> list[dict[str, str]]:
             "id": "os-navigator",
             "name": "OS Navigator",
             "description": "Route work through installed Agentic OS rooms.",
-            "source": "skills/os-navigator/SKILL.md",
+            "source": "harness/skills/os-navigator/SKILL.md",
         },
         {
             "id": "workflow-builder",
             "name": "Workflow Builder",
             "description": "Create or refine reusable workflow contracts.",
-            "source": "skills/workflow-builder/SKILL.md",
+            "source": "harness/skills/workflow-builder/SKILL.md",
         },
         {
             "id": "automation-qualifier",
             "name": "Automation Qualifier",
             "description": "Decide whether a process is safe to automate.",
-            "source": "skills/automation-qualifier/SKILL.md",
+            "source": "harness/skills/automation-qualifier/SKILL.md",
         },
         {
             "id": "orchestrate",
             "name": "Orchestrate",
             "description": "Coordinate subagents, verification, and integration.",
-            "source": "skills/orchestrate/SKILL.md",
+            "source": "harness/skills/orchestrate/SKILL.md",
         },
     ]
 
@@ -184,7 +186,7 @@ def hook_entries() -> list[dict[str, str]]:
             "name": "Memory Write Router",
             "description": "Routes durable memory writes to the correct substrate without writing CLAUDE.md.",
             "status": "available",
-            "source": "hooks/memory-session-start.sh",
+            "source": "harness/hooks/memory-session-start.sh",
             "events": "SessionStart, Stop",
         },
         {
@@ -192,7 +194,7 @@ def hook_entries() -> list[dict[str, str]]:
             "name": "Memory Session Start",
             "description": "Injects losmon-memory discipline at session start, resume, or clear.",
             "status": "available",
-            "source": "hooks/memory-session-start.sh",
+            "source": "harness/hooks/memory-session-start.sh",
             "events": "SessionStart",
         },
         {
@@ -200,7 +202,7 @@ def hook_entries() -> list[dict[str, str]]:
             "name": "Memory Stop Reminder",
             "description": "Reminds agents to write durable memory before ending substantive turns.",
             "status": "available",
-            "source": "hooks/memory-stop.sh",
+            "source": "harness/hooks/memory-stop.sh",
             "events": "Stop",
         },
         {
@@ -208,7 +210,7 @@ def hook_entries() -> list[dict[str, str]]:
             "name": "Harness Trace Emitter",
             "description": "Emits non-blocking AGENT_TRACE memory records from Stop hook payloads.",
             "status": "available",
-            "source": "hooks/harness-emit-trace.sh",
+            "source": "harness/hooks/harness-emit-trace.sh",
             "events": "Stop",
         },
         {
@@ -216,7 +218,7 @@ def hook_entries() -> list[dict[str, str]]:
             "name": "Context Mode Cache Heal",
             "description": "Repairs stale Claude context-mode plugin cache symlinks after auto-updates.",
             "status": "available",
-            "source": "hooks/context-mode-cache-heal.mjs",
+            "source": "harness/hooks/context-mode-cache-heal.mjs",
             "events": "SessionStart",
         },
         {

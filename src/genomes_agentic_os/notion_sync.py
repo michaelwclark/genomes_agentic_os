@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from .scaffold import expand_path
+from .scaffold import expand_path, shared_factory_path
 
 
 MAPPING_PATH = ".notion-sync/mapping.yml"
@@ -73,7 +73,11 @@ def notion_id_for(record_key: str) -> str:
 
 
 def domain_dirs(root: Path) -> list[Path]:
-    return sorted(path for path in root.iterdir() if path.is_dir() and (path / "domain.yml").is_file())
+    domains = [path for path in root.iterdir() if path.is_dir() and (path / "domain.yml").is_file()]
+    shared = shared_factory_path(root)
+    if (shared / "domain.yml").is_file():
+        domains.append(shared)
+    return sorted(domains)
 
 
 def discover_sync_objects(root: str | Path) -> list[SyncObject]:
@@ -91,6 +95,9 @@ def discover_sync_objects(root: str | Path) -> list[SyncObject]:
         decisions = domain_root / "00-control-plane" / "decisions.md"
         if decisions.is_file():
             objects.append(SyncObject("decisions", domain, f"{domain} decisions", decisions))
+        state_index = domain_root / "00-control-plane" / "state-index.md"
+        if state_index.is_file():
+            objects.append(SyncObject("state_index", domain, f"{domain} state index", state_index))
         metrics = domain_root / "07-metrics" / "scorecards.md"
         if metrics.is_file():
             objects.append(SyncObject("metrics", domain, f"{domain} metrics", metrics))

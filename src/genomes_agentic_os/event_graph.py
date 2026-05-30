@@ -13,8 +13,8 @@ from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
 
 
-CONTROL_PLANE = Path("shared_factory/00-control-plane")
-EVENTS = Path("shared_factory/06-runs-and-logs/events")
+CONTROL_PLANE = Path("harness/shared_factory/00-control-plane")
+EVENTS = Path("harness/shared_factory/06-runs-and-logs/events")
 DEAD_LETTER = EVENTS / "dead-letter"
 PROCESSING_RESULTS = EVENTS / "processing-results"
 RUN_QUEUE = CONTROL_PLANE / "run-queue.yml"

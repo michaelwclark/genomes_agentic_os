@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .scaffold import AUTOMATION_FILES, append_once, expand_path, normalize_domain, validate_name
+from .scaffold import AUTOMATION_FILES, append_control_signal, append_once, domain_path, expand_path, normalize_domain, validate_name
 
 
 AUTOMATION_MATURITY_LEVELS = ("observe", "prepare", "propose", "execute_approved", "execute_guarded")
@@ -46,7 +46,7 @@ def automation_root(root: str | Path, domain: str, lane: str, automation: str) -
     domain = normalize_domain(domain)
     lane = validate_name(lane, "lane")
     automation = validate_name(automation, "automation")
-    return expand_path(root) / domain / "04-automations" / lane / automation
+    return domain_path(root, domain) / "04-automations" / lane / automation
 
 
 def section_body(content: str, heading: str) -> str:
@@ -210,7 +210,8 @@ def set_automation_maturity(root: str | Path, domain: str, lane: str, automation
         updated = f"{content.rstrip()}\n\n## Maturity\n\n| Field | Value |\n| --- | --- |\n| Level | `{level}` |\n"
     automation_md.write_text(updated, encoding="utf-8")
 
-    decision_path = os_root / domain / "00-control-plane" / "decisions.md"
+    domain_root = domain_path(os_root, domain)
+    decision_path = domain_root / "00-control-plane" / "decisions.md"
     date = datetime.now(timezone.utc).date().isoformat()
     append_once(
         decision_path,
@@ -219,6 +220,15 @@ def set_automation_maturity(root: str | Path, domain: str, lane: str, automation
             f"File-first reconfiguration | Execution level is now `{level}` | "
             f"`04-automations/{lane}/{automation}/automation.md` |\n"
         ),
+        _Result(),
+    )
+    append_control_signal(
+        domain_root,
+        "Automation Status",
+        f"`{automation}`",
+        level,
+        f"`04-automations/{lane}/{automation}/automation.md`",
+        f"Automation maturity changed from `{old_level}`.",
         _Result(),
     )
     return {
@@ -238,7 +248,7 @@ def attach_automation(root: str | Path, domain: str, lane: str, automation: str,
     root_path = automation_root(os_root, domain, lane, automation)
     if not root_path.is_dir():
         raise ValueError(f"automation folder is missing: {root_path}")
-    project_root = os_root / domain / "02-projects" / project
+    project_root = domain_path(os_root, domain) / "02-projects" / project
     if not project_root.is_dir():
         raise ValueError(f"project folder is missing: {project_root}")
 

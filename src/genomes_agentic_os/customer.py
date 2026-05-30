@@ -23,6 +23,8 @@ from .scaffold import (
     ensure_dir,
     ensure_update_metadata,
     expand_path,
+    harness_path,
+    shared_factory_path,
     template_source_dir,
     validate_name,
     write_file_once,
@@ -53,9 +55,13 @@ CUSTOMER_ROOT_FILES = (
     "RULES.md",
     "TOOLS.md",
     "MEMORY.md",
+    "customer.yml",
+)
+
+CUSTOMER_HARNESS_FILES = (
+    "INVENTORY.md",
     "agentic-os.lock.json",
     "UPDATE_POLICY.md",
-    "customer.yml",
 )
 
 
@@ -447,7 +453,7 @@ Updates add missing standards, templates, domains, workflows, and automations. T
 """,
         result,
     )
-    shared = root / "shared_factory" / "05-knowledge" / "templates"
+    shared = shared_factory_path(root, "05-knowledge", "templates")
     write_file_once(
         shared / "profile" / "customer-os-profile.yml",
         (template_source_dir() / "profile" / "customer-os-profile.yml").read_text(encoding="utf-8"),
@@ -557,7 +563,7 @@ def ensure_public_customer_capability_surface(root: Path, result: CustomerResult
     payloads = public_customer_registry_payloads()
     for registry_name, relative_path in REGISTRY_FILES.items():
         write_file_once(root / relative_path, yaml.safe_dump(payloads[registry_name], sort_keys=False), result)
-    write_file_once(root / "INVENTORY.md", inventory_markdown(payloads), result)
+    write_file_once(harness_path(root, "INVENTORY.md"), inventory_markdown(payloads), result)
 
 
 def parse_bundle_item(item: Any, default_domain: str) -> tuple[str, str, str]:
@@ -696,12 +702,16 @@ def customer_validate(root: str | Path) -> dict[str, Any]:
     for filename in CUSTOMER_ROOT_FILES:
         if not (os_root / filename).is_file():
             core_errors.append(f"missing customer root file: {os_root / filename}")
+    for filename in CUSTOMER_HARNESS_FILES:
+        if not harness_path(os_root, filename).is_file():
+            core_errors.append(f"missing customer harness file: {harness_path(os_root, filename)}")
     for filename in ("customer-identity.json", "backup-policy.yml"):
-        if not (os_root / "registries" / filename).is_file():
-            core_errors.append(f"missing customer registry file: {os_root / 'registries' / filename}")
-    for directory in ("security/ssh", "logs/updates", "logs/backups"):
-        if not (os_root / directory).is_dir():
-            core_errors.append(f"missing customer runtime folder: {os_root / directory}")
+        if not harness_path(os_root, "registries", filename).is_file():
+            core_errors.append(f"missing customer registry file: {harness_path(os_root, 'registries', filename)}")
+    for directory in (("security", "ssh"), ("logs", "updates"), ("logs", "backups")):
+        path = harness_path(os_root, *directory)
+        if not path.is_dir():
+            core_errors.append(f"missing customer runtime folder: {path}")
     profile_path = os_root / "customer.yml"
     profile: dict[str, Any] = {}
     if profile_path.is_file():

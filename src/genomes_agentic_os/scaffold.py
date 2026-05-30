@@ -12,6 +12,7 @@ import shutil
 import yaml
 
 from .capability_registry import (
+    HARNESS_DIRECTORY,
     REGISTRY_FILES,
     VISIBLE_CAPABILITY_DIRECTORIES,
     hook_entries,
@@ -26,11 +27,11 @@ DEFAULT_DOMAINS = (
     "personal",
     "clarks_consulting",
     "los",
-    "shared_factory",
     "archive",
 )
 
 ROOT_MARKER_FILENAME = ".agentic_root"
+SHARED_FACTORY_DOMAIN = "shared_factory"
 # Backward-compatible default for the deprecated --projects-source flag.
 DEFAULT_PROJECTS_SOURCE = "~/projects"
 SOURCE_PACKAGE_VERSION = "0.1.0"
@@ -73,6 +74,7 @@ PROJECT_CONFIG_FILES = (
 CONTROL_PLANE_FILES = (
     "README.md",
     "active-work.md",
+    "state-index.md",
     "decisions.md",
     "routing-rules.md",
     "approval-rules.md",
@@ -163,6 +165,21 @@ def expand_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 
 
+def harness_path(root: str | Path, *parts: str) -> Path:
+    return expand_path(root) / HARNESS_DIRECTORY / Path(*parts)
+
+
+def shared_factory_path(root: str | Path, *parts: str) -> Path:
+    return harness_path(root, SHARED_FACTORY_DOMAIN, *parts)
+
+
+def domain_path(root: str | Path, domain: str) -> Path:
+    normalized = normalize_domain(domain)
+    if normalized == SHARED_FACTORY_DOMAIN:
+        return shared_factory_path(root)
+    return expand_path(root) / normalized
+
+
 def validate_name(value: str, label: str = "name") -> str:
     if not NAME_PATTERN.fullmatch(value):
         raise ValueError(f"{label} must use lowercase letters, numbers, and underscores only: {value!r}")
@@ -237,9 +254,10 @@ kind = "genomes_agentic_os_root"
 version = "1"
 source_package_version = "{SOURCE_PACKAGE_VERSION}"
 project_link_scope = "domain_project_src"
+harness_entrypoint = "harness/AGENTS.md"
 update_channel = "{DEFAULT_UPDATE_CHANNEL}"
 update_policy = "{DEFAULT_UPDATE_POLICY}"
-update_registry = "registries/updates.yml"
+update_registry = "harness/registries/updates.yml"
 """
 
 
@@ -289,15 +307,15 @@ def updates_registry_payload() -> dict[str, object]:
             "channel": DEFAULT_UPDATE_CHANNEL,
             "policy": DEFAULT_UPDATE_POLICY,
             "latest_known_version": SOURCE_PACKAGE_VERSION,
-            "status_ref": "registries/update-status.yml",
+            "status_ref": "harness/registries/update-status.yml",
         }
     }
 
 
 def ensure_update_metadata(root: Path, result: ScaffoldResult) -> None:
-    write_file_once(root / "agentic-os.lock.json", json.dumps(update_lock_payload(), indent=2) + "\n", result)
-    write_file_once(root / "UPDATE_POLICY.md", update_policy_markdown(), result)
-    write_file_once(root / "registries" / "updates.yml", yaml.safe_dump(updates_registry_payload(), sort_keys=False), result)
+    write_file_once(harness_path(root, "agentic-os.lock.json"), json.dumps(update_lock_payload(), indent=2) + "\n", result)
+    write_file_once(harness_path(root, "UPDATE_POLICY.md"), update_policy_markdown(), result)
+    write_file_once(harness_path(root, "registries", "updates.yml"), yaml.safe_dump(updates_registry_payload(), sort_keys=False), result)
 
 
 def customer_identity_payload() -> dict[str, object]:
@@ -311,7 +329,7 @@ def customer_identity_payload() -> dict[str, object]:
         },
         "update_grant": {
             "status": "not_registered",
-            "path": "registries/update-grant.json",
+            "path": "harness/registries/update-grant.json",
         },
     }
 
@@ -322,18 +340,18 @@ def backup_policy_payload() -> dict[str, object]:
             "enabled": True,
             "include": [
                 ".agentic_root",
-                "AGENTS.md",
-                "ROUTER.md",
-                "CONTEXT.md",
-                "RULES.md",
-                "TOOLS.md",
-                "registries/",
-                "shared_factory/00-control-plane/",
+                "harness/AGENTS.md",
+                "harness/ROUTER.md",
+                "harness/CONTEXT.md",
+                "harness/RULES.md",
+                "harness/TOOLS.md",
+                "harness/registries/",
+                "harness/shared_factory/00-control-plane/",
             ],
             "exclude": [
                 "projects/",
-                "logs/",
-                "security/ssh/*",
+                "harness/logs/",
+                "harness/security/ssh/*",
                 "**/.env",
                 "**/*secret*",
                 "**/*token*",
@@ -347,14 +365,14 @@ def backup_policy_payload() -> dict[str, object]:
 
 
 def ensure_customer_update_contract(root: Path, result: ScaffoldResult) -> None:
-    ensure_dir(root / "security", result)
-    ensure_dir(root / "security" / "ssh", result)
-    ensure_dir(root / "logs", result)
-    ensure_dir(root / "logs" / "updates", result)
-    ensure_dir(root / "logs" / "backups", result)
-    write_file_once(root / "registries" / "customer-identity.json", json.dumps(customer_identity_payload(), indent=2) + "\n", result)
+    ensure_dir(harness_path(root, "security"), result)
+    ensure_dir(harness_path(root, "security", "ssh"), result)
+    ensure_dir(harness_path(root, "logs"), result)
+    ensure_dir(harness_path(root, "logs", "updates"), result)
+    ensure_dir(harness_path(root, "logs", "backups"), result)
+    write_file_once(harness_path(root, "registries", "customer-identity.json"), json.dumps(customer_identity_payload(), indent=2) + "\n", result)
     write_file_once(
-        root / "registries" / "backup-policy.yml",
+        harness_path(root, "registries", "backup-policy.yml"),
         yaml.safe_dump(backup_policy_payload(), sort_keys=False),
         result,
     )
@@ -408,7 +426,7 @@ def ensure_visible_capability_directories(root: Path, result: ScaffoldResult) ->
 def ensure_capability_registries(root: Path, result: ScaffoldResult) -> None:
     for relative_path, payload in registry_file_payloads().items():
         write_file_once(root / relative_path, yaml.safe_dump(payload, sort_keys=False), result)
-    write_file_once(root / "INVENTORY.md", inventory_markdown(), result)
+    write_file_once(harness_path(root, "INVENTORY.md"), inventory_markdown(), result)
 
 
 def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> None:
@@ -416,17 +434,17 @@ def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> Non
     ensure_capability_registries(root, result)
     hooks_root = harness_source_dir() / "hooks"
     if hooks_root.is_dir():
-        result.extend(copy_tree_missing(hooks_root, root / "hooks"))
+        result.extend(copy_tree_missing(hooks_root, harness_path(root, "hooks")))
 
 
 def mirror_visible_commands_and_skills(root: Path) -> ScaffoldResult:
     result = ScaffoldResult()
     harness_root = harness_source_dir()
-    result.extend(copy_tree_missing(harness_root / "commands", root / "commands"))
-    result.extend(copy_tree_missing(harness_root / "skills", root / "skills"))
+    result.extend(copy_tree_missing(harness_root / "commands", harness_path(root, "commands")))
+    result.extend(copy_tree_missing(harness_root / "skills", harness_path(root, "skills")))
     hooks_root = harness_root / "hooks"
     if hooks_root.is_dir():
-        result.extend(copy_tree_missing(hooks_root, root / "hooks"))
+        result.extend(copy_tree_missing(hooks_root, harness_path(root, "hooks")))
     return result
 
 
@@ -456,11 +474,16 @@ def root_readme() -> str:
     domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in DEFAULT_DOMAINS)
     return f"""# Installed Agentic OS
 
-This is the live operating system root for agentic work. It is domain-first: choose the domain, then use that domain's control plane, inbox, projects, workflows, automations, knowledge, runs, metrics, and archive.
+This is the live operating system root for agentic work. It is domain-first: choose the domain, then use that domain's control plane, inbox, projects, workflows, automations, knowledge, runs, metrics, and archive. OS brains and harness-visible capabilities live under `harness/`.
 
 ## Domains
 
 {domains}
+
+## Harness Brain
+
+- `harness/` - root router, tools, commands, skills, hooks, MCP declarations, registries, logs, update metadata, and the shared factory.
+- `harness/shared_factory/` - reusable patterns, templates, workflow and automation building blocks, runtime registries, and cross-domain knowledge.
 
 ## Standard Domain Shape
 
@@ -478,7 +501,7 @@ Each domain uses the same numbered operating lanes:
 
 ## Agent Entry Point
 
-Start with `AGENTS.md` in this directory. It tells every harness to read
+Start with `harness/AGENTS.md`. It tells every harness to read
 `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`, route to the narrowest
 directory, and repeat the same local read loop before acting.
 
@@ -504,6 +527,14 @@ After choosing a domain or narrower layer, change to that directory and read its
 | Domain | Use For | Intake Path |
 | --- | --- | --- |
 {routing_rows}
+| `harness/shared_factory` | Shared OS templates, schemas, routers, reusable automations, runtime registries, cross-domain tools, and installed harness capabilities. | `harness/shared_factory/01-inbox/` |
+
+## Domain Classification
+
+- First identify the project, product, client, or life area named in the request.
+- Route explicit project or product names to their domain before deciding whether the work is an idea, project, workflow, automation, run, or knowledge update.
+- Examples: requests mentioning `LOS`, loan origination, lender operations, or LOS engineering route to `los/`; requests mentioning Clark's Consulting route to `clarks_consulting/`.
+- If a request says `add an idea`, `capture an idea`, `idea for`, or similar, route to the matching domain's `01-inbox/` unless the user explicitly asks to create a project, workflow, automation, Jira, or implementation branch.
 
 ## Operating Rules
 
@@ -513,8 +544,8 @@ After choosing a domain or narrower layer, change to that directory and read its
 - Put workflow specs in `<domain>/03-workflows/<lane>/<workflow>/`.
 - Put automation specs in `<domain>/04-automations/<lane>/<automation>/`.
 - Put execution records in `<domain>/06-runs-and-logs/runs/`.
-- Use `shared_factory` for reusable templates, schemas, and cross-domain operating patterns.
-- Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read `shared_factory/05-knowledge/host-tool-registry.<host>.yml` when it exists.
+- Use `harness/shared_factory` for reusable templates, schemas, and cross-domain operating patterns.
+- Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read `harness/shared_factory/05-knowledge/host-tool-registry.<host>.yml` when it exists.
 - Use `archive` only for inactive or historical material.
 
 ## Standard Lanes
@@ -564,7 +595,7 @@ def root_context() -> str:
     domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in DEFAULT_DOMAINS)
     return f"""# Local Context
 
-This installed root is the entry layer for Genome's Agentic OS runtime. It
+This installed harness directory is the entry layer for Genome's Agentic OS runtime. It
 routes work into domain rooms, shared factory materials, workflows,
 automations, projects, run logs, and archived material.
 
@@ -625,8 +656,8 @@ def root_tools() -> str:
     )
     return f"""# Tools
 
-This root registry names the visible tool surface for the installed Agentic OS.
-Harness-specific folders and config files implement this contract; they are not
+This harness registry names the visible tool surface for the installed Agentic OS.
+Folders under `harness/` and config files implement this contract; they are not
 the source of truth by themselves.
 
 ## Skills
@@ -829,6 +860,7 @@ Classify the request into one of this domain's operating lanes, then choose the 
 
 | Work Type | Path |
 | --- | --- |
+| Idea spec or rough idea capture | `01-inbox/<idea-slug>.md` |
 | Raw capture | `01-inbox/raw-ideas.md` |
 | Triage notes | `01-inbox/triage.md` |
 | Domain context | `CONTEXT.md` |
@@ -845,6 +877,8 @@ Classify the request into one of this domain's operating lanes, then choose the 
 ## Routing Rules
 
 - Read `AGENTS.md`, then `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`.
+- If the prompt says `add an idea`, `capture an idea`, `idea for`, `rough idea`, or similar, write the idea to `01-inbox/` first. Do not route it directly to `02-projects`, `03-workflows`, `04-automations`, Jira, or a code repository unless the user explicitly asks for that escalation.
+- Treat ideas as pre-routing inputs. A systems idea is different from a code feature, Jira implementation task, or active project.
 - If a project, workflow, automation, or run-log directory narrows the route, change there and repeat the local context-file load before acting.
 - Read `00-control-plane/routing-rules.md` before creating a new workflow or automation.
 - Read `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `REFERENCES.md` before doing domain-specific work.
@@ -894,6 +928,7 @@ This file teaches agents how work inside `{domain}` should be understood before 
 3. Reuse an existing project, workflow, automation, or run log when one fits.
 4. Read only the references required for the routed task.
 5. Record validation, next action, and durable learning before ending.
+6. When a new idea, workflow opportunity, automation state, project feature, bug fix, or research thread appears, update `00-control-plane/state-index.md` and `MEMORY.md`.
 
 ## Output Folders
 
@@ -976,6 +1011,8 @@ workflow, or automation defines a stricter rule.
 
 - Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` before acting in this domain.
 - Check `00-control-plane/active-work.md` before creating new active work.
+- Keep `00-control-plane/state-index.md` current for ideas, workflow opportunities, automation states, project features, bug fixes, and research threads.
+- Update `MEMORY.md` for durable, non-secret routing and operating learnings.
 - Record material execution in `06-runs-and-logs/`.
 - Preserve source links and validation evidence.
 - Keep secrets out of run logs, docs, prompts, and generated config.
@@ -999,9 +1036,9 @@ libraries, and wrappers for `{domain}`.
 
 | Skill | Use When | Source |
 | --- | --- | --- |
-| `os-navigator` | Route domain work to the correct project, workflow, automation, or run log. | inherited from `shared_factory` |
-| `workflow-builder` | Create or refine repeatable workflows. | inherited from `shared_factory` |
-| `automation-qualifier` | Decide whether a repeatable process should become an automation. | inherited from `shared_factory` |
+| `os-navigator` | Route domain work to the correct project, workflow, automation, or run log. | inherited from `harness/shared_factory` |
+| `workflow-builder` | Create or refine repeatable workflows. | inherited from `harness/shared_factory` |
+| `automation-qualifier` | Decide whether a repeatable process should become an automation. | inherited from `harness/shared_factory` |
 
 ## Commands
 
@@ -1080,6 +1117,35 @@ This folder owns routing, approvals, active work, and durable decisions for `{do
 | Work | Status | Owner | Next Action | Link |
 | --- | --- | --- | --- | --- |
 """,
+        "state-index.md": f"""# State Index: {display_name}
+
+Use this file as the domain control-plane ledger. Update it whenever an idea is captured, a workflow opportunity appears, an automation is running or disabled, a project feature or bug changes state, or research starts or closes.
+
+## Ideas
+
+| Date | Item | Status | Link | Notes |
+| --- | --- | --- | --- | --- |
+
+## Workflow Opportunities
+
+| Date | Workflow Or Pattern | Status | Link | Notes |
+| --- | --- | --- | --- | --- |
+
+## Automation Status
+
+| Date | Automation | Status | Link | Notes |
+| --- | --- | --- | --- | --- |
+
+## Project Activity
+
+| Date | Project Or Work | Status | Link | Notes |
+| --- | --- | --- | --- | --- |
+
+## Research
+
+| Date | Topic | Status | Link | Notes |
+| --- | --- | --- | --- | --- |
+""",
         "decisions.md": f"""# Decisions: {display_name}
 
 | Date | Decision | Why | Impact | Link |
@@ -1090,10 +1156,24 @@ This folder owns routing, approvals, active work, and durable decisions for `{do
 ## Default Route
 
 1. Identify the domain.
-2. Identify the lane.
-3. Check active projects.
-4. Reuse an existing workflow or automation when one fits.
-5. Create a new workflow only when the process should be repeated.
+2. If the request is an idea capture, write it to `01-inbox/` before routing it further.
+3. Identify the lane.
+4. Check active projects.
+5. Reuse an existing workflow or automation when one fits.
+6. Create a new workflow only when the process should be repeated.
+
+## Idea Capture
+
+- Treat `add an idea`, `capture an idea`, `idea for`, `rough idea`, and similar phrasing as inbox work.
+- Keep the first artifact in `01-inbox/` as a markdown idea/spec unless the user asks for a table-only capture.
+- Do not promote an idea into a project, workflow, automation, Jira, or repository feature until the user asks to route or escalate it.
+- When capturing an idea, update `01-inbox/raw-ideas.md`, `01-inbox/triage.md`, `00-control-plane/state-index.md`, and `MEMORY.md` in the same pass.
+
+## Control-Plane Writeback
+
+- Update `00-control-plane/state-index.md` for ideas, workflow opportunities, automation enabled/disabled/running states, project features, bug fixes, and research.
+- Update `00-control-plane/active-work.md` when work is active, waiting, blocked, or ready for owner review.
+- Update `MEMORY.md` for durable, non-secret routing decisions, repeated patterns, source maps, and stable project/domain learnings.
 
 ## Lane Hints
 
@@ -1391,20 +1471,22 @@ def ensure_root_files(
 ) -> None:
     ensure_dir(root, result)
     write_root_marker(root, result, projects_source)
+    ensure_dir(harness_path(root), result)
     ensure_visible_capability_surface(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
-    write_file_once(root / "README.md", root_readme(), result)
+    harness_root = harness_path(root)
+    write_file_once(harness_root / "README.md", root_readme(), result)
     router = root_router()
-    write_file_once(root / "ROUTER.md", router, result)
-    write_file_once(root / "AGENTS.md", agent_entrypoint("the installed Agentic OS root"), result)
-    write_file_once(root / "CLAUDE.md", claude_adapter(), result)
-    write_file_once(root / "CONTEXT.md", root_context(), result)
-    write_file_once(root / "RULES.md", root_rules(), result)
-    write_file_once(root / "TOOLS.md", root_tools(), result)
+    write_file_once(harness_root / "ROUTER.md", router, result)
+    write_file_once(harness_root / "AGENTS.md", agent_entrypoint("the installed Agentic OS root harness"), result)
+    write_file_once(harness_root / "CLAUDE.md", claude_adapter(), result)
+    write_file_once(harness_root / "CONTEXT.md", root_context(), result)
+    write_file_once(harness_root / "RULES.md", root_rules(), result)
+    write_file_once(harness_root / "TOOLS.md", root_tools(), result)
     if include_legacy_agent:
-        write_file_once(root / "AGENT.md", legacy_agent_adapter(), result)
-    ensure_codex_config(root, "agentic_os_root", result)
+        write_file_once(harness_root / "AGENT.md", legacy_agent_adapter(), result)
+    ensure_codex_config(harness_root, "agentic_os_root", result)
 
 
 def create_domain_structure(
@@ -1416,7 +1498,7 @@ def create_domain_structure(
     public_customer_tools: bool = False,
 ) -> None:
     domain = validate_name(domain, "domain")
-    domain_root = os_root / domain
+    domain_root = domain_path(os_root, domain)
     ensure_dir(domain_root, result)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
     router = domain_router(domain)
@@ -1489,7 +1571,8 @@ def create_domain_structure(
 def ensure_default_domains(os_root: Path, result: ScaffoldResult, *, include_legacy_agent: bool = False) -> None:
     for domain in DEFAULT_DOMAINS:
         create_domain_structure(os_root, domain, result, include_legacy_agent=include_legacy_agent)
-    result.extend(copy_tree_missing(template_source_dir(), os_root / "shared_factory" / "05-knowledge" / "templates"))
+    create_domain_structure(os_root, SHARED_FACTORY_DOMAIN, result, include_legacy_agent=include_legacy_agent)
+    result.extend(copy_tree_missing(template_source_dir(), shared_factory_path(os_root, "05-knowledge", "templates")))
     result.extend(install_docs(os_root))
 
 
@@ -1513,25 +1596,25 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     result.extend(
         copy_tree(
             template_source_dir(),
-            os_root / "shared_factory" / "05-knowledge" / "templates",
+            shared_factory_path(os_root, "05-knowledge", "templates"),
         )
     )
     result.extend(
         copy_tree(
             operating_manual_source_dir(),
-            os_root / "shared_factory" / "05-knowledge" / "operating-manual",
+            shared_factory_path(os_root, "05-knowledge", "operating-manual"),
         )
     )
     result.extend(
         copy_tree(
             harness_source_dir() / "commands",
-            os_root / "shared_factory" / "05-knowledge" / "commands",
+            shared_factory_path(os_root, "05-knowledge", "commands"),
         )
     )
     result.extend(
         copy_tree(
             harness_source_dir() / "skills",
-            os_root / "shared_factory" / "05-knowledge" / "skills",
+            shared_factory_path(os_root, "05-knowledge", "skills"),
         )
     )
     hooks_root = harness_source_dir() / "hooks"
@@ -1539,19 +1622,19 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         result.extend(
             copy_tree(
                 hooks_root,
-                os_root / "shared_factory" / "05-knowledge" / "hooks",
+                shared_factory_path(os_root, "05-knowledge", "hooks"),
             )
         )
     result.extend(
         copy_tree(
             plans_source_dir(),
-            os_root / "shared_factory" / "05-knowledge" / "plans",
+            shared_factory_path(os_root, "05-knowledge", "plans"),
         )
     )
     result.extend(
         copy_tree(
             template_source_dir() / "reference",
-            os_root / "shared_factory" / "05-knowledge" / "references",
+            shared_factory_path(os_root, "05-knowledge", "references"),
         )
     )
     return result
@@ -1780,6 +1863,15 @@ future work in this project. Keep temporary branch status in `status.md` or
 """
 
 
+def domain_memory_policy(domain: str) -> str:
+    return f"""# Memory: {titleize_name(domain)}
+
+Record durable, non-secret domain learnings here. Use this for routing decisions,
+stable source maps, repeated workflow findings, project-level conventions, and
+control-plane changes that future sessions should not rediscover.
+"""
+
+
 def project_config_file_content(domain: str, project: str, status: str, lane: str | None, filename: str) -> str:
     lane_value = lane or ""
     if filename == "project-profile.yml":
@@ -1933,6 +2025,51 @@ def ensure_active_work(active_work: Path, project: str, status: str, result: Sca
     append_once(
         active_work,
         f"| `{project}` | `{status}` | OS Owner | Define next action. | `02-projects/{project}/` |\n",
+        result,
+    )
+
+
+def append_control_signal(
+    domain_root: Path,
+    section: str,
+    item: str,
+    status: str,
+    link: str,
+    notes: str,
+    result: ScaffoldResult,
+) -> None:
+    state_index = domain_root / "00-control-plane" / "state-index.md"
+    if not state_index.exists():
+        write_file_once(state_index, control_file_content(domain_root.name, "state-index.md"), result)
+    row = (
+        f"| {datetime.now(timezone.utc).date().isoformat()} | {item} | `{status}` | "
+        f"{link} | {notes} |\n"
+    )
+    content = state_index.read_text(encoding="utf-8") if state_index.exists() else ""
+    if row in content:
+        result.skipped.append(state_index)
+        return
+    marker = f"## {section}"
+    start = content.find(marker)
+    if start == -1:
+        append_once(state_index, f"\n{marker}\n\n| Date | Item | Status | Link | Notes |\n| --- | --- | --- | --- | --- |\n{row}", result)
+        return
+    next_section = content.find("\n## ", start + len(marker))
+    insert_at = len(content) if next_section == -1 else next_section
+    prefix = content[:insert_at]
+    suffix = content[insert_at:]
+    separator = "" if prefix.endswith("\n") else "\n"
+    state_index.write_text(f"{prefix}{separator}{row}{suffix}", encoding="utf-8")
+    result.updated.append(state_index)
+
+
+def append_domain_memory(domain_root: Path, entry: str, result: ScaffoldResult) -> None:
+    memory_file = domain_root / "MEMORY.md"
+    if not memory_file.exists():
+        write_file_once(memory_file, domain_memory_policy(domain_root.name), result)
+    append_once(
+        memory_file,
+        f"\n## {datetime.now(timezone.utc).date().isoformat()}\n\n- {entry}\n",
         result,
     )
 
@@ -2107,7 +2244,7 @@ def link_project_source(
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
     os_root = expand_path(root)
-    project_root = os_root / domain / "02-projects" / project
+    project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
         raise ValueError(f"project not found: {domain}/{project}")
 
@@ -2137,7 +2274,7 @@ def onboard_project(root: str | Path, domain: str, project: str) -> ScaffoldResu
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
     os_root = expand_path(root)
-    project_root = os_root / domain / "02-projects" / project
+    project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
         raise ValueError(f"project not found: {domain}/{project}")
     data = yaml.safe_load((project_root / "project.yml").read_text(encoding="utf-8")) or {}
@@ -2216,7 +2353,7 @@ def register_project_worktree(
     project = validate_name(project, "project")
     name = validate_name(name, "worktree")
     os_root = expand_path(root)
-    project_root = os_root / domain / "02-projects" / project
+    project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
         raise ValueError(f"project not found: {domain}/{project}")
     target = expand_path(path)
@@ -2282,7 +2419,7 @@ def create_project(
         lane = validate_name(lane, "lane")
 
     result = create_domain(root, domain)
-    domain_root = expand_path(root) / domain
+    domain_root = domain_path(root, domain)
     project_root = domain_root / "02-projects" / project
     ensure_dir(project_root, result)
     write_file_once(project_root / "README.md", project_readme(domain, project, status, lane), result)
@@ -2295,6 +2432,15 @@ def create_project(
 
     ensure_project_index(domain_root / "02-projects" / "README.md", domain, project, status, result)
     ensure_active_work(domain_root / "00-control-plane" / "active-work.md", project, status, result)
+    append_control_signal(
+        domain_root,
+        "Project Activity",
+        f"`{project}`",
+        status,
+        f"`02-projects/{project}/`",
+        "Project scaffold created or repaired.",
+        result,
+    )
     append_project_source_refs(project_root / "source-map.md", repo, notion, jira, result)
     return result
 
@@ -2429,7 +2575,7 @@ def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> Scaf
     lane = validate_name(lane, "lane")
     name = validate_name(name, "workflow")
     result = create_domain(root, domain)
-    workflow_root = expand_path(root) / domain / "03-workflows" / lane / name
+    workflow_root = domain_path(root, domain) / "03-workflows" / lane / name
     ensure_dir(workflow_root, result)
     ensure_dir(workflow_root / "examples", result)
     ensure_dir(workflow_root / "runs", result)
@@ -2438,6 +2584,15 @@ def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> Scaf
     for filename in WORKFLOW_FILES:
         write_file_once(workflow_root / filename, workflow_scaffold_content(domain, lane, name, filename), result)
     ensure_codex_config(workflow_root, "workflow_or_task", result)
+    append_control_signal(
+        domain_path(root, domain),
+        "Workflow Opportunities",
+        f"`{name}`",
+        "scaffolded",
+        f"`03-workflows/{lane}/{name}/`",
+        "Workflow opportunity now has a reusable spec scaffold.",
+        result,
+    )
     return result
 
 
@@ -2542,13 +2697,22 @@ def create_automation(root: str | Path, domain: str, lane: str, name: str) -> Sc
     lane = validate_name(lane, "lane")
     name = validate_name(name, "automation")
     result = create_domain(root, domain)
-    automation_root = expand_path(root) / domain / "04-automations" / lane / name
+    automation_root = domain_path(root, domain) / "04-automations" / lane / name
     ensure_dir(automation_root, result)
     ensure_dir(automation_root / "logs", result)
     write_file_once(automation_root / "logs" / "README.md", automation_logs_readme(domain, lane, name), result)
     for filename in AUTOMATION_FILES:
         write_file_once(automation_root / filename, automation_scaffold_content(domain, lane, name, filename), result)
     ensure_codex_config(automation_root, "automation", result)
+    append_control_signal(
+        domain_path(root, domain),
+        "Automation Status",
+        f"`{name}`",
+        "observe",
+        f"`04-automations/{lane}/{name}/`",
+        "Automation scaffold starts in observe mode until explicitly advanced.",
+        result,
+    )
     return result
 
 
@@ -2583,7 +2747,7 @@ def create_run_log(root: str | Path, domain: str, workflow_or_automation: str) -
             "<done_waiting_failed_needs_approval>": "running",
         },
     )
-    run_root = unique_run_log_dir(expand_path(root) / domain / "06-runs-and-logs" / "runs", run_id)
+    run_root = unique_run_log_dir(domain_path(root, domain) / "06-runs-and-logs" / "runs", run_id)
     ensure_dir(run_root, result)
     ensure_dir(run_root / "artifacts", result)
     write_file_once(run_root / "run-log.md", content, result)

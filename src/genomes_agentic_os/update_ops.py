@@ -22,6 +22,7 @@ from .scaffold import (
     ensure_update_metadata,
     ensure_visible_capability_surface,
     expand_path,
+    harness_path,
     install_docs,
 )
 
@@ -34,15 +35,15 @@ def now_stamp() -> str:
 
 
 def status_path(root: Path) -> Path:
-    return root / "registries" / "update-status.yml"
+    return harness_path(root, "registries", "update-status.yml")
 
 
 def plan_path(root: Path) -> Path:
-    return root / "registries" / "update-plan.yml"
+    return harness_path(root, "registries", "update-plan.yml")
 
 
 def snapshots_dir(root: Path) -> Path:
-    return root / "logs" / "updates" / "snapshots"
+    return harness_path(root, "logs", "updates", "snapshots")
 
 
 def read_structured(path: Path) -> dict[str, Any]:
@@ -57,7 +58,7 @@ def read_structured(path: Path) -> dict[str, Any]:
 
 
 def lock_data(root: Path) -> dict[str, Any]:
-    data = read_structured(root / "agentic-os.lock.json")
+    data = read_structured(harness_path(root, "agentic-os.lock.json"))
     return {
         "installed_version": data.get("installed_version") or SOURCE_PACKAGE_VERSION,
         "update_channel": data.get("update_channel") or DEFAULT_UPDATE_CHANNEL,
@@ -68,7 +69,7 @@ def lock_data(root: Path) -> dict[str, Any]:
 
 def local_manifest(root: Path) -> dict[str, Any]:
     lock = lock_data(root)
-    updates = read_structured(root / "registries" / "updates.yml").get("updates") or {}
+    updates = read_structured(harness_path(root, "registries", "updates.yml")).get("updates") or {}
     return {
         "version": updates.get("latest_known_version") or SOURCE_PACKAGE_VERSION,
         "channel": updates.get("channel") or lock["update_channel"],
@@ -150,11 +151,11 @@ def write_status(root: Path, status: dict[str, Any]) -> None:
 
 
 def customer_identity_path(root: Path) -> Path:
-    return root / "registries" / "customer-identity.json"
+    return harness_path(root, "registries", "customer-identity.json")
 
 
 def update_grant_path(root: Path) -> Path:
-    return root / "registries" / "update-grant.json"
+    return harness_path(root, "registries", "update-grant.json")
 
 
 def read_customer_identity(root: Path) -> dict[str, Any]:
@@ -175,7 +176,7 @@ def activate_license(root: str | Path, *, key: str) -> dict[str, Any]:
     license_data["status"] = "active"
     license_data["activated_at"] = now_stamp()
     license_data["key_hash"] = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    identity.setdefault("update_grant", {"status": "not_registered", "path": "registries/update-grant.json"})
+    identity.setdefault("update_grant", {"status": "not_registered", "path": "harness/registries/update-grant.json"})
     write_customer_identity(os_root, identity)
     return {
         "root": str(os_root),
@@ -188,7 +189,7 @@ def activate_license(root: str | Path, *, key: str) -> dict[str, Any]:
 
 
 def ensure_keypair(root: Path, name: str) -> tuple[Path, Path, str]:
-    key_dir = root / "security" / "ssh"
+    key_dir = harness_path(root, "security", "ssh")
     key_dir.mkdir(parents=True, exist_ok=True)
     private_key = key_dir / name
     public_key = key_dir / f"{name}.pub"
@@ -245,19 +246,19 @@ def fake_provisioning_response(root: Path, update_public_key: str, backup_public
 
 
 def write_ssh_config(root: Path, grant: dict[str, Any]) -> Path:
-    config_path = root / "security" / "ssh" / "config"
+    config_path = harness_path(root, "security", "ssh", "config")
     remotes = grant["remotes"]
     config = f"""Host agentic-os-update
   HostName github.com
   User git
-  IdentityFile {root / "security" / "ssh" / "update_ed25519"}
+  IdentityFile {harness_path(root, "security", "ssh", "update_ed25519")}
   IdentitiesOnly yes
   # Remote: {remotes["update"]["url"]}
 
 Host agentic-os-backup
   HostName github.com
   User git
-  IdentityFile {root / "security" / "ssh" / "backup_ed25519"}
+  IdentityFile {harness_path(root, "security", "ssh", "backup_ed25519")}
   IdentitiesOnly yes
   # Remote: {remotes["backup"]["url"]}
 """
@@ -286,7 +287,7 @@ def update_register(root: str | Path) -> dict[str, Any]:
     config_path = write_ssh_config(os_root, grant)
 
     identity = read_customer_identity(os_root)
-    identity["update_grant"] = {"status": "registered", "path": "registries/update-grant.json", "registered_at": grant["registered_at"]}
+    identity["update_grant"] = {"status": "registered", "path": "harness/registries/update-grant.json", "registered_at": grant["registered_at"]}
     write_customer_identity(os_root, identity)
 
     return {
@@ -295,7 +296,7 @@ def update_register(root: str | Path) -> dict[str, Any]:
         "ssh_config": str(config_path),
         "remotes": grant["remotes"],
         "public_keys": grant["public_keys"],
-        "private_keys": "stored locally under security/ssh with mode 0600",
+        "private_keys": "stored locally under harness/security/ssh with mode 0600",
     }
 
 
@@ -307,7 +308,7 @@ def load_update_grant(root: Path) -> dict[str, Any]:
 
 
 def write_run_log(root: Path, folder: str, prefix: str, payload: dict[str, Any]) -> Path:
-    destination = root / "logs" / folder / f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.yml"
+    destination = harness_path(root, "logs", folder, f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.yml")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return destination
@@ -333,7 +334,7 @@ def update_pull(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
 def backup_run(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
     grant = load_update_grant(os_root)
-    policy = read_structured(os_root / "registries" / "backup-policy.yml").get("backup_policy") or {}
+    policy = read_structured(harness_path(os_root, "registries", "backup-policy.yml")).get("backup_policy") or {}
     payload = {
         "status": "planned" if dry_run else "completed",
         "dry_run": dry_run,
@@ -350,7 +351,7 @@ def backup_run(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
 def snapshot_update_state(root: Path) -> Path:
     snapshot = {
         "created_at": now_stamp(),
-        "lock": read_structured(root / "agentic-os.lock.json"),
+        "lock": read_structured(harness_path(root, "agentic-os.lock.json")),
         "status": read_structured(status_path(root)),
     }
     destination = snapshots_dir(root) / f"snapshot-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.yml"
@@ -429,7 +430,7 @@ def update_status(root: str | Path) -> dict[str, Any]:
 def phone_home_payload(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
     lock = lock_data(os_root)
-    registries = os_root / "registries"
+    registries = harness_path(os_root, "registries")
     registry_counts: dict[str, int] = {}
     if registries.is_dir():
         for path in sorted(registries.glob("*.yml")):
@@ -447,7 +448,7 @@ def phone_home_payload(root: str | Path) -> dict[str, Any]:
         },
         "health": {
             "root_marker_present": (os_root / ".agentic_root").is_file(),
-            "inventory_present": (os_root / "INVENTORY.md").is_file(),
+            "inventory_present": harness_path(os_root, "INVENTORY.md").is_file(),
             "registry_counts": registry_counts,
         },
         "privacy": {

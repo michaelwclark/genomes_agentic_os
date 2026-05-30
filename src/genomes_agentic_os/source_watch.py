@@ -14,8 +14,8 @@ from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
 
 
-CONTROL_PLANE = Path("shared_factory/00-control-plane")
-SOURCE_EVENTS = Path("shared_factory/06-runs-and-logs/source-events")
+CONTROL_PLANE = Path("harness/shared_factory/00-control-plane")
+SOURCE_EVENTS = Path("harness/shared_factory/06-runs-and-logs/source-events")
 
 CONNECTED_SYSTEMS_FILE = CONTROL_PLANE / "connected-systems.yml"
 SOURCE_PROVIDERS_FILE = CONTROL_PLANE / "source-providers.yml"

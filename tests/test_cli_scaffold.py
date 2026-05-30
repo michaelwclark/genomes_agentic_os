@@ -13,6 +13,14 @@ from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES
 from genomes_agentic_os.validate import validate_root
 
 
+def harness(root: Path) -> Path:
+    return root / "harness"
+
+
+def shared_factory(root: Path) -> Path:
+    return harness(root) / "shared_factory"
+
+
 def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     projects_source = tmp_path / "projects"
@@ -22,8 +30,15 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
 
     assert (root / ".agentic_root").is_file()
     assert not (root / "projects").exists()
+    assert {path.name for path in root.iterdir() if not path.name.startswith(".")} == {
+        "archive",
+        "clarks_consulting",
+        "harness",
+        "los",
+        "personal",
+    }
 
-    for domain in ("personal", "clarks_consulting", "los", "shared_factory", "archive"):
+    for domain in ("personal", "clarks_consulting", "los", "archive"):
         domain_root = root / domain
         assert domain_root.is_dir()
         assert (domain_root / "config.toml").is_file()
@@ -50,32 +65,36 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "06-runs-and-logs" / "failures" / "README.md").is_file()
         assert (domain_root / "08-archive" / "README.md").is_file()
 
-    assert (root / "ROUTER.md").is_file()
-    assert (root / "config.toml").is_file()
-    assert (root / "AGENTS.md").is_file()
-    assert (root / "CLAUDE.md").is_file()
-    assert (root / "CONTEXT.md").is_file()
-    assert (root / "RULES.md").is_file()
-    assert (root / "TOOLS.md").is_file()
-    assert (root / "MEMORY.md").is_file()
-    assert (root / "agentic-os.lock.json").is_file()
-    assert (root / "UPDATE_POLICY.md").is_file()
-    assert (root / "registries" / "updates.yml").is_file()
-    assert (root / "registries" / "customer-identity.json").is_file()
-    assert (root / "registries" / "backup-policy.yml").is_file()
-    assert not (root / "registries" / "update-grant.json").exists()
-    assert (root / "security" / "ssh").is_dir()
-    assert (root / "logs" / "updates").is_dir()
-    assert (root / "logs" / "backups").is_dir()
+    assert (shared_factory(root) / "domain.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "state-index.md").is_file()
+    assert not (root / "shared_factory").exists()
+
+    assert (harness(root) / "ROUTER.md").is_file()
+    assert (harness(root) / "config.toml").is_file()
+    assert (harness(root) / "AGENTS.md").is_file()
+    assert (harness(root) / "CLAUDE.md").is_file()
+    assert (harness(root) / "CONTEXT.md").is_file()
+    assert (harness(root) / "RULES.md").is_file()
+    assert (harness(root) / "TOOLS.md").is_file()
+    assert (harness(root) / "MEMORY.md").is_file()
+    assert (harness(root) / "agentic-os.lock.json").is_file()
+    assert (harness(root) / "UPDATE_POLICY.md").is_file()
+    assert (harness(root) / "registries" / "updates.yml").is_file()
+    assert (harness(root) / "registries" / "customer-identity.json").is_file()
+    assert (harness(root) / "registries" / "backup-policy.yml").is_file()
+    assert not (harness(root) / "registries" / "update-grant.json").exists()
+    assert (harness(root) / "security" / "ssh").is_dir()
+    assert (harness(root) / "logs" / "updates").is_dir()
+    assert (harness(root) / "logs" / "backups").is_dir()
     assert not (root / "AGENT.md").exists()
-    assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
-    root_agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert (harness(root) / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    root_agents = (harness(root) / "AGENTS.md").read_text(encoding="utf-8")
     assert "ROUTER.md" in root_agents
     assert "CONTEXT.md" in root_agents
     assert "RULES.md" in root_agents
     assert "TOOLS.md" in root_agents
     for directory in ("bin", "commands", "skills", "mcp", "plugins", "libraries", "hooks", "rules", "registries"):
-        assert (root / directory).is_dir()
+        assert (harness(root) / directory).is_dir()
     for registry_name in (
         "capabilities.yml",
         "commands.yml",
@@ -86,13 +105,13 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "plugins.yml",
         "rules.yml",
     ):
-        assert (root / "registries" / registry_name).is_file()
-    inventory = (root / "INVENTORY.md").read_text(encoding="utf-8")
+        assert (harness(root) / "registries" / registry_name).is_file()
+    inventory = (harness(root) / "INVENTORY.md").read_text(encoding="utf-8")
     assert "## Commands" in inventory
     assert "`make-skill`" in inventory
     assert "`orchestrate`" in inventory
     assert "`config-install-tree`" in inventory
-    commands = yaml.safe_load((root / "registries" / "commands.yml").read_text(encoding="utf-8"))
+    commands = yaml.safe_load((harness(root) / "registries" / "commands.yml").read_text(encoding="utf-8"))
     assert {entry["command"] for entry in commands["commands"]} >= {
         "/make-skill",
         "/make-domain",
@@ -100,11 +119,11 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "/make-workflow",
         "/orchestrate",
     }
-    mcp_servers = yaml.safe_load((root / "registries" / "mcp-servers.yml").read_text(encoding="utf-8"))
+    mcp_servers = yaml.safe_load((harness(root) / "registries" / "mcp-servers.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "genomes_brain"} <= {entry["id"] for entry in mcp_servers["mcp_servers"]}
-    libraries = yaml.safe_load((root / "registries" / "libraries.yml").read_text(encoding="utf-8"))
+    libraries = yaml.safe_load((harness(root) / "registries" / "libraries.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "unified_memory"} <= {entry["id"] for entry in libraries["libraries"]}
-    hooks = yaml.safe_load((root / "registries" / "hooks.yml").read_text(encoding="utf-8"))
+    hooks = yaml.safe_load((harness(root) / "registries" / "hooks.yml").read_text(encoding="utf-8"))
     assert {"memory-session-start", "memory-stop", "harness-trace-emitter", "context-mode-cache-heal"} <= {
         entry["id"] for entry in hooks["hooks"]
     }
@@ -114,143 +133,135 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "harness-emit-trace.sh",
         "context-mode-cache-heal.mjs",
     ):
-        hook_path = root / "hooks" / hook_name
+        hook_path = harness(root) / "hooks" / hook_name
         assert hook_path.is_file()
         assert hook_path.stat().st_mode & 0o111
-    assert (root / "commands" / "os-route.md").is_file()
-    assert (root / "skills" / "os-navigator" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "domain" / "context.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "planning" / "feature-spec.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "planning" / "future-idea.md").is_file()
+    assert (harness(root) / "commands" / "os-route.md").is_file()
+    assert (harness(root) / "skills" / "os-navigator" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "domain" / "context.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "planning" / "feature-spec.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "planning" / "future-idea.md").is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "notion" / "agentic-os-control-plane.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "notion" / "agentic-os-control-plane.md"
     ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "room" / "context.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "room" / "router.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "room" / "routing-table.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "stage" / "stage-context.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "room" / "context.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "room" / "router.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "room" / "routing-table.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "stage" / "stage-context.md").is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
     ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "tool-index.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "tool-index.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "reference" / "tool-index.md").is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "source-priority.md"
-    ).is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "style-and-output-rules.md"
-    ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "decision-log.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "references" / "naming-conventions.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "references" / "source-priority.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "references" / "style-and-output-rules.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "references" / "decision-log.md").is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "profile" / "customer-os-profile.yml"
+        shared_factory(root) / "05-knowledge" / "templates" / "reference" / "source-priority.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "client-automation-brief.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "reference" / "style-and-output-rules.md"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "reference" / "decision-log.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "naming-conventions.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "tool-index.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "source-priority.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "style-and-output-rules.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "decision-log.md").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "templates" / "profile" / "customer-os-profile.yml"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "automation-fit-matrix.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "customer" / "client-automation-brief.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "customer-handoff-checklist.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "customer" / "automation-fit-matrix.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "notion" / "control-plane-database-spec.md"
-    ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "heartbeat.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "schedule.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "execution-target.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "integration.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "run-queue-item.yml").is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "notion" / "runtime-tracking-database-spec.md"
-    ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "connected-system.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "source-provider.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-source.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-cursor.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "source-event.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "trigger-rule.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-ledger-index.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "chain-rule.yml").is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-processing-result.yml"
-    ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "dead-letter-event.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "update-grant.json").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "backup-policy.yml").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "index.html").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "operating-manual" / "07-diagrams" / "layer-map.svg").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-route.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-capture-plan.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-discover-rooms.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-doctor.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-update.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-client-automation-brief.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-control-plane-bootstrap.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-context-audit.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-runtime-init.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-heartbeat.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-integration-setup.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-event.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-chain.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "plans" / "README.md").is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
-    ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "plans" / "09-future-ideas-intake.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "plans" / "11-room-first-installer-and-routing.md").is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "plans" / "12-factory-template-import-backlog.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "customer" / "customer-handoff-checklist.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "plans" / "13-reference-and-skill-index-layer.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "notion" / "control-plane-database-spec.md"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "heartbeat.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "schedule.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "execution-target.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "integration.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "run-queue-item.yml").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "templates" / "notion" / "runtime-tracking-database-spec.md"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "connected-system.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "source-provider.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-source.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-cursor.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "source-event.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "trigger-rule.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "event-ledger-index.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "chain-rule.yml").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "event-processing-result.yml"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "dead-letter-event.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "update-grant.json").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "backup-policy.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "README.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "index.html").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "07-diagrams" / "layer-map.svg").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-route.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-capture-plan.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-discover-rooms.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-doctor.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-update.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-client-automation-brief.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-control-plane-bootstrap.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-context-audit.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-runtime-init.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-heartbeat.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-integration-setup.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-event.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-chain.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "plans" / "README.md").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "plans" / "09-future-ideas-intake.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "plans" / "11-room-first-installer-and-routing.md").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "plans" / "12-factory-template-import-backlog.md"
     ).is_file()
     assert (
-        root
-        / "shared_factory"
-        / "05-knowledge"
-        / "plans"
-        / "14-client-automation-and-control-plane-playbooks.md"
+        shared_factory(root) / "05-knowledge" / "plans" / "13-reference-and-skill-index-layer.md"
     ).is_file()
     assert (
-        root
-        / "shared_factory"
-        / "05-knowledge"
-        / "plans"
-        / "15-always-on-runtime-heartbeats-schedules-and-integrations.md"
+        shared_factory(root) / "05-knowledge" / "plans" / "14-client-automation-and-control-plane-playbooks.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "plans" / "16-connected-source-watch-registry.md"
+        shared_factory(root) / "05-knowledge" / "plans" / "15-always-on-runtime-heartbeats-schedules-and-integrations.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "plans" / "17-event-graph-and-chained-automations.md"
-    ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "room-builder" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
-    assert (
-        root / "shared_factory" / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
+        shared_factory(root) / "05-knowledge" / "plans" / "16-connected-source-watch-registry.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "skills" / "control-plane-bootstrap" / "SKILL.md"
+        shared_factory(root) / "05-knowledge" / "plans" / "17-event-graph-and-chained-automations.md"
     ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "context-audit" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "runtime-operator" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "integration-setup" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "room-builder" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
+    ).is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "skills" / "control-plane-bootstrap" / "SKILL.md"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "context-audit" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "runtime-operator" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "integration-setup" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
     assert not validate_root(root).errors
@@ -260,7 +271,7 @@ def test_validate_fails_when_declared_capability_is_missing_from_registry(tmp_pa
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
-    capabilities_path = root / "registries" / "capabilities.yml"
+    capabilities_path = harness(root) / "registries" / "capabilities.yml"
     capabilities = yaml.safe_load(capabilities_path.read_text(encoding="utf-8"))
     capabilities["capabilities"].append(
         {
@@ -284,7 +295,7 @@ def test_update_channel_check_plan_apply_and_phone_home_are_local_and_safe(tmp_p
     manifest = tmp_path / "manifest.yml"
 
     assert main(["init", "--target", str(root)]) == 0
-    local_command = root / "commands" / "os-route.md"
+    local_command = harness(root) / "commands" / "os-route.md"
     local_command.write_text("# local command edit\n", encoding="utf-8")
     manifest.write_text(
         yaml.safe_dump(
@@ -307,7 +318,7 @@ def test_update_channel_check_plan_apply_and_phone_home_are_local_and_safe(tmp_p
     check = yaml.safe_load(capsys.readouterr().out)
     assert check["update_available"] is True
     assert check["mutated"] is False
-    assert not (root / "registries" / "update-plan.yml").exists()
+    assert not (harness(root) / "registries" / "update-plan.yml").exists()
 
     assert main(["update", "plan", "--root", str(root), "--manifest", str(manifest)]) == 0
     planned = yaml.safe_load(capsys.readouterr().out)
@@ -342,7 +353,7 @@ def test_license_register_update_pull_and_backup_use_local_grants(tmp_path: Path
     activated = yaml.safe_load(activated_output)
     assert activated["license"]["status"] == "active"
     assert len(activated["license"]["key_hash"]) == 64
-    identity = (root / "registries" / "customer-identity.json").read_text(encoding="utf-8")
+    identity = (harness(root) / "registries" / "customer-identity.json").read_text(encoding="utf-8")
     assert raw_key not in identity
 
     assert main(["update", "register", "--root", str(root)]) == 0
@@ -351,8 +362,8 @@ def test_license_register_update_pull_and_backup_use_local_grants(tmp_path: Path
     assert "public_keys" in registered
     assert "private_keys" in registered
     assert raw_key not in yaml.safe_dump(registered)
-    assert (root / "security" / "ssh" / "update_ed25519").stat().st_mode & 0o777 == 0o600
-    assert (root / "security" / "ssh" / "backup_ed25519").stat().st_mode & 0o777 == 0o600
+    assert (harness(root) / "security" / "ssh" / "update_ed25519").stat().st_mode & 0o777 == 0o600
+    assert (harness(root) / "security" / "ssh" / "backup_ed25519").stat().st_mode & 0o777 == 0o600
 
     assert main(["update", "pull", "--root", str(root), "--dry-run"]) == 0
     planned_pull = yaml.safe_load(capsys.readouterr().out)
@@ -383,24 +394,24 @@ def test_update_register_blocks_when_billing_is_inactive(tmp_path: Path) -> None
     # No license activated yet -> billing inactive -> registration must be blocked
     # without generating any keypair or grant.
     assert main(["update", "register", "--root", str(root)]) == 2
-    assert not (root / "registries" / "update-grant.json").is_file()
-    assert not (root / "security" / "ssh" / "update_ed25519").exists()
+    assert not (harness(root) / "registries" / "update-grant.json").is_file()
+    assert not (harness(root) / "security" / "ssh" / "update_ed25519").exists()
 
     # Activating the license flips billing active and unblocks registration.
     assert main(["license", "activate", "--root", str(root), "--key", "fake-key"]) == 0
     assert main(["update", "register", "--root", str(root)]) == 0
-    assert (root / "registries" / "update-grant.json").is_file()
+    assert (harness(root) / "registries" / "update-grant.json").is_file()
 
 
 def test_backup_policy_excludes_projects_keys_and_secrets(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
 
-    policy = yaml.safe_load((root / "registries" / "backup-policy.yml").read_text(encoding="utf-8"))
+    policy = yaml.safe_load((harness(root) / "registries" / "backup-policy.yml").read_text(encoding="utf-8"))
     excludes = policy["backup_policy"]["exclude"]
     # AC: backup excludes private keys, env files, secrets, raw customer data, and projects/ by default.
     assert "projects/" in excludes
-    assert "security/ssh/*" in excludes
+    assert "harness/security/ssh/*" in excludes
     assert "**/.env" in excludes
     assert any("secret" in pattern for pattern in excludes)
 
@@ -410,16 +421,16 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
 
     assert main(["init", "--target", str(root)]) == 0
     assert main(["runtime", "init", "--root", str(root)]) == 0
-    assert (root / "shared_factory" / "00-control-plane" / "runtime-registry.yml").is_file()
-    assert (root / "shared_factory" / "00-control-plane" / "integration-registry.yml").is_file()
-    assert (root / "shared_factory" / "00-control-plane" / "run-queue.yml").is_file()
-    assert (root / "shared_factory" / "06-runs-and-logs" / "heartbeats").is_dir()
+    assert (shared_factory(root) / "00-control-plane" / "runtime-registry.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "integration-registry.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "run-queue.yml").is_file()
+    assert (shared_factory(root) / "06-runs-and-logs" / "heartbeats").is_dir()
 
     assert main(["runtime", "doctor", "--root", str(root)]) == 0
     assert main(["heartbeat", "list", "--root", str(root)]) == 0
 
     assert main(["heartbeat", "run", "granola_recent_notes_sync", "--root", str(root), "--dry-run"]) == 0
-    assert list((root / "shared_factory" / "06-runs-and-logs" / "heartbeats").glob("*granola_recent_notes_sync.yml"))
+    assert list((shared_factory(root) / "06-runs-and-logs" / "heartbeats").glob("*granola_recent_notes_sync.yml"))
     assert main(["schedule", "create", "weekly_runtime_doctor", "--root", str(root), "--cadence", "weekly"]) == 0
     assert main(["schedule", "run-due", "--root", str(root), "--dry-run"]) == 0
     assert main(["integration", "list", "--root", str(root)]) == 0
@@ -443,9 +454,9 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     )
     assert (root / ".notion-runtime-tracking" / "manifest.yml").is_file()
 
-    registry = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "runtime-registry.yml").read_text())
+    registry = yaml.safe_load((shared_factory(root) / "00-control-plane" / "runtime-registry.yml").read_text())
     integration_registry = yaml.safe_load(
-        (root / "shared_factory" / "00-control-plane" / "integration-registry.yml").read_text()
+        (shared_factory(root) / "00-control-plane" / "integration-registry.yml").read_text()
     )
     assert {"codex_harness", "claude_harness", "script", "orgo_desktop", "composio_cli", "agentmail_api", "granola_local", "notion_api"} <= {
         target["id"] for target in registry["execution_targets"]
@@ -472,7 +483,7 @@ def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_
     assert second["queued"] == []
     assert second["skipped"][0]["reason"] == "not due"
 
-    queue_path = root / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue_path = shared_factory(root) / "00-control-plane" / "run-queue.yml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
     assert len(queue["items"]) == 1
     assert queue["run_queue"] == queue["items"]
@@ -499,7 +510,7 @@ def test_runtime_gates_approval_needed_and_provider_targets(tmp_path: Path, caps
     assert main(["init", "--target", str(root)]) == 0
     assert main(["runtime", "init", "--root", str(root)]) == 0
 
-    registry_path = root / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
+    registry_path = shared_factory(root) / "00-control-plane" / "runtime-registry.yml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     registry["schedules"] = [
         {
@@ -544,7 +555,7 @@ def test_runtime_doctor_reports_invalid_schedule_semantics(tmp_path: Path, capsy
     assert main(["init", "--target", str(root)]) == 0
     assert main(["runtime", "init", "--root", str(root)]) == 0
 
-    registry_path = root / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
+    registry_path = shared_factory(root) / "00-control-plane" / "runtime-registry.yml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     registry["schedules"][0]["cadence"] = "every_zero_hours"
     registry["schedules"][0]["timezone"] = "Missing/Timezone"
@@ -649,8 +660,8 @@ def test_validate_requires_root_rules_and_tools(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
-    (root / "RULES.md").unlink()
-    (root / "TOOLS.md").unlink()
+    (harness(root) / "RULES.md").unlink()
+    (harness(root) / "TOOLS.md").unlink()
 
     result = validate_root(root)
     assert not result.ok
@@ -731,7 +742,7 @@ def test_config_install_tree_covers_domain_project_workflow_and_automation_layer
     result = yaml.safe_load(capsys.readouterr().out)
     targets = {(target["root"], target["layer"]) for target in result["targets"]}
 
-    assert (str(root), "agentic_os_root") in targets
+    assert (str(harness(root)), "agentic_os_root") in targets
     assert (str(root / "los"), "domain_or_lane") in targets
     assert (str(root / "los" / "02-projects" / "losmon_replacement"), "project") in targets
     assert (str(root / "los" / "03-workflows" / "engineering" / "feature_dev"), "workflow_or_task") in targets
@@ -754,7 +765,7 @@ def test_config_install_tree_apply_writes_and_doctors_discovered_layers(tmp_path
     capsys.readouterr()
 
     targets = {
-        root: "agentic_os_root",
+        harness(root): "agentic_os_root",
         root / "los": "domain_or_lane",
         root / "los" / "02-projects" / "losmon_replacement": "project",
         root / "los" / "03-workflows" / "engineering" / "feature_dev": "workflow_or_task",
@@ -879,18 +890,18 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
-    manual_readme = root / "shared_factory" / "05-knowledge" / "operating-manual" / "README.md"
-    command_file = root / "shared_factory" / "05-knowledge" / "commands" / "os-sync-notion.md"
-    playbook_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-client-automation-brief.md"
-    playbook_skill = root / "shared_factory" / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
-    watch_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-watch-source.md"
-    watch_template = root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "watch-source.yml"
-    event_command = root / "shared_factory" / "05-knowledge" / "commands" / "os-event.md"
-    event_template = root / "shared_factory" / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml"
-    plan_readme = root / "shared_factory" / "05-knowledge" / "plans" / "README.md"
-    plan_file = root / "shared_factory" / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
-    planning_template = root / "shared_factory" / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
-    domain_context_template = root / "shared_factory" / "05-knowledge" / "templates" / "domain" / "context.md"
+    manual_readme = shared_factory(root) / "05-knowledge" / "operating-manual" / "README.md"
+    command_file = shared_factory(root) / "05-knowledge" / "commands" / "os-sync-notion.md"
+    playbook_command = shared_factory(root) / "05-knowledge" / "commands" / "os-client-automation-brief.md"
+    playbook_skill = shared_factory(root) / "05-knowledge" / "skills" / "client-automation-brief" / "SKILL.md"
+    watch_command = shared_factory(root) / "05-knowledge" / "commands" / "os-watch-source.md"
+    watch_template = shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-source.yml"
+    event_command = shared_factory(root) / "05-knowledge" / "commands" / "os-event.md"
+    event_template = shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml"
+    plan_readme = shared_factory(root) / "05-knowledge" / "plans" / "README.md"
+    plan_file = shared_factory(root) / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
+    planning_template = shared_factory(root) / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
+    domain_context_template = shared_factory(root) / "05-knowledge" / "templates" / "domain" / "context.md"
     manual_readme.write_text("# local edit\n", encoding="utf-8")
     plan_readme.write_text("# local plan edit\n", encoding="utf-8")
     command_file.unlink()
@@ -919,11 +930,11 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert plan_file.is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "commands" / "os-update.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-update.md").is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md"
+        shared_factory(root) / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md"
     ).is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "skills" / "os-doctor" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "os-doctor" / "SKILL.md").is_file()
     assert main(["validate", "--root", str(root)]) == 0
     assert main(["docs", "update", "--root", str(root)]) == 0
     assert manual_readme.read_text(encoding="utf-8") == "# local edit\n"
@@ -1194,6 +1205,132 @@ def test_route_classifies_project_request_and_approval_risk(tmp_path: Path, caps
     assert any(path.endswith("source-map.md") for path in packet["sources_to_load"])
 
 
+def test_idea_capture_routes_to_domain_inbox_even_from_linked_project_repo(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "los_app"
+    repo.mkdir()
+
+    assert main(["project", "create", "los", "los_app", "--repo", str(repo), "--root", str(root)]) == 0
+    monkeypatch.chdir(repo)
+    assert (
+        main(
+            [
+                "here",
+                "route",
+                "I want to add an idea to LOS. Monitor all recent merged pull requests and build a developer newsletter.",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "inbox"
+    assert packet["target_path"].endswith("los/01-inbox")
+    assert not packet["target_path"].endswith("02-projects/los_app")
+    assert str(root / "los" / "01-inbox" / "raw-ideas.md") in packet["sources_to_load"]
+    assert str(root / "los" / "00-control-plane" / "state-index.md") in packet["sources_to_load"]
+    assert str(root / "los" / "MEMORY.md") in packet["sources_to_load"]
+
+
+def test_plan_capture_updates_inbox_control_plane_and_memory(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    title = "Developer Newsletter"
+    summary = "Monitor recent merged pull requests and build a developer newsletter."
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert (
+        main(
+            [
+                "plan",
+                "capture",
+                "--root",
+                str(root),
+                "--kind",
+                "domain",
+                "--domain",
+                "los",
+                "--title",
+                title,
+                "--summary",
+                summary,
+            ]
+        )
+        == 0
+    )
+
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["target"].endswith("los/01-inbox/raw-ideas.md")
+    raw_ideas = (root / "los" / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
+    triage = (root / "los" / "01-inbox" / "triage.md").read_text(encoding="utf-8")
+    state_index = (root / "los" / "00-control-plane" / "state-index.md").read_text(encoding="utf-8")
+    active_work = (root / "los" / "00-control-plane" / "active-work.md").read_text(encoding="utf-8")
+    memory = (root / "los" / "MEMORY.md").read_text(encoding="utf-8")
+    assert title in raw_ideas
+    assert summary in raw_ideas
+    assert title in triage
+    assert title in state_index
+    assert "`captured`" in state_index
+    assert title in active_work
+    assert f"Captured domain signal `{title}`" in memory
+
+
+def test_plan_capture_classifies_research_and_project_bug_activity(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "los", "los_app", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "plan",
+                "capture",
+                "--root",
+                str(root),
+                "--kind",
+                "domain",
+                "--domain",
+                "los",
+                "--title",
+                "Research PR Signals",
+                "--summary",
+                "Research ongoing signals from recent merged pull requests.",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "plan",
+                "capture",
+                "--root",
+                str(root),
+                "--kind",
+                "domain",
+                "--domain",
+                "los",
+                "--project",
+                "los_app",
+                "--title",
+                "Fix Routing Bug",
+                "--summary",
+                "Bug fix for linked project routing.",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    state_index = (root / "los" / "00-control-plane" / "state-index.md").read_text(encoding="utf-8")
+    memory = (root / "los" / "MEMORY.md").read_text(encoding="utf-8")
+    assert "| Research PR Signals | `research` |" in state_index
+    assert "| `los_app` bugfix: Fix Routing Bug | `bugfix` |" in state_index
+    assert "Captured project signal `Fix Routing Bug`" in memory
+
+
 def test_context_build_returns_exact_project_sources(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
@@ -1217,11 +1354,11 @@ def test_context_build_returns_exact_project_sources(tmp_path: Path, capsys) -> 
     packet = yaml.safe_load(capsys.readouterr().out)
     assert packet["domain"] == "los"
     assert packet["object_type"] == "project"
-    assert str(root / "ROUTER.md") in packet["sources_to_load"]
-    assert str(root / "shared_factory" / "05-knowledge" / "references" / "tool-index.md") in packet[
+    assert str(harness(root) / "ROUTER.md") in packet["sources_to_load"]
+    assert str(shared_factory(root) / "05-knowledge" / "references" / "tool-index.md") in packet[
         "sources_to_load"
     ]
-    assert str(root / "shared_factory" / "05-knowledge" / "references" / "source-priority.md") in packet[
+    assert str(shared_factory(root) / "05-knowledge" / "references" / "source-priority.md") in packet[
         "sources_to_load"
     ]
     assert str(root / "los" / "ROUTER.md") in packet["sources_to_load"]
@@ -1588,7 +1725,7 @@ def test_room_profile_init_creates_custom_room_without_default_domains(tmp_path:
     assert "docs/voice.md" in context
     assert "humanizer" in context
     assert "output exists in the expected folder" in context
-    router = (root / "ROUTER.md").read_text(encoding="utf-8")
+    router = (harness(root) / "ROUTER.md").read_text(encoding="utf-8")
     assert "`writing_room`" in router
     assert main(["validate", "--root", str(root)]) == 0
 
@@ -1619,16 +1756,16 @@ def test_factory_templates_install_and_customer_facing_templates_are_sanitized(t
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "room" / "context.md").is_file()
-    assert (root / "shared_factory" / "05-knowledge" / "templates" / "stage" / "stage-context.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "room" / "context.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "stage" / "stage-context.md").is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "profile" / "customer-os-profile.yml"
+        shared_factory(root) / "05-knowledge" / "templates" / "profile" / "customer-os-profile.yml"
     ).is_file()
     assert (
-        root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "automation-fit-matrix.md"
+        shared_factory(root) / "05-knowledge" / "templates" / "customer" / "automation-fit-matrix.md"
     ).is_file()
 
     sanitized_roots = [
@@ -1651,7 +1788,7 @@ def test_client_playbook_commands_and_skills_are_installed_and_sanitized(tmp_pat
 
     assert main(["init", "--target", str(root)]) == 0
 
-    knowledge_root = root / "shared_factory" / "05-knowledge"
+    knowledge_root = shared_factory(root) / "05-knowledge"
     command_paths = [
         knowledge_root / "commands" / "os-client-automation-brief.md",
         knowledge_root / "commands" / "os-control-plane-bootstrap.md",
@@ -1719,8 +1856,8 @@ def test_watch_source_registry_create_doctor_poll_and_run_due(tmp_path: Path, ca
     )
     result = yaml.safe_load(capsys.readouterr().out)
     assert result["action"] == "created"
-    assert (root / "shared_factory" / "00-control-plane" / "watch-sources.yml").is_file()
-    assert (root / "shared_factory" / "00-control-plane" / "watch-cursors.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "watch-sources.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "watch-cursors.yml").is_file()
 
     assert main(["watch-source", "doctor", "agentic_os_kanban", "--root", str(root)]) == 0
     doctor = yaml.safe_load(capsys.readouterr().out)
@@ -1769,7 +1906,7 @@ def test_watch_source_doctor_catches_missing_cursor_and_provider(tmp_path: Path,
 
     assert main(["watch-source", "create", "agentic_os_kanban", "--root", str(root), "--enabled"]) == 0
     capsys.readouterr()
-    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    watch_file = shared_factory(root) / "00-control-plane" / "watch-sources.yml"
     data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
     source = data["watch_sources"][0]
     source.pop("cursor")
@@ -1782,7 +1919,7 @@ def test_watch_source_doctor_catches_missing_cursor_and_provider(tmp_path: Path,
     assert "missing cursor type or state_ref" in messages
     assert "missing dedupe idempotency_key" in messages
 
-    systems_file = root / "shared_factory" / "00-control-plane" / "connected-systems.yml"
+    systems_file = shared_factory(root) / "00-control-plane" / "connected-systems.yml"
     systems = yaml.safe_load(systems_file.read_text(encoding="utf-8"))
     systems["connected_systems"][0]["provider_priority"] = ["missing_provider"]
     systems_file.write_text(yaml.safe_dump(systems, sort_keys=False), encoding="utf-8")
@@ -1797,7 +1934,7 @@ def test_watch_source_doctor_catches_enabled_source_without_trigger_rules(tmp_pa
 
     assert main(["watch-source", "create", "agentic_os_kanban", "--root", str(root), "--enabled"]) == 0
     capsys.readouterr()
-    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    watch_file = shared_factory(root) / "00-control-plane" / "watch-sources.yml"
     data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
     data["watch_sources"][0]["trigger_rules"] = []
     watch_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
@@ -1832,7 +1969,7 @@ def test_watch_source_dedupe_templates_use_external_refs_safely(tmp_path: Path, 
         == 0
     )
     capsys.readouterr()
-    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    watch_file = shared_factory(root) / "00-control-plane" / "watch-sources.yml"
     data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
     data["watch_sources"][0]["dedupe"] = {
         "idempotency_key": "{source_type}:{database_id}:{page_id}:{last_edited_time}:{unknown_field}"
@@ -1868,7 +2005,7 @@ def test_watch_source_trigger_rules_emit_event_and_enqueue_work(tmp_path: Path, 
         == 0
     )
     capsys.readouterr()
-    watch_file = root / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+    watch_file = shared_factory(root) / "00-control-plane" / "watch-sources.yml"
     data = yaml.safe_load(watch_file.read_text(encoding="utf-8"))
     data["watch_sources"][0]["trigger_rules"] = [
         {
@@ -1897,7 +2034,7 @@ def test_watch_source_trigger_rules_emit_event_and_enqueue_work(tmp_path: Path, 
     assert {action["action"] for action in poll["trigger_actions"]} == {"emit_event", "enqueue"}
     assert next(action for action in poll["trigger_actions"] if action["action"] == "emit_event")["path"]
 
-    queue = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    queue = yaml.safe_load((shared_factory(root) / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
     assert queue["run_queue"][0]["kind"] == "source_trigger"
     assert queue["run_queue"][0]["work_type"] == "source_review"
 
@@ -1905,7 +2042,7 @@ def test_watch_source_trigger_rules_emit_event_and_enqueue_work(tmp_path: Path, 
     repeated = yaml.safe_load(capsys.readouterr().out)
     enqueue = next(action for action in repeated["trigger_actions"] if action["action"] == "enqueue")
     assert enqueue["status"] == "skipped"
-    assert len(list((root / "shared_factory" / "06-runs-and-logs" / "source-events").glob("*.yml"))) == 1
+    assert len(list((shared_factory(root) / "06-runs-and-logs" / "source-events").glob("*.yml"))) == 1
 
 
 def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys) -> None:
@@ -1932,9 +2069,9 @@ def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys
     event = yaml.safe_load(capsys.readouterr().out)
     event_path = Path(event["path"])
     assert event_path.is_file()
-    assert (root / "shared_factory" / "06-runs-and-logs" / "events" / "event-ledger-index.md").is_file()
+    assert (shared_factory(root) / "06-runs-and-logs" / "events" / "event-ledger-index.md").is_file()
 
-    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    chain_rules = shared_factory(root) / "00-control-plane" / "chain-rules.yml"
     data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
     data["chain_rules"][0]["enabled"] = True
     data["chain_rules"][0]["when"]["filters"] = {}
@@ -1949,14 +2086,14 @@ def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys
     dry_run = yaml.safe_load(capsys.readouterr().out)
     assert dry_run["dry_run"] is True
     assert dry_run["actions"][0]["results"][0]["status"] == "dry-run"
-    assert not (root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(
+    assert not (shared_factory(root) / "00-control-plane" / "run-queue.yml").read_text(
         encoding="utf-8"
     ).count("documentation_update")
 
     assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
     applied = yaml.safe_load(capsys.readouterr().out)
     assert applied["actions"][0]["results"][0]["status"] == "queued"
-    run_queue = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    run_queue = yaml.safe_load((shared_factory(root) / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
     assert run_queue["run_queue"][0]["work_type"] == "documentation_update"
 
     assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
@@ -1997,7 +2134,7 @@ def test_event_graph_duplicate_event_envelopes_do_not_duplicate_queue_work(tmp_p
     duplicate_path = event_path.parent / "evt_duplicate_pr_123.yml"
     duplicate_path.write_text(yaml.safe_dump(duplicate, sort_keys=False), encoding="utf-8")
 
-    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    chain_rules = shared_factory(root) / "00-control-plane" / "chain-rules.yml"
     data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
     data["chain_rules"][0]["enabled"] = True
     data["chain_rules"][0]["when"]["filters"] = {}
@@ -2009,7 +2146,7 @@ def test_event_graph_duplicate_event_envelopes_do_not_duplicate_queue_work(tmp_p
     assert statuses == ["queued", "skipped"]
     assert processed["actions"][1]["results"][0]["reason"] == "idempotency key already processed"
 
-    run_queue = yaml.safe_load((root / "shared_factory" / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    run_queue = yaml.safe_load((shared_factory(root) / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
     assert len(run_queue["run_queue"]) == 1
 
 
@@ -2024,7 +2161,7 @@ def test_event_graph_max_depth_and_approval_needed_outputs(tmp_path: Path, capsy
     envelope["correlation"]["chain_depth"] = 2
     event_path.write_text(yaml.safe_dump(envelope, sort_keys=False), encoding="utf-8")
 
-    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    chain_rules = shared_factory(root) / "00-control-plane" / "chain-rules.yml"
     data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
     ci_rule = next(rule for rule in data["chain_rules"] if rule["id"] == "ci_failure_investigation")
     ci_rule["enabled"] = True
@@ -2061,7 +2198,7 @@ def test_event_graph_dead_letter_and_run_close_emit_events(tmp_path: Path, capsy
     assert main(["init", "--target", str(root)]) == 0
     assert main(["event", "append", "--root", str(root), "--type", "example.failed", "--source", "example:1"]) == 0
     capsys.readouterr()
-    chain_rules = root / "shared_factory" / "00-control-plane" / "chain-rules.yml"
+    chain_rules = shared_factory(root) / "00-control-plane" / "chain-rules.yml"
     data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
     data["chain_rules"].append(
         {
@@ -2083,7 +2220,7 @@ def test_event_graph_dead_letter_and_run_close_emit_events(tmp_path: Path, capsy
     assert main(["event", "process-due", "--root", str(root), "--apply"]) == 0
     processed = yaml.safe_load(capsys.readouterr().out)
     assert processed["actions"][0]["results"][0]["status"] == "dead-letter"
-    assert list((root / "shared_factory" / "06-runs-and-logs" / "events" / "dead-letter").glob("*.yml"))
+    assert list((shared_factory(root) / "06-runs-and-logs" / "events" / "dead-letter").glob("*.yml"))
 
     data = yaml.safe_load(chain_rules.read_text(encoding="utf-8"))
     data["chain_rules"][-1]["then"] = {
@@ -2296,7 +2433,7 @@ def test_doctor_reports_stale_run_logs_and_repairs_missing_managed_files(tmp_pat
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
-    missing_doc = root / "shared_factory" / "05-knowledge" / "templates" / "customer" / "client-automation-brief.md"
+    missing_doc = shared_factory(root) / "05-knowledge" / "templates" / "customer" / "client-automation-brief.md"
     missing_doc.unlink()
     local_readme = root / "README.md"
     local_readme.write_text("# local root edit\n", encoding="utf-8")
@@ -2399,7 +2536,7 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
     assert os_plan.is_file()
     assert "Capture losmon telemetry into run logs." in os_plan.read_text(encoding="utf-8")
     assert "future-ideas/telemetry-adapter.md" in (
-        root / "shared_factory" / "05-knowledge" / "plans" / "README.md"
+        shared_factory(root) / "05-knowledge" / "plans" / "README.md"
     ).read_text(encoding="utf-8")
 
     assert (
@@ -2559,12 +2696,12 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
     run_log = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
 
     required_sections = {
-        root / "ROUTER.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
-        root / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
-        root / "CLAUDE.md": ("@AGENTS.md",),
-        root / "CONTEXT.md": ("# Local Context", "## What To Load", "## Done Means"),
-        root / "RULES.md": ("# Rules", "## Approval Gates", "## Operating Rules"),
-        root / "TOOLS.md": ("# Tools", "## Skills", "## Commands", "## MCP Servers"),
+        harness(root) / "ROUTER.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
+        harness(root) / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
+        harness(root) / "CLAUDE.md": ("@AGENTS.md",),
+        harness(root) / "CONTEXT.md": ("# Local Context", "## What To Load", "## Done Means"),
+        harness(root) / "RULES.md": ("# Rules", "## Approval Gates", "## Operating Rules"),
+        harness(root) / "TOOLS.md": ("# Tools", "## Skills", "## Commands", "## MCP Servers"),
         root / "los" / "ROUTER.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
         root / "los" / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
         root / "los" / "CLAUDE.md": ("@AGENTS.md",),

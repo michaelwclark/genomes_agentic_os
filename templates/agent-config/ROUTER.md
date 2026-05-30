@@ -8,6 +8,7 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 
 | Request Type | Route To | Read First |
 | --- | --- | --- |
+| Idea, rough thought, or product/system concept | matching domain `01-inbox/` | domain `ROUTER.md` |
 | Raw capture | `01-inbox/` | `CONTEXT.md` |
 | Active project work | `02-projects/<project>/` | project `status.md` and `source-map.md` |
 | Repeatable workflow | `03-workflows/<lane>/<workflow>/` | workflow `quick-reference.md`, `context-pack.md`, and `runbook.md` |
@@ -19,6 +20,7 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 ## Routing Rules
 
 - Choose a domain or room before creating work.
+- Route explicit ideas to the matching domain inbox before promoting them into projects, workflows, automations, Jira, or implementation work.
 - Read `CONTEXT.md`, `RULES.md`, and `TOOLS.md` before acting in the routed layer.
 - Repeat the route-read-cd loop after changing directories.
 - Reuse an existing project, workflow, automation, or run log when it fits.

@@ -17,11 +17,11 @@ from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
 from .validate import validate_root
 
-RUNTIME_REGISTRY = "shared_factory/00-control-plane/runtime-registry.yml"
-INTEGRATION_REGISTRY = "shared_factory/00-control-plane/integration-registry.yml"
-RUN_QUEUE = "shared_factory/00-control-plane/run-queue.yml"
-HEARTBEAT_LOG_DIR = "shared_factory/06-runs-and-logs/heartbeats"
-RUNTIME_SETUP_RUN_DIR = "shared_factory/06-runs-and-logs/runs"
+RUNTIME_REGISTRY = "harness/shared_factory/00-control-plane/runtime-registry.yml"
+INTEGRATION_REGISTRY = "harness/shared_factory/00-control-plane/integration-registry.yml"
+RUN_QUEUE = "harness/shared_factory/00-control-plane/run-queue.yml"
+HEARTBEAT_LOG_DIR = "harness/shared_factory/06-runs-and-logs/heartbeats"
+RUNTIME_SETUP_RUN_DIR = "harness/shared_factory/06-runs-and-logs/runs"
 NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 
 RUNTIME_REQUIRED_TARGETS = {
@@ -361,8 +361,8 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "integration": "granola",
             "context": {
                 "read_first": [
-                    "shared_factory/00-control-plane/integration-registry.yml",
-                    "shared_factory/05-knowledge/source-map.md",
+                    "harness/shared_factory/00-control-plane/integration-registry.yml",
+                    "harness/shared_factory/05-knowledge/source-map.md",
                 ]
             },
             "approval_policy": {
@@ -385,7 +385,7 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "cadence": "hourly",
             "execution_target": "agentmail_api",
             "integration": "agentmail",
-            "context": {"read_first": ["shared_factory/00-control-plane/integration-registry.yml"]},
+            "context": {"read_first": ["harness/shared_factory/00-control-plane/integration-registry.yml"]},
             "approval_policy": {"external_write": False, "customer_visible_output": False},
             "success_means": ["inbound queue checked", "run log written"],
             "failure_escalation": {"after_consecutive_failures": 2, "notify": "Genome"},
@@ -400,7 +400,7 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "timezone": "America/Chicago",
             "execution_target": "script",
             "command": "agentic-os validate --root <root>",
-            "outputs": ["shared_factory/06-runs-and-logs/runs/"],
+            "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,
@@ -638,7 +638,7 @@ def runtime_init(root: str | Path) -> dict[str, Any]:
         "docs_created": len(install_result.created),
         "docs_skipped": len(install_result.skipped),
     }
-    _ensure_dir(_runtime_path(os_root, "shared_factory/00-control-plane"), result)
+    _ensure_dir(_runtime_path(os_root, "harness/shared_factory/00-control-plane"), result)
     _ensure_dir(_runtime_path(os_root, HEARTBEAT_LOG_DIR), result)
     _ensure_dir(_runtime_path(os_root, RUNTIME_SETUP_RUN_DIR), result)
     _seed_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), DEFAULT_RUNTIME_REGISTRY, result)
@@ -744,7 +744,7 @@ def schedule_create(
         "timezone": timezone_name,
         "execution_target": "script",
         "command": command or "agentic-os validate --root <root>",
-        "outputs": ["shared_factory/06-runs-and-logs/runs/"],
+            "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
         "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
         "next_due_at": None,
         "last_queued_at": None,
