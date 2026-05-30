@@ -6,8 +6,8 @@
 > build next. Read this page first; follow the links; trust them over re-derivation
 > (but re-validate if a fact looks stale — see the timestamp below).
 
-**Last full validation: 2026-05-30** · CLI: **52 OK + 1 intentional guardrail exit** ·
-Tests: **74/74 pass** · Diagram pipeline: **verified (Mermaid→PNG)**.
+**Last full validation: 2026-05-30** · CLI: **51 OK + 2 intentional guardrail exits** ·
+Tests: **82/82 pass** · Diagram pipeline: **verified (Mermaid→PNG)**.
 
 ---
 

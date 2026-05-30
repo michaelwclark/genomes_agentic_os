@@ -174,6 +174,7 @@ SHARED_KNOWLEDGE_FILES = (
     "plans/15-always-on-runtime-heartbeats-schedules-and-integrations.md",
     "plans/16-connected-source-watch-registry.md",
     "plans/17-event-graph-and-chained-automations.md",
+    "plans/22-project-work-lifecycle-and-conversation-auto-logging.md",
     "skills/os-navigator/SKILL.md",
     "skills/room-builder/SKILL.md",
     "skills/workflow-builder/SKILL.md",

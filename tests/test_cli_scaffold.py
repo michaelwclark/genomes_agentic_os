@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import sys
 import tomllib
 
 import pytest
@@ -340,6 +345,45 @@ def test_update_channel_check_plan_apply_and_phone_home_are_local_and_safe(tmp_p
     assert payload["install"]["root_name"] == "agentic_os"
     assert payload["privacy"]["excludes"] == ["prompts", "customer files", "source code", "logs", "secrets"]
     assert "logs" not in payload["health"]["registry_counts"]
+
+
+def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "los", "los_app_los_django", "--root", str(root)]) == 0
+    legacy_project = root / "los" / "02-projects" / "los_app_los_django"
+    shutil.rmtree(legacy_project / "work-items")
+    (legacy_project / "config" / "work-lifecycle.yml").unlink()
+    for child in sorted(harness(root).iterdir(), key=lambda path: path.name):
+        shutil.move(str(child), str(root / child.name))
+    harness(root).rmdir()
+    assert (root / "AGENTS.md").is_file()
+    assert (root / "shared_factory" / "domain.yml").is_file()
+    assert not (harness(root) / "AGENTS.md").exists()
+
+    assert main(["update", "plan", "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert main(["update", "apply", "--root", str(root)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+
+    assert result["status"]["layout_migration"] is True
+    assert result["status"]["project_surface_repair"] is True
+    assert {path.name for path in root.iterdir() if not path.name.startswith(".")} == {
+        "archive",
+        "clarks_consulting",
+        "harness",
+        "los",
+        "personal",
+    }
+    assert (harness(root) / "AGENTS.md").is_file()
+    assert (harness(root) / "config.toml").is_file()
+    assert (shared_factory(root) / "domain.yml").is_file()
+    assert (legacy_project / "work-items").is_dir()
+    assert (legacy_project / "config" / "work-lifecycle.yml").is_file()
+    assert not (root / "shared_factory").exists()
+    assert list((harness(root) / "logs" / "migrations").glob("harness-layout-*/legacy-root/AGENTS.md"))
+    assert validate_root(root).ok
 
 
 def test_license_register_update_pull_and_backup_use_local_grants(tmp_path: Path, capsys) -> None:
@@ -2560,6 +2604,7 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
     )
     raw_ideas = (root / "los" / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
     assert "CI failure clustering" in raw_ideas
+    capsys.readouterr()
 
     assert (
         main(
@@ -2582,10 +2627,175 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
         )
         == 0
     )
+    result = yaml.safe_load(capsys.readouterr().out)
     project_status = (root / "los" / "02-projects" / "losmon_replacement" / "status.md").read_text(
         encoding="utf-8"
     )
     assert "Customer-safe deploy brief" in project_status
+    work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "customer-safe-deploy-brief"
+    assert (work_item / "work.yml").is_file()
+    assert (work_item / "IDEA.md").is_file()
+    assert result["work_item"] == str(work_item)
+
+
+def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "los",
+                "losmon_replacement",
+                "--title",
+                "Build Logger",
+                "--summary",
+                "Log conversations and tool calls to the routed work item.",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "build-logger"
+    assert (work_item / "work.yml").is_file()
+    assert (work_item / "logs" / "conversations").is_dir()
+
+    assert main(["route", "Implement build logger for losmon_replacement", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["object_type"] == "work_item"
+    assert packet["target_path"] == str(work_item)
+    assert packet["lifecycle"]["state"] == "captured"
+    assert str(work_item / "IDEA.md") in packet["sources_to_load"]
+    assert main(["validate", "--root", str(root)]) == 0
+
+
+def test_route_can_resume_source_package_feature_from_linked_repo(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "genomes_agentic_os"
+    feature = repo / "features" / "60-memory-driven-toolsmith-loop"
+    feature.mkdir(parents=True)
+    (feature / "feature.yml").write_text(
+        "id: test\nprefix: '60'\nslug: 60-memory-driven-toolsmith-loop\ntitle: 60 Memory Driven Toolsmith Loop\nstatus: planned\n",
+        encoding="utf-8",
+    )
+    (feature / "IDEA.md").write_text("# Idea\n", encoding="utf-8")
+    (feature / "WORKLOG.md").write_text("# Worklog\n", encoding="utf-8")
+    (feature / "NEXT.md").write_text("# Next\n", encoding="utf-8")
+
+    assert main(["project", "create", "los", "genomes_agentic_os", "--repo", str(repo), "--root", str(root)]) == 0
+    assert main(["route", "Let's implement 60-memory-driven-toolsmith-loop", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["object_type"] == "work_item"
+    assert packet["target_path"] == str(feature)
+    assert packet["lifecycle"]["source"] == "source_feature"
+
+
+def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "los",
+                "losmon_replacement",
+                "--title",
+                "Build Logger",
+                "--summary",
+                "Log conversations.",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "build-logger"
+    transcript = tmp_path / "session.jsonl"
+    secret = "sk-" + "a" * 30
+    transcript.write_text(
+        json.dumps({"type": "tool_use", "command": f"echo {secret}"}) + "\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "harness/hooks/conversation-auto-log.py"],
+        input=json.dumps({"cwd": str(work_item), "transcript_path": str(transcript), "session_id": "test-session"}),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "Stop"
+    log_dir = work_item / "logs" / "conversations"
+    tool_md = next(log_dir.glob("*_tool_calls.md"))
+    tool_jsonl = next(log_dir.glob("*_tool_calls.jsonl"))
+    raw_log = next(path for path in log_dir.glob("*.jsonl") if not path.name.endswith("_tool_calls.jsonl"))
+    assert "[REDACTED]" in tool_md.read_text(encoding="utf-8")
+    assert secret not in tool_md.read_text(encoding="utf-8")
+    assert secret not in tool_jsonl.read_text(encoding="utf-8")
+    assert secret not in raw_log.read_text(encoding="utf-8")
+
+
+def test_conversation_auto_log_hook_routes_linked_repo_to_active_work_item(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "los_app", "--repo", str(repo), "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "los",
+                "los_app",
+                "--title",
+                "Build Logger",
+                "--summary",
+                "Log conversations.",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    work_item = root / "los" / "02-projects" / "los_app" / "work-items" / "build-logger"
+
+    proc = subprocess.run(
+        [sys.executable, "harness/hooks/conversation-auto-log.py"],
+        input=json.dumps({"cwd": str(repo), "session_id": "linked-repo"}),
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "AGENTIC_OS_ROOT": str(root)},
+    )
+    assert proc.returncode == 0
+    assert next((work_item / "logs" / "conversations").glob("*linked_repo*"), None) is None
+    assert list((work_item / "logs" / "conversations").glob("*build_logger*.jsonl"))
+
+
+def test_conversation_auto_log_hook_routes_harness_surface_to_harness_logs(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    cwd = root / "harness" / "hooks"
+    cwd.mkdir(parents=True)
+
+    proc = subprocess.run(
+        [sys.executable, "harness/hooks/conversation-auto-log.py"],
+        input=json.dumps({"cwd": str(cwd), "session_id": "harness-session"}),
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "AGENTIC_OS_ROOT": str(root)},
+    )
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "Stop"
+    assert list((root / "harness" / "logs" / "conversations").glob("*harness*.jsonl"))
 
 
 def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> None:

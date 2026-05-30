@@ -22,7 +22,7 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 | 15 | OK | 0 | automation attach -> launch |
 | 16 | OK | 0 | automation set-maturity prepare |
 | 17 | OK | 0 | run-log create |
-| 18 | OK | 0 | run-log close (20260530T043555Z-acme-launch_blog) |
+| 18 | OK | 0 | run-log close (20260530T172146Z-acme-launch_blog) |
 | 19 | OK | 0 | profile create |
 | 20 | OK | 0 | profile validate |
 | 21 | OK | 0 | runtime init |
@@ -44,7 +44,7 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 | 37 | OK | 0 | connected-system list |
 | 38 | OK | 0 | watch-source list |
 | 39 | OK | 0 | notion plan-sync |
-| 40 | OK | 0 | config doctor (layer) |
+| 40 | GUARDED | 1 | config doctor (layer) |
 | 41 | OK | 0 | config install (dry) |
 | 42 | OK | 0 | config install-tree (dry) |
 | 43 | OK | 0 | license activate |
@@ -61,5 +61,5 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 
 ## Totals
 
-- OK: 52
-- GUARDED: 1
+- OK: 51
+- GUARDED: 2

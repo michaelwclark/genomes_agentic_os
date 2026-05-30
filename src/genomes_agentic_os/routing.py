@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .lifecycle import WorkItemRecord, select_project_work_item
 from .scaffold import (
     DEFAULT_DOMAINS,
     SHARED_FACTORY_DOMAIN,
@@ -65,9 +66,10 @@ class ContextPacket:
     approval_risks: list[str]
     known_gaps: list[str]
     handoff_prompt: str
+    lifecycle: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        packet = {
             "domain": self.domain,
             "lane": self.lane,
             "object_type": self.object_type,
@@ -77,6 +79,9 @@ class ContextPacket:
             "known_gaps": self.known_gaps,
             "handoff_prompt": self.handoff_prompt,
         }
+        if self.lifecycle is not None:
+            packet["lifecycle"] = self.lifecycle
+        return packet
 
 
 def format_packet(packet: ContextPacket) -> str:
@@ -206,6 +211,25 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
         if any(label.lower() in text for label in labels):
             project_hits.append(record)
 
+    work_item_hits: list[tuple[dict[str, Any], WorkItemRecord]] = []
+    for record in project_records(root):
+        try:
+            work_item = select_project_work_item(record["path"], request=request)
+        except ValueError:
+            raise
+        if work_item and work_item_matches_request(work_item, request):
+            work_item_hits.append((record, work_item))
+
+    if len(work_item_hits) == 1:
+        record, work_item = work_item_hits[0]
+        return {
+            "domain": record["domain"],
+            "project": record["project"],
+            "lane": record["lane"],
+            "work_item": work_item.path.name,
+        }
+    if len(work_item_hits) > 1:
+        raise ValueError("routing confidence is low: request matches multiple work items")
     if len(project_hits) == 1:
         record = project_hits[0]
         return {"domain": record["domain"], "project": record["project"], "lane": record["lane"]}
@@ -214,6 +238,25 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
     if len(domain_hits) > 1 or len(project_hits) > 1:
         raise ValueError("routing confidence is low: request matches multiple domains or projects")
     raise ValueError("routing confidence is low: no domain or project matched")
+
+
+def work_item_matches_request(record: WorkItemRecord, request: str) -> bool:
+    text = request.lower()
+    labels = {
+        record.path.name,
+        record.slug,
+        record.title,
+        str(record.metadata.get("id") or ""),
+        str(record.metadata.get("prefix") or ""),
+    }
+    for label in labels:
+        label = label.strip().lower()
+        if not label:
+            continue
+        variants = {label, label.replace("_", "-"), label.replace("-", " ")}
+        if any(len(variant) >= 2 and variant in text for variant in variants):
+            return True
+    return False
 
 
 def find_workflow(root: Path, domain: str, workflow: str, lane: str | None = None) -> tuple[str, Path]:
@@ -242,6 +285,9 @@ def build_context(
     lane: str | None = None,
     inbox: bool = False,
     risks: list[str] | None = None,
+    work_item: str | None = None,
+    request: str | None = None,
+    cwd: str | Path | None = None,
 ) -> ContextPacket:
     os_root = expand_path(root)
     domain = normalize_domain(domain)
@@ -265,6 +311,7 @@ def build_context(
     object_type = "domain"
     known_gaps: list[str] = []
     detected_lane = lane or ""
+    lifecycle: dict[str, Any] | None = None
 
     if inbox:
         target = domain_root / "01-inbox"
@@ -301,6 +348,7 @@ def build_context(
                 project_root / "decisions.md",
                 project_root / "config" / "project-profile.yml",
                 project_root / "config" / "workflows.yml",
+                project_root / "config" / "work-lifecycle.yml",
                 project_root / "config" / "output-artifacts.yml",
                 project_root / "config" / "validation.yml",
                 project_root / "config" / "worktrees.yml",
@@ -310,6 +358,18 @@ def build_context(
                 project_root / "worktrees" / "index.yml",
             ]
         )
+        selected_work_item = select_project_work_item(
+            project_root,
+            request=request,
+            cwd=Path(cwd).expanduser().resolve() if cwd else None,
+            work_item=work_item,
+        )
+        if selected_work_item:
+            target = selected_work_item.path
+            object_type = "work_item"
+            lifecycle = selected_work_item.as_lifecycle_dict()
+            sources.append(selected_work_item.metadata_path)
+            sources.extend(selected_work_item.required_files)
 
     if workflow and not inbox:
         detected_lane, workflow_root = find_workflow(os_root, domain, workflow, detected_lane or None)
@@ -336,6 +396,7 @@ def build_context(
         approval_risks=risks or [],
         known_gaps=known_gaps,
         handoff_prompt=f"Load the listed sources, work in {target}, follow approval rules, and record validation before closeout.",
+        lifecycle=lifecycle,
     )
 
 
@@ -362,6 +423,9 @@ def route_request(root: str | Path, request: str, *, cwd: str | Path | None = No
         project=context.get("project"),
         workflow=context.get("workflow"),
         lane=context.get("lane"),
+        work_item=context.get("work_item"),
+        request=request,
+        cwd=cwd_path,
         inbox=inbox,
         risks=approval_risks(request),
     )
@@ -379,4 +443,5 @@ def context_from_here(root: str | Path, *, cwd: str | Path | None = None) -> Con
         project=context.get("project"),
         workflow=context.get("workflow"),
         lane=context.get("lane"),
+        cwd=cwd_path,
     )

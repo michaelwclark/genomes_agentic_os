@@ -17,21 +17,57 @@ import yaml
 from .scaffold import (
     DEFAULT_UPDATE_CHANNEL,
     DEFAULT_UPDATE_POLICY,
+    DEFAULT_PROJECTS_SOURCE,
     SOURCE_PACKAGE_VERSION,
     ScaffoldResult,
+    ensure_default_domains,
+    ensure_project_operating_surface,
+    ensure_root_files,
     ensure_update_metadata,
     ensure_visible_capability_surface,
     expand_path,
     harness_path,
     install_docs,
+    shared_factory_path,
 )
 
 
 RISKY_CHANGE_TYPES = {"executable", "hook", "mcp", "rule", "permission"}
+LEGACY_ROOT_FILES = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTEXT.md",
+    "INVENTORY.md",
+    "MEMORY.md",
+    "README.md",
+    "ROUTER.md",
+    "RULES.md",
+    "TOOLS.md",
+    "UPDATE_POLICY.md",
+    "agentic-os.lock.json",
+    "config.toml",
+)
+LEGACY_ROOT_CAPABILITY_DIRS = (
+    "bin",
+    "commands",
+    "hooks",
+    "libraries",
+    "logs",
+    "mcp",
+    "plugins",
+    "registries",
+    "rules",
+    "security",
+    "skills",
+)
 
 
 def now_stamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def path_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def status_path(root: Path) -> Path:
@@ -360,6 +396,109 @@ def snapshot_update_state(root: Path) -> Path:
     return destination
 
 
+def unique_destination(path: Path) -> Path:
+    if not path.exists():
+        return path
+    if path.suffix:
+        stem = path.with_suffix("")
+        suffix = path.suffix
+    else:
+        stem = path
+        suffix = ""
+    for index in range(1, 1000):
+        candidate = stem.with_name(f"{stem.name}-{index}{suffix}")
+        if not candidate.exists():
+            return candidate
+    raise ValueError(f"could not allocate unique archive path for {path}")
+
+
+def move_to_archive(source: Path, archive_root: Path, relative: Path, result: ScaffoldResult) -> Path:
+    destination = unique_destination(archive_root / relative)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+    result.updated.append(destination)
+    return destination
+
+
+def merge_legacy_directory(source: Path, destination: Path, archive_root: Path, relative: Path, result: ScaffoldResult) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in sorted(source.iterdir(), key=lambda path: path.name):
+        target = destination / item.name
+        item_relative = relative / item.name
+        if not target.exists():
+            shutil.move(str(item), str(target))
+            result.updated.append(target)
+            continue
+        if item.is_dir() and target.is_dir():
+            merge_legacy_directory(item, target, archive_root, item_relative, result)
+            continue
+        move_to_archive(item, archive_root, item_relative, result)
+    try:
+        source.rmdir()
+    except OSError:
+        move_to_archive(source, archive_root, relative, result)
+
+
+def migrate_harness_layout(root: str | Path) -> ScaffoldResult:
+    """Move pre-harness root files into the canonical harness layout.
+
+    Root prompt/config files are archived instead of moved into place so the new
+    harness entrypoint can be regenerated from the current installer templates.
+    Stateful directories such as registries, logs, security, and shared_factory
+    are merged into harness/ while preserving conflicting legacy content in a
+    migration archive.
+    """
+    os_root = expand_path(root)
+    result = ScaffoldResult()
+    legacy_paths = [
+        *(os_root / filename for filename in LEGACY_ROOT_FILES),
+        *(os_root / dirname for dirname in LEGACY_ROOT_CAPABILITY_DIRS),
+        os_root / "shared_factory",
+    ]
+    if not any(path.exists() for path in legacy_paths):
+        return result
+
+    archive_root = harness_path(os_root, "logs", "migrations", f"harness-layout-{path_stamp()}", "legacy-root")
+    for filename in LEGACY_ROOT_FILES:
+        source = os_root / filename
+        if source.exists():
+            move_to_archive(source, archive_root, Path(filename), result)
+
+    shared_factory = os_root / "shared_factory"
+    if shared_factory.is_dir():
+        merge_legacy_directory(shared_factory, shared_factory_path(os_root), archive_root, Path("shared_factory"), result)
+
+    for dirname in LEGACY_ROOT_CAPABILITY_DIRS:
+        source = os_root / dirname
+        if source.is_dir():
+            merge_legacy_directory(source, harness_path(os_root, dirname), archive_root, Path(dirname), result)
+    return result
+
+
+def project_surface_metadata(project_root: Path) -> tuple[str, str | None]:
+    data = read_structured(project_root / "project.yml")
+    status = str(data.get("status") or "active") if isinstance(data, dict) else "active"
+    lane_value = data.get("lane") if isinstance(data, dict) else None
+    lane = str(lane_value) if lane_value else None
+    return status, lane
+
+
+def repair_project_operating_surfaces(root: str | Path) -> ScaffoldResult:
+    """Backfill lifecycle scaffolding for projects created by older installers."""
+    os_root = expand_path(root)
+    result = ScaffoldResult()
+    for domain_root in sorted(path for path in os_root.iterdir() if path.is_dir() and not path.name.startswith(".")):
+        projects_root = domain_root / "02-projects"
+        if not projects_root.is_dir():
+            continue
+        for project_root in sorted(path for path in projects_root.iterdir() if path.is_dir()):
+            if not (project_root / "project.yml").is_file():
+                continue
+            status, lane = project_surface_metadata(project_root)
+            ensure_project_operating_surface(project_root, domain_root.name, project_root.name, status, lane, result)
+    return result
+
+
 def update_apply(
     root: str | Path,
     *,
@@ -383,14 +522,22 @@ def update_apply(
 
     snapshot = snapshot_update_state(os_root)
     result = ScaffoldResult()
+    layout_migration = migrate_harness_layout(os_root)
+    result.extend(layout_migration)
+    ensure_root_files(os_root, result, DEFAULT_PROJECTS_SOURCE)
+    ensure_default_domains(os_root, result)
     ensure_visible_capability_surface(os_root, result)
     ensure_update_metadata(os_root, result)
     result.extend(install_docs(os_root))
+    project_repair = repair_project_operating_surfaces(os_root)
+    result.extend(project_repair)
     status = {
         "status": "applied",
         "applied_at": now_stamp(),
         "target": plan_data.get("target") or {},
         "snapshot": str(snapshot),
+        "layout_migration": bool(layout_migration.updated),
+        "project_surface_repair": bool(project_repair.created or project_repair.updated),
         "created": [str(path) for path in result.created],
         "updated": [str(path) for path in result.updated],
         "skipped": [str(path) for path in result.skipped],

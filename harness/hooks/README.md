@@ -12,5 +12,5 @@ part of the operating contract.
 | `memory-session-start.sh` | `SessionStart` | Inject losmon-memory discipline before work starts. |
 | `memory-stop.sh` | `Stop` | Remind agents to capture durable learnings before yielding. |
 | `harness-emit-trace.sh` | `Stop` | Fire-and-forget an `AGENT_TRACE` memory record from hook payload metadata. |
+| `conversation-auto-log.py` | `Stop` | Write redacted transcript and tool-call sidecars to the routed project or work item. |
 | `context-mode-cache-heal.mjs` | `SessionStart` | Repair stale Claude context-mode plugin cache symlinks. |
-

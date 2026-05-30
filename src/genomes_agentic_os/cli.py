@@ -30,6 +30,7 @@ from .event_graph import (
     test_chain_rule,
 )
 from .losmon import format_losmon_result, losmon_validate
+from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
@@ -185,6 +186,17 @@ def build_parser() -> argparse.ArgumentParser:
     project_worktree_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_add.add_argument("--force", action="store_true", help="Replace an existing worktree symlink that points elsewhere.")
     project_worktree_add.set_defaults(handler=handle_project_worktree_add)
+    project_work_item = project_subparsers.add_parser("work-item", help="Manage project lifecycle work items.")
+    project_work_item_subparsers = project_work_item.add_subparsers(dest="project_work_item_command", required=True)
+    project_work_item_create = project_work_item_subparsers.add_parser("create", help="Create a project lifecycle work item.")
+    project_work_item_create.add_argument("domain")
+    project_work_item_create.add_argument("project")
+    project_work_item_create.add_argument("--title", required=True)
+    project_work_item_create.add_argument("--summary", required=True)
+    project_work_item_create.add_argument("--work-id", help="Optional work item slug. Defaults to a slug from the title.")
+    project_work_item_create.add_argument("--status", default="captured", choices=WORK_LIFECYCLE_STATES)
+    project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_work_item_create.set_defaults(handler=handle_project_work_item_create)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -266,6 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
     context_build = context_subparsers.add_parser("build", help="Build a context packet.")
     context_build.add_argument("--domain", required=True)
     context_build.add_argument("--project")
+    context_build.add_argument("--work-item")
     context_build.add_argument("--workflow")
     context_build.add_argument("--lane")
     context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -741,6 +754,21 @@ def handle_project_worktree_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_work_item_create(args: argparse.Namespace) -> int:
+    print_result(
+        create_project_work_item(
+            args.root,
+            args.domain,
+            args.project,
+            title=args.title,
+            summary=args.summary,
+            status=args.status,
+            work_id=args.work_id,
+        )
+    )
+    return 0
+
+
 def handle_workflow_create(args: argparse.Namespace) -> int:
     print_result(create_workflow(args.root, args.domain, args.lane, args.name))
     return 0
@@ -817,6 +845,7 @@ def handle_context_build(args: argparse.Namespace) -> int:
                 args.root,
                 domain=args.domain,
                 project=args.project,
+                work_item=args.work_item,
                 workflow=args.workflow,
                 lane=args.lane,
             )

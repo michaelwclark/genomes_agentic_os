@@ -214,6 +214,14 @@ def hook_entries() -> list[dict[str, str]]:
             "events": "Stop",
         },
         {
+            "id": "conversation-auto-log",
+            "name": "Conversation Auto Log",
+            "description": "Writes redacted conversation transcripts and tool-call sidecars to the routed project or work item.",
+            "status": "available",
+            "source": "harness/hooks/conversation-auto-log.py",
+            "events": "Stop",
+        },
+        {
             "id": "context-mode-cache-heal",
             "name": "Context Mode Cache Heal",
             "description": "Repairs stale Claude context-mode plugin cache symlinks after auto-updates.",
