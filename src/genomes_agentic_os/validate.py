@@ -10,6 +10,17 @@ import yaml
 
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .config_ops import CONFIG_FILENAME
+from .lifecycle import (
+    WORK_ITEM_DIRECTORIES,
+    WORK_ITEM_METADATA_FILES,
+    WORK_LIFECYCLE_STATES,
+    contains_token_shaped_value,
+    conversation_log_files,
+    lifecycle_status,
+    load_yaml_mapping,
+    local_project_work_items,
+    metadata_path_for,
+)
 from .scaffold import (
     CONTROL_PLANE_FILES,
     DEFAULT_DOMAINS,
@@ -256,7 +267,7 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
     validate_agent_layer(project_root, result)
     for filename in ("README.md", "project.yml", "status.md", "source-map.md", "decisions.md"):
         require_file(project_root / filename, result)
-    for directory in ("artifacts", "config", "ideas", "worktrees"):
+    for directory in ("artifacts", "config", "ideas", "work-items", "worktrees"):
         require_dir(project_root / directory, result)
     for filename in PROJECT_CONFIG_FILES:
         require_file(project_root / "config" / filename, result)
@@ -265,6 +276,33 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
     require_file(project_root / "worktrees" / "README.md", result)
     require_file(project_root / "worktrees" / "index.yml", result)
     validate_project_worktrees(project_root, result)
+    validate_project_work_items(project_root, result)
+
+
+def validate_project_work_items(project_root: Path, result: ValidationResult) -> None:
+    work_items_root = project_root / "work-items"
+    if not work_items_root.is_dir():
+        return
+    for work_item_root in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
+        metadata_path = metadata_path_for(work_item_root)
+        if metadata_path is None:
+            result.errors.append(
+                f"work item missing metadata file ({', '.join(WORK_ITEM_METADATA_FILES)}): {work_item_root}"
+            )
+            continue
+        metadata = load_yaml_mapping(metadata_path)
+        status = lifecycle_status(metadata)
+        if status not in WORK_LIFECYCLE_STATES:
+            result.errors.append(f"work item has invalid lifecycle status {status!r}: {metadata_path}")
+        for directory in WORK_ITEM_DIRECTORIES:
+            require_dir(work_item_root / directory, result)
+    for record in local_project_work_items(project_root):
+        for path in record.missing_required_files:
+            result.errors.append(f"work item {record.path.name} status {record.status!r} missing required file: {path}")
+        for log_file in conversation_log_files(record.path):
+            content = log_file.read_text(encoding="utf-8", errors="replace")
+            if contains_token_shaped_value(content):
+                result.errors.append(f"conversation log contains token-shaped value: {log_file}")
 
 
 def validate_domain(domain_root: Path, result: ValidationResult) -> None:

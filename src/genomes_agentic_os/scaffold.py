@@ -63,6 +63,7 @@ PROJECT_STATUSES = (
 PROJECT_CONFIG_FILES = (
     "project-profile.yml",
     "workflows.yml",
+    "work-lifecycle.yml",
     "output-artifacts.yml",
     "validation.yml",
     "worktrees.yml",
@@ -1700,6 +1701,22 @@ routing:
   status_file: status.md
   source_map: source-map.md
   decisions: decisions.md
+
+work_lifecycle:
+  enabled: true
+  work_items_root: work-items
+  default_state: captured
+  transcript_logging:
+    enabled: true
+    include_raw_transcript: true
+    include_tool_call_jsonl: true
+    include_tool_call_markdown: true
+    redaction_policy: strict
+  spec_destination:
+    type: local
+    path: work-items
+  external_tracker:
+    type: none
 """
 
 
@@ -1758,7 +1775,8 @@ This is the project-local entrypoint for `{domain}/02-projects/{project}`.
 2. Decide whether the request belongs in project state, `src/`, a registered worktree, `ideas/`, or `artifacts/`.
 3. If source work is required, use `src/` for the canonical checkout or `worktrees/<name>` for an active branch-specific checkout.
 4. Follow local `RULES.md` and tool boundaries before touching source files.
-5. Record durable ideas in `ideas/`, outputs in `artifacts/`, and execution evidence in the domain run log.
+5. For lifecycle work, read the matching `work-items/<slug>/work.yml` plus the state-specific files before editing.
+6. Record durable ideas in `ideas/`, lifecycle evidence in `work-items/`, outputs in `artifacts/`, and execution evidence in the domain run log.
 
 ## Source Priority
 
@@ -1776,6 +1794,7 @@ Route project work to the narrowest local surface before acting.
 | Request Type | Route |
 | --- | --- |
 | New idea, product thought, rough note | `ideas/raw-ideas.md` |
+| Lifecycle work item | `work-items/<slug>/work.yml` and state-specific files |
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
 | Feature implementation | `src/` or a registered `worktrees/<name>` link |
@@ -1801,7 +1820,8 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 2. `source-map.md`
 3. `config/project-profile.yml`
 4. `config/workflows.yml`, `config/output-artifacts.yml`, and `config/validation.yml`
-5. `worktrees/index.yml` when source work may use a branch checkout
+5. `config/work-lifecycle.yml` and the matching `work-items/<slug>/work.yml` when lifecycle work is active
+6. `worktrees/index.yml` when source work may use a branch checkout
 
 ## Markdown vs YAML
 
@@ -1821,7 +1841,7 @@ checkout or feature artifact defines a stricter rule.
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `ideas/` for project-scoped idea capture before promoting work into a workflow, ticket, or feature artifact.
+- Use `ideas/` for raw project idea capture and `work-items/` for promoted lifecycle work packets.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
 """
@@ -1850,6 +1870,7 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `worktrees/` | Visible links to active worktrees. |
 | `config/` | Parsed project defaults and tool/workflow configuration. |
 | `ideas/` | Project-scoped idea capture. |
+| `work-items/` | Lifecycle packets from captured idea through documented closeout. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
 """
 
@@ -1898,6 +1919,43 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "feature_development": {
                         "artifacts_ref": "config/output-artifacts.yml",
                         "validation_ref": "config/validation.yml",
+                    },
+                }
+            },
+            sort_keys=False,
+        )
+    if filename == "work-lifecycle.yml":
+        return yaml.safe_dump(
+            {
+                "work_lifecycle": {
+                    "enabled": True,
+                    "work_items_root": "work-items",
+                    "default_state": "captured",
+                    "states": [
+                        "captured",
+                        "triaged",
+                        "specified",
+                        "ready",
+                        "building",
+                        "validating",
+                        "finished",
+                        "documented",
+                        "blocked",
+                        "archived",
+                    ],
+                    "transcript_logging": {
+                        "enabled": True,
+                        "include_raw_transcript": True,
+                        "include_tool_call_jsonl": True,
+                        "include_tool_call_markdown": True,
+                        "redaction_policy": "strict",
+                    },
+                    "spec_destination": {
+                        "type": "local",
+                        "path": "work-items",
+                    },
+                    "external_tracker": {
+                        "type": "none",
                     },
                 }
             },
@@ -2112,6 +2170,7 @@ def ensure_project_operating_surface(
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
     ensure_dir(project_root / "ideas", result)
+    ensure_dir(project_root / "work-items", result)
     ensure_dir(project_root / "worktrees", result)
     write_project_file(
         project_root / "AGENTS.md",

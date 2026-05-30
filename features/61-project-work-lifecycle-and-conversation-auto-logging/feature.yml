@@ -1,0 +1,19 @@
+id: dd565783-efb5-4125-b52a-39f580809130
+title: 61 Project Work Lifecycle And Conversation Auto Logging
+prefix: "61"
+slug: 61-project-work-lifecycle-and-conversation-auto-logging
+source_queue: Local
+status: planned
+created_at: 2026-05-30T00:00:00Z
+source_plan: PLANS/22-project-work-lifecycle-and-conversation-auto-logging.md
+acceptance:
+  - project work items use the feature-60-style markdown stack
+  - idea to documented lifecycle is explicit and configurable per project
+  - agents can resume a numbered feature by reading state-specific files
+  - conversation auto logging writes redacted transcript and tool-call sidecars to the routed work item
+  - LOS Django can promote specified work to Jira while retaining a local OS mirror
+  - genomes_agentic_os source work maps to PLANS and features folders
+  - hook gap analysis creates follow-on implementation ideas with validation targets
+verification:
+  - command: pending
+    result: planned feature only; no implementation yet

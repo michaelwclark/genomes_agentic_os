@@ -159,3 +159,27 @@ schedulable:
 ---
 
 See [`backlog.md`](backlog.md) for the prioritized, actionable version of these.
+
+---
+
+## K. Project work lifecycle and conversation evidence are not first-class (S1)
+
+- **Evidence:** project ideas can be captured, source-package features can use a
+  rich local packet like `features/60-memory-driven-toolsmith-loop/`, and run
+  logs exist, but the installed OS does not yet give every project the same
+  idea-to-spec-to-build-to-validation-to-documented lifecycle. The current hooks
+  remind agents about memory and emit a high-level trace, but they do not attach
+  transcripts or tool-call evidence to the routed project work item.
+- **Impact:** a fresh agent cannot reliably answer "where is this idea now?",
+  "what should I read before implementing it?", or "what did the last agent do?"
+  from project files alone. The memory-driven toolsmith loop also lacks the
+  project-local evidence it needs to prove recurring friction and missed tool
+  opportunities.
+- **Recommendation:** implement Plan 22:
+  `PLANS/22-project-work-lifecycle-and-conversation-auto-logging.md`. Add
+  project work-item templates, lifecycle state, project policy configuration,
+  lifecycle-aware routing/context output, a non-blocking conversation auto
+  logging hook, redacted transcript/tool-call sidecars, and lifecycle
+  validate/doctor checks.
+
+Backlog: F-004.
