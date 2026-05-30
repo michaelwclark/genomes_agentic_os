@@ -1,0 +1,17 @@
+id: cdfa50ee-05bc-40ec-bb17-133a9d272422
+title: 60 Memory Driven Toolsmith Loop
+prefix: "60"
+slug: 60-memory-driven-toolsmith-loop
+source_queue: Local
+status: planned
+created_at: 2026-05-30T03:09:13Z
+acceptance:
+  - self-improvement analysis runs from durable evidence, not opaque model state
+  - dry-run output explains repeated friction, missed tool opportunities, and proposed fixes with source evidence
+  - apply mode writes reviewable local proposals only; it does not mutate harness tools, skills, or Notion without an explicit approval path
+  - proposal records can target project rules, shared references, skills, commands, validation checks, or new feature specs
+  - dedupe, cooldown, confidence, and redaction safeguards prevent noisy or unsafe self-modification
+  - runtime scheduling can trigger the analyzer through existing supervisor and schedule surfaces
+verification:
+  - command: pending
+    result: planned feature only; no implementation yet
