@@ -28,6 +28,7 @@ API = "https://api.notion.com/v1"
 VERSION = "2022-06-28"
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 TOKEN = os.environ.get("GENOMES_NOTION_PAT", "")
+_UPLOADS: dict[str, str] = {}  # rel path -> file_upload id (cache, one upload per image)
 
 
 def _req(method: str, path: str, payload: dict | None = None) -> dict:
@@ -77,9 +78,64 @@ def _t(content: str, *, bold=False, code=False, link: str | None = None) -> dict
 def _para(rt): return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": rt}}
 
 
+def _is_sep_row(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{2,}:?", c or "") for c in cells)
+
+
+def _table_block(rows_md: list[str]) -> dict | None:
+    """Build a real Notion table block from markdown table rows."""
+    grid = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in rows_md]
+    grid = [r for r in grid if not _is_sep_row(r)]
+    if not grid:
+        return None
+    width = min(max(len(r) for r in grid), 100)
+
+    def cells(r: list[str]) -> list[list]:
+        r = (r + [""] * width)[:width]
+        return [rich(c) if c.strip() else [] for c in r]
+
+    children = [{"object": "block", "type": "table_row", "table_row": {"cells": cells(r)}} for r in grid]
+    return {"object": "block", "type": "table", "table": {
+        "table_width": width, "has_column_header": True, "has_row_header": False, "children": children}}
+
+
+def upload_image(rel: str) -> str | None:
+    """Upload a local image via the Notion file-upload API; return file_upload id (cached)."""
+    if rel in _UPLOADS:
+        return _UPLOADS[rel]
+    path = DOCS / rel
+    if not path.is_file():
+        print(f"  ! image not found: {rel}", flush=True)
+        return None
+    created = _req("POST", "/file_uploads", {"filename": path.name, "content_type": "image/png"})
+    fid, url = created["id"], created["upload_url"]
+    boundary = "----notionform" + fid.replace("-", "")[:18]
+    body = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
+        f"Content-Type: image/png\r\n\r\n"
+    ).encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Authorization", f"Bearer {TOKEN}")
+    req.add_header("Notion-Version", VERSION)
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    try:
+        urllib.request.urlopen(req)
+    except urllib.error.HTTPError as exc:
+        print(f"  ! image upload failed: {rel} ({exc.code})", flush=True)
+        return None
+    _UPLOADS[rel] = fid
+    return fid
+
+
 def md_to_blocks(md: str) -> list[dict]:
     blocks: list[dict] = []
     lines = md.splitlines()
+    # Drop a leading H1 — the Notion page title (from properties) already shows it.
+    _i0 = 0
+    while _i0 < len(lines) and not lines[_i0].strip():
+        _i0 += 1
+    if _i0 < len(lines) and lines[_i0].startswith("# "):
+        del lines[_i0]
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -100,20 +156,28 @@ def md_to_blocks(md: str) -> list[dict]:
             blocks.append({"object": "block", "type": "code", "code": {
                 "language": _lang(lang), "rich_text": [_t("\n".join(buf)[:2000])]}})
             continue
-        # table -> code block (collect consecutive | rows)
+        # table -> real Notion table block (collect consecutive | rows)
         if line.lstrip().startswith("|"):
             buf = []
             while i < len(lines) and lines[i].lstrip().startswith("|"):
-                buf.append(lines[i].rstrip()); i += 1
-            blocks.append({"object": "block", "type": "code", "code": {
-                "language": "markdown", "rich_text": [_t("\n".join(buf)[:2000])]}})
+                buf.append(lines[i].strip()); i += 1
+            tb = _table_block(buf)
+            if tb:
+                blocks.append(tb)
             continue
-        # image -> callout placeholder
+        # image -> upload the PNG and embed a real image block (callout fallback)
         m = re.match(r"!\[([^\]]*)\]\(([^)]+)\)", line.strip())
         if m:
-            blocks.append({"object": "block", "type": "callout", "callout": {
-                "icon": {"type": "emoji", "emoji": "📊"},
-                "rich_text": [_t(f"Diagram — {m.group(1)[:1800]} (repo: docs/{m.group(2)})")]}})
+            alt, rel = m.group(1), m.group(2)
+            fid = upload_image(rel)
+            if fid:
+                blocks.append({"object": "block", "type": "image", "image": {
+                    "type": "file_upload", "file_upload": {"id": fid},
+                    "caption": rich(alt) if alt.strip() else []}})
+            else:
+                blocks.append({"object": "block", "type": "callout", "callout": {
+                    "icon": {"type": "emoji", "emoji": "📊"},
+                    "rich_text": [_t(f"Diagram — {alt[:1800]} (repo: docs/{rel})")]}})
             i += 1
             continue
         stripped = line.strip()
