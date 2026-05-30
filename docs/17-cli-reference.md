@@ -25,7 +25,7 @@ never change.
 | **Exit 2** | Argparse usage error **or** deliberate handled refusal — e.g. `here route` when routing confidence is low, `config install` when blocked by conflicts. Exit 2 is not a crash; it is the OS saying "I won't guess." |
 | **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
-| **`config` subcommands** | Exactly `install` and `doctor` — no `config layers` subcommand exists. |
+| **`config` subcommands** | Exactly `install`, `install-tree`, and `doctor` — no `config layers` subcommand exists. |
 
 ---
 

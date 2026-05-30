@@ -90,7 +90,7 @@ scaffolder:
 | --- | --- | --- |
 | `00-control-plane/` | Active work, routing, approvals, and decisions. | `active-work.md`, `decisions.md`, `routing-rules.md`, `approval-rules.md` |
 | `01-inbox/` | Raw capture and triage — where unprocessed input lands first. | `raw-ideas.md`, `triage.md` |
-| `02-projects/` | One folder per active project; local repositories are linked as each project's `src/`. | `README.md` |
+| `02-projects/` | One folder per active project; each project is its own routed operating surface with source and worktree links. | `README.md` |
 | `03-workflows/` | Repeatable human-and-agent workflow specs, divided by lane. | `README.md` + one sub-folder per standard lane |
 | `04-automations/` | Trigger-driven automation specs and logs, divided by lane. | `README.md` + one sub-folder per standard lane |
 | `05-knowledge/` | Source maps, glossary, memory policy, and reference material. | `source-map.md`, `glossary.md`, `memory-policy.md` |
@@ -140,6 +140,56 @@ These are what agents read on entry before any tool is called:
 `MEMORY.md` and `BRAIN.md` may also appear here if the memory system has written
 to this layer; they are not scaffolded by `init` but are part of the full context
 contract (see [05 · Routing & Context](05-routing-and-context.md)).
+
+---
+
+## Project folder anatomy
+
+Each project under `<domain>/02-projects/<project>/` is more than a note wrapped
+around a repository. It is the local control surface for that project:
+
+```text
+<project>/
+  AGENTS.md
+  ROUTER.md
+  CONTEXT.md
+  RULES.md
+  TOOLS.md
+  MEMORY.md
+  config.toml
+  project.yml
+  status.md
+  source-map.md
+  decisions.md
+  src -> <canonical source checkout>
+  worktrees/
+    README.md
+    index.yml
+    <name> -> <real worktree path>
+  config/
+    project-profile.yml
+    workflows.yml
+    output-artifacts.yml
+    validation.yml
+    worktrees.yml
+    memory.yml
+    mcps.yml
+    tools.yml
+  ideas/
+    README.md
+    raw-ideas.md
+  artifacts/
+```
+
+Use `agentic-os project onboard <domain> <project>` to repair this surface for
+an existing project. Use `agentic-os project worktree add <domain> <project>
+<name> --path <path>` to make a branch checkout visible without moving it into
+the OS.
+
+Markdown files explain intent, context, rules, decisions, and ideas. YAML files
+under `config/` hold parsed defaults that commands and agents can read. Hybrid
+artifacts, such as feature specs or ticket drafts, can use Markdown with YAML
+front matter.
 
 ---
 

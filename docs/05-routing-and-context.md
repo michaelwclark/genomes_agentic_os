@@ -76,9 +76,16 @@ sources_to_load:
 - .../acme/ROUTER.md
 - .../acme/CONTEXT.md
 - .../acme/00-control-plane/active-work.md
+- .../acme/02-projects/launch/AGENTS.md
+- .../acme/02-projects/launch/ROUTER.md
+- .../acme/02-projects/launch/CONTEXT.md
+- .../acme/02-projects/launch/RULES.md
+- .../acme/02-projects/launch/TOOLS.md
 - .../acme/02-projects/launch/project.yml
 - .../acme/02-projects/launch/status.md
 - .../acme/02-projects/launch/source-map.md
+- .../acme/02-projects/launch/config/output-artifacts.yml
+- .../acme/02-projects/launch/worktrees/index.yml
 approval_risks: []
 known_gaps: []
 handoff_prompt: Load the listed sources, work in .../acme/02-projects/launch,
@@ -87,6 +94,11 @@ handoff_prompt: Load the listed sources, work in .../acme/02-projects/launch,
 
 `context build --domain acme --project launch` produces the same packet without a
 request string — useful when you already know the target.
+
+`here context build` can also route from a linked project source checkout or a
+registered worktree target. Canonical repositories come from
+`project.yml:sources.repo`; branch checkouts come from
+`worktrees/index.yml`, maintained by `agentic-os project worktree add`.
 
 ---
 
@@ -127,8 +139,8 @@ Routing scans the request for `RISK_KEYWORDS` and surfaces them in
 - **Claude:** run the `/os-route` command, or invoke the **`os-navigator`** skill
   (it wraps route + context-pack building). Context loading mirrors Codex.
 - **Codex:** run `agentic-os route "<request>" --root ~/agentic_os` (or
-  `here route` from inside a domain). The `domain_or_lane` profile in that folder's
-  `config.toml` governs the model, tool allow-list, and validation hooks.
+  `here route` from inside a domain, project `src`, or registered worktree). The
+  nearest `config.toml` governs the model, tool allow-list, and validation hooks.
 
 Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 
@@ -140,6 +152,9 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
   `error: routing confidence is low: no domain or project matched`. This is
   intentional — name the domain/project explicitly, or `cd` into it and use
   `here route`. (See [18 · Troubleshooting](18-troubleshooting-and-faq.md).)
+- **Unregistered worktrees do not route.** If `here context build` fails from a
+  branch checkout, register it with `agentic-os project worktree add ... --path
+  <path>` or run from the project folder.
 - **Names are snake_case.** `launch_blog`, not `launch-blog`.
 - **Routing reads, never writes.** `route`/`context build` are safe to run anytime;
   they only compute and print.
