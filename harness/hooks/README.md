@@ -5,6 +5,11 @@ Harness-specific config files may call them from Codex, Claude, or another agent
 runtime, but the installed OS remains the source of truth for which hooks are
 part of the operating contract.
 
+Use `agentic-os hook sync --root ~/agentic_os --target all --apply --backup` to
+point active Claude and Codex hook settings directly at this installed hook
+directory. Do not copy hook scripts into `~/.claude/hooks` or `~/.codex/hooks`
+as a separate source of truth.
+
 ## Installed Hooks
 
 | Hook | Event | Purpose |

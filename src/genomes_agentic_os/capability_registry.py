@@ -108,6 +108,12 @@ def command_entries() -> list[dict[str, str]]:
             "description": "Install Codex config.toml files across the OS routing tree.",
             "source": "agentic-os config install-tree",
         },
+        {
+            "id": "hook-sync",
+            "command": "agentic-os hook sync",
+            "description": "Point active Claude/Codex hook settings at the installed OS hook source of truth.",
+            "source": "agentic-os hook sync",
+        },
     ]
 
 

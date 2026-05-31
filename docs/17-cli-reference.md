@@ -143,6 +143,7 @@ atlas command reference for the full flag table and real captured output.
 | `config install --layer <l>` | Install or merge `config.toml` at a named layer (dry-run by default; apply exits 2 on conflicts) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
 | `config install-tree` | Install or repair `config.toml` across the routed OS tree (root, domains, projects, workflows, automations) | [13 · Agent Surfaces](13-agent-surfaces.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
 | `config doctor --layer <l>` | Validate `config.toml` OTEL and MCP contracts (exits 1 when absent) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
+| `hook sync` / `hook doctor` | Point active Claude/Codex hook settings at `~/agentic_os/harness/hooks` and verify no copied hook scripts remain authoritative | [13 · Agent Surfaces](13-agent-surfaces.md) | [§10](../.agentic-atlas/architecture/command-reference.md) |
 
 Valid `--layer` values: `agentic_os_root`, `automation`, `customer_os_root`,
 `domain_or_lane`, `global_harness`, `project`, `workflow_or_task`.

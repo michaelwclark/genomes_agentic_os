@@ -426,8 +426,36 @@ def ensure_visible_capability_directories(root: Path, result: ScaffoldResult) ->
 
 def ensure_capability_registries(root: Path, result: ScaffoldResult) -> None:
     for relative_path, payload in registry_file_payloads().items():
-        write_file_once(root / relative_path, yaml.safe_dump(payload, sort_keys=False), result)
+        merge_registry_file(root / relative_path, payload, result)
     write_file_once(harness_path(root, "INVENTORY.md"), inventory_markdown(), result)
+
+
+def merge_registry_file(path: Path, payload: dict[str, list[dict[str, str]]], result: ScaffoldResult) -> None:
+    if not path.exists():
+        write_file_once(path, yaml.safe_dump(payload, sort_keys=False), result)
+        return
+    existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(existing, dict):
+        result.skipped.append(path)
+        return
+    changed = False
+    for key, entries in payload.items():
+        current = existing.get(key)
+        if not isinstance(current, list):
+            existing[key] = []
+            current = existing[key]
+            changed = True
+        existing_ids = {entry.get("id") for entry in current if isinstance(entry, dict)}
+        for entry in entries:
+            if entry.get("id") not in existing_ids:
+                current.append(entry)
+                existing_ids.add(entry.get("id"))
+                changed = True
+    if changed:
+        path.write_text(yaml.safe_dump(existing, sort_keys=False), encoding="utf-8")
+        result.updated.append(path)
+    else:
+        result.skipped.append(path)
 
 
 def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> None:

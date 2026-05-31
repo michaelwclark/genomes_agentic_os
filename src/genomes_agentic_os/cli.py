@@ -29,6 +29,7 @@ from .event_graph import (
     summarize_events,
     test_chain_rule,
 )
+from .hook_ops import hook_doctor, hook_sync
 from .losmon import format_losmon_result, losmon_validate
 from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item
 from .migrations import format_migration_result, migrate_apply, migrate_plan
@@ -405,6 +406,25 @@ def build_parser() -> argparse.ArgumentParser:
     config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
     config_doctor.set_defaults(handler=handle_config_doctor)
+
+    hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
+    hook_subparsers = hook_parser.add_subparsers(dest="hook_command", required=True)
+    hook_sync_parser = hook_subparsers.add_parser("sync", help="Point active harness hook settings at installed OS hooks.")
+    hook_sync_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    hook_sync_parser.add_argument("--target", choices=("all", "codex", "claude"), default="all")
+    hook_sync_mode = hook_sync_parser.add_mutually_exclusive_group()
+    hook_sync_mode.add_argument("--dry-run", action="store_true", default=True)
+    hook_sync_mode.add_argument("--apply", action="store_true")
+    hook_sync_parser.add_argument("--backup", action="store_true", help="Back up active hook config before applying.")
+    hook_sync_parser.add_argument("--codex-hooks-path", help="Override Codex hooks.json path.")
+    hook_sync_parser.add_argument("--claude-settings-path", help="Override Claude settings.json path.")
+    hook_sync_parser.set_defaults(handler=handle_hook_sync)
+    hook_doctor_parser = hook_subparsers.add_parser("doctor", help="Validate active hook settings use installed OS hooks.")
+    hook_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    hook_doctor_parser.add_argument("--target", choices=("all", "codex", "claude"), default="all")
+    hook_doctor_parser.add_argument("--codex-hooks-path", help="Override Codex hooks.json path.")
+    hook_doctor_parser.add_argument("--claude-settings-path", help="Override Claude settings.json path.")
+    hook_doctor_parser.set_defaults(handler=handle_hook_doctor)
 
     notion_parser = subparsers.add_parser("notion", help="Plan and apply filesystem-to-Notion sync.")
     notion_subparsers = notion_parser.add_subparsers(dest="notion_command", required=True)
@@ -958,6 +978,30 @@ def handle_config_doctor(args: argparse.Namespace) -> int:
     result = doctor_config(args.root, layer=args.layer)
     print(yaml_dump(result))
     return 0 if result["ok"] else 1
+
+
+def handle_hook_sync(args: argparse.Namespace) -> int:
+    result = hook_sync(
+        args.root,
+        target=args.target,
+        dry_run=not args.apply,
+        backup=args.backup,
+        codex_hooks_path=args.codex_hooks_path,
+        claude_settings_path=args.claude_settings_path,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 1 if result.findings else 0
+
+
+def handle_hook_doctor(args: argparse.Namespace) -> int:
+    result = hook_doctor(
+        args.root,
+        target=args.target,
+        codex_hooks_path=args.codex_hooks_path,
+        claude_settings_path=args.claude_settings_path,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 0 if result.ok else 1
 
 
 def handle_notion_plan_sync(args: argparse.Namespace) -> int:

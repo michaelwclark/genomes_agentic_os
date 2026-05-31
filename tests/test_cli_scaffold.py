@@ -324,6 +324,34 @@ def test_validate_requires_context_mode_and_unified_memory_runtime_integrations(
     assert any("missing required runtime hook 'memory-stop'" in error for error in result.errors)
 
 
+def test_update_apply_merges_missing_default_capability_registry_entries(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    commands_path = harness(root) / "registries" / "commands.yml"
+    commands = yaml.safe_load(commands_path.read_text(encoding="utf-8"))
+    commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "hook-sync"]
+    commands["commands"].append(
+        {
+            "id": "local-command",
+            "command": "local only",
+            "description": "Preserve local registry entries.",
+            "source": "local",
+        }
+    )
+    commands_path.write_text(yaml.safe_dump(commands, sort_keys=False), encoding="utf-8")
+
+    assert main(["update", "plan", "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert main(["update", "apply", "--root", str(root)]) == 0
+    capsys.readouterr()
+
+    repaired = yaml.safe_load(commands_path.read_text(encoding="utf-8"))
+    command_ids = {entry["id"] for entry in repaired["commands"]}
+    assert "hook-sync" in command_ids
+    assert "local-command" in command_ids
+
+
 def test_update_channel_check_plan_apply_and_phone_home_are_local_and_safe(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
     manifest = tmp_path / "manifest.yml"
@@ -719,6 +747,118 @@ def test_config_install_places_mcp_servers_by_layer(tmp_path: Path) -> None:
     assert "sentry" not in clarks_servers
     assert "datadog" not in clarks_servers
     assert main(["config", "doctor", "--root", str(clarks_root), "--layer", "domain_or_lane"]) == 0
+
+
+def test_hook_sync_points_active_settings_at_installed_harness_hooks(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    codex_hooks = tmp_path / "codex-hooks.json"
+    claude_settings = tmp_path / "claude-settings.json"
+
+    assert main(["init", "--target", str(root)]) == 0
+    codex_hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup|resume|clear",
+                            "hooks": [{"type": "command", "command": "/Users/genome/.codex/hooks/memory-session-start.sh"}],
+                        }
+                    ],
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {"type": "command", "command": "/Users/genome/.codex/hooks/memory-stop.sh"},
+                                {"type": "command", "command": "/Users/genome/.local/bin/harness-emit-trace codex"},
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    claude_settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "/Users/genome/.claude/hooks/memory-session-start.sh"}]},
+                        {"hooks": [{"type": "command", "command": "\"/Users/genome/.claude/hooks/context-mode-cache-heal.mjs\""}]},
+                    ],
+                    "Stop": [
+                        {
+                            "hooks": [
+                                {"type": "command", "command": "/Users/genome/.claude/hooks/memory-stop.sh"},
+                                {"type": "command", "command": "/Users/genome/.local/bin/harness-emit-trace claude"},
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "hook",
+                "doctor",
+                "--root",
+                str(root),
+                "--codex-hooks-path",
+                str(codex_hooks),
+                "--claude-settings-path",
+                str(claude_settings),
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "hook",
+                "sync",
+                "--root",
+                str(root),
+                "--apply",
+                "--codex-hooks-path",
+                str(codex_hooks),
+                "--claude-settings-path",
+                str(claude_settings),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    codex_text = codex_hooks.read_text(encoding="utf-8")
+    claude_text = claude_settings.read_text(encoding="utf-8")
+    assert str(root / "harness" / "hooks" / "memory-session-start.sh") in codex_text
+    assert str(root / "harness" / "hooks" / "memory-stop.sh") in claude_text
+    assert str(root / "harness" / "hooks" / "context-mode-cache-heal.mjs") in claude_text
+    assert ".codex/hooks" not in codex_text
+    assert ".claude/hooks" not in claude_text
+
+    assert (
+        main(
+            [
+                "hook",
+                "doctor",
+                "--root",
+                str(root),
+                "--codex-hooks-path",
+                str(codex_hooks),
+                "--claude-settings-path",
+                str(claude_settings),
+            ]
+        )
+        == 0
+    )
 
 
 def test_config_doctor_reports_missing_required_otel_and_mcp_keys(tmp_path: Path) -> None:

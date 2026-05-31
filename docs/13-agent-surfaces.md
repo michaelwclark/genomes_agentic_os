@@ -379,7 +379,7 @@ hunting through the installed `TOOLS.md`.
 
 | Doc page / task | Claude: command / skill | Codex: equivalent |
 |---|---|---|
-| Install & quickstart | install skills + `CLAUDE.md`=`@AGENTS.md` | `agentic-os config install --layer global_harness`, then `config install-tree` for repairs |
+| Install & quickstart | install skills + `CLAUDE.md`=`@AGENTS.md` | `agentic-os config install --layer global_harness`, `config install-tree` for repairs, then `agentic-os hook sync --root ~/agentic_os --target all --apply --backup` |
 | Routing & context | `/os-route`, `os-navigator` skill | `agentic-os route` / `here route`; `domain_or_lane` profile |
 | Workflows | `/os-create-workflow`, `workflow-builder` skill | `agentic-os workflow check`; author from `templates/workflow/` |
 | Automations | `/os-create-automation`, `automation-qualifier` skill | `agentic-os automation check/set-maturity` |
