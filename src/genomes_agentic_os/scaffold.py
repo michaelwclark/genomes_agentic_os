@@ -438,14 +438,13 @@ def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> Non
         result.extend(copy_tree_missing(hooks_root, harness_path(root, "hooks")))
 
 
-def mirror_visible_commands_and_skills(root: Path) -> ScaffoldResult:
+def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     result = ScaffoldResult()
     harness_root = harness_source_dir()
-    result.extend(copy_tree_missing(harness_root / "commands", harness_path(root, "commands")))
-    result.extend(copy_tree_missing(harness_root / "skills", harness_path(root, "skills")))
-    hooks_root = harness_root / "hooks"
-    if hooks_root.is_dir():
-        result.extend(copy_tree_missing(hooks_root, harness_path(root, "hooks")))
+    for directory in ("bin", "commands", "skills", "mcp", "plugins", "libraries", "hooks", "rules"):
+        source = harness_root / directory
+        if source.is_dir():
+            result.extend(copy_tree_missing(source, harness_path(root, directory)))
     return result
 
 
@@ -1593,7 +1592,7 @@ def init_os(
 def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
-    result.extend(mirror_visible_commands_and_skills(os_root))
+    result.extend(mirror_visible_capability_assets(os_root))
     result.extend(
         copy_tree(
             template_source_dir(),

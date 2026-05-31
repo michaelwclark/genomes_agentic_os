@@ -87,6 +87,11 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (harness(root) / "registries" / "updates.yml").is_file()
     assert (harness(root) / "registries" / "customer-identity.json").is_file()
     assert (harness(root) / "registries" / "backup-policy.yml").is_file()
+    assert (harness(root) / "bin" / "README.md").is_file()
+    assert (harness(root) / "mcp" / "README.md").is_file()
+    assert (harness(root) / "plugins" / "README.md").is_file()
+    assert (harness(root) / "libraries" / "README.md").is_file()
+    assert (harness(root) / "rules" / "README.md").is_file()
     assert not (harness(root) / "registries" / "update-grant.json").exists()
     assert (harness(root) / "security" / "ssh").is_dir()
     assert (harness(root) / "logs" / "updates").is_dir()
@@ -136,6 +141,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "memory-session-start.sh",
         "memory-stop.sh",
         "harness-emit-trace.sh",
+        "conversation-auto-log.py",
         "context-mode-cache-heal.mjs",
     ):
         hook_path = harness(root) / "hooks" / hook_name
@@ -293,6 +299,29 @@ def test_validate_fails_when_declared_capability_is_missing_from_registry(tmp_pa
 
     assert not result.ok
     assert any("missing command 'missing-command'" in error for error in result.errors)
+
+
+def test_validate_requires_context_mode_and_unified_memory_runtime_integrations(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    mcp_path = harness(root) / "registries" / "mcp-servers.yml"
+    mcp_servers = yaml.safe_load(mcp_path.read_text(encoding="utf-8"))
+    mcp_servers["mcp_servers"] = [
+        entry for entry in mcp_servers["mcp_servers"] if entry.get("id") != "context_mode"
+    ]
+    mcp_path.write_text(yaml.safe_dump(mcp_servers, sort_keys=False), encoding="utf-8")
+
+    hooks_path = harness(root) / "registries" / "hooks.yml"
+    hooks = yaml.safe_load(hooks_path.read_text(encoding="utf-8"))
+    hooks["hooks"] = [entry for entry in hooks["hooks"] if entry.get("id") != "memory-stop"]
+    hooks_path.write_text(yaml.safe_dump(hooks, sort_keys=False), encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert not result.ok
+    assert any("missing required runtime MCP server 'context_mode'" in error for error in result.errors)
+    assert any("missing required runtime hook 'memory-stop'" in error for error in result.errors)
 
 
 def test_update_channel_check_plan_apply_and_phone_home_are_local_and_safe(tmp_path: Path, capsys) -> None:

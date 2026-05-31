@@ -82,6 +82,24 @@ LEGACY_ROOT_FOLDERS = (
     "security",
 )
 
+REQUIRED_CORE_MCP_SERVERS = (
+    "context_mode",
+    "genomes_brain",
+)
+
+REQUIRED_CORE_LIBRARIES = (
+    "context_mode",
+    "unified_memory",
+)
+
+REQUIRED_CORE_HOOKS = (
+    "memory-write-router",
+    "memory-session-start",
+    "memory-stop",
+    "harness-trace-emitter",
+    "context-mode-cache-heal",
+)
+
 
 SHARED_KNOWLEDGE_FILES = (
     "templates/domain/context.md",
@@ -503,6 +521,27 @@ def validate_registered_hooks(root: Path, result: ValidationResult) -> None:
             result.errors.append(f"registered hook file is not executable: {path}")
 
 
+def validate_required_runtime_integrations(root: Path, result: ValidationResult) -> None:
+    checks = (
+        ("mcp_servers", REQUIRED_CORE_MCP_SERVERS, "required runtime MCP server"),
+        ("libraries", REQUIRED_CORE_LIBRARIES, "required runtime library"),
+        ("hooks", REQUIRED_CORE_HOOKS, "required runtime hook"),
+    )
+    for registry_name, required_ids, label in checks:
+        relative_path = REGISTRY_FILES[registry_name]
+        path = root / relative_path
+        if not path.is_file():
+            continue
+        present = {
+            str(entry.get("id"))
+            for entry in load_registry(path, registry_name)
+            if entry.get("id")
+        }
+        for required_id in required_ids:
+            if required_id not in present:
+                result.errors.append(f"missing {label} {required_id!r}: {path}")
+
+
 def validate_update_backup_contract(root: Path, result: ValidationResult) -> None:
     backup_policy_path = harness_path(root, "registries", "backup-policy.yml")
     backup_policy = load_control_yaml(backup_policy_path, result).get("backup_policy") or {}
@@ -568,6 +607,7 @@ def validate_root(root: str | Path) -> ValidationResult:
     require_dir(harness_path(os_root, "logs", "backups"), result)
     validate_capability_registries(os_root, result)
     validate_registered_hooks(os_root, result)
+    validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)
 
     profile_domains = profile_domain_names(os_root)
