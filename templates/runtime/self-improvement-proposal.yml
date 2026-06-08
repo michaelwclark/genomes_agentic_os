@@ -1,0 +1,29 @@
+schema_version: 1
+proposal_id: ""
+created_at: ""
+updated_at: ""
+opportunity_type: ""
+title: ""
+summary: ""
+scope: installed_os
+evidence: []
+deterministic_findings: []
+model_recommendation: null
+score:
+  frequency: 0
+  severity: 0
+  reuse: 0
+  confidence: 0
+  blast_radius: 0
+  staleness: 0
+  total: 0
+dedupe_key: ""
+cooldown_until: null
+recommended_artifact: ""
+approval_requirement: operator_required
+validation_plan: []
+reference_migration_plan: []
+redaction_status: clean
+content_hash: ""
+promotion_status: proposed
+approval_record_id: null

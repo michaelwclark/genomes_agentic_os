@@ -114,6 +114,12 @@ def command_entries() -> list[dict[str, str]]:
             "description": "Point active Claude/Codex hook settings at the installed OS hook source of truth.",
             "source": "agentic-os hook sync",
         },
+        {
+            "id": "self-improvement-run",
+            "command": "agentic-os self-improvement run --dry-run",
+            "description": "Review durable local evidence for proposal-only OS improvement opportunities.",
+            "source": "harness/commands/os-self-improvement.md",
+        },
     ]
 
 
@@ -142,6 +148,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Orchestrate",
             "description": "Coordinate subagents, verification, and integration.",
             "source": "harness/skills/orchestrate/SKILL.md",
+        },
+        {
+            "id": "toolsmith-reviewer",
+            "name": "Toolsmith Reviewer",
+            "description": "Review redacted evidence bundles and propose draft-only OS improvements.",
+            "source": "harness/skills/toolsmith-reviewer/SKILL.md",
         },
     ]
 

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS self-improvement control plane",
+  "type": "object",
+  "required": ["schema_version", "enabled", "schedule_mode", "evidence_roots", "output_paths", "approval_required"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "enabled": {"type": "boolean"},
+    "schedule_mode": {"enum": ["disabled", "dry_run", "apply_proposals"]},
+    "evidence_roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "legacy_read_only"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "legacy_read_only": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "external_sources": {"type": "array"},
+    "proposal_thresholds": {"type": "object"},
+    "cooldowns": {"type": "object"},
+    "redaction": {"type": "object"},
+    "output_paths": {
+      "type": "object",
+      "required": ["runs", "proposals", "approvals", "drafts"],
+      "properties": {
+        "runs": {"type": "string"},
+        "proposals": {"type": "string"},
+        "approvals": {"type": "string"},
+        "drafts": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "promotion_targets": {"type": "array", "items": {"type": "string"}},
+    "approval_required": {"const": true},
+    "model_review": {"type": "object"}
+  },
+  "additionalProperties": true
+}

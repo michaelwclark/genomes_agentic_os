@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS artifact usage sidecar",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "artifact_id",
+    "views",
+    "invocations",
+    "successful_invocations",
+    "failed_invocations",
+    "patched_count",
+    "references"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "artifact_type": {"enum": ["skill", "command", "workflow", "automation", "tool_wrapper", "validator"]},
+    "artifact_id": {"type": "string"},
+    "views": {"type": "integer", "minimum": 0},
+    "invocations": {"type": "integer", "minimum": 0},
+    "successful_invocations": {"type": "integer", "minimum": 0},
+    "failed_invocations": {"type": "integer", "minimum": 0},
+    "last_used_at": {"type": ["string", "null"]},
+    "last_failure_at": {"type": ["string", "null"]},
+    "patched_count": {"type": "integer", "minimum": 0},
+    "references": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

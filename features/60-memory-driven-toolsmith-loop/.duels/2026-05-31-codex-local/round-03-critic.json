@@ -1,0 +1,71 @@
+{
+  "verdict": "PASS",
+  "verdictRationale": "The Writer closed the round-one severe issues with enforceable invariants: content-bound approval, strict reviewer sandboxing, and checksum-based install/update conflict semantics. The remaining safety boundaries around paths, dedupe, external sources, and legacy roots are now specific enough to drive implementation and test design without inventing major runtime policy.",
+  "falsifiability": {
+    "failureCondition": "An approved proposal is mutated after approval and then successfully promoted without creating a fresh approval record for the new content.",
+    "observableSignal": "A draft artifact appears even though the proposal content hash, validation hash, target, or control-plane hash differs from the approval record.",
+    "measurementMethod": "Create a temp installed root, apply a valid proposal, approve it, edit its evidence or validation plan, then run promote and inspect exit code plus drafts directory contents.",
+    "threshold": "promote must exit nonzero and create zero draft files",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "Approval is now bound to proposal content hash, validation hash, target, and control-plane hash, with promote-time recomputation and mutation invalidation."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "The model reviewer is explicitly data-only, denied write-capable tools, and disabled when that sandbox cannot be enforced."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "Managed-template checksums, merge policies, conflict outputs, and manual-only files define non-overwrite update behavior."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "The scoring rubric now maps each dimension to concrete bands and preserves threshold meaning across implementations."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "The path invariant now requires code-owned root-relative paths, realpath checks, traversal rejection, symlink rejection, and same-directory atomic writes."
+    },
+    {
+      "issueId": "i6",
+      "review": "SATISFIED",
+      "rationale": "Proposal mutation now has explicit approved-content boundaries, per-proposal locks, lock timeout behavior, and atomic write requirements."
+    },
+    {
+      "issueId": "i7",
+      "review": "SATISFIED",
+      "rationale": "External sources now require explicit config records and credential references are barred from evidence, prompts, reports, proposals, approvals, and drafts."
+    },
+    {
+      "issueId": "i8",
+      "review": "SATISFIED",
+      "rationale": "The spec normalizes canonical harness/shared_factory paths and adds an acceptance check banning writes to legacy top-level shared_factory paths."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The v1 boundary remains appropriately conservative: reports, proposals, approvals, and drafts are allowed, while live shared artifact mutation is excluded.",
+      "lineRef": "Vision / What's NOT in v1"
+    },
+    {
+      "id": "p2",
+      "summary": "The spec preserves the useful Hermes ideas without copying direct mutation, especially sidecar telemetry and separate deterministic versus model recommendations.",
+      "lineRef": "Sidecar Telemetry Contract / Model Review Sandbox"
+    },
+    {
+      "id": "p3",
+      "summary": "The validation plan is strong enough to catch the most likely unsafe-write, stale-approval, secret-leak, and scheduler-failure regressions.",
+      "lineRef": "Validations"
+    }
+  ]
+}

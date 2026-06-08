@@ -26,6 +26,18 @@ def shared_factory(root: Path) -> Path:
     return harness(root) / "shared_factory"
 
 
+def limit_self_improvement_evidence_to_runs(root: Path) -> None:
+    config_path = shared_factory(root) / "00-control-plane" / "self-improvement.yml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["evidence_roots"] = [
+        {
+            "path": "harness/shared_factory/06-runs-and-logs/runs",
+            "legacy_read_only": False,
+        }
+    ]
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
 def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     projects_source = tmp_path / "projects"
@@ -217,6 +229,21 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "dead-letter-event.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "update-grant.json").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "backup-policy.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "self-improvement.yml").is_file()
+    assert (shared_factory(root) / "00-control-plane" / "managed-templates.yml").is_file()
+    assert (shared_factory(root) / "04-workflows" / "self-improvement-review.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "self-improvement.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "managed-templates.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "self-improvement-workflow.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "self-improvement-review.yml").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "self-improvement-proposal.yml").is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "self-improvement-usage-sidecar.json"
+    ).is_file()
+    assert (shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "runs").is_dir()
+    assert (shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "proposals").is_dir()
+    assert (shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "approvals").is_dir()
+    assert (shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "drafts").is_dir()
     assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "README.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "index.html").is_file()
     assert (shared_factory(root) / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md").is_file()
@@ -232,6 +259,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-runtime-init.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-heartbeat.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-integration-setup.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-self-improvement.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-event.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-chain.md").is_file()
@@ -273,9 +301,249 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "skills" / "integration-setup" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "toolsmith-reviewer" / "SKILL.md").is_file()
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
     assert not validate_root(root).errors
+
+
+def test_validate_requires_self_improvement_surface(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    (shared_factory(root) / "00-control-plane" / "self-improvement.yml").unlink()
+
+    result = validate_root(root)
+
+    assert not result.ok
+    assert any("self-improvement.yml" in error for error in result.errors)
+
+
+def test_self_improvement_dry_run_reports_seeded_evidence_without_writes(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "seeded-self-improvement.md"
+    evidence.write_text(
+        "\n".join(
+            [
+                "Validation failed after repeated manual command sequence.",
+                "Validation failed after repeated manual command sequence.",
+                "Manual command workaround should become a shared workflow.",
+                "token: ghp_1234567890abcdefghijklmnopqrst",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    self_improvement_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement"
+    before = {
+        path.relative_to(self_improvement_root)
+        for path in self_improvement_root.rglob("*")
+        if path.is_file()
+    }
+
+    assert main(["self-improvement", "run", "--root", str(root), "--dry-run"]) == 0
+
+    output = capsys.readouterr().out
+    after = {
+        path.relative_to(self_improvement_root)
+        for path in self_improvement_root.rglob("*")
+        if path.is_file()
+    }
+    assert before == after
+    assert "Self Improvement Dry Run" in output
+    assert "writes: none" in output
+    assert "Deterministic findings:" in output
+    assert "Recurring failure signal" in output or "Repeated evidence pattern" in output
+    assert "ghp_1234567890abcdefghijklmnopqrst" not in output
+    assert "redactions: 1" in output
+
+
+def test_self_improvement_apply_writes_proposals_and_dedupes(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    limit_self_improvement_evidence_to_runs(root)
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "apply-evidence.md"
+    evidence.write_text(
+        "\n".join(
+            [
+                "Validation failed after repeated manual command sequence.",
+                "Validation failed after repeated manual command sequence.",
+                "Manual command workaround should become a shared workflow.",
+                "token: ghp_1234567890abcdefghijklmnopqrst",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 0
+    output = capsys.readouterr().out
+    assert "Self Improvement Apply" in output
+    assert "ghp_1234567890abcdefghijklmnopqrst" not in output
+
+    self_improvement_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement"
+    run_files = sorted((self_improvement_root / "runs").glob("*.yml"))
+    proposal_files = sorted((self_improvement_root / "proposals").glob("*.yml"))
+    assert run_files
+    assert proposal_files
+    first_count = len(proposal_files)
+    proposal = yaml.safe_load(proposal_files[0].read_text(encoding="utf-8"))
+    assert proposal["content_hash"].startswith("sha256:")
+    assert proposal["promotion_status"] == "proposed"
+    assert proposal["approval_requirement"] == "operator_required"
+    assert proposal["validation_plan"]
+    assert "ghp_1234567890abcdefghijklmnopqrst" not in yaml.safe_dump(proposal)
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 0
+    assert len(sorted((self_improvement_root / "proposals").glob("*.yml"))) == first_count
+
+    proposal_id = proposal["proposal_id"]
+    assert main(["self-improvement", "status", "--root", str(root)]) == 0
+    assert "proposal_counts:" in capsys.readouterr().out
+    assert main(["self-improvement", "list", "--root", str(root)]) == 0
+    assert proposal_id in capsys.readouterr().out
+    assert main(["self-improvement", "show", proposal_id, "--root", str(root)]) == 0
+    assert proposal_id in capsys.readouterr().out
+
+
+def test_self_improvement_reject_starts_cooldown_and_suppresses_duplicate(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    limit_self_improvement_evidence_to_runs(root)
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "single-finding.md"
+    evidence.write_text(
+        "Repeated operator friction should become a draft feature.\n"
+        "Repeated operator friction should become a draft feature.\n",
+        encoding="utf-8",
+    )
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 0
+    proposals_dir = shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "proposals"
+    proposal_path = next(proposals_dir.glob("*.yml"))
+    proposal_id = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))["proposal_id"]
+
+    assert main(["self-improvement", "reject", proposal_id, "--root", str(root)]) == 0
+    rejected = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
+    assert rejected["promotion_status"] == "rejected"
+    assert rejected["cooldown_until"]
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 0
+    output = capsys.readouterr().out
+    assert "cooldown_active" in output
+    assert len(sorted(proposals_dir.glob("*.yml"))) == 1
+
+
+def test_self_improvement_approve_and_promote_feature_draft(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    limit_self_improvement_evidence_to_runs(root)
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "feature-draft.md"
+    evidence.write_text(
+        "Repeated operator friction should become a draft feature.\n"
+        "Repeated operator friction should become a draft feature.\n",
+        encoding="utf-8",
+    )
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 0
+    proposals_dir = shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "proposals"
+    proposal_path = next(proposals_dir.glob("*.yml"))
+    proposal_id = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))["proposal_id"]
+
+    assert main(["self-improvement", "approve", proposal_id, "--target", "feature-spec", "--root", str(root)]) == 0
+    approved = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
+    assert approved["promotion_status"] == "approved"
+    assert approved["approval_record_id"]
+    approval_path = shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "approvals" / f"{approved['approval_record_id']}.yml"
+    assert approval_path.is_file()
+
+    assert main(["self-improvement", "promote", proposal_id, "--target", "feature-spec", "--root", str(root)]) == 0
+    draft_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "drafts" / proposal_id
+    assert (draft_root / "feature.yml").is_file()
+    assert (draft_root / "SPEC.md").is_file()
+    assert (draft_root / "PLAN.md").is_file()
+    assert (draft_root / "NEXT.md").is_file()
+    drafted = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
+    assert drafted["promotion_status"] == "drafted"
+
+
+def test_self_improvement_promote_rejects_mutated_approval_content(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    limit_self_improvement_evidence_to_runs(root)
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "mutated-approval.md"
+    evidence.write_text(
+        "Repeated operator friction should become a draft feature.\n"
+        "Repeated operator friction should become a draft feature.\n",
+        encoding="utf-8",
+    )
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 0
+    proposals_dir = shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "proposals"
+    proposal_path = next(proposals_dir.glob("*.yml"))
+    proposal = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
+    proposal_id = proposal["proposal_id"]
+    assert main(["self-improvement", "approve", proposal_id, "--target", "feature-spec", "--root", str(root)]) == 0
+
+    proposal = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
+    proposal["summary"] = "Changed after approval."
+    proposal_path.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    assert main(["self-improvement", "promote", proposal_id, "--target", "feature-spec", "--root", str(root)]) == 2
+    draft_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement" / "drafts" / proposal_id
+    assert not draft_root.exists()
+
+
+def test_self_improvement_apply_rejects_unsafe_output_paths(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    limit_self_improvement_evidence_to_runs(root)
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "unsafe-path.md"
+    evidence.write_text(
+        "Repeated operator friction should become a draft feature.\n"
+        "Repeated operator friction should become a draft feature.\n",
+        encoding="utf-8",
+    )
+    config_path = shared_factory(root) / "00-control-plane" / "self-improvement.yml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["output_paths"]["proposals"] = "../escape"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    assert main(["self-improvement", "run", "--root", str(root), "--apply"]) == 2
+    assert not (tmp_path / "escape").exists()
+
+
+def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_enabled(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    registry_path = shared_factory(root) / "00-control-plane" / "runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    schedules = {schedule["id"]: schedule for schedule in registry["schedules"]}
+    assert schedules["self_improvement_review"]["enabled"] is False
+    assert schedules["self_improvement_review"]["command"] == "agentic-os self-improvement run --root <root> --dry-run"
+
+    for schedule in registry["schedules"]:
+        schedule["enabled"] = schedule["id"] == "self_improvement_review"
+        schedule["next_due_at"] = None
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    queued = yaml.safe_load(capsys.readouterr().out)
+    assert queued["queued"][0]["ref"] == "self_improvement_review"
+    item_id = queued["queued"][0]["id"]
+
+    assert main(["runtime", "run-next", "--root", str(root), "--item-id", item_id, "--apply"]) == 0
+    dispatched = yaml.safe_load(capsys.readouterr().out)
+    assert dispatched["status"] == "done"
+    self_improvement_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement"
+    assert not list(self_improvement_root.rglob("*.yml"))
 
 
 def test_validate_fails_when_declared_capability_is_missing_from_registry(tmp_path: Path) -> None:

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS self-improvement proposal",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "opportunity_type",
+    "title",
+    "summary",
+    "evidence",
+    "deterministic_findings",
+    "score",
+    "recommended_artifact",
+    "approval_requirement",
+    "validation_plan",
+    "redaction_status",
+    "content_hash",
+    "promotion_status"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "proposal_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "opportunity_type": {"type": "string"},
+    "title": {"type": "string"},
+    "summary": {"type": "string"},
+    "scope": {"enum": ["project_local", "installed_os", "source_package_candidate"]},
+    "evidence": {"type": "array"},
+    "deterministic_findings": {"type": "array"},
+    "model_recommendation": {"type": ["string", "null"]},
+    "score": {
+      "type": "object",
+      "required": ["frequency", "severity", "reuse", "confidence", "blast_radius", "staleness", "total"]
+    },
+    "dedupe_key": {"type": "string"},
+    "cooldown_until": {"type": ["string", "null"]},
+    "recommended_artifact": {"type": "string"},
+    "approval_requirement": {"type": "string"},
+    "validation_plan": {"type": "array"},
+    "reference_migration_plan": {"type": "array"},
+    "redaction_status": {"type": "string"},
+    "content_hash": {"type": "string"},
+    "promotion_status": {"enum": ["proposed", "approved", "drafted", "rejected", "superseded"]},
+    "approval_record_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

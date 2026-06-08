@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -51,6 +52,44 @@ STANDARD_LANES = (
     "finance",
     "personal_admin",
     "learning",
+)
+
+SELF_IMPROVEMENT_MANAGED_FILES = (
+    (
+        "templates/runtime/self-improvement.yml",
+        "harness/shared_factory/00-control-plane/self-improvement.yml",
+        "create_if_missing",
+    ),
+    (
+        "templates/runtime/self-improvement-workflow.md",
+        "harness/shared_factory/04-workflows/self-improvement-review.md",
+        "create_if_missing",
+    ),
+    (
+        "templates/runtime/self-improvement-review.yml",
+        "harness/shared_factory/05-knowledge/templates/runtime/self-improvement-review.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/self-improvement-proposal.yml",
+        "harness/shared_factory/05-knowledge/templates/runtime/self-improvement-proposal.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/self-improvement-usage-sidecar.json",
+        "harness/shared_factory/05-knowledge/templates/runtime/self-improvement-usage-sidecar.json",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/commands/os-self-improvement.md",
+        "harness/shared_factory/05-knowledge/commands/os-self-improvement.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/skills/toolsmith-reviewer/SKILL.md",
+        "harness/shared_factory/05-knowledge/skills/toolsmith-reviewer/SKILL.md",
+        "replace_if_managed_unchanged",
+    ),
 )
 
 PROJECT_STATUSES = (
@@ -401,6 +440,108 @@ def copy_file(source: Path, destination: Path, result: ScaffoldResult) -> None:
 
 def copy_file_once(source: Path, destination: Path, result: ScaffoldResult) -> None:
     copy_file(source, destination, result)
+
+
+def source_relative_path(relative_path: str) -> Path:
+    return repo_root() / relative_path
+
+
+def file_sha256(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def managed_templates_payload() -> dict[str, object]:
+    entries = []
+    for source, destination, merge_policy in SELF_IMPROVEMENT_MANAGED_FILES:
+        source_path = source_relative_path(source)
+        checksum = file_sha256(source_path) if source_path.is_file() else "sha256:missing"
+        entries.append(
+            {
+                "source": source,
+                "destination": destination,
+                "source_version": 1,
+                "source_checksum": checksum,
+                "installed_checksum": checksum,
+                "merge_policy": merge_policy,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "managed_by": "agentic-os self-improvement",
+        "entries": entries,
+    }
+
+
+def previous_managed_checksums(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    entries = data.get("entries") if isinstance(data, dict) else []
+    if not isinstance(entries, list):
+        return {}
+    checksums = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        destination = entry.get("destination")
+        installed_checksum = entry.get("installed_checksum")
+        if destination and installed_checksum:
+            checksums[str(destination)] = str(installed_checksum)
+    return checksums
+
+
+def write_managed_file(source: Path, destination: Path, previous_checksum: str | None, result: ScaffoldResult) -> None:
+    source_checksum = file_sha256(source)
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        result.created.append(destination)
+        return
+    destination_checksum = file_sha256(destination)
+    if destination_checksum == source_checksum:
+        result.skipped.append(destination)
+        return
+    if previous_checksum and destination_checksum == previous_checksum:
+        shutil.copy2(source, destination)
+        result.updated.append(destination)
+        return
+    conflict_path = destination.with_name(f"{destination.name}.new")
+    if conflict_path.exists() and file_sha256(conflict_path) == source_checksum:
+        result.skipped.append(conflict_path)
+        return
+    existed = conflict_path.exists()
+    conflict_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, conflict_path)
+    if existed:
+        result.updated.append(conflict_path)
+    else:
+        result.created.append(conflict_path)
+
+
+def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
+    for directory in ("runs", "proposals", "approvals", "drafts"):
+        ensure_dir(shared_factory_path(root, "06-runs-and-logs", "self-improvement", directory), result)
+
+    manifest_path = shared_factory_path(root, "00-control-plane", "managed-templates.yml")
+    previous_checksums = previous_managed_checksums(manifest_path)
+    for source, destination, _merge_policy in SELF_IMPROVEMENT_MANAGED_FILES:
+        source_path = source_relative_path(source)
+        destination_path = root / destination
+        write_managed_file(source_path, destination_path, previous_checksums.get(destination), result)
+
+    desired_manifest = yaml.safe_dump(managed_templates_payload(), sort_keys=False)
+    if not manifest_path.exists():
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(desired_manifest, encoding="utf-8")
+        result.created.append(manifest_path)
+    elif manifest_path.read_text(encoding="utf-8") == desired_manifest:
+        result.skipped.append(manifest_path)
+    else:
+        manifest_path.write_text(desired_manifest, encoding="utf-8")
+        result.updated.append(manifest_path)
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
@@ -1665,6 +1806,7 @@ def install_docs(root: str | Path) -> ScaffoldResult:
             shared_factory_path(os_root, "05-knowledge", "references"),
         )
     )
+    ensure_self_improvement_surface(os_root, result)
     return result
 
 
@@ -1731,8 +1873,23 @@ routing:
 
 work_lifecycle:
   enabled: true
+  source_of_truth: agentic_os
   work_items_root: work-items
   default_state: captured
+  lanes:
+    intake: 01-intake
+    active: 02-active
+    complete: 03-complete
+  lane_state_map:
+    01-intake: [captured, triaged]
+    02-active: [specified, ready, building, validating, blocked]
+    03-complete: [finished, documented, archived]
+  naming:
+    intake_pattern: "{{index:03d}}_{{slug}}.md"
+    expanded_intake_pattern: "{{index:03d}}_{{slug}}/"
+    packet_pattern: "{{index:03d}}_{{slug}}/"
+    subtask_pattern: "{{parent_index:03d}}_{{subindex:02d}}_{{slug}}.md"
+    default_intake_format: single_markdown
   transcript_logging:
     enabled: true
     include_raw_transcript: true
@@ -1741,7 +1898,7 @@ work_lifecycle:
     redaction_policy: strict
   spec_destination:
     type: local
-    path: work-items
+    path: work-items/02-active
   external_tracker:
     type: none
 """
@@ -1799,16 +1956,17 @@ This is the project-local entrypoint for `{domain}/02-projects/{project}`.
 ## Required Loop
 
 1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `project.yml`, and `config/*.yml`.
-2. Decide whether the request belongs in project state, `src/`, a registered worktree, `ideas/`, or `artifacts/`.
+2. Decide whether the request belongs in project state, `work-items/`, `src/`, a registered worktree, or `artifacts/`.
 3. If source work is required, use `src/` for the canonical checkout or `worktrees/<name>` for an active branch-specific checkout.
 4. Follow local `RULES.md` and tool boundaries before touching source files.
-5. For lifecycle work, read the matching `work-items/<slug>/work.yml` plus the state-specific files before editing.
-6. Record durable ideas in `ideas/`, lifecycle evidence in `work-items/`, outputs in `artifacts/`, and execution evidence in the domain run log.
+5. For lifecycle work, read the matching `work-items/<lane>/<id>` object and the state-specific files before editing.
+6. Record project-known ideas in `work-items/01-intake/`, active work in `work-items/02-active/`, complete work in `work-items/03-complete/`, outputs in `artifacts/`, and execution evidence in the domain run log.
 
 ## Source Priority
 
 - `project.yml` and `source-map.md` identify the project and canonical sources.
-- `config/output-artifacts.yml` declares feature artifact roots such as `src/.features/{{ticket_or_slug}}`.
+- `config/work-lifecycle.yml` declares lifecycle lanes and naming rules.
+- `config/output-artifacts.yml` declares feature artifact roots such as `work-items/02-active/{{ticket_or_slug}}/artifacts`.
 - `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
 """
 
@@ -1820,8 +1978,10 @@ Route project work to the narrowest local surface before acting.
 
 | Request Type | Route |
 | --- | --- |
-| New idea, product thought, rough note | `ideas/raw-ideas.md` |
-| Lifecycle work item | `work-items/<slug>/work.yml` and state-specific files |
+| New project-known idea, product thought, rough note | `work-items/01-intake/<index>_<slug>.md` |
+| Domain-level idea without a known project | `<domain>/01-inbox/raw-ideas.md` |
+| Lifecycle work item | `work-items/01-intake/`, `work-items/02-active/`, or `work-items/03-complete/` based on state |
+| Expanded idea packet from duel/spec work | `work-items/01-intake/<index>_<slug>/` until promoted |
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
 | Feature implementation | `src/` or a registered `worktrees/<name>` link |
@@ -1847,7 +2007,7 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 2. `source-map.md`
 3. `config/project-profile.yml`
 4. `config/workflows.yml`, `config/output-artifacts.yml`, and `config/validation.yml`
-5. `config/work-lifecycle.yml` and the matching `work-items/<slug>/work.yml` when lifecycle work is active
+5. `config/work-lifecycle.yml` and the matching lane object under `work-items/` when lifecycle work is active
 6. `worktrees/index.yml` when source work may use a branch checkout
 
 ## Markdown vs YAML
@@ -1868,7 +2028,9 @@ checkout or feature artifact defines a stricter rule.
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `ideas/` for raw project idea capture and `work-items/` for promoted lifecycle work packets.
+- Use `work-items/01-intake/` for raw project-known ideas. `ideas/` is a compatibility index, not the lifecycle source of truth.
+- Keep exactly one canonical work object per idea. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
+- Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
 """
@@ -1886,6 +2048,7 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project src` | Create or repair the canonical `src` link. | The link stays scoped inside this project folder. |
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
+| `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet. | Use for handoffs. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
 
@@ -1896,8 +2059,10 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `src/` | Canonical source checkout for this project. |
 | `worktrees/` | Visible links to active worktrees. |
 | `config/` | Parsed project defaults and tool/workflow configuration. |
-| `ideas/` | Project-scoped idea capture. |
-| `work-items/` | Lifecycle packets from captured idea through documented closeout. |
+| `ideas/` | Compatibility index for project ideas; do not use as the lifecycle source of truth. |
+| `work-items/01-intake/` | Raw project-known ideas, defaulting to `001_idea_slug.md`; expanded idea packets keep the same index as `001_idea_slug/`. |
+| `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
+| `work-items/03-complete/` | Finished, documented, or archived work packets. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
 """
 
@@ -1932,7 +2097,7 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "lane": lane_value,
                     "entrypoint": "AGENTS.md",
                     "canonical_source": "src",
-                    "ideas": "ideas",
+                    "ideas": "work-items/01-intake",
                     "artifacts": "artifacts",
                 }
             },
@@ -1956,8 +2121,26 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
             {
                 "work_lifecycle": {
                     "enabled": True,
+                    "source_of_truth": "agentic_os",
                     "work_items_root": "work-items",
                     "default_state": "captured",
+                    "lanes": {
+                        "intake": "01-intake",
+                        "active": "02-active",
+                        "complete": "03-complete",
+                    },
+                    "lane_state_map": {
+                        "01-intake": ["captured", "triaged"],
+                        "02-active": ["specified", "ready", "building", "validating", "blocked"],
+                        "03-complete": ["finished", "documented", "archived"],
+                    },
+                        "naming": {
+                            "intake_pattern": "{index:03d}_{slug}.md",
+                            "expanded_intake_pattern": "{index:03d}_{slug}/",
+                            "packet_pattern": "{index:03d}_{slug}/",
+                            "subtask_pattern": "{parent_index:03d}_{subindex:02d}_{slug}.md",
+                            "default_intake_format": "single_markdown",
+                    },
                     "states": [
                         "captured",
                         "triaged",
@@ -1979,7 +2162,7 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     },
                     "spec_destination": {
                         "type": "local",
-                        "path": "work-items",
+                        "path": "work-items/02-active",
                     },
                     "external_tracker": {
                         "type": "none",
@@ -1992,10 +2175,12 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
         return yaml.safe_dump(
             {
                 "output_artifacts": {
-                    "feature_root": "src/.features/{ticket_or_slug}",
+                    "feature_root": "work-items/02-active/{ticket_or_slug}/artifacts",
                     "project_artifacts": "artifacts",
                     "run_logs": "../../06-runs-and-logs/runs",
                     "front_matter": True,
+                    "legacy_source_feature_root": "src/.features/{ticket_or_slug}",
+                    "source_of_truth": "agentic_os",
                 }
             },
             sort_keys=False,
@@ -2086,13 +2271,18 @@ def worktrees_index(project: str) -> str:
 def ideas_readme(project: str) -> str:
     return f"""# Ideas: {project}
 
-Capture project-scoped ideas here before promoting them into tickets, workflows,
-feature artifacts, or implementation plans.
+Project-known ideas now start in `work-items/01-intake/`.
+
+This folder is a compatibility index for older tools and should point to the
+canonical work item instead of becoming a separate idea backlog.
 """
 
 
 def ideas_raw(project: str) -> str:
     return f"""# Raw Ideas: {project}
+
+Project-known ideas should be captured as `work-items/01-intake/NNN_slug.md`.
+Use this table only as a compatibility index.
 
 | Date | Source | Idea | Next Step |
 | --- | --- | --- | --- |
@@ -2198,6 +2388,8 @@ def ensure_project_operating_surface(
     ensure_dir(project_root / "config", result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
+    for lane_name in ("01-intake", "02-active", "03-complete"):
+        ensure_dir(project_root / "work-items" / lane_name, result)
     ensure_dir(project_root / "worktrees", result)
     write_project_file(
         project_root / "AGENTS.md",

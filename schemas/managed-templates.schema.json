@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS managed templates manifest",
+  "type": "object",
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "managed_by": {"type": "string"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "destination", "source_version", "source_checksum", "installed_checksum", "merge_policy"],
+        "properties": {
+          "source": {"type": "string"},
+          "destination": {"type": "string"},
+          "source_version": {"type": "integer", "minimum": 1},
+          "source_checksum": {"type": "string", "pattern": "^sha256:"},
+          "installed_checksum": {"type": "string", "pattern": "^sha256:"},
+          "merge_policy": {
+            "enum": [
+              "create_if_missing",
+              "replace_if_managed_unchanged",
+              "write_new_on_conflict",
+              "manual_only"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

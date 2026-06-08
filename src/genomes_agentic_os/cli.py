@@ -52,6 +52,16 @@ from .runtime_ops import (
     schedule_create,
     schedule_run_due,
 )
+from .self_improvement import (
+    approve_self_improvement_proposal,
+    format_self_improvement_result,
+    list_self_improvement_proposals,
+    promote_self_improvement_proposal,
+    reject_self_improvement_proposal,
+    run_self_improvement,
+    self_improvement_status,
+    show_self_improvement_proposal,
+)
 from .supervisor import format_supervise_result, supervise_tick
 from .scaffold import (
     DEFAULT_PROJECTS_SOURCE,
@@ -563,6 +573,66 @@ def build_parser() -> argparse.ArgumentParser:
     plan_capture.add_argument("--domain")
     plan_capture.add_argument("--project")
     plan_capture.set_defaults(handler=handle_plan_capture)
+
+    self_improvement_parser = subparsers.add_parser(
+        "self-improvement",
+        help="Review local evidence for proposal-only OS improvements.",
+    )
+    self_improvement_subparsers = self_improvement_parser.add_subparsers(
+        dest="self_improvement_command",
+        required=True,
+    )
+    self_improvement_run = self_improvement_subparsers.add_parser(
+        "run",
+        help="Run a no-write self-improvement review.",
+    )
+    self_improvement_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_run_mode = self_improvement_run.add_mutually_exclusive_group()
+    self_improvement_run_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Print a review without writing run records or proposals.",
+    )
+    self_improvement_run_mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write run records and proposal files under the configured self-improvement output paths.",
+    )
+    self_improvement_run.set_defaults(handler=handle_self_improvement_run)
+    self_improvement_status_parser = self_improvement_subparsers.add_parser(
+        "status",
+        help="Summarize self-improvement run and proposal state.",
+    )
+    self_improvement_status_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_status_parser.set_defaults(handler=handle_self_improvement_status)
+    self_improvement_list = self_improvement_subparsers.add_parser("list", help="List self-improvement proposals.")
+    self_improvement_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_list.set_defaults(handler=handle_self_improvement_list)
+    self_improvement_show = self_improvement_subparsers.add_parser("show", help="Show one self-improvement proposal.")
+    self_improvement_show.add_argument("proposal_id")
+    self_improvement_show.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_show.set_defaults(handler=handle_self_improvement_show)
+    self_improvement_approve = self_improvement_subparsers.add_parser(
+        "approve",
+        help="Approve one proposal for a specific draft target.",
+    )
+    self_improvement_approve.add_argument("proposal_id")
+    self_improvement_approve.add_argument("--target", required=True)
+    self_improvement_approve.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_approve.set_defaults(handler=handle_self_improvement_approve)
+    self_improvement_reject = self_improvement_subparsers.add_parser("reject", help="Reject one proposal and start cooldown.")
+    self_improvement_reject.add_argument("proposal_id")
+    self_improvement_reject.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_reject.set_defaults(handler=handle_self_improvement_reject)
+    self_improvement_promote = self_improvement_subparsers.add_parser(
+        "promote",
+        help="Promote an approved proposal into a draft artifact.",
+    )
+    self_improvement_promote.add_argument("proposal_id")
+    self_improvement_promote.add_argument("--target", required=True)
+    self_improvement_promote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_promote.set_defaults(handler=handle_self_improvement_promote)
 
     connected_parser = subparsers.add_parser("connected-system", help="Manage connected source systems.")
     connected_subparsers = connected_parser.add_subparsers(dest="connected_system_command", required=True)
@@ -1142,6 +1212,49 @@ def handle_plan_capture(args: argparse.Namespace) -> int:
                 domain=args.domain,
                 project=args.project,
             )
+        )
+    )
+    return 0
+
+
+def handle_self_improvement_run(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_status(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(self_improvement_status(args.root)))
+    return 0
+
+
+def handle_self_improvement_list(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(list_self_improvement_proposals(args.root)))
+    return 0
+
+
+def handle_self_improvement_show(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(show_self_improvement_proposal(args.root, args.proposal_id)))
+    return 0
+
+
+def handle_self_improvement_approve(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            approve_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
+        )
+    )
+    return 0
+
+
+def handle_self_improvement_reject(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(reject_self_improvement_proposal(args.root, args.proposal_id)))
+    return 0
+
+
+def handle_self_improvement_promote(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            promote_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
         )
     )
     return 0

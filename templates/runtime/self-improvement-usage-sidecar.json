@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "artifact_type": "skill|command|workflow|automation|tool_wrapper|validator",
+  "artifact_id": "stable relative identifier",
+  "views": 0,
+  "invocations": 0,
+  "successful_invocations": 0,
+  "failed_invocations": 0,
+  "last_used_at": null,
+  "last_failure_at": null,
+  "patched_count": 0,
+  "references": []
+}

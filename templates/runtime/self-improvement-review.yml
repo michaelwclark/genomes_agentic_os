@@ -1,0 +1,16 @@
+schema_version: 1
+run_id: ""
+started_at: ""
+completed_at: ""
+mode: dry-run
+config_ref: harness/shared_factory/00-control-plane/self-improvement.yml
+evidence_roots: []
+deterministic_findings: []
+model_review:
+  enabled: false
+  reason: no-tool reviewer sandbox is not configured
+redaction:
+  replacements: 0
+  refused: false
+proposal_candidates: []
+writes: []

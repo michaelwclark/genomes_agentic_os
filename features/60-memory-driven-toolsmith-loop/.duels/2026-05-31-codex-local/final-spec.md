@@ -1,3 +1,16 @@
+<!--
+  Spec produced by the Duel skill (~/.claude/skills/duel/)
+  Duel ID:        2026-05-31-codex-local
+  Started:        2026-05-31T15:14:26.966Z
+  Ended:          2026-05-31T15:19:21.287Z
+  Termination:    PASS
+  Final artifact: final-spec.md
+  Total rounds:   3
+  Total cost:     $0.0000 of $20.00 cap
+  Writer:         codex-cli (default)
+  Critic:         codex-cli (default)
+-->
+
 # Feature Spec: Memory Driven Toolsmith Loop v1
 
 ## Vision

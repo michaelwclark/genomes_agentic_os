@@ -15,6 +15,7 @@ import yaml
 
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
+from .self_improvement import run_self_improvement
 from .validate import validate_root
 
 RUNTIME_REGISTRY = "harness/shared_factory/00-control-plane/runtime-registry.yml"
@@ -402,6 +403,19 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os validate --root <root>",
             "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "self_improvement_review",
+            "display_name": "Self-improvement review",
+            "enabled": False,
+            "cadence": "weekly",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os self-improvement run --root <root> --dry-run",
+            "outputs": ["harness/shared_factory/06-runs-and-logs/self-improvement/runs/"],
+            "notion_update": {"object": "Self Improvement", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,
         }
@@ -872,6 +886,29 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "command": normalized,
             "errors": validation.errors,
             "warnings": validation.warnings,
+        }
+    if normalized in {
+        f"agentic-os self-improvement run --root {root} --dry-run",
+        f"agentic-os self-improvement run --root {str(root)} --dry-run",
+    }:
+        try:
+            result = run_self_improvement(root, dry_run=True)
+        except ValueError as exc:
+            return {
+                "supported": True,
+                "ok": False,
+                "command": normalized,
+                "errors": [str(exc)],
+                "warnings": [],
+            }
+        return {
+            "supported": True,
+            "ok": bool(result.get("ok")),
+            "command": normalized,
+            "errors": [],
+            "warnings": [],
+            "evidence_files": result.get("evidence_files"),
+            "findings": len(result.get("findings") or []),
         }
     return {
         "supported": False,

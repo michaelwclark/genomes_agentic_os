@@ -1,0 +1,47 @@
+schema_version: 1
+enabled: false
+schedule_mode: disabled
+schedule_target:
+  id: self_improvement_review
+  enabled: false
+  cadence: weekly
+  command: agentic-os self-improvement run --root <root> --dry-run
+evidence_roots:
+  - path: harness/shared_factory/06-runs-and-logs
+    legacy_read_only: false
+  - path: harness/shared_factory/05-knowledge
+    legacy_read_only: false
+  - path: harness/logs
+    legacy_read_only: false
+  - path: shared_factory
+    legacy_read_only: true
+external_sources: []
+proposal_thresholds:
+  minimum_total: 18
+  minimum_confidence: 3
+cooldowns:
+  skill-draft: 14d
+  command-draft: 14d
+  workflow-draft: 14d
+  automation-draft: 30d
+  feature-spec: 30d
+redaction:
+  replacement: "[REDACTED_SECRET]"
+  refuse_token_shaped_values: true
+output_paths:
+  runs: harness/shared_factory/06-runs-and-logs/self-improvement/runs
+  proposals: harness/shared_factory/06-runs-and-logs/self-improvement/proposals
+  approvals: harness/shared_factory/06-runs-and-logs/self-improvement/approvals
+  drafts: harness/shared_factory/06-runs-and-logs/self-improvement/drafts
+promotion_targets:
+  - feature-spec
+  - skill-draft
+  - command-draft
+  - workflow-draft
+  - tool-wrapper-draft
+  - reference-update-plan
+  - doctor-check-draft
+approval_required: true
+model_review:
+  enabled: false
+  sandbox_required: true

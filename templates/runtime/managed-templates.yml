@@ -1,0 +1,7 @@
+schema_version: 1
+managed_by: agentic-os self-improvement
+entries: []
+notes:
+  - Fresh installs write a generated manifest with source and installed checksums.
+  - Updates may replace only unchanged managed files.
+  - Local operator config, proposals, approvals, and drafts are manual-only.

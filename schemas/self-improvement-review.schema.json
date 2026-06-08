@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS self-improvement review run",
+  "type": "object",
+  "required": ["schema_version", "mode", "config_ref", "evidence_roots", "deterministic_findings", "model_review", "writes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "started_at": {"type": "string"},
+    "completed_at": {"type": "string"},
+    "mode": {"enum": ["dry-run", "apply"]},
+    "config_ref": {"type": "string"},
+    "evidence_roots": {"type": "array"},
+    "deterministic_findings": {"type": "array"},
+    "model_review": {"type": "object"},
+    "redaction": {"type": "object"},
+    "proposal_candidates": {"type": "array"},
+    "writes": {"type": "array"}
+  },
+  "additionalProperties": true
+}

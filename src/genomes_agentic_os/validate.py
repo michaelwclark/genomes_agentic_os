@@ -146,6 +146,12 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/dead-letter-event.yml",
     "templates/runtime/update-grant.json",
     "templates/runtime/backup-policy.yml",
+    "templates/runtime/managed-templates.yml",
+    "templates/runtime/self-improvement.yml",
+    "templates/runtime/self-improvement-workflow.md",
+    "templates/runtime/self-improvement-review.yml",
+    "templates/runtime/self-improvement-proposal.yml",
+    "templates/runtime/self-improvement-usage-sidecar.json",
     "templates/agent-config/AGENTS.md",
     "templates/agent-config/CLAUDE.md",
     "templates/agent-config/ROUTER.md",
@@ -181,6 +187,7 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-runtime-init.md",
     "commands/os-heartbeat.md",
     "commands/os-integration-setup.md",
+    "commands/os-self-improvement.md",
     "commands/system-tool-registry.md",
     "plans/README.md",
     "plans/00-current-state-and-gap-map.md",
@@ -205,6 +212,20 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/integration-setup/SKILL.md",
     "skills/source-watcher/SKILL.md",
     "skills/event-graph-operator/SKILL.md",
+    "skills/toolsmith-reviewer/SKILL.md",
+)
+
+SELF_IMPROVEMENT_REQUIRED_FILES = (
+    "harness/shared_factory/00-control-plane/self-improvement.yml",
+    "harness/shared_factory/00-control-plane/managed-templates.yml",
+    "harness/shared_factory/04-workflows/self-improvement-review.md",
+)
+
+SELF_IMPROVEMENT_REQUIRED_DIRS = (
+    "harness/shared_factory/06-runs-and-logs/self-improvement/runs",
+    "harness/shared_factory/06-runs-and-logs/self-improvement/proposals",
+    "harness/shared_factory/06-runs-and-logs/self-improvement/approvals",
+    "harness/shared_factory/06-runs-and-logs/self-improvement/drafts",
 )
 
 
@@ -620,6 +641,10 @@ def validate_root(root: str | Path) -> ValidationResult:
     shared_knowledge = shared_factory_path(os_root, "05-knowledge")
     for filename in SHARED_KNOWLEDGE_FILES:
         require_file(shared_knowledge / filename, result)
+    for relative_path in SELF_IMPROVEMENT_REQUIRED_FILES:
+        require_file(os_root / relative_path, result)
+    for relative_path in SELF_IMPROVEMENT_REQUIRED_DIRS:
+        require_dir(os_root / relative_path, result)
     validate_watch_registries(os_root, result)
 
     for folder in LEGACY_ROOT_FOLDERS:
