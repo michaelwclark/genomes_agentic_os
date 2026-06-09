@@ -1,0 +1,45 @@
+id: email_client_replies
+display_name: Email — Client Reply Watch
+connected_system: email_genome
+source_type: email_search
+external_ref:
+  search_query: "from:<client_domain> is:unread"
+  label: INBOX
+watch_method: poll
+cadence: every_10_minutes
+enabled: false
+cursor:
+  type: timestamp
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{label}:{message_id}"
+filters:
+  is_unread: true
+  sender_domain: <client_domain>
+trigger_rules:
+  - id: email_client_reply_received
+    display_name: Client reply received
+    enabled: false
+    when:
+      event_type: email_search.polled
+      fields:
+        is_reply: "true"
+    then:
+      emit_event:
+        type: os.observation
+      enqueue:
+        work_type: review
+        route_to: shared_factory
+        context_profile: source_event
+        maturity: observe
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{label}:{message_id}:email_client_reply_received"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

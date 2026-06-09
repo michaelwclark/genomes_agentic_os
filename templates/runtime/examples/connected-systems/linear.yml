@@ -1,0 +1,34 @@
+id: linear_genome
+display_name: Genome's Linear Workspace
+system: linear
+status: planned
+owner: OS Owner
+provider_priority:
+  - native_mcp
+  - composio
+  - direct_api
+credential_refs:
+  env_vars:
+    - LINEAR_API_KEY
+  account_aliases:
+    - linear_genome
+workspace_verification:
+  required: true
+  expected_workspace: <linear_workspace_name>
+permissions:
+  read:
+    - issues
+    - projects
+    - teams
+    - cycles
+    - labels
+    - comments
+  write:
+    - issues
+    - comments
+    - state_transitions
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor linear_genome

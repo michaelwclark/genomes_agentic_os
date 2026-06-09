@@ -1,0 +1,24 @@
+id: approval_granted_dispatch
+display_name: Approval granted — dispatch approved action with original context
+enabled: false
+when:
+  event_type: os.approval.granted
+  filters: {}
+then:
+  enqueue:
+    work_type: execute_approved
+    route_to: shared_factory
+    workflow: approved_action_dispatch
+    context_profile: approval_context
+    execution_target: codex
+    maturity: execute_guarded
+approval:
+  required: false
+limits:
+  max_chain_depth: 2
+  cooldown: 1_minute
+idempotency:
+  key: "{event_idempotency_key}:approval_granted_dispatch"
+outputs:
+  run_queue: shared_factory/00-control-plane/run-queue.yml
+  event_log: shared_factory/06-runs-and-logs/events/

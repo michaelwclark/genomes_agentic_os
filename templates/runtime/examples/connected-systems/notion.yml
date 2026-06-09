@@ -1,0 +1,33 @@
+id: notion_genome
+display_name: Genome's Notion Workspace
+system: notion
+status: planned
+owner: OS Owner
+provider_priority:
+  - native_mcp
+  - composio
+  - direct_api
+credential_refs:
+  env_vars:
+    - GENOMES_NOTION_PAT
+    - GENOMES_NOTION_CONNECTOR
+  account_aliases:
+    - notion_genome
+workspace_verification:
+  required: true
+  expected_workspace: Genome's Notion
+permissions:
+  read:
+    - databases
+    - pages
+    - blocks
+    - comments
+  write:
+    - pages
+    - blocks
+    - comments
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor notion_genome

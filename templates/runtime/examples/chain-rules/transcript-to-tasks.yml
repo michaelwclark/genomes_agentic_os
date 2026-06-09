@@ -1,0 +1,25 @@
+id: transcript_to_tasks
+display_name: Meeting transcript — extract decisions and create work items
+enabled: false
+when:
+  event_type: granola.note.created
+  filters:
+    note_type: transcript
+then:
+  enqueue:
+    work_type: review
+    route_to: shared_factory
+    workflow: transcript_action_extraction
+    context_profile: transcript_context
+    execution_target: claude
+    maturity: prepare
+approval:
+  required: false
+limits:
+  max_chain_depth: 3
+  cooldown: 30_minutes
+idempotency:
+  key: "{event_idempotency_key}:transcript_to_tasks"
+outputs:
+  run_queue: shared_factory/00-control-plane/run-queue.yml
+  event_log: shared_factory/06-runs-and-logs/events/

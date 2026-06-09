@@ -1,0 +1,28 @@
+id: granola_genome
+display_name: Genome's Granola Meeting Notes
+system: granola
+status: planned
+owner: OS Owner
+provider_priority:
+  - native_mcp
+  - direct_api
+credential_refs:
+  env_vars:
+    - GRANOLA_API_KEY
+  account_aliases:
+    - granola_genome
+workspace_verification:
+  required: true
+  expected_workspace: <granola_account_email>
+permissions:
+  read:
+    - notes
+    - transcripts
+    - summaries
+    - folders
+  write: []
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor granola_genome

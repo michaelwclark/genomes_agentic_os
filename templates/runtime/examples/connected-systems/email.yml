@@ -1,0 +1,35 @@
+id: email_genome
+display_name: Genome's Email Account
+system: email
+status: planned
+owner: OS Owner
+provider_priority:
+  - native_mcp
+  - composio
+  - direct_api
+credential_refs:
+  env_vars:
+    - EMAIL_IMAP_HOST
+    - EMAIL_SMTP_HOST
+    - EMAIL_USERNAME
+    - EMAIL_APP_PASSWORD
+  account_aliases:
+    - email_genome
+workspace_verification:
+  required: true
+  expected_workspace: <email_address>
+permissions:
+  read:
+    - inbox
+    - sent
+    - labels
+    - threads
+    - attachments
+  write:
+    - drafts
+    - send
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor email_genome

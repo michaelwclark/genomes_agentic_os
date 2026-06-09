@@ -1,0 +1,25 @@
+id: ci_failure_investigation
+display_name: CI check suite failed — queue investigation workflow
+enabled: false
+when:
+  event_type: github.check_suite.failed
+  filters:
+    branch: main
+then:
+  enqueue:
+    work_type: review
+    route_to: shared_factory
+    workflow: ci_failure_investigation
+    context_profile: ci_failure_context
+    execution_target: claude
+    maturity: observe
+approval:
+  required: false
+limits:
+  max_chain_depth: 3
+  cooldown: 15_minutes
+idempotency:
+  key: "{event_idempotency_key}:ci_failure_investigation"
+outputs:
+  run_queue: shared_factory/00-control-plane/run-queue.yml
+  event_log: shared_factory/06-runs-and-logs/events/
