@@ -25,7 +25,7 @@
 | ID | Type | Item | Why | Gap | Status |
 | --- | --- | --- | --- | --- | --- |
 | F-010 | 🟩 | **Live Notion adapter** behind existing workspace/parent-page guards (`notion sync --apply`) | The human control plane is designed but not live | [B](gap-register.md#b-control-plane-notion-is-plan-only-s2) | todo |
-| F-011 | 🟦 | **Schema enforcement in `validate`** — load `schemas/` (jsonschema) and check structured files; add `validate --strict` | 18 schemas exist but nothing enforces them; malformed YAML passes today | [D](gap-register.md#d-schemas-authored-but-not-enforced-by-validate-s2) | todo |
+| F-011 | 🟦 | **Schema enforcement in `validate`** — load `schemas/` (jsonschema) and check structured files; add `validate --strict` | 22 schemas exist but nothing enforces them; malformed YAML passes today | [D](gap-register.md#d-schemas-authored-but-not-enforced-by-validate-s2) | todo |
 | F-012 | 🟩 | **`agentic-os metrics refresh`** — compute scorecards/baselines from run logs, doctor findings, automation maturity | 07-metrics is templates only; OS can't show it's improving | [E](gap-register.md#e-metrics-layer-is-templates-only-s2) | todo |
 | F-013 | 🟩 | **First live source adapters** (GitHub, Slack) + a **secrets contract** (env/keychain, never in-repo) | "Connected" sources aren't actually polled | [F](gap-register.md#f-integrations--connected-sources-are-contracts-not-connections-s2) | todo |
 | F-014 | 🟦 | **Tune routing low-confidence threshold** — return best candidate as a suggestion instead of hard refusal; revisit `detect_from_request` matching | Valid requests get refused (e.g. a request naming an existing project) | [I](gap-register.md#i-routing-low-confidence-threshold-may-be-aggressive-s3) | todo |

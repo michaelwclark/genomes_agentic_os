@@ -132,6 +132,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "hooks.yml",
         "plugins.yml",
         "rules.yml",
+        "composio-tools.yml",
     ):
         assert (harness(root) / "registries" / registry_name).is_file()
     inventory = (harness(root) / "INVENTORY.md").read_text(encoding="utf-8")
@@ -149,6 +150,9 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     }
     mcp_servers = yaml.safe_load((harness(root) / "registries" / "mcp-servers.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "genomes_brain"} <= {entry["id"] for entry in mcp_servers["mcp_servers"]}
+    composio_tools = yaml.safe_load((harness(root) / "registries" / "composio-tools.yml").read_text(encoding="utf-8"))
+    composio_route_ids = {entry["id"] for entry in composio_tools["composio_tools"]}
+    assert {"agentmail_genome", "slack_genome", "notion_blocks", "composio_discovery"} <= composio_route_ids
     libraries = yaml.safe_load((harness(root) / "registries" / "libraries.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "unified_memory"} <= {entry["id"] for entry in libraries["libraries"]}
     hooks = yaml.safe_load((harness(root) / "registries" / "hooks.yml").read_text(encoding="utf-8"))

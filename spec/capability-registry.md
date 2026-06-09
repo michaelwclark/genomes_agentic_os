@@ -63,6 +63,7 @@ adapters. They are not the primary source of truth.
 | Library registry | `registries/libraries.yml` | Local libraries and third-party systems such as MemPalace, CoCoIndex, and context-mode. |
 | Hook registry | `registries/hooks.yml` | Lifecycle hooks, trigger events, allowed side effects, and rollback behavior. |
 | Rule registry | `registries/rules.yml` | Shared rules consumed by harness entrypoints. |
+| Composio tool routing registry | `registries/composio-tools.yml` | Toolkit-level Composio routes, known slugs, layer scope, provider order, and approval boundaries. |
 
 `INVENTORY.md` is generated from these registries and should be optimized for
 human and agent scanning.
@@ -121,6 +122,25 @@ Initial command candidates:
 - `/make-automation`
 - `/make-workflow`
 - `/orchestrate`
+
+### Composio Tool Routes
+
+Composio is a federation layer, not one tool. The installed OS must therefore
+route by toolkit and effect type before calling `composio execute`, `proxy`, or
+`run`.
+
+Each route declares:
+
+- `toolkit`: Composio toolkit slug or CLI family.
+- `route_when`: task wording that should select the route.
+- `layer_scope`: OS layers where the route is visible.
+- `provider_priority`: fallback order, usually matching `connected-systems.yml`.
+- `read_tools`, `write_tools`, `trigger_tools`: known slugs or CLI operations.
+- `approval_required_for`: write/customer-visible/destructive gates.
+- `boundary`: workspace/account/data restrictions.
+
+Agents should read the local `TOOLS.md` first, then use
+`harness/registries/composio-tools.yml` for the structured source of truth.
 - `/os-doctor`
 - `/os-update`
 - `/os-inventory`
@@ -229,4 +249,3 @@ registries.
   or both.
 - Whether plugin packages should follow Codex plugin layout directly or use an
   OS-native wrapper that can emit Codex/Claude-specific adapters.
-

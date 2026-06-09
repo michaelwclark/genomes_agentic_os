@@ -27,6 +27,8 @@ libraries, hooks, plugins, and rules make up the system.
 - Fresh installs include the visible directories and registry files.
 - `INVENTORY.md` lists installed capabilities by type.
 - Context-mode and Unified Memory appear in the MCP/library registries.
+- Composio toolkit routes appear in `registries/composio-tools.yml` and in
+  generated `TOOLS.md`, with provider order and approval boundaries.
 - `/make-skill`, `/make-domain`, `/make-automation`, `/make-workflow`, and
   `/orchestrate` appear in the command registry once installed.
 - Dot-folder harness config is generated from visible registry state.
@@ -37,4 +39,3 @@ libraries, hooks, plugins, and rules make up the system.
 The registry pattern should follow the LedgerLine-style idea of explicit
 composition through registries, while adapting it to an OS/harness runtime
 instead of a web service.
-

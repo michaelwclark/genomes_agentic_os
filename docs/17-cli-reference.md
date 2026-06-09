@@ -236,12 +236,12 @@ Tested by `.agentic-atlas/tools/validate-cli.sh` against a scratch root:
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| **OK** | 52 | Exits 0 as expected |
-| **GUARDED** | 1 | `here route` (exit 2, low confidence by design) |
+| **OK** | 53 | Exits 0 as expected |
+| **GUARDED** | 2 | `here route` and `config doctor` guardrail exits by design |
 | Crashes / tracebacks | 0 | None |
-| **Total validated** | 53 | Full matrix: [`.agentic-atlas/validation/RESULTS.md`](../.agentic-atlas/validation/RESULTS.md) |
+| **Total validated** | 55 | Full matrix: [`.agentic-atlas/validation/RESULTS.md`](../.agentic-atlas/validation/RESULTS.md) |
 
-Commands not yet in the 53-invocation matrix (e.g. `room`, `watch-source create`,
+Commands not yet in the 55-invocation matrix (e.g. `room`, `watch-source create`,
 `notion sync`, `update apply`, `customer update`) are structurally sound — argparse
 definitions and handlers exist — but lack captured real-output evidence. They are
 listed here for navigation; treat them with normal care and run `--dry-run` first.

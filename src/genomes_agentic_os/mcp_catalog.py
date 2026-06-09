@@ -87,8 +87,8 @@ MCP_SERVERS: dict[str, McpServer] = {
     "composio": McpServer(
         id="composio",
         display_name="Composio",
-        use_when="Federated SaaS tools, OAuth flows, triggers, and app actions.",
-        boundary="Visible by default; install only after generating an approved Composio MCP server URL for the target layer.",
+        use_when="Federated SaaS tools, OAuth flows, triggers, and app actions routed through `harness/registries/composio-tools.yml`.",
+        boundary="Visible by default; install only after generating an approved Composio MCP server URL for the target layer and matching the requested toolkit to the route registry.",
         install_scope="visible only until an approved generated MCP URL is available",
     ),
     "orgo": McpServer(

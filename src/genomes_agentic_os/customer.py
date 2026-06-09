@@ -517,6 +517,23 @@ def public_customer_registry_payloads() -> dict[str, dict[str, Any]]:
         {"id": "strictest-rule-wins", "name": "Strictest rule wins", "description": "The strictest applicable safety rule wins.", "source": "RULES.md"},
         {"id": "no-secret-registry-values", "name": "No secret registry values", "description": "Reference secret environment variable names only.", "source": "RULES.md"},
     ]
+    composio_tools = [
+        {
+            "id": "customer_approved_only",
+            "toolkit": "composio",
+            "name": "Customer-approved Composio routes only",
+            "route_when": "Use Composio only when the customer profile explicitly approves the toolkit, workspace, and account boundary.",
+            "layer_scope": ["customer_os_root", "domain_or_lane", "project", "workflow_or_task", "automation"],
+            "provider_priority": ["customer_approved_provider"],
+            "read_tools": [],
+            "write_tools": [],
+            "trigger_tools": [],
+            "approval_required_for": ["external_write", "customer_visible_output", "workspace_mismatch"],
+            "boundary": "Do not inherit operator-private Composio routes into customer OS roots.",
+            "status": "customer approval required",
+            "source_system": "customer-profile",
+        }
+    ]
     collections = {
         "commands": commands,
         "skills": skills,
@@ -556,6 +573,7 @@ def public_customer_registry_payloads() -> dict[str, dict[str, Any]]:
         "hooks": {"hooks": hooks},
         "plugins": {"plugins": plugins},
         "rules": {"rules": rules},
+        "composio_tools": {"composio_tools": composio_tools},
     }
 
 

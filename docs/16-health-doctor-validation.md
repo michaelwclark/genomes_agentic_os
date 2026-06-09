@@ -30,7 +30,7 @@ anything.
 
 **Honest current limits (Gaps C and D):** every doctor is a *one-shot CLI call*
 — there is no `doctor --all` aggregation, no scheduled run, and no alerting. Gap
-D: the 18 schema files in `schemas/` exist but `validate` does not enforce them
+D: the 22 schema files in `schemas/` exist but `validate` does not enforce them
 (`validate.py` imports neither `jsonschema` nor `schemas/`); malformed runtime
 YAML can pass `validate` and fail later at use. Both gaps are tracked in the
 backlog; the recommendations are below.
@@ -354,7 +354,7 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   `config install` for one layer or `config install-tree` for the routed tree.
 - **`validate` does not enforce schemas (Gap D).** Passing `validate` means the
   filesystem shape is correct and all YAML/JSON parses; it does not mean your
-  heartbeat or chain-rule files conform to the 18 schemas in `schemas/`.
+  heartbeat or chain-rule files conform to the 22 schemas in `schemas/`.
 - **Names are snake_case.** All domain, workflow, and automation names must use
   lowercase letters, digits, and underscores only.
 - **Always pass `--root` in scripts.** The default `~/agentic_os` is your live

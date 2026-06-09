@@ -21,6 +21,7 @@ from .capability_registry import (
     registry_file_payloads,
 )
 from .config_ops import install_config
+from .composio_catalog import composio_tools_markdown
 from .mcp_catalog import mcp_tools_markdown
 
 
@@ -859,6 +860,10 @@ the source of truth by themselves.
 
 {mcp_tools_markdown()}
 
+## Composio Tool Routes
+
+{composio_tools_markdown()}
+
 ## Plugins And Libraries
 
 | Name | Use When | Notes |
@@ -1196,6 +1201,7 @@ privacy, production, billing, legal, or customer-visible work.
 def domain_tools(domain: str, *, public_customer: bool = False) -> str:
     display_name = titleize_name(domain)
     mcp_markdown = mcp_tools_markdown(domain, include_inactive=not public_customer, public_customer=public_customer)
+    composio_markdown = composio_tools_markdown(public_customer=public_customer)
     return f"""# Tools: {display_name}
 
 This registry names the intended skills, commands, MCP servers, plugins,
@@ -1221,6 +1227,10 @@ libraries, and wrappers for `{domain}`.
 ## MCP Servers
 
 {mcp_markdown}
+
+## Composio Tool Routes
+
+{composio_markdown}
 
 ## Plugins And Libraries
 
@@ -2064,6 +2074,10 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
 | `work-items/03-complete/` | Finished, documented, or archived work packets. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
+
+## Composio Tool Routes
+
+{composio_tools_markdown()}
 """
 
 

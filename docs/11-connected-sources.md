@@ -23,6 +23,7 @@ Connected sources are described in two registries that the OS scaffolds under
 | `source-providers.yml` | Known provider capabilities (Composio, native MCP, connector, direct API, local script) |
 | `watch-sources.yml` | Per-source polling contracts: what to watch, how often, what cursor to advance, which trigger rules to fire |
 | `watch-cursors.yml` | Last applied cursor position per source — written by `poll --apply`, untouched by dry-run |
+| `harness/registries/composio-tools.yml` | Composio toolkit routes: which toolkit/tool slugs are visible at which OS layers, provider fallback order, and approval boundaries |
 
 A **connected system** is a durable, workspace-verified entry that is resolved once
 and shared across many watch sources. A **watch source** is the specific polling
@@ -33,6 +34,15 @@ a Slack channel.
 `provider_priority` list. `connected-system list` resolves and displays the first
 available provider at list time, so you always know which adapter would be used
 before any polling happens.
+
+**Composio routing is explicit.** The generic `composio` provider is not enough
+for an agent to know which SaaS action to use. The installed OS also carries
+`harness/registries/composio-tools.yml`, and every generated `TOOLS.md` includes
+the same route table. Agents should match the request to that registry first,
+then inspect a concrete slug with `composio execute <slug> --get-schema` or
+discover missing slugs with `composio tools list <toolkit>` / `composio search`.
+External writes remain approval-gated even when the Composio account is already
+linked.
 
 A **cursor** records the incremental position of each source: the last event ID,
 timestamp, or file modification time written during the most recent apply-mode poll.
@@ -74,6 +84,19 @@ rule's idempotency key, so re-running `run-due` is always safe.
 | `workspace_verification` | Expected workspace/account — verified structurally by doctor |
 | `approval_required_for` | Gates that must be recorded before an external write fires |
 | `health_check.command` | The doctor command for this system |
+
+### `harness/registries/composio-tools.yml` — key fields
+
+| Field | Purpose |
+| --- | --- |
+| `id` | Stable route id, usually matching a connected-system id |
+| `toolkit` | Composio toolkit slug or CLI family (`slack`, `github`, `agent_mail`, `composio`) |
+| `route_when` | Plain-language task match for agents |
+| `layer_scope` | Agentic OS layers where the route is visible |
+| `provider_priority` | Ordered provider fallback for that toolkit |
+| `read_tools` / `write_tools` / `trigger_tools` | Known concrete slugs or CLI operations; empty lists mean discover with `composio tools list <toolkit>` |
+| `approval_required_for` | Effects that must be approved before execution |
+| `boundary` | Workspace, account, data, and write restrictions |
 
 ### `watch-sources.yml` — key fields
 

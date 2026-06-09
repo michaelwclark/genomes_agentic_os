@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 from .capability_registry import HARNESS_DIRECTORY, command_entries, hook_entries, library_entries, plugin_entries, rule_entries, skill_entries
+from .composio_catalog import composio_tools_markdown
 from .mcp_catalog import MCP_SERVERS, config_mcp_ids, mcp_config_payload, mcp_tools_markdown
 
 
@@ -118,6 +119,10 @@ the contract but do not replace it.
 ## MCP Servers
 
 {mcp_tools_markdown()}
+
+## Composio Tool Routes
+
+{composio_tools_markdown()}
 
 ## Plugins And Libraries
 
