@@ -478,6 +478,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/feature-spec.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/future-idea.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/os-capture-plan.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/profile
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/profile/customer-os-profile.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference
@@ -500,6 +501,34 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/event-envelope.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/event-ledger-index.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/event-processing-result.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules/approval-granted.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules/ci-failure-investigation.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules/email-sent-to-crm.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules/feature-merge-to-docs.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules/notion-card-to-worktree.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/chain-rules/transcript-to-tasks.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/agentmail.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/email.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/filesystem.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/github.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/granola.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/jira.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/linear.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/notion.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/connected-systems/slack.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/agentmail-inbox.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/email-inbox.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/filesystem-glob.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/github-repo.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/granola-folder.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/jira-jql.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/linear-team.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/notion-database.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/slack-channel.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/execution-target.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/heartbeat.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/integration.yml
@@ -1197,17 +1226,17 @@ decision_log: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log create acme launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T174112Z-acme-launch_blog
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T174112Z-acme-launch_blog/artifacts
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T174112Z-acme-launch_blog/run-log.md
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/artifacts
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/run-log.md
 ```
 
-## 19-run-log_close_20260609T174112Z-acme-launch_blog
+## 19-run-log_close_20260609T210340Z-acme-launch_blog
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260609T174112Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260609T210340Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T174112Z-acme-launch_blog/run-log.md
+run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/run-log.md
 status: done
 workflow_or_automation: launch_blog
 activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.md
@@ -1248,7 +1277,7 @@ skipped:
 - /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 - /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/runs
 docs_created: 0
-docs_skipped: 314
+docs_skipped: 343
 ```
 
 ## 23-runtime_doctor
@@ -1283,7 +1312,7 @@ message: no queued runtime work
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-09T17:41:13Z'
+tick: '2026-06-09T21:03:41Z'
 root: /tmp/aos-validate/root
 dry_run: true
 ok: true
@@ -1327,7 +1356,7 @@ steps:
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --apply
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-09T17:41:13Z'
+tick: '2026-06-09T21:03:41Z'
 root: /tmp/aos-validate/root
 dry_run: false
 ok: true
@@ -1470,18 +1499,18 @@ queued:
   ref: demo
   status: dry-run
   approval_state: not_required
-  created_at: '2026-06-09T17:41:13.784847+00:00'
+  created_at: '2026-06-09T21:03:41.617985+00:00'
   dry_run: true
   due_at: '2026-06-09T05:00:00Z'
   idempotency_key: schedule:demo:2026-06-09T05:00:00Z
   execution_target: script
   command: agentic-os validate --root <root>
-  log: harness/shared_factory/06-runs-and-logs/runs/20260609T174113Z-45a2c4ee-demo/run-log.yml
+  log: harness/shared_factory/06-runs-and-logs/runs/20260609T210341Z-45a2c4ee-demo/run-log.yml
   evidence:
   - type: run_log
-    path: harness/shared_factory/06-runs-and-logs/runs/20260609T174113Z-45a2c4ee-demo/run-log.yml
+    path: harness/shared_factory/06-runs-and-logs/runs/20260609T210341Z-45a2c4ee-demo/run-log.yml
   blocked_reason: null
-  updated_at: '2026-06-09T17:41:13.784847+00:00'
+  updated_at: '2026-06-09T21:03:41.617985+00:00'
   created: true
 skipped:
 - schedule: daily_agentic_os_doctor
@@ -2187,12 +2216,12 @@ actions:
   fingerprint: 2467a03437db66b972d87026ae73645a3b653003aea3a2c2dfbc7ca0ce8850a3
 - action: create
   kind: run
-  key: acme/20260609T174112Z-acme-launch_blog
-  title: 20260609T174112Z-acme-launch_blog
-  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T174112Z-acme-launch_blog/run-log.md
-  record_key: run:acme/20260609T174112Z-acme-launch_blog
+  key: acme/20260609T210340Z-acme-launch_blog
+  title: 20260609T210340Z-acme-launch_blog
+  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/run-log.md
+  record_key: run:acme/20260609T210340Z-acme-launch_blog
   notion_id: null
-  fingerprint: 80b2cd40a5d7c518f09283fd91183b2b73f7c5a1af8d40181336053b4038ff97
+  fingerprint: c3231f4bce753ae6472b02300f6f1d1c44b3d12c7b0110cb7fe8ab94ca2bf3b6
 - action: create
   kind: domain
   key: archive
@@ -3532,7 +3561,7 @@ installations:
 root: /private/tmp/aos-validate/root
 license:
   status: active
-  activated_at: '2026-06-09T17:41:15Z'
+  activated_at: '2026-06-09T21:03:42Z'
   key_hash: 98f9006c28109fe76a6960274702c0b357b598b264e22716aa50ba6e18296bab
 ```
 
@@ -3554,9 +3583,9 @@ remotes:
     url: git@github.com:genome/local-agentic-os-backups.git
     access: write
 public_keys:
-  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAt/p9chDamJ1oihWC83rWdxsRf5+FybooP/dw2KotrM
+  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH/Ag1Ksm+wmUKKXKy3qiJlnLVVDmCx5LvWzQZ7T5WFk
     agentic-os-update_ed25519
-  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILnScU5itiLUACHpjy8Fv+EMK/KOM6/cexJdRSTc0stp
+  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOuue4c2QgLN02nlYETr6cePeVq3Fk0X0XsVGrfMjQ0t
     agentic-os-backup_ed25519
 private_keys: stored locally under harness/security/ssh with mode 0600
 ```
@@ -3598,10 +3627,10 @@ plan_path: ''
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 root: /private/tmp/aos-validate/root
-log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260609174115.yml
+log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260609210342.yml
 status: planned
 dry_run: true
-created_at: '2026-06-09T17:41:15Z'
+created_at: '2026-06-09T21:03:42Z'
 remote:
   name: agentic-os-backup
   url: git@github.com:genome/local-agentic-os-backups.git
@@ -3679,9 +3708,9 @@ created_or_verified:
 - /private/tmp/aos-validate/root/los/03-workflows/operations/deploy_planning
 - /private/tmp/aos-validate/root/los/04-automations/support/thread_intake
 run_logs:
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T174115Z-los-pr_review/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T174115Z-los-failing_ci_triage/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T174115Z-los-deploy_planning/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T210343Z-los-pr_review/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T210343Z-los-failing_ci_triage/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T210343Z-los-deploy_planning/run-log.md
 comparison: /private/tmp/aos-validate/root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
 ```
 

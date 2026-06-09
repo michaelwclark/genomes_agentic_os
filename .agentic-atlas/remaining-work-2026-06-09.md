@@ -65,6 +65,22 @@ uncommitted Composio tool-routing slice in the working tree.
   phone-home send) — stays local-first until Plan 20 V1 is proven.
 - Plan 20 real GitHub/MCP provisioning wiring (fake provider stays until approved).
 
+## Outcome (same day, orchestrated)
+
+Bucket A shipped via 4 subagent branches merged to main: A1 (slice committed +
+validate/doctor awareness), A2/F-011 (strict schema validation; fresh installs
+strict-clean after remapping skill-registry.schema.json to the distribution
+registry and adding skill-visibility-registry.schema.json), A3 (`backup push`,
+`fleet push` on the fake provider), A4 (hook-failure log, conversation-logging
+tests, LOS fixture, shared_factory docs), A5, A6, A7 (9 source + 6 chain
+examples installed), A9 (F-003/F-012/F-014/F-020–F-023). Tests 97 → 195
+passed. CLI validation re-run: 55 commands, no defects.
+
+Still open: **A8** (plans 12/14 generation work — needs design input), Bucket B
+(live/credentialed validations), Bucket C (policy-gated), F-010, F-013, plus
+follow-ups: scaffolder/schema alignment for customer surfaces, doctor
+event-on-regression emission, schemas dir resolution for non-editable installs.
+
 ## Corrections / notes
 
 - `shared_factory` lives under `harness/shared_factory/` in installs; plan-15 text
