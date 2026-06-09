@@ -1983,8 +1983,11 @@ def test_route_fails_safely_when_ambiguous(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root)]) == 0
+    # A completely unrecognised request still exits 2 (hard refusal).
     assert main(["route", "Do the thing", "--root", str(root)]) == 2
-    assert main(["route", "Compare los and personal work", "--root", str(root)]) == 2
+    # A multi-domain match returns a low-confidence SUGGESTION packet (exit 0)
+    # rather than a hard refusal — F-014: route best candidate as advisory output.
+    assert main(["route", "Compare los and personal work", "--root", str(root)]) == 0
 
 
 def write_ready_automation_contract(path: Path) -> None:

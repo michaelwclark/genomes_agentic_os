@@ -24,11 +24,28 @@ project, and route your first request.
 
 ## 1 · Install the CLI
 
+### Option A — pipx (recommended for global use)
+
+[pipx](https://pipx.pypa.io/) installs the CLI into an isolated virtualenv and
+adds `agentic-os` to your `PATH` automatically:
+
+```bash
+pipx install /path/to/genomes_agentic_os   # from a local clone
+# or once published to PyPI:
+# pipx install genomes-agentic-os
+```
+
+After `pipx install`, `agentic-os` is available in every shell without
+activating a virtualenv.  If pipx is not installed, `pip install --user pipx`
+or `brew install pipx` then `pipx ensurepath`.
+
+### Option B — venv (development or pinned installs)
+
 From inside the cloned repository directory, create a venv and install:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -e .
 ```
 
@@ -37,6 +54,11 @@ To run tests too, add the `dev` extra:
 ```bash
 python -m pip install -e '.[dev]'
 ```
+
+> **Note:** With the venv approach, `agentic-os` is only available inside the
+> activated venv.  If you see `command not found: agentic-os`, either activate
+> the venv (`source .venv/bin/activate`) or use the fully-qualified path:
+> `.venv/bin/agentic-os --help`.
 
 The installed entry point is `agentic-os`, wired to
 `genomes_agentic_os.cli:main` in `pyproject.toml`.

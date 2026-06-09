@@ -81,6 +81,25 @@ ROUTING_MATCH_STOPWORDS = {
 }
 
 
+class RoutingSuggestion(ValueError):
+    """Raised when confidence is below threshold but a best candidate exists.
+
+    Callers that want to honour the suggestion should catch this exception
+    and use ``suggestion`` as advisory context rather than treating the result
+    as a confirmed route.  Callers that want hard-refusal behaviour should
+    treat it identically to ``ValueError``.
+
+    The ``reason`` attribute carries the human-readable explanation of why
+    confidence was low.  Approval-risk checks are not bypassed — the caller
+    still runs ``approval_risks()`` as normal.
+    """
+
+    def __init__(self, suggestion: dict[str, str], reason: str) -> None:
+        super().__init__(reason)
+        self.suggestion = suggestion
+        self.reason = reason
+
+
 @dataclass
 class ContextPacket:
     domain: str
@@ -254,14 +273,35 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
             "work_item": work_item.path.name,
         }
     if len(work_item_hits) > 1:
-        raise ValueError("routing confidence is low: request matches multiple work items")
+        # Multiple work item matches — return the first as a suggestion
+        record, work_item = work_item_hits[0]
+        raise RoutingSuggestion(
+            {
+                "domain": record["domain"],
+                "project": record["project"],
+                "lane": record["lane"],
+                "work_item": work_item.path.name,
+            },
+            "routing confidence is low: request matches multiple work items",
+        )
     if len(project_hits) == 1:
         record = project_hits[0]
         return {"domain": record["domain"], "project": record["project"], "lane": record["lane"]}
     if len(domain_hits) == 1:
         return {"domain": domain_hits[0]}
-    if len(domain_hits) > 1 or len(project_hits) > 1:
-        raise ValueError("routing confidence is low: request matches multiple domains or projects")
+    if len(domain_hits) > 1:
+        # Multiple domain matches — suggest the first
+        raise RoutingSuggestion(
+            {"domain": domain_hits[0]},
+            "routing confidence is low: request matches multiple domains",
+        )
+    if len(project_hits) > 1:
+        # Multiple project matches — suggest the first
+        record = project_hits[0]
+        raise RoutingSuggestion(
+            {"domain": record["domain"], "project": record["project"], "lane": record["lane"]},
+            "routing confidence is low: request matches multiple projects",
+        )
     raise ValueError("routing confidence is low: no domain or project matched")
 
 
@@ -411,6 +451,16 @@ def build_context(
         if not source.is_file():
             known_gaps.append(f"missing source: {source}")
 
+    # F-022: surface run-log create discoverability — it is required before
+    # run-log close but easy to miss.  Add it to the handoff prompt so agents
+    # routing to a workflow or automation always see the reminder.
+    runlog_hint = ""
+    if object_type in ("workflow", "automation", "work_item"):
+        runlog_hint = (
+            "  Before closing work: run `agentic-os run-log create <domain> <workflow_or_automation> --root <root>`"
+            " first, then `run-log close` with the run_id it returns."
+        )
+
     return ContextPacket(
         domain=domain,
         lane=detected_lane,
@@ -419,7 +469,10 @@ def build_context(
         sources_to_load=sources,
         approval_risks=risks or [],
         known_gaps=known_gaps,
-        handoff_prompt=f"Load the listed sources, work in {target}, follow approval rules, and record validation before closeout.",
+        handoff_prompt=(
+            f"Load the listed sources, work in {target}, follow approval rules, and record validation before closeout."
+            + (f"\n{runlog_hint}" if runlog_hint else "")
+        ),
         lifecycle=lifecycle,
     )
 
@@ -429,23 +482,38 @@ def route_request(root: str | Path, request: str, *, cwd: str | Path | None = No
     cwd_path = Path(cwd).expanduser().resolve() if cwd else Path.cwd()
     inbox_request = is_idea_capture_request(request)
     inbox = False
-    context = {}
+    context: dict[str, str] = {}
+    suggestion_reason: str | None = None
+
     if inbox_request:
         try:
             context = detect_from_request(os_root, request)
             if "project" not in context and "work_item" not in context:
                 context = {"domain": context["domain"]}
                 inbox = True
+        except RoutingSuggestion as exc:
+            # Low confidence on an inbox request: use the suggestion domain
+            context = {"domain": exc.suggestion.get("domain", "")}
+            suggestion_reason = exc.reason
+            inbox = bool(context.get("domain"))
         except ValueError:
             cwd_context = detect_from_cwd(os_root, cwd_path)
             if cwd_context:
                 context = {"domain": cwd_context["domain"]}
                 inbox = True
+
     if not context:
         context = detect_from_cwd(os_root, cwd_path)
     if not context:
-        context = detect_from_request(os_root, request)
-    return build_context(
+        try:
+            context = detect_from_request(os_root, request)
+        except RoutingSuggestion as exc:
+            # Surface the suggestion: build context from the best candidate and
+            # mark it advisory via known_gaps so callers can see it was a guess.
+            context = exc.suggestion
+            suggestion_reason = exc.reason
+
+    packet = build_context(
         os_root,
         domain=context["domain"],
         project=context.get("project"),
@@ -457,6 +525,12 @@ def route_request(root: str | Path, request: str, *, cwd: str | Path | None = No
         inbox=inbox,
         risks=approval_risks(request),
     )
+    if suggestion_reason:
+        packet.known_gaps.insert(
+            0,
+            f"SUGGESTION (low confidence): {suggestion_reason} — verify before acting",
+        )
+    return packet
 
 
 def context_from_here(root: str | Path, *, cwd: str | Path | None = None) -> ContextPacket:
