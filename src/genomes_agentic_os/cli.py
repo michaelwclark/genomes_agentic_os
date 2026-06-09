@@ -16,7 +16,7 @@ from .automation_ops import (
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result
-from .doctor import doctor, format_doctor_result
+from .doctor import doctor, doctor_all, format_doctor_result
 from .event_graph import (
     append_event,
     chain_doctor,
@@ -90,7 +90,7 @@ from .update_ops import (
     update_rollback,
     update_status,
 )
-from .validate import validate_root
+from .validate import StrictFinding, validate_root, validate_schemas_strict
 from .workflow_ops import check_workflow, close_run_log, format_findings
 
 
@@ -534,6 +534,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="Run installed OS health checks.")
     doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     doctor_parser.add_argument("--fix-missing", action="store_true", help="Create missing managed files only.")
+    doctor_parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_systems",
+        help="Aggregate all subsystem doctors (runtime, event-graph, config) into one report.",
+    )
     doctor_parser.set_defaults(handler=handle_doctor)
 
     migrate_parser = subparsers.add_parser("migrate", help="Plan and apply explicit migrations.")
@@ -655,6 +661,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
     validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    validate_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Also validate structured files against JSON schemas in schemas/.",
+    )
     validate_parser.set_defaults(handler=handle_validate)
 
     docs_parser = subparsers.add_parser("docs", help="Install or update runtime OS documentation.")
@@ -1111,7 +1122,10 @@ def handle_integration_doctor(args: argparse.Namespace) -> int:
 
 
 def handle_doctor(args: argparse.Namespace) -> int:
-    result = doctor(args.root, fix_missing=args.fix_missing)
+    if getattr(args, "all_systems", False):
+        result = doctor_all(args.root)
+    else:
+        result = doctor(args.root, fix_missing=args.fix_missing)
     print(format_doctor_result(result))
     return 0 if result["ok"] else 1
 
@@ -1249,7 +1263,11 @@ def handle_chain_doctor(args: argparse.Namespace) -> int:
 
 def handle_validate(args: argparse.Namespace) -> int:
     result = validate_root(args.root)
-    if result.ok:
+    strict_findings: list[StrictFinding] = []
+    if getattr(args, "strict", False):
+        from pathlib import Path as _Path  # noqa: PLC0415
+        strict_findings = validate_schemas_strict(_Path(args.root).expanduser())
+    if result.ok and not strict_findings:
         print(f"valid: {Path(args.root).expanduser()}")
         for warning in result.warnings:
             print(f"warning: {warning}", file=sys.stderr)
@@ -1258,7 +1276,9 @@ def handle_validate(args: argparse.Namespace) -> int:
         print(f"error: {error}", file=sys.stderr)
     for warning in result.warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    return 1
+    for finding in strict_findings:
+        print(f"strict: [{finding.schema}] {finding.path}: {finding.message}", file=sys.stderr)
+    return 1 if (result.errors or strict_findings) else 0
 
 
 def handle_docs_install(args: argparse.Namespace) -> int:

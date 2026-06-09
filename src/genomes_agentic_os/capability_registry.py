@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .composio_catalog import composio_tool_entries
 from .mcp_catalog import MCP_SERVERS, all_visible_mcp_ids
 
 
@@ -33,6 +34,7 @@ REGISTRY_FILES = {
     "hooks": "harness/registries/hooks.yml",
     "plugins": "harness/registries/plugins.yml",
     "rules": "harness/registries/rules.yml",
+    "composio_tools": "harness/registries/composio-tools.yml",
 }
 
 CAPABILITY_COLLECTIONS = {
@@ -324,6 +326,7 @@ def registry_payloads() -> dict[str, dict[str, Any]]:
         "hooks": {"hooks": hook_entries()},
         "plugins": {"plugins": plugin_entries()},
         "rules": {"rules": rule_entries()},
+        "composio_tools": {"composio_tools": composio_tool_entries()},
     }
 
 

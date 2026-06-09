@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS Composio Tool Routing Registry",
+  "type": "object",
+  "required": ["composio_tools"],
+  "properties": {
+    "composio_tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "toolkit",
+          "name",
+          "route_when",
+          "layer_scope",
+          "provider_priority",
+          "approval_required_for",
+          "boundary",
+          "status"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "toolkit": { "type": "string" },
+          "name": { "type": "string" },
+          "route_when": { "type": "string" },
+          "layer_scope": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "provider_priority": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "read_tools": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "write_tools": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "trigger_tools": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "approval_required_for": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "boundary": { "type": "string" },
+          "status": { "type": "string" },
+          "source_system": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

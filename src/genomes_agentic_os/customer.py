@@ -562,6 +562,10 @@ def ensure_public_customer_capability_surface(root: Path, result: CustomerResult
         ensure_dir(root / directory, result)
     payloads = public_customer_registry_payloads()
     for registry_name, relative_path in REGISTRY_FILES.items():
+        if registry_name not in payloads:
+            # Some registry files (e.g. composio_tools) are Genome-internal and
+            # are not written into customer OS surfaces.
+            continue
         write_file_once(root / relative_path, yaml.safe_dump(payloads[registry_name], sort_keys=False), result)
     write_file_once(harness_path(root, "INVENTORY.md"), inventory_markdown(payloads), result)
 
