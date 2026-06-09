@@ -3,7 +3,7 @@ title: 61 Project Work Lifecycle And Conversation Auto Logging
 prefix: "61"
 slug: 61-project-work-lifecycle-and-conversation-auto-logging
 source_queue: Local
-status: planned
+status: ready_to_merge
 created_at: 2026-05-30T00:00:00Z
 source_plan: PLANS/22-project-work-lifecycle-and-conversation-auto-logging.md
 acceptance:
@@ -15,5 +15,9 @@ acceptance:
   - genomes_agentic_os source work maps to PLANS and features folders
   - hook gap analysis creates follow-on implementation ideas with validation targets
 verification:
-  - command: pending
-    result: planned feature only; no implementation yet
+  - command: .venv/bin/python -m pytest -q tests/test_cli_scaffold.py -k 'plan_capture_routes_os_domain_and_project_ideas or project_work_item_create_and_route_lifecycle_context or compat_work_lifecycle_helpers_use_lane_paths or conversation_auto_log_hook_writes_redacted_sidecars'
+    result: 4 passed, 90 deselected
+  - command: .venv/bin/python -m pytest -q
+    result: 97 passed in dirty working tree with Feature 62 present
+  - command: PYTHONPATH=<staged-worktree>/src .venv/bin/python -m pytest -q
+    result: 96 passed in detached staged Feature 61 tree

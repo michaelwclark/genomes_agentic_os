@@ -13,53 +13,55 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 | 6 | OK | 0 | project create acme launch |
 | 7 | OK | 0 | project link-source acme launch |
 | 8 | OK | 0 | project onboard acme launch |
-| 9 | OK | 0 | project worktree add acme launch |
-| 10 | OK | 0 | route a request |
-| 11 | OK | 0 | context build --domain |
-| 12 | GUARDED | 2 | here route (cwd-aware) |
-| 13 | OK | 0 | workflow check (templated) |
-| 14 | OK | 0 | automation check (templated) |
-| 15 | OK | 0 | automation attach -> launch |
-| 16 | OK | 0 | automation set-maturity prepare |
-| 17 | OK | 0 | run-log create |
-| 18 | OK | 0 | run-log close (20260530T172146Z-acme-launch_blog) |
-| 19 | OK | 0 | profile create |
-| 20 | OK | 0 | profile validate |
-| 21 | OK | 0 | runtime init |
-| 22 | OK | 0 | runtime doctor |
-| 23 | OK | 0 | runtime run-next (dry) |
-| 24 | OK | 0 | runtime supervise (dry) |
-| 25 | OK | 0 | runtime supervise (apply) |
-| 26 | OK | 0 | heartbeat list |
-| 27 | OK | 0 | heartbeat doctor |
-| 28 | OK | 0 | schedule create demo |
-| 29 | OK | 0 | schedule run-due (dry) |
-| 30 | OK | 0 | integration list |
-| 31 | OK | 0 | integration doctor |
-| 32 | OK | 0 | event list |
-| 33 | OK | 0 | event summary |
-| 34 | OK | 0 | event process-due (dry) |
-| 35 | OK | 0 | chain list |
-| 36 | OK | 0 | chain doctor |
-| 37 | OK | 0 | connected-system list |
-| 38 | OK | 0 | watch-source list |
-| 39 | OK | 0 | notion plan-sync |
-| 40 | GUARDED | 1 | config doctor (layer) |
-| 41 | OK | 0 | config install (dry) |
-| 42 | OK | 0 | config install-tree (dry) |
-| 43 | OK | 0 | license activate |
-| 44 | OK | 0 | update register |
-| 45 | OK | 0 | update check |
-| 46 | OK | 0 | update status |
-| 47 | OK | 0 | backup run (dry) |
-| 48 | OK | 0 | migrate plan |
-| 49 | OK | 0 | losmon validate |
-| 50 | OK | 0 | plan capture |
-| 51 | OK | 0 | docs install |
-| 52 | OK | 0 | customer init (example) |
-| 53 | OK | 0 | customer validate |
+| 9 | OK | 0 | project work-item create intake |
+| 10 | OK | 0 | project work-item create packet |
+| 11 | OK | 0 | project worktree add acme launch |
+| 12 | OK | 0 | route a request |
+| 13 | OK | 0 | context build --domain |
+| 14 | GUARDED | 2 | here route (cwd-aware) |
+| 15 | OK | 0 | workflow check (templated) |
+| 16 | OK | 0 | automation check (templated) |
+| 17 | OK | 0 | automation attach -> launch |
+| 18 | OK | 0 | automation set-maturity prepare |
+| 19 | OK | 0 | run-log create |
+| 20 | OK | 0 | run-log close (20260602T194803Z-acme-launch_blog) |
+| 21 | OK | 0 | profile create |
+| 22 | OK | 0 | profile validate |
+| 23 | OK | 0 | runtime init |
+| 24 | OK | 0 | runtime doctor |
+| 25 | OK | 0 | runtime run-next (dry) |
+| 26 | OK | 0 | runtime supervise (dry) |
+| 27 | OK | 0 | runtime supervise (apply) |
+| 28 | OK | 0 | heartbeat list |
+| 29 | OK | 0 | heartbeat doctor |
+| 30 | OK | 0 | schedule create demo |
+| 31 | OK | 0 | schedule run-due (dry) |
+| 32 | OK | 0 | integration list |
+| 33 | OK | 0 | integration doctor |
+| 34 | OK | 0 | event list |
+| 35 | OK | 0 | event summary |
+| 36 | OK | 0 | event process-due (dry) |
+| 37 | OK | 0 | chain list |
+| 38 | OK | 0 | chain doctor |
+| 39 | OK | 0 | connected-system list |
+| 40 | OK | 0 | watch-source list |
+| 41 | OK | 0 | notion plan-sync |
+| 42 | GUARDED | 1 | config doctor (layer) |
+| 43 | OK | 0 | config install (dry) |
+| 44 | OK | 0 | config install-tree (dry) |
+| 45 | OK | 0 | license activate |
+| 46 | OK | 0 | update register |
+| 47 | OK | 0 | update check |
+| 48 | OK | 0 | update status |
+| 49 | OK | 0 | backup run (dry) |
+| 50 | OK | 0 | migrate plan |
+| 51 | OK | 0 | losmon validate |
+| 52 | OK | 0 | plan capture |
+| 53 | OK | 0 | docs install |
+| 54 | OK | 0 | customer init (example) |
+| 55 | OK | 0 | customer validate |
 
 ## Totals
 
-- OK: 51
+- OK: 53
 - GUARDED: 2

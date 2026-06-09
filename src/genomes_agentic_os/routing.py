@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
 
-from .lifecycle import WorkItemRecord, select_project_work_item
+from .lifecycle import WorkItemRecord, record_matches_request, select_project_work_item
 from .scaffold import (
     DEFAULT_DOMAINS,
     SHARED_FACTORY_DOMAIN,
@@ -54,6 +55,30 @@ ESCALATION_PHRASES = (
     "make a pr",
     "jira",
 )
+
+ROUTING_MATCH_STOPWORDS = {
+    "a",
+    "add",
+    "an",
+    "and",
+    "build",
+    "create",
+    "feature",
+    "for",
+    "from",
+    "have",
+    "i",
+    "idea",
+    "in",
+    "into",
+    "new",
+    "of",
+    "on",
+    "the",
+    "to",
+    "want",
+    "with",
+}
 
 
 @dataclass
@@ -208,7 +233,7 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
     for record in project_records(root):
         project = record["project"]
         labels = {project, project.replace("_", " "), project.replace("_", "-")}
-        if any(label.lower() in text for label in labels):
+        if any(label.lower() in text or token_label_matches(label, text) for label in labels):
             project_hits.append(record)
 
     work_item_hits: list[tuple[dict[str, Any], WorkItemRecord]] = []
@@ -240,23 +265,22 @@ def detect_from_request(root: Path, request: str) -> dict[str, str]:
     raise ValueError("routing confidence is low: no domain or project matched")
 
 
-def work_item_matches_request(record: WorkItemRecord, request: str) -> bool:
-    text = request.lower()
-    labels = {
-        record.path.name,
-        record.slug,
-        record.title,
-        str(record.metadata.get("id") or ""),
-        str(record.metadata.get("prefix") or ""),
+def token_label_matches(label: str, text: str) -> bool:
+    label_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", label.lower())
+        if token not in ROUTING_MATCH_STOPWORDS and (len(token) >= 2 or token.isdigit())
     }
-    for label in labels:
-        label = label.strip().lower()
-        if not label:
-            continue
-        variants = {label, label.replace("_", "-"), label.replace("-", " ")}
-        if any(len(variant) >= 2 and variant in text for variant in variants):
-            return True
-    return False
+    request_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if token not in ROUTING_MATCH_STOPWORDS and (len(token) >= 2 or token.isdigit())
+    }
+    return len(label_tokens & request_tokens) >= 2
+
+
+def work_item_matches_request(record: WorkItemRecord, request: str) -> bool:
+    return record_matches_request(record, request)
 
 
 def find_workflow(root: Path, domain: str, workflow: str, lane: str | None = None) -> tuple[str, Path]:
@@ -403,16 +427,20 @@ def build_context(
 def route_request(root: str | Path, request: str, *, cwd: str | Path | None = None) -> ContextPacket:
     os_root = expand_path(root)
     cwd_path = Path(cwd).expanduser().resolve() if cwd else Path.cwd()
-    inbox = is_idea_capture_request(request)
+    inbox_request = is_idea_capture_request(request)
+    inbox = False
     context = {}
-    if inbox:
+    if inbox_request:
         try:
             context = detect_from_request(os_root, request)
-            context = {"domain": context["domain"]}
+            if "project" not in context and "work_item" not in context:
+                context = {"domain": context["domain"]}
+                inbox = True
         except ValueError:
             cwd_context = detect_from_cwd(os_root, cwd_path)
             if cwd_context:
                 context = {"domain": cwd_context["domain"]}
+                inbox = True
     if not context:
         context = detect_from_cwd(os_root, cwd_path)
     if not context:

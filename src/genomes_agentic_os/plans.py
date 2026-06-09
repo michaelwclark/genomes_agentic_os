@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from .lifecycle import create_project_work_item, slugify_work_id
+from .lifecycle import create_project_work_item, indexed_work_id, work_item_path
 from .scaffold import (
     append_control_signal,
     append_domain_memory,
@@ -113,8 +113,9 @@ def capture_plan(
     if project:
         project = validate_name(project, "project")
         signal_section, signal_status, signal_notes = classify_control_signal(title, summary, project=True)
-        work_id = slugify_work_id(title)
-        work_item_root = domain_root / "02-projects" / project / "work-items" / work_id
+        project_root = domain_root / "02-projects" / project
+        work_id = indexed_work_id(project_root, title)
+        work_item_target = work_item_path(project_root, work_id, "captured")
         create_project_work_item(
             os_root,
             domain,
@@ -124,28 +125,29 @@ def capture_plan(
             status="captured",
             work_id=work_id,
         )
-        target = work_item_root / "IDEA.md"
+        target = work_item_target
+        relative_target = target.relative_to(project_root)
         append_once(
             domain_root / "02-projects" / project / "status.md",
             f"\n## Future Idea: {title}\n\n- Kind: `{kind}`\n- Summary: {summary}\n- Status: {signal_status}\n",
         )
         append_once(
             domain_root / "00-control-plane" / "active-work.md",
-            f"| `{project}/{work_id}` | `{signal_status}` | OS Owner | Triage project signal `{title}`. | `02-projects/{project}/work-items/{work_id}/` |\n",
+            f"| `{project}/{work_id}` | `{signal_status}` | OS Owner | Triage project signal `{title}`. | `02-projects/{project}/{relative_target}` |\n",
         )
         append_control_signal(
             domain_root,
             signal_section,
             f"`{project}` {signal_status}: {title}",
             signal_status,
-            f"`02-projects/{project}/work-items/{work_id}/`",
+            f"`02-projects/{project}/{relative_target}`",
             signal_notes,
             _Result(),
         )
-        append_domain_memory(domain_root, f"Captured project signal `{title}` for `{project}` with status `{signal_status}`; lifecycle work item is in `02-projects/{project}/work-items/{work_id}/`.", _Result())
+        append_domain_memory(domain_root, f"Captured project signal `{title}` for `{project}` with status `{signal_status}`; lifecycle work item is in `02-projects/{project}/{relative_target}`.", _Result())
         return {
             "target": str(target),
-            "work_item": str(work_item_root),
+            "work_item": str(work_item_target),
             "kind": kind,
             "status": signal_status,
         }

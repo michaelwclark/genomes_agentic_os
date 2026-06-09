@@ -36,6 +36,23 @@ WORK_LIFECYCLE_STATES = (
     "archived",
 )
 
+WORK_ITEM_LANES = ("01-intake", "02-active", "03-complete")
+
+WORK_ITEM_STATE_LANES: dict[str, str] = {
+    "captured": "01-intake",
+    "triaged": "01-intake",
+    "specified": "02-active",
+    "ready": "02-active",
+    "building": "02-active",
+    "validating": "02-active",
+    "blocked": "02-active",
+    "finished": "03-complete",
+    "documented": "03-complete",
+    "archived": "03-complete",
+}
+
+INTAKE_MARKDOWN_STATES = {"captured", "triaged"}
+
 WORK_ITEM_METADATA_FILES = ("work.yml", "feature.yml")
 
 WORK_ITEM_FILES = (
@@ -81,6 +98,24 @@ ACTIVE_WORK_ITEM_STATES = {
     "blocked",
 }
 
+WORK_ITEM_INDEX_RE = re.compile(r"^(?P<index>\d{3})[_-](?P<slug>.+)$")
+
+WORK_ITEM_MATCH_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "for",
+    "from",
+    "in",
+    "into",
+    "item",
+    "of",
+    "on",
+    "the",
+    "to",
+    "work",
+}
+
 TOKEN_SHAPED_VALUE_RE = re.compile(
     r"(?i)("
     r"sk-[a-z0-9_-]{20,}|"
@@ -112,6 +147,8 @@ class WorkItemRecord:
 
     @property
     def conversation_logs_path(self) -> Path:
+        if self.path.is_file():
+            return self.path.parent / f"{self.path.stem}.logs" / "conversations"
         return self.path / "logs" / "conversations"
 
     def as_lifecycle_dict(self) -> dict[str, Any]:
@@ -121,6 +158,8 @@ class WorkItemRecord:
             "work_item": str(self.path),
             "metadata": str(self.metadata_path),
             "source": self.source,
+            "lane": str(self.metadata.get("lane") or lane_for_status(self.status)),
+            "format": "markdown" if self.path.is_file() else "folder",
             "required_files": [str(path) for path in self.required_files],
             "missing_required_files": [str(path) for path in self.missing_required_files],
             "conversation_logs": str(self.conversation_logs_path),
@@ -137,11 +176,65 @@ def today_iso() -> str:
 
 
 def slugify_work_id(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug or "work-item"
 
 
+def lane_for_status(status: str) -> str:
+    return WORK_ITEM_STATE_LANES.get(status, "01-intake")
+
+
+def work_items_root(project_root: Path) -> Path:
+    return project_root / "work-items"
+
+
+def lane_root(project_root: Path, status: str) -> Path:
+    return work_items_root(project_root) / lane_for_status(status)
+
+
+def work_item_index_from_name(name: str) -> int | None:
+    match = WORK_ITEM_INDEX_RE.match(Path(name).stem)
+    if not match:
+        return None
+    return int(match.group("index"))
+
+
+def next_work_item_index(project_root: Path) -> int:
+    indexes = []
+    root = work_items_root(project_root)
+    if not root.is_dir():
+        return 1
+    candidates = list(root.iterdir())
+    for lane in WORK_ITEM_LANES:
+        lane_path = root / lane
+        if lane_path.is_dir():
+            candidates.extend(lane_path.iterdir())
+    for candidate in candidates:
+        index = work_item_index_from_name(candidate.name)
+        if index is not None:
+            indexes.append(index)
+    return max(indexes, default=0) + 1
+
+
+def indexed_work_id(project_root: Path, value: str) -> str:
+    slug = slugify_work_id(value)
+    if WORK_ITEM_INDEX_RE.match(slug):
+        return slug
+    return f"{next_work_item_index(project_root):03d}_{slug}"
+
+
+def work_item_path(project_root: Path, work_id: str, status: str, *, item_format: str | None = None) -> Path:
+    if item_format not in {None, "markdown", "packet"}:
+        raise ValueError(f"item_format must be markdown or packet: {item_format!r}")
+    lane = lane_root(project_root, status)
+    if status in INTAKE_MARKDOWN_STATES and item_format != "packet":
+        return lane / f"{work_id}.md"
+    return lane / work_id
+
+
 def metadata_path_for(work_item_root: Path) -> Path | None:
+    if work_item_root.is_file() and work_item_root.suffix == ".md":
+        return work_item_root
     for filename in WORK_ITEM_METADATA_FILES:
         candidate = work_item_root / filename
         if candidate.is_file():
@@ -151,6 +244,13 @@ def metadata_path_for(work_item_root: Path) -> Path | None:
 
 def load_yaml_mapping(path: Path) -> dict[str, Any]:
     if not path.is_file():
+        return {}
+    if path.suffix == ".md":
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if text.startswith("---\n"):
+            _, front_matter, _ = text.split("---", 2)
+            data = yaml.safe_load(front_matter) or {}
+            return data if isinstance(data, dict) else {}
         return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
@@ -172,6 +272,8 @@ def promotion_target_from_metadata(metadata: dict[str, Any]) -> str:
 
 
 def state_file_paths(work_item_root: Path, state: str) -> list[Path]:
+    if work_item_root.is_file():
+        return [work_item_root]
     names = STATE_REQUIRED_FILES.get(state, STATE_REQUIRED_FILES["captured"])
     return [work_item_root / name for name in names]
 
@@ -184,13 +286,21 @@ def work_item_metadata(
     title: str,
     status: str,
     summary: str,
+    item_format: str | None = None,
 ) -> str:
+    resolved_format = (
+        "folder"
+        if item_format == "packet"
+        else item_format or ("markdown" if status in INTAKE_MARKDOWN_STATES else "folder")
+    )
     payload = {
         "id": work_id,
         "title": title,
         "domain": domain,
         "project": project,
         "status": status,
+        "lane": lane_for_status(status),
+        "format": resolved_format,
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "summary": summary,
@@ -202,13 +312,60 @@ def work_item_metadata(
         },
         "spec_destination": {
             "type": "local",
-            "path": "work-items",
+            "path": "work-items/02-active",
         },
         "external_tracker": {
             "type": "none",
         },
     }
     return yaml.safe_dump(payload, sort_keys=False)
+
+
+def intake_idea_markdown(*, domain: str, project: str, work_id: str, title: str, status: str, summary: str) -> str:
+    metadata = {
+        "id": work_id,
+        "title": title,
+        "domain": domain,
+        "project": project,
+        "status": status,
+        "lane": lane_for_status(status),
+        "format": "markdown",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "summary": summary,
+        "lifecycle": {
+            "state": status,
+            "state_vocabulary": list(WORK_LIFECYCLE_STATES),
+            "lane_vocabulary": list(WORK_ITEM_LANES),
+            "required_files": ["this file"],
+            "conversation_logs": f"{work_id}.logs/conversations",
+        },
+        "spec_destination": {"type": "local", "path": "work-items/02-active"},
+        "external_tracker": {"type": "none"},
+    }
+    return f"""---
+{yaml.safe_dump(metadata, sort_keys=False).strip()}
+---
+
+# Idea: {title}
+
+## Captured
+
+| Field | Value |
+| --- | --- |
+| Date | {today_iso()} |
+| Status | `{status}` |
+| Work Item | `{work_id}` |
+| Lane | `{lane_for_status(status)}` |
+
+## Raw Idea
+
+{summary}
+
+## Notes
+
+-
+"""
 
 
 def work_item_file_content(filename: str, *, title: str, summary: str, status: str, work_id: str) -> str:
@@ -369,9 +526,12 @@ def create_project_work_item(
     summary: str,
     status: str = "captured",
     work_id: str | None = None,
+    item_format: str | None = None,
 ) -> ScaffoldResult:
     if status not in WORK_LIFECYCLE_STATES:
         raise ValueError(f"status must be one of {', '.join(WORK_LIFECYCLE_STATES)}: {status!r}")
+    if item_format not in {None, "markdown", "packet"}:
+        raise ValueError(f"format must be one of markdown, packet: {item_format!r}")
     os_root = expand_path(root)
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
@@ -380,47 +540,70 @@ def create_project_work_item(
     if not project_root.is_dir():
         raise ValueError(f"project not found: {domain}/{project}")
 
-    work_id = slugify_work_id(work_id or title)
-    work_item_root = project_root / "work-items" / work_id
+    work_id = indexed_work_id(project_root, work_id or title)
+    work_root = work_items_root(project_root)
+    work_item_root = work_item_path(project_root, work_id, status, item_format=item_format)
     result = ScaffoldResult()
-    if work_item_root.is_dir():
-        result.skipped.append(work_item_root)
-    else:
-        work_item_root.mkdir(parents=True, exist_ok=True)
-        result.created.append(work_item_root)
-    ensure_work_item_dirs(work_item_root, result)
-    write_file_once(
-        work_item_root / "work.yml",
-        work_item_metadata(
-            domain=domain,
-            project=project,
-            work_id=work_id,
-            title=title,
-            status=status,
-            summary=summary,
-        ),
-        result,
-    )
-    for filename in WORK_ITEM_FILES:
+    for directory in (work_root, *(work_root / lane for lane in WORK_ITEM_LANES)):
+        if directory.is_dir():
+            result.skipped.append(directory)
+        else:
+            directory.mkdir(parents=True, exist_ok=True)
+            result.created.append(directory)
+    if status in INTAKE_MARKDOWN_STATES and item_format != "packet":
         write_file_once(
-            work_item_root / filename,
-            work_item_file_content(filename, title=title, summary=summary, status=status, work_id=work_id),
+            work_item_root,
+            intake_idea_markdown(
+                domain=domain,
+                project=project,
+                work_id=work_id,
+                title=title,
+                status=status,
+                summary=summary,
+            ),
             result,
         )
+    else:
+        if work_item_root.is_dir():
+            result.skipped.append(work_item_root)
+        else:
+            work_item_root.mkdir(parents=True, exist_ok=True)
+            result.created.append(work_item_root)
+        ensure_work_item_dirs(work_item_root, result)
+        write_file_once(
+            work_item_root / "work.yml",
+            work_item_metadata(
+                domain=domain,
+                project=project,
+                work_id=work_id,
+                title=title,
+                status=status,
+                summary=summary,
+                item_format="packet",
+            ),
+            result,
+        )
+        for filename in WORK_ITEM_FILES:
+            write_file_once(
+                work_item_root / filename,
+                work_item_file_content(filename, title=title, summary=summary, status=status, work_id=work_id),
+                result,
+            )
 
+    relative_work_item = work_item_root.relative_to(project_root)
     append_once(
         project_root / "ideas" / "raw-ideas.md",
-        f"| {today_iso()} | plan capture | {title} | `work-items/{work_id}/IDEA.md` |\n",
+        f"| {today_iso()} | plan capture | {title} | `{relative_work_item}` |\n",
         result,
     )
     append_once(
         project_root / "status.md",
-        f"\n## Work Item: {title}\n\n- Status: `{status}`\n- Path: `work-items/{work_id}/`\n- Next: `work-items/{work_id}/NEXT.md`\n",
+        f"\n## Work Item: {title}\n\n- Status: `{status}`\n- Path: `{relative_work_item}`\n- Next: `{relative_work_item}`\n",
         result,
     )
     append_once(
         domain_root / "00-control-plane" / "active-work.md",
-        f"| `{project}/{work_id}` | `{status}` | OS Owner | Review `NEXT.md`. | `02-projects/{project}/work-items/{work_id}/` |\n",
+        f"| `{project}/{work_id}` | `{status}` | OS Owner | Review work item. | `02-projects/{project}/{relative_work_item}` |\n",
         result,
     )
     append_control_signal(
@@ -428,16 +611,30 @@ def create_project_work_item(
         "Project Activity",
         f"`{project}` {status}: {title}",
         status,
-        f"`02-projects/{project}/work-items/{work_id}/`",
+        f"`02-projects/{project}/{relative_work_item}`",
         "Lifecycle work item created or repaired.",
         result,
     )
     append_domain_memory(
         domain_root,
-        f"Created lifecycle work item `{project}/{work_id}` with status `{status}`; local evidence is in `02-projects/{project}/work-items/{work_id}/`.",
+        f"Created lifecycle work item `{project}/{work_id}` with status `{status}`; local evidence is in `02-projects/{project}/{relative_work_item}`.",
         result,
     )
     return result
+
+
+def local_work_item_candidates(work_items_root: Path) -> list[Path]:
+    if not work_items_root.is_dir():
+        return []
+    candidates: list[Path] = []
+    for child in sorted(work_items_root.iterdir()):
+        if child.name in WORK_ITEM_LANES and child.is_dir():
+            candidates.extend(sorted(item for item in child.iterdir() if item.is_dir() or item.suffix == ".md"))
+        elif child.is_dir() and child.name not in {".logs", "logs"}:
+            candidates.append(child)
+        elif child.suffix == ".md":
+            candidates.append(child)
+    return candidates
 
 
 def local_project_work_items(project_root: Path) -> list[WorkItemRecord]:
@@ -445,7 +642,7 @@ def local_project_work_items(project_root: Path) -> list[WorkItemRecord]:
     work_items_root = project_root / "work-items"
     if not work_items_root.is_dir():
         return records
-    for candidate in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
+    for candidate in local_work_item_candidates(work_items_root):
         metadata_path = metadata_path_for(candidate)
         if not metadata_path:
             continue
@@ -457,7 +654,7 @@ def local_project_work_items(project_root: Path) -> list[WorkItemRecord]:
                 metadata_path=metadata_path,
                 status=status,
                 title=str(metadata.get("title") or candidate.name),
-                slug=str(metadata.get("slug") or metadata.get("id") or candidate.name),
+                slug=str(metadata.get("slug") or metadata.get("id") or candidate.stem),
                 source="project_work_item",
                 metadata=metadata,
             )
@@ -526,12 +723,18 @@ def project_work_item_records(project_root: Path) -> list[WorkItemRecord]:
 
 
 def normalized_labels(record: WorkItemRecord) -> set[str]:
+    index_match = WORK_ITEM_INDEX_RE.match(record.path.stem)
+    index = index_match.group("index") if index_match else ""
     labels = {
         record.path.name,
+        record.path.stem,
         record.slug,
         record.title,
         str(record.metadata.get("id") or ""),
         str(record.metadata.get("prefix") or ""),
+        index,
+        f"idea {index}" if index else "",
+        f"idea {int(index)}" if index else "",
     }
     normalized: set[str] = set()
     for label in labels:
@@ -551,6 +754,19 @@ def record_matches_request(record: WorkItemRecord, request: str) -> bool:
             continue
         if label in text:
             return True
+        label_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", label)
+            if token not in WORK_ITEM_MATCH_STOPWORDS and (len(token) >= 3 or token.isdigit())
+        }
+        request_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", text)
+            if token not in WORK_ITEM_MATCH_STOPWORDS and (len(token) >= 3 or token.isdigit())
+        }
+        overlap = label_tokens & request_tokens
+        if len(overlap) >= 3 or (len(label_tokens) <= 3 and len(overlap) >= 2):
+            return True
     return False
 
 
@@ -560,7 +776,19 @@ def record_from_cwd(project_root: Path, cwd: Path) -> WorkItemRecord | None:
     except ValueError:
         relative = None
     if relative and len(relative.parts) >= 2 and relative.parts[0] == "work-items":
-        match = next((record for record in local_project_work_items(project_root) if record.path.name == relative.parts[1]), None)
+        local_records = local_project_work_items(project_root)
+        match = next(
+            (
+                record
+                for record in local_records
+                if record.path.is_dir()
+                and (
+                    record.path.name in relative.parts
+                    or record.path.stem in relative.parts
+                )
+            ),
+            None,
+        )
         if match:
             return match
 
@@ -588,7 +816,7 @@ def select_project_work_item(
     records = project_work_item_records(project_root)
     if work_item:
         for record in records:
-            if work_item in {record.path.name, record.slug, str(record.metadata.get("id") or "")}:
+            if work_item in {record.path.name, record.path.stem, record.slug, str(record.metadata.get("id") or "")}:
                 return record
         raise ValueError(f"work item not found: {work_item}")
 
@@ -636,6 +864,8 @@ def is_stale_building(record: WorkItemRecord, *, now: datetime | None = None, st
 
 
 def has_documentation_evidence(record: WorkItemRecord) -> bool:
+    if record.path.is_file():
+        return False
     memory = record.path / "MEMORY.md"
     summary = record.path / "SUMMARY.md"
     return memory.is_file() and summary.is_file() and "Pending." not in summary.read_text(encoding="utf-8")
@@ -650,7 +880,10 @@ def redact_text(text: str) -> str:
 
 
 def conversation_log_files(work_item_root: Path) -> list[Path]:
-    logs_root = work_item_root / "logs" / "conversations"
+    if work_item_root.is_file():
+        logs_root = work_item_root.parent / f"{work_item_root.stem}.logs" / "conversations"
+    else:
+        logs_root = work_item_root / "logs" / "conversations"
     if not logs_root.is_dir():
         return []
     return [path for path in sorted(logs_root.rglob("*")) if path.is_file()]

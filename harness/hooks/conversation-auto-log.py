@@ -33,6 +33,8 @@ TOOL_KEYS = {
     "followup_task",
 }
 
+WORK_ITEM_LANES = {"01-intake", "02-active", "03-complete"}
+
 
 def emit() -> None:
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ""}}))
@@ -106,11 +108,25 @@ def cwd_within(cwd: Path, candidate: Path) -> bool:
 def active_work_item(project_dir: Path) -> Path | None:
     active_states = {"captured", "triaged", "specified", "ready", "building", "validating", "blocked"}
     matches: list[Path] = []
-    for work_yml in sorted((project_dir / "work-items").glob("*/work.yml")):
-        status = yaml_scalar(work_yml, "status") or yaml_scalar(work_yml, "state")
+    work_items = project_dir / "work-items"
+    candidates = []
+    if work_items.is_dir():
+        candidates.extend(sorted(work_items.glob("*/work.yml")))
+        candidates.extend(sorted(work_items.glob("*.md")))
+        for lane in WORK_ITEM_LANES:
+            candidates.extend(sorted((work_items / lane).glob("*/work.yml")))
+            candidates.extend(sorted((work_items / lane).glob("*.md")))
+    for metadata in candidates:
+        status = yaml_scalar(metadata, "status") or yaml_scalar(metadata, "state")
         if status in active_states:
-            matches.append(work_yml.parent)
+            matches.append(metadata if metadata.suffix == ".md" else metadata.parent)
     return matches[0] if len(matches) == 1 else None
+
+
+def work_item_log_destination(work_item: Path) -> tuple[Path, str]:
+    if work_item.is_file():
+        return work_item.parent / f"{work_item.stem}.logs" / "conversations", work_item.stem
+    return work_item / "logs" / "conversations", work_item.name
 
 
 def linked_project_for_cwd(root: Path, cwd: Path) -> Path | None:
@@ -150,16 +166,22 @@ def route_log_dir(root: Path, cwd: Path, payload: dict[str, Any]) -> tuple[Path,
         shared = root / "harness" / "shared_factory"
         if len(parts) >= 5 and parts[2] == "02-projects":
             project = shared / "02-projects" / parts[3]
+            if len(parts) >= 7 and parts[4] == "work-items" and parts[5] in WORK_ITEM_LANES:
+                lane_item = project / "work-items" / parts[5] / parts[6]
+                return work_item_log_destination(lane_item)
             if len(parts) >= 6 and parts[4] == "work-items":
                 work_item = project / "work-items" / parts[5]
-                return work_item / "logs" / "conversations", parts[5]
+                return work_item_log_destination(work_item)
             return project / "logs" / "conversations", parts[3]
         return shared / "06-runs-and-logs" / "conversations", "shared_factory"
     if parts and parts[0] == "harness":
         return root / "harness" / "logs" / "conversations", "harness"
+    if len(parts) >= 6 and parts[1] == "02-projects" and parts[3] == "work-items" and parts[4] in WORK_ITEM_LANES:
+        lane_item = root / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4] / parts[5]
+        return work_item_log_destination(lane_item)
     if len(parts) >= 5 and parts[1] == "02-projects" and parts[3] == "work-items":
         work_item = root / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4]
-        return work_item / "logs" / "conversations", parts[4]
+        return work_item_log_destination(work_item)
     if len(parts) >= 3 and parts[1] == "02-projects":
         project = root / parts[0] / "02-projects" / parts[2]
         return project / "logs" / "conversations", parts[2]
@@ -170,7 +192,7 @@ def route_log_dir(root: Path, cwd: Path, payload: dict[str, Any]) -> tuple[Path,
     if linked_project:
         work_item = active_work_item(linked_project)
         if work_item:
-            return work_item / "logs" / "conversations", work_item.name
+            return work_item_log_destination(work_item)
         return linked_project / "logs" / "conversations", linked_project.name
 
     session = payload_value(payload, "session_id", "sessionId") or "conversation"

@@ -36,6 +36,21 @@ WORK_ITEM_STATES = (
 
 TERMINAL_WORK_ITEM_STATES = {"documented", "archived"}
 
+WORK_ITEM_LANES = ("01-intake", "02-active", "03-complete")
+
+WORK_ITEM_STATE_LANES = {
+    "captured": "01-intake",
+    "triaged": "01-intake",
+    "specified": "02-active",
+    "ready": "02-active",
+    "building": "02-active",
+    "validating": "02-active",
+    "blocked": "02-active",
+    "finished": "03-complete",
+    "documented": "03-complete",
+    "archived": "03-complete",
+}
+
 WORK_ITEM_MARKDOWN_FILES = (
     "IDEA.md",
     "SPEC.md",
@@ -131,7 +146,7 @@ def work_lifecycle_config(project_root: Path) -> dict[str, Any]:
             "include_tool_call_markdown": True,
             "redaction_policy": "strict",
         },
-        "spec_destination": config.get("spec_destination") or {"type": "local", "path": "work-items"},
+        "spec_destination": config.get("spec_destination") or {"type": "local", "path": "work-items/02-active"},
         "external_tracker": config.get("external_tracker") or {"type": "none"},
     }
 
@@ -141,8 +156,41 @@ def project_work_items_root(project_root: Path) -> Path:
     return project_root / configured
 
 
-def work_item_root_for(project_root: Path, work_item: str) -> Path:
-    return project_work_items_root(project_root) / slugify_work_id(work_item)
+def lane_for_state(state: str) -> str:
+    return WORK_ITEM_STATE_LANES.get(state, "01-intake")
+
+
+def iter_work_item_roots(project_root: Path) -> list[Path]:
+    root = project_work_items_root(project_root)
+    if not root.is_dir():
+        return []
+    candidates: list[Path] = []
+    for child in sorted(root.iterdir()):
+        if child.name in WORK_ITEM_LANES and child.is_dir():
+            candidates.extend(sorted(item for item in child.iterdir() if item.is_dir()))
+        elif child.is_dir():
+            candidates.append(child)
+    return candidates
+
+
+def find_work_item_root(project_root: Path, work_item: str) -> Path | None:
+    slug = slugify_work_id(work_item)
+    for candidate in iter_work_item_roots(project_root):
+        metadata = load_work_item_metadata(candidate)
+        identifiers = {candidate.name, str(metadata.get("id") or ""), str(metadata.get("slug") or "")}
+        if slug in identifiers:
+            return candidate
+    return None
+
+
+def work_item_root_for(project_root: Path, work_item: str, state: str | None = None) -> Path:
+    found = find_work_item_root(project_root, work_item)
+    if found:
+        return found
+    root = project_work_items_root(project_root)
+    if state:
+        return root / lane_for_state(state) / slugify_work_id(work_item)
+    return root / slugify_work_id(work_item)
 
 
 def metadata_path(work_item_root: Path) -> Path:
@@ -202,6 +250,8 @@ def render_work_metadata(
         "domain": domain,
         "project": project,
         "state": state,
+        "lane": lane_for_state(state),
+        "format": "folder",
         "created_at": timestamp,
         "updated_at": timestamp,
         "lifecycle": "project_work_item",
@@ -258,9 +308,16 @@ def create_project_work_item(
     if state not in WORK_ITEM_STATES:
         raise ValueError(f"state must be one of {', '.join(WORK_ITEM_STATES)}: {state!r}")
     work_item = slugify_work_id(work_item or title)
-    work_root = work_item_root_for(project_root, work_item)
+    work_root = work_item_root_for(project_root, work_item, state)
     timestamp = utc_timestamp()
     result = ScaffoldResult()
+    for lane in WORK_ITEM_LANES:
+        lane_root = project_work_items_root(project_root) / lane
+        if lane_root.is_dir():
+            result.skipped.append(lane_root)
+        else:
+            lane_root.mkdir(parents=True, exist_ok=True)
+            result.created.append(lane_root)
     for directory in (work_root, work_root / "artifacts", work_root / "logs", work_root / "logs" / "conversations"):
         if directory.is_dir():
             result.skipped.append(directory)
@@ -298,7 +355,7 @@ def create_project_work_item(
         )
     append_once(
         project_root / "status.md",
-        f"\n## Work Item: {title}\n\n- ID: `{work_item}`\n- State: `{state}`\n- Summary: {summary}\n- Path: `work-items/{work_item}/`\n",
+        f"\n## Work Item: {title}\n\n- ID: `{work_item}`\n- State: `{state}`\n- Summary: {summary}\n- Path: `{work_root.relative_to(project_root)}/`\n",
         result,
     )
     append_control_signal(
@@ -306,7 +363,7 @@ def create_project_work_item(
         "Project Activity",
         f"`{project}/{work_item}`",
         state,
-        f"`02-projects/{project}/work-items/{work_item}/`",
+        f"`02-projects/{project}/{work_root.relative_to(project_root)}/`",
         "Project work item created or repaired.",
         result,
     )
@@ -327,7 +384,7 @@ def list_project_work_items(root: str | Path, domain: str, project: str) -> dict
     work_items_root = project_work_items_root(project_root)
     items = []
     if work_items_root.is_dir():
-        for child in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
+        for child in iter_work_item_roots(project_root):
             if (child / "work.yml").is_file() or (child / "feature.yml").is_file():
                 items.append(work_item_summary(child))
     return {"domain": domain, "project": project, "work_items_root": str(work_items_root), "items": items}
@@ -372,14 +429,25 @@ def promote_project_work_item(
     metadata = load_yaml(path)
     old_state = str(metadata.get("state") or metadata.get("status") or "")
     timestamp = utc_timestamp()
+    target_root = project_work_items_root(project_root) / lane_for_state(state) / work_root.name
+    result = ScaffoldResult()
+    if target_root != work_root:
+        if target_root.exists():
+            raise ValueError(f"target work item already exists: {target_root}")
+        target_root.parent.mkdir(parents=True, exist_ok=True)
+        work_root.rename(target_root)
+        result.updated.append(target_root)
+        work_root = target_root
     if "state" in metadata or path.name == "work.yml":
         metadata["state"] = state
     else:
         metadata["status"] = state
+    metadata["lane"] = lane_for_state(state)
+    metadata["format"] = "folder"
     metadata["updated_at"] = timestamp
+    path = metadata_path(work_root)
     before = path.read_text(encoding="utf-8")
     after = yaml.safe_dump(metadata, sort_keys=False)
-    result = ScaffoldResult()
     if before != after:
         path.write_text(after, encoding="utf-8")
         result.updated.append(path)
@@ -403,7 +471,7 @@ def promote_project_work_item(
         "Project Activity",
         f"`{project}/{slugify_work_id(work_item)}`",
         state,
-        f"`02-projects/{project}/work-items/{slugify_work_id(work_item)}/`",
+        f"`02-projects/{project}/{work_root.relative_to(project_root)}/`",
         note or "Project work item state changed.",
         result,
     )
@@ -430,7 +498,7 @@ def project_work_item_records(root: str | Path) -> list[dict[str, Any]]:
         work_items_root = project_work_items_root(project_root)
         if not work_items_root.is_dir():
             continue
-        for child in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
+        for child in iter_work_item_roots(project_root):
             metadata = load_work_item_metadata(child)
             if not metadata:
                 continue

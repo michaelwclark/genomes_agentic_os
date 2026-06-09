@@ -16,6 +16,11 @@ from genomes_agentic_os.cli import main
 from genomes_agentic_os.routing import context_from_here
 from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES
 from genomes_agentic_os.validate import validate_root
+from genomes_agentic_os.work_lifecycle import (
+    create_project_work_item as create_compat_project_work_item,
+    list_project_work_items as list_compat_project_work_items,
+    promote_project_work_item as promote_compat_project_work_item,
+)
 
 
 def harness(root: Path) -> Path:
@@ -705,6 +710,9 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
     assert (harness(root) / "config.toml").is_file()
     assert (shared_factory(root) / "domain.yml").is_file()
     assert (legacy_project / "work-items").is_dir()
+    assert (legacy_project / "work-items" / "01-intake").is_dir()
+    assert (legacy_project / "work-items" / "02-active").is_dir()
+    assert (legacy_project / "work-items" / "03-complete").is_dir()
     assert (legacy_project / "config" / "work-lifecycle.yml").is_file()
     assert not (root / "shared_factory").exists()
     assert list((harness(root) / "logs" / "migrations").glob("harness-layout-*/legacy-root/AGENTS.md"))
@@ -1468,6 +1476,9 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert (project_root / "artifacts").is_dir()
     assert (project_root / "config").is_dir()
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
+    assert (project_root / "work-items" / "01-intake").is_dir()
+    assert (project_root / "work-items" / "02-active").is_dir()
+    assert (project_root / "work-items" / "03-complete").is_dir()
     assert (project_root / "worktrees" / "index.yml").is_file()
     for filename in PROJECT_CONFIG_FILES:
         assert (project_root / "config" / filename).is_file()
@@ -1479,7 +1490,13 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert "config/*.yml" in agents
     assert "worktrees/index.yml" in agents
     output_artifacts = yaml.safe_load((project_root / "config" / "output-artifacts.yml").read_text(encoding="utf-8"))
-    assert output_artifacts["output_artifacts"]["feature_root"] == "src/.features/{ticket_or_slug}"
+    assert output_artifacts["output_artifacts"]["feature_root"] == "work-items/02-active/{ticket_or_slug}/artifacts"
+    work_lifecycle = yaml.safe_load((project_root / "config" / "work-lifecycle.yml").read_text(encoding="utf-8"))
+    assert work_lifecycle["work_lifecycle"]["lanes"] == {
+        "intake": "01-intake",
+        "active": "02-active",
+        "complete": "03-complete",
+    }
     assert f"repo: {repo}" in (project_root / "project.yml").read_text(encoding="utf-8")
     assert f"| Repo | {repo} |" in (project_root / "source-map.md").read_text(encoding="utf-8")
     assert "`losmon_replacement`" in (root / "los" / "02-projects" / "README.md").read_text(encoding="utf-8")
@@ -1684,6 +1701,18 @@ def test_route_classifies_project_request_and_approval_risk(tmp_path: Path, caps
     assert packet["target_path"].endswith("los/02-projects/losmon_replacement")
     assert "production change" in packet["approval_risks"]
     assert any(path.endswith("source-map.md") for path in packet["sources_to_load"])
+
+
+def test_route_matches_project_shorthand_by_tokens(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "los_app_los_django", "--root", str(root)]) == 0
+    assert main(["route", "i have an idea for los django", "--root", str(root)]) == 0
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "project"
+    assert packet["target_path"].endswith("los/02-projects/los_app_los_django")
 
 
 def test_idea_capture_routes_to_domain_inbox_even_from_linked_project_repo(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -3069,9 +3098,16 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
         encoding="utf-8"
     )
     assert "Customer-safe deploy brief" in project_status
-    work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "customer-safe-deploy-brief"
-    assert (work_item / "work.yml").is_file()
-    assert (work_item / "IDEA.md").is_file()
+    work_item = (
+        root
+        / "los"
+        / "02-projects"
+        / "losmon_replacement"
+        / "work-items"
+        / "01-intake"
+        / "001_customer_safe_deploy_brief.md"
+    )
+    assert work_item.is_file()
     assert result["work_item"] == str(work_item)
 
 
@@ -3097,17 +3133,125 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         )
         == 0
     )
-    work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "build-logger"
-    assert (work_item / "work.yml").is_file()
-    assert (work_item / "logs" / "conversations").is_dir()
+    work_item = (
+        root
+        / "los"
+        / "02-projects"
+        / "losmon_replacement"
+        / "work-items"
+        / "01-intake"
+        / "001_build_logger.md"
+    )
+    assert work_item.is_file()
 
     assert main(["route", "Implement build logger for losmon_replacement", "--root", str(root)]) == 0
     packet = yaml.safe_load(capsys.readouterr().out)
     assert packet["object_type"] == "work_item"
     assert packet["target_path"] == str(work_item)
     assert packet["lifecycle"]["state"] == "captured"
-    assert str(work_item / "IDEA.md") in packet["sources_to_load"]
+    assert packet["lifecycle"]["lane"] == "01-intake"
+    assert packet["lifecycle"]["format"] == "markdown"
+    assert str(work_item) in packet["sources_to_load"]
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "los",
+                "losmon_replacement",
+                "--title",
+                "Duel Expanded Idea",
+                "--summary",
+                "Create a multi-file intake packet for a hardened idea.",
+                "--format",
+                "packet",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    intake_packet = (
+        root
+        / "los"
+        / "02-projects"
+        / "losmon_replacement"
+        / "work-items"
+        / "01-intake"
+        / "002_duel_expanded_idea"
+    )
+    assert (intake_packet / "work.yml").is_file()
+    assert (intake_packet / "IDEA.md").is_file()
+    intake_metadata = yaml.safe_load((intake_packet / "work.yml").read_text(encoding="utf-8"))
+    assert intake_metadata["lane"] == "01-intake"
+    assert intake_metadata["format"] == "folder"
+    assert main(["route", "run duel expanded packet for losmon_replacement", "--root", str(root)]) == 0
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["object_type"] == "work_item"
+    assert packet["target_path"] == str(intake_packet)
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "los",
+                "losmon_replacement",
+                "--title",
+                "Active Build",
+                "--summary",
+                "Create the active full packet.",
+                "--status",
+                "building",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    active_work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "02-active" / "003_active_build"
+    assert (active_work_item / "work.yml").is_file()
+    assert (active_work_item / "logs" / "conversations").is_dir()
     assert main(["validate", "--root", str(root)]) == 0
+
+
+def test_compat_work_lifecycle_helpers_use_lane_paths(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["project", "create", "los", "losmon_replacement", "--root", str(root)]) == 0
+    created = create_compat_project_work_item(
+        root,
+        "los",
+        "losmon_replacement",
+        "legacy_packet",
+        title="Legacy Packet",
+        summary="Exercise compatibility lifecycle helpers.",
+        state="building",
+    )
+    project_root = root / "los" / "02-projects" / "losmon_replacement"
+    active = project_root / "work-items" / "02-active" / "legacy_packet"
+    assert created["path"] == str(active)
+    assert (active / "work.yml").is_file()
+    assert not (project_root / "work-items" / "legacy_packet").exists()
+
+    listed = list_compat_project_work_items(root, "los", "losmon_replacement")
+    assert [item["path"] for item in listed["items"]] == [str(active)]
+
+    promoted = promote_compat_project_work_item(
+        root,
+        "los",
+        "losmon_replacement",
+        "legacy_packet",
+        state="documented",
+        note="Close the compatibility packet.",
+    )
+    complete = project_root / "work-items" / "03-complete" / "legacy_packet"
+    assert promoted["path"] == str(complete)
+    assert complete.is_dir()
+    assert not active.exists()
+    metadata = yaml.safe_load((complete / "work.yml").read_text(encoding="utf-8"))
+    assert metadata["lane"] == "03-complete"
 
 
 def test_route_can_resume_source_package_feature_from_linked_repo(tmp_path: Path, capsys) -> None:
@@ -3152,7 +3296,15 @@ def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> 
         )
         == 0
     )
-    work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "build-logger"
+    work_item = (
+        root
+        / "los"
+        / "02-projects"
+        / "losmon_replacement"
+        / "work-items"
+        / "01-intake"
+        / "001_build_logger.md"
+    )
     transcript = tmp_path / "session.jsonl"
     secret = "sk-" + "a" * 30
     transcript.write_text(
@@ -3169,7 +3321,7 @@ def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> 
     )
     assert proc.returncode == 0
     assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "Stop"
-    log_dir = work_item / "logs" / "conversations"
+    log_dir = work_item.parent / "001_build_logger.logs" / "conversations"
     tool_md = next(log_dir.glob("*_tool_calls.md"))
     tool_jsonl = next(log_dir.glob("*_tool_calls.jsonl"))
     raw_log = next(path for path in log_dir.glob("*.jsonl") if not path.name.endswith("_tool_calls.jsonl"))
@@ -3202,7 +3354,7 @@ def test_conversation_auto_log_hook_routes_linked_repo_to_active_work_item(tmp_p
         )
         == 0
     )
-    work_item = root / "los" / "02-projects" / "los_app" / "work-items" / "build-logger"
+    work_item = root / "los" / "02-projects" / "los_app" / "work-items" / "01-intake" / "001_build_logger.md"
 
     proc = subprocess.run(
         [sys.executable, "harness/hooks/conversation-auto-log.py"],
@@ -3213,8 +3365,9 @@ def test_conversation_auto_log_hook_routes_linked_repo_to_active_work_item(tmp_p
         env={**os.environ, "AGENTIC_OS_ROOT": str(root)},
     )
     assert proc.returncode == 0
-    assert next((work_item / "logs" / "conversations").glob("*linked_repo*"), None) is None
-    assert list((work_item / "logs" / "conversations").glob("*build_logger*.jsonl"))
+    log_dir = work_item.parent / "001_build_logger.logs" / "conversations"
+    assert next(log_dir.glob("*linked_repo*"), None) is None
+    assert list(log_dir.glob("*001_build_logger*.jsonl"))
 
 
 def test_conversation_auto_log_hook_routes_harness_surface_to_harness_logs(tmp_path: Path) -> None:

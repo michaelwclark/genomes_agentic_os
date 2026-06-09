@@ -52,8 +52,13 @@ agentic-os plan capture --root ~/agentic_os \
   `shared_factory/05-knowledge/plans/future-ideas/` and appends it to the shared
   plans index.
 - `--kind domain` appends to `<domain>/01-inbox/raw-ideas.md`.
-- `--kind customer` with `--project` appends to
-  `<domain>/02-projects/<project>/status.md`.
+- `--kind customer` with `--project` creates a captured project work item under
+  `<domain>/02-projects/<project>/work-items/01-intake/NNN_slug.md` and appends
+  status/control-plane indexes.
+- Expanded intake may use a folder packet at
+  `<domain>/02-projects/<project>/work-items/01-intake/NNN_slug/` when a duel or
+  spec pass creates multiple files. Subtasks keep the parent index, for example
+  `NNN_01_update_database.md`.
 
 Domain and customer captures require `--domain`. Project captures require an
 existing project status file.

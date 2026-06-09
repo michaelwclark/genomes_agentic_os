@@ -72,12 +72,20 @@ config.toml
 artifacts/
 config/
 ideas/
+work-items/
+  01-intake/
+  02-active/
+  03-complete/
 worktrees/
 ```
 
 `config/` holds parsed project defaults such as workflow profiles, output
 artifact locations, validation commands, MCP boundaries, tools, memory policy,
-and registered worktrees. `ideas/` is the project-scoped capture area.
+and registered worktrees. `work-items/01-intake/` is the project-known idea
+intake lane, defaulting to indexed files such as `001_build_logger.md`.
+Expanded intake can use an indexed packet folder when a duel/spec pass needs
+multiple files.
+`ideas/` remains only as a compatibility index.
 `worktrees/` contains visible symlinks and `worktrees/index.yml`, which routing
 uses to recognize commands run from real worktree paths.
 
@@ -131,4 +139,4 @@ test ! -d "$TMP_ROOT/lenders"
 
 ## Done Signal
 
-Feature 01 is healthy when project creation creates the project folder, project-local agent/config/ideas/worktree surfaces, updates active-work and project indexes, preserves existing files on rerun, records supplied source references, normalizes `lenders` to `los`, routes from registered worktree paths, and leaves `agentic-os validate` passing.
+Feature 01 is healthy when project creation creates the project folder, project-local agent/config/work-item/worktree surfaces, updates active-work and project indexes, preserves existing files on rerun, records supplied source references, normalizes `lenders` to `los`, routes from registered worktree paths, and leaves `agentic-os validate` passing.

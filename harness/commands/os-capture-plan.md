@@ -4,11 +4,12 @@ Use when a future idea, implementation gap, customer OS need, or validation find
 
 ## Procedure
 
-1. Route the idea to a domain if it is domain-specific.
+1. Route the idea to the narrowest known domain/project.
 2. If it is reusable OS product work, record it under `shared_factory/05-knowledge/plans/`.
-3. If it is customer-specific, record it in the customer domain inbox or project folder and link the reusable pattern back to shared plans.
-4. Capture problem, user outcome, scope, non-goals, affected surfaces, acceptance criteria, validation, and rollout notes.
-5. Update active work only when the plan is ready to build.
+3. If it is tied to a known project, capture it as `work-items/01-intake/NNN_slug.md` by default; use `work-items/01-intake/NNN_slug/` only when intake needs multiple files.
+4. If the project is not known yet, record it in the domain inbox and leave triage notes.
+5. Capture problem, user outcome, scope, non-goals, affected surfaces, acceptance criteria, validation, and rollout notes.
+6. Update active work only when the plan is ready to build.
 
 ## Output
 

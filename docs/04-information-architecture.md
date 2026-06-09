@@ -178,6 +178,10 @@ around a repository. It is the local control surface for that project:
   ideas/
     README.md
     raw-ideas.md
+  work-items/
+    01-intake/
+    02-active/
+    03-complete/
   artifacts/
 ```
 
@@ -186,6 +190,9 @@ an existing project. Use `agentic-os project worktree add <domain> <project>
 <name> --path <path>` to make a branch checkout visible without moving it into
 the OS.
 
+Project-known ideas are captured in `work-items/01-intake/` as indexed markdown
+files such as `001_build_logger.md`, or as indexed packet folders when intake
+needs multiple files; `ideas/` is a compatibility index.
 Markdown files explain intent, context, rules, decisions, and ideas. YAML files
 under `config/` hold parsed defaults that commands and agents can read. Hybrid
 artifacts, such as feature specs or ticket drafts, can use Markdown with YAML

@@ -206,6 +206,11 @@ def build_parser() -> argparse.ArgumentParser:
     project_work_item_create.add_argument("--summary", required=True)
     project_work_item_create.add_argument("--work-id", help="Optional work item slug. Defaults to a slug from the title.")
     project_work_item_create.add_argument("--status", default="captured", choices=WORK_LIFECYCLE_STATES)
+    project_work_item_create.add_argument(
+        "--format",
+        choices=("markdown", "packet"),
+        help="Override the default shape. Captured/triaged ideas default to markdown; active and complete states use packet folders.",
+    )
     project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_create.set_defaults(handler=handle_project_work_item_create)
 
@@ -854,6 +859,7 @@ def handle_project_work_item_create(args: argparse.Namespace) -> int:
             summary=args.summary,
             status=args.status,
             work_id=args.work_id,
+            item_format=args.format,
         )
     )
     return 0

@@ -11,6 +11,7 @@ import yaml
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .config_ops import CONFIG_FILENAME
 from .lifecycle import (
+    WORK_ITEM_LANES,
     WORK_ITEM_DIRECTORIES,
     WORK_ITEM_METADATA_FILES,
     WORK_LIFECYCLE_STATES,
@@ -313,6 +314,8 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / "config" / filename, result)
     require_file(project_root / "ideas" / "README.md", result)
     require_file(project_root / "ideas" / "raw-ideas.md", result)
+    for lane in WORK_ITEM_LANES:
+        require_dir(project_root / "work-items" / lane, result)
     require_file(project_root / "worktrees" / "README.md", result)
     require_file(project_root / "worktrees" / "index.yml", result)
     validate_project_worktrees(project_root, result)
@@ -323,7 +326,11 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
     work_items_root = project_root / "work-items"
     if not work_items_root.is_dir():
         return
-    for work_item_root in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
+    for work_item_root in sorted(
+        record.path
+        for record in local_project_work_items(project_root)
+        if record.source == "project_work_item"
+    ):
         metadata_path = metadata_path_for(work_item_root)
         if metadata_path is None:
             result.errors.append(
@@ -334,8 +341,9 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
         status = lifecycle_status(metadata)
         if status not in WORK_LIFECYCLE_STATES:
             result.errors.append(f"work item has invalid lifecycle status {status!r}: {metadata_path}")
-        for directory in WORK_ITEM_DIRECTORIES:
-            require_dir(work_item_root / directory, result)
+        if work_item_root.is_dir():
+            for directory in WORK_ITEM_DIRECTORIES:
+                require_dir(work_item_root / directory, result)
     for record in local_project_work_items(project_root):
         for path in record.missing_required_files:
             result.errors.append(f"work item {record.path.name} status {record.status!r} missing required file: {path}")
