@@ -9,9 +9,12 @@ from typing import Any
 import yaml
 
 from .automation_ops import check_automation
+from .config_ops import LAYERS as CONFIG_LAYERS, doctor_config
 from .customer import customer_update
+from .event_graph import chain_doctor
+from .runtime_ops import runtime_doctor
 from .scaffold import expand_path, init_os, install_docs
-from .validate import validate_root
+from .validate import lifecycle_staleness_findings, validate_root
 from .workflow_ops import check_workflow
 
 
@@ -104,6 +107,14 @@ def run_log_findings(root: Path) -> list[DoctorFinding]:
     return findings
 
 
+def lifecycle_findings(root: Path) -> list[DoctorFinding]:
+    """Return DoctorFindings for plan-22 lifecycle staleness conditions."""
+    return [
+        DoctorFinding(f["severity"], Path(f["path"]), f["message"])
+        for f in lifecycle_staleness_findings(root)
+    ]
+
+
 def doctor(root: str | Path, *, fix_missing: bool = False) -> dict[str, Any]:
     os_root = expand_path(root)
     repairs = managed_repair(os_root) if fix_missing else []
@@ -118,9 +129,82 @@ def doctor(root: str | Path, *, fix_missing: bool = False) -> dict[str, Any]:
     findings.extend(workflow_findings(os_root))
     findings.extend(automation_findings(os_root))
     findings.extend(run_log_findings(os_root))
+    findings.extend(lifecycle_findings(os_root))
     if repairs:
         findings.append(DoctorFinding("observation", os_root, f"additive repair executed: {', '.join(repairs)}"))
     return {"root": str(os_root), "ok": not any(f.severity == "blocker" for f in findings), "repairs": repairs, "findings": [f.as_dict() for f in findings]}
+
+
+def doctor_all(root: str | Path) -> dict[str, Any]:
+    """Aggregate every subsystem doctor into one health report (F-003).
+
+    Subsystems checked:
+      - core: structural + lifecycle (doctor())
+      - runtime: execution targets, heartbeats, schedules, integrations
+      - event_graph: chain rules
+      - config: per config-layer OTEL/MCP contracts (all known layers)
+
+    Returns a dict with:
+      ok        -- True only if every subsystem reports ok
+      subsystems -- per-subsystem result dicts (keyed by subsystem name)
+      findings  -- flattened list of all findings across subsystems
+    """
+    os_root = expand_path(root)
+    subsystems: dict[str, Any] = {}
+
+    # Core doctor (structural + lifecycle)
+    subsystems["core"] = doctor(os_root)
+
+    # Runtime doctor
+    try:
+        subsystems["runtime"] = runtime_doctor(os_root)
+    except Exception as exc:  # noqa: BLE001
+        subsystems["runtime"] = {
+            "ok": False,
+            "findings": [{"severity": "blocker", "path": str(os_root), "message": f"runtime doctor error: {exc}"}],
+        }
+
+    # Event-graph chain doctor
+    try:
+        chain_result = chain_doctor(os_root)
+        subsystems["event_graph"] = {"root": str(os_root), **chain_result}
+    except Exception as exc:  # noqa: BLE001
+        subsystems["event_graph"] = {
+            "ok": False,
+            "findings": [{"severity": "blocker", "path": str(os_root), "message": f"event_graph doctor error: {exc}"}],
+        }
+
+    # Config doctor — run for each known layer; aggregate findings
+    config_findings: list[dict[str, str]] = []
+    config_ok = True
+    for layer in sorted(CONFIG_LAYERS):
+        try:
+            layer_result = doctor_config(os_root, layer=layer)
+            for finding in layer_result.get("findings") or []:
+                config_findings.append({**finding, "layer": layer})
+            if not layer_result.get("ok", True):
+                config_ok = False
+        except Exception as exc:  # noqa: BLE001
+            config_findings.append(
+                {"severity": "blocker", "path": str(os_root), "message": f"config doctor error ({layer}): {exc}", "layer": layer}
+            )
+            config_ok = False
+    subsystems["config"] = {"root": str(os_root), "ok": config_ok, "findings": config_findings}
+
+    # Flatten findings for the top-level summary
+    all_findings: list[dict[str, str]] = []
+    for subsystem_name, result in subsystems.items():
+        for finding in result.get("findings") or []:
+            all_findings.append({**finding, "subsystem": subsystem_name})
+
+    overall_ok = all(result.get("ok", True) for result in subsystems.values())
+
+    return {
+        "root": str(os_root),
+        "ok": overall_ok,
+        "subsystems": subsystems,
+        "findings": all_findings,
+    }
 
 
 def format_doctor_result(result: dict[str, Any]) -> str:

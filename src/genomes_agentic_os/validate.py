@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import datetime
 import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -605,6 +607,245 @@ def validate_update_backup_contract(root: Path, result: ValidationResult) -> Non
             result.errors.append(f"private key must use mode 0600: {key_path}")
 
 
+# ---------------------------------------------------------------------------
+# F-011: JSON schema enforcement (strict mode)
+# ---------------------------------------------------------------------------
+
+# Explicit schema → installed-root target-glob mapping.
+# Keys are schema filenames (relative to schemas/); values are glob patterns
+# relative to the installed OS root that produce matching structured files.
+# Files that do not exist are not strict errors (missing-file errors already
+# come from the structural validator above).
+_SCHEMA_DIR = Path(__file__).parent.parent.parent / "schemas"
+
+SCHEMA_TARGETS: dict[str, list[str]] = {
+    "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
+    "command-registry.schema.json": [REGISTRY_FILES["commands"]],
+    "skill-registry.schema.json": [REGISTRY_FILES["skills"]],
+    "mcp-server-registry.schema.json": [REGISTRY_FILES["mcp_servers"]],
+    "library-registry.schema.json": [REGISTRY_FILES["libraries"]],
+    "hook-registry.schema.json": [REGISTRY_FILES["hooks"]],
+    "plugin-registry.schema.json": [REGISTRY_FILES["plugins"]],
+    "rule-registry.schema.json": [REGISTRY_FILES["rules"]],
+    "composio-tool-routing.schema.json": [REGISTRY_FILES["composio_tools"]],
+    "update-grant.schema.json": ["harness/registries/update-grant.json"],
+    "backup-policy.schema.json": ["harness/registries/backup-policy.yml"],
+    "automation.schema.json": ["**/04-automations/*/*/automation.yml"],
+    "domain.schema.json": ["**/domain.yml"],
+    "run.schema.json": ["**/06-runs-and-logs/runs/*/run.yml"],
+    "workflow.schema.json": ["**/03-workflows/*/*/workflow.yml"],
+    "update-manifest.schema.json": [],  # generated; no installed glob
+}
+
+
+@dataclass
+class StrictFinding:
+    """A schema-validation finding produced by --strict mode."""
+
+    schema: str
+    path: Path
+    message: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"schema": self.schema, "path": str(self.path), "message": self.message}
+
+
+def _load_schema(schema_file: Path) -> dict[str, Any] | None:
+    """Load a JSON schema from disk, returning None on failure."""
+    try:
+        return json.loads(schema_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _load_document(path: Path) -> Any | None:
+    """Parse a YAML or JSON document, returning None on failure."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        if path.suffix == ".json":
+            return json.loads(text)
+        return yaml.safe_load(text)
+    except (json.JSONDecodeError, yaml.YAMLError):
+        return None
+
+
+def validate_schemas_strict(root: Path) -> list[StrictFinding]:
+    """Validate installed files against their JSON schemas.
+
+    Only reports findings for files that exist.  Missing files are already
+    reported by the structural validator and are not re-reported here.
+    """
+    try:
+        import jsonschema  # noqa: PLC0415
+        from jsonschema import Draft202012Validator  # noqa: PLC0415
+    except ImportError:
+        return [
+            StrictFinding(
+                schema="(jsonschema library)",
+                path=root,
+                message="jsonschema package is not installed; run: pip install 'jsonschema>=4'",
+            )
+        ]
+
+    findings: list[StrictFinding] = []
+    schemas_dir = _SCHEMA_DIR
+
+    for schema_filename, target_patterns in SCHEMA_TARGETS.items():
+        schema_path = schemas_dir / schema_filename
+        if not schema_path.is_file():
+            continue
+        schema = _load_schema(schema_path)
+        if schema is None:
+            findings.append(
+                StrictFinding(
+                    schema=schema_filename,
+                    path=schema_path,
+                    message=f"could not parse schema file: {schema_path}",
+                )
+            )
+            continue
+
+        try:
+            validator_cls = Draft202012Validator
+            validator_cls.check_schema(schema)
+        except Exception:
+            # If the schema itself is invalid, skip without reporting — it's a
+            # source-package authoring problem, not an install-root problem.
+            continue
+
+        for pattern in target_patterns:
+            if "**" in pattern or "*" in pattern:
+                candidates = list(root.rglob(pattern.lstrip("**/").lstrip("*/")))
+                if "**/" in pattern:
+                    candidates = list(root.rglob(pattern[pattern.index("**/") + 3 :]))
+            else:
+                candidates = [root / pattern]
+
+            for target_path in candidates:
+                if not target_path.is_file():
+                    continue
+                doc = _load_document(target_path)
+                if doc is None:
+                    continue
+
+                errors = list(
+                    jsonschema.Draft202012Validator(schema).iter_errors(doc)
+                )
+                for error in errors:
+                    path_str = " -> ".join(str(p) for p in error.absolute_path) if error.absolute_path else "(root)"
+                    findings.append(
+                        StrictFinding(
+                            schema=schema_filename,
+                            path=target_path,
+                            message=f"schema violation at {path_str}: {error.message}",
+                        )
+                    )
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Plan-22: lifecycle staleness checks
+# ---------------------------------------------------------------------------
+
+# 50/50 DECISION: staleness threshold for "building" state.
+# Plan-22 does not specify a numeric threshold; I chose 7 calendar days
+# (based on mtime of the work-item directory).  Rationale: a week is long
+# enough to be meaningful work-in-progress; any longer without a WORKLOG.md
+# update is genuinely stale.  This constant is the single place to change it.
+BUILDING_STALE_DAYS = 7
+
+
+def _work_item_mtime(work_item_root: Path) -> datetime.datetime | None:
+    """Return the most recent mtime among all files in a work-item directory."""
+    latest: float | None = None
+    try:
+        for child in work_item_root.rglob("*"):
+            try:
+                mtime = child.stat().st_mtime
+                if latest is None or mtime > latest:
+                    latest = mtime
+            except OSError:
+                pass
+    except OSError:
+        pass
+    if latest is None:
+        return None
+    return datetime.datetime.fromtimestamp(latest, tz=datetime.timezone.utc)
+
+
+def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
+    """Scan all project work-items for staleness conditions.
+
+    Returns a list of finding dicts with keys: severity, path, message.
+
+    Two conditions are detected (plan-22 AC):
+      (a) Work items stuck in ``building`` state past BUILDING_STALE_DAYS.
+      (b) Work items in ``finished`` state that are missing SUMMARY.md.
+    """
+    findings: list[dict[str, str]] = []
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+
+    for work_items_root in root.rglob("work-items"):
+        if not work_items_root.is_dir():
+            continue
+        for work_item_root in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
+            metadata_path = metadata_path_for(work_item_root)
+            if metadata_path is None:
+                continue
+            metadata = load_yaml_mapping(metadata_path)
+            # Extract state directly from common work.yml/feature.yml keys.
+            # work.yml written by work_lifecycle.py uses "state" at root;
+            # feature.yml uses "lifecycle.state" or "status".
+            # lifecycle_status() does not check root-level "state", so we
+            # fall back to it only after checking "state" directly.
+            status = str(
+                metadata.get("state")
+                or metadata.get("status")
+                or (
+                    metadata.get("lifecycle", {}).get("state")
+                    if isinstance(metadata.get("lifecycle"), dict)
+                    else None
+                )
+                or "captured"
+            )
+
+            if status == "building":
+                mtime = _work_item_mtime(work_item_root)
+                if mtime is not None:
+                    age_days = (now - mtime).days
+                    if age_days >= BUILDING_STALE_DAYS:
+                        findings.append(
+                            {
+                                "severity": "fix-soon",
+                                "path": str(work_item_root),
+                                "message": (
+                                    f"work item stuck in 'building' state for {age_days} days "
+                                    f"(threshold: {BUILDING_STALE_DAYS}): {work_item_root.name}"
+                                ),
+                            }
+                        )
+
+            elif status == "finished":
+                summary_path = work_item_root / "SUMMARY.md"
+                if not summary_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "fix-soon",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'finished' but missing required SUMMARY.md: "
+                                f"{work_item_root.name}"
+                            ),
+                        }
+                    )
+
+    return findings
+
+
 def validate_root(root: str | Path) -> ValidationResult:
     os_root = expand_path(root)
     result = ValidationResult(root=os_root)
@@ -672,6 +913,10 @@ def validate_root(root: str | Path) -> ValidationResult:
                 yaml.safe_load(path.read_text(encoding="utf-8"))
             except yaml.YAMLError as exc:
                 result.errors.append(f"invalid YAML: {path}: {exc}")
+
+    # Plan-22: lifecycle staleness checks (warnings, not blockers)
+    for finding in lifecycle_staleness_findings(os_root):
+        result.warnings.append(finding["message"])
 
     return result
 
