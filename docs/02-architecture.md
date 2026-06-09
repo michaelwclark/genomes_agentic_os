@@ -62,6 +62,43 @@ Every domain gets the identical numbered skeleton:
 
 This uniformity is the point: an agent that learns one domain can navigate any domain.
 
+### `harness/shared_factory/` — the canonical shared OS product layer
+
+`shared_factory` is the one domain that is not user-facing work. It holds
+OS-level plans, references, host-tool registries, hooks, and the event-control
+plane that all domains share.
+
+**Canonical path (new installs):**
+
+```text
+<os-root>/harness/shared_factory/
+  00-control-plane/    event-ledger-index.md, chain-rules.yml, run-queue.yml …
+  05-knowledge/        plans/, references/, host-tool-registry.<host>.yml …
+  06-runs-and-logs/    events/ (ledger JSONL), processing-results/ …
+```
+
+`harness/shared_factory/` lives under `harness/` because it is managed OS
+infrastructure, not a first-class user domain.  In code it is resolved via
+`shared_factory_path(root, ...)` — which expands to
+`<root>/harness/shared_factory/...` — and `domain_path(root, "shared_factory")`
+routes there automatically.
+
+**Migration safety for older installs:**
+
+Installs created before this convention existed may have a top-level
+`shared_factory/` directory (a plain domain alongside `personal/`, `los/`,
+etc.). That layout still works — `domain_path` resolves it correctly.  Migrate
+when convenient by running `agentic-os doctor --fix-missing`, which scaffolds
+the canonical `harness/shared_factory/` without touching the existing top-level
+directory. Then move content manually under the new path and remove the old
+directory once you have verified the move.  There is no automated migration that
+deletes files; the move is intentionally explicit.
+
+**Rule:** new templates, plans, hook registries, and OS product docs should
+always reference `harness/shared_factory/`, never the bare top-level path.
+Existing docs that still say `shared_factory/` (without `harness/`) remain
+valid for older installs and will be updated as each doc is revised.
+
 ---
 
 ## Python package map
