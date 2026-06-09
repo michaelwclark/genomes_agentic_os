@@ -269,6 +269,9 @@ class TestTempRootSmoke:
             note="Smoke test promotion to specified",
         )
         assert promote_result["state"] == "specified"
+        # Promotion moves the item from 01-intake to the 02-active lane.
+        work_item_path = Path(promote_result["path"])
+        assert work_item_path.is_dir()
 
         # Step 5: simulate conversation logging hook
         transcript = tmp_path / "smoke_transcript.jsonl"
@@ -483,6 +486,8 @@ class TestLOSPolicyJiraFixture:
         )
         assert promote_result["state"] == "specified"
         assert promote_result["old_state"] == "captured"
+        # Promotion moves the item from 01-intake to the 02-active lane.
+        work_item_path = Path(promote_result["path"])
 
         # Local mirror is the evidence: work.yml reflects new state
         work_yml = yaml.safe_load((work_item_path / "work.yml").read_text(encoding="utf-8"))
