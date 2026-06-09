@@ -621,7 +621,11 @@ _SCHEMA_DIR = Path(__file__).parent.parent.parent / "schemas"
 SCHEMA_TARGETS: dict[str, list[str]] = {
     "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
     "command-registry.schema.json": [REGISTRY_FILES["commands"]],
-    "skill-registry.schema.json": [REGISTRY_FILES["skills"]],
+    "skill-visibility-registry.schema.json": [REGISTRY_FILES["skills"]],
+    "skill-registry.schema.json": [
+        "harness/skills/skill-registry.yml",
+        "harness/shared_factory/05-knowledge/skills/skill-registry.yml",
+    ],
     "mcp-server-registry.schema.json": [REGISTRY_FILES["mcp_servers"]],
     "library-registry.schema.json": [REGISTRY_FILES["libraries"]],
     "hook-registry.schema.json": [REGISTRY_FILES["hooks"]],

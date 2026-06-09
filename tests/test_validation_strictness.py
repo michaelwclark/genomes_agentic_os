@@ -124,37 +124,24 @@ def test_validate_schemas_strict_returns_list(tmp_path: Path) -> None:
     assert isinstance(findings, list)
 
 
-def test_validate_schemas_strict_runs_on_fresh_install(tmp_path: Path) -> None:
-    """validate_schemas_strict completes without exceptions on a fresh install.
+def test_validate_schemas_strict_clean_on_fresh_install(tmp_path: Path) -> None:
+    """A fresh install produces zero strict schema violations.
 
-    NOTE: The JSON schemas in schemas/ describe a forward-looking file format
-    that is more complete than what the current scaffolder generates (e.g.
-    skill-registry.schema.json requires top-level id/version/source_dir fields
-    not yet written by registry_payloads()).  This test therefore only asserts
-    that the function runs to completion and returns a list — not that there are
-    zero violations.  Once the scaffolder catches up to the schema spec the
-    assertion can be tightened.
+    Every SCHEMA_TARGETS pair must hold against scaffolder output; a failure
+    here means a schema and the scaffolder drifted apart.
     """
     root = tmp_path / "agentic_os"
     _init_root(root)
     findings = validate_schemas_strict(root)
-    assert isinstance(findings, list)
+    assert findings == [], "\n".join(f.message for f in findings)
 
 
-def test_validate_strict_cli_flag_runs_on_fresh_install(tmp_path: Path, capsys: Any) -> None:
-    """agentic-os validate --strict runs without crashing on a fresh install.
-
-    NOTE: The JSON schemas describe a forward-looking format; a fresh install
-    may produce schema violations because the scaffolder does not yet write all
-    required schema fields.  This test only asserts the command runs to
-    completion (exit code 0 or 1) without an unhandled exception and produces
-    some output.  Exit code 0 means no violations; exit code 1 means violations
-    were found — both are valid outcomes until the scaffolder catches up.
-    """
+def test_validate_strict_cli_flag_passes_on_fresh_install(tmp_path: Path, capsys: Any) -> None:
+    """agentic-os validate --strict exits 0 on a fresh install."""
     root = tmp_path / "agentic_os"
     _init_root(root)
     exit_code = main(["validate", "--root", str(root), "--strict"])
-    assert exit_code in (0, 1), f"Unexpected exit code {exit_code}: {capsys.readouterr().err}"
+    assert exit_code == 0, f"strict violations on fresh install: {capsys.readouterr().out}"
 
 
 def test_validate_strict_detects_schema_violation(tmp_path: Path) -> None:
