@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import traceback
 from typing import Any
 
 from .lifecycle import (
@@ -20,9 +21,39 @@ from .lifecycle import (
 from .routing import detect_from_cwd, project_records, read_yaml
 from .scaffold import domain_path, expand_path
 
+# Relative path inside the installed OS root for hook-failure entries.
+# Mirrors the harness/logs/ convention; hooks/ is analogous to conversations/.
+_HOOK_LOG_RELATIVE = Path("harness") / "logs" / "hooks" / "hook-failures.jsonl"
+
 
 def utc_date_slug() -> str:
     return datetime.now(timezone.utc).strftime("%Y_%m_%d")
+
+
+def utc_iso_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def append_hook_failure(root: Path | None, hook_name: str, error_summary: str) -> None:
+    """Append a single hook-failure record to the local hook log.
+
+    Failures are non-blocking: any exception raised here is silently swallowed
+    so the hook never causes a non-zero exit.  The log entry carries only a
+    timestamp, the hook name, and a short error summary — never secrets or full
+    payloads.
+    """
+    try:
+        log_path = (root / _HOOK_LOG_RELATIVE) if root is not None else (Path("~/agentic_os").expanduser() / _HOOK_LOG_RELATIVE)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = json.dumps({
+            "timestamp": utc_iso_now(),
+            "hook": hook_name,
+            "error": error_summary,
+        }, sort_keys=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(entry + "\n")
+    except Exception:  # pragma: no cover - must never raise
+        pass
 
 
 def find_os_root(cwd: Path) -> Path | None:
@@ -205,13 +236,18 @@ def conversation_log_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     _ = argv or sys.argv[1:]
+    root: Path | None = None
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):
             payload = {}
+        cwd = Path(str(payload.get("cwd") or os.getcwd())).expanduser().resolve()
+        root = find_os_root(cwd)
         result = conversation_log_from_payload(payload)
-    except Exception as exc:  # pragma: no cover - hook must never block callers
-        result = {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        summary = f"{type(exc).__name__}: {exc}"
+        append_hook_failure(root, "conversation_logging", summary)
+        result = {"ok": False, "error": summary}
     print(json.dumps(result, sort_keys=True))
     return 0
 
