@@ -87,9 +87,12 @@ from .source_watch import (
     poll_watch_source,
     run_due_watch_sources,
 )
+from .metrics_ops import format_metrics_result, metrics_refresh
 from .update_ops import (
     activate_license,
+    backup_push,
     backup_run,
+    fleet_push,
     format_update_result,
     phone_home_payload,
     update_apply,
@@ -386,6 +389,44 @@ def build_parser() -> argparse.ArgumentParser:
     backup_run_mode.add_argument("--dry-run", action="store_true", default=True)
     backup_run_mode.add_argument("--apply", action="store_true")
     backup_run_parser.set_defaults(handler=handle_backup_run)
+    backup_push_parser = backup_subparsers.add_parser(
+        "push",
+        help=(
+            "Record a local backup push run log. "
+            "Skips remote push when update grant is absent (no creds); always logs locally."
+        ),
+    )
+    backup_push_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    backup_push_parser.set_defaults(handler=handle_backup_push)
+
+    fleet_parser = subparsers.add_parser("fleet", help="Operator fleet management commands.")
+    fleet_subparsers = fleet_parser.add_subparsers(dest="fleet_command", required=True)
+    fleet_push_parser = fleet_subparsers.add_parser(
+        "push",
+        help=(
+            "Record a simulated operator-push event for a customer installation. "
+            "V1 local-only: no real SSH or network calls."
+        ),
+    )
+    fleet_push_parser.add_argument("customer_slug", help="Customer slug (snake_case).")
+    fleet_push_parser.add_argument(
+        "--source",
+        default="latest",
+        help="Release ref or tag to push (default: latest).",
+    )
+    fleet_push_parser.set_defaults(handler=handle_fleet_push)
+
+    metrics_parser = subparsers.add_parser("metrics", help="Compute and view OS metrics scorecards.")
+    metrics_subparsers = metrics_parser.add_subparsers(dest="metrics_command", required=True)
+    metrics_refresh_parser = metrics_subparsers.add_parser(
+        "refresh",
+        help=(
+            "Compute a metrics scorecard from run logs, doctor findings, and automation maturity. "
+            "Writes result to harness/shared_factory/07-metrics/scorecard.yml."
+        ),
+    )
+    metrics_refresh_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    metrics_refresh_parser.set_defaults(handler=handle_metrics_refresh)
 
     config_parser = subparsers.add_parser("config", help="Install or update Codex config.toml conventions.")
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
@@ -1035,6 +1076,21 @@ def handle_license_activate(args: argparse.Namespace) -> int:
 
 def handle_backup_run(args: argparse.Namespace) -> int:
     print(format_update_result(backup_run(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_backup_push(args: argparse.Namespace) -> int:
+    print(format_update_result(backup_push(args.root)))
+    return 0
+
+
+def handle_fleet_push(args: argparse.Namespace) -> int:
+    print(format_update_result(fleet_push(args.customer_slug, source=args.source)))
+    return 0
+
+
+def handle_metrics_refresh(args: argparse.Namespace) -> int:
+    print(format_metrics_result(metrics_refresh(args.root)))
     return 0
 
 

@@ -766,4 +766,33 @@ def customer_validate(root: str | Path) -> dict[str, Any]:
 
 
 def format_customer_result(result: dict[str, Any]) -> str:
-    return yaml.safe_dump(result, sort_keys=False).strip()
+    """Format customer validate / init / update results.
+
+    For validate results the two finding classes are labelled explicitly so
+    operators can distinguish OS-level failures (``core_errors``, block ok=False)
+    from profile-level advisory warnings (``profile_warnings``, ok=True).
+    """
+    lines: list[str] = []
+    lines.append(f"root: {result.get('root', '')}")
+    if "ok" in result:
+        lines.append(f"ok: {str(result['ok']).lower()}")
+    core_errors: list[str] = result.get("core_errors") or []
+    profile_warnings: list[str] = result.get("profile_warnings") or []
+    if core_errors or profile_warnings:
+        lines.append(f"core_errors: {len(core_errors)}  # OS failures — these set ok=false")
+        if core_errors:
+            for err in core_errors:
+                lines.append(f"  - {err}")
+        lines.append(f"profile_warnings: {len(profile_warnings)}  # advisory — ok stays true")
+        if profile_warnings:
+            for warn in profile_warnings:
+                lines.append(f"  - {warn}")
+    else:
+        # Non-validate results (init / update) — fall back to generic YAML
+        return yaml.safe_dump(result, sort_keys=False).strip()
+    # Append any remaining keys (customer slug etc.) that are not already shown
+    shown = {"root", "ok", "core_errors", "profile_warnings"}
+    remainder = {k: v for k, v in result.items() if k not in shown}
+    if remainder:
+        lines.append(yaml.safe_dump(remainder, sort_keys=False).strip())
+    return "\n".join(lines)

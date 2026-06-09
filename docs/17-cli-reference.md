@@ -75,8 +75,8 @@ atlas command reference for the full flag table and real captured output.
 | `automation check <domain> <lane> <name>` | Validate automation definition | [07 · Automations](07-automations.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 | `automation attach <domain> <lane> <name> <project>` | Attach automation to a project | [07 · Automations](07-automations.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 | `automation set-maturity <domain> <lane> <name> <level>` | Advance maturity: `observe` → `prepare` → `propose` → `execute_approved` → `execute_guarded` | [07 · Automations](07-automations.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
-| `run-log create` | Open a new run log for a workflow or automation run | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
-| `run-log close --status <s>` | Close a run log; `--status done` requires `--validation` evidence | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
+| `run-log create <domain> <workflow_or_automation>` | **Required first step** — open a timestamped run log; returns the `run_id` needed by `run-log close` | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
+| `run-log close <domain> <run_id> --status <s>` | Close a run log; `--status done` requires `--validation` evidence; `run_id` comes from `run-log create` | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 
 ### Profiles & rooms
 
@@ -162,7 +162,10 @@ Valid `--layer` values: `agentic_os_root`, `automation`, `customer_os_root`,
 | `update status` | Show current update state | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `update phone-home` | Report telemetry | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `backup run` | Plan or execute a GitHub-backed state backup (dry-run by default; needs `update register` first) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
+| `backup push` | Record a local backup push run log; skips remote push when no update grant is present, always logs locally | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
+| `fleet push <customer_slug>` | Record a simulated operator-push event for a customer installation (V1 local-only, no real network calls) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `license activate` | Activate a license key | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
+| `metrics refresh` | Compute a scorecard from run logs, doctor findings, and automation maturity; writes to `07-metrics/scorecard.yml` | [07 · Automations](07-automations.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 
 ### Migration & validation
 
@@ -278,6 +281,10 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`backup run` requires `update register` first.** Running `backup run` without a
   prior `update register` will fail — register generates the update grant that
   backup depends on.
+- **`run-log create` must come before `run-log close`.** Run
+  `agentic-os run-log create <domain> <workflow_or_automation> --root <root>`
+  first; it returns a `run_id`. Pass that `run_id` to `run-log close`. Skipping
+  the create step is the most common reason `run-log close` fails.
 - **`run-log close --status done` requires `--validation` evidence.** Missing
   evidence is a guardrail (exits non-zero with an explanation), not a crash. Add
   `--validation "..."` and re-run.

@@ -386,6 +386,68 @@ def backup_run(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     return {"root": str(os_root), "log_path": str(log_path), **payload}
 
 
+def backup_push(root: str | Path) -> dict[str, Any]:
+    """Record a local backup push run log.
+
+    When no update grant is present (not yet registered) the remote push is
+    skipped and the log records ``remote_skipped: true``.  A local log entry
+    is always written so the operator can audit what happened.
+    """
+    os_root = expand_path(root)
+    policy = read_structured(harness_path(os_root, "registries", "backup-policy.yml")).get("backup_policy") or {}
+    remote: dict[str, Any] = {}
+    remote_skipped = False
+    skip_reason = ""
+    try:
+        grant = load_update_grant(os_root)
+        remote = grant["remotes"].get("backup") or {}
+    except ValueError as exc:
+        remote_skipped = True
+        skip_reason = str(exc)
+
+    payload: dict[str, Any] = {
+        "status": "skipped_no_grant" if remote_skipped else "pushed",
+        "created_at": now_stamp(),
+        "remote_skipped": remote_skipped,
+        "include": policy.get("include") or [],
+        "exclude": policy.get("exclude") or [],
+    }
+    if remote_skipped:
+        payload["skip_reason"] = skip_reason
+    else:
+        payload["remote"] = remote
+    log_path = write_run_log(os_root, "backups", "backup-push", payload)
+    return {"root": str(os_root), "log_path": str(log_path), **payload}
+
+
+def fleet_push(customer_slug: str, *, source: str = "latest") -> dict[str, Any]:
+    """Record a simulated operator-push event for a customer installation.
+
+    V1 uses the local fake provisioning provider only — no real SSH, GitHub,
+    or MCP calls are made.  The result is a structured log entry that can be
+    inspected and acted upon by an operator.  Real network wiring is
+    policy-gated and deferred to a future plan.
+    """
+    if not customer_slug or not customer_slug.replace("_", "").isalnum():
+        raise ValueError(f"customer_slug must be snake_case alphanumeric: {customer_slug!r}")
+
+    payload: dict[str, Any] = {
+        "customer_slug": customer_slug,
+        "source": source,
+        "provider": "fake_local",
+        "status": "recorded",
+        "created_at": now_stamp(),
+        "note": (
+            "V1 local-only: no SSH, GitHub, or MCP calls performed. "
+            "Real push wiring is policy-gated and deferred."
+        ),
+        "update_status": "recorded_intent",
+        "backup_status": "not_run",
+        "blocked_risky_changes": [],
+    }
+    return payload
+
+
 def snapshot_update_state(root: Path) -> Path:
     snapshot = {
         "created_at": now_stamp(),

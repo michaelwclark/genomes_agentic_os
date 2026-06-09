@@ -30,6 +30,26 @@ is the most common way to make a mess.
 Notion is a *projection*. The database is a *future* plane for when file-based
 state stops scaling — it is not required for V1.
 
+### When to introduce the runtime database (F-023)
+
+Do **not** add a database until at least one of these conditions is true
+(from [`spec/data-model.md`](../spec/data-model.md)):
+
+| Condition | Why it triggers the database |
+| --- | --- |
+| Inbound messages are **frequent and messy** | File-per-message creates noise and race conditions |
+| Multiple automations can **update the same work item** | File writes are not atomic; concurrent agents clobber each other |
+| State changes need **replay** (audit, debugging, rollback) | Files don't have a native event log |
+| **Dedupe and idempotency** are required | Hash-based dedupe belongs in a table, not a glob of files |
+| **Joins across domains** are needed (messages, PRs, incidents, runs, approvals) | SQL or a query engine, not `rglob` |
+| **Matching or embeddings** are part of the product | Vector search requires a vector store |
+
+If none of these apply, the filesystem scales fine.  Introducing the database
+prematurely adds operational complexity (migrations, connection management,
+backup strategy, local dev setup) with no payoff.  The earliest sane trigger is
+usually when a single domain processes > 50 inbound items/day from automated
+sources, or when two or more automations compete to update work item state.
+
 ---
 
 ## The object hierarchy

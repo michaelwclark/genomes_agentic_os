@@ -223,6 +223,13 @@ def domain_path(root: str | Path, domain: str) -> Path:
 
 def validate_name(value: str, label: str = "name") -> str:
     if not NAME_PATTERN.fullmatch(value):
+        # If the only problem is hyphens, suggest the snake_case form.
+        snake = value.replace("-", "_")
+        if NAME_PATTERN.fullmatch(snake):
+            raise ValueError(
+                f"{label} must use lowercase letters, numbers, and underscores only: {value!r}"
+                f" — did you mean {snake!r}?"
+            )
         raise ValueError(f"{label} must use lowercase letters, numbers, and underscores only: {value!r}")
     return value
 
