@@ -1,0 +1,45 @@
+id: notion_kanban_in_progress
+display_name: Notion Kanban — In Progress
+connected_system: notion_genome
+source_type: notion_database
+external_ref:
+  database_id: <notion_database_id>
+watch_method: poll
+cadence: every_1_minute
+enabled: false
+cursor:
+  type: last_edited_time
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{database_id}:{page_id}:{last_edited_time}"
+filters:
+  status_field: Status
+  status_values:
+    - In Progress
+trigger_rules:
+  - id: notion_work_item_started
+    display_name: Work item moved to In Progress
+    enabled: false
+    when:
+      event_type: notion.database_page.updated
+      fields:
+        Status: In Progress
+    then:
+      emit_event:
+        type: os.work_item.started
+      enqueue:
+        work_type: plan_implementation
+        route_to: shared_factory
+        context_profile: plan_file_and_runtime_state
+        maturity: prepare
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{database_id}:{page_id}:notion_work_item_started"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

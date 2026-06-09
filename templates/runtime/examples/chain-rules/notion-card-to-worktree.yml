@@ -1,0 +1,24 @@
+id: notion_card_to_worktree
+display_name: Notion work item started — create worktree and dispatch agent
+enabled: false
+when:
+  event_type: os.work_item.started
+  filters: {}
+then:
+  enqueue:
+    work_type: plan_implementation
+    route_to: shared_factory
+    workflow: worktree_dispatch
+    context_profile: plan_file_and_runtime_state
+    execution_target: codex
+    maturity: prepare
+approval:
+  required: false
+limits:
+  max_chain_depth: 3
+  cooldown: 5_minutes
+idempotency:
+  key: "{event_idempotency_key}:notion_card_to_worktree"
+outputs:
+  run_queue: shared_factory/00-control-plane/run-queue.yml
+  event_log: shared_factory/06-runs-and-logs/events/

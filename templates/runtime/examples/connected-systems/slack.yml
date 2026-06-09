@@ -1,0 +1,32 @@
+id: slack_genome
+display_name: Genome's Slack Workspace
+system: slack
+status: planned
+owner: OS Owner
+provider_priority:
+  - native_mcp
+  - composio
+  - direct_api
+credential_refs:
+  env_vars:
+    - SLACK_BOT_TOKEN
+    - SLACK_USER_TOKEN
+  account_aliases:
+    - slack_genome
+workspace_verification:
+  required: true
+  expected_workspace: <slack_workspace_name>
+permissions:
+  read:
+    - channels
+    - messages
+    - threads
+    - users
+    - reactions
+  write:
+    - messages
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor slack_genome

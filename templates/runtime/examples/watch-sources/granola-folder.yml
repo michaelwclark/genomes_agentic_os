@@ -1,0 +1,48 @@
+id: granola_recent_notes
+display_name: Granola — Recent Meeting Notes
+connected_system: granola_genome
+source_type: granola_folder
+external_ref:
+  folder_id: <granola_folder_id_or_recent>
+  note_types:
+    - transcript
+    - summary
+watch_method: poll
+cadence: every_15_minutes
+enabled: false
+cursor:
+  type: timestamp
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{folder_id}:{note_id}:{created_at}"
+filters:
+  note_types:
+    - transcript
+    - summary
+trigger_rules:
+  - id: granola_new_meeting_note
+    display_name: New meeting transcript or summary available
+    enabled: false
+    when:
+      event_type: granola_folder.polled
+      fields:
+        note_type: transcript
+    then:
+      emit_event:
+        type: granola.note.created
+      enqueue:
+        work_type: review
+        route_to: shared_factory
+        context_profile: source_event
+        maturity: observe
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{folder_id}:{note_id}:granola_new_meeting_note"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

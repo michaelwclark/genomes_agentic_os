@@ -1,0 +1,27 @@
+id: filesystem_local
+display_name: Local Filesystem Drop Folder
+system: filesystem
+status: planned
+owner: OS Owner
+provider_priority:
+  - connector
+  - direct_api
+credential_refs:
+  env_vars: []
+  account_aliases:
+    - filesystem_local
+workspace_verification:
+  required: false
+  expected_workspace: ""
+permissions:
+  read:
+    - files
+    - directories
+    - metadata
+  write:
+    - files
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor filesystem_local

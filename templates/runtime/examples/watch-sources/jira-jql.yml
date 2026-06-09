@@ -1,0 +1,45 @@
+id: jira_ready_for_dev
+display_name: Jira — Ready for Development Issues
+connected_system: jira_genome
+source_type: jira_jql
+external_ref:
+  jql: "project = <PROJECT_KEY> AND status = 'Ready for Dev' ORDER BY updated DESC"
+  project_key: <PROJECT_KEY>
+watch_method: poll
+cadence: every_5_minutes
+enabled: false
+cursor:
+  type: timestamp
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{project_key}:{issue_key}:{updated}"
+filters:
+  status_values:
+    - Ready for Dev
+trigger_rules:
+  - id: jira_issue_ready_for_dev
+    display_name: Jira issue moved to Ready for Dev
+    enabled: false
+    when:
+      event_type: jira_jql.polled
+      fields:
+        status: Ready for Dev
+    then:
+      emit_event:
+        type: os.work_item.started
+      enqueue:
+        work_type: plan_implementation
+        route_to: shared_factory
+        context_profile: plan_file_and_runtime_state
+        maturity: prepare
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{project_key}:{issue_key}:jira_issue_ready_for_dev"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

@@ -1,0 +1,41 @@
+id: agentmail_main_inbox
+display_name: AgentMail — Main Agent Inbox
+connected_system: agentmail_genome
+source_type: agentmail_inbox
+external_ref:
+  inbox_id: <agentmail_inbox_id>
+watch_method: poll
+cadence: every_5_minutes
+enabled: false
+cursor:
+  type: event_id
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{inbox_id}:{message_id}"
+filters: {}
+trigger_rules:
+  - id: agentmail_inbound_message
+    display_name: Inbound AgentMail message or reply needed
+    enabled: false
+    when:
+      event_type: agentmail_inbox.polled
+      fields: {}
+    then:
+      emit_event:
+        type: os.observation
+      enqueue:
+        work_type: review
+        route_to: shared_factory
+        context_profile: source_event
+        maturity: observe
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{inbox_id}:{message_id}:agentmail_inbound_message"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

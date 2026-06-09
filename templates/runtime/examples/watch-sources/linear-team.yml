@@ -1,0 +1,45 @@
+id: linear_in_progress_issues
+display_name: Linear — In Progress Issues
+connected_system: linear_genome
+source_type: linear_team
+external_ref:
+  team_id: <linear_team_id>
+  team_key: <TEAM_KEY>
+  workflow_state: In Progress
+watch_method: poll
+cadence: every_5_minutes
+enabled: false
+cursor:
+  type: timestamp
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{team_id}:{issue_id}:{updated_at}"
+filters:
+  workflow_state: In Progress
+trigger_rules:
+  - id: linear_issue_in_progress
+    display_name: Linear issue moved to In Progress
+    enabled: false
+    when:
+      event_type: linear_team.polled
+      fields:
+        workflow_state: In Progress
+    then:
+      emit_event:
+        type: os.work_item.started
+      enqueue:
+        work_type: plan_implementation
+        route_to: shared_factory
+        context_profile: plan_file_and_runtime_state
+        maturity: prepare
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{team_id}:{issue_id}:linear_issue_in_progress"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

@@ -1,0 +1,46 @@
+id: filesystem_exports_drop
+display_name: Filesystem — Exports Drop Folder
+connected_system: filesystem_local
+source_type: filesystem_glob
+external_ref:
+  glob: "<drop_folder_path>/*.md"
+  base_path: <drop_folder_path>
+watch_method: poll
+cadence: every_5_minutes
+enabled: false
+cursor:
+  type: file_mtime
+  state_ref: shared_factory/00-control-plane/watch-cursors.yml
+dedupe:
+  idempotency_key: "{source_type}:{base_path}:{filename}:{file_mtime}"
+filters:
+  extensions:
+    - .md
+    - .txt
+    - .json
+trigger_rules:
+  - id: filesystem_new_export_file
+    display_name: New export, artifact, or handoff file detected
+    enabled: false
+    when:
+      event_type: filesystem_glob.polled
+      fields: {}
+    then:
+      emit_event:
+        type: os.observation
+      enqueue:
+        work_type: review
+        route_to: shared_factory
+        context_profile: source_event
+        maturity: observe
+    approval:
+      required: false
+    idempotency:
+      key: "{source_type}:{base_path}:{filename}:filesystem_new_export_file"
+route:
+  command: agentic-os route
+  context_command: agentic-os context build
+  fallback_domain: shared_factory
+outputs:
+  source_events_dir: shared_factory/06-runs-and-logs/source-events/
+  run_queue_ref: shared_factory/00-control-plane/run-queue.yml

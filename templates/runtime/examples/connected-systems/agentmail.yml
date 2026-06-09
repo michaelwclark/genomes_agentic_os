@@ -1,0 +1,31 @@
+id: agentmail_genome
+display_name: Genome's AgentMail Inbox
+system: agentmail
+status: planned
+owner: OS Owner
+provider_priority:
+  - native_mcp
+  - direct_api
+credential_refs:
+  env_vars:
+    - AGENTMAIL_API_KEY
+    - AGENTMAIL_INBOX_ID
+  account_aliases:
+    - agentmail_genome
+workspace_verification:
+  required: true
+  expected_workspace: <agentmail_account_id>
+permissions:
+  read:
+    - inbox
+    - threads
+    - messages
+    - attachments
+  write:
+    - replies
+    - drafts
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor agentmail_genome

@@ -1,0 +1,37 @@
+id: jira_genome
+display_name: Genome's Jira Cloud
+system: jira
+status: planned
+owner: OS Owner
+provider_priority:
+  - composio
+  - native_mcp
+  - direct_api
+credential_refs:
+  env_vars:
+    - JIRA_API_TOKEN
+    - JIRA_BASE_URL
+    - JIRA_USER_EMAIL
+  account_aliases:
+    - jira_genome
+workspace_verification:
+  required: true
+  expected_workspace: <jira_cloud_site_name>
+permissions:
+  read:
+    - issues
+    - projects
+    - boards
+    - sprints
+    - comments
+    - worklogs
+  write:
+    - issues
+    - comments
+    - worklogs
+    - transitions
+approval_required_for:
+  - external_message_send
+  - customer_visible_output
+health_check:
+  command: agentic-os connected-system doctor jira_genome
