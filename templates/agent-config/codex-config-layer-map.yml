@@ -27,6 +27,7 @@ agentic_os_layers:
     config_path: ~/.codex/config.toml
     prompt_files:
       - ~/.codex/AGENTS.md
+      - ~/.codex/PROFILE.md
     intended_settings:
       - default profile
       - personal model defaults
@@ -37,10 +38,12 @@ agentic_os_layers:
     config_path: ~/agentic_os/config.toml
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
       - TOOLS.md
+      - MEMORY.md
     intended_settings:
       - OS operating profile
       - shared skills and tooling
@@ -50,10 +53,12 @@ agentic_os_layers:
     config_path: <customer_os>/config.toml
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
       - TOOLS.md
+      - MEMORY.md
     intended_settings:
       - customer data boundary
       - customer MCP servers
@@ -63,10 +68,12 @@ agentic_os_layers:
     config_path: <domain_or_lane>/config.toml
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
       - TOOLS.md
+      - MEMORY.md
     intended_settings:
       - domain routing
       - model/reasoning profile
@@ -76,6 +83,7 @@ agentic_os_layers:
     config_path: <domain>/02-projects/<project>/config.toml
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
@@ -90,6 +98,7 @@ agentic_os_layers:
     config_path: <workflow>/config.toml
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
@@ -99,6 +108,20 @@ agentic_os_layers:
       - temporary profile override
       - workflow-specific context
       - workflow-specific validation
+  automation:
+    config_path: <automation>/config.toml
+    prompt_files:
+      - AGENTS.md
+      - PROFILE.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
+      - MEMORY.md
+    intended_settings:
+      - automation-scoped posture
+      - automation contract and context
+      - approval and evidence gates
 security_sensitive_keys:
   - approval_policy
   - approvals_reviewer

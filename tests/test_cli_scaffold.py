@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
+from genomes_agentic_os.config_ops import LAYER_POLICIES, PROFILE_MANAGED_MARKER, sidecar_path
 from genomes_agentic_os.routing import context_from_here
 from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES
 from genomes_agentic_os.validate import validate_root
@@ -707,7 +708,9 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
         "personal",
     }
     assert (harness(root) / "AGENTS.md").is_file()
+    assert (harness(root) / "PROFILE.md").is_file()
     assert (harness(root) / "config.toml").is_file()
+    assert sidecar_path(harness(root)).is_file()
     assert (shared_factory(root) / "domain.yml").is_file()
     assert (legacy_project / "work-items").is_dir()
     assert (legacy_project / "work-items" / "01-intake").is_dir()
@@ -715,6 +718,8 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
     assert (legacy_project / "work-items" / "03-complete").is_dir()
     assert (legacy_project / "config" / "work-lifecycle.yml").is_file()
     assert not (root / "shared_factory").exists()
+    assert not (root / "PROFILE.md").exists()
+    assert not (root / "config").exists()
     assert list((harness(root) / "logs" / "migrations").glob("harness-layout-*/legacy-root/AGENTS.md"))
     assert validate_root(root).ok
 
@@ -961,12 +966,22 @@ def test_config_install_apply_creates_config_and_prompt_files(tmp_path: Path) ->
     assert config.is_file()
     content = config.read_text(encoding="utf-8")
     assert 'layer = "agentic_os_root"' in content
-    assert (
-        'prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]'
-        in content
-    )
-    for filename in ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"):
+    parsed = tomllib.loads(content)
+    assert parsed["model"] == "gpt-5.4-mini"
+    assert parsed["profiles"]["agentic_os_root"]["agentic_os"]["prompt_files"] == [
+        "AGENTS.md",
+        "PROFILE.md",
+        "CLAUDE.md",
+        "ROUTER.md",
+        "CONTEXT.md",
+        "RULES.md",
+        "TOOLS.md",
+        "MEMORY.md",
+    ]
+    assert parsed["project_doc_fallback_filenames"][0] == "PROFILE.md"
+    for filename in ("AGENTS.md", "PROFILE.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"):
         assert (root / filename).is_file()
+    assert sidecar_path(root).is_file()
     assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
     tools = (root / "TOOLS.md").read_text(encoding="utf-8")
     assert "`/orchestrate`" in tools
@@ -1140,7 +1155,7 @@ def test_hook_sync_points_active_settings_at_installed_harness_hooks(tmp_path: P
 def test_config_doctor_reports_missing_required_otel_and_mcp_keys(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     root.mkdir()
-    (root / "config.toml").write_text('model = "gpt-5.2"\n', encoding="utf-8")
+    (root / "config.toml").write_text('model = "local-model"\n', encoding="utf-8")
 
     assert main(["config", "doctor", "--root", str(root), "--layer", "agentic_os_root"]) == 1
 
@@ -1163,9 +1178,13 @@ def test_config_install_is_idempotent_on_repeated_apply(tmp_path: Path) -> None:
 
     assert main(["config", "install", "--root", str(root), "--layer", "customer_os_root", "--apply"]) == 0
     first = (root / "config.toml").read_text(encoding="utf-8")
+    first_profile = (root / "PROFILE.md").read_text(encoding="utf-8")
+    first_sidecar = sidecar_path(root).read_text(encoding="utf-8")
     assert main(["config", "install", "--root", str(root), "--layer", "customer_os_root", "--apply"]) == 0
 
     assert (root / "config.toml").read_text(encoding="utf-8") == first
+    assert (root / "PROFILE.md").read_text(encoding="utf-8") == first_profile
+    assert sidecar_path(root).read_text(encoding="utf-8") == first_sidecar
 
 
 def test_config_install_preserves_existing_conflicts_until_confirmed(tmp_path: Path) -> None:
@@ -1197,6 +1216,8 @@ def test_config_install_preserves_existing_conflicts_until_confirmed(tmp_path: P
     assert 'model = "local-model"' in merged
     assert 'approval_policy = "on-request"' in merged
     assert (root / "AGENTS.md").is_file()
+    assert (root / "PROFILE.md").is_file()
+    assert sidecar_path(root).is_file()
     assert list(root.glob("config.toml.bak-*"))
     assert main(["config", "doctor", "--root", str(root), "--layer", "domain_or_lane"]) == 0
 
@@ -1213,9 +1234,65 @@ def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> No
     for layer, expected_files in cases.items():
         root = tmp_path / layer
         assert main(["config", "install", "--root", str(root), "--layer", layer, "--apply"]) == 0
-        assert (root / "config.toml").is_file()
-        for filename in ("AGENTS.md", "CLAUDE.md", *expected_files):
+        config_path = root / "config.toml"
+        assert config_path.is_file()
+        policy = LAYER_POLICIES[layer]
+        parsed_config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert parsed_config["model"] == policy.model
+        assert parsed_config["model_reasoning_effort"] == policy.model_reasoning_effort
+        assert parsed_config["project_doc_fallback_filenames"][0] == "PROFILE.md"
+        assert policy.profile in parsed_config["profiles"]
+        for legacy_profile in policy.legacy_profiles:
+            assert legacy_profile in parsed_config["profiles"]
+            assert parsed_config["profiles"][legacy_profile]["model"] == policy.model
+        for filename in ("AGENTS.md", "PROFILE.md", "CLAUDE.md", *expected_files):
             assert (root / filename).is_file()
+        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+        assert "<!-- agentic-os-codex-profile:start -->" in agents
+        assert f"Role: {policy.role}" in agents
+        assert f"Profile: {policy.profile}" in agents
+        profile = (root / "PROFILE.md").read_text(encoding="utf-8")
+        assert PROFILE_MANAGED_MARKER in profile
+        assert f"Role: {policy.role}" in profile
+        assert f"Layer: {policy.layer_token}" in profile
+        assert f"Profile: {policy.profile}" in profile
+        assert f"Default model: {policy.model}" in profile
+        sidecar = yaml.safe_load(sidecar_path(root).read_text(encoding="utf-8"))
+        assert sidecar["layer"] == policy.layer_token
+        assert sidecar["profile"] == policy.profile
+        assert sidecar["legacy_profiles"] == list(policy.legacy_profiles)
+        assert sidecar["role"] == policy.role
+        assert sidecar["model"] == policy.model
+        assert sidecar["model_reasoning_effort"] == policy.model_reasoning_effort
+        assert sidecar["prompt_files"] == list(policy.prompt_files)
+        assert "PROFILE.md" in sidecar["prompt_files"]
+
+
+def test_config_install_blocks_unmanaged_and_changed_managed_profile_artifacts(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    profile = root / "PROFILE.md"
+    sidecar = sidecar_path(root)
+    sidecar.parent.mkdir()
+    profile.write_text("# Local profile\n", encoding="utf-8")
+    sidecar.write_text("role: local\n", encoding="utf-8")
+
+    assert main(["config", "install", "--root", str(root), "--layer", "project", "--apply"]) == 2
+    assert profile.read_text(encoding="utf-8") == "# Local profile\n"
+    assert sidecar.read_text(encoding="utf-8") == "role: local\n"
+
+    assert main(["config", "install", "--root", str(root), "--layer", "project", "--apply", "--confirm-conflicts"]) == 0
+    assert "Profile: project_orchestrator" in profile.read_text(encoding="utf-8")
+    assert yaml.safe_load(sidecar.read_text(encoding="utf-8"))["profile"] == "project_orchestrator"
+
+    profile.write_text(profile.read_text(encoding="utf-8") + "\nLocal managed edit.\n", encoding="utf-8")
+    sidecar_payload = yaml.safe_load(sidecar.read_text(encoding="utf-8"))
+    sidecar_payload["role_summary"] = "local managed edit"
+    sidecar.write_text(yaml.safe_dump(sidecar_payload, sort_keys=False), encoding="utf-8")
+
+    assert main(["config", "install", "--root", str(root), "--layer", "project", "--apply"]) == 2
+    assert "Local managed edit." in profile.read_text(encoding="utf-8")
+    assert yaml.safe_load(sidecar.read_text(encoding="utf-8"))["role_summary"] == "local managed edit"
 
 
 def test_config_install_tree_covers_domain_project_workflow_and_automation_layers(tmp_path: Path, capsys) -> None:
@@ -1271,6 +1348,9 @@ def test_config_install_tree_apply_writes_and_doctors_discovered_layers(tmp_path
         config = target / "config.toml"
         assert config.is_file()
         assert f'layer = "{layer}"' in config.read_text(encoding="utf-8")
+        assert (target / "PROFILE.md").is_file()
+        assert sidecar_path(target).is_file()
+        assert yaml.safe_load(sidecar_path(target).read_text(encoding="utf-8"))["profile"] == LAYER_POLICIES[layer].profile
         assert main(["config", "doctor", "--root", str(target), "--layer", layer]) == 0
 
 
@@ -2162,6 +2242,8 @@ def test_customer_init_generates_public_customer_os_from_profile(tmp_path: Path,
     assert result["customer"] == "acme_ops"
     assert (root / "README.md").is_file()
     assert (root / "ROUTER.md").is_file()
+    assert (root / "PROFILE.md").is_file()
+    assert sidecar_path(root).is_file()
     assert (root / "customer.yml").is_file()
     assert (root / "support" / "domain.yml").is_file()
     assert (root / "support" / "03-workflows" / "support" / "intake_triage" / "workflow.md").is_file()
@@ -2172,6 +2254,34 @@ def test_customer_init_generates_public_customer_os_from_profile(tmp_path: Path,
     disallowed = ("genome", "clark", "clarks_consulting", "los", "lenders")
     generated_text = "\n".join(path.read_text(encoding="utf-8").lower() for path in customer_text_files(root))
     assert not any(re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", generated_text) for term in disallowed)
+    customer_role_artifacts = [
+        root / "config.toml",
+        root / "PROFILE.md",
+        sidecar_path(root),
+        root / "support" / "config.toml",
+        root / "support" / "PROFILE.md",
+        sidecar_path(root / "support"),
+        root / "support" / "03-workflows" / "support" / "intake_triage" / "config.toml",
+        root / "support" / "03-workflows" / "support" / "intake_triage" / "PROFILE.md",
+        sidecar_path(root / "support" / "03-workflows" / "support" / "intake_triage"),
+        root / "support" / "04-automations" / "support" / "thread_intake" / "config.toml",
+        root / "support" / "04-automations" / "support" / "thread_intake" / "PROFILE.md",
+        sidecar_path(root / "support" / "04-automations" / "support" / "thread_intake"),
+    ]
+    assert all(path.is_file() for path in customer_role_artifacts)
+    role_text = "\n".join(path.read_text(encoding="utf-8").lower() for path in customer_role_artifacts)
+    assert "project_orchestrator" not in role_text
+    assert "genome's notion" not in role_text
+    assert "/users/genome" not in role_text
+    assert "genomes_notion_pat" not in role_text
+    root_sidecar = yaml.safe_load(sidecar_path(root).read_text(encoding="utf-8"))
+    assert root_sidecar["role"] == "customer_navigator"
+    assert root_sidecar["model"] == "gpt-5.4-mini"
+    automation_sidecar = yaml.safe_load(
+        sidecar_path(root / "support" / "04-automations" / "support" / "thread_intake").read_text(encoding="utf-8")
+    )
+    assert automation_sidecar["profile"] == "automation_guard"
+    assert automation_sidecar["model"] == "gpt-5.5"
 
     assert main(["customer", "validate", "--root", str(root)]) == 0
     packet = yaml.safe_load(capsys.readouterr().out)

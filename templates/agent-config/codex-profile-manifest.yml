@@ -1,8 +1,11 @@
 id: codex_profile_manifest
-version: 0.1.0
+version: 0.2.0
+managed_feature: 62-role-aware-codex-config-layers
+policy_version: 1
 purpose: >
   Agentic OS metadata for Codex config profiles. Use with
-  templates/agent-config/codex-profiles.toml.
+  templates/agent-config/codex-profiles.toml and generated
+  config/codex-profile.yml sidecars.
 default_telemetry:
   otel_log_user_prompt: false
   secrets_in_logs: false
@@ -16,16 +19,90 @@ merge_rules:
   safety: strictest_rule_wins
   mcp_availability: runtime_intersection_with_narrowest_layer
   telemetry: narrower_layers_may_only_restrict
+defaults:
+  approval_policy: on-request
+  sandbox_mode: workspace-write
+  prompt_files:
+    - AGENTS.md
+    - PROFILE.md
+    - CLAUDE.md
+    - ROUTER.md
+    - CONTEXT.md
+    - RULES.md
+    - TOOLS.md
+    - MEMORY.md
+  project_doc_fallback_filenames:
+    - PROFILE.md
+    - ROUTER.md
+    - CONTEXT.md
+    - RULES.md
+    - TOOLS.md
+    - MEMORY.md
+role_policy:
+  global_harness:
+    profile: global_user_harness
+    legacy_profiles: []
+    role: navigator
+    model: gpt-5.4-mini
+    model_reasoning_effort: medium
+    mcp_availability: user-approved only
+  agentic_os_root:
+    profile: agentic_os_root
+    legacy_profiles: []
+    role: os_navigator
+    model: gpt-5.4-mini
+    model_reasoning_effort: medium
+    mcp_availability: source package and local filesystem tools
+  customer_os_root:
+    profile: customer_os_root
+    legacy_profiles: []
+    role: customer_navigator
+    model: gpt-5.4-mini
+    model_reasoning_effort: medium
+    mcp_availability: approved customer systems only
+  domain_or_lane:
+    profile: domain_or_lane
+    legacy_profiles: []
+    role: domain_navigator
+    model: gpt-5.4-mini
+    model_reasoning_effort: medium
+    mcp_availability: domain-approved systems only
+  project:
+    profile: project_orchestrator
+    legacy_profiles:
+      - project
+    role: orchestrator
+    model: gpt-5.5
+    model_reasoning_effort: high
+    mcp_availability: project-approved systems only
+  workflow_or_task:
+    profile: workflow_orchestrator
+    legacy_profiles:
+      - workflow_or_task
+    role: orchestrator
+    model: gpt-5.5
+    model_reasoning_effort: high
+    mcp_availability: workflow-approved systems only
+  automation:
+    profile: automation_guard
+    legacy_profiles:
+      - automation
+    role: automation_guard
+    model: gpt-5.5
+    model_reasoning_effort: high
+    mcp_availability: explicit automation contract only
 profiles:
   global_user_harness:
     layer: global_harness
-    intended_model_behavior: conservative_global_defaults
+    intended_model_behavior: lightweight_navigation_and_routing
     skills:
       - skill-discovery
       - memory-refresh
       - shell-hygiene
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
+      - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
@@ -40,7 +117,7 @@ profiles:
       notes: Do not log secrets or full prompts.
   agentic_os_root:
     layer: agentic_os_root
-    intended_model_behavior: product-source-aware
+    intended_model_behavior: lightweight_os_navigation
     skills:
       - build-runner
       - os-doctor
@@ -48,6 +125,8 @@ profiles:
       - run-logger
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
+      - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
@@ -62,13 +141,15 @@ profiles:
       notes: Store run evidence in local logs.
   customer_os_root:
     layer: customer_os_root
-    intended_model_behavior: customer-boundary-aware
+    intended_model_behavior: customer_boundary_navigation
     skills:
       - customer-validation
       - source-map-review
       - handoff-checks
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
+      - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
       - RULES.md
@@ -84,7 +165,7 @@ profiles:
       notes: Keep customer-safe summaries only.
   domain_or_lane:
     layer: domain_or_lane
-    intended_model_behavior: narrow-routing-and-source-map-aware
+    intended_model_behavior: lightweight_domain_routing
     skills:
       - routing
       - context-pack-builder
@@ -92,6 +173,7 @@ profiles:
       - automation-qualifier
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
@@ -106,15 +188,18 @@ profiles:
     logging_telemetry_posture:
       otel_log_user_prompt: false
       notes: Use domain run logs and activity logs.
-  project:
+  project_orchestrator:
     layer: project
-    intended_model_behavior: project-source-and-rules-aware
+    intended_model_behavior: heavy_project_orchestration
+    compatibility_aliases:
+      - project
     skills:
       - routing
       - context-pack-builder
       - source-map-review
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
@@ -132,15 +217,18 @@ profiles:
     logging_telemetry_posture:
       otel_log_user_prompt: false
       notes: Use project status, source map, and linked run logs.
-  workflow_or_task:
+  workflow_orchestrator:
     layer: workflow_or_task
-    intended_model_behavior: acceptance-criteria-driven
+    intended_model_behavior: heavy_acceptance_criteria_execution
+    compatibility_aliases:
+      - workflow_or_task
     skills:
       - context-pack-builder
       - qa-planning
       - run-closeout
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md
@@ -159,15 +247,18 @@ profiles:
     logging_telemetry_posture:
       otel_log_user_prompt: false
       notes: Record validation in run logs.
-  automation:
+  automation_guard:
     layer: automation
-    intended_model_behavior: guarded-idempotent-runtime-operation
+    intended_model_behavior: guarded_idempotent_runtime_operation
+    compatibility_aliases:
+      - automation
     skills:
       - automation-qualifier
       - runtime-operator
       - integration-setup
     prompt_files:
       - AGENTS.md
+      - PROFILE.md
       - CLAUDE.md
       - ROUTER.md
       - CONTEXT.md

@@ -9,8 +9,8 @@ mechanical work, and one agent reads the right files at the right moment.
 
 > **The promise:** stop rebuilding operating context from scratch in every chat.
 
-**Validated baseline (2026-05-30):** 51 CLI commands functional · 2 deliberate
-guardrail exits · 0 crashes · 82/82 tests pass. Re-validate with
+**Validated baseline (2026-06-09):** 53 CLI commands functional · 2 deliberate
+guardrail exits · 0 crashes · 97/97 tests pass. Re-validate with
 `bash .agentic-atlas/tools/validate-cli.sh` and `.venv/bin/python -m pytest -q`.
 
 ---

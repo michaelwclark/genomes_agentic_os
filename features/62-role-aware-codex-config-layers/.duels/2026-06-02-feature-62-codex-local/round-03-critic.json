@@ -1,0 +1,66 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The revision closes the original severe prompt-visibility and prompt-stitching gaps well enough for implementation to converge. One new moderate contradiction remains in the customer artifact scanning rules: the spec both requires managed ownership metadata and appears to require whole-artifact denylist scans that may reject that metadata.",
+  "falsifiability": {
+    "failureCondition": "A customer install renders config/codex-profile.yml with managed_by: genomes_agentic_os, and the required customer denylist test scans the whole artifact for genomes_agentic_os.",
+    "observableSignal": "The customer safety test either fails on the required managed_by field or is weakened to skip broad artifact scanning without a precise exception.",
+    "measurementMethod": "Generate a neutral customer OS fixture, render config.toml, PROFILE.md, and config/codex-profile.yml, then run the documented denylist scan exactly as specified against full file contents and separately against extracted user-visible role text.",
+    "threshold": "Whole-artifact scan must pass with zero forbidden private terms except explicitly enumerated metadata-key exceptions, and user-visible role text must contain zero occurrences of all denylisted terms.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i6",
+      "severity": "moderate",
+      "category": "invariant_gap",
+      "title": "Customer denylist conflicts with managed metadata",
+      "description": "The spec requires generated sidecars to include `managed_by: genomes_agentic_os`, while the customer safety section frames `config/codex-profile.yml` as part of the generated-artifact denylist surface and later says customer generated files must not include denylisted terms. Although one bullet narrows `genomes_agentic_os` to user-visible role text, the required targeted test says to scan customer generated files, which can make the sidecar both required and forbidden. Implementation agents may either remove required ownership metadata from customer sidecars or weaken the customer scan inconsistently.",
+      "suggestedFix": "Split customer scanning into `whole_artifact_forbidden_terms` and `user_visible_role_text_forbidden_terms`, and explicitly allow `managed_by: genomes_agentic_os` as non-user-visible metadata if that field remains required.",
+      "lineRef": "Customer OS Safety; Sidecar Metadata Contract; Required targeted tests"
+    }
+  ],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "The spec now requires a temporary root, generated install, config selector, prompt capture, and exact-once role-field checks."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "The prompt_files invariant is now tied to both sidecar metadata and the loader-visible prompt inventory, with a targeted test."
+    },
+    {
+      "issueId": "i3",
+      "review": "PARTIAL",
+      "rationale": "The customer safety lists are now concrete, but the scan scope conflicts with required managed metadata and needs one clarification."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "The P1 compatibility discovery pass and explicit legacy_profiles field remove the circular profile rename decision."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Ownership markers, unmanaged-file behavior, and conflict tests are now defined for both PROFILE.md and the sidecar."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "Temporary-root prompt validation is concrete enough to prevent accidental validation against the user's live Codex profile.",
+      "lineRef": "Prompt Visibility Contract"
+    },
+    {
+      "id": "p2",
+      "summary": "The policy map now carries profile compatibility, prompt files, MCP scope, and customer-safety selection in one test-addressable structure.",
+      "lineRef": "Authoritative Policy Map"
+    },
+    {
+      "id": "p3",
+      "summary": "Managed-file behavior for new generated files preserves Feature 57's blocking conflict model instead of silently overwriting local content.",
+      "lineRef": "Managed-File Ownership And Conflict Behavior"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "verdict": "FAIL_WITH_FIXES",
+  "verdictRationale": "The spec is close to implementation-ready, but two enforcement points still allow divergent builds: prompt visibility is accepted by an underspecified debug command, and customer-safe output is defined by vague negative terms rather than an enforceable policy. These are fixable without rescoping the feature.",
+  "falsifiability": {
+    "failureCondition": "A generated project layer contains PROFILE.md with the orchestrator role, but the Codex prompt input used for that layer does not include the role block.",
+    "observableSignal": "The prompt-input capture lacks Role, Layer, Profile, Default model, or the role summary even though generated files exist on disk.",
+    "measurementMethod": "Create a temporary install root, run the documented config install command for the project layer, then run the exact documented Codex prompt-input command with the generated config/profile selected and grep for all required role fields.",
+    "threshold": "All five required fields must be present exactly once in the captured prompt input.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [
+    {
+      "id": "i1",
+      "severity": "severe",
+      "category": "unenforceable_validation",
+      "title": "Prompt visibility command is under-specified",
+      "description": "The acceptance gate depends on `codex debug prompt-input --profile project_orchestrator`, but the spec does not say how that command is pointed at the generated temporary root or generated config. Because tests must not mutate `~/.codex` or `~/agentic_os`, an implementer could accidentally validate the user's live profile, or validate nothing relevant while the generated `PROFILE.md` remains unloaded.",
+      "suggestedFix": "Specify the exact validation setup: temp root path, generated config path or environment variable, working directory, profile argument, and expected grep assertions. Add a targeted test or scripted recipe that fails if `PROFILE.md` exists but the prompt input omits the role block.",
+      "lineRef": "Prompt Visibility Contract; Acceptance Criteria 10; Validations"
+    },
+    {
+      "id": "i2",
+      "severity": "severe",
+      "category": "invariant_gap",
+      "title": "Prompt-file stitching target is not named",
+      "description": "The spec says to add `PROFILE.md` to whatever generated prompt-file inventory or stitching convention the repo uses, with fallback to `CONTEXT.md` or `AGENTS.md`. That leaves the core invariant dependent on implementer discovery rather than a named code path, so one agent may update only YAML `prompt_files` while another patches the actual loader.",
+      "suggestedFix": "Name the existing repo function, template, or manifest that controls Codex prompt files after checking the codebase, or require the implementation to introduce a single `prompt_files` rendering path used by both sidecar metadata and prompt stitching. Acceptance should assert that the same policy list drives generated files and the loader-visible prompt inventory.",
+      "lineRef": "Prompt Visibility Contract; Architecture / Authoritative Policy Map"
+    },
+    {
+      "id": "i3",
+      "severity": "moderate",
+      "category": "hidden_assumption",
+      "title": "Customer safety denylist is too vague",
+      "description": "Customer artifacts must not contain Genome-private terms, private paths, or unauthorized MCP names, but the spec does not enumerate which terms and MCP identifiers are forbidden or which MCPs are allowed. This makes the customer safety test easy to satisfy superficially while still leaking internal wording or accidentally removing valid customer terminology.",
+      "suggestedFix": "Define a concrete generated-artifact denylist and MCP allowlist for customer OS output, even if initially small. Include examples such as forbidden private paths, Genome-only MCP identifiers, and allowed customer-safe role names.",
+      "lineRef": "Customer OS Safety; Acceptance Criteria 8; Required targeted tests"
+    },
+    {
+      "id": "i4",
+      "severity": "moderate",
+      "category": "hidden_assumption",
+      "title": "Profile compatibility decision remains circular",
+      "description": "The spec says not to keep duplicate profile names unless current tests prove a public profile name is used, but it does not require the implementer to inspect the existing generated profile names before renaming `project` to `project_orchestrator`. This can break users who invoke existing profile names manually while still passing new tests that only assert the new canonical names.",
+      "suggestedFix": "Add a discovery step in P1 that records existing generated profile keys from docs/tests/templates, then lock the alias decision in the spec or implementation notes. If legacy names exist, define the alias map explicitly and test canonical plus legacy resolution.",
+      "lineRef": "Authoritative Policy Map; Risks; Open Decisions Locked By This Spec"
+    },
+    {
+      "id": "i5",
+      "severity": "moderate",
+      "category": "invariant_gap",
+      "title": "Sidecar YAML conflict ownership is unclear",
+      "description": "The spec says `config/codex-profile.yml` follows the same managed-file conflict behavior as `config.toml`, but it does not say how generated ownership is detected for new sidecars and `PROFILE.md`. If a user already has a local `PROFILE.md`, implementation could either overwrite it as generated or block forever with no upgrade path.",
+      "suggestedFix": "Define the managed-file marker or manifest entry used for `PROFILE.md` and `config/codex-profile.yml`, and specify behavior for pre-existing unmanaged files. Tests should cover missing file, managed changed file, and pre-existing unmanaged file cases.",
+      "lineRef": "Sidecar Metadata Contract; Merge And Conflict Behavior; P2"
+    }
+  ],
+  "ledgerReview": [],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec correctly preserves Feature 55 by separating native Codex TOML posture from richer Agentic OS metadata in YAML and prompt artifacts.",
+      "lineRef": "Vision; TOML Contract; Sidecar Metadata Contract"
+    },
+    {
+      "id": "p2",
+      "summary": "The seven-layer policy table is concrete enough to drive model-tiered generation and targeted tests for navigator versus heavy-work layers.",
+      "lineRef": "Authoritative Policy Map"
+    },
+    {
+      "id": "p3",
+      "summary": "The spec explicitly keeps Feature 57 conflict blocking behavior and extends it to newly generated files, which protects local model overrides and user edits.",
+      "lineRef": "Merge And Conflict Behavior; Acceptance Criteria 4"
+    }
+  ]
+}

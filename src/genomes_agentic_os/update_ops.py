@@ -39,6 +39,7 @@ LEGACY_ROOT_FILES = (
     "CONTEXT.md",
     "INVENTORY.md",
     "MEMORY.md",
+    "PROFILE.md",
     "README.md",
     "ROUTER.md",
     "RULES.md",
@@ -50,6 +51,7 @@ LEGACY_ROOT_FILES = (
 LEGACY_ROOT_CAPABILITY_DIRS = (
     "bin",
     "commands",
+    "config",
     "hooks",
     "libraries",
     "logs",

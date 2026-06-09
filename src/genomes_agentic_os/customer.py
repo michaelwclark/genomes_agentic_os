@@ -10,6 +10,16 @@ from typing import Any
 import yaml
 
 from .capability_registry import REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, inventory_markdown
+from .config_ops import (
+    PROJECT_DOC_FALLBACK_FILES,
+    agents_markdown_template,
+    profile_markdown_template,
+    profile_toml_block,
+    policy_for_layer,
+    sidecar_path,
+    sidecar_template,
+    toml_array,
+)
 from .scaffold import (
     AUTOMATION_FILES,
     ROOT_MARKER_FILENAME,
@@ -38,18 +48,13 @@ from .validate import ValidationResult, validate_domain
 
 
 PRIVATE_TERMS = ("genome", "clark", "clarks_consulting", "los", "lenders")
-CUSTOMER_CONFIG_PROFILES = {
-    "customer_os_root": "customer_os_root",
-    "domain_or_lane": "domain_or_lane",
-    "workflow_or_task": "workflow_or_task",
-    "automation": "automation",
-}
 CUSTOMER_ROOT_FILES = (
     ROOT_MARKER_FILENAME,
     "config.toml",
     "README.md",
     "ROUTER.md",
     "AGENTS.md",
+    "PROFILE.md",
     "CLAUDE.md",
     "CONTEXT.md",
     "RULES.md",
@@ -351,30 +356,20 @@ Record missing customer-approved tools here instead of falling back to another w
 
 
 def customer_layer_config(layer: str) -> str:
-    profile = CUSTOMER_CONFIG_PROFILES[layer]
+    policy = policy_for_layer(layer)
+    profile_blocks = "\n\n".join(profile_toml_block(policy, profile_name) for profile_name in policy.profile_names)
     return f"""# Agentic OS Codex config template
 # Layer: {layer}
 # Customer-safe local layer. Do not inline secrets.
 
-model = "gpt-5.2"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
+model = "{policy.model}"
+model_reasoning_effort = "{policy.model_reasoning_effort}"
+approval_policy = "{policy.approval_policy}"
+sandbox_mode = "{policy.sandbox_mode}"
 project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
-project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+project_doc_fallback_filenames = {toml_array(PROJECT_DOC_FALLBACK_FILES)}
 
-[profiles.{profile}]
-model = "gpt-5.2"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-
-[profiles.{profile}.agentic_os]
-layer = "{layer}"
-prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
-context_contract = "route-read-cd-repeat"
-rules_file = "RULES.md"
-tool_registry_file = "TOOLS.md"
-mcp_availability = "approved customer systems only"
-environment = "local filesystem"
+{profile_blocks}
 
 [otel]
 log_user_prompt = false
@@ -411,14 +406,21 @@ def write_customer_safe_file(path: Path, content: str, result: CustomerResult) -
 
 
 def ensure_customer_codex_layer(root: Path, layer: str, result: CustomerResult) -> None:
+    policy = policy_for_layer(layer)
     write_customer_safe_file(root / "config.toml", customer_layer_config(layer), result)
-    write_customer_safe_file(root / "AGENTS.md", agent_entrypoint("this customer-approved Agentic OS layer"), result)
+    write_customer_safe_file(
+        root / "AGENTS.md",
+        agents_markdown_template(policy, agent_entrypoint("this customer-approved Agentic OS layer")),
+        result,
+    )
+    write_customer_safe_file(root / "PROFILE.md", profile_markdown_template(policy), result)
     write_customer_safe_file(root / "CLAUDE.md", claude_adapter(), result)
     write_customer_safe_file(root / "ROUTER.md", "# Agent Router\n\nRoute to the narrowest customer-approved local layer before acting.\n", result)
     write_customer_safe_file(root / "CONTEXT.md", "# Local Context\n\nUse only customer-approved local context and source systems for this layer.\n", result)
     write_customer_safe_file(root / "RULES.md", render_customer_rules({"customer": {"display_name": "this customer", "approved_domains": []}}), result)
     write_customer_safe_file(root / "TOOLS.md", customer_layer_tools(), result)
     write_customer_safe_file(root / "MEMORY.md", "# Memory Policy\n\nRecord only durable, non-secret, customer-approved learnings.\n", result)
+    write_customer_safe_file(sidecar_path(root), sidecar_template(policy), result)
 
 
 def render_customer_asset(template_name: str, profile: dict[str, Any]) -> str:
@@ -702,6 +704,8 @@ def customer_validate(root: str | Path) -> dict[str, Any]:
     for filename in CUSTOMER_ROOT_FILES:
         if not (os_root / filename).is_file():
             core_errors.append(f"missing customer root file: {os_root / filename}")
+    if not sidecar_path(os_root).is_file():
+        core_errors.append(f"missing customer profile sidecar: {sidecar_path(os_root)}")
     for filename in CUSTOMER_HARNESS_FILES:
         if not harness_path(os_root, filename).is_file():
             core_errors.append(f"missing customer harness file: {harness_path(os_root, filename)}")

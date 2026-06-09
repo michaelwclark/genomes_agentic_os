@@ -44,8 +44,8 @@
 ## Notes for whoever picks these up
 
 - **Validate first, always.** Re-run `bash .agentic-atlas/tools/validate-cli.sh`
-  and `.venv/bin/python -m pytest -q` before and after. Baseline: 51 commands
-  OK (2 intentional guardrail exits), 82/82 tests pass.
+  and `.venv/bin/python -m pytest -q` before and after. Baseline: 53 commands
+  OK (2 intentional guardrail exits), 97/97 tests pass.
 - **Match the architecture.** New commands follow the §9 recipe in
   [`architecture/system-architecture.md`](architecture/system-architecture.md):
   parser + thin handler in `cli.py`, logic in a `*_ops.py`, template in

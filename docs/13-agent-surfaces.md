@@ -63,7 +63,7 @@ the same 19 `os-*` slash-commands and 18 skills into `TOOLS.md` for both harness
 
 ## Diagram
 
-![Both harnesses reading the same shared markdown core (AGENTS.md, ROUTER.md, CONTEXT.md, RULES.md, TOOLS.md, MEMORY.md, BRAIN.md) and the same CLI, then diverging: Claude via the @AGENTS.md adapter + skills/commands + MCP in Claude config; Codex via config.toml layers + profiles + config install + MCP in mcp_servers.*](diagrams/surfaces-harness-design.png)
+![Both harnesses reading the same shared markdown core (AGENTS.md, PROFILE.md, ROUTER.md, CONTEXT.md, RULES.md, TOOLS.md, MEMORY.md, BRAIN.md) and the same CLI, then diverging: Claude via the @AGENTS.md adapter plus skills, commands, and MCP in Claude config; Codex via config.toml layers, profiles, config install, and MCP in mcp_servers.*](diagrams/surfaces-harness-design.png)
 
 ---
 
@@ -93,8 +93,12 @@ contract:
 - `config.toml` gives Codex the project layer posture.
 - `config/*.yml` stores machine-readable project profile, workflows, output
   artifacts, validation, worktrees, memory, MCP, and tool defaults.
-- `ideas/` captures project-scoped notes before they become tickets, workflows,
-  or feature artifacts.
+- `work-items/01-intake/` captures project-known rough ideas as indexed markdown
+  files before they become specs, tickets, workflows, or implementation packets.
+  Expanded intake can use an indexed packet folder when a duel/spec pass creates
+  multiple files.
+- `ideas/` is a compatibility index for older tools, not the lifecycle source
+  of truth.
 - `src/` is the canonical source symlink when a local repo is known.
 - `worktrees/` contains visible symlinks to active branch checkouts, backed by
   `worktrees/index.yml` for routing.
@@ -199,8 +203,11 @@ built-in defaults.
 
 ### Profile keys
 
-Each `config.toml` carries a `[profiles.<layer>]` section. The four keys that
-govern runtime posture:
+Each `config.toml` carries one canonical `[profiles.<name>]` section and, where
+needed, compatibility aliases for older generated profile names. Navigation
+layers use `gpt-5.4-mini` with medium reasoning; project, workflow, and
+automation layers use `gpt-5.5` with high reasoning. The four keys that govern
+runtime posture:
 
 | Key | What it controls |
 |---|---|
@@ -244,8 +251,13 @@ no `config layers` or `config list` subcommand.
 
 #### `config install`
 
-Writes or merges `config.toml` (and `MEMORY.md`) for one OS layer. Dry-run by
-default — always preview before applying.
+Writes or merges `config.toml`, `PROFILE.md`, `config/codex-profile.yml`, and
+the standard prompt files for one OS layer. Dry-run is the default; always
+preview before applying.
+
+`PROFILE.md` is the tool-visible role artifact. The same short role block is
+mirrored into generated `AGENTS.md` because current `codex debug prompt-input`
+loads `AGENTS.md` but not arbitrary `PROFILE.md` files.
 
 ```
 agentic-os config install --layer <layer> [--root <path>] [--dry-run | --apply]
@@ -276,12 +288,15 @@ created:
 - /private/tmp/aos-validate/config-layer
 - /private/tmp/aos-validate/config-layer/config.toml
 - /private/tmp/aos-validate/config-layer/AGENTS.md
+- /private/tmp/aos-validate/config-layer/PROFILE.md
 - /private/tmp/aos-validate/config-layer/CLAUDE.md
 - /private/tmp/aos-validate/config-layer/ROUTER.md
 - /private/tmp/aos-validate/config-layer/CONTEXT.md
 - /private/tmp/aos-validate/config-layer/RULES.md
 - /private/tmp/aos-validate/config-layer/TOOLS.md
 - /private/tmp/aos-validate/config-layer/MEMORY.md
+- /private/tmp/aos-validate/config-layer/config
+- /private/tmp/aos-validate/config-layer/config/codex-profile.yml
 updated: []
 skipped: []
 backups: []
@@ -294,20 +309,22 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   +# Layer: agentic_os_root
   +# Local edits are preserved by the installer. Review diffs before applying.
   +
-  +model = "gpt-5.2"
+  +model = "gpt-5.4-mini"
+  +model_reasoning_effort = "medium"
   +approval_policy = "on-request"
   +sandbox_mode = "workspace-write"
   +project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", ...]
-  +project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", ...]
+  +project_doc_fallback_filenames = ["PROFILE.md", "ROUTER.md", "CONTEXT.md", ...]
   +
   +[profiles.agentic_os_root]
-  +model = "gpt-5.2"
+  +model = "gpt-5.4-mini"
+  +model_reasoning_effort = "medium"
   +approval_policy = "on-request"
   +sandbox_mode = "workspace-write"
   +
   +[profiles.agentic_os_root.agentic_os]
   +layer = "agentic_os_root"
-  +prompt_files = ["AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md",
+  +prompt_files = ["AGENTS.md", "PROFILE.md", "CLAUDE.md", "ROUTER.md",
   +                "RULES.md", "TOOLS.md", "MEMORY.md"]
   +context_contract = "route-read-cd-repeat"
   ...

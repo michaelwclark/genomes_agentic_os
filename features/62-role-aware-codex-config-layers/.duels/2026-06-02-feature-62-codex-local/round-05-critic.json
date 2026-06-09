@@ -1,0 +1,61 @@
+{
+  "verdict": "PASS",
+  "verdictRationale": "The current spec closes the prior severe prompt-visibility and prompt-stitching gaps with temporary-root validation, exact prompt assertions, and a shared policy-driven prompt inventory. The remaining customer-safety issues are now concrete enough to implement and test, with explicit full-artifact metadata exceptions and zero-exception user-visible scans.",
+  "falsifiability": {
+    "failureCondition": "A generated project layer can pass tests while PROFILE.md exists but the captured Codex prompt input for project_orchestrator lacks the role block or contains duplicate role fields.",
+    "observableSignal": "The temporary-root prompt-input capture does not contain exactly one occurrence of each required role field and project role summary.",
+    "measurementMethod": "Run the documented temporary-root install recipe, capture codex debug prompt-input for project_orchestrator, and execute the five grep-count checks against the captured file.",
+    "threshold": "All five required prompt identity checks return exactly 1 occurrence.",
+    "whoCanRunTheCheck": "orchestrator"
+  },
+  "newIssueList": [],
+  "ledgerReview": [
+    {
+      "issueId": "i1",
+      "review": "SATISFIED",
+      "rationale": "The spec now requires temporary-root prompt capture with an explicit config selector and exact-once role-field assertions, avoiding live-profile validation."
+    },
+    {
+      "issueId": "i2",
+      "review": "SATISFIED",
+      "rationale": "The spec now makes policy.prompt_files authoritative for both sidecar metadata and loader-visible prompt inventory, with a targeted test to catch YAML-only updates."
+    },
+    {
+      "issueId": "i3",
+      "review": "SATISFIED",
+      "rationale": "The customer safety section now enumerates forbidden terms, allowed role identifiers, MCP constraints, and two scan modes with clear exception rules."
+    },
+    {
+      "issueId": "i4",
+      "review": "SATISFIED",
+      "rationale": "The spec now requires a P1 compatibility discovery pass, recorded evidence, explicit legacy_profiles aliases, and tests for discovered public keys."
+    },
+    {
+      "issueId": "i5",
+      "review": "SATISFIED",
+      "rationale": "Managed markers, unmanaged pre-existing file behavior, dry-run reporting, blocking conflicts, and explicit confirmation handling are now specified for both new files."
+    },
+    {
+      "issueId": "i6",
+      "review": "SATISFIED",
+      "rationale": "The contradiction is resolved by treating managed_by and related ownership fields as exact metadata exceptions in full-artifact scans while excluding them from role-visible text."
+    }
+  ],
+  "preserveList": [
+    {
+      "id": "p1",
+      "summary": "The spec preserves Feature 55's TOML-versus-YAML separation and avoids relying on opaque TOML metadata for role identity.",
+      "lineRef": "TOML Contract / Sidecar Metadata Contract"
+    },
+    {
+      "id": "p2",
+      "summary": "The prompt visibility gate is now operational and bound to generated temporary artifacts rather than the user's live Codex setup.",
+      "lineRef": "Prompt Visibility Contract / Validations"
+    },
+    {
+      "id": "p3",
+      "summary": "Customer artifact validation is specific enough to prevent private wording leaks without removing required managed ownership metadata.",
+      "lineRef": "Customer OS Safety"
+    }
+  ]
+}

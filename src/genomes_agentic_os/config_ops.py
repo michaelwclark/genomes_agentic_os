@@ -9,13 +9,24 @@ import difflib
 import re
 import shutil
 from typing import Any
+import yaml
 
 from .capability_registry import HARNESS_DIRECTORY, command_entries, hook_entries, library_entries, plugin_entries, rule_entries, skill_entries
 from .mcp_catalog import MCP_SERVERS, config_mcp_ids, mcp_config_payload, mcp_tools_markdown
 
 
 CONFIG_FILENAME = "config.toml"
+SIDECAR_FILENAME = "codex-profile.yml"
 ROOT_MARKER_FILENAME = ".agentic_root"
+MANAGED_BY = "genomes_agentic_os"
+MANAGED_FEATURE = "62-role-aware-codex-config-layers"
+MANAGED_POLICY_VERSION = 1
+PROJECT_DOC_FALLBACK_FILES = ("PROFILE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
+AGENTS_PROFILE_BEGIN = "<!-- agentic-os-codex-profile:start -->"
+AGENTS_PROFILE_END = "<!-- agentic-os-codex-profile:end -->"
+PROFILE_MANAGED_MARKER = (
+    "<!-- managed-by: genomes_agentic_os; feature: 62-role-aware-codex-config-layers; policy-version: 1 -->"
+)
 OTEL_ENV_VARS = (
     "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT",
     "AGENTIC_OS_OTEL_HEADERS",
@@ -31,7 +42,7 @@ MCP_REGISTRATION_POINTS = (
     "playwright",
     "filesystem_runtime",
 )
-BASE_PROMPT_FILES = ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
+BASE_PROMPT_FILES = ("AGENTS.md", "PROFILE.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
 
 
 def expand_path(path: str | Path) -> Path:
@@ -193,49 +204,141 @@ rule from the stitched context.
 }
 
 
+@dataclass(frozen=True)
+class CodexLayerPolicy:
+    layer_token: str
+    profile: str
+    legacy_profiles: tuple[str, ...]
+    role: str
+    role_summary: str
+    model: str
+    model_reasoning_effort: str
+    approval_policy: str
+    sandbox_mode: str
+    prompt_files: tuple[str, ...]
+    mcp_scope: str
+    customer_safe: bool
+
+    @property
+    def profile_names(self) -> tuple[str, ...]:
+        return (self.profile, *self.legacy_profiles)
+
+
+LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
+    "global_harness": CodexLayerPolicy(
+        layer_token="global_harness",
+        profile="global_user_harness",
+        legacy_profiles=(),
+        role="navigator",
+        role_summary="Route personal work, gather lightweight context, and hand off to the narrowest useful layer.",
+        model="gpt-5.4-mini",
+        model_reasoning_effort="medium",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="user-approved only",
+        customer_safe=True,
+    ),
+    "agentic_os_root": CodexLayerPolicy(
+        layer_token="agentic_os_root",
+        profile="agentic_os_root",
+        legacy_profiles=(),
+        role="os_navigator",
+        role_summary="Navigate the installed OS, read shared rules, and prepare context before routing work deeper.",
+        model="gpt-5.4-mini",
+        model_reasoning_effort="medium",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="source package and local filesystem tools",
+        customer_safe=False,
+    ),
+    "customer_os_root": CodexLayerPolicy(
+        layer_token="customer_os_root",
+        profile="customer_os_root",
+        legacy_profiles=(),
+        role="customer_navigator",
+        role_summary="Stay inside the customer boundary, route to approved customer surfaces, and avoid cross-customer context.",
+        model="gpt-5.4-mini",
+        model_reasoning_effort="medium",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="approved customer systems only",
+        customer_safe=True,
+    ),
+    "domain_or_lane": CodexLayerPolicy(
+        layer_token="domain_or_lane",
+        profile="domain_or_lane",
+        legacy_profiles=(),
+        role="domain_navigator",
+        role_summary="Classify work for this domain and route to the correct project, workflow, or automation layer.",
+        model="gpt-5.4-mini",
+        model_reasoning_effort="medium",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="domain-approved systems only",
+        customer_safe=True,
+    ),
+    "project": CodexLayerPolicy(
+        layer_token="project",
+        profile="project_orchestrator",
+        legacy_profiles=("project",),
+        role="orchestrator",
+        role_summary=(
+            "You plan, decompose, delegate, verify, and integrate project work. If the request is only navigation or "
+            "routing, route to the narrowest layer and avoid broad implementation. If you spawn subagents, verify their "
+            "results before declaring the work complete."
+        ),
+        model="gpt-5.5",
+        model_reasoning_effort="high",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="project-approved systems only",
+        customer_safe=True,
+    ),
+    "workflow_or_task": CodexLayerPolicy(
+        layer_token="workflow_or_task",
+        profile="workflow_orchestrator",
+        legacy_profiles=("workflow_or_task",),
+        role="orchestrator",
+        role_summary="Run workflow-scoped heavy work, track acceptance criteria, verify delegated outputs, and record evidence.",
+        model="gpt-5.5",
+        model_reasoning_effort="high",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="workflow-approved systems only",
+        customer_safe=True,
+    ),
+    "automation": CodexLayerPolicy(
+        layer_token="automation",
+        profile="automation_guard",
+        legacy_profiles=("automation",),
+        role="automation_guard",
+        role_summary="Execute only within the automation contract, preserve evidence, and stop when approvals or safety gates are missing.",
+        model="gpt-5.5",
+        model_reasoning_effort="high",
+        approval_policy="on-request",
+        sandbox_mode="workspace-write",
+        prompt_files=BASE_PROMPT_FILES,
+        mcp_scope="explicit automation contract only",
+        customer_safe=True,
+    ),
+}
+
+
 LAYERS: dict[str, dict[str, Any]] = {
-    "global_harness": {
-        "profile": "global_user_harness",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "user-approved only",
-        "sandbox": "workspace-write",
-    },
-    "agentic_os_root": {
-        "profile": "agentic_os_root",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "source package and local filesystem tools",
-        "sandbox": "workspace-write",
-    },
-    "customer_os_root": {
-        "profile": "customer_os_root",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "approved customer systems only",
-        "sandbox": "workspace-write",
-    },
-    "domain_or_lane": {
-        "profile": "domain_or_lane",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "domain-approved systems only",
-        "sandbox": "workspace-write",
-    },
-    "project": {
-        "profile": "project",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "project-approved systems only",
-        "sandbox": "workspace-write",
-    },
-    "workflow_or_task": {
-        "profile": "workflow_or_task",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "workflow-approved systems only",
-        "sandbox": "workspace-write",
-    },
-    "automation": {
-        "profile": "automation",
-        "prompt_files": BASE_PROMPT_FILES,
-        "mcp": "explicit automation contract only",
-        "sandbox": "workspace-write",
-    },
+    layer: {
+        "profile": policy.profile,
+        "legacy_profiles": policy.legacy_profiles,
+        "prompt_files": policy.prompt_files,
+        "mcp": policy.mcp_scope,
+        "sandbox": policy.sandbox_mode,
+    }
+    for layer, policy in LAYER_POLICIES.items()
 }
 
 KEY_PATTERN = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*(?:#.*)?$")
@@ -339,32 +442,45 @@ def mcp_servers_template(layer: str, root: str | Path | None = None) -> str:
     return "\n\n".join(mcp_server_template(server_id) for server_id in config_mcp_ids(layer, root))
 
 
+def policy_for_layer(layer: str) -> CodexLayerPolicy:
+    if layer not in LAYER_POLICIES:
+        raise ValueError(f"layer must be one of {', '.join(sorted(LAYER_POLICIES))}: {layer!r}")
+    return LAYER_POLICIES[layer]
+
+
+def profile_toml_block(policy: CodexLayerPolicy, profile_name: str) -> str:
+    return f"""[profiles.{profile_name}]
+model = "{policy.model}"
+model_reasoning_effort = "{policy.model_reasoning_effort}"
+approval_policy = "{policy.approval_policy}"
+sandbox_mode = "{policy.sandbox_mode}"
+
+[profiles.{profile_name}.agentic_os]
+layer = "{policy.layer_token}"
+prompt_files = {toml_array(policy.prompt_files)}
+context_contract = "route-read-cd-repeat"
+rules_file = "RULES.md"
+tool_registry_file = "TOOLS.md"
+mcp_availability = "{policy.mcp_scope}"
+environment = "local filesystem"
+"""
+
+
 def config_template(layer: str, root: str | Path | None = None) -> str:
-    config = LAYERS[layer]
-    profile = config["profile"]
+    policy = policy_for_layer(layer)
+    profile_blocks = "\n\n".join(profile_toml_block(policy, profile_name) for profile_name in policy.profile_names)
     return f"""# Agentic OS Codex config template
 # Layer: {layer}
 # Local edits are preserved by the installer. Review diffs before applying.
 
-model = "gpt-5.2"
-approval_policy = "on-request"
-sandbox_mode = "{config['sandbox']}"
+model = "{policy.model}"
+model_reasoning_effort = "{policy.model_reasoning_effort}"
+approval_policy = "{policy.approval_policy}"
+sandbox_mode = "{policy.sandbox_mode}"
 project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
-project_doc_fallback_filenames = ["ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+project_doc_fallback_filenames = {toml_array(PROJECT_DOC_FALLBACK_FILES)}
 
-[profiles.{profile}]
-model = "gpt-5.2"
-approval_policy = "on-request"
-sandbox_mode = "{config['sandbox']}"
-
-[profiles.{profile}.agentic_os]
-layer = "{layer}"
-prompt_files = {toml_array(config['prompt_files'])}
-context_contract = "route-read-cd-repeat"
-rules_file = "RULES.md"
-tool_registry_file = "TOOLS.md"
-mcp_availability = "{config['mcp']}"
-environment = "local filesystem"
+{profile_blocks}
 
 [otel]
 log_user_prompt = false
@@ -378,6 +494,93 @@ secret_policy = "no inline secrets"
 
 {mcp_servers_template(layer, root)}
 """
+
+
+def profile_markdown_template(policy: CodexLayerPolicy) -> str:
+    return f"""{PROFILE_MANAGED_MARKER}
+
+# Codex Profile
+
+Role: {policy.role}
+Layer: {policy.layer_token}
+Profile: {policy.profile}
+Default model: {policy.model}
+Reasoning effort: {policy.model_reasoning_effort}
+
+{policy.role_summary}
+"""
+
+
+def agents_role_block(policy: CodexLayerPolicy) -> str:
+    return f"""{AGENTS_PROFILE_BEGIN}
+## Codex Profile
+
+Role: {policy.role}
+Layer: {policy.layer_token}
+Profile: {policy.profile}
+Default model: {policy.model}
+Reasoning effort: {policy.model_reasoning_effort}
+
+{policy.role_summary}
+{AGENTS_PROFILE_END}"""
+
+
+def agents_markdown_template(policy: CodexLayerPolicy, base: str | None = None) -> str:
+    block = agents_role_block(policy)
+    content = (base or PROMPT_TEMPLATES["AGENTS.md"]).rstrip()
+    if content.startswith("# "):
+        first_line, _, rest = content.partition("\n")
+        return f"{first_line}\n\n{block}\n\n{rest.lstrip()}\n"
+    return f"{block}\n\n{content}\n"
+
+
+def content_looks_generated_agents(content: str) -> bool:
+    return content.startswith("# Agent Entry Point") and ("## Startup Loop" in content or "## Required Loop" in content)
+
+
+def merge_agents_role_block(existing: str, policy: CodexLayerPolicy) -> str:
+    if not existing.strip():
+        return agents_markdown_template(policy).rstrip() + "\n"
+    if AGENTS_PROFILE_BEGIN in existing and AGENTS_PROFILE_END in existing:
+        pattern = re.compile(
+            rf"{re.escape(AGENTS_PROFILE_BEGIN)}.*?{re.escape(AGENTS_PROFILE_END)}",
+            re.DOTALL,
+        )
+        stripped = pattern.sub("", existing, count=1).lstrip()
+        return agents_markdown_template(policy, stripped).rstrip() + "\n"
+    if content_looks_generated_agents(existing):
+        return agents_markdown_template(policy, existing).rstrip() + "\n"
+    return existing if existing.endswith("\n") else existing + "\n"
+
+
+def sidecar_payload(policy: CodexLayerPolicy) -> dict[str, Any]:
+    return {
+        "layer": policy.layer_token,
+        "profile": policy.profile,
+        "legacy_profiles": list(policy.legacy_profiles),
+        "role": policy.role,
+        "role_summary": policy.role_summary,
+        "model": policy.model,
+        "model_reasoning_effort": policy.model_reasoning_effort,
+        "prompt_files": list(policy.prompt_files),
+        "mcp_availability": policy.mcp_scope,
+        "customer_safe": policy.customer_safe,
+        "managed_by": MANAGED_BY,
+        "managed_feature": MANAGED_FEATURE,
+        "managed_policy_version": MANAGED_POLICY_VERSION,
+    }
+
+
+def sidecar_template(policy: CodexLayerPolicy) -> str:
+    return yaml.safe_dump(sidecar_payload(policy), sort_keys=False)
+
+
+def prompt_file_template(policy: CodexLayerPolicy, filename: str) -> str:
+    if filename == "AGENTS.md":
+        return agents_markdown_template(policy)
+    if filename == "PROFILE.md":
+        return profile_markdown_template(policy)
+    return PROMPT_TEMPLATES[filename]
 
 
 def toml_array(values: tuple[str, ...]) -> str:
@@ -485,6 +688,38 @@ def backup_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.bak-{stamp}")
 
 
+def sidecar_path(root: Path) -> Path:
+    return root / "config" / SIDECAR_FILENAME
+
+
+def artifact_is_managed(path: Path, content: str) -> bool:
+    if path.name == "PROFILE.md":
+        return PROFILE_MANAGED_MARKER in content
+    if path.name == SIDECAR_FILENAME:
+        try:
+            data = yaml.safe_load(content) or {}
+        except yaml.YAMLError:
+            return False
+        return (
+            data.get("managed_by") == MANAGED_BY
+            and data.get("managed_feature") == MANAGED_FEATURE
+            and data.get("managed_policy_version") == MANAGED_POLICY_VERSION
+        )
+    return False
+
+
+def plan_managed_artifact(path: Path, planned: str) -> tuple[str, str, str]:
+    """Return action, existing content, and conflict message for a managed whole-file artifact."""
+    if not path.exists():
+        return "create", "", ""
+    existing = path.read_text(encoding="utf-8")
+    if existing == planned:
+        return "skip", existing, ""
+    if artifact_is_managed(path, existing):
+        return "update", existing, f"{path}: managed content differs from policy"
+    return "update", existing, f"{path}: pre_existing_unmanaged_file"
+
+
 def install_config(
     root: str | Path,
     *,
@@ -493,8 +728,7 @@ def install_config(
     backup: bool = False,
     confirm_conflicts: bool = False,
 ) -> ConfigInstallResult:
-    if layer not in LAYERS:
-        raise ValueError(f"layer must be one of {', '.join(sorted(LAYERS))}: {layer!r}")
+    policy = policy_for_layer(layer)
 
     root_path = expand_path(root)
     config_path = root_path / CONFIG_FILENAME
@@ -504,19 +738,57 @@ def install_config(
     result = ConfigInstallResult(root=root_path, layer=layer, dry_run=dry_run, conflicts=conflicts)
     result.diff = diff_text(existing, planned, config_path)
 
-    prompt_files = LAYERS[layer]["prompt_files"]
+    profile_path = root_path / "PROFILE.md"
+    sidecar = sidecar_path(root_path)
+    profile_content = profile_markdown_template(policy)
+    sidecar_content = sidecar_template(policy)
+    managed_artifacts = (
+        (profile_path, profile_content),
+        (sidecar, sidecar_content),
+    )
+    artifact_plans: list[tuple[Path, str, str, str, str]] = []
+    for path, content in managed_artifacts:
+        action, artifact_existing, artifact_conflict = plan_managed_artifact(path, content)
+        if artifact_conflict:
+            result.conflicts.append(artifact_conflict)
+        artifact_diff = diff_text(artifact_existing, content, path)
+        if artifact_diff:
+            result.diff = f"{result.diff.rstrip()}\n{artifact_diff}".lstrip()
+        artifact_plans.append((path, action, artifact_existing, content, artifact_conflict))
+
+    agents_path = root_path / "AGENTS.md"
+    agents_existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
+    agents_planned = merge_agents_role_block(agents_existing, policy)
+    agents_diff = diff_text(agents_existing, agents_planned, agents_path)
+    if agents_diff:
+        result.diff = f"{result.diff.rstrip()}\n{agents_diff}".lstrip()
+
+    prompt_files = policy.prompt_files
     if dry_run:
         if not root_path.exists():
             result.created.append(root_path)
         if not config_path.exists() or planned != existing:
             result.updated.append(config_path) if config_path.exists() else result.created.append(config_path)
+        if not agents_path.exists():
+            result.created.append(agents_path)
+        elif agents_planned != agents_existing:
+            result.updated.append(agents_path)
         for filename in prompt_files:
+            if filename in {"AGENTS.md", "PROFILE.md"}:
+                continue
             prompt_path = root_path / filename
             if not prompt_path.exists():
                 result.created.append(prompt_path)
+        if not sidecar.parent.exists():
+            result.created.append(sidecar.parent)
+        for path, action, _artifact_existing, _content, _artifact_conflict in artifact_plans:
+            if action == "create":
+                result.created.append(path)
+            elif action == "update":
+                result.updated.append(path)
         return result
 
-    if conflicts and not confirm_conflicts:
+    if result.conflicts and not confirm_conflicts:
         result.blocked = True
         return result
 
@@ -531,13 +803,38 @@ def install_config(
     else:
         result.skipped.append(config_path)
 
+    if agents_planned != agents_existing:
+        if agents_path.exists() and backup:
+            destination = backup_path(agents_path)
+            shutil.copy2(agents_path, destination)
+            result.backups.append(destination)
+        agents_path.write_text(agents_planned, encoding="utf-8")
+        result.updated.append(agents_path) if agents_existing else result.created.append(agents_path)
+    else:
+        result.skipped.append(agents_path)
+
     for filename in prompt_files:
         prompt_path = root_path / filename
+        if filename in {"AGENTS.md", "PROFILE.md"}:
+            continue
         if prompt_path.exists():
             result.skipped.append(prompt_path)
             continue
-        prompt_path.write_text(PROMPT_TEMPLATES[filename], encoding="utf-8")
+        prompt_path.write_text(prompt_file_template(policy, filename), encoding="utf-8")
         result.created.append(prompt_path)
+
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    for path, action, _artifact_existing, content, _artifact_conflict in artifact_plans:
+        if action == "skip":
+            result.skipped.append(path)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and backup:
+            destination = backup_path(path)
+            shutil.copy2(path, destination)
+            result.backups.append(destination)
+        path.write_text(content, encoding="utf-8")
+        result.created.append(path) if action == "create" else result.updated.append(path)
 
     return result
 
@@ -600,8 +897,7 @@ def install_config_tree(
 
 
 def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
-    if layer not in LAYERS:
-        raise ValueError(f"layer must be one of {', '.join(sorted(LAYERS))}: {layer!r}")
+    policy = policy_for_layer(layer)
 
     root_path = expand_path(root)
     config_path = root_path / CONFIG_FILENAME
@@ -619,9 +915,10 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
 
     content = config_path.read_text(encoding="utf-8")
     keys = parse_toml_keys(content)
-    profile = LAYERS[layer]["profile"]
     expected_mcp_ids = ("filesystem_runtime", *config_mcp_ids(layer, root_path))
     required = [
+        (None, "model", "Add a model matching the layer policy."),
+        (None, "model_reasoning_effort", "Add model_reasoning_effort matching the layer policy."),
         (None, "approval_policy", "Add an approval_policy matching the layer contract."),
         (None, "sandbox_mode", "Add a sandbox_mode matching the layer contract."),
         (None, "project_root_markers", "Add project_root_markers with .agentic_root so the installed OS root is discoverable."),
@@ -638,31 +935,44 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
         ),
         ("otel", "headers_env_var", "Reference AGENTIC_OS_OTEL_HEADERS by name; do not inline header values."),
         (
-            f"profiles.{profile}.agentic_os",
-            "mcp_availability",
-            "Declare the MCP availability boundary for this layer.",
-        ),
-        (
-            f"profiles.{profile}.agentic_os",
-            "context_contract",
-            "Declare context_contract = \"route-read-cd-repeat\" for the shared harness contract.",
-        ),
-        (
-            f"profiles.{profile}.agentic_os",
-            "rules_file",
-            "Point the layer profile at RULES.md.",
-        ),
-        (
-            f"profiles.{profile}.agentic_os",
-            "tool_registry_file",
-            "Point the layer profile at TOOLS.md.",
-        ),
-        (
             "mcp_servers.filesystem_runtime",
             "secret_policy",
             "Declare secret_policy = \"no inline secrets\" for MCP registration blocks.",
         ),
     ]
+    for profile_name in policy.profile_names:
+        required.extend(
+            [
+                (f"profiles.{profile_name}", "model", f"Add model for profile {profile_name}."),
+                (
+                    f"profiles.{profile_name}",
+                    "model_reasoning_effort",
+                    f"Add model_reasoning_effort for profile {profile_name}.",
+                ),
+                (f"profiles.{profile_name}", "approval_policy", f"Add approval_policy for profile {profile_name}."),
+                (f"profiles.{profile_name}", "sandbox_mode", f"Add sandbox_mode for profile {profile_name}."),
+                (
+                    f"profiles.{profile_name}.agentic_os",
+                    "mcp_availability",
+                    "Declare the MCP availability boundary for this layer.",
+                ),
+                (
+                    f"profiles.{profile_name}.agentic_os",
+                    "context_contract",
+                    "Declare context_contract = \"route-read-cd-repeat\" for the shared harness contract.",
+                ),
+                (
+                    f"profiles.{profile_name}.agentic_os",
+                    "rules_file",
+                    "Point the layer profile at RULES.md.",
+                ),
+                (
+                    f"profiles.{profile_name}.agentic_os",
+                    "tool_registry_file",
+                    "Point the layer profile at TOOLS.md.",
+                ),
+            ]
+        )
     for server_id in expected_mcp_ids:
         section = f"mcp_servers.{server_id}"
         if server_id == "filesystem_runtime":
@@ -696,6 +1006,72 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
                 "Add .agentic_root to project_root_markers so Codex can discover the installed OS root.",
             )
         )
+
+    profile_path = root_path / "PROFILE.md"
+    if not profile_path.is_file():
+        findings.append(
+            ConfigDoctorFinding(
+                "blocker",
+                profile_path,
+                "PROFILE.md is missing",
+                "Run agentic-os config install to generate the prompt-visible Codex role artifact.",
+            )
+        )
+    else:
+        profile_content = profile_path.read_text(encoding="utf-8")
+        expected_profile_lines = (
+            PROFILE_MANAGED_MARKER,
+            f"Role: {policy.role}",
+            f"Layer: {policy.layer_token}",
+            f"Profile: {policy.profile}",
+            f"Default model: {policy.model}",
+            f"Reasoning effort: {policy.model_reasoning_effort}",
+        )
+        for expected in expected_profile_lines:
+            if expected not in profile_content:
+                findings.append(
+                    ConfigDoctorFinding(
+                        "blocker",
+                        profile_path,
+                        f"PROFILE.md missing expected policy line: {expected}",
+                        "Regenerate PROFILE.md with agentic-os config install.",
+                    )
+                )
+
+    sidecar = sidecar_path(root_path)
+    if not sidecar.is_file():
+        findings.append(
+            ConfigDoctorFinding(
+                "blocker",
+                sidecar,
+                "config/codex-profile.yml is missing",
+                "Run agentic-os config install to generate Codex profile sidecar metadata.",
+            )
+        )
+    else:
+        try:
+            sidecar_data = yaml.safe_load(sidecar.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as error:
+            findings.append(
+                ConfigDoctorFinding(
+                    "blocker",
+                    sidecar,
+                    f"config/codex-profile.yml is not valid YAML: {error}",
+                    "Regenerate the sidecar with agentic-os config install.",
+                )
+            )
+            sidecar_data = {}
+        expected_sidecar = sidecar_payload(policy)
+        for key, expected_value in expected_sidecar.items():
+            if sidecar_data.get(key) != expected_value:
+                findings.append(
+                    ConfigDoctorFinding(
+                        "blocker",
+                        sidecar,
+                        f"config/codex-profile.yml has {key!r}={sidecar_data.get(key)!r}, expected {expected_value!r}",
+                        "Regenerate the sidecar with agentic-os config install.",
+                    )
+                )
 
     secret_markers = (
         "secret=",
