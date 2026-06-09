@@ -768,7 +768,21 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
             if metadata_path is None:
                 continue
             metadata = load_yaml_mapping(metadata_path)
-            status = lifecycle_status(metadata)
+            # Extract state directly from common work.yml/feature.yml keys.
+            # work.yml written by work_lifecycle.py uses "state" at root;
+            # feature.yml uses "lifecycle.state" or "status".
+            # lifecycle_status() does not check root-level "state", so we
+            # fall back to it only after checking "state" directly.
+            status = str(
+                metadata.get("state")
+                or metadata.get("status")
+                or (
+                    metadata.get("lifecycle", {}).get("state")
+                    if isinstance(metadata.get("lifecycle"), dict)
+                    else None
+                )
+                or "captured"
+            )
 
             if status == "building":
                 mtime = _work_item_mtime(work_item_root)
