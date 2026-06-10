@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
 from .event_graph import append_event, ensure_event_state
 from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
+from .source_providers import poll_live_source
 
 
 CONTROL_PLANE = Path("harness/shared_factory/00-control-plane")
@@ -446,24 +447,75 @@ def selected_provider_record(root: str | Path, provider_id: str | None) -> dict[
     return find_by_id(source_providers(root), provider_id)
 
 
-def normalized_source_event(root: str | Path, source: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+def normalized_source_event(
+    root: str | Path,
+    source: dict[str, Any],
+    *,
+    dry_run: bool,
+    live_items: list[dict[str, Any]] | None = None,
+    live_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the normalised source event envelope.
+
+    When *live_items* is provided (from a live adapter poll), the idempotency
+    key is derived from provider-issued event IDs rather than a registry digest,
+    and the payload summary reflects the real items found.  The envelope shape
+    is identical in both cases so downstream trigger rules are unaffected.
+    """
     system = find_by_id(connected_systems(root), str(source.get("connected_system", ""))) or {}
     observed_at = utc_now()
     selected_provider = select_provider(root, system) if system else None
     event_key = source_event_key(source, selected_provider)
     event_id = source_event_id(str(source["id"]), event_key)
     provider = selected_provider_record(root, selected_provider)
-    format_values = {
-        **(source.get("external_ref") or {}),
-        "event_id": event_id,
-        "event_key": event_key,
-        "source_id": source.get("id"),
-        "source_type": source.get("source_type"),
-        "observed_at": observed_at,
-        "provider": selected_provider,
-    }
-    return {
-        "id": event_id,
+
+    # When live items exist, derive a stable idempotency key from provider IDs
+    if live_items:
+        # Sort by the provider-issued idempotency key so the digest is stable
+        sorted_keys = sorted(
+            item.get("_idempotency_key", "") for item in live_items
+        )
+        live_digest = hashlib.sha256(
+            ("\n".join(sorted_keys)).encode()
+        ).hexdigest()[:12]
+        live_event_key = f"{event_key}\nlive_digest:{live_digest}"
+        live_event_id = f"src_evt_{hashlib.sha256(f'{source['id']}:{live_event_key}'.encode()).hexdigest()[:10]}"
+        effective_event_id = live_event_id
+        # Idempotency key for deduplication: live items hash, not a timestamp
+        effective_idempotency_key = f"{source.get('source_type')}:{source.get('id')}:{live_digest}"
+        item_count = len(live_items)
+        summary = f"Live poll: {item_count} item(s) from {source.get('display_name') or source['id']}"
+        payload_ref: dict[str, Any] = {
+            "type": "live",
+            "item_count": item_count,
+            "provider": (live_result or {}).get("provider", "direct_api"),
+            "credential_env": (live_result or {}).get("credential_env"),
+        }
+        adapter_mode = "live_apply" if not dry_run else "live_dry_run"
+    else:
+        effective_event_id = event_id
+        format_values: dict[str, Any] = {
+            **(source.get("external_ref") or {}),
+            "event_id": event_id,
+            "event_key": event_key,
+            "source_id": source.get("id"),
+            "source_type": source.get("source_type"),
+            "observed_at": observed_at,
+            "provider": selected_provider,
+        }
+        effective_idempotency_key = format_template(
+            str((source.get("dedupe") or {}).get("idempotency_key", "")), format_values
+        )
+        summary = (
+            f"Dry-run poll for {source.get('display_name') or source['id']}"
+            if dry_run
+            else f"Polled {source['id']}"
+        )
+        payload_ref = {"type": "registry", "path": str(WATCH_SOURCES_FILE)}
+        adapter_mode = "registry_dry_run" if dry_run else "registry_apply"
+
+    event: dict[str, Any] = {
+        "id": effective_event_id,
         "schema_version": 1,
         "event_type": f"{source.get('source_type', 'source')}.polled",
         "observed_at": observed_at,
@@ -474,20 +526,21 @@ def normalized_source_event(root: str | Path, source: dict[str, Any], *, dry_run
             "source_type": source.get("source_type"),
             "external_ref": source.get("external_ref") or {},
         },
-        "dedupe": {
-            "idempotency_key": format_template(str((source.get("dedupe") or {}).get("idempotency_key", "")), format_values)
-        },
+        "dedupe": {"idempotency_key": effective_idempotency_key},
         "route": source.get("route") or {},
-        "summary": f"Dry-run poll for {source.get('display_name') or source['id']}" if dry_run else f"Polled {source['id']}",
-        "payload_ref": {"type": "registry", "path": str(WATCH_SOURCES_FILE)},
+        "summary": summary,
+        "payload_ref": payload_ref,
         "event_key": event_key,
         "provider_adapter": {
             "id": selected_provider,
             "type": (provider or {}).get("type"),
-            "mode": "registry_dry_run" if dry_run else "registry_apply",
+            "mode": adapter_mode,
         },
         "dry_run": dry_run,
     }
+    if live_items is not None:
+        event["live_items"] = live_items
+    return event
 
 
 def write_source_event(root: str | Path, event: dict[str, Any]) -> Path:
@@ -629,15 +682,76 @@ def apply_trigger_rules(
     return actions
 
 
-def poll_watch_source(root: str | Path, source_id: str, *, dry_run: bool = True) -> dict[str, Any]:
+def poll_watch_source(
+    root: str | Path,
+    source_id: str,
+    *,
+    dry_run: bool = True,
+    fetcher: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Poll a single watch source.
+
+    When a live adapter exists for the source's connected system and a credential
+    env var is available, real API data is fetched and embedded in the event.
+    When no credential is present or no live adapter exists, the existing
+    registry dry-run path is used unchanged.
+
+    Parameters
+    ----------
+    fetcher:
+        Injectable HTTP transport (``urllib.request.Request -> response``).
+        Defaults to ``urllib.request.urlopen``.  Pass a fake in tests so no
+        network calls are made.
+    """
     source = find_by_id(watch_sources(root), source_id)
     if not source:
         raise ValueError(f"watch source not found: {source_id}")
     doctor = doctor_watch_source(root, source_id)
     if not doctor["ok"]:
         return {"source_id": source_id, "ok": False, "dry_run": dry_run, "findings": doctor["findings"], "events": []}
-    event = normalized_source_event(root, source, dry_run=dry_run)
-    result = {"source_id": source_id, "ok": True, "dry_run": dry_run, "events": [event]}
+
+    # --- attempt live adapter ---
+    system = find_by_id(connected_systems(root), str(source.get("connected_system", ""))) or {}
+    live_kwargs: dict[str, Any] = {}
+    if fetcher is not None:
+        live_kwargs["fetcher"] = fetcher
+    live_result = poll_live_source(source, system, **live_kwargs)
+
+    # Secrets-in-config guard fires here — propagate as a hard failure
+    if live_result is not None and not live_result.get("ok") and any(
+        f.get("code") == "SECRETS_IN_CONFIG"
+        for f in (live_result.get("findings") or [])
+    ):
+        return {
+            "source_id": source_id,
+            "ok": False,
+            "dry_run": dry_run,
+            "findings": live_result["findings"],
+            "events": [],
+        }
+
+    # Build normalised event envelope
+    live_items: list[dict[str, Any]] | None = None
+    if live_result is not None and live_result.get("live"):
+        live_items = live_result.get("items") or []
+
+    event = normalized_source_event(
+        root, source, dry_run=dry_run, live_items=live_items, live_result=live_result
+    )
+
+    result: dict[str, Any] = {
+        "source_id": source_id,
+        "ok": True,
+        "dry_run": dry_run,
+        "events": [event],
+    }
+    if live_result is not None:
+        result["adapter"] = {
+            "live": live_result.get("live", False),
+            "item_count": live_result.get("item_count", 0),
+            "dry_run_reason": live_result.get("dry_run_reason"),
+        }
+
     event_path = None
     if not dry_run:
         event_path = write_source_event(root, event)
