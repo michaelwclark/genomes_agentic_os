@@ -161,7 +161,7 @@ class TestTokenRedaction:
     _TOKEN_SAMPLES = [
         "sk-abcdefghijklmnopqrstuvwxyz1234",      # OpenAI-style
         "ghp_ABCDEFghijklmnopqrstuvwxyz123456",   # GitHub PAT
-        "xoxb-fakefixturevalue-notarealsecret",  # Slack bot token
+        "xoxb-fakefixturevalue-notarealsecret",   # Slack-style token (fake shape, no digit segments)
         "bearer abcdef1234567890abcdef1234567890", # Bearer token
         "api_key: my_super_secret_key_1234567890",# api_key assignment
     ]
