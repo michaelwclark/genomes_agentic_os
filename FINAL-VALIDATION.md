@@ -26,12 +26,20 @@ dry half of item 8; tarball backup taken first at `~/agentic_os-backup-20260610.
   databases Integrations, Execution Targets, Heartbeats, Schedules, Run Queue, Approvals,
   Runs; no token values printed.
 - Item 8 (dry half) `runtime run-next --dry-run` — rc 0, status idle.
+- Item 6 `notion track-runtime --apply --verified-workspace "Genome's Notion"` — rc 0,
+  `live: true` via the F-010 adapter slice; cockpit page `Runtime Control Plane`
+  created under the Genome's Agentic OS page (`363683b4…`), all 7 databases created
+  with real Notion ids recorded in `.notion-runtime-tracking/manifest.yml`, 20 records
+  upserted; second apply reused all 7 databases (0 created, 20 updated); no token
+  values printed; API-side check confirmed the page parent and the 7 child databases.
 - Also: `config install --layer agentic_os_root --apply` created the root context
-  contract with zero conflicts, and `doctor --all` reports ok true across
-  core/runtime/event_graph/config.
+  contract with zero conflicts; `doctor --all` reports ok true across
+  core/runtime/event_graph/config; and the launchd supervisor
+  (`com.genome.agentic-os.supervisor`, 15-minute cadence) is installed and ticking —
+  first kickstarted run completed all steps with run_queue idle and health ok.
 
-Still pending: item 6 (Notion tracking apply with `--verified-workspace`), item 7
-(granola integration doctor/setup — needs credentials), and the apply half of item 8.
+Still pending: item 7 (granola integration doctor/setup — needs credentials) and the
+apply half of item 8 (no queued runtime work yet to dispatch).
 
 Manual/live validation to run later:
 
