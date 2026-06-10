@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from .automation_ops import check_automation
-from .config_ops import LAYERS as CONFIG_LAYERS, doctor_config
+from .config_ops import discover_config_tree_targets, doctor_config
 from .customer import customer_update
 from .event_graph import append_event, chain_doctor, utc_now, write_yaml
 from .runtime_ops import runtime_doctor
@@ -242,7 +242,7 @@ def doctor_all(root: str | Path) -> dict[str, Any]:
       - core: structural + lifecycle (doctor())
       - runtime: execution targets, heartbeats, schedules, integrations
       - event_graph: chain rules
-      - config: per config-layer OTEL/MCP contracts (all known layers)
+      - config: OTEL/MCP contracts per discovered config-tree target
 
     After each run:
       - A compact snapshot (per-subsystem ok + blocker_count) is persisted to
@@ -283,19 +283,29 @@ def doctor_all(root: str | Path) -> dict[str, Any]:
             "findings": [{"severity": "blocker", "path": str(os_root), "message": f"event_graph doctor error: {exc}"}],
         }
 
-    # Config doctor — run for each known layer; aggregate findings
+    # Config doctor — check each discovered config-tree target against its own
+    # layer contract (same join as `config install-tree`); checking every known
+    # layer against the root path would demand layer keys the root never holds.
     config_findings: list[dict[str, str]] = []
     config_ok = True
-    for layer in sorted(CONFIG_LAYERS):
+    try:
+        config_targets = discover_config_tree_targets(os_root)
+    except ValueError as exc:
+        config_targets = []
+        config_findings.append(
+            {"severity": "blocker", "path": str(os_root), "message": f"config tree discovery failed: {exc}", "layer": "agentic_os_root"}
+        )
+        config_ok = False
+    for target in config_targets:
         try:
-            layer_result = doctor_config(os_root, layer=layer)
+            layer_result = doctor_config(target.root, layer=target.layer)
             for finding in layer_result.get("findings") or []:
-                config_findings.append({**finding, "layer": layer})
+                config_findings.append({**finding, "layer": target.layer})
             if not layer_result.get("ok", True):
                 config_ok = False
         except Exception as exc:  # noqa: BLE001
             config_findings.append(
-                {"severity": "blocker", "path": str(os_root), "message": f"config doctor error ({layer}): {exc}", "layer": layer}
+                {"severity": "blocker", "path": str(target.root), "message": f"config doctor error ({target.layer}): {exc}", "layer": target.layer}
             )
             config_ok = False
     subsystems["config"] = {"root": str(os_root), "ok": config_ok, "findings": config_findings}
