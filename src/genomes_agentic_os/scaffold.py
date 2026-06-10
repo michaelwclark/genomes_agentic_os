@@ -1801,6 +1801,8 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
     result.extend(mirror_visible_capability_assets(os_root))
+    # Existing roots predate harness/schemas/; docs update is their delivery path.
+    ensure_schemas_dir(os_root, result)
     result.extend(
         copy_tree(
             template_source_dir(),

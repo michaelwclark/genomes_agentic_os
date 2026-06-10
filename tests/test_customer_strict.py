@@ -12,6 +12,7 @@ Deliberately kept separate from tests/test_cli_scaffold.py.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ import yaml
 
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.customer import customer_init
-from genomes_agentic_os.scaffold import init_os
+from genomes_agentic_os.scaffold import init_os, install_docs
 from genomes_agentic_os.validate import SCHEMA_TARGETS, validate_schemas_strict
 
 # ---------------------------------------------------------------------------
@@ -67,6 +68,21 @@ def test_init_root_installs_schemas_dir(tmp_path: Path) -> None:
     for schema_filename in SCHEMA_TARGETS:
         assert schema_filename in installed, (
             f"harness/schemas/{schema_filename} missing after init_os"
+        )
+
+
+def test_docs_update_installs_schemas_on_existing_root(tmp_path: Path) -> None:
+    """docs update delivers harness/schemas/ to roots that predate the feature."""
+    root = tmp_path / "os_root"
+    _init_root(root)
+    shutil.rmtree(harness(root) / "schemas")
+
+    install_docs(root)
+
+    installed = {p.name for p in (harness(root) / "schemas").glob("*.json")}
+    for schema_filename in SCHEMA_TARGETS:
+        assert schema_filename in installed, (
+            f"harness/schemas/{schema_filename} missing after docs update"
         )
 
 
