@@ -31,6 +31,7 @@ from .scaffold import (
     create_domain_structure,
     ensure_customer_update_contract,
     ensure_dir,
+    ensure_schemas_dir,
     ensure_update_metadata,
     expand_path,
     harness_path,
@@ -666,6 +667,7 @@ def customer_init(customer_slug: str, profile_path: str | Path, target: str | Pa
     root.mkdir(parents=True, exist_ok=True)
     write_root_marker(root, result)
     ensure_public_customer_capability_surface(root, result)
+    ensure_schemas_dir(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
     write_file_once(root / "README.md", render_customer_readme(profile), result)
@@ -691,6 +693,7 @@ def customer_update(customer_slug: str, root: str | Path) -> dict[str, Any]:
     result = CustomerResult()
     write_root_marker(os_root, result)
     ensure_public_customer_capability_surface(os_root, result)
+    ensure_schemas_dir(os_root, result)
     ensure_update_metadata(os_root, result)
     ensure_customer_update_contract(os_root, result)
     write_file_once(os_root / "AGENTS.md", render_agent_router(), result)
