@@ -1,0 +1,30 @@
+# Notion Runtime Tracking Configuration
+#
+# Controls whether `agentic-os notion track-runtime --apply` writes live data
+# to Notion or falls back to local synthetic IDs.
+#
+# Live path is activated only when BOTH:
+#   1. `parent_page_id` is set to a real Notion page ID
+#   2. The env var named by `token_env` is set and resolves to a valid token
+#
+# When either condition is absent, the command writes a local manifest with
+# synthetic IDs (live: false). The launchd supervisor and heartbeat paths
+# are NEVER affected — only the explicit `--apply` command goes live.
+
+# Notion workspace name — must exactly match the bot's workspace.
+# Change only if you are installing in a non-default Genome workspace.
+workspace: "Genome's Notion"
+
+# Notion page ID of the parent page where the Runtime Control Plane cockpit
+# and its 7 databases will be created. Leave empty to stay in local mode.
+# Format: 32-char hex UUID (with or without dashes).
+# Example: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+parent_page_id: ""
+
+# Environment variable whose value is the Notion integration token.
+# The token value must never appear in config files — only the var name here.
+token_env: GENOMES_NOTION_PAT
+
+# Title of the cockpit page created as a child of parent_page_id.
+# The 7 runtime tracking databases are created under this page.
+cockpit_page_title: "Runtime Control Plane"
