@@ -52,15 +52,107 @@ Dry-run polling never updates the cursor.
 event-ledger entry and/or a run-queue item. Writes are idempotent by the trigger
 rule's idempotency key, so re-running `run-due` is always safe.
 
-> **Gap F — honest status:** `connected-system` and `watch-source` manage
-> registries, cursor contracts, and structural doctor checks. There are **no live
-> API adapters and no automatic polling loop today.** Polling emits a normalized
-> event from registry metadata; it does not actually read the external system.
-> Sources' `status` is `planned`. Making sources live requires: (1) a secrets
-> contract (env var or keychain, never in-repo), (2) real provider adapters behind
-> the existing registry + doctor scaffolding, and (3) a supervisor driving
-> `run-due` on a schedule (see [09 · Runtime & Always-On](09-runtime-and-always-on.md)
+> **Gap F — partial:** GitHub (`github_repo`) and Slack (`slack_channel`) watch
+> sources now have real direct-API adapters.  When the required env var is set the
+> adapter fetches live data and populates the normalised event with real items.
+> When the env var is absent the adapter falls back to the existing registry
+> dry-run path — no behaviour change.  Remaining providers (Notion, Jira, Linear,
+> email, Granola, AgentMail, filesystem) still use the registry dry-run path.
+> Making those sources live requires the same pattern: (1) the secrets contract
+> below, (2) a provider adapter in `source_providers.py`, and (3) a supervisor
+> driving `run-due` on a schedule (see [09 · Runtime & Always-On](09-runtime-and-always-on.md)
 > and [Gap A](../.agentic-atlas/gap-register.md)).
+
+---
+
+## Secrets contract
+
+> **Rule: registry files and watch-source configs hold env var *names* only.
+> Credential values live in the operator's shell environment (or OS keychain).
+> The repo and all installed OS roots must never contain a token value.**
+
+### How credentials flow
+
+```
+connected-systems.yml
+  credential_refs:
+    env_vars:
+      - GITHUB_TOKEN          ← env var NAME, not value
+      - SLACK_BOT_TOKEN       ← env var NAME, not value
+
+Shell environment (set by operator, never committed)
+  GITHUB_TOKEN=ghp_xxx...    ← value lives here only
+  SLACK_BOT_TOKEN=xoxb-...   ← value lives here only
+```
+
+The polling layer reads the env var *name* from `credential_refs.env_vars`, then
+resolves the value from `os.environ` at poll time.  The value is used for the
+HTTP request and immediately discarded — it is never stored in any event file,
+cursor record, or log entry.
+
+An optional `token_env` field may appear on an individual watch source to override
+the system-level env var name for that source only:
+
+```yaml
+# watch-sources.yml — per-source override (name only, not value)
+- id: my_github_source
+  ...
+  token_env: MY_CUSTOM_GITHUB_TOKEN   # env var NAME
+```
+
+### Token-shaped-value guard
+
+The polling layer runs a heuristic check before any network call.  If a
+token-shaped value (length ≥ 20, no spaces, matches known token prefixes such as
+`ghp_`, `xoxb-`, `sk-`) is found in the watch-source config dict — for example,
+an operator accidentally pasted a real token into `external_ref` — the poll is
+**refused** with a `SECRETS_IN_CONFIG` finding:
+
+```yaml
+ok: false
+findings:
+  - severity: blocker
+    code: SECRETS_IN_CONFIG
+    message: "token-shaped values found in config keys: [token]; use
+              credential_refs.env_vars to reference env var NAMES only"
+```
+
+No network request is made.  The operator must fix the config and re-run.
+
+### Setting up credentials (operator steps)
+
+**GitHub:**
+```bash
+# Add to ~/.zshenv (or equivalent) — never to any file tracked by git
+export GITHUB_TOKEN="ghp_your_personal_access_token"
+```
+Scopes needed: `repo` (read) for PRs and issues.
+
+**Slack:**
+```bash
+export SLACK_BOT_TOKEN="xoxb-your-bot-token"
+```
+OAuth scopes needed: `channels:history`, `groups:history` (or `conversations:read`
+for the workspace bot).
+
+After setting the env var, verify with:
+```bash
+agentic-os watch-source poll <source_id> --root ~/agentic_os --dry-run
+```
+A successful live poll produces `"live": true` and `item_count > 0` in the adapter
+summary.  A missing credential produces `"live": false` and a `dry_run_reason`
+message — identical output to the pre-adapter dry-run path.
+
+### What the polling layer stores
+
+When `--apply` is used, the written event file contains:
+- Provider-item summaries trimmed to safe fields (title, number, state, timestamps,
+  user login — never body text beyond 500 characters for Slack messages)
+- A `payload_ref` with `type: live`, `item_count`, and `provider`
+- A `credential_env` field with the env var *name* used (never the value)
+- A stable idempotency key derived from provider-issued event IDs (not timestamps)
+
+Tokens, raw API responses, and full message bodies are never persisted.
 
 ---
 
@@ -341,10 +433,11 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
   `--apply` flag to write anything. Omitting it is always safe.
 - **`poll` takes a positional `source_id`.** Running `watch-source poll --dry-run`
   without naming a source is a usage error (exit 2).
-- **No live reads today (Gap F).** `poll --dry-run` generates a normalized event
-  from registry metadata; it does not call Notion, Slack, or any other API. The
-  event shape is correct; the payload is a registry-derived placeholder until a
-  real provider adapter is wired (see [gap-register.md §F](../.agentic-atlas/gap-register.md)).
+- **Live polling for GitHub and Slack (Gap F partial).** When `GITHUB_TOKEN` or
+  `SLACK_BOT_TOKEN` is set, `poll` makes a real API call and populates live items
+  in the event.  When the credential is absent, the existing registry dry-run path
+  is used unchanged — no error.  Other providers (Notion, Jira, etc.) still use
+  the registry dry-run path (see [Secrets contract](#secrets-contract) above).
 - **Secrets are never stored in registry files.** `credential_refs.env_vars` lists
   env var *names* only. The values must be present in the shell environment when a
   live adapter eventually reads them.
