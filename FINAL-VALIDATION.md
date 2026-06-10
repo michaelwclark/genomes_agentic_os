@@ -9,6 +9,30 @@ Source-package validation already completed:
 - `uv run pytest -q` passed with 50 tests.
 - Temp-root smoke validation passed for runtime init, schedule run-due, heartbeat dry-run, runtime doctor, runtime run-next dry-run/apply, runtime validate, and local Notion runtime tracking manifest apply.
 
+Live-install validation completed 2026-06-10 against `~/agentic_os` (items 1–5 and the
+dry half of item 8; tarball backup taken first at `~/agentic_os-backup-20260610.tar.gz`):
+
+- Item 1 `docs update` — rc 0; 29 files created (plan 16/17 example library plus
+  `os-capture-plan.md`), then 22 schema files into `harness/schemas/` after the
+  docs-update schema-delivery fix; write-once path, no local edits overwritten.
+- Item 2 `validate` — rc 0; `validate --strict` — rc 0 with zero schema findings.
+- Item 3 `runtime doctor` — ok true after `runtime init`; only the two expected
+  credential fix-soons remain (`AGENTMAIL_API_KEY` not set).
+- Item 4 `schedule run-due --dry-run` queued `daily_agentic_os_doctor`
+  (idempotency key `schedule:daily_agentic_os_doctor:2026-06-10T05:00:00Z`);
+  `heartbeat run granola_recent_notes_sync --dry-run` wrote a queue item and log under
+  `harness/shared_factory/06-runs-and-logs/heartbeats/`; no external effects.
+- Item 5 `notion track-runtime --dry-run` — rc 0; workspace `Genome's Notion`; planned
+  databases Integrations, Execution Targets, Heartbeats, Schedules, Run Queue, Approvals,
+  Runs; no token values printed.
+- Item 8 (dry half) `runtime run-next --dry-run` — rc 0, status idle.
+- Also: `config install --layer agentic_os_root --apply` created the root context
+  contract with zero conflicts, and `doctor --all` reports ok true across
+  core/runtime/event_graph/config.
+
+Still pending: item 6 (Notion tracking apply with `--verified-workspace`), item 7
+(granola integration doctor/setup — needs credentials), and the apply half of item 8.
+
 Manual/live validation to run later:
 
 1. Update the live installed OS documentation only after approval.
@@ -261,11 +285,12 @@ Deferred by design (not required by the plan's acceptance criteria; tracked for 
    `registries/mcp-servers.yml` (consistent across code, tests, and validation).
    Reconcile the spec name or the constant in a future cleanup.
 
-Manual/live validation to run later (against `~/agentic_os`, after approval):
+Manual/live validation completed 2026-06-10:
 
-- Run `agentic-os docs update --root ~/agentic_os`, then confirm `INVENTORY.md` and
-  `registries/` appear without overwriting local edits.
-- `agentic-os validate --root ~/agentic_os` reports no declared-but-missing capabilities.
+- `agentic-os docs update --root ~/agentic_os` ran clean (rc 0) and the live root holds
+  `INVENTORY.md` plus all `registries/` files; local edits untouched (write-once path).
+- `agentic-os validate --root ~/agentic_os` exits 0 with no declared-but-missing
+  capabilities, and `validate --strict` exits 0 against the installed `harness/schemas/`.
 
 ## Plan 19: Update Channel And Customer Fleet
 

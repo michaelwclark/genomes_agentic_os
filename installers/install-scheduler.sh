@@ -65,7 +65,7 @@ fi
 
 ROOT="${ROOT/#\~/$HOME}"
 INTERVAL_SECONDS=$(( INTERVAL_MINUTES * 60 ))
-LOG_DIR="${ROOT}/shared_factory/06-runs-and-logs"
+LOG_DIR="${ROOT}/harness/shared_factory/06-runs-and-logs"
 OUT_LOG="${LOG_DIR}/supervisor.out.log"
 ERR_LOG="${LOG_DIR}/supervisor.err.log"
 OS="$(uname -s)"
