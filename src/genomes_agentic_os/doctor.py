@@ -11,11 +11,19 @@ import yaml
 from .automation_ops import check_automation
 from .config_ops import LAYERS as CONFIG_LAYERS, doctor_config
 from .customer import customer_update
-from .event_graph import chain_doctor
+from .event_graph import append_event, chain_doctor, utc_now, write_yaml
 from .runtime_ops import runtime_doctor
 from .scaffold import expand_path, init_os, install_docs
 from .validate import lifecycle_staleness_findings, validate_root
 from .workflow_ops import check_workflow
+
+# Snapshot persisted to the shared-factory control plane alongside other
+# runtime-state YAML files (event-graph.yml, chain-rules.yml, run-queue.yml).
+# 50/50 decision: used shared_factory/00-control-plane/ rather than a new
+# logs/doctor/ path because this is a small, single-file state record
+# (not a log stream), and it co-locates with the other runtime control-plane
+# state that event_graph.py already owns.
+_DOCTOR_SNAPSHOT_FILE = Path("harness/shared_factory/00-control-plane/doctor-snapshot.yml")
 
 
 @dataclass
@@ -135,6 +143,98 @@ def doctor(root: str | Path, *, fix_missing: bool = False) -> dict[str, Any]:
     return {"root": str(os_root), "ok": not any(f.severity == "blocker" for f in findings), "repairs": repairs, "findings": [f.as_dict() for f in findings]}
 
 
+def _snapshot_path(os_root: Path) -> Path:
+    """Absolute path to the doctor snapshot file for this install root."""
+    return os_root / _DOCTOR_SNAPSHOT_FILE
+
+
+def _build_snapshot(subsystems: dict[str, Any], timestamp: str) -> dict[str, Any]:
+    """Compact summary of each subsystem's health state."""
+    return {
+        "schema_version": 1,
+        "captured_at": timestamp,
+        "subsystems": {
+            name: {
+                "ok": bool(result.get("ok", True)),
+                "blocker_count": sum(
+                    1 for f in (result.get("findings") or []) if f.get("severity") == "blocker"
+                ),
+            }
+            for name, result in subsystems.items()
+        },
+    }
+
+
+def _load_snapshot(os_root: Path) -> dict[str, Any] | None:
+    """Return the previous snapshot dict, or None if none exists yet."""
+    path = _snapshot_path(os_root)
+    if not path.is_file():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return data if isinstance(data, dict) else None
+
+
+def _save_snapshot(os_root: Path, snapshot: dict[str, Any]) -> None:
+    """Persist snapshot, overwriting any prior snapshot."""
+    path = _snapshot_path(os_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_yaml(path, snapshot)
+
+
+def _detect_regressions(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Compare previous and current snapshots; return per-subsystem regression dicts.
+
+    A regression is either:
+    - a subsystem that was ok=True and is now ok=False, OR
+    - a subsystem whose blocker_count increased.
+    """
+    regressed: list[dict[str, Any]] = []
+    prev_subs = previous.get("subsystems") or {}
+    curr_subs = current.get("subsystems") or {}
+    for name, curr_state in curr_subs.items():
+        prev_state = prev_subs.get(name)
+        if prev_state is None:
+            # New subsystem, not seen before — not a regression
+            continue
+        was_ok = bool(prev_state.get("ok", True))
+        is_ok = bool(curr_state.get("ok", True))
+        prev_blockers = int(prev_state.get("blocker_count", 0))
+        curr_blockers = int(curr_state.get("blocker_count", 0))
+        if (was_ok and not is_ok) or curr_blockers > prev_blockers:
+            regressed.append(
+                {
+                    "subsystem": name,
+                    "was_ok": was_ok,
+                    "is_ok": is_ok,
+                    "prev_blocker_count": prev_blockers,
+                    "curr_blocker_count": curr_blockers,
+                }
+            )
+    return regressed
+
+
+def _emit_regression_event(os_root: Path, regressions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Append one os.doctor.regression event to the event ledger.
+
+    Payload carries regressed subsystems with old→new blocker counts.
+    No secrets, no full findings dump.
+    """
+    subsystem_names = ", ".join(r["subsystem"] for r in regressions)
+    return append_event(
+        os_root,
+        event_type="os.doctor.regression",
+        source_ref=str(_snapshot_path(os_root)),
+        summary=f"doctor --all detected regression in: {subsystem_names}.",
+        payload_ref={
+            "type": "inline",
+            "regressions": regressions,
+        },
+    )
+
+
 def doctor_all(root: str | Path) -> dict[str, Any]:
     """Aggregate every subsystem doctor into one health report (F-003).
 
@@ -144,10 +244,19 @@ def doctor_all(root: str | Path) -> dict[str, Any]:
       - event_graph: chain rules
       - config: per config-layer OTEL/MCP contracts (all known layers)
 
+    After each run:
+      - A compact snapshot (per-subsystem ok + blocker_count) is persisted to
+        harness/shared_factory/00-control-plane/doctor-snapshot.yml.
+      - If a prior snapshot exists and this run shows a regression, exactly one
+        os.doctor.regression event is appended to the event ledger.  No event is
+        emitted on the first run (no baseline to compare against), on improvement,
+        or when health is unchanged.
+
     Returns a dict with:
-      ok        -- True only if every subsystem reports ok
-      subsystems -- per-subsystem result dicts (keyed by subsystem name)
-      findings  -- flattened list of all findings across subsystems
+      ok              -- True only if every subsystem reports ok
+      subsystems      -- per-subsystem result dicts (keyed by subsystem name)
+      findings        -- flattened list of all findings across subsystems
+      regression_event -- the emitted event dict, or None if no regression
     """
     os_root = expand_path(root)
     subsystems: dict[str, Any] = {}
@@ -199,11 +308,24 @@ def doctor_all(root: str | Path) -> dict[str, Any]:
 
     overall_ok = all(result.get("ok", True) for result in subsystems.values())
 
+    # Snapshot persistence and regression detection
+    previous_snapshot = _load_snapshot(os_root)
+    timestamp = utc_now()
+    current_snapshot = _build_snapshot(subsystems, timestamp)
+    _save_snapshot(os_root, current_snapshot)
+
+    regression_event: dict[str, Any] | None = None
+    if previous_snapshot is not None:
+        regressions = _detect_regressions(previous_snapshot, current_snapshot)
+        if regressions:
+            regression_event = _emit_regression_event(os_root, regressions)
+
     return {
         "root": str(os_root),
         "ok": overall_ok,
         "subsystems": subsystems,
         "findings": all_findings,
+        "regression_event": regression_event,
     }
 
 
