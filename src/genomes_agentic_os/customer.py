@@ -48,7 +48,25 @@ from .mcp_catalog import mcp_tools_markdown
 from .validate import ValidationResult, validate_domain
 
 
-PRIVATE_TERMS = ("genome", "clark", "clarks_consulting", "los", "lenders")
+# Exact-word terms that must not appear in generated customer-facing files.
+# Matching is whole-word (word-boundary regex) and case-insensitive.
+# Design notes:
+#   "eduba" — course-platform name used in factory school material; included.
+#   "clark" already covers "clarks" via prefix; "clarks_consulting" is kept
+#     explicitly so underscore-joined slug forms are also caught.
+#   Short substrings (e.g. "los") are kept as they are genuine private domain
+#     names in this OS; false-positive risk is low in generated content.
+#   "school", "course", and "acme" are NOT listed — they are common English
+#     words or generic example names that appear legitimately in customer-owned
+#     content.  Adding them would produce false positives for real customers.
+PRIVATE_TERMS = (
+    "genome",
+    "clark",
+    "clarks_consulting",
+    "los",
+    "lenders",
+    "eduba",
+)
 CUSTOMER_ROOT_FILES = (
     ROOT_MARKER_FILENAME,
     "config.toml",
@@ -766,6 +784,42 @@ def customer_validate(root: str | Path) -> dict[str, Any]:
         profile_warnings.extend(domain_result.warnings)
     profile_warnings.extend(private_term_warnings(os_root))
     return {"root": str(os_root), "ok": not core_errors, "core_errors": core_errors, "profile_warnings": profile_warnings}
+
+
+def scaffold_customer_brief(
+    root: str | Path,
+    domain: str,
+    name: str,
+) -> dict[str, Any]:
+    """Instantiate a client-automation-brief template instance in a customer install.
+
+    Places a named brief instance under ``<root>/<domain>/01-intake/<name>-brief.md``
+    (the intake lane is where new automation candidates live).  Refuses to
+    overwrite an existing file — each brief is write-once so operators can
+    accumulate edits safely.
+
+    Returns a dict with ``path`` (absolute string) and ``created`` (bool).
+    """
+    os_root = expand_path(root)
+    domain = validate_customer_name(domain, "domain")
+    name = validate_name(name, "brief name")
+
+    template_path = template_source_dir() / "customer" / "client-automation-brief.md"
+    if not template_path.is_file():
+        raise ValueError(f"client-automation-brief template is missing: {template_path}")
+
+    intake_dir = os_root / domain / "01-intake"
+    intake_dir.mkdir(parents=True, exist_ok=True)
+
+    brief_path = intake_dir / f"{name}-brief.md"
+    if brief_path.exists():
+        return {"path": str(brief_path), "created": False}
+
+    content = template_path.read_text(encoding="utf-8")
+    # Replace the placeholder workflow/outcome name with the brief slug
+    content = content.replace("<workflow_or_outcome>", name.replace("_", " ").title())
+    brief_path.write_text(content, encoding="utf-8")
+    return {"path": str(brief_path), "created": True}
 
 
 def format_customer_result(result: dict[str, Any]) -> str:

@@ -15,7 +15,7 @@ from .automation_ops import (
 )
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
-from .customer import customer_init, customer_update, customer_validate, format_customer_result
+from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
 from .doctor import doctor, doctor_all, format_doctor_result
 from .event_graph import (
     append_event,
@@ -329,6 +329,14 @@ def build_parser() -> argparse.ArgumentParser:
     customer_validate_parser = customer_subparsers.add_parser("validate", help="Validate a customer OS root.")
     customer_validate_parser.add_argument("--root", required=True)
     customer_validate_parser.set_defaults(handler=handle_customer_validate)
+    customer_brief_parser = customer_subparsers.add_parser(
+        "brief",
+        help="Scaffold a client-automation-brief instance into a customer install domain.",
+    )
+    customer_brief_parser.add_argument("--root", required=True, help="Customer OS root path.")
+    customer_brief_parser.add_argument("--domain", required=True, help="Domain (room) to place the brief in.")
+    customer_brief_parser.add_argument("--name", required=True, help="Brief slug (snake_case). Becomes <name>-brief.md in domain/01-intake/.")
+    customer_brief_parser.set_defaults(handler=handle_customer_brief)
 
     update_parser = subparsers.add_parser("update", help="Check, plan, apply, and report installed OS updates.")
     update_subparsers = update_parser.add_subparsers(dest="update_command", required=True)
@@ -1026,6 +1034,14 @@ def handle_customer_validate(args: argparse.Namespace) -> int:
     result = customer_validate(args.root)
     print(format_customer_result(result))
     return 0 if result["ok"] else 1
+
+
+def handle_customer_brief(args: argparse.Namespace) -> int:
+    import json
+
+    result = scaffold_customer_brief(args.root, args.domain, args.name)
+    print(json.dumps(result, indent=2))
+    return 0
 
 
 def handle_update_check(args: argparse.Namespace) -> int:
