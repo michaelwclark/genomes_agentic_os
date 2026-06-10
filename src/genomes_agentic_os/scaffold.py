@@ -550,6 +550,24 @@ def write_managed_file(source: Path, destination: Path, previous_checksum: str |
         result.created.append(conflict_path)
 
 
+def ensure_notion_tracking_config(root: Path, result: ScaffoldResult) -> None:
+    """Install the notion-tracking.yml config file into 00-control-plane if absent.
+
+    This is a write-once install — existing operator edits are never overwritten.
+    The template lives at ``templates/runtime/notion-tracking.yml`` in the source tree.
+    """
+    destination = shared_factory_path(root, "00-control-plane", "notion-tracking.yml")
+    if destination.exists():
+        result.skipped.append(destination)
+        return
+    source = source_relative_path("templates/runtime/notion-tracking.yml")
+    if not source.is_file():
+        return  # source package missing template — skip silently
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    result.created.append(destination)
+
+
 def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     for directory in ("runs", "proposals", "approvals", "drafts"):
         ensure_dir(shared_factory_path(root, "06-runs-and-logs", "self-improvement", directory), result)
@@ -571,6 +589,8 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     else:
         manifest_path.write_text(desired_manifest, encoding="utf-8")
         result.updated.append(manifest_path)
+
+    ensure_notion_tracking_config(root, result)
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:

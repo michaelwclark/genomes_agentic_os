@@ -1198,17 +1198,223 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
     }
 
 
-def apply_runtime_tracking(root: str | Path, *, verified_workspace: str | None) -> dict[str, Any]:
+def _load_notion_tracking_config(os_root: Path) -> dict[str, Any]:
+    """Load notion-tracking.yml from the installed root's 00-control-plane."""
+    from .scaffold import shared_factory_path
+    config_path = shared_factory_path(os_root, "00-control-plane", "notion-tracking.yml")
+    return _load_yaml(config_path, {})
+
+
+def _live_notion_config(config: dict[str, Any]) -> tuple[str | None, str, str, str]:
+    """Extract live-path settings from a tracking config dict.
+
+    Returns (parent_page_id_or_None, token_env, cockpit_title, workspace).
+    """
+    parent_page_id = (config.get("parent_page_id") or "").strip() or None
+    token_env = (config.get("token_env") or "GENOMES_NOTION_PAT").strip()
+    cockpit_title = (config.get("cockpit_page_title") or "Runtime Control Plane").strip()
+    workspace = (config.get("workspace") or "Genome's Notion").strip()
+    return parent_page_id, token_env, cockpit_title, workspace
+
+
+def _apply_runtime_tracking_live(
+    os_root: Path,
+    workspace: str,
+    plan: dict[str, Any],
+    manifest_path: Path,
+    existing_manifest: dict[str, Any],
+    parent_page_id: str,
+    token_env: str,
+    cockpit_title: str,
+    fetcher: Any,
+) -> dict[str, Any]:
+    """Execute the live Notion path for apply_runtime_tracking.
+
+    Verifies workspace via live API, ensures cockpit page + 7 databases exist,
+    upserts all records, writes manifest with real IDs and live: true.
+    """
+    from .notion_api import (
+        DATABASE_PROPERTY_SCHEMAS,
+        _base_db_properties,
+        build_record_properties,
+        create_database,
+        create_database_page,
+        create_page,
+        get_bot_workspace,
+        query_database_by_key,
+        search_child_databases,
+        search_child_pages,
+        update_database_page,
+    )
+
+    # --- live workspace verification ---
+    bot_workspace = get_bot_workspace(token_env, fetcher=fetcher)
+    if bot_workspace != workspace:
+        raise ValueError(
+            f"live API workspace mismatch: bot reports {bot_workspace!r} "
+            f"but verified_workspace expects {workspace!r}; refusing Notion write"
+        )
+
+    now = _now()
+
+    # --- cockpit page ---
+    existing_cockpit_id: str | None = existing_manifest.get("cockpit_page_id")
+    cockpit_id: str | None = None
+    cockpit_created = False
+
+    if existing_cockpit_id:
+        cockpit_id = existing_cockpit_id
+    else:
+        child_pages = search_child_pages(parent_page_id, token_env, fetcher=fetcher)
+        for page in child_pages:
+            if page["title"] == cockpit_title:
+                cockpit_id = page["id"]
+                break
+
+    if cockpit_id is None:
+        cockpit_id = create_page(parent_page_id, cockpit_title, token_env, fetcher=fetcher)
+        cockpit_created = True
+
+    # --- 7 databases ---
+    database_ids: dict[str, str] = {}
+    databases_created = 0
+    databases_reused = 0
+
+    existing_db_ids: dict[str, str] = existing_manifest.get("database_ids") or {}
+
+    child_dbs = search_child_databases(cockpit_id, token_env, fetcher=fetcher)
+    live_db_by_title: dict[str, str] = {db["title"]: db["id"] for db in child_dbs}
+
+    for db_name in plan["databases"]:
+        db_id: str | None = existing_db_ids.get(db_name)
+        if db_id:
+            database_ids[db_name] = db_id
+            databases_reused += 1
+        elif db_name in live_db_by_title:
+            database_ids[db_name] = live_db_by_title[db_name]
+            databases_reused += 1
+        else:
+            schema = DATABASE_PROPERTY_SCHEMAS.get(db_name) or _base_db_properties()
+            new_id = create_database(cockpit_id, db_name, schema, token_env, fetcher=fetcher)
+            database_ids[db_name] = new_id
+            databases_created += 1
+
+    # --- kind → database name mapping ---
+    KIND_TO_DATABASE: dict[str, str] = {
+        "integration": "Integrations",
+        "execution_target": "Execution Targets",
+        "heartbeat": "Heartbeats",
+        "schedule": "Schedules",
+        "run_queue_item": "Run Queue",
+        "approval": "Approvals",
+        "heartbeat_run": "Runs",
+        "run": "Runs",
+    }
+
+    # --- upsert records ---
+    records_created = 0
+    records_updated = 0
+    records: list[dict[str, Any]] = []
+
+    for record in plan["records"]:
+        record_key = f"{record['kind']}:{record['key']}"
+        record_with_key = {**record, "record_key": record_key}
+        db_name = KIND_TO_DATABASE.get(record["kind"])
+        if db_name is None or db_name not in database_ids:
+            records.append({**record_with_key, "notion_id": _local_id(record_key)})
+            continue
+
+        db_id = database_ids[db_name]
+        props = build_record_properties(record_with_key, now)
+        existing_page_id = query_database_by_key(db_id, record_key, token_env, fetcher=fetcher)
+        if existing_page_id:
+            update_database_page(existing_page_id, props, token_env, fetcher=fetcher)
+            notion_id = existing_page_id
+            records_updated += 1
+        else:
+            notion_id = create_database_page(db_id, props, token_env, fetcher=fetcher)
+            records_created += 1
+        records.append({**record_with_key, "notion_id": notion_id})
+
+    manifest = {
+        "live": True,
+        "workspace": workspace,
+        "cockpit_page_id": cockpit_id,
+        "updated_at": now,
+        "databases": plan["databases"],
+        "database_ids": database_ids,
+        "records": records,
+    }
+    _write_yaml(manifest_path, manifest)
+
+    return {
+        **plan,
+        "applied": True,
+        "live": True,
+        "cockpit_page_id": cockpit_id,
+        "cockpit_created": cockpit_created,
+        "databases_created": databases_created,
+        "databases_reused": databases_reused,
+        "records_created": records_created,
+        "records_updated": records_updated,
+        "database_ids": database_ids,
+        "records": records,
+    }
+
+
+def apply_runtime_tracking(
+    root: str | Path,
+    *,
+    verified_workspace: str | None,
+    fetcher: Any = None,
+) -> dict[str, Any]:
+    """Apply runtime tracking — writes a local manifest or goes live to Notion.
+
+    Live path is activated when ``harness/shared_factory/00-control-plane/
+    notion-tracking.yml`` has a non-empty ``parent_page_id`` AND the token
+    env var it names is set. In all other cases the local-only path is used
+    and the manifest gains ``live: false``.
+
+    The ``fetcher`` kwarg is the injectable HTTP transport used by the live
+    path — pass a fake in tests to avoid network access.
+    """
     os_root = expand_path(root)
     workspace = verify_workspace(os_root, verified_workspace)
     plan = build_runtime_tracking_plan(os_root)
     manifest_path = _runtime_path(os_root, NOTION_RUNTIME_MANIFEST)
+
+    config = _load_notion_tracking_config(os_root)
+    parent_page_id, token_env, cockpit_title, _config_workspace = _live_notion_config(config)
+
+    from .notion_api import resolve_token
+    token_present = resolve_token(token_env) is not None
+
+    go_live = bool(parent_page_id and token_present)
+
+    if go_live:
+        existing_manifest: dict[str, Any] = _load_yaml(manifest_path, {})
+        from . import notion_api as _notion_api
+        _fetcher = fetcher if fetcher is not None else _notion_api._default_fetcher
+        return _apply_runtime_tracking_live(
+            os_root=os_root,
+            workspace=workspace,
+            plan=plan,
+            manifest_path=manifest_path,
+            existing_manifest=existing_manifest,
+            parent_page_id=parent_page_id,
+            token_env=token_env,
+            cockpit_title=cockpit_title,
+            fetcher=_fetcher,
+        )
+
+    # --- local path (original behaviour + live: false) ---
     database_ids = {database: _local_id(f"database:{workspace}:{database}") for database in plan["databases"]}
     records = []
     for record in plan["records"]:
         record_key = f"{record['kind']}:{record['key']}"
         records.append({**record, "notion_id": _local_id(record_key), "record_key": record_key})
     manifest = {
+        "live": False,
         "workspace": workspace,
         "updated_at": _now(),
         "databases": plan["databases"],
@@ -1216,7 +1422,7 @@ def apply_runtime_tracking(root: str | Path, *, verified_workspace: str | None) 
         "records": records,
     }
     _write_yaml(manifest_path, manifest)
-    return {**plan, "applied": True, "database_ids": database_ids, "records": records}
+    return {**plan, "applied": True, "live": False, "database_ids": database_ids, "records": records}
 
 
 def format_runtime_result(result: dict[str, Any]) -> str:
