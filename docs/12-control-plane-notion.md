@@ -275,3 +275,58 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   meanings and workspace-verification errors.
 - Atlas: [`gap-register.md` §B](../.agentic-atlas/gap-register.md) ·
   [`command-reference.md` §9](../.agentic-atlas/architecture/command-reference.md)
+
+---
+
+## Live runtime-tracking path (F-010)
+
+The `agentic-os notion track-runtime --apply` command can write the 7 runtime
+tracking databases directly to Genome's Notion. The live path is opt-in and
+controlled by a config file installed into every root.
+
+### Config file
+
+Location inside each installed root:
+
+```
+harness/shared_factory/00-control-plane/notion-tracking.yml
+```
+
+Fresh installs receive this file via `agentic-os init`. It arrives in
+**local mode** (`parent_page_id` is empty) so no credentials are required.
+
+| Field | Default | Purpose |
+|---|---|---|
+| `workspace` | `Genome's Notion` | Expected workspace name — must match the bot's |
+| `parent_page_id` | *(empty)* | Parent page ID; leave empty for local mode |
+| `token_env` | `GENOMES_NOTION_PAT` | Name of the env var holding the token (never the value) |
+| `cockpit_page_title` | `Runtime Control Plane` | Title of the cockpit page under `parent_page_id` |
+
+### Activating the live path
+
+1. Set the Notion integration token: `export GENOMES_NOTION_PAT=secret_...`
+2. Set `parent_page_id` in `notion-tracking.yml` to a real Notion page ID.
+3. Run `agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace "Genome's Notion"`.
+
+The command verifies the workspace two ways: the string-match guard in
+`verify_workspace` and a live `/users/me` API call confirming the bot's
+`workspace_name`. If either check fails, the command exits with an error and
+writes nothing to Notion.
+
+### Idempotency
+
+Re-applying is safe. Existing pages and databases are reused (matched by the
+IDs in the manifest, or by title search). Records are upserted by their `Key`
+field — no duplicates are created. The manifest records `live: true` and all
+real Notion IDs.
+
+### Token safety
+
+The token value never appears in the manifest, result dict, log output, or
+exception messages. Only the env-var *name* is stored in config.
+
+### Supervisor constraint
+
+The launchd supervisor, heartbeat runner, and all scheduled paths are
+network-silent — they never call the Notion API. Only the explicit
+`notion track-runtime --apply` command goes live.
