@@ -8,6 +8,11 @@ This room is for <kind_of_work>.
 
 - <input_type> - <where_it_comes_from>
 
+## Read First
+
+- `CONTEXT.md` - this room contract
+- `<path>` - <why_it_is_required_before_acting>
+
 ## Task Routing
 
 | Task | Read First | Create Output In | Optional Tools |

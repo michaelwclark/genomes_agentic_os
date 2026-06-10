@@ -361,9 +361,11 @@ class TestRoomContextLoadContract:
         assert "request is filed in triage" in content
 
     def test_template_context_has_all_six_sections(self) -> None:
-        """The static room/CONTEXT.md template must declare all six load-contract fields."""
+        """The static room context template must declare all six load-contract fields."""
         from genomes_agentic_os.scaffold import template_source_dir
-        template = (template_source_dir() / "room" / "CONTEXT.md").read_text(encoding="utf-8")
+        # Canonical path is lowercase; an uppercase read only resolves on
+        # case-insensitive filesystems.
+        template = (template_source_dir() / "room" / "context.md").read_text(encoding="utf-8")
         required_sections = [
             "## Read First",
             "## Read When Needed",
