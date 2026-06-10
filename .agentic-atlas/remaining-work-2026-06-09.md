@@ -81,6 +81,20 @@ Still open: **A8** (plans 12/14 generation work — needs design input), Bucket 
 follow-ups: scaffolder/schema alignment for customer surfaces, doctor
 event-on-regression emission, schemas dir resolution for non-editable installs.
 
+## Outcome, wave 2 (2026-06-10)
+
+The 06-09 follow-ups and A8 shipped via 4 more subagent branches: schemas now
+install into `harness/schemas/` and customer roots are strict-clean (U6);
+F-013's offline half — env-token-gated GitHub/Slack adapters with injectable
+transport plus an enforced secrets contract (U7); `doctor --all` persists a
+snapshot and emits `os.doctor.regression` events (U8); plans 12/14 residuals —
+factory inventory doc, private-name scrub test, operator-room load contracts,
+real playbook skills, and `customer brief` scaffolder (U5). Tests 195 → 303
+passed. Remaining now: Bucket B live validations (incl. F-013 live tokens,
+F-010 live Notion apply), Bucket C policy-gated work, and minor follow-ups
+(per-item live events, control-plane spec template enrichment, remaining
+factory skill shapes).
+
 ## Corrections / notes
 
 - `shared_factory` lives under `harness/shared_factory/` in installs; plan-15 text

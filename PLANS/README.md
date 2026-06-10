@@ -12,18 +12,21 @@ That installed copy gives future agents a durable place to find what should be b
 
 ## Current Position
 
-The repo has a working V1 scaffold:
+As of 2026-06-10 the operating loop is built and test-covered (303 tests, 55
+CLI validation commands): projects and work-item lifecycle, cwd-aware routing
+with context packs, workflow readiness, run closeout with event emission,
+runtime supervise/heartbeats/schedules, connected-source registries with
+offline-testable GitHub/Slack adapters, event chaining, `doctor --all` with
+regression events, strict schema validation (installs ship their schemas),
+Notion plan-sync (dry-run), customer OS packaging with licenses, updates,
+backups, and operator push against a fake provider, and the factory playbook
+skills.
 
-- `agentic-os init`
-- `agentic-os domain create`
-- `agentic-os workflow create`
-- `agentic-os automation create`
-- `agentic-os run-log create`
-- `agentic-os docs install`
-- `agentic-os docs update`
-- `agentic-os validate`
-
-The missing work is the operating loop: projects, cwd-aware routing, automatic context packs, workflow readiness, run closeout, always-on heartbeats, schedule runners, connected source watchers, event chaining, doctor repairs, Notion sync, customer OS packaging, and LOS/losmon replacement validation.
+The missing work is live and policy-gated: the deferred live-install
+validations in `FINAL-VALIDATION.md` (plans 15–17), live Notion apply, live
+source polling with real credentials, plan 19's update channel, real
+GitHub/MCP provisioning for plan 20, and plan 08's real-LOS-task comparison.
+See `.agentic-atlas/remaining-work-2026-06-09.md` for the itemized state.
 
 ## Plan Index
 

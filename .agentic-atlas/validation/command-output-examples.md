@@ -36,6 +36,29 @@ created: /private/tmp/aos-validate/root/harness/hooks/conversation-auto-log.py
 created: /private/tmp/aos-validate/root/harness/hooks/harness-emit-trace.sh
 created: /private/tmp/aos-validate/root/harness/hooks/memory-session-start.sh
 created: /private/tmp/aos-validate/root/harness/hooks/memory-stop.sh
+created: /private/tmp/aos-validate/root/harness/schemas
+created: /private/tmp/aos-validate/root/harness/schemas/automation.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/backup-policy.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/capability-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/command-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/composio-tool-routing.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/domain.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/hook-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/library-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/managed-templates.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/mcp-server-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/plugin-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/rule-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/run.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/self-improvement-control-plane.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/self-improvement-proposal.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/self-improvement-review.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/self-improvement-sidecar-usage.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/skill-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/skill-visibility-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/update-grant.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/update-manifest.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/workflow.schema.json
 created: /private/tmp/aos-validate/root/harness/agentic-os.lock.json
 created: /private/tmp/aos-validate/root/harness/UPDATE_POLICY.md
 created: /private/tmp/aos-validate/root/harness/registries/updates.yml
@@ -1226,17 +1249,17 @@ decision_log: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log create acme launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/artifacts
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/run-log.md
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/artifacts
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/run-log.md
 ```
 
-## 19-run-log_close_20260609T210340Z-acme-launch_blog
+## 19-run-log_close_20260610T143042Z-acme-launch_blog
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260609T210340Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260610T143042Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/run-log.md
+run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/run-log.md
 status: done
 workflow_or_automation: launch_blog
 activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.md
@@ -1312,7 +1335,7 @@ message: no queued runtime work
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-09T21:03:41Z'
+tick: '2026-06-10T14:30:43Z'
 root: /tmp/aos-validate/root
 dry_run: true
 ok: true
@@ -1356,7 +1379,7 @@ steps:
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --apply
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-09T21:03:41Z'
+tick: '2026-06-10T14:30:43Z'
 root: /tmp/aos-validate/root
 dry_run: false
 ok: true
@@ -1494,28 +1517,28 @@ registry: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 root: /private/tmp/aos-validate/root
 status: dry-run
 queued:
-- id: queue_45a2c4ee9a3b
+- id: queue_7478eaec27c4
   kind: schedule
   ref: demo
   status: dry-run
   approval_state: not_required
-  created_at: '2026-06-09T21:03:41.617985+00:00'
+  created_at: '2026-06-10T14:30:43.737775+00:00'
   dry_run: true
-  due_at: '2026-06-09T05:00:00Z'
-  idempotency_key: schedule:demo:2026-06-09T05:00:00Z
+  due_at: '2026-06-10T05:00:00Z'
+  idempotency_key: schedule:demo:2026-06-10T05:00:00Z
   execution_target: script
   command: agentic-os validate --root <root>
-  log: harness/shared_factory/06-runs-and-logs/runs/20260609T210341Z-45a2c4ee-demo/run-log.yml
+  log: harness/shared_factory/06-runs-and-logs/runs/20260610T143043Z-7478eaec-demo/run-log.yml
   evidence:
   - type: run_log
-    path: harness/shared_factory/06-runs-and-logs/runs/20260609T210341Z-45a2c4ee-demo/run-log.yml
+    path: harness/shared_factory/06-runs-and-logs/runs/20260610T143043Z-7478eaec-demo/run-log.yml
   blocked_reason: null
-  updated_at: '2026-06-09T21:03:41.617985+00:00'
+  updated_at: '2026-06-10T14:30:43.737775+00:00'
   created: true
 skipped:
 - schedule: daily_agentic_os_doctor
   reason: not due
-  next_due_at: '2026-06-10T05:00:00Z'
+  next_due_at: '2026-06-11T05:00:00Z'
 - schedule: self_improvement_review
   reason: disabled
 ```
@@ -2173,7 +2196,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
   record_key: decisions:acme
   notion_id: null
-  fingerprint: 76752b0b98b47852c9bf3b5f9233b964e6d610a26c7540eec5f187182c72c696
+  fingerprint: b3759d97ced8d549d80a0ed5850cb9567bcdcc403215766447b91ae46a2c2472
 - action: create
   kind: state_index
   key: acme
@@ -2181,7 +2204,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/state-index.md
   record_key: state_index:acme
   notion_id: null
-  fingerprint: b8928dfc6f45a21665c31c73244713ac00105e68fc19abcdbf8fe5856c36977d
+  fingerprint: 6ac2b7e925c853c09377c9909f5f37c9dde5048251afc80eeff99de0e2d63a31
 - action: create
   kind: metrics
   key: acme
@@ -2216,12 +2239,12 @@ actions:
   fingerprint: 2467a03437db66b972d87026ae73645a3b653003aea3a2c2dfbc7ca0ce8850a3
 - action: create
   kind: run
-  key: acme/20260609T210340Z-acme-launch_blog
-  title: 20260609T210340Z-acme-launch_blog
-  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260609T210340Z-acme-launch_blog/run-log.md
-  record_key: run:acme/20260609T210340Z-acme-launch_blog
+  key: acme/20260610T143042Z-acme-launch_blog
+  title: 20260610T143042Z-acme-launch_blog
+  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/run-log.md
+  record_key: run:acme/20260610T143042Z-acme-launch_blog
   notion_id: null
-  fingerprint: c3231f4bce753ae6472b02300f6f1d1c44b3d12c7b0110cb7fe8ab94ca2bf3b6
+  fingerprint: 4536b4e5456db613f4618344cdcf3d44c34f20f007e6eb7914a13d59a57d8a03
 - action: create
   kind: domain
   key: archive
@@ -3561,7 +3584,7 @@ installations:
 root: /private/tmp/aos-validate/root
 license:
   status: active
-  activated_at: '2026-06-09T21:03:42Z'
+  activated_at: '2026-06-10T14:30:44Z'
   key_hash: 98f9006c28109fe76a6960274702c0b357b598b264e22716aa50ba6e18296bab
 ```
 
@@ -3583,9 +3606,9 @@ remotes:
     url: git@github.com:genome/local-agentic-os-backups.git
     access: write
 public_keys:
-  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH/Ag1Ksm+wmUKKXKy3qiJlnLVVDmCx5LvWzQZ7T5WFk
+  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDakNcuyiTwBWVSwLO3dBt/Q8ecUdAeL/WLb0TdmIWh9
     agentic-os-update_ed25519
-  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOuue4c2QgLN02nlYETr6cePeVq3Fk0X0XsVGrfMjQ0t
+  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ4+Rj7T1cVGIG4/VBVYvS8QC37Vm5jGDj2tMlCwjqH8
     agentic-os-backup_ed25519
 private_keys: stored locally under harness/security/ssh with mode 0600
 ```
@@ -3627,10 +3650,10 @@ plan_path: ''
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 root: /private/tmp/aos-validate/root
-log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260609210342.yml
+log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260610143045.yml
 status: planned
 dry_run: true
-created_at: '2026-06-09T21:03:42Z'
+created_at: '2026-06-10T14:30:45Z'
 remote:
   name: agentic-os-backup
   url: git@github.com:genome/local-agentic-os-backups.git
@@ -3708,9 +3731,9 @@ created_or_verified:
 - /private/tmp/aos-validate/root/los/03-workflows/operations/deploy_planning
 - /private/tmp/aos-validate/root/los/04-automations/support/thread_intake
 run_logs:
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T210343Z-los-pr_review/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T210343Z-los-failing_ci_triage/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260609T210343Z-los-deploy_planning/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260610T143045Z-los-pr_review/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260610T143045Z-los-failing_ci_triage/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260610T143045Z-los-deploy_planning/run-log.md
 comparison: /private/tmp/aos-validate/root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
 ```
 
@@ -3760,6 +3783,29 @@ created:
 - /private/tmp/aos-validate/customer/harness/registries/rules.yml
 - /private/tmp/aos-validate/customer/harness/registries/composio-tools.yml
 - /private/tmp/aos-validate/customer/harness/INVENTORY.md
+- /private/tmp/aos-validate/customer/harness/schemas
+- /private/tmp/aos-validate/customer/harness/schemas/automation.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/backup-policy.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/capability-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/command-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/composio-tool-routing.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/domain.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/hook-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/library-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/managed-templates.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/mcp-server-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/plugin-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/rule-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/run.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/self-improvement-control-plane.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/self-improvement-proposal.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/self-improvement-review.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/self-improvement-sidecar-usage.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/skill-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/skill-visibility-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/update-grant.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/update-manifest.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/workflow.schema.json
 - /private/tmp/aos-validate/customer/harness/agentic-os.lock.json
 - /private/tmp/aos-validate/customer/harness/UPDATE_POLICY.md
 - /private/tmp/aos-validate/customer/harness/registries/updates.yml
