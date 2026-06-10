@@ -86,21 +86,57 @@ Read this map first, then load only the room router and context files needed for
 
 
 def room_context(room: dict[str, Any]) -> str:
+    """Generate a room CONTEXT.md from a room profile entry.
+
+    Produces all six load-contract fields required by plan-12 AC3:
+    read-first, read-when-needed, do-not-load, tools/skills, output folders,
+    and done criteria.  Profile data flows into each field; placeholders are
+    used for any field the profile omits so the agent always sees a complete
+    contract skeleton.
+    """
     inputs = "\n".join(f"- {item}" for item in room.get("inputs", []) or ["TBD"])
-    outputs = "\n".join(f"- `{name}` -> `{path}`" for name, path in (room.get("output_folders") or {}).items()) or "- TBD"
+    outputs = "\n".join(f"- `{name}` — `{path}`" for name, path in (room.get("output_folders") or {}).items()) or "- TBD"
     tools = "\n".join(
         f"| {tool.get('name', '')} | {tool.get('trigger', '')} | {tool.get('notes', '')} |"
         for tool in room.get("tools", [])
     ) or "|  |  |  |"
     done = "\n".join(f"- {item}" for item in room.get("done_means", []))
-    load_rows = []
+
+    # Collect read_first / read_when_needed / skip_by_default across all routing entries
+    read_first_items: list[str] = []
+    read_when_needed_items: list[str] = []
+    skip_by_default_items: list[str] = []
+    load_rows: list[str] = []
     for route in room.get("routing", []):
+        rf = route.get("read_first", []) or []
+        rwn = route.get("read_when_needed", []) or []
+        skip = route.get("skip_by_default", []) or []
         load_rows.append(
-            f"| {route.get('task', '')} | {', '.join(route.get('read_first', []))} | "
-            f"{', '.join(route.get('read_when_needed', []))} | {', '.join(route.get('skip_by_default', []))} | "
+            f"| {route.get('task', '')} | {', '.join(rf)} | "
+            f"{', '.join(rwn)} | {', '.join(skip)} | "
             f"{route.get('output_path', '')} |"
         )
+        for item in rf:
+            if item and item not in read_first_items:
+                read_first_items.append(item)
+        for item in rwn:
+            if item and item not in read_when_needed_items:
+                read_when_needed_items.append(item)
+        for item in skip:
+            if item and item not in skip_by_default_items:
+                skip_by_default_items.append(item)
+
+    # Always include the standard room entrypoint files in read-first
+    for standard in ("ROUTER.md", "RULES.md", "TOOLS.md"):
+        if standard not in read_first_items:
+            read_first_items.insert(0, standard)
+
     loads = "\n".join(load_rows) or "|  |  |  |  |  |"
+
+    read_first_block = "\n".join(f"- `{item}`" for item in read_first_items) or "- TBD"
+    read_when_needed_block = "\n".join(f"- `{item}`" for item in read_when_needed_items) or "- TBD"
+    skip_block = "\n".join(f"- `{item}`" for item in skip_by_default_items) or "- TBD"
+
     return f"""# Context: {room.get('display_name') or room['slug']}
 
 <!-- room-profile-managed -->
@@ -113,15 +149,33 @@ def room_context(room: dict[str, Any]) -> str:
 
 {inputs}
 
-## Output Folders
+## Read First
 
-{outputs}
+Always load these before acting in this room.
 
-## What To Load
+{read_first_block}
+
+## Read When Needed
+
+Load only when the task specifically requires it.
+
+{read_when_needed_block}
+
+## Do Not Load By Default
+
+Skip these unless explicitly requested.
+
+{skip_block}
+
+## Task Routing
 
 | Task | Read First | Read When Needed | Skip By Default | Output Path |
 | --- | --- | --- | --- | --- |
 {loads}
+
+## Output Folders
+
+{outputs}
 
 ## Tools And Skills
 
