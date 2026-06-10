@@ -446,6 +446,27 @@ def copy_file(source: Path, destination: Path, result: ScaffoldResult) -> None:
     result.created.append(destination)
 
 
+def ensure_schemas_dir(root: Path, result: ScaffoldResult) -> None:
+    """Copy the repo schemas/ JSON files into harness/schemas/ so that
+    installed roots are self-contained for strict validation and work even
+    when the source repository is not available (e.g. pip-installed packages
+    or customer machines).  Only JSON schemas are copied; the YAML
+    customer-profile schema is not a SCHEMA_TARGETS target.
+    """
+    try:
+        schemas_source = repo_root() / "schemas"
+    except FileNotFoundError:
+        # Running from a non-editable pip install that has no repo checkout;
+        # ship the schemas from the package data directory instead.
+        schemas_source = Path(__file__).parent.parent.parent / "schemas"
+    if not schemas_source.is_dir():
+        return
+    dest = harness_path(root, "schemas")
+    ensure_dir(dest, result)
+    for schema_file in sorted(schemas_source.glob("*.json")):
+        copy_file(schema_file, dest / schema_file.name, result)
+
+
 def copy_file_once(source: Path, destination: Path, result: ScaffoldResult) -> None:
     copy_file(source, destination, result)
 
@@ -1659,6 +1680,7 @@ def ensure_root_files(
     write_root_marker(root, result, projects_source)
     ensure_dir(harness_path(root), result)
     ensure_visible_capability_surface(root, result)
+    ensure_schemas_dir(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
     harness_root = harness_path(root)

@@ -59,6 +59,7 @@ LEGACY_ROOT_CAPABILITY_DIRS = (
     "plugins",
     "registries",
     "rules",
+    "schemas",
     "security",
     "skills",
 )

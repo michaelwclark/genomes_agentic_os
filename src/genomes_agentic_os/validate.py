@@ -695,7 +695,12 @@ def validate_schemas_strict(root: Path) -> list[StrictFinding]:
         ]
 
     findings: list[StrictFinding] = []
-    schemas_dir = _SCHEMA_DIR
+    # Resolution order: prefer schemas bundled with the install at
+    # harness/schemas/ (written by scaffold/customer init so installs are
+    # self-contained), fall back to the source-repo schemas/ directory so
+    # that older roots that pre-date this feature keep working.
+    _install_schemas = root / "harness" / "schemas"
+    schemas_dir = _install_schemas if _install_schemas.is_dir() else _SCHEMA_DIR
 
     for schema_filename, target_patterns in SCHEMA_TARGETS.items():
         schema_path = schemas_dir / schema_filename
