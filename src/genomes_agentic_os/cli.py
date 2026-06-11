@@ -72,10 +72,12 @@ from .scaffold import (
     create_workflow,
     install_docs,
     init_os,
+    link_project_remote,
     link_project_source,
     onboard_project,
     register_project_worktree,
 )
+from .hosts import upsert_host, list_hosts
 from .source_watch import (
     create_watch_source,
     doctor_connected_system,
@@ -173,6 +175,11 @@ def build_parser() -> argparse.ArgumentParser:
     project_create.add_argument("--jira", help="Jira project, issue, or URL.")
     project_create.add_argument("--status", default="active", choices=("active", "waiting", "blocked", "done"))
     project_create.add_argument("--lane", help="Primary operating lane for this project.")
+    project_create.add_argument("--remote-host", help="Remote SSH host alias for the primary remote source.")
+    project_create.add_argument("--remote-path", help="Absolute path on the remote host.")
+    project_create.add_argument("--remote-name", help="Name for the remote (defaults to project name).")
+    project_create.add_argument("--remote-kind", default="git", choices=("git", "folder"), help="Remote source kind (default: git).")
+    project_create.add_argument("--authority", default="remote", choices=("remote", "local"), help="Which side owns truth (default: remote).")
     project_create.set_defaults(handler=handle_project_create)
     project_link_source = project_subparsers.add_parser(
         "link-source",
@@ -190,6 +197,20 @@ def build_parser() -> argparse.ArgumentParser:
     project_onboard.add_argument("project")
     project_onboard.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_onboard.set_defaults(handler=handle_project_onboard)
+    project_link_remote = project_subparsers.add_parser(
+        "link-remote",
+        help="Attach a remote SSH source to an existing project.",
+    )
+    project_link_remote.add_argument("domain")
+    project_link_remote.add_argument("project")
+    project_link_remote.add_argument("--host", required=True, help="Remote SSH host alias (key in config/hosts.yml).")
+    project_link_remote.add_argument("--path", required=True, help="Absolute path on the remote host.")
+    project_link_remote.add_argument("--name", help="Name for the remote (defaults to project name).")
+    project_link_remote.add_argument("--kind", default="git", choices=("git", "folder"), help="Remote source kind (default: git).")
+    project_link_remote.add_argument("--authority", default="remote", choices=("remote", "local"), help="Which side owns truth (default: remote).")
+    project_link_remote.add_argument("--force", action="store_true", help="Replace an existing remote of the same name.")
+    project_link_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_link_remote.set_defaults(handler=handle_project_link_remote)
     project_worktree = project_subparsers.add_parser("worktree", help="Manage visible project worktree links.")
     project_worktree_subparsers = project_worktree.add_subparsers(dest="project_worktree_command", required=True)
     project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree symlink.")
@@ -231,6 +252,19 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_check.add_argument("workflow")
     workflow_check.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     workflow_check.set_defaults(handler=handle_workflow_check)
+
+    host_parser = subparsers.add_parser("host", help="Manage the SSH host registry (config/hosts.yml).")
+    host_subparsers = host_parser.add_subparsers(dest="host_command", required=True)
+    host_add = host_subparsers.add_parser("add", help="Add or update a host alias in the registry.")
+    host_add.add_argument("alias", help="Host alias (identifier used in project remotes).")
+    host_add.add_argument("--ssh-alias", help="SSH alias that resolves via ~/.ssh/config.")
+    host_add.add_argument("--user", help="Remote username (informational).")
+    host_add.add_argument("--description", help="Human-readable description of this host.")
+    host_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_add.set_defaults(handler=handle_host_add)
+    host_list = host_subparsers.add_parser("list", help="List registered hosts.")
+    host_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_list.set_defaults(handler=handle_host_list)
 
     automation_parser = subparsers.add_parser("automation", help="Manage automations.")
     automation_subparsers = automation_parser.add_subparsers(dest="automation_command", required=True)
@@ -870,6 +904,15 @@ def handle_room_update(args: argparse.Namespace) -> int:
 
 
 def handle_project_create(args: argparse.Namespace) -> int:
+    remotes = None
+    if getattr(args, "remote_host", None) and getattr(args, "remote_path", None):
+        remotes = [{
+            "name": args.remote_name or args.project,
+            "host": args.remote_host,
+            "path": args.remote_path,
+            "kind": args.remote_kind,
+            "authority": args.authority,
+        }]
     print_result(
         create_project(
             args.root,
@@ -880,6 +923,7 @@ def handle_project_create(args: argparse.Namespace) -> int:
             jira=args.jira,
             status=args.status,
             lane=args.lane,
+            remotes=remotes,
         )
     )
     return 0
@@ -890,8 +934,50 @@ def handle_project_link_source(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_link_remote(args: argparse.Namespace) -> int:
+    print_result(
+        link_project_remote(
+            args.root,
+            args.domain,
+            args.project,
+            host=args.host,
+            path=args.path,
+            name=getattr(args, "name", None),
+            kind=args.kind,
+            authority=args.authority,
+            force=args.force,
+        )
+    )
+    return 0
+
+
 def handle_project_onboard(args: argparse.Namespace) -> int:
     print_result(onboard_project(args.root, args.domain, args.project))
+    return 0
+
+
+def handle_host_add(args: argparse.Namespace) -> int:
+    result = upsert_host(
+        args.root,
+        args.alias,
+        ssh_alias=getattr(args, "ssh_alias", None),
+        user=getattr(args, "user", None),
+        description=getattr(args, "description", None),
+    )
+    print(f"{result['action']}: {result['alias']} → {result['path']}")
+    return 0
+
+
+def handle_host_list(args: argparse.Namespace) -> int:
+    hosts = list_hosts(args.root)
+    if not hosts:
+        print("No hosts registered. Use: agentic-os host add <alias>")
+        return 0
+    for entry in hosts:
+        alias = entry.get("alias", "")
+        ssh_alias = entry.get("ssh_alias", alias)
+        desc = entry.get("description", "")
+        print(f"  {alias}  (ssh_alias: {ssh_alias})  {desc}")
     return 0
 
 

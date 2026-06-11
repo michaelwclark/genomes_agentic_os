@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/hosts.schema.json",
+  "title": "Host Registry",
+  "description": "Alias-based SSH host registry for the Agentic OS. No credentials, no keys, no ports with secrets. Connectivity lives in ~/.ssh/config.",
+  "type": "object",
+  "required": ["hosts"],
+  "properties": {
+    "hosts": {
+      "type": "object",
+      "description": "Map of host alias (key) to host entry (value). Alias must be an identifier.",
+      "additionalProperties": {
+        "$ref": "#/$defs/HostEntry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "HostEntry": {
+      "type": "object",
+      "description": "A single host registration. All fields are optional; aliases resolve via ~/.ssh/config.",
+      "properties": {
+        "ssh_alias": {
+          "type": "string",
+          "description": "SSH alias that must resolve via ~/.ssh/config. No credentials here."
+        },
+        "user": {
+          "type": "string",
+          "description": "Remote username (informational; real auth is via ~/.ssh/config)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of this host."
+        },
+        "ssh_options": {
+          "type": "array",
+          "description": "Extra ssh(1) options passed to ssh commands for this host (e.g. [\"-o\", \"ClearAllForwardings=yes\"]).",
+          "items": { "type": "string" }
+        },
+        "paths": {
+          "type": "array",
+          "description": "Notable paths on this host (informational registry data, not mounts).",
+          "items": { "$ref": "#/$defs/HostPath" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostPath": {
+      "type": "object",
+      "required": ["path"],
+      "description": "A notable directory or file on the remote host.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute path on the remote host."
+        },
+        "purpose": {
+          "type": "string",
+          "description": "Short description of this path's role."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
