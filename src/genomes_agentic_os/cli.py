@@ -78,6 +78,7 @@ from .scaffold import (
     register_project_worktree,
 )
 from .hosts import upsert_host, list_hosts
+from .remote_ops import sync_project_remote
 from .source_watch import (
     create_watch_source,
     doctor_connected_system,
@@ -237,6 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_create.set_defaults(handler=handle_project_work_item_create)
+
+    project_sync_remote = project_subparsers.add_parser(
+        "sync-remote",
+        help="Refresh manifest.yml for declared remote SSH sources.",
+    )
+    project_sync_remote.add_argument("domain")
+    project_sync_remote.add_argument("project")
+    project_sync_remote.add_argument("--name", help="Sync only the remote with this name (default: all).")
+    project_sync_remote.add_argument("--timeout", type=int, default=20, help="SSH command timeout in seconds (default: 20).")
+    project_sync_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_sync_remote.set_defaults(handler=handle_project_sync_remote)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -503,6 +515,11 @@ def build_parser() -> argparse.ArgumentParser:
     config_doctor = config_subparsers.add_parser("doctor", help="Validate config.toml OTEL and MCP contracts.")
     config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
+    config_doctor.add_argument(
+        "--check-remotes",
+        action="store_true",
+        help="Probe each registered host with ssh -o BatchMode=yes <alias> true and report unreachable hosts as warnings.",
+    )
     config_doctor.set_defaults(handler=handle_config_doctor)
 
     hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
@@ -981,6 +998,26 @@ def handle_host_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_sync_remote(args: argparse.Namespace) -> int:
+    result = sync_project_remote(
+        args.root,
+        args.domain,
+        args.project,
+        name=getattr(args, "name", None),
+        timeout=getattr(args, "timeout", 20),
+    )
+    for w in result.get("warnings", []):
+        print(f"warning: {w}")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    synced = result.get("synced", [])
+    if synced:
+        print(f"synced: {', '.join(synced)}")
+    else:
+        print("no remotes synced")
+    return 1 if result.get("errors") else 0
+
+
 def handle_project_worktree_add(args: argparse.Namespace) -> int:
     print_result(
         register_project_worktree(
@@ -1220,9 +1257,25 @@ def handle_config_install_tree(args: argparse.Namespace) -> int:
 
 
 def handle_config_doctor(args: argparse.Namespace) -> int:
+    check_remotes = getattr(args, "check_remotes", False)
     result = doctor_config(args.root, layer=args.layer)
+    if check_remotes:
+        from .validate import validate_project_remotes_connectivity  # noqa: PLC0415
+        from .hosts import load_hosts as _load_hosts  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+        root_path = _Path(args.root).expanduser()
+        try:
+            hosts = _load_hosts(root_path)
+        except Exception:
+            hosts = {}
+        connectivity_warnings = validate_project_remotes_connectivity(root_path, hosts)
+        if isinstance(result, dict):
+            result.setdefault("warnings", [])
+            result["warnings"].extend(connectivity_warnings)
+            if connectivity_warnings:
+                result["ok"] = False
     print(yaml_dump(result))
-    return 0 if result["ok"] else 1
+    return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
 
 
 def handle_hook_sync(args: argparse.Namespace) -> int:

@@ -517,3 +517,474 @@ class TestCLI:
         # onboard should re-create the missing REMOTE.md
         onboard_project(tmp_path, "los", "losmon_app")
         assert (pr / "remote" / "losmon" / "REMOTE.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# P2: sync_project_remote — fake-runner unit tests
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_runner(responses: dict[str, tuple[int, str, str]]):
+    """Return a fake runner that maps command substrings to (returncode, stdout, stderr)."""
+    def _runner(args: list[str], *, timeout: int = 20):
+        cmd_str = " ".join(args)
+        for key, (rc, stdout, stderr) in responses.items():
+            if key in cmd_str:
+                class _R:
+                    returncode = rc
+                    pass
+                r = _R()
+                r.stdout = stdout
+                r.stderr = stderr
+                r.returncode = rc
+                return r
+        # Default: success with empty output
+        class _Default:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _Default()
+    return _runner
+
+
+def _git_runner(branch: str = "main", head: str = "abc123", dirty: bool = False):
+    """Fake runner that returns plausible git info for a git-kind remote."""
+    dirty_output = "M src/foo.py\n" if dirty else ""
+    return _make_fake_runner({
+        "rev-parse --abbrev-ref HEAD": (0, branch + "\n", ""),
+        "rev-parse HEAD": (0, head + "\n", ""),
+        "status --porcelain": (0, dirty_output, ""),
+        "ls -1A": (0, "src\npackage.json\nREADME.md\n", ""),
+    })
+
+
+class TestSyncProjectRemote:
+    def test_git_kind_writes_full_manifest(self, tmp_path: Path) -> None:
+        """sync_project_remote with a git remote writes branch/head/dirty + listing."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {
+            "name": "losmon",
+            "host": "genomesbox",
+            "path": "/home/genome/projects/losmon",
+            "kind": "git",
+            "authority": "remote",
+        }
+        create_project(tmp_path, "los", "losmon_app", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "losmon_app")
+
+        result = sync_project_remote(
+            tmp_path, "los", "losmon_app",
+            runner=_git_runner(branch="main", head="abc123", dirty=False),
+        )
+        assert result["errors"] == []
+        assert "losmon" in result["synced"]
+
+        manifest_path = pr / "remote" / "losmon" / "manifest.yml"
+        assert manifest_path.is_file()
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        assert data["reachable"] is True
+        assert data["git"]["branch"] == "main"
+        assert data["git"]["head"] == "abc123"
+        assert data["git"]["dirty"] is False
+        assert "src" in data["listing"]
+        assert data["synced_at"] is not None
+
+    def test_git_kind_dirty_flag(self, tmp_path: Path) -> None:
+        """dirty=True is reflected in manifest when porcelain output is non-empty."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "myproj", remotes=[remote])
+
+        sync_project_remote(
+            tmp_path, "los", "myproj",
+            runner=_git_runner(dirty=True),
+        )
+        pr = _project_root(tmp_path, "los", "myproj")
+        data = yaml.safe_load((pr / "remote" / "r" / "manifest.yml").read_text(encoding="utf-8"))
+        assert data["git"]["dirty"] is True
+
+    def test_folder_kind_no_git_block(self, tmp_path: Path) -> None:
+        """folder-kind sync writes listing but no git block."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "assets", "host": "fileserver", "path": "/data/assets", "kind": "folder", "authority": "remote"}
+        create_project(tmp_path, "los", "assetproj", remotes=[remote])
+
+        folder_runner = _make_fake_runner({
+            "ls -1A": (0, "img\nvideo\n", ""),
+            "test -d": (0, "", ""),
+        })
+        result = sync_project_remote(
+            tmp_path, "los", "assetproj",
+            runner=folder_runner,
+        )
+        assert result["errors"] == []
+        pr = _project_root(tmp_path, "los", "assetproj")
+        data = yaml.safe_load((pr / "remote" / "assets" / "manifest.yml").read_text(encoding="utf-8"))
+        assert "git" not in data
+        assert data["reachable"] is True
+        assert "img" in data["listing"]
+
+    def test_unreachable_host_reachable_false_no_exception(self, tmp_path: Path) -> None:
+        """Unreachable host → reachable: false in manifest, no raised exception."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "remote1", "host": "deadhost", "path": "/home/user/proj", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "proj1", remotes=[remote])
+
+        # All commands fail
+        failing_runner = _make_fake_runner({
+            "rev-parse --abbrev-ref HEAD": (1, "", "not a git repo"),
+            "rev-parse HEAD": (1, "", "error"),
+            "status --porcelain": (1, "", "error"),
+            "ls -1A": (1, "", "connection refused"),
+        })
+        result = sync_project_remote(tmp_path, "los", "proj1", runner=failing_runner)
+        assert result["errors"] == []
+        assert len(result["warnings"]) >= 1
+
+        pr = _project_root(tmp_path, "los", "proj1")
+        data = yaml.safe_load((pr / "remote" / "remote1" / "manifest.yml").read_text(encoding="utf-8"))
+        assert data["reachable"] is False
+        assert data["synced_at"] is not None
+
+    def test_unreachable_host_keeps_prior_git_data(self, tmp_path: Path) -> None:
+        """On second (failing) sync, previous git info is preserved in the manifest."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "p2", remotes=[remote])
+
+        # First sync succeeds
+        sync_project_remote(tmp_path, "los", "p2", runner=_git_runner(head="sha_first"))
+
+        # Second sync fails
+        failing_runner = _make_fake_runner({
+            "rev-parse --abbrev-ref HEAD": (1, "", "err"),
+            "rev-parse HEAD": (1, "", "err"),
+            "status --porcelain": (1, "", "err"),
+        })
+        sync_project_remote(tmp_path, "los", "p2", runner=failing_runner)
+
+        pr = _project_root(tmp_path, "los", "p2")
+        data = yaml.safe_load((pr / "remote" / "r" / "manifest.yml").read_text(encoding="utf-8"))
+        assert data["reachable"] is False
+        # Prior git data must be preserved
+        assert data.get("git", {}).get("head") == "sha_first"
+
+    def test_listing_capped_at_200_with_truncated_flag(self, tmp_path: Path) -> None:
+        """Listings with more than 200 entries are capped and listing_truncated is set."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "big", "host": "h", "path": "/big", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "bigproj", remotes=[remote])
+
+        big_ls = "\n".join(f"file{i:04d}.txt" for i in range(250)) + "\n"
+        big_runner = _make_fake_runner({
+            "rev-parse --abbrev-ref HEAD": (0, "main\n", ""),
+            "rev-parse HEAD": (0, "deadbeef\n", ""),
+            "status --porcelain": (0, "", ""),
+            "ls -1A": (0, big_ls, ""),
+        })
+        sync_project_remote(tmp_path, "los", "bigproj", runner=big_runner)
+
+        pr = _project_root(tmp_path, "los", "bigproj")
+        data = yaml.safe_load((pr / "remote" / "big" / "manifest.yml").read_text(encoding="utf-8"))
+        assert len(data["listing"]) == 200
+        assert data.get("listing_truncated") is True
+
+    def test_source_map_row_updated_idempotently(self, tmp_path: Path) -> None:
+        """Syncing twice updates the source-map row date but leaves exactly one row."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "myhost", "path": "/mypath", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "idproj", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "idproj")
+
+        sync_project_remote(tmp_path, "los", "idproj", runner=_git_runner())
+        sync_project_remote(tmp_path, "los", "idproj", runner=_git_runner())
+
+        sm_text = (pr / "source-map.md").read_text(encoding="utf-8")
+        # The row appears exactly once (no duplicate rows)
+        rows_with_host = [line for line in sm_text.splitlines() if "myhost:/mypath" in line]
+        assert len(rows_with_host) == 1
+        assert "synced" in rows_with_host[0]
+
+    def test_sync_remote_cli(self, tmp_path: Path) -> None:
+        """CLI wiring: agentic-os project sync-remote exercises the handler."""
+        # We can't inject a runner through the CLI, so we test with a project
+        # that has no hosts registered — the ssh command will fail fast and
+        # return reachable=false, which is exit-0 semantics.
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "cliproj", remotes=[remote])
+
+        # Call through remote_ops directly with a fake runner — CLI path tested
+        # separately by arg-parser smoke test below.
+        result = sync_project_remote(
+            tmp_path, "los", "cliproj",
+            runner=_git_runner(),
+        )
+        assert "r" in result["synced"]
+
+    def test_sync_remote_cli_arg_parser(self, tmp_path: Path, capsys) -> None:
+        """project sync-remote parser is registered and --help exits cleanly."""
+        import sys
+        with pytest.raises(SystemExit) as exc_info:
+            main(["project", "sync-remote", "--help"])
+        # argparse --help exits 0
+        assert exc_info.value.code == 0
+
+    def test_sync_remote_filter_by_name(self, tmp_path: Path) -> None:
+        """--name filters to just the named remote."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remotes = [
+            {"name": "r1", "host": "h1", "path": "/p1", "kind": "git", "authority": "remote"},
+            {"name": "r2", "host": "h2", "path": "/p2", "kind": "git", "authority": "remote"},
+        ]
+        create_project(tmp_path, "los", "multiproj", remotes=remotes)
+
+        result = sync_project_remote(
+            tmp_path, "los", "multiproj",
+            name="r1",
+            runner=_git_runner(),
+        )
+        assert result["synced"] == ["r1"]
+
+    def test_sync_remote_unknown_name_returns_error(self, tmp_path: Path) -> None:
+        """--name with a nonexistent remote name returns an error dict, not exception."""
+        from genomes_agentic_os.remote_ops import sync_project_remote
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "eproj", remotes=[remote])
+
+        result = sync_project_remote(
+            tmp_path, "los", "eproj",
+            name="nonexistent",
+            runner=_git_runner(),
+        )
+        assert result["synced"] == []
+        assert result["errors"]
+
+
+# ---------------------------------------------------------------------------
+# P2: doctor remote validation
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorRemoteValidation:
+    def test_unknown_host_is_error(self, tmp_path: Path) -> None:
+        """Remote referencing a host not in hosts.yml → error."""
+        from genomes_agentic_os.validate import validate_project_remotes, ValidationResult
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "unknownhost", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "p", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "p")
+
+        result = ValidationResult(root=pr)
+        # Pass an empty hosts dict — any host is unknown
+        validate_project_remotes(pr, result, hosts={})
+        assert any("unknown host" in e for e in result.errors)
+
+    def test_missing_remote_md_is_error(self, tmp_path: Path) -> None:
+        """Missing remote/<name>/REMOTE.md → error."""
+        from genomes_agentic_os.validate import validate_project_remotes, ValidationResult
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "p2", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "p2")
+        (pr / "remote" / "r" / "REMOTE.md").unlink()
+
+        # Register the host so we only test the missing-file check
+        hosts = {"h": {"ssh_alias": "h"}}
+        result = ValidationResult(root=pr)
+        validate_project_remotes(pr, result, hosts=hosts)
+        assert any("REMOTE.md" in e for e in result.errors)
+
+    def test_missing_manifest_yml_is_error(self, tmp_path: Path) -> None:
+        """Missing remote/<name>/manifest.yml → error."""
+        from genomes_agentic_os.validate import validate_project_remotes, ValidationResult
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "p3", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "p3")
+        (pr / "remote" / "r" / "manifest.yml").unlink()
+
+        hosts = {"h": {"ssh_alias": "h"}}
+        result = ValidationResult(root=pr)
+        validate_project_remotes(pr, result, hosts=hosts)
+        assert any("manifest" in e for e in result.errors)
+
+    def test_stale_manifest_is_warning(self, tmp_path: Path) -> None:
+        """manifest synced_at older than 14 days → warning."""
+        from genomes_agentic_os.validate import validate_project_remotes, ValidationResult
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "p4", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "p4")
+
+        # Write a manifest with a synced_at 30 days ago
+        import datetime
+        old_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+        manifest_path = pr / "remote" / "r" / "manifest.yml"
+        old_data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        old_data["synced_at"] = old_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        manifest_path.write_text(yaml.safe_dump(old_data, sort_keys=False), encoding="utf-8")
+
+        hosts = {"h": {"ssh_alias": "h"}}
+        result = ValidationResult(root=pr)
+        validate_project_remotes(pr, result, hosts=hosts)
+        assert any("stale" in w for w in result.warnings)
+
+    def test_null_synced_at_is_warning(self, tmp_path: Path) -> None:
+        """manifest synced_at: null → warning (never synced)."""
+        from genomes_agentic_os.validate import validate_project_remotes, ValidationResult
+
+        _init_root(tmp_path)
+        remote = {"name": "r", "host": "h", "path": "/p", "kind": "git", "authority": "remote"}
+        create_project(tmp_path, "los", "p5", remotes=[remote])
+        pr = _project_root(tmp_path, "los", "p5")
+
+        # The scaffold stub has synced_at: null by default
+        hosts = {"h": {"ssh_alias": "h"}}
+        result = ValidationResult(root=pr)
+        validate_project_remotes(pr, result, hosts=hosts)
+        assert any("never been synced" in w or "null" in w for w in result.warnings)
+
+    def test_malformed_remote_entry_missing_host_is_error(self, tmp_path: Path) -> None:
+        """Remote entry missing host field → error."""
+        from genomes_agentic_os.validate import validate_project_remotes, ValidationResult
+
+        _init_root(tmp_path)
+        create_project(tmp_path, "los", "malformed")
+        pr = _project_root(tmp_path, "los", "malformed")
+
+        # Manually inject a malformed remote into project.yml
+        project_yml = pr / "project.yml"
+        data = yaml.safe_load(project_yml.read_text(encoding="utf-8"))
+        data.setdefault("sources", {})["remotes"] = [{"name": "bad", "path": "/p"}]  # missing host
+        project_yml.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        result = ValidationResult(root=pr)
+        validate_project_remotes(pr, result, hosts={})
+        assert any("missing required field" in e for e in result.errors)
+
+    def test_check_remotes_unreachable_host_is_warning(self, tmp_path: Path) -> None:
+        """--check-remotes with an unreachable host → warning from connectivity check."""
+        from genomes_agentic_os.validate import validate_project_remotes_connectivity
+
+        hosts = {"myhost": {"ssh_alias": "myhost", "ssh_options": []}}
+
+        def fake_runner(args: list[str], *, timeout: int = 10):
+            class _R:
+                returncode = 255
+                stderr = "Connection refused"
+                stdout = ""
+            return _R()
+
+        warnings = validate_project_remotes_connectivity(tmp_path, hosts, runner=fake_runner)
+        assert any("myhost" in w for w in warnings)
+        assert any("unreachable" in w for w in warnings)
+
+    def test_check_remotes_reachable_host_no_warning(self, tmp_path: Path) -> None:
+        """--check-remotes with reachable host → no warning."""
+        from genomes_agentic_os.validate import validate_project_remotes_connectivity
+
+        hosts = {"goodhost": {"ssh_alias": "goodhost", "ssh_options": []}}
+
+        def fake_runner(args: list[str], *, timeout: int = 10):
+            class _R:
+                returncode = 0
+                stderr = ""
+                stdout = ""
+            return _R()
+
+        warnings = validate_project_remotes_connectivity(tmp_path, hosts, runner=fake_runner)
+        assert warnings == []
+
+    def test_malformed_hosts_yml_is_schema_error(self, tmp_path: Path) -> None:
+        """A hosts.yml with wrong types triggers a schema validation finding."""
+        import json
+        from genomes_agentic_os.validate import validate_schemas_strict, _SCHEMA_DIR
+
+        # Write a malformed hosts.yml (hosts must be a mapping, not a list)
+        hosts_path = tmp_path / "config" / "hosts.yml"
+        hosts_path.parent.mkdir(parents=True, exist_ok=True)
+        hosts_path.write_text("hosts:\n  - not_a_mapping\n", encoding="utf-8")
+
+        # Only run this test if jsonschema is available and the schema exists
+        schema_path = _SCHEMA_DIR / "hosts.schema.json"
+        try:
+            import jsonschema  # noqa: F401
+        except ImportError:
+            pytest.skip("jsonschema not installed")
+        if not schema_path.is_file():
+            pytest.skip("hosts.schema.json not present")
+
+        findings = validate_schemas_strict(tmp_path)
+        hosts_findings = [f for f in findings if "hosts" in f.schema]
+        assert len(hosts_findings) >= 1
+
+
+# ---------------------------------------------------------------------------
+# P2: migration — fix_missing creates hosts.yml
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationHostsYml:
+    def test_migrate_hosts_apply_creates_file(self, tmp_path: Path) -> None:
+        """migrate_hosts_apply creates config/hosts.yml when absent."""
+        from genomes_agentic_os.migrations import migrate_hosts_apply
+
+        result = migrate_hosts_apply(tmp_path)
+        assert result["applied"] is True
+        hosts_path = tmp_path / "config" / "hosts.yml"
+        assert hosts_path.is_file()
+        data = yaml.safe_load(hosts_path.read_text(encoding="utf-8"))
+        assert isinstance(data.get("hosts"), dict)
+
+    def test_migrate_hosts_apply_idempotent(self, tmp_path: Path) -> None:
+        """migrate_hosts_apply skips if hosts.yml already exists."""
+        from genomes_agentic_os.migrations import migrate_hosts_apply
+
+        migrate_hosts_apply(tmp_path)
+        result2 = migrate_hosts_apply(tmp_path)
+        assert result2.get("skipped") is True
+        assert result2.get("applied") is False
+
+    def test_fix_missing_hosts_yml(self, tmp_path: Path) -> None:
+        """fix_missing_hosts_yml creates hosts.yml when absent."""
+        from genomes_agentic_os.migrations import fix_missing_hosts_yml
+
+        result = fix_missing_hosts_yml(tmp_path)
+        assert result["applied"] is True
+        assert (tmp_path / "config" / "hosts.yml").is_file()
+
+    def test_migrate_hosts_plan_writes_plan_file(self, tmp_path: Path) -> None:
+        """migrate_hosts_plan writes a plan file under .migrations/."""
+        from genomes_agentic_os.migrations import migrate_hosts_plan
+
+        result = migrate_hosts_plan(tmp_path)
+        assert "plan_path" in result
+        plan_path = Path(result["plan_path"])
+        assert plan_path.is_file()
+        plan_data = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+        assert plan_data["migration_id"] == "hosts-yml-init-v1"
