@@ -35,11 +35,13 @@ from .scaffold import (
     PROJECT_CONFIG_FILES,
     ROOT_MARKER_FILENAME,
     STANDARD_LANES,
+    _remotes_from_config,
     domain_path,
     expand_path,
     harness_path,
     shared_factory_path,
 )
+from .hosts import load_hosts
 
 
 ROOT_FILES = (
@@ -333,6 +335,156 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
     require_file(project_root / "worktrees" / "index.yml", result)
     validate_project_worktrees(project_root, result)
     validate_project_work_items(project_root, result)
+    # Load hosts registry for remote validation (best-effort; errors surfaced below).
+    # root_candidate: <os-root>/<domain>/02-projects/<project> → parent×3 = <os-root>
+    root_candidate = project_root.parent.parent.parent
+    hosts_yml = root_candidate / "config" / "hosts.yml"
+    if hosts_yml.is_file():
+        try:
+            hosts: dict[str, Any] | None = load_hosts(root_candidate)
+        except Exception:
+            hosts = {}
+    else:
+        # hosts.yml not yet created (pre-migration); skip host-reference check
+        hosts = None
+    validate_project_remotes(project_root, result, hosts)
+
+
+def validate_project_remotes(
+    project_root: Path,
+    result: ValidationResult,
+    hosts: dict[str, Any] | None,
+) -> None:
+    """Validate declared remote sources for a single project.
+
+    Parameters
+    ----------
+    hosts:
+        The loaded hosts registry (alias → entry dict).  Pass ``None`` to
+        indicate that ``config/hosts.yml`` does not exist yet (pre-migration);
+        in that case the host-reference check is skipped.  Pass ``{}`` to
+        indicate the file exists but has no entries (all references unknown).
+
+    Checks:
+    - Every ``sources.remotes`` entry has ``host`` and ``path`` fields (error).
+    - Every declared host exists in hosts.yml (error) — skipped when hosts is None.
+    - ``remote/<name>/REMOTE.md`` and ``remote/<name>/manifest.yml`` exist (error).
+    - manifest ``synced_at`` is None or older than 14 days (warning).
+    """
+    project_yml = project_root / "project.yml"
+    if not project_yml.is_file():
+        return
+    try:
+        data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return
+    if not isinstance(data, dict):
+        return
+
+    remotes = _remotes_from_config(data)
+    for remote in remotes:
+        name = remote.get("name", "")
+        host = remote.get("host", "")
+        path = remote.get("path", "")
+
+        # (a) Required fields
+        if not host or not path:
+            result.errors.append(
+                f"project remote {name!r} in {project_yml} is missing required "
+                f"field(s): {'host' if not host else ''} {'path' if not path else ''}".strip()
+            )
+            continue
+
+        # (b) Host must be in hosts.yml (only when the file exists; hosts=None → skip)
+        if hosts is not None and host not in hosts:
+            result.errors.append(
+                f"project remote {name!r} in {project_yml} references unknown "
+                f"host {host!r} (not in config/hosts.yml)"
+            )
+
+        # (c) Marker files must exist
+        remote_dir = project_root / "remote" / name
+        remote_md = remote_dir / "REMOTE.md"
+        manifest_yml = remote_dir / "manifest.yml"
+        if not remote_md.is_file():
+            result.errors.append(
+                f"project remote {name!r}: missing marker file {remote_md}"
+            )
+        if not manifest_yml.is_file():
+            result.errors.append(
+                f"project remote {name!r}: missing manifest file {manifest_yml}"
+            )
+            continue
+
+        # (d) Staleness warning
+        try:
+            manifest_data = yaml.safe_load(manifest_yml.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            manifest_data = {}
+        synced_at = manifest_data.get("synced_at") if isinstance(manifest_data, dict) else None
+        if synced_at is None:
+            result.warnings.append(
+                f"project remote {name!r}: manifest has never been synced "
+                f"(synced_at is null): {manifest_yml}"
+            )
+        else:
+            try:
+                synced_dt = datetime.datetime.fromisoformat(str(synced_at).rstrip("Z")).replace(
+                    tzinfo=datetime.timezone.utc
+                )
+                age = datetime.datetime.now(datetime.timezone.utc) - synced_dt
+                if age.days > 14:
+                    result.warnings.append(
+                        f"project remote {name!r}: manifest is stale "
+                        f"({age.days} days since last sync): {manifest_yml}"
+                    )
+            except (ValueError, TypeError):
+                pass  # unparseable synced_at — skip staleness check
+
+
+def validate_project_remotes_connectivity(
+    root: Path,
+    hosts: dict[str, Any],
+    *,
+    runner: Any | None = None,
+) -> list[str]:
+    """Probe each registered host with a no-op SSH command.
+
+    Used by ``config doctor --check-remotes``.  Returns a list of warning
+    strings; never raises.  No network calls when *hosts* is empty.
+
+    The injectable *runner* follows the same shape as remote_ops: callable
+    ``(args: list[str], *, timeout: int) -> result-with-returncode``.
+    """
+    import subprocess  # noqa: PLC0415
+
+    if runner is None:
+        def runner(args: list[str], *, timeout: int = 10) -> Any:  # type: ignore[misc]
+            try:
+                return subprocess.run(args, capture_output=True, text=True, timeout=timeout)  # noqa: S603
+            except Exception as exc:
+                class _Fail:
+                    returncode = 1
+                    stderr = str(exc)
+                return _Fail()
+
+    warnings: list[str] = []
+    for alias, entry in hosts.items():
+        if not isinstance(entry, dict):
+            continue
+        ssh_alias = entry.get("ssh_alias") or alias
+        ssh_options: list[str] = entry.get("ssh_options") or []
+        args = ["ssh", "-o", "BatchMode=yes"] + list(ssh_options) + [ssh_alias, "true"]
+        try:
+            result = runner(args, timeout=10)
+            if result.returncode != 0:
+                warnings.append(
+                    f"host {alias!r} (ssh_alias={ssh_alias!r}) is unreachable: "
+                    f"ssh exited {result.returncode}"
+                )
+        except Exception as exc:
+            warnings.append(f"host {alias!r} (ssh_alias={ssh_alias!r}) probe failed: {exc}")
+    return warnings
 
 
 def validate_project_work_items(project_root: Path, result: ValidationResult) -> None:
@@ -650,6 +802,7 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "run.schema.json": ["**/06-runs-and-logs/runs/*/run.yml"],
     "workflow.schema.json": ["**/03-workflows/*/*/workflow.yml"],
     "update-manifest.schema.json": [],  # generated; no installed glob
+    "hosts.schema.json": ["config/hosts.yml"],
 }
 
 

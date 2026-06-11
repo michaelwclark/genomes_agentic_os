@@ -22,6 +22,7 @@ from .capability_registry import (
 )
 from .config_ops import install_config
 from .composio_catalog import composio_tools_markdown
+from .hosts import load_hosts
 from .mcp_catalog import mcp_tools_markdown
 
 
@@ -1914,7 +1915,24 @@ def project_config(
     repo: str | None,
     notion: str | None,
     jira: str | None,
+    remotes: list[dict[str, str]] | None = None,
 ) -> str:
+    remotes_block = ""
+    if remotes:
+        remotes_block = "\n  remotes:\n"
+        for r in remotes:
+            name = r.get("name") or project
+            host = r.get("host", "")
+            path = r.get("path", "")
+            kind = r.get("kind", "git")
+            authority = r.get("authority", "remote")
+            remotes_block += (
+                f"    - name: {name}\n"
+                f"      host: {host}\n"
+                f"      path: {path}\n"
+                f"      kind: {kind}\n"
+                f"      authority: {authority}\n"
+            )
     return f"""id: {project}
 name: {project}
 domain: {domain}
@@ -1924,7 +1942,7 @@ lane: {lane or ""}
 sources:
   repo: {repo or ""}
   notion: {notion or ""}
-  jira: {jira or ""}
+  jira: {jira or ""}{remotes_block}
 
 routing:
   project_root: 02-projects/{project}
@@ -2009,8 +2027,29 @@ def project_source_map(project: str, repo: str | None, notion: str | None, jira:
 """
 
 
-def project_agents(domain: str, project: str) -> str:
+def project_agents(domain: str, project: str, remotes: list[dict[str, str]] | None = None) -> str:
+    remote_section = ""
+    if remotes:
+        lines = ["\n## Remote Sources\n"]
+        for r in remotes:
+            name = r.get("name") or project
+            host = r.get("host", "")
+            path = r.get("path", "")
+            authority = r.get("authority", "remote")
+            auth_note = (
+                "Code is authoritative on the remote host."
+                if authority == "remote"
+                else "Local copy is authoritative; remote is a deploy/reference copy."
+            )
+            lines.append(
+                f"- **{name}** (`{host}:{path}`): {auth_note}\n"
+                f"  Reach via commands in `remote/{name}/REMOTE.md`.\n"
+                f"  Artifacts, work-items, and decisions stay local in this room."
+            )
+        remote_section = "\n".join(lines)
     return f"""# Agent Entry Point: {project}
+
+This file is the harness-neutral entrypoint for this Agentic OS layer.
 
 This is the project-local entrypoint for `{domain}/02-projects/{project}`.
 
@@ -2029,6 +2068,7 @@ This is the project-local entrypoint for `{domain}/02-projects/{project}`.
 - `config/work-lifecycle.yml` declares lifecycle lanes and naming rules.
 - `config/output-artifacts.yml` declares feature artifact roots such as `work-items/02-active/{{ticket_or_slug}}/artifacts`.
 - `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
+{remote_section}
 """
 
 
@@ -2056,8 +2096,29 @@ Register visible worktrees with `agentic-os project worktree add {domain} {proje
 """
 
 
-def project_context(domain: str, project: str) -> str:
+def project_context(domain: str, project: str, remotes: list[dict[str, str]] | None = None) -> str:
+    remote_section = ""
+    if remotes:
+        lines = ["\n## Remote Sources\n"]
+        for r in remotes:
+            name = r.get("name") or project
+            host = r.get("host", "")
+            path = r.get("path", "")
+            authority = r.get("authority", "remote")
+            auth_note = (
+                "Code is authoritative on the remote host."
+                if authority == "remote"
+                else "Local copy is authoritative; remote is a deploy/reference copy."
+            )
+            lines.append(
+                f"- **{name}** (`{host}:{path}`): {auth_note}\n"
+                f"  Reach via commands in `remote/{name}/REMOTE.md`.\n"
+                f"  Artifacts, work-items, and decisions stay local in this room."
+            )
+        remote_section = "\n".join(lines)
     return f"""# Context: {project}
+
+Describe the local room, source systems, routing hints for `{domain}/02-projects/{project}`.
 
 This project layer is the operating surface for `{domain}/02-projects/{project}`.
 It connects project state, source links, worktrees, ideas, output artifacts, and local rules.
@@ -2076,6 +2137,7 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 - Markdown files explain intent, decisions, source maps, and human-readable context.
 - YAML files under `config/` are for parsed defaults, paths, validation commands, MCP boundaries, and tool declarations.
 - Use Markdown with YAML front matter for hybrid specs, ideas, and ticket drafts when both narrative and machine-readable metadata are needed.
+{remote_section}
 """
 
 
@@ -2426,6 +2488,146 @@ def append_project_source_refs(source_map: Path, repo: str | None, notion: str |
         append_once(source_map, row, result)
 
 
+def append_project_remote_refs(
+    source_map: Path,
+    remotes: list[dict[str, str]],
+    result: ScaffoldResult,
+) -> None:
+    """Append one source-map row per declared remote."""
+    for r in remotes:
+        name = r.get("name", "")
+        host = r.get("host", "")
+        path = r.get("path", "")
+        authority = r.get("authority", "remote")
+        purpose = (
+            "Authoritative working tree"
+            if authority == "remote"
+            else "Reference working tree (local is authoritative)"
+        )
+        row = f"| Remote ({host}) | {host}:{path} | {purpose} | pending sync |\n"
+        append_once(source_map, row, result)
+
+
+def _remote_ssh_connect_cmd(host: str, root: str | Path, ssh_options: list[str] | None = None) -> str:
+    """Return the interactive connect command for *host*, pulling ssh_options from hosts.yml if available."""
+    if ssh_options is None:
+        try:
+            hosts = load_hosts(root)
+            entry = hosts.get(host, {})
+            ssh_options = entry.get("ssh_options") or []
+        except Exception:
+            ssh_options = []
+    if ssh_options:
+        opts_str = " ".join(ssh_options)
+        return f"ssh {opts_str} {host}"
+    return f"ssh {host}"
+
+
+def remote_readme_content(
+    project: str,
+    remote: dict[str, str],
+    root: str | Path,
+    local_repo: str | None = None,
+) -> str:
+    """Return the managed REMOTE.md content for one remote entry."""
+    name = remote.get("name") or project
+    host = remote.get("host", "")
+    path = remote.get("path", "")
+    authority = remote.get("authority", "remote")
+
+    connect_cmd = _remote_ssh_connect_cmd(host, root)
+    batch_cmd = f"ssh -o BatchMode=yes {host} '<cmd>'"
+
+    authority_stmt = (
+        f"Code is **authoritative on {host}**. The local room is a read-only reference."
+        if authority == "remote"
+        else f"Local copy is **authoritative**. `{host}:{path}` is a deploy or reference copy."
+    )
+    mirror_warning = ""
+    if local_repo and authority == "remote":
+        mirror_warning = (
+            f"\n> **Reference-only warning**: `src/` points to `{local_repo}` (local mirror). "
+            f"The authoritative working tree is `{host}:{path}`. "
+            f"Edits must be made on the remote; the local mirror is a reference snapshot."
+        )
+
+    return f"""# Remote: {name}
+
+## Authority
+
+{authority_stmt}{mirror_warning}
+
+## Connect
+
+Interactive session:
+
+```sh
+{connect_cmd}
+cd {path}
+```
+
+Non-interactive (agent-safe):
+
+```sh
+{batch_cmd}
+```
+
+## Notes
+
+- Sync state is tracked in `manifest.yml` alongside this file.
+- Run `agentic-os project sync-remote` to refresh the manifest.
+- Never commit credentials, keys, or hostnames-with-passwords here.
+  All connectivity lives in `~/.ssh/config` under the alias `{host}`.
+"""
+
+
+def remote_manifest_stub(project: str, remote: dict[str, str]) -> str:
+    """Return the initial manifest.yml stub content for one remote."""
+    name = remote.get("name") or project
+    host = remote.get("host", "")
+    path = remote.get("path", "")
+    kind = remote.get("kind", "git")
+    authority = remote.get("authority", "remote")
+    payload = {
+        "name": name,
+        "host": host,
+        "path": path,
+        "kind": kind,
+        "authority": authority,
+        "reachable": "unknown",
+        "synced_at": None,
+    }
+    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+
+
+def ensure_project_remote_dirs(
+    project_root: Path,
+    project: str,
+    remotes: list[dict[str, str]],
+    root: str | Path,
+    result: ScaffoldResult,
+    local_repo: str | None = None,
+) -> None:
+    """Materialize remote/<name>/ for every declared remote."""
+    for r in remotes:
+        name = r.get("name") or project
+        remote_dir = project_root / "remote" / name
+        ensure_dir(remote_dir, result)
+        # REMOTE.md is a managed file — refreshed on re-runs if the marker phrase appears
+        write_project_file(
+            remote_dir / "REMOTE.md",
+            remote_readme_content(project, r, root, local_repo=local_repo),
+            result,
+            replace_markers=("Never commit credentials, keys, or hostnames-with-passwords here.",),
+        )
+        # manifest.yml is a stub written once; sync-remote owns it after creation
+        write_file_once(
+            remote_dir / "manifest.yml",
+            remote_manifest_stub(project, r),
+            result,
+        )
+
+
 def write_project_file(path: Path, content: str, result: ScaffoldResult, *, replace_markers: tuple[str, ...] = ()) -> None:
     if not path.exists():
         write_file_once(path, content, result)
@@ -2448,6 +2650,10 @@ def ensure_project_operating_surface(
     status: str,
     lane: str | None,
     result: ScaffoldResult,
+    *,
+    remotes: list[dict[str, str]] | None = None,
+    root: str | Path | None = None,
+    repo: str | None = None,
 ) -> None:
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
@@ -2458,7 +2664,7 @@ def ensure_project_operating_surface(
     ensure_dir(project_root / "worktrees", result)
     write_project_file(
         project_root / "AGENTS.md",
-        project_agents(domain, project),
+        project_agents(domain, project, remotes=remotes),
         result,
         replace_markers=("This file is the harness-neutral entrypoint for this Agentic OS layer",),
     )
@@ -2470,7 +2676,7 @@ def ensure_project_operating_surface(
     )
     write_project_file(
         project_root / "CONTEXT.md",
-        project_context(domain, project),
+        project_context(domain, project, remotes=remotes),
         result,
         replace_markers=("Describe the local room, source systems, routing hints",),
     )
@@ -2503,6 +2709,15 @@ def ensure_project_operating_surface(
             result,
         )
     ensure_codex_config(project_root, "project", result)
+    if remotes:
+        ensure_project_remote_dirs(
+            project_root,
+            project,
+            remotes,
+            root if root is not None else project_root,
+            result,
+            local_repo=repo,
+        )
 
 
 def is_remote_repo_reference(repo: str) -> bool:
@@ -2613,6 +2828,114 @@ def link_project_source(
     return result
 
 
+def _remotes_from_config(data: dict) -> list[dict[str, str]]:
+    """Extract sources.remotes list from a parsed project.yml data dict."""
+    sources = data.get("sources")
+    if not isinstance(sources, dict):
+        return []
+    remotes = sources.get("remotes")
+    if not isinstance(remotes, list):
+        return []
+    result = []
+    for r in remotes:
+        if isinstance(r, dict):
+            result.append({str(k): str(v) for k, v in r.items() if v is not None})
+    return result
+
+
+def _upsert_remote_in_config(
+    project_root: Path,
+    project: str,
+    remote: dict[str, str],
+    *,
+    force: bool = False,
+) -> dict[str, str]:
+    """Add or replace a remote entry in project.yml sources.remotes.
+
+    Returns the final remote dict that was written.
+    Raises ValueError on name conflict when force=False.
+    """
+    config = project_root / "project.yml"
+    data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"project config must be a YAML mapping: {config}")
+    sources = data.get("sources")
+    if not isinstance(sources, dict):
+        sources = {}
+        data["sources"] = sources
+    existing_remotes: list[dict] = []
+    if isinstance(sources.get("remotes"), list):
+        existing_remotes = sources["remotes"]
+
+    name = remote.get("name") or project
+    conflict_index = next(
+        (i for i, r in enumerate(existing_remotes) if (r.get("name") or project) == name),
+        None,
+    )
+    if conflict_index is not None and not force:
+        raise ValueError(
+            f"Remote {name!r} already exists in {config}. Use --force to replace."
+        )
+    if conflict_index is not None:
+        existing_remotes[conflict_index] = remote
+    else:
+        existing_remotes.append(remote)
+    sources["remotes"] = existing_remotes
+    config.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return remote
+
+
+def link_project_remote(
+    root: str | Path,
+    domain: str,
+    project: str,
+    *,
+    host: str,
+    path: str,
+    name: str | None = None,
+    kind: str = "git",
+    authority: str = "remote",
+    force: bool = False,
+) -> ScaffoldResult:
+    """Attach a remote to an existing project: update project.yml, materialize remote dir, append source-map row."""
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    os_root = expand_path(root)
+    project_root = domain_path(os_root, domain) / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+
+    remote: dict[str, str] = {
+        "name": name or project,
+        "host": host,
+        "path": path,
+        "kind": kind,
+        "authority": authority,
+    }
+    result = ScaffoldResult()
+    _upsert_remote_in_config(project_root, project, remote, force=force)
+    data = yaml.safe_load((project_root / "project.yml").read_text(encoding="utf-8")) or {}
+    repo = str(data.get("sources", {}).get("repo") or "") or None
+
+    ensure_project_remote_dirs(project_root, project, [remote], os_root, result, local_repo=repo)
+    append_project_remote_refs(project_root / "source-map.md", [remote], result)
+    # Re-run AGENTS.md and CONTEXT.md with the updated full remotes list so the section is refreshed
+    all_remotes = _remotes_from_config(data)
+    write_project_file(
+        project_root / "AGENTS.md",
+        project_agents(domain, project, remotes=all_remotes),
+        result,
+        replace_markers=("This file is the harness-neutral entrypoint for this Agentic OS layer",),
+    )
+    write_project_file(
+        project_root / "CONTEXT.md",
+        project_context(domain, project, remotes=all_remotes),
+        result,
+        replace_markers=("Describe the local room, source systems, routing hints",),
+    )
+    return result
+
+
 def onboard_project(root: str | Path, domain: str, project: str) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
@@ -2621,6 +2944,8 @@ def onboard_project(root: str | Path, domain: str, project: str) -> ScaffoldResu
     if not (project_root / "project.yml").is_file():
         raise ValueError(f"project not found: {domain}/{project}")
     data = yaml.safe_load((project_root / "project.yml").read_text(encoding="utf-8")) or {}
+    remotes = _remotes_from_config(data) or None
+    repo = str(data.get("sources", {}).get("repo") or "") or None
     result = ScaffoldResult()
     ensure_project_operating_surface(
         project_root,
@@ -2629,6 +2954,9 @@ def onboard_project(root: str | Path, domain: str, project: str) -> ScaffoldResu
         str(data.get("status") or "active"),
         str(data.get("lane") or "") or None,
         result,
+        remotes=remotes,
+        root=os_root,
+        repo=repo,
     )
     return result
 
@@ -2753,6 +3081,7 @@ def create_project(
     jira: str | None = None,
     status: str = "active",
     lane: str | None = None,
+    remotes: list[dict[str, str]] | None = None,
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
@@ -2766,12 +3095,12 @@ def create_project(
     project_root = domain_root / "02-projects" / project
     ensure_dir(project_root, result)
     write_file_once(project_root / "README.md", project_readme(domain, project, status, lane), result)
-    write_file_once(project_root / "project.yml", project_config(domain, project, status, lane, repo, notion, jira), result)
+    write_file_once(project_root / "project.yml", project_config(domain, project, status, lane, repo, notion, jira, remotes=remotes), result)
     write_file_once(project_root / "status.md", project_status(project, status), result)
     write_file_once(project_root / "decisions.md", project_decisions(project), result)
     write_file_once(project_root / "source-map.md", project_source_map(project, repo, notion, jira), result)
     ensure_project_source_link(project_root, repo, result)
-    ensure_project_operating_surface(project_root, domain, project, status, lane, result)
+    ensure_project_operating_surface(project_root, domain, project, status, lane, result, remotes=remotes, root=root, repo=repo)
 
     ensure_project_index(domain_root / "02-projects" / "README.md", domain, project, status, result)
     ensure_active_work(domain_root / "00-control-plane" / "active-work.md", project, status, result)
@@ -2785,6 +3114,8 @@ def create_project(
         result,
     )
     append_project_source_refs(project_root / "source-map.md", repo, notion, jira, result)
+    if remotes:
+        append_project_remote_refs(project_root / "source-map.md", remotes, result)
     return result
 
 

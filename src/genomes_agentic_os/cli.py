@@ -72,10 +72,13 @@ from .scaffold import (
     create_workflow,
     install_docs,
     init_os,
+    link_project_remote,
     link_project_source,
     onboard_project,
     register_project_worktree,
 )
+from .hosts import upsert_host, list_hosts
+from .remote_ops import sync_project_remote
 from .source_watch import (
     create_watch_source,
     doctor_connected_system,
@@ -173,6 +176,11 @@ def build_parser() -> argparse.ArgumentParser:
     project_create.add_argument("--jira", help="Jira project, issue, or URL.")
     project_create.add_argument("--status", default="active", choices=("active", "waiting", "blocked", "done"))
     project_create.add_argument("--lane", help="Primary operating lane for this project.")
+    project_create.add_argument("--remote-host", help="Remote SSH host alias for the primary remote source.")
+    project_create.add_argument("--remote-path", help="Absolute path on the remote host.")
+    project_create.add_argument("--remote-name", help="Name for the remote (defaults to project name).")
+    project_create.add_argument("--remote-kind", default="git", choices=("git", "folder"), help="Remote source kind (default: git).")
+    project_create.add_argument("--authority", default="remote", choices=("remote", "local"), help="Which side owns truth (default: remote).")
     project_create.set_defaults(handler=handle_project_create)
     project_link_source = project_subparsers.add_parser(
         "link-source",
@@ -190,6 +198,20 @@ def build_parser() -> argparse.ArgumentParser:
     project_onboard.add_argument("project")
     project_onboard.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_onboard.set_defaults(handler=handle_project_onboard)
+    project_link_remote = project_subparsers.add_parser(
+        "link-remote",
+        help="Attach a remote SSH source to an existing project.",
+    )
+    project_link_remote.add_argument("domain")
+    project_link_remote.add_argument("project")
+    project_link_remote.add_argument("--host", required=True, help="Remote SSH host alias (key in config/hosts.yml).")
+    project_link_remote.add_argument("--path", required=True, help="Absolute path on the remote host.")
+    project_link_remote.add_argument("--name", help="Name for the remote (defaults to project name).")
+    project_link_remote.add_argument("--kind", default="git", choices=("git", "folder"), help="Remote source kind (default: git).")
+    project_link_remote.add_argument("--authority", default="remote", choices=("remote", "local"), help="Which side owns truth (default: remote).")
+    project_link_remote.add_argument("--force", action="store_true", help="Replace an existing remote of the same name.")
+    project_link_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_link_remote.set_defaults(handler=handle_project_link_remote)
     project_worktree = project_subparsers.add_parser("worktree", help="Manage visible project worktree links.")
     project_worktree_subparsers = project_worktree.add_subparsers(dest="project_worktree_command", required=True)
     project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree symlink.")
@@ -217,6 +239,17 @@ def build_parser() -> argparse.ArgumentParser:
     project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_create.set_defaults(handler=handle_project_work_item_create)
 
+    project_sync_remote = project_subparsers.add_parser(
+        "sync-remote",
+        help="Refresh manifest.yml for declared remote SSH sources.",
+    )
+    project_sync_remote.add_argument("domain")
+    project_sync_remote.add_argument("project")
+    project_sync_remote.add_argument("--name", help="Sync only the remote with this name (default: all).")
+    project_sync_remote.add_argument("--timeout", type=int, default=20, help="SSH command timeout in seconds (default: 20).")
+    project_sync_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_sync_remote.set_defaults(handler=handle_project_sync_remote)
+
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
     workflow_create = workflow_subparsers.add_parser("create", help="Create a workflow scaffold.")
@@ -231,6 +264,19 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_check.add_argument("workflow")
     workflow_check.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     workflow_check.set_defaults(handler=handle_workflow_check)
+
+    host_parser = subparsers.add_parser("host", help="Manage the SSH host registry (config/hosts.yml).")
+    host_subparsers = host_parser.add_subparsers(dest="host_command", required=True)
+    host_add = host_subparsers.add_parser("add", help="Add or update a host alias in the registry.")
+    host_add.add_argument("alias", help="Host alias (identifier used in project remotes).")
+    host_add.add_argument("--ssh-alias", help="SSH alias that resolves via ~/.ssh/config.")
+    host_add.add_argument("--user", help="Remote username (informational).")
+    host_add.add_argument("--description", help="Human-readable description of this host.")
+    host_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_add.set_defaults(handler=handle_host_add)
+    host_list = host_subparsers.add_parser("list", help="List registered hosts.")
+    host_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_list.set_defaults(handler=handle_host_list)
 
     automation_parser = subparsers.add_parser("automation", help="Manage automations.")
     automation_subparsers = automation_parser.add_subparsers(dest="automation_command", required=True)
@@ -604,6 +650,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="all_systems",
         help="Aggregate all subsystem doctors (runtime, event-graph, config) into one report.",
     )
+    doctor_parser.add_argument(
+        "--check-remotes",
+        action="store_true",
+        help="Probe each registered host with ssh -o BatchMode=yes <alias> true and report unreachable hosts as warnings.",
+    )
     doctor_parser.set_defaults(handler=handle_doctor)
 
     migrate_parser = subparsers.add_parser("migrate", help="Plan and apply explicit migrations.")
@@ -870,6 +921,15 @@ def handle_room_update(args: argparse.Namespace) -> int:
 
 
 def handle_project_create(args: argparse.Namespace) -> int:
+    remotes = None
+    if getattr(args, "remote_host", None) and getattr(args, "remote_path", None):
+        remotes = [{
+            "name": args.remote_name or args.project,
+            "host": args.remote_host,
+            "path": args.remote_path,
+            "kind": args.remote_kind,
+            "authority": args.authority,
+        }]
     print_result(
         create_project(
             args.root,
@@ -880,6 +940,7 @@ def handle_project_create(args: argparse.Namespace) -> int:
             jira=args.jira,
             status=args.status,
             lane=args.lane,
+            remotes=remotes,
         )
     )
     return 0
@@ -890,9 +951,71 @@ def handle_project_link_source(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_link_remote(args: argparse.Namespace) -> int:
+    print_result(
+        link_project_remote(
+            args.root,
+            args.domain,
+            args.project,
+            host=args.host,
+            path=args.path,
+            name=getattr(args, "name", None),
+            kind=args.kind,
+            authority=args.authority,
+            force=args.force,
+        )
+    )
+    return 0
+
+
 def handle_project_onboard(args: argparse.Namespace) -> int:
     print_result(onboard_project(args.root, args.domain, args.project))
     return 0
+
+
+def handle_host_add(args: argparse.Namespace) -> int:
+    result = upsert_host(
+        args.root,
+        args.alias,
+        ssh_alias=getattr(args, "ssh_alias", None),
+        user=getattr(args, "user", None),
+        description=getattr(args, "description", None),
+    )
+    print(f"{result['action']}: {result['alias']} → {result['path']}")
+    return 0
+
+
+def handle_host_list(args: argparse.Namespace) -> int:
+    hosts = list_hosts(args.root)
+    if not hosts:
+        print("No hosts registered. Use: agentic-os host add <alias>")
+        return 0
+    for entry in hosts:
+        alias = entry.get("alias", "")
+        ssh_alias = entry.get("ssh_alias", alias)
+        desc = entry.get("description", "")
+        print(f"  {alias}  (ssh_alias: {ssh_alias})  {desc}")
+    return 0
+
+
+def handle_project_sync_remote(args: argparse.Namespace) -> int:
+    result = sync_project_remote(
+        args.root,
+        args.domain,
+        args.project,
+        name=getattr(args, "name", None),
+        timeout=getattr(args, "timeout", 20),
+    )
+    for w in result.get("warnings", []):
+        print(f"warning: {w}")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    synced = result.get("synced", [])
+    if synced:
+        print(f"synced: {', '.join(synced)}")
+    else:
+        print("no remotes synced")
+    return 1 if result.get("errors") else 0
 
 
 def handle_project_worktree_add(args: argparse.Namespace) -> int:
@@ -1136,7 +1259,7 @@ def handle_config_install_tree(args: argparse.Namespace) -> int:
 def handle_config_doctor(args: argparse.Namespace) -> int:
     result = doctor_config(args.root, layer=args.layer)
     print(yaml_dump(result))
-    return 0 if result["ok"] else 1
+    return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
 
 
 def handle_hook_sync(args: argparse.Namespace) -> int:
@@ -1274,6 +1397,21 @@ def handle_doctor(args: argparse.Namespace) -> int:
         result = doctor_all(args.root)
     else:
         result = doctor(args.root, fix_missing=args.fix_missing)
+    if getattr(args, "check_remotes", False):
+        from .hosts import load_hosts  # noqa: PLC0415
+        from .validate import validate_project_remotes_connectivity  # noqa: PLC0415
+
+        root_path = Path(args.root).expanduser()
+        try:
+            hosts = load_hosts(root_path)
+        except ValueError:
+            hosts = {}
+        # Unreachable hosts are a warning state by spec — never flip doctor ok.
+        connectivity_warnings = validate_project_remotes_connectivity(root_path, hosts)
+        if isinstance(result.get("warnings"), list):
+            result["warnings"].extend(connectivity_warnings)
+        else:
+            result["warnings"] = connectivity_warnings
     print(format_doctor_result(result))
     return 0 if result["ok"] else 1
 
