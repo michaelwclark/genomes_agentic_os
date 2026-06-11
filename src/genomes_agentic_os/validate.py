@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import datetime
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -299,9 +300,19 @@ def validate_project_worktrees(project_root: Path, result: ValidationResult) -> 
             result.errors.append(f"duplicate project worktree id {worktree_id!r}: {index_path}")
         seen_ids.add(worktree_id)
         link_path = project_root / link_value
-        if not link_path.is_symlink():
-            result.errors.append(f"project worktree link is missing or not a symlink: {link_path}")
         target_path = Path(path_value).expanduser()
+        if link_path.is_symlink():
+            pass
+        elif link_path.is_dir():
+            # in-place worktree: the checkout itself lives under worktrees/
+            if link_path.resolve() != target_path.resolve():
+                result.errors.append(
+                    f"project worktree directory does not match entry path: {link_path}"
+                )
+        else:
+            result.errors.append(
+                f"project worktree link is missing or not a symlink or directory: {link_path}"
+            )
         if not target_path.exists():
             result.warnings.append(f"project worktree target is missing: {target_path}")
 
@@ -910,18 +921,34 @@ def validate_root(root: str | Path) -> ValidationResult:
         if path.exists():
             result.warnings.append(f"legacy root folder present: {path}")
 
-    for path in sorted(os_root.rglob("*.json")):
+    json_paths: list[Path] = []
+    yaml_paths: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(os_root):
+        current = Path(dirpath)
+        # Embedded git checkouts (in-place project worktrees, vendored repos) are
+        # project source, not OS control surface — skip their contents entirely.
+        dirnames[:] = [d for d in dirnames if not (current / d / ".git").exists()]
+        for filename in filenames:
+            if filename.endswith(".json"):
+                json_paths.append(current / filename)
+            elif filename.endswith((".yml", ".yaml")):
+                yaml_paths.append(current / filename)
+
+    for path in sorted(json_paths):
+        if not path.is_file():
+            continue
         try:
             json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             result.errors.append(f"invalid JSON: {path}: {exc}")
 
-    for pattern in ("*.yml", "*.yaml"):
-        for path in sorted(os_root.rglob(pattern)):
-            try:
-                yaml.safe_load(path.read_text(encoding="utf-8"))
-            except yaml.YAMLError as exc:
-                result.errors.append(f"invalid YAML: {path}: {exc}")
+    for path in sorted(yaml_paths):
+        if not path.is_file():
+            continue
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            result.errors.append(f"invalid YAML: {path}: {exc}")
 
     # Plan-22: lifecycle staleness checks (warnings, not blockers)
     for finding in lifecycle_staleness_findings(os_root):

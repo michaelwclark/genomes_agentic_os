@@ -1747,6 +1747,42 @@ def test_project_worktree_add_registers_visible_link_and_routes_from_target(tmp_
     assert validate_root(root).ok
 
 
+def test_validate_accepts_in_place_project_worktrees(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    checkout = project_root / "worktrees" / "feature_x"
+    (checkout / "app").mkdir(parents=True)
+    # a real checkout has a .git pointer and may contain fixtures that are not
+    # valid JSON/YAML — the OS control-file lint must not descend into it
+    (checkout / ".git").write_text("gitdir: /elsewhere/.git/worktrees/feature_x\n", encoding="utf-8")
+    (checkout / "app" / "broken.json").write_text("{not json", encoding="utf-8")
+    (checkout / "app" / "broken.yml").write_text(":\n\t- {", encoding="utf-8")
+    index_path = project_root / "worktrees" / "index.yml"
+    index = yaml.safe_load(index_path.read_text(encoding="utf-8"))
+    index["worktrees"] = [
+        {
+            "id": "feature_x",
+            "path": str(checkout.resolve()),
+            "link": "worktrees/feature_x",
+            "status": "active",
+        }
+    ]
+    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+
+    result = validate_root(root)
+    assert result.ok, result.errors
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    index["worktrees"][0]["path"] = str(elsewhere.resolve())
+    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+    mismatch = validate_root(root)
+    assert not mismatch.ok
+    assert any("does not match entry path" in error for error in mismatch.errors)
+
+
 def test_project_create_is_idempotent_and_preserves_local_edits(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     command = ["project", "create", "los", "losmon_replacement", "--root", str(root)]
