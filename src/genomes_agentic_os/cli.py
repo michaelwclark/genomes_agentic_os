@@ -515,11 +515,6 @@ def build_parser() -> argparse.ArgumentParser:
     config_doctor = config_subparsers.add_parser("doctor", help="Validate config.toml OTEL and MCP contracts.")
     config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
-    config_doctor.add_argument(
-        "--check-remotes",
-        action="store_true",
-        help="Probe each registered host with ssh -o BatchMode=yes <alias> true and report unreachable hosts as warnings.",
-    )
     config_doctor.set_defaults(handler=handle_config_doctor)
 
     hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
@@ -654,6 +649,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="all_systems",
         help="Aggregate all subsystem doctors (runtime, event-graph, config) into one report.",
+    )
+    doctor_parser.add_argument(
+        "--check-remotes",
+        action="store_true",
+        help="Probe each registered host with ssh -o BatchMode=yes <alias> true and report unreachable hosts as warnings.",
     )
     doctor_parser.set_defaults(handler=handle_doctor)
 
@@ -1257,23 +1257,7 @@ def handle_config_install_tree(args: argparse.Namespace) -> int:
 
 
 def handle_config_doctor(args: argparse.Namespace) -> int:
-    check_remotes = getattr(args, "check_remotes", False)
     result = doctor_config(args.root, layer=args.layer)
-    if check_remotes:
-        from .validate import validate_project_remotes_connectivity  # noqa: PLC0415
-        from .hosts import load_hosts as _load_hosts  # noqa: PLC0415
-        from pathlib import Path as _Path  # noqa: PLC0415
-        root_path = _Path(args.root).expanduser()
-        try:
-            hosts = _load_hosts(root_path)
-        except Exception:
-            hosts = {}
-        connectivity_warnings = validate_project_remotes_connectivity(root_path, hosts)
-        if isinstance(result, dict):
-            result.setdefault("warnings", [])
-            result["warnings"].extend(connectivity_warnings)
-            if connectivity_warnings:
-                result["ok"] = False
     print(yaml_dump(result))
     return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
 
@@ -1413,6 +1397,21 @@ def handle_doctor(args: argparse.Namespace) -> int:
         result = doctor_all(args.root)
     else:
         result = doctor(args.root, fix_missing=args.fix_missing)
+    if getattr(args, "check_remotes", False):
+        from .hosts import load_hosts  # noqa: PLC0415
+        from .validate import validate_project_remotes_connectivity  # noqa: PLC0415
+
+        root_path = Path(args.root).expanduser()
+        try:
+            hosts = load_hosts(root_path)
+        except ValueError:
+            hosts = {}
+        # Unreachable hosts are a warning state by spec — never flip doctor ok.
+        connectivity_warnings = validate_project_remotes_connectivity(root_path, hosts)
+        if isinstance(result.get("warnings"), list):
+            result["warnings"].extend(connectivity_warnings)
+        else:
+            result["warnings"] = connectivity_warnings
     print(format_doctor_result(result))
     return 0 if result["ok"] else 1
 
