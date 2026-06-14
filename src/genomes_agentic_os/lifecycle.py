@@ -53,7 +53,7 @@ WORK_ITEM_STATE_LANES: dict[str, str] = {
 
 INTAKE_MARKDOWN_STATES = {"captured", "triaged"}
 
-WORK_ITEM_METADATA_FILES = ("work.yml", "feature.yml")
+WORK_ITEM_METADATA_FILES = ("work.yml", "feature.yml", "work-item.md")
 
 WORK_ITEM_FILES = (
     "IDEA.md",
@@ -258,7 +258,7 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
 
 def lifecycle_status(metadata: dict[str, Any]) -> str:
     lifecycle = metadata.get("lifecycle") if isinstance(metadata.get("lifecycle"), dict) else {}
-    status = str(lifecycle.get("state") or metadata.get("status") or "captured")
+    status = str(lifecycle.get("state") or metadata.get("state") or metadata.get("status") or "captured")
     return status if status in WORK_LIFECYCLE_STATES else status
 
 
@@ -507,6 +507,32 @@ Record durable, non-secret project learnings promoted from this work item.
     raise ValueError(f"unknown work item file: {filename}")
 
 
+def repaired_work_item_metadata(record: WorkItemRecord, *, status: str, summary: str) -> str:
+    payload = dict(record.metadata)
+    payload.setdefault("id", record.slug or record.path.name)
+    payload.setdefault("title", record.title)
+    payload.setdefault("summary", summary)
+    payload.setdefault("created_at", payload.get("created") or now_iso())
+    payload["updated_at"] = now_iso()
+    payload["status"] = status
+    payload["state"] = status
+    payload["lane"] = lane_for_status(status)
+    payload["format"] = "folder"
+    lifecycle = payload.get("lifecycle") if isinstance(payload.get("lifecycle"), dict) else {}
+    lifecycle.update(
+        {
+            "state": status,
+            "state_vocabulary": list(WORK_LIFECYCLE_STATES),
+            "required_files": list(STATE_REQUIRED_FILES.get(status, STATE_REQUIRED_FILES["captured"])),
+            "conversation_logs": "logs/conversations",
+        }
+    )
+    payload["lifecycle"] = lifecycle
+    payload.setdefault("spec_destination", {"type": "local", "path": "work-items/02-active"})
+    payload.setdefault("external_tracker", {"type": "none"})
+    return yaml.safe_dump(payload, sort_keys=False)
+
+
 def ensure_work_item_dirs(work_item_root: Path, result: ScaffoldResult) -> None:
     for directory in WORK_ITEM_DIRECTORIES:
         path = work_item_root / directory
@@ -732,6 +758,7 @@ def normalized_labels(record: WorkItemRecord) -> set[str]:
         record.title,
         str(record.metadata.get("id") or ""),
         str(record.metadata.get("prefix") or ""),
+        str(record.metadata.get("ticket") or ""),
         index,
         f"idea {index}" if index else "",
         f"idea {int(index)}" if index else "",
@@ -815,8 +842,9 @@ def select_project_work_item(
 
     records = project_work_item_records(project_root)
     if work_item:
+        requested_label = work_item.strip().lower()
         for record in records:
-            if work_item in {record.path.name, record.path.stem, record.slug, str(record.metadata.get("id") or "")}:
+            if requested_label in normalized_labels(record):
                 return record
         raise ValueError(f"work item not found: {work_item}")
 
@@ -836,6 +864,65 @@ def select_project_work_item(
     if not active and len(records) == 1:
         return records[0]
     return None
+
+
+def repair_project_work_item(
+    root: str | Path,
+    domain: str,
+    project: str,
+    *,
+    work_item: str | None = None,
+    all_items: bool = False,
+) -> ScaffoldResult:
+    if bool(work_item) == bool(all_items):
+        raise ValueError("provide exactly one of work_item or all_items=True")
+    os_root = expand_path(root)
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    project_root = domain_path(os_root, domain) / "02-projects" / project
+    if not project_root.is_dir():
+        raise ValueError(f"project not found: {domain}/{project}")
+
+    records = local_project_work_items(project_root)
+    if work_item:
+        target = select_project_work_item(project_root, work_item=work_item)
+        if target is None or target.source != "project_work_item":
+            raise ValueError(f"project work item not found: {work_item}")
+        records = [target]
+    else:
+        records = [record for record in records if record.source == "project_work_item"]
+
+    result = ScaffoldResult()
+    for record in records:
+        if record.path.is_file():
+            result.skipped.append(record.path)
+            continue
+        status = record.status if record.status in WORK_LIFECYCLE_STATES else "captured"
+        work_id = str(record.metadata.get("id") or record.slug or record.path.name)
+        title = record.title
+        summary = str(
+            record.metadata.get("summary")
+            or record.metadata.get("description")
+            or f"Recovered lifecycle scaffold for {title}."
+        )
+        ensure_work_item_dirs(record.path, result)
+        write_file_once(
+            record.path / "work.yml",
+            repaired_work_item_metadata(record, status=status, summary=summary),
+            result,
+        )
+        for filename in WORK_ITEM_FILES:
+            write_file_once(
+                record.path / filename,
+                work_item_file_content(filename, title=title, summary=summary, status=status, work_id=work_id),
+                result,
+            )
+        append_once(
+            record.path / "WORKLOG.md",
+            f"\n## {today_iso()}\n\n- Repaired lifecycle packet scaffold for status `{status}` without overwriting existing artifacts.\n",
+            result,
+        )
+    return result
 
 
 def parse_timestamp(value: Any) -> datetime | None:

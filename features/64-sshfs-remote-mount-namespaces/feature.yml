@@ -1,0 +1,24 @@
+id: c79a15d0-a5e1-467f-991a-8e3d201d6d59
+title: 64 SSHFS Remote Mount Namespaces
+prefix: "64"
+slug: 64-sshfs-remote-mount-namespaces
+source_queue: Local
+status: planned
+created_at: 2026-06-14T00:00:00Z
+source_feature: 63-remote-ssh-project-sources
+acceptance:
+  - Agentic OS recognizes any path component named SSH_<host> as an explicit SSHFS remote namespace without scanning folders.
+  - remote project manifests can declare an optional mount namespace and local mount path while preserving the existing alias-only host registry and sources.remotes contract.
+  - mounted files may be read and edited through the local filesystem, but project commands, git operations, builds, tests, services, and watchers execute on the remote host by default.
+  - local SSHFS paths translate deterministically to remote host paths using project remote metadata, not inferred directory traversal.
+  - scaffolded root and project rules make the SSH_<host> convention visible to Claude and Codex and hard to confuse with ordinary local folders.
+  - doctor validates mount metadata offline and can optionally probe mounted path health without requiring sshfs, macFUSE, or network access by default.
+  - mounting and unmounting are explicit operator actions with dry-run-first output; the feature does not auto-install kernel extensions or silently mount remote hosts.
+  - no credentials, private hostnames-with-passwords, ssh keys, or tokens are written into OS files.
+verification:
+  - command: .venv/bin/python -m pytest -q tests/test_remote_mounts.py
+    result: planned
+  - command: .venv/bin/python -m pytest -q
+    result: planned
+  - command: bash .agentic-atlas/tools/validate-cli.sh
+    result: planned

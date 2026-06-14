@@ -99,11 +99,15 @@ REQUIRED_CORE_LIBRARIES = (
 )
 
 REQUIRED_CORE_HOOKS = (
+    "session-prayer-start",
     "memory-write-router",
     "memory-session-start",
     "memory-stop",
     "harness-trace-emitter",
+    "conversation-auto-log",
     "context-mode-cache-heal",
+    "context-mode-codex-hooks",
+    "mempalace-claude-hooks",
 )
 
 
@@ -130,6 +134,14 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/customer/customer-handoff-checklist.md",
     "templates/planning/feature-spec.md",
     "templates/planning/future-idea.md",
+    "templates/thread/README.md",
+    "templates/thread/thread.yml",
+    "templates/thread/thread-closeout.yml",
+    "templates/thread/closeout.md",
+    "templates/thread/evidence.jsonl",
+    "templates/thread/memory-write-receipts.jsonl",
+    "templates/thread/notion-sync.md",
+    "templates/thread/archive-manifest.yml",
     "templates/system/host-tool-registry.yml",
     "templates/system/shell-shape.yml",
     "templates/runtime/heartbeat.yml",
@@ -194,6 +206,7 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-heartbeat.md",
     "commands/os-integration-setup.md",
     "commands/os-self-improvement.md",
+    "commands/os-end-chat.md",
     "commands/system-tool-registry.md",
     "plans/README.md",
     "plans/00-current-state-and-gap-map.md",
@@ -219,6 +232,7 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/source-watcher/SKILL.md",
     "skills/event-graph-operator/SKILL.md",
     "skills/toolsmith-reviewer/SKILL.md",
+    "skills/thread-finalizer/SKILL.md",
 )
 
 SELF_IMPROVEMENT_REQUIRED_FILES = (
@@ -801,6 +815,25 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "domain.schema.json": ["**/domain.yml"],
     "run.schema.json": ["**/06-runs-and-logs/runs/*/run.yml"],
     "workflow.schema.json": ["**/03-workflows/*/*/workflow.yml"],
+    "thread.schema.json": [
+        "**/work-items/*/*/thread.yml",
+        "**/work-items/*/*/artifacts/thread-closeouts/*/thread.yml",
+        "**/work-items/*/*.artifacts/thread-closeouts/*/thread.yml",
+        "**/06-runs-and-logs/runs/*/thread.yml",
+    ],
+    "thread-closeout.schema.json": [
+        "**/work-items/*/*/thread-closeout.yml",
+        "**/work-items/*/*/artifacts/thread-closeouts/*/thread-closeout.yml",
+        "**/work-items/*/*.artifacts/thread-closeouts/*/thread-closeout.yml",
+        "**/06-runs-and-logs/runs/*/thread-closeout.yml",
+        "**/artifacts/thread-closeout.yml",
+    ],
+    "archive-manifest.schema.json": [
+        "**/work-items/*/*/archive-manifest.yml",
+        "**/work-items/*/*/artifacts/thread-closeouts/*/archive-manifest.yml",
+        "**/06-runs-and-logs/runs/*/archive-manifest.yml",
+        "**/artifacts/archive-manifest.yml",
+    ],
     "update-manifest.schema.json": [],  # generated; no installed glob
     "hosts.schema.json": ["config/hosts.yml"],
 }

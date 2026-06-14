@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/archive-manifest.schema.json",
+  "title": "Agentic OS archive manifest",
+  "type": "object",
+  "required": ["schema_version", "archive"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "archive": {
+      "type": "object",
+      "required": ["archived_at", "finalizer_mode", "source_thread", "source_of_truth", "closeout_receipt", "unresolved_next_action"],
+      "properties": {
+        "archived_at": {"type": "string"},
+        "archived_by": {"type": "string"},
+        "finalizer_mode": {"const": "archive"},
+        "source_thread": {"type": "string"},
+        "source_of_truth": {"type": "array", "items": {"type": "string"}},
+        "closeout_receipt": {"type": "string"},
+        "unresolved_next_action": {"type": "boolean"},
+        "explicit_blocked_archive_accepted": {"type": "boolean"},
+        "retained_artifacts": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

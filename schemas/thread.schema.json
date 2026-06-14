@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/thread.schema.json",
+  "title": "Agentic OS thread state",
+  "type": "object",
+  "required": ["schema_version", "thread"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "thread": {
+      "type": "object",
+      "required": ["id", "started_at", "work_level", "routed_layer", "final_state"],
+      "properties": {
+        "id": {"type": "string"},
+        "started_at": {"type": "string"},
+        "finished_at": {"type": ["string", "null"]},
+        "work_level": {
+          "type": "string",
+          "enum": ["trivial", "contextual", "artifact", "implementation", "operational"]
+        },
+        "routed_layer": {"type": "string"},
+        "active_work_item": {"type": ["string", "null"]},
+        "source_repo_context": {"type": ["string", "null"]},
+        "external_refs": {
+          "type": "object",
+          "properties": {
+            "prs": {"type": "array"},
+            "jira": {"type": "array"},
+            "notion": {"type": "array"}
+          },
+          "additionalProperties": true
+        },
+        "memory": {"type": "object", "additionalProperties": true},
+        "evidence": {"type": "object", "additionalProperties": true},
+        "final_state": {
+          "type": "string",
+          "enum": ["noop", "working", "finalized", "archived", "blocked"]
+        },
+        "dirty_state": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

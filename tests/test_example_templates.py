@@ -119,6 +119,56 @@ def test_os_capture_plan_template_is_installed(tmp_path: Path) -> None:
     assert "feature-spec.md" in content
 
 
+def test_thread_closeout_templates_are_installed(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    thread_templates = knowledge_templates(root) / "thread"
+    expected = {
+        "README.md",
+        "thread.yml",
+        "thread-closeout.yml",
+        "closeout.md",
+        "evidence.jsonl",
+        "memory-write-receipts.jsonl",
+        "notion-sync.md",
+        "archive-manifest.yml",
+    }
+    for filename in expected:
+        assert (thread_templates / filename).is_file(), f"Missing thread closeout template: {filename}"
+
+
+def test_end_chat_command_and_finalizer_skill_are_installed(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    assert (root / "harness" / "commands" / "os-end-chat.md").is_file()
+    assert (root / "harness" / "skills" / "thread-finalizer" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-end-chat.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "thread-finalizer" / "SKILL.md").is_file()
+
+    commands = yaml.safe_load((root / "harness" / "registries" / "commands.yml").read_text(encoding="utf-8"))
+    command_ids = {entry["id"] for entry in commands["commands"]}
+    assert {"end-chat", "finalize", "cleanup-thread", "archive"} <= command_ids
+
+    skills = yaml.safe_load((root / "harness" / "registries" / "skills.yml").read_text(encoding="utf-8"))
+    skill_ids = {entry["id"] for entry in skills["skills"]}
+    assert "thread-finalizer" in skill_ids
+
+
+def test_thread_schemas_are_installed(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    schemas = root / "harness" / "schemas"
+    assert (schemas / "thread.schema.json").is_file()
+    assert (schemas / "thread-closeout.schema.json").is_file()
+    assert (schemas / "archive-manifest.schema.json").is_file()
+
+
 def test_connected_system_examples_are_valid_yaml_with_required_fields(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 

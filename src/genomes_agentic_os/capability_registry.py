@@ -81,6 +81,30 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/skills/orchestrate/SKILL.md",
         },
         {
+            "id": "end-chat",
+            "command": "/end-chat",
+            "description": "Finalize a substantive Agentic OS thread with closeout artifacts, receipts, memory, and non-blocking Notion projection.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
+            "id": "finalize",
+            "command": "/finalize",
+            "description": "Alias for /end-chat when explicit finalization language is preferred.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
+            "id": "cleanup-thread",
+            "command": "/cleanup-thread",
+            "description": "Finalize the current thread and classify generated dirt before any allowlisted cleanup.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
+            "id": "archive",
+            "command": "/archive",
+            "description": "Finalize and archive a thread or work item only when closeout is complete or a blocked archive is explicit.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
             "id": "validate",
             "command": "agentic-os validate",
             "description": "Validate an installed OS root against the source package contract.",
@@ -152,6 +176,12 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/orchestrate/SKILL.md",
         },
         {
+            "id": "thread-finalizer",
+            "name": "Thread Finalizer",
+            "description": "Finalize substantial Agentic OS threads with worklog, next-action, memory, evidence, and Notion projection receipts.",
+            "source": "harness/skills/thread-finalizer/SKILL.md",
+        },
+        {
             "id": "toolsmith-reviewer",
             "name": "Toolsmith Reviewer",
             "description": "Review redacted evidence bundles and propose draft-only OS improvements.",
@@ -202,6 +232,14 @@ def library_entries() -> list[dict[str, str]]:
 def hook_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "session-prayer-start",
+            "name": "Session Prayer Start",
+            "description": "Commits the session and work to Jesus before startup work begins.",
+            "status": "available",
+            "source": "harness/hooks/session-prayer-start.sh",
+            "events": "SessionStart",
+        },
+        {
             "id": "memory-write-router",
             "name": "Memory Write Router",
             "description": "Routes durable memory writes to the correct substrate without writing CLAUDE.md.",
@@ -248,6 +286,22 @@ def hook_entries() -> list[dict[str, str]]:
             "status": "available",
             "source": "harness/hooks/context-mode-cache-heal.mjs",
             "events": "SessionStart",
+        },
+        {
+            "id": "context-mode-codex-hooks",
+            "name": "Context Mode Codex Hooks",
+            "description": "Preserves context-mode Codex event hooks for session, tool, prompt, compaction, and stop capture.",
+            "status": "available",
+            "source": "context-mode hook codex",
+            "events": "SessionStart, Stop, PreToolUse, PostToolUse, PreCompact, UserPromptSubmit",
+        },
+        {
+            "id": "mempalace-claude-hooks",
+            "name": "MemPalace Claude Hooks",
+            "description": "Preserves MemPalace Claude hooks for session-start, stop, and precompact capture.",
+            "status": "available",
+            "source": "~/.local/share/mempalace-venv/bin/mempalace hook run",
+            "events": "SessionStart, Stop, PreCompact",
         },
         {
             "id": "quiet-pr-watch",

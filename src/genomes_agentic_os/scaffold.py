@@ -179,6 +179,7 @@ AUTOMATION_FILES = (
 )
 
 NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
+WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
 @dataclass
@@ -233,6 +234,23 @@ def validate_name(value: str, label: str = "name") -> str:
             )
         raise ValueError(f"{label} must use lowercase letters, numbers, and underscores only: {value!r}")
     return value
+
+
+def validate_worktree_name(value: str) -> str:
+    """Worktree names mirror git branch names (slashes excepted), so hyphens and dots are allowed."""
+    if not WORKTREE_NAME_PATTERN.fullmatch(value):
+        raise ValueError(
+            "worktree name must start with a lowercase letter or number and use lowercase letters, "
+            f"numbers, dots, hyphens, and underscores only: {value!r}"
+        )
+    return value
+
+
+def worktree_name_from_branch(branch: str) -> str:
+    name = re.sub(r"[^a-z0-9._-]+", "-", branch.lower()).strip("-.")
+    if not name:
+        raise ValueError(f"cannot derive a worktree name from branch: {branch!r}")
+    return validate_worktree_name(name)
 
 
 def normalize_domain(value: str) -> str:
@@ -887,6 +905,7 @@ the source of truth by themselves.
 | `workflow-builder` | Create or improve reusable workflows. | `shared_factory/05-knowledge/skills/workflow-builder/` |
 | `automation-qualifier` | Decide whether a process is safe to automate. | `shared_factory/05-knowledge/skills/automation-qualifier/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
+| `thread-finalizer` | Finalize substantive threads with worklog, next-action, memory, evidence, and Notion projection receipts. | `shared_factory/05-knowledge/skills/thread-finalizer/` |
 
 ## Commands
 
@@ -897,11 +916,16 @@ the source of truth by themselves.
 | `/make-automation` | Create a guarded automation spec. | Declared in `registries/commands.yml`. |
 | `/make-workflow` | Create a reusable workflow contract. | Declared in `registries/commands.yml`. |
 | `/orchestrate` | Decompose, delegate, verify, and merge feature work. | Declared in `registries/commands.yml`. |
+| `/end-chat` | Finalize the current substantive thread without archiving by default. | Runs `agentic-os thread end`. |
+| `/finalize` | Alias for `/end-chat` when explicit finalization language is preferred. | Runs `agentic-os thread finalize`. |
+| `/cleanup-thread` | Finalize and classify generated dirt before any allowlisted cleanup. | Runs `agentic-os thread cleanup`. |
+| `/archive` | Finalize and archive only when no unresolved next action remains. | Runs `agentic-os thread archive`. |
 | `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
 | `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
 | `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
 | `agentic-os project worktree add` | Register a visible worktree link inside a project. | Keeps the real checkout outside the OS. |
+| `agentic-os thread stale-finalize --dry-run` | List work items untouched for more than 3 days before applying conservative closeout. | Dry-run by default. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
 | `agentic-os config install-tree` | Install Codex config across routed OS layers. | Dry-run by default. |
 
@@ -2172,7 +2196,8 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
 | `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
-| `agentic-os context build --project {project}` | Build a deterministic project context packet. | Use for handoffs. |
+| `agentic-os project work-item repair` | Backfill missing lifecycle packet files and log folders on legacy or partial work items. | Use before full validation when a `work-item.md`-only packet blocks the OS. |
+| `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
 
 ## Local Paths
@@ -2377,11 +2402,19 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
 def worktrees_readme(project: str) -> str:
     return f"""# Worktrees: {project}
 
-This folder contains visible links to active project worktrees. The source
-checkouts stay where they already live; this folder makes them discoverable from
-the project operating surface.
+This folder contains active project worktrees. Checkouts may live in-place as
+real directories under this folder, or stay where they already live with a
+visible symlink registered here.
 
-Register a worktree:
+Create an in-place worktree from a repo branch (the directory is named after
+the branch, slashes become hyphens, unless a name is given):
+
+```bash
+agentic-os project worktree create <domain> {project} [<name>] --repo <repo> --branch <branch>
+```
+
+Register an existing worktree (paths inside this folder register in place,
+without a symlink):
 
 ```bash
 agentic-os project worktree add <domain> {project} <name> --path <path>
@@ -2990,15 +3023,23 @@ def write_project_worktree_index(project_root: Path, data: dict[str, object], re
     result.updated.append(index_path) if before else result.created.append(index_path)
 
 
+def project_worktree_link_policy(entries: list[dict[str, object]]) -> str:
+    policies = {str(entry.get("link_policy") or "symlink_to_external_worktree") for entry in entries}
+    if entries and policies == {"in_place_worktree"}:
+        return "in_place_worktree"
+    return "symlink_to_external_worktree"
+
+
 def sync_project_worktree_config(project_root: Path, index_data: dict[str, object], result: ScaffoldResult) -> None:
     config_path = project_root / "config" / "worktrees.yml"
     before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    entries = [entry for entry in index_data.get("worktrees") or [] if isinstance(entry, dict)]
     after = yaml.safe_dump(
         {
             "worktrees": {
                 "directory": "worktrees",
                 "index": "worktrees/index.yml",
-                "link_policy": "symlink_to_external_worktree",
+                "link_policy": project_worktree_link_policy(entries),
                 "registered": index_data.get("worktrees") or [],
             }
         },
@@ -3022,7 +3063,7 @@ def register_project_worktree(
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
-    name = validate_name(name, "worktree")
+    name = validate_worktree_name(name)
     os_root = expand_path(root)
     project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
@@ -3033,7 +3074,14 @@ def register_project_worktree(
 
     result = onboard_project(os_root, domain, project)
     link_path = project_root / "worktrees" / name
-    if link_path.is_symlink():
+    worktrees_root = (project_root / "worktrees").resolve()
+    in_place = target.is_relative_to(worktrees_root)
+    if in_place:
+        # The checkout itself lives under worktrees/; register it without a symlink.
+        if target != worktrees_root / name:
+            raise ValueError(f"in-place worktree path must be the worktrees/{name} directory itself: {target}")
+        result.skipped.append(link_path)
+    elif link_path.is_symlink():
         if link_path.resolve() == target:
             result.skipped.append(link_path)
         elif force:
@@ -3055,6 +3103,7 @@ def register_project_worktree(
         "path": str(target),
         "link": f"worktrees/{name}",
         "status": "active",
+        "link_policy": "in_place_worktree" if in_place else "symlink_to_external_worktree",
     }
     replaced = False
     for offset, existing in enumerate(entries):
@@ -3069,6 +3118,57 @@ def register_project_worktree(
     write_project_worktree_index(project_root, index_data, result)
     sync_project_worktree_config(project_root, index_data, result)
     return result
+
+
+def _default_git_runner(args: list[str], *, timeout: int = 60) -> object:
+    import subprocess  # noqa: PLC0415
+
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)  # noqa: S603
+
+
+def create_project_worktree(
+    root: str | Path,
+    domain: str,
+    project: str,
+    name: str | None = None,
+    *,
+    repo: str | Path,
+    branch: str,
+    runner: object | None = None,
+) -> ScaffoldResult:
+    """Create an in-place git worktree under the project worktrees directory and register it.
+
+    The worktree directory is named after the branch (slashes become hyphens)
+    unless an explicit name is given.
+    """
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
+    os_root = expand_path(root)
+    project_root = domain_path(os_root, domain) / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+    repo_path = expand_path(repo)
+    if not repo_path.is_dir():
+        raise ValueError(f"worktree repo must be an existing local directory: {repo_path}")
+    destination = project_root / "worktrees" / name
+    if destination.is_symlink() or destination.exists():
+        raise ValueError(f"worktree destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    run = runner or _default_git_runner
+    probe = run(["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
+    if probe.returncode == 0:
+        command = ["git", "-C", str(repo_path), "worktree", "add", str(destination), branch]
+    else:
+        command = ["git", "-C", str(repo_path), "worktree", "add", "-b", branch, str(destination)]
+    created = run(command)
+    if created.returncode != 0:
+        detail = (created.stderr or created.stdout or "").strip()
+        raise ValueError(f"git worktree add failed for {destination}: {detail}")
+    if not destination.is_dir():
+        raise ValueError(f"git worktree add did not produce a directory: {destination}")
+    return register_project_worktree(os_root, domain, project, name, path=destination)
 
 
 def create_project(

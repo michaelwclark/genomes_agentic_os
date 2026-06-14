@@ -16,6 +16,7 @@ import yaml
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
 from .self_improvement import run_self_improvement
+from .thread_closeout import stale_finalize_threads
 from .validate import validate_root
 
 RUNTIME_REGISTRY = "harness/shared_factory/00-control-plane/runtime-registry.yml"
@@ -403,6 +404,19 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os validate --root <root>",
             "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "stale_thread_finalizer",
+            "display_name": "Stale thread finalizer",
+            "enabled": True,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply",
+            "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
+            "notion_update": {"object": "Thread Closeouts", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,
         },
@@ -909,6 +923,20 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "warnings": [],
             "evidence_files": result.get("evidence_files"),
             "findings": len(result.get("findings") or []),
+        }
+    if normalized in {
+        f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
+        f"agentic-os thread stale-finalize --root {str(root)} --older-than-days 3 --apply",
+    }:
+        result = stale_finalize_threads(root, older_than_days=3, apply=True)
+        return {
+            "supported": True,
+            "ok": bool(result.get("ok")),
+            "command": normalized,
+            "errors": [],
+            "warnings": [],
+            "candidate_count": result.get("candidate_count"),
+            "applied_count": len(result.get("applied") or []),
         }
     return {
         "supported": False,

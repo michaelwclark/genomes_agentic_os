@@ -18,6 +18,7 @@ Agents should not invent new document shapes when a template exists. They should
 | `automation/` | Triggered process specs, permissions, and failure policies. |
 | `notion/` | Notion control-plane mapping, page structure, and bootstrap templates. |
 | `memory/` | Memory policy for durable agent context. |
+| `thread/` | Thread lifecycle closeout receipts for `/end-chat`, `/finalize`, cleanup, archive, and stale finalization. |
 | `system/` | Host tool registries and shared shell/terminal shape for local and remote machines. |
 | `planning/` | Feature specs and future-idea capture for OS product work. |
 

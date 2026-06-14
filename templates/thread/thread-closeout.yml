@@ -1,0 +1,26 @@
+schema_version: 1
+thread:
+  id: <thread_id>
+  work_level: artifact
+  closeout_mode: artifact-closeout
+  routed_layer: <agentic_os_layer_path>
+  active_work_item: <active_work_item_or_null>
+  started_at: <started_at_iso8601>
+  finished_at: <finished_at_iso8601>
+closeout:
+  final_state: finalized
+  summary: <one_sentence_summary>
+  source_of_truth:
+    - <path_to_work_item_or_run_log>
+  receipts:
+    - <path_or_identifier>
+  next_action: <next_action_or_none>
+  blockers: []
+  stale_reason: null
+notion_sync:
+  status: skipped
+  receipt: notion-sync.md
+dirty_state:
+  unrelated: []
+  generated: []
+  intentional: []

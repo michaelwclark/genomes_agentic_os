@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -15,7 +16,7 @@ import yaml
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.config_ops import LAYER_POLICIES, PROFILE_MANAGED_MARKER, sidecar_path
 from genomes_agentic_os.routing import context_from_here
-from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES
+from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES, create_project_worktree
 from genomes_agentic_os.validate import validate_root
 from genomes_agentic_os.work_lifecycle import (
     create_project_work_item as create_compat_project_work_item,
@@ -537,6 +538,11 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
     registry_path = shared_factory(root) / "00-control-plane" / "runtime-registry.yml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     schedules = {schedule["id"]: schedule for schedule in registry["schedules"]}
+    assert schedules["stale_thread_finalizer"]["enabled"] is True
+    assert (
+        schedules["stale_thread_finalizer"]["command"]
+        == "agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply"
+    )
     assert schedules["self_improvement_review"]["enabled"] is False
     assert schedules["self_improvement_review"]["command"] == "agentic-os self-improvement run --root <root> --dry-run"
 
@@ -546,8 +552,9 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
     queued = yaml.safe_load(capsys.readouterr().out)
-    assert queued["queued"][0]["ref"] == "self_improvement_review"
-    item_id = queued["queued"][0]["id"]
+    by_ref = {item["ref"]: item for item in queued["queued"]}
+    assert by_ref["self_improvement_review"]["ref"] == "self_improvement_review"
+    item_id = by_ref["self_improvement_review"]["id"]
 
     assert main(["runtime", "run-next", "--root", str(root), "--item-id", item_id, "--apply"]) == 0
     dispatched = yaml.safe_load(capsys.readouterr().out)
@@ -861,8 +868,9 @@ def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_
 
     assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
     first = yaml.safe_load(capsys.readouterr().out)
-    assert first["queued"][0]["status"] == "queued"
-    assert first["queued"][0]["created"] is True
+    first_by_ref = {item["ref"]: item for item in first["queued"]}
+    assert first_by_ref["daily_agentic_os_doctor"]["status"] == "queued"
+    assert first_by_ref["daily_agentic_os_doctor"]["created"] is True
 
     assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
     second = yaml.safe_load(capsys.readouterr().out)
@@ -871,9 +879,9 @@ def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_
 
     queue_path = shared_factory(root) / "00-control-plane" / "run-queue.yml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
-    assert len(queue["items"]) == 1
+    assert len(queue["items"]) == len(first["queued"])
     assert queue["run_queue"] == queue["items"]
-    item_id = queue["items"][0]["id"]
+    item_id = first_by_ref["daily_agentic_os_doctor"]["id"]
 
     assert main(["runtime", "run-next", "--root", str(root), "--item-id", item_id, "--dry-run"]) == 0
     dry_run = yaml.safe_load(capsys.readouterr().out)
@@ -886,8 +894,9 @@ def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_
     assert dispatched["status"] == "done"
     assert Path(dispatched["log"]).is_file()
     queue_after_apply = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
-    assert queue_after_apply["items"][0]["status"] == "done"
-    assert queue_after_apply["items"][0]["dispatch_log"]
+    dispatched_item = next(item for item in queue_after_apply["items"] if item["id"] == item_id)
+    assert dispatched_item["status"] == "done"
+    assert dispatched_item["dispatch_log"]
 
 
 def test_runtime_gates_approval_needed_and_provider_targets(tmp_path: Path, capsys) -> None:
@@ -1736,15 +1745,152 @@ def test_project_worktree_add_registers_visible_link_and_routes_from_target(tmp_
             "path": str(worktree.resolve()),
             "link": "worktrees/launch_feature",
             "status": "active",
+            "link_policy": "symlink_to_external_worktree",
         }
     ]
     config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
     assert config["worktrees"]["registered"] == index["worktrees"]
+    assert config["worktrees"]["link_policy"] == "symlink_to_external_worktree"
     packet = context_from_here(root, cwd=nested)
     assert packet.domain == "los"
     assert packet.object_type == "project"
     assert packet.target_path == project_root.resolve()
     assert validate_root(root).ok
+
+
+def test_context_build_project_infers_domain_from_project_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "context_project", "--root", str(root)]) == 0
+    capsys.readouterr()
+    project_root = root / "los" / "02-projects" / "context_project"
+
+    monkeypatch.chdir(project_root)
+    assert main(["context", "build", "--project", "context_project", "--root", str(root)]) == 0
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "project"
+    assert packet["target_path"] == str(project_root)
+
+
+def test_context_build_project_infers_domain_from_unique_project(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "unique_context_project", "--root", str(root)]) == 0
+    capsys.readouterr()
+
+    assert main(["context", "build", "--project", "unique_context_project", "--root", str(root)]) == 0
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["domain"] == "los"
+    assert packet["object_type"] == "project"
+
+
+def test_context_build_selects_legacy_work_item_markdown_by_ticket(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "legacy_packet_project", "--root", str(root)]) == 0
+    capsys.readouterr()
+    project_root = root / "los" / "02-projects" / "legacy_packet_project"
+    work_item_root = project_root / "work-items" / "02-active" / "001_flywl_1404_login_button"
+    work_item_root.mkdir(parents=True)
+    (work_item_root / "work-item.md").write_text(
+        """---
+id: 001_flywl_1404_login_button
+ticket: FLYWL-1404
+title: Add login button
+state: validating
+lane: 02-active
+---
+
+# FLYWL-1404
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "context",
+                "build",
+                "--domain",
+                "los",
+                "--project",
+                "legacy_packet_project",
+                "--work-item",
+                "FLYWL-1404",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert packet["object_type"] == "work_item"
+    assert packet["target_path"] == str(work_item_root)
+    assert packet["lifecycle"]["metadata"] == str(work_item_root / "work-item.md")
+    assert packet["lifecycle"]["state"] == "validating"
+
+
+def test_project_work_item_repair_backfills_legacy_packet(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "legacy_packet_project", "--root", str(root)]) == 0
+    capsys.readouterr()
+    project_root = root / "los" / "02-projects" / "legacy_packet_project"
+    work_item_root = project_root / "work-items" / "02-active" / "001_flywl_1404_login_button"
+    work_item_root.mkdir(parents=True)
+    (work_item_root / "work-item.md").write_text(
+        """---
+id: 001_flywl_1404_login_button
+ticket: FLYWL-1404
+title: Add login button
+state: validating
+lane: 02-active
+---
+
+# FLYWL-1404
+""",
+        encoding="utf-8",
+    )
+
+    broken = validate_root(root)
+    assert not broken.ok
+    assert any("logs/conversations" in error for error in broken.errors)
+    assert any("SPEC.md" in error for error in broken.errors)
+
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "repair",
+                "los",
+                "legacy_packet_project",
+                "--work-item",
+                "FLYWL-1404",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (work_item_root / "logs" / "conversations").is_dir()
+    for filename in ("work.yml", "SPEC.md", "PLAN.md", "HOLDOUT_QA.md", "WORKLOG.md", "NEXT.md"):
+        assert (work_item_root / filename).is_file()
+    metadata = yaml.safe_load((work_item_root / "work.yml").read_text(encoding="utf-8"))
+    assert metadata["ticket"] == "FLYWL-1404"
+    assert metadata["state"] == "validating"
+    assert metadata["lifecycle"]["required_files"] == ["SPEC.md", "PLAN.md", "HOLDOUT_QA.md", "WORKLOG.md", "NEXT.md"]
+
+    fixed = validate_root(root)
+    assert fixed.ok, fixed.errors
 
 
 def test_validate_accepts_in_place_project_worktrees(tmp_path: Path) -> None:
@@ -1781,6 +1927,312 @@ def test_validate_accepts_in_place_project_worktrees(tmp_path: Path) -> None:
     mismatch = validate_root(root)
     assert not mismatch.ok
     assert any("does not match entry path" in error for error in mismatch.errors)
+
+
+def test_project_worktree_add_in_place_registers_without_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    checkout = project_root / "worktrees" / "feature_x"
+    checkout.mkdir(parents=True)
+    (checkout / ".git").write_text("gitdir: /elsewhere/.git/worktrees/feature_x\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "project",
+                "worktree",
+                "add",
+                "los",
+                "inplace_project",
+                "feature_x",
+                "--path",
+                str(checkout),
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    assert checkout.is_dir()
+    assert not checkout.is_symlink()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"] == [
+        {
+            "id": "feature_x",
+            "path": str(checkout.resolve()),
+            "link": "worktrees/feature_x",
+            "status": "active",
+            "link_policy": "in_place_worktree",
+        }
+    ]
+    config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
+    assert config["worktrees"]["link_policy"] == "in_place_worktree"
+    assert config["worktrees"]["registered"] == index["worktrees"]
+    assert validate_root(root).ok
+
+
+def test_project_worktree_add_in_place_rejects_paths_not_at_worktree_name(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    nested = project_root / "worktrees" / "feature_x" / "app"
+    nested.mkdir(parents=True)
+    add = ["project", "worktree", "add", "los", "inplace_project"]
+
+    assert main([*add, "feature_x", "--path", str(nested), "--root", str(root)]) == 2
+    assert main([*add, "feature_y", "--path", str(nested.parent), "--root", str(root)]) == 2
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"] == []
+
+
+def test_project_worktree_mixed_policies_keep_symlink_config_default(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    external = tmp_path / "external_feature"
+    external.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    checkout = project_root / "worktrees" / "feature_x"
+    checkout.mkdir(parents=True)
+    add = ["project", "worktree", "add", "los", "inplace_project"]
+
+    assert main([*add, "feature_x", "--path", str(checkout), "--root", str(root)]) == 0
+    assert main([*add, "external_feature", "--path", str(external), "--root", str(root)]) == 0
+
+    config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
+    assert config["worktrees"]["link_policy"] == "symlink_to_external_worktree"
+    policies = {entry["id"]: entry["link_policy"] for entry in config["worktrees"]["registered"]}
+    assert policies == {
+        "feature_x": "in_place_worktree",
+        "external_feature": "symlink_to_external_worktree",
+    }
+    assert validate_root(root).ok
+
+
+def _fake_worktree_git_runner(
+    calls: list[list[str]],
+    destination: Path,
+    *,
+    branch_exists: bool = False,
+    fail_add: bool = False,
+):
+    """Fake git runner for worktree create: records calls and simulates checkout creation."""
+
+    def _runner(args: list[str], *, timeout: int = 60):
+        calls.append(list(args))
+        if "rev-parse" in args:
+            return SimpleNamespace(returncode=0 if branch_exists else 1, stdout="", stderr="")
+        if fail_add:
+            return SimpleNamespace(returncode=128, stdout="", stderr="fatal: bad object HEAD")
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / ".git").write_text("gitdir: /elsewhere/.git/worktrees/feature_x\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return _runner
+
+
+def test_project_worktree_create_checks_out_new_branch_in_place(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    destination = project_root / "worktrees" / "feature_x"
+    calls: list[list[str]] = []
+
+    create_project_worktree(
+        root,
+        "los",
+        "inplace_project",
+        "feature_x",
+        repo=repo,
+        branch="feature-x",
+        runner=_fake_worktree_git_runner(calls, destination),
+    )
+
+    assert calls[0] == ["git", "-C", str(repo.resolve()), "rev-parse", "--verify", "--quiet", "refs/heads/feature-x"]
+    assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", "-b", "feature-x", str(destination)]
+    assert destination.is_dir()
+    assert not destination.is_symlink()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"][0]["link_policy"] == "in_place_worktree"
+    assert validate_root(root).ok
+
+
+def test_project_worktree_create_reuses_existing_branch(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    destination = root / "los" / "02-projects" / "inplace_project" / "worktrees" / "feature_x"
+    calls: list[list[str]] = []
+
+    create_project_worktree(
+        root,
+        "los",
+        "inplace_project",
+        "feature_x",
+        repo=repo,
+        branch="feature-x",
+        runner=_fake_worktree_git_runner(calls, destination, branch_exists=True),
+    )
+
+    assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", str(destination), "feature-x"]
+
+
+def test_project_worktree_create_surfaces_git_failures(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    destination = project_root / "worktrees" / "feature_x"
+    calls: list[list[str]] = []
+
+    with pytest.raises(ValueError, match="git worktree add failed"):
+        create_project_worktree(
+            root,
+            "los",
+            "inplace_project",
+            "feature_x",
+            repo=repo,
+            branch="feature-x",
+            runner=_fake_worktree_git_runner(calls, destination, fail_add=True),
+        )
+
+    assert not destination.exists()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"] == []
+
+
+def test_project_worktree_create_rejects_existing_destination(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    destination = root / "los" / "02-projects" / "inplace_project" / "worktrees" / "feature_x"
+    destination.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="already exists"):
+        create_project_worktree(
+            root,
+            "los",
+            "inplace_project",
+            "feature_x",
+            repo=repo,
+            branch="feature-x",
+            runner=_fake_worktree_git_runner([], destination),
+        )
+
+
+def test_project_worktree_create_cli_runs_real_git(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+            "-q",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+
+    assert (
+        main(
+            [
+                "project",
+                "worktree",
+                "create",
+                "los",
+                "inplace_project",
+                "--repo",
+                str(repo),
+                "--branch",
+                "feat/63-demo",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    checkout = project_root / "worktrees" / "feat-63-demo"
+    assert checkout.is_dir()
+    assert not checkout.is_symlink()
+    assert (checkout / ".git").is_file()
+    branch = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert branch == "feat/63-demo"
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"][0]["id"] == "feat-63-demo"
+    config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
+    assert config["worktrees"]["link_policy"] == "in_place_worktree"
+    result = validate_root(root)
+    assert result.ok, result.errors
+
+
+def test_project_worktree_create_derives_name_from_branch(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    destination = project_root / "worktrees" / "feat-63-remote-ssh"
+    calls: list[list[str]] = []
+
+    create_project_worktree(
+        root,
+        "los",
+        "inplace_project",
+        repo=repo,
+        branch="feat/63-remote-ssh",
+        runner=_fake_worktree_git_runner(calls, destination),
+    )
+
+    assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", "-b", "feat/63-remote-ssh", str(destination)]
+    assert destination.is_dir()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"][0]["id"] == "feat-63-remote-ssh"
+    assert index["worktrees"][0]["link"] == "worktrees/feat-63-remote-ssh"
+    assert validate_root(root).ok
+
+
+def test_project_worktree_add_accepts_branch_like_names(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    external = tmp_path / "external_feature"
+    external.mkdir()
+    assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
+    add = ["project", "worktree", "add", "los", "inplace_project"]
+
+    assert main([*add, "feat-63-remote-ssh", "--path", str(external), "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "inplace_project"
+    assert (project_root / "worktrees" / "feat-63-remote-ssh").is_symlink()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"][0]["id"] == "feat-63-remote-ssh"
+    assert validate_root(root).ok
+
+    # slashes and uppercase still rejected — a worktree name is a single directory
+    assert main([*add, "feat/63-remote-ssh", "--path", str(external), "--root", str(root)]) == 2
+    assert main([*add, "Feat-63", "--path", str(external), "--root", str(root)]) == 2
 
 
 def test_project_create_is_idempotent_and_preserves_local_edits(tmp_path: Path) -> None:

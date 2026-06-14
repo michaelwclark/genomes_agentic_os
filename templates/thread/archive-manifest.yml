@@ -1,0 +1,17 @@
+schema_version: 1
+archive:
+  archived_at: <iso8601>
+  archived_by: agentic-os
+  finalizer_mode: archive
+  source_thread: <thread_id>
+  source_of_truth:
+    - <work_item_or_run_log_path>
+  closeout_receipt: closeout.md
+  unresolved_next_action: false
+  explicit_blocked_archive_accepted: false
+  retained_artifacts:
+    - thread-closeout.yml
+    - closeout.md
+    - evidence.jsonl
+    - memory-write-receipts.jsonl
+    - notion-sync.md

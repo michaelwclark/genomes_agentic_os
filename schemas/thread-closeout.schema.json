@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/thread-closeout.schema.json",
+  "title": "Agentic OS thread closeout",
+  "type": "object",
+  "required": ["schema_version", "thread", "closeout"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "thread": {
+      "type": "object",
+      "required": ["id", "work_level", "closeout_mode", "routed_layer", "finished_at"],
+      "properties": {
+        "id": {"type": "string"},
+        "work_level": {
+          "type": "string",
+          "enum": ["trivial", "contextual", "artifact", "implementation", "operational"]
+        },
+        "closeout_mode": {
+          "type": "string",
+          "enum": ["noop", "status-only", "artifact-closeout", "implementation-closeout", "cleanup", "archive"]
+        },
+        "routed_layer": {"type": "string"},
+        "active_work_item": {"type": ["string", "null"]},
+        "started_at": {"type": ["string", "null"]},
+        "finished_at": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "closeout": {
+      "type": "object",
+      "required": ["final_state", "summary", "source_of_truth", "receipts", "next_action"],
+      "properties": {
+        "final_state": {
+          "type": "string",
+          "enum": ["noop", "finalized", "archived", "blocked"]
+        },
+        "summary": {"type": "string"},
+        "source_of_truth": {"type": "array", "items": {"type": "string"}},
+        "receipts": {"type": "array", "items": {"type": "string"}},
+        "next_action": {"type": ["string", "null"]},
+        "blockers": {"type": "array"},
+        "stale_reason": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "notion_sync": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["verified", "skipped", "warning", "blocked"]
+        },
+        "receipt": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "dirty_state": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": true
+}

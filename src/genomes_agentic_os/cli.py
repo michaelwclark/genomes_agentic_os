@@ -31,12 +31,12 @@ from .event_graph import (
 )
 from .hook_ops import hook_doctor, hook_sync
 from .losmon import format_losmon_result, losmon_validate
-from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item
+from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item, repair_project_work_item
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
-from .routing import build_context, context_from_here, format_packet, route_request
+from .routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
 from .runtime_ops import (
     apply_runtime_tracking,
     build_runtime_tracking_plan,
@@ -68,6 +68,7 @@ from .scaffold import (
     create_automation,
     create_domain,
     create_project,
+    create_project_worktree,
     create_run_log,
     create_workflow,
     install_docs,
@@ -89,6 +90,13 @@ from .source_watch import (
     parse_external_refs,
     poll_watch_source,
     run_due_watch_sources,
+)
+from .thread_closeout import (
+    DEFAULT_STALE_DAYS,
+    WORK_LEVELS,
+    close_thread,
+    format_thread_closeout_result,
+    stale_finalize_threads,
 )
 from .metrics_ops import format_metrics_result, metrics_refresh
 from .update_ops import (
@@ -116,6 +124,50 @@ DEFAULT_ROOT = "~/agentic_os"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentic-os", description="Scaffold and validate an Agentic OS root.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def add_thread_closeout_args(closeout_parser: argparse.ArgumentParser, mode: str) -> None:
+        closeout_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+        closeout_parser.add_argument("--domain", help="Domain that owns the work item.")
+        closeout_parser.add_argument("--project", help="Project that owns the work item.")
+        closeout_parser.add_argument("--work-item", help="Work item id, slug, title, or ticket.")
+        closeout_parser.add_argument("--thread-id", help="Stable closeout id. Defaults to a timestamped id.")
+        closeout_parser.add_argument("--work-level", choices=WORK_LEVELS, help="Closeout work level.")
+        closeout_parser.add_argument("--summary", help="One-line closeout result.")
+        closeout_parser.add_argument("--next-action", help="Concrete next action, or None.")
+        closeout_parser.add_argument("--validation", action="append", default=[], help="Validation receipt to record.")
+        closeout_parser.add_argument("--artifact", action="append", default=[], help="Artifact path or identifier to record.")
+        closeout_parser.add_argument("--receipt", action="append", default=[], help="Command, PR, ticket, or external receipt.")
+        closeout_parser.add_argument("--memory-receipt", action="append", default=[], help="Durable memory write or skip receipt.")
+        closeout_parser.add_argument("--notion-url", help="Verified Genome's Notion projection URL to record.")
+        closeout_parser.add_argument("--notion-warning", help="Non-blocking Notion projection warning to record.")
+        closeout_parser.add_argument(
+            "--verified-notion-workspace",
+            help="Workspace verified for a supplied Notion projection. Must be Genome's Notion.",
+        )
+        closeout_parser.add_argument("--skip-notion", action="store_true", help="Record Notion projection as skipped.")
+        closeout_parser.add_argument(
+            "--allow-blocked-archive",
+            action="store_true",
+            help="Allow archive mode even when --next-action is unresolved.",
+        )
+        closeout_parser.add_argument("--request", help="Optional request text used for work-item disambiguation.")
+        closeout_parser.add_argument("--cwd", help="Current working directory for context detection. Defaults to process cwd.")
+        closeout_parser.set_defaults(handler=handle_thread_closeout, closeout_mode=mode)
+
+    def add_stale_finalize_args(stale_parser: argparse.ArgumentParser) -> None:
+        stale_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+        stale_parser.add_argument("--domain", help="Limit stale sweep to a domain.")
+        stale_parser.add_argument("--project", help="Limit stale sweep to a project.")
+        stale_parser.add_argument(
+            "--older-than-days",
+            type=int,
+            default=DEFAULT_STALE_DAYS,
+            help=f"Finalize candidates untouched for more than this many days (default: {DEFAULT_STALE_DAYS}).",
+        )
+        stale_mode = stale_parser.add_mutually_exclusive_group()
+        stale_mode.add_argument("--dry-run", action="store_true", default=True, help="List candidates without writing.")
+        stale_mode.add_argument("--apply", action="store_true", help="Write conservative status-only closeouts.")
+        stale_parser.set_defaults(handler=handle_thread_stale_finalize)
 
     init_parser = subparsers.add_parser("init", help="Create the base installed OS tree.")
     init_parser.add_argument("--target", default=DEFAULT_ROOT, help="Installed OS target path.")
@@ -214,14 +266,33 @@ def build_parser() -> argparse.ArgumentParser:
     project_link_remote.set_defaults(handler=handle_project_link_remote)
     project_worktree = project_subparsers.add_parser("worktree", help="Manage visible project worktree links.")
     project_worktree_subparsers = project_worktree.add_subparsers(dest="project_worktree_command", required=True)
-    project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree symlink.")
+    project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree.")
     project_worktree_add.add_argument("domain")
     project_worktree_add.add_argument("project")
     project_worktree_add.add_argument("name")
-    project_worktree_add.add_argument("--path", required=True, help="Existing worktree directory to link.")
+    project_worktree_add.add_argument(
+        "--path",
+        required=True,
+        help="Existing worktree directory; paths inside the project worktrees directory register in place, others get a symlink.",
+    )
     project_worktree_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_add.add_argument("--force", action="store_true", help="Replace an existing worktree symlink that points elsewhere.")
     project_worktree_add.set_defaults(handler=handle_project_worktree_add)
+    project_worktree_create = project_worktree_subparsers.add_parser(
+        "create", help="Create an in-place git worktree under the project worktrees directory and register it."
+    )
+    project_worktree_create.add_argument("domain")
+    project_worktree_create.add_argument("project")
+    project_worktree_create.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help="Worktree directory name; defaults to the branch name with slashes replaced by hyphens.",
+    )
+    project_worktree_create.add_argument("--repo", required=True, help="Existing local git repository to create the worktree from.")
+    project_worktree_create.add_argument("--branch", required=True, help="Branch to check out; created from HEAD when it does not exist.")
+    project_worktree_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_worktree_create.set_defaults(handler=handle_project_worktree_create)
     project_work_item = project_subparsers.add_parser("work-item", help="Manage project lifecycle work items.")
     project_work_item_subparsers = project_work_item.add_subparsers(dest="project_work_item_command", required=True)
     project_work_item_create = project_work_item_subparsers.add_parser("create", help="Create a project lifecycle work item.")
@@ -238,6 +309,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_create.set_defaults(handler=handle_project_work_item_create)
+    project_work_item_repair = project_work_item_subparsers.add_parser(
+        "repair", help="Backfill missing lifecycle packet files and folders without overwriting local edits."
+    )
+    project_work_item_repair.add_argument("domain")
+    project_work_item_repair.add_argument("project")
+    project_work_item_repair.add_argument("--work-item", help="Specific work item id, slug, title, or ticket to repair.")
+    project_work_item_repair.add_argument("--all", action="store_true", help="Repair every folder-format project work item.")
+    project_work_item_repair.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_work_item_repair.set_defaults(handler=handle_project_work_item_repair)
 
     project_sync_remote = project_subparsers.add_parser(
         "sync-remote",
@@ -333,6 +413,28 @@ def build_parser() -> argparse.ArgumentParser:
     run_log_close.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     run_log_close.set_defaults(handler=handle_run_log_close)
 
+    thread_parser = subparsers.add_parser("thread", help="Manage thread lifecycle closeouts.")
+    thread_subparsers = thread_parser.add_subparsers(dest="thread_command", required=True)
+    thread_end = thread_subparsers.add_parser("end", help="Finalize the current thread without archiving.")
+    add_thread_closeout_args(thread_end, "artifact-closeout")
+    thread_finalize = thread_subparsers.add_parser("finalize", help="Alias for thread end.")
+    add_thread_closeout_args(thread_finalize, "artifact-closeout")
+    thread_cleanup = thread_subparsers.add_parser("cleanup", help="Finalize and classify generated dirt without deletion.")
+    add_thread_closeout_args(thread_cleanup, "cleanup")
+    thread_archive = thread_subparsers.add_parser("archive", help="Finalize and archive when no unresolved next action remains.")
+    add_thread_closeout_args(thread_archive, "archive")
+    thread_stale = thread_subparsers.add_parser("stale-finalize", help="Dry-run or apply stale thread finalization.")
+    add_stale_finalize_args(thread_stale)
+
+    end_chat_parser = subparsers.add_parser("end-chat", help="Alias for agentic-os thread end.")
+    add_thread_closeout_args(end_chat_parser, "artifact-closeout")
+    finalize_parser = subparsers.add_parser("finalize", help="Alias for agentic-os thread finalize.")
+    add_thread_closeout_args(finalize_parser, "artifact-closeout")
+    cleanup_thread_parser = subparsers.add_parser("cleanup-thread", help="Alias for agentic-os thread cleanup.")
+    add_thread_closeout_args(cleanup_thread_parser, "cleanup")
+    archive_thread_parser = subparsers.add_parser("archive", help="Alias for agentic-os thread archive.")
+    add_thread_closeout_args(archive_thread_parser, "archive")
+
     route_parser = subparsers.add_parser("route", help="Route a request to a domain, project, or workflow.")
     route_parser.add_argument("request")
     route_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -341,7 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     context_parser = subparsers.add_parser("context", help="Build deterministic context packets.")
     context_subparsers = context_parser.add_subparsers(dest="context_command", required=True)
     context_build = context_subparsers.add_parser("build", help="Build a context packet.")
-    context_build.add_argument("--domain", required=True)
+    context_build.add_argument("--domain")
     context_build.add_argument("--project")
     context_build.add_argument("--work-item")
     context_build.add_argument("--workflow")
@@ -1032,6 +1134,20 @@ def handle_project_worktree_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_worktree_create(args: argparse.Namespace) -> int:
+    print_result(
+        create_project_worktree(
+            args.root,
+            args.domain,
+            args.project,
+            args.name,
+            repo=args.repo,
+            branch=args.branch,
+        )
+    )
+    return 0
+
+
 def handle_project_work_item_create(args: argparse.Namespace) -> int:
     print_result(
         create_project_work_item(
@@ -1043,6 +1159,19 @@ def handle_project_work_item_create(args: argparse.Namespace) -> int:
             status=args.status,
             work_id=args.work_id,
             item_format=args.format,
+        )
+    )
+    return 0
+
+
+def handle_project_work_item_repair(args: argparse.Namespace) -> int:
+    print_result(
+        repair_project_work_item(
+            args.root,
+            args.domain,
+            args.project,
+            work_item=args.work_item,
+            all_items=args.all,
         )
     )
     return 0
@@ -1106,6 +1235,45 @@ def handle_run_log_close(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_thread_closeout(args: argparse.Namespace) -> int:
+    result = close_thread(
+        args.root,
+        mode=args.closeout_mode,
+        thread_id=args.thread_id,
+        domain=args.domain,
+        project=args.project,
+        work_item=args.work_item,
+        work_level=args.work_level,
+        summary=args.summary,
+        next_action=args.next_action,
+        validations=args.validation,
+        artifacts=args.artifact,
+        receipts=args.receipt,
+        memory_receipts=args.memory_receipt,
+        notion_url=args.notion_url,
+        notion_warning=args.notion_warning,
+        verified_notion_workspace=args.verified_notion_workspace,
+        skip_notion=args.skip_notion,
+        allow_blocked_archive=args.allow_blocked_archive,
+        request=args.request,
+        cwd=args.cwd,
+    )
+    print(format_thread_closeout_result(result))
+    return 0
+
+
+def handle_thread_stale_finalize(args: argparse.Namespace) -> int:
+    result = stale_finalize_threads(
+        args.root,
+        older_than_days=args.older_than_days,
+        domain=args.domain,
+        project=args.project,
+        apply=args.apply,
+    )
+    print(format_thread_closeout_result(result))
+    return 0
+
+
 def yaml_dump(value) -> str:
     import yaml
 
@@ -1118,15 +1286,43 @@ def handle_route(args: argparse.Namespace) -> int:
 
 
 def handle_context_build(args: argparse.Namespace) -> int:
+    domain = args.domain
+    project = args.project
+    workflow = args.workflow
+    lane = args.lane
+    cwd = Path.cwd()
+
+    if not domain:
+        inferred = detect_from_cwd(Path(args.root).expanduser().resolve(), cwd)
+        domain = inferred.get("domain")
+        if not project:
+            project = inferred.get("project")
+        if not workflow:
+            workflow = inferred.get("workflow")
+        if not lane:
+            lane = inferred.get("lane")
+
+    if not domain and project:
+        matches = [record for record in project_records(Path(args.root).expanduser().resolve()) if record["project"] == project]
+        if len(matches) == 1:
+            domain = matches[0]["domain"]
+            lane = lane or matches[0].get("lane") or None
+        elif len(matches) > 1:
+            raise ValueError(f"project is ambiguous; specify --domain: {project}")
+
+    if not domain:
+        raise ValueError("domain is required unless current directory or unique --project identifies a domain")
+
     print(
         format_packet(
             build_context(
                 args.root,
-                domain=args.domain,
-                project=args.project,
+                domain=domain,
+                project=project,
                 work_item=args.work_item,
-                workflow=args.workflow,
-                lane=args.lane,
+                workflow=workflow,
+                lane=lane,
+                cwd=cwd,
             )
         )
     )

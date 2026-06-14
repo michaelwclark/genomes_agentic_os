@@ -156,6 +156,20 @@ skills:
     bootstrap: false
     purpose: >
       Capture run closeout notes into OS logs.
+  - id: thread-finalizer
+    title: Thread Finalizer
+    source_path: harness/skills/thread-finalizer
+    installed_path: shared_factory/05-knowledge/skills/thread-finalizer
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Finalize substantial Agentic OS threads with source-of-truth closeout
+      files, evidence receipts, memory decisions, and non-blocking Notion
+      projection receipts.
   - id: workflow-builder
     title: Workflow Builder
     source_path: harness/skills/workflow-builder
