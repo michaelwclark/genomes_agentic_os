@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
 from .self_improvement import run_self_improvement
@@ -417,6 +418,19 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply",
             "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Thread Closeouts", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "closed_worktree_cleanup_prepare",
+            "display_name": "Closed worktree cleanup prepare",
+            "enabled": False,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os project worktree cleanup-closed --root <root> --apply",
+            "outputs": ["00-control-plane/active/", "*/02-projects/*/worktrees/closed.yml"],
+            "notion_update": {"object": "OS Cleanup", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,
         },
@@ -937,6 +951,21 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "warnings": [],
             "candidate_count": result.get("candidate_count"),
             "applied_count": len(result.get("applied") or []),
+        }
+    if normalized in {
+        f"agentic-os project worktree cleanup-closed --root {root} --apply",
+        f"agentic-os project worktree cleanup-closed --root {str(root)} --apply",
+    }:
+        result = cleanup_terminal_worktrees(root, apply=True, remove_files=False)
+        return {
+            "supported": True,
+            "ok": True,
+            "command": normalized,
+            "errors": [],
+            "warnings": [],
+            "candidate_count": result.get("candidate_count"),
+            "closed_count": len(result.get("closed") or []),
+            "skipped_count": len(result.get("skipped") or []),
         }
     return {
         "supported": False,

@@ -123,6 +123,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "agentic-os project worktree add",
         },
         {
+            "id": "project-worktree-cleanup-closed",
+            "command": "agentic-os project worktree cleanup-closed",
+            "description": "Close terminal Jira or merged-PR worktree registrations and optionally remove clean in-project worktree directories.",
+            "source": "harness/commands/os-clean-worktrees.md",
+        },
+        {
             "id": "config-doctor",
             "command": "agentic-os config doctor",
             "description": "Validate Codex config and MCP registration contracts.",
@@ -180,6 +186,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Thread Finalizer",
             "description": "Finalize substantial Agentic OS threads with worklog, next-action, memory, evidence, and Notion projection receipts.",
             "source": "harness/skills/thread-finalizer/SKILL.md",
+        },
+        {
+            "id": "os-cleaner",
+            "name": "OS Cleaner",
+            "description": "Reconcile Agentic OS worktree and work-item state after Jira terminal statuses or merged pull requests.",
+            "source": "harness/skills/os-cleaner/SKILL.md",
         },
         {
             "id": "toolsmith-reviewer",

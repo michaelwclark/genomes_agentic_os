@@ -132,6 +132,19 @@ skills:
     bootstrap: false
     purpose: >
       Route a request inside an installed Agentic OS.
+  - id: os-cleaner
+    title: OS Cleaner
+    source_path: harness/skills/os-cleaner
+    installed_path: shared_factory/05-knowledge/skills/os-cleaner
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Reconcile worktree and work-item state after Jira terminal statuses or
+      merged pull requests, with dry-run and deletion gates.
   - id: room-builder
     title: Room Builder
     source_path: harness/skills/room-builder

@@ -141,6 +141,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert "`make-skill`" in inventory
     assert "`orchestrate`" in inventory
     assert "`config-install-tree`" in inventory
+    assert "`project-worktree-cleanup-closed`" in inventory
     commands = yaml.safe_load((harness(root) / "registries" / "commands.yml").read_text(encoding="utf-8"))
     assert {entry["command"] for entry in commands["commands"]} >= {
         "/make-skill",
@@ -148,7 +149,10 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "/make-automation",
         "/make-workflow",
         "/orchestrate",
+        "agentic-os project worktree cleanup-closed",
     }
+    skills = yaml.safe_load((harness(root) / "registries" / "skills.yml").read_text(encoding="utf-8"))
+    assert "os-cleaner" in {entry["id"] for entry in skills["skills"]}
     mcp_servers = yaml.safe_load((harness(root) / "registries" / "mcp-servers.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "genomes_brain"} <= {entry["id"] for entry in mcp_servers["mcp_servers"]}
     composio_tools = yaml.safe_load((harness(root) / "registries" / "composio-tools.yml").read_text(encoding="utf-8"))
@@ -545,6 +549,11 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
     )
     assert schedules["self_improvement_review"]["enabled"] is False
     assert schedules["self_improvement_review"]["command"] == "agentic-os self-improvement run --root <root> --dry-run"
+    assert schedules["closed_worktree_cleanup_prepare"]["enabled"] is False
+    assert (
+        schedules["closed_worktree_cleanup_prepare"]["command"]
+        == "agentic-os project worktree cleanup-closed --root <root> --apply"
+    )
 
     for schedule in registry["schedules"]:
         schedule["enabled"] = schedule["id"] == "self_improvement_review"
@@ -1572,6 +1581,7 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert (project_root / "work-items" / "01-intake").is_dir()
     assert (project_root / "work-items" / "02-active").is_dir()
     assert (project_root / "work-items" / "03-complete").is_dir()
+    assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert (project_root / "worktrees" / "index.yml").is_file()
     for filename in PROJECT_CONFIG_FILES:
         assert (project_root / "config" / filename).is_file()
@@ -1705,6 +1715,7 @@ def test_project_onboard_repairs_project_config_ideas_and_worktrees(tmp_path: Pa
 
     assert (project_root / "config" / "tools.yml").is_file()
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
+    assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert (project_root / "worktrees" / "index.yml").is_file()
     assert validate_root(root).ok
 
@@ -1736,6 +1747,7 @@ def test_project_worktree_add_registers_visible_link_and_routes_from_target(tmp_
 
     project_root = root / "los" / "02-projects" / "linked_project"
     link_path = project_root / "worktrees" / "launch_feature"
+    assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert link_path.is_symlink()
     assert link_path.resolve() == worktree.resolve()
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
@@ -1956,6 +1968,7 @@ def test_project_worktree_add_in_place_registers_without_symlink(tmp_path: Path)
     )
 
     assert checkout.is_dir()
+    assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert not checkout.is_symlink()
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
     assert index["worktrees"] == [
@@ -2054,6 +2067,7 @@ def test_project_worktree_create_checks_out_new_branch_in_place(tmp_path: Path) 
     assert calls[0] == ["git", "-C", str(repo.resolve()), "rev-parse", "--verify", "--quiet", "refs/heads/feature-x"]
     assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", "-b", "feature-x", str(destination)]
     assert destination.is_dir()
+    assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert not destination.is_symlink()
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
     assert index["worktrees"][0]["link_policy"] == "in_place_worktree"
@@ -2173,6 +2187,7 @@ def test_project_worktree_create_cli_runs_real_git(tmp_path: Path) -> None:
     project_root = root / "los" / "02-projects" / "inplace_project"
     checkout = project_root / "worktrees" / "feat-63-demo"
     assert checkout.is_dir()
+    assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert not checkout.is_symlink()
     assert (checkout / ".git").is_file()
     branch = subprocess.run(

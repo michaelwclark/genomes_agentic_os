@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+import shutil
+import subprocess
 from typing import Any
 
 import yaml
@@ -16,6 +18,7 @@ from .scaffold import (
     append_domain_memory,
     append_once,
     domain_path,
+    ensure_spotlight_never_index,
     expand_path,
     normalize_domain,
     validate_name,
@@ -37,6 +40,8 @@ WORK_LIFECYCLE_STATES = (
 )
 
 WORK_ITEM_LANES = ("01-intake", "02-active", "03-complete")
+TERMINAL_JIRA_STATUSES = {"qa_ready", "done", "ready_for_production", "wont_do", "won_t_do"}
+TERMINAL_WORKTREE_STATUSES = TERMINAL_JIRA_STATUSES | {"merged", "closed", "archived", "inactive"}
 
 WORK_ITEM_STATE_LANES: dict[str, str] = {
     "captured": "01-intake",
@@ -97,6 +102,10 @@ ACTIVE_WORK_ITEM_STATES = {
     "validating",
     "blocked",
 }
+
+ACTIVE_CONTAINER_WORK_ITEM_STATES = {"specified", "ready", "building", "validating", "blocked"}
+
+TERMINAL_WORK_ITEM_STATES = {"finished", "documented", "archived"}
 
 WORK_ITEM_INDEX_RE = re.compile(r"^(?P<index>\d{3})[_-](?P<slug>.+)$")
 
@@ -190,6 +199,38 @@ def work_items_root(project_root: Path) -> Path:
 
 def lane_root(project_root: Path, status: str) -> Path:
     return work_items_root(project_root) / lane_for_status(status)
+
+
+def root_project_dirs(root: Path, *, domain: str | None = None, project: str | None = None) -> list[Path]:
+    roots: list[Path] = []
+    if domain:
+        domain_root = domain_path(root, normalize_domain(domain))
+        projects_root = domain_root / "02-projects"
+        if project:
+            candidate = projects_root / validate_name(project, "project")
+            if candidate.is_dir():
+                roots.append(candidate)
+        elif projects_root.is_dir():
+            roots.extend(path for path in sorted(projects_root.iterdir()) if path.is_dir())
+        return roots
+
+    seen: set[str] = set()
+    projects_roots = list(root.glob("*/02-projects"))
+    projects_roots.append(root / "harness" / "shared_factory" / "02-projects")
+    for projects_root in sorted(projects_roots):
+        if not projects_root.is_dir():
+            continue
+        for candidate in sorted(projects_root.iterdir()):
+            if not candidate.is_dir():
+                continue
+            if project and candidate.name != project:
+                continue
+            key = str(candidate.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            roots.append(candidate)
+    return roots
 
 
 def work_item_index_from_name(name: str) -> int | None:
@@ -974,3 +1015,613 @@ def conversation_log_files(work_item_root: Path) -> list[Path]:
     if not logs_root.is_dir():
         return []
     return [path for path in sorted(logs_root.rglob("*")) if path.is_file()]
+
+
+def project_domain(project_root: Path) -> str:
+    if (
+        project_root.parent.name == "02-projects"
+        and project_root.parent.parent.name == "shared_factory"
+        and project_root.parent.parent.parent.name == "harness"
+    ):
+        return "shared_factory"
+    if project_root.parent.name == "02-projects":
+        return project_root.parent.parent.name
+    metadata = load_yaml_mapping(project_root / "project.yml")
+    return str(metadata.get("domain") or project_root.parent.parent.name)
+
+
+def current_lane(record: WorkItemRecord) -> str | None:
+    try:
+        parts = record.path.relative_to(record.path.parents[2]).parts
+    except ValueError:
+        return None
+    if len(parts) >= 2 and parts[0] == "work-items" and parts[1] in WORK_ITEM_LANES:
+        return parts[1]
+    path_parts = record.path.parts
+    for index, part in enumerate(path_parts):
+        if part == "work-items" and index + 1 < len(path_parts) and path_parts[index + 1] in WORK_ITEM_LANES:
+            return path_parts[index + 1]
+    return None
+
+
+def is_lingering_terminal_record(record: WorkItemRecord) -> bool:
+    return record.source == "project_work_item" and record.status in TERMINAL_WORK_ITEM_STATES and current_lane(record) != lane_for_status(record.status)
+
+
+def update_work_item_metadata(record: WorkItemRecord, *, status: str, lane: str, metadata_path: Path) -> None:
+    payload = dict(record.metadata)
+    payload["status"] = status
+    payload["state"] = status
+    payload["lane"] = lane
+    payload["updated_at"] = now_iso()
+    lifecycle = payload.get("lifecycle") if isinstance(payload.get("lifecycle"), dict) else {}
+    lifecycle["state"] = status
+    lifecycle["required_files"] = list(STATE_REQUIRED_FILES.get(status, STATE_REQUIRED_FILES["captured"]))
+    payload["lifecycle"] = lifecycle
+    metadata_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def replace_markdown_table_row(
+    path: Path,
+    *,
+    identifier: str,
+    status: str,
+    link: str,
+    next_action: str,
+) -> bool:
+    if not path.is_file():
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    changed = False
+    for index, line in enumerate(lines):
+        if not line.startswith("|") or identifier not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 5 or cells[0] == "---":
+            continue
+        cells[1] = f"`{status}`"
+        cells[3] = next_action
+        cells[4] = f"`{link}`"
+        lines[index] = "| " + " | ".join(cells) + " |"
+        changed = True
+    if changed:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return changed
+
+
+def finalize_lingering_work_items(
+    root: str | Path,
+    *,
+    domain: str | None = None,
+    project: str | None = None,
+    apply: bool = False,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    candidates: list[dict[str, Any]] = []
+    updated: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for project_root in root_project_dirs(os_root, domain=domain, project=project):
+        for record in local_project_work_items(project_root):
+            if not is_lingering_terminal_record(record):
+                continue
+            target_lane = lane_for_status(record.status)
+            target = work_items_root(project_root) / target_lane / record.path.name
+            record_domain = str(record.metadata.get("domain") or project_domain(project_root))
+            record_project = str(record.metadata.get("project") or project_root.name)
+            relative_target = target.relative_to(project_root)
+            entry = {
+                "domain": record_domain,
+                "project": record_project,
+                "work_item": record.slug or record.path.name,
+                "status": record.status,
+                "from": str(record.path),
+                "to": str(target),
+            }
+            candidates.append(entry)
+            if not apply:
+                continue
+            if target.exists() and target.resolve() != record.path.resolve():
+                skipped.append({"path": str(record.path), "reason": f"target exists: {target}"})
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            record.path.rename(target)
+            metadata_path = target / record.metadata_path.name if record.metadata_path.parent == record.path else target / "work.yml"
+            update_work_item_metadata(record, status=record.status, lane=target_lane, metadata_path=metadata_path)
+            worklog = target / "WORKLOG.md"
+            if worklog.is_file():
+                append_once(
+                    worklog,
+                    f"\n## {today_iso()}\n\n- Finalized lingering active-lane packet: moved from `{record.path.relative_to(project_root)}` to `{relative_target}` because status is `{record.status}`.\n",
+                    ScaffoldResult(),
+                )
+            active_work = project_root.parent.parent / "00-control-plane" / "active-work.md"
+            identifier = f"{record_project}/{record.slug or record.path.name}"
+            replace_markdown_table_row(
+                active_work,
+                identifier=identifier,
+                status=record.status,
+                link=f"02-projects/{record_project}/{relative_target}",
+                next_action="Review completion receipts.",
+            )
+            status_file = project_root / "status.md"
+            if status_file.is_file():
+                text = status_file.read_text(encoding="utf-8")
+                new_text = text.replace(str(record.path.relative_to(project_root)), str(relative_target))
+                if new_text != text:
+                    status_file.write_text(new_text, encoding="utf-8")
+            updated.append(str(target))
+    sync_result = sync_active_container(os_root, domain=domain, project=project) if apply else None
+    return {
+        "mode": "apply" if apply else "dry-run",
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "updated": updated,
+        "skipped": skipped,
+        "active_container": sync_result,
+    }
+
+
+def active_container_root(root: Path) -> Path:
+    return root / "00-control-plane" / "active"
+
+
+def reset_managed_category(category_root: Path) -> None:
+    category_root.mkdir(parents=True, exist_ok=True)
+    for child in category_root.iterdir():
+        if child.is_symlink() or child.is_file():
+            child.unlink()
+
+
+def safe_link_name(*parts: str) -> str:
+    text = "__".join(part for part in parts if part)
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", text).strip("._-") or "item"
+
+
+def create_link(link: Path, target: Path) -> None:
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    link.symlink_to(target.resolve(), target_is_directory=target.is_dir())
+
+
+def timestamp_from_epoch(value: float) -> str:
+    return datetime.fromtimestamp(value, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def filesystem_created_at(path: Path) -> str:
+    stat = path.stat()
+    birth_time = getattr(stat, "st_birthtime", None)
+    return timestamp_from_epoch(birth_time if birth_time is not None else stat.st_ctime)
+
+
+def filesystem_modified_at(path: Path, *, recursive: bool = False) -> str:
+    modified_at = path.stat().st_mtime
+    if recursive and path.is_dir():
+        for child in path.rglob("*"):
+            try:
+                modified_at = max(modified_at, child.stat().st_mtime)
+            except FileNotFoundError:
+                continue
+    return timestamp_from_epoch(modified_at)
+
+
+def record_created_at(record: WorkItemRecord) -> str:
+    return str(record.metadata.get("created_at") or record.metadata.get("created") or filesystem_created_at(record.path))
+
+
+def record_modified_at(record: WorkItemRecord) -> str:
+    return filesystem_modified_at(record.path, recursive=True)
+
+
+def active_index_timestamps(path: Path, *, recursive: bool = False) -> dict[str, str]:
+    return {
+        "created_at": filesystem_created_at(path),
+        "last_modified_at": filesystem_modified_at(path, recursive=recursive),
+    }
+
+
+def normalized_status(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+
+
+def nested_value(data: dict[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = data
+    for part in path:
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def first_entry_value(entry: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> Any:
+    for path in paths:
+        value = nested_value(entry, path)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def worktree_jira_status(entry: dict[str, Any]) -> str:
+    value = first_entry_value(
+        entry,
+        (
+            ("jira_status",),
+            ("ticket_status",),
+            ("issue_status",),
+            ("jira", "status"),
+            ("jira", "state"),
+            ("jira", "fields", "status", "name"),
+        ),
+    )
+    return normalized_status(value)
+
+
+def worktree_pr_state(entry: dict[str, Any]) -> str:
+    value = first_entry_value(
+        entry,
+        (
+            ("pr_status",),
+            ("pull_request_status",),
+            ("pr_state",),
+            ("pull_request_state",),
+            ("pr", "status"),
+            ("pr", "state"),
+            ("pull_request", "status"),
+            ("pull_request", "state"),
+            ("github", "pr", "status"),
+            ("github", "pr", "state"),
+        ),
+    )
+    return normalized_status(value)
+
+
+def truthy_entry_value(entry: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> bool:
+    value = first_entry_value(entry, paths)
+    if isinstance(value, bool):
+        return value
+    return normalized_status(value) in {"true", "yes", "y", "1", "merged", "done"}
+
+
+def worktree_cleanup_reason(entry: dict[str, Any]) -> str | None:
+    jira_status = worktree_jira_status(entry)
+    if jira_status in TERMINAL_JIRA_STATUSES:
+        return f"jira_status:{jira_status}"
+    if truthy_entry_value(
+        entry,
+        (
+            ("pr_merged",),
+            ("pull_request_merged",),
+            ("merged",),
+            ("pr", "merged"),
+            ("pull_request", "merged"),
+            ("github", "pr", "merged"),
+        ),
+    ):
+        return "pr:merged"
+    pr_state = worktree_pr_state(entry)
+    if pr_state == "merged":
+        return "pr_state:merged"
+    status = normalized_status(entry.get("status"))
+    if status in TERMINAL_WORKTREE_STATUSES:
+        return f"status:{status}"
+    return None
+
+
+def worktree_registry_payload(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
+    payload = load_yaml_mapping(path)
+    raw = payload.get("worktrees")
+    if isinstance(raw, dict):
+        for key in ("registered", "worktrees"):
+            if isinstance(raw.get(key), list):
+                return payload, raw[key], key
+        raw["registered"] = []
+        return payload, raw["registered"], "registered"
+    if isinstance(raw, list):
+        return payload, raw, None
+    if isinstance(payload, list):
+        return {"worktrees": payload}, payload, None
+    payload["worktrees"] = []
+    return payload, payload["worktrees"], None
+
+
+def write_worktree_registry(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def archive_worktree_entry(project_root: Path, entry: dict[str, Any], *, reason: str, source: Path) -> dict[str, Any]:
+    closed_path = project_root / "worktrees" / "closed.yml"
+    payload = load_yaml_mapping(closed_path)
+    payload.setdefault("project", project_root.name)
+    closed = payload.setdefault("worktrees", [])
+    if not isinstance(closed, list):
+        closed = []
+        payload["worktrees"] = closed
+    archived = dict(entry)
+    archived["status"] = "closed"
+    archived["closed_at"] = now_iso()
+    archived["cleanup_reason"] = reason
+    archived["cleanup_source"] = str(source)
+    key = (str(archived.get("id") or archived.get("name") or ""), str(archived.get("path") or ""))
+    replaced = False
+    for index, existing in enumerate(closed):
+        if not isinstance(existing, dict):
+            continue
+        existing_key = (str(existing.get("id") or existing.get("name") or ""), str(existing.get("path") or ""))
+        if existing_key == key:
+            closed[index] = archived
+            replaced = True
+            break
+    if not replaced:
+        closed.append(archived)
+    closed_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return {"path": str(closed_path), "entry": archived}
+
+
+def clean_git_checkout(path: Path) -> tuple[bool, str]:
+    if not path.exists():
+        return True, "missing"
+    probe = subprocess.run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, check=False)
+    if probe.returncode != 0:
+        return False, "not a git checkout"
+    status = subprocess.run(["git", "-C", str(path), "status", "--porcelain"], capture_output=True, text=True, check=False)
+    if status.returncode != 0:
+        return False, (status.stderr or status.stdout or "git status failed").strip()
+    if status.stdout.strip():
+        return False, "git checkout has uncommitted changes"
+    return True, "clean"
+
+
+def remove_worktree_files(project_root: Path, entry: dict[str, Any]) -> tuple[bool, str]:
+    target = Path(str(entry.get("path") or "")).expanduser()
+    if not target.exists():
+        return True, "missing"
+    try:
+        target_resolved = target.resolve()
+        managed_root = (project_root / "worktrees").resolve()
+    except OSError as exc:
+        return False, str(exc)
+    if not target_resolved.is_relative_to(managed_root):
+        return False, "target is outside project worktrees/"
+    clean, reason = clean_git_checkout(target_resolved)
+    if not clean:
+        return False, reason
+    shutil.rmtree(target_resolved)
+    return True, "removed"
+
+
+def cleanup_terminal_worktrees(
+    root: str | Path,
+    *,
+    domain: str | None = None,
+    project: str | None = None,
+    apply: bool = False,
+    remove_files: bool = False,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    candidates: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []
+    removed: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    registry_paths = ("config/worktrees.yml", "worktrees/index.yml")
+    for project_root in root_project_dirs(os_root, domain=domain, project=project):
+        record_domain = project_domain(project_root)
+        for relative_registry in registry_paths:
+            registry_path = project_root / relative_registry
+            if not registry_path.is_file():
+                continue
+            payload, entries, _ = worktree_registry_payload(registry_path)
+            kept_entries: list[dict[str, Any]] = []
+            changed = False
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    kept_entries.append(entry)
+                    continue
+                reason = worktree_cleanup_reason(entry)
+                if not reason:
+                    kept_entries.append(entry)
+                    continue
+                path_value = str(entry.get("path") or "")
+                candidate = {
+                    "domain": record_domain,
+                    "project": project_root.name,
+                    "id": str(entry.get("id") or entry.get("name") or Path(path_value).name),
+                    "path": path_value,
+                    "source": str(registry_path),
+                    "reason": reason,
+                    "jira_status": worktree_jira_status(entry),
+                    "pr_state": worktree_pr_state(entry),
+                }
+                candidates.append(candidate)
+                if not apply:
+                    kept_entries.append(entry)
+                    continue
+                archived = archive_worktree_entry(project_root, entry, reason=reason, source=registry_path)
+                closed.append({"id": candidate["id"], "closed_registry": archived["path"], "reason": reason})
+                link_value = str(entry.get("link") or "")
+                if link_value:
+                    link_path = project_root / link_value
+                    if link_path.is_symlink():
+                        link_path.unlink()
+                        removed.append({"path": str(link_path), "reason": "removed worktree symlink"})
+                if remove_files:
+                    ok, removal_reason = remove_worktree_files(project_root, entry)
+                    if ok:
+                        removed.append({"path": path_value, "reason": removal_reason})
+                    else:
+                        skipped.append({"path": path_value, "reason": removal_reason})
+                changed = True
+            if apply and changed:
+                if isinstance(payload.get("worktrees"), dict):
+                    raw = payload["worktrees"]
+                    key = "registered" if "registered" in raw else "worktrees"
+                    raw[key] = kept_entries
+                else:
+                    payload["worktrees"] = kept_entries
+                write_worktree_registry(registry_path, payload)
+    sync_result = sync_active_container(os_root, domain=domain, project=project) if apply else None
+    return {
+        "mode": "apply" if apply else "dry-run",
+        "remove_files": remove_files,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "closed": closed,
+        "removed": removed,
+        "skipped": skipped,
+        "active_container": sync_result,
+    }
+
+
+def active_worktree_entries(project_root: Path) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for path in (project_root / "config" / "worktrees.yml", project_root / "worktrees" / "index.yml"):
+        data = load_yaml_mapping(path)
+        worktrees = data.get("worktrees") if isinstance(data.get("worktrees"), dict) else data
+        raw_entries = []
+        if isinstance(worktrees, dict):
+            raw_entries = worktrees.get("registered") or worktrees.get("worktrees") or []
+        elif isinstance(worktrees, list):
+            raw_entries = worktrees
+        for entry in raw_entries:
+            if not isinstance(entry, dict) or str(entry.get("status") or "active") != "active":
+                continue
+            target = Path(str(entry.get("path") or "")).expanduser()
+            if not target.exists() and entry.get("link"):
+                target = project_root / str(entry["link"])
+            if not target.exists():
+                continue
+            entries.append(
+                {
+                    "id": str(entry.get("id") or entry.get("name") or target.name),
+                    "path": str(target),
+                    "source": str(path),
+                    **active_index_timestamps(target),
+                }
+            )
+    unique: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        unique[f"{entry['id']}:{entry['path']}"] = entry
+    return list(unique.values())
+
+
+def active_automation_entries(root: Path) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    inactive = {"done", "finished", "documented", "archived", "inactive"}
+    for active_work in sorted(root.glob("*/00-control-plane/active-work.md")):
+        domain_root = active_work.parent.parent
+        for line in active_work.read_text(encoding="utf-8").splitlines():
+            if "04-automations/" not in line or not line.startswith("|"):
+                continue
+            cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
+            if len(cells) < 5 or cells[0] == "---":
+                continue
+            status = cells[1].strip("`").lower()
+            if status in inactive:
+                continue
+            link = cells[4].strip("`")
+            target = domain_root / link
+            if target.is_dir():
+                entries.append(
+                    {
+                        "id": cells[0].replace("`", ""),
+                        "status": status,
+                        "path": str(target),
+                        **active_index_timestamps(target, recursive=True),
+                    }
+                )
+    return entries
+
+
+def sync_active_container(root: str | Path, *, domain: str | None = None, project: str | None = None) -> dict[str, Any]:
+    os_root = expand_path(root)
+    container = active_container_root(os_root)
+    work_item_links = container / "work-items"
+    worktree_links = container / "worktrees"
+    automation_links = container / "automations"
+    for category in (work_item_links, worktree_links, automation_links):
+        reset_managed_category(category)
+    ensure_spotlight_never_index(worktree_links, ScaffoldResult())
+
+    index: dict[str, Any] = {
+        "generated_at": now_iso(),
+        "source_of_truth": "filesystem work-items and project worktree registries",
+        "work_items": [],
+        "worktrees": [],
+        "automations": [],
+    }
+    for project_root in root_project_dirs(os_root, domain=domain, project=project):
+        record_domain = project_domain(project_root)
+        linked_work_item_paths: set[Path] = set()
+        for record in local_project_work_items(project_root):
+            if record.status not in ACTIVE_CONTAINER_WORK_ITEM_STATES or current_lane(record) != "02-active":
+                continue
+            link = work_item_links / safe_link_name(record_domain, project_root.name, record.path.name)
+            create_link(link, record.path)
+            linked_work_item_paths.add(record.path.resolve())
+            index["work_items"].append(
+                {
+                    "domain": record_domain,
+                    "project": project_root.name,
+                    "id": record.slug,
+                    "status": record.status,
+                    "created_at": record_created_at(record),
+                    "last_modified_at": record_modified_at(record),
+                    "link": str(link),
+                    "target": str(record.path),
+                }
+            )
+        active_lane = work_items_root(project_root) / "02-active"
+        if active_lane.is_dir():
+            for legacy in sorted(item for item in active_lane.iterdir() if item.is_dir() or item.suffix == ".md"):
+                if legacy.resolve() in linked_work_item_paths:
+                    continue
+                link = work_item_links / safe_link_name(record_domain, project_root.name, legacy.name)
+                create_link(link, legacy)
+                index["work_items"].append(
+                    {
+                        "domain": record_domain,
+                        "project": project_root.name,
+                        "id": legacy.stem,
+                        "status": "legacy-active",
+                        **active_index_timestamps(legacy, recursive=True),
+                        "link": str(link),
+                        "target": str(legacy),
+                    }
+                )
+        for entry in active_worktree_entries(project_root):
+            link = worktree_links / safe_link_name(record_domain, project_root.name, entry["id"])
+            create_link(link, Path(entry["path"]))
+            index["worktrees"].append(
+                {
+                    "domain": record_domain,
+                    "project": project_root.name,
+                    "id": entry["id"],
+                    "created_at": entry["created_at"],
+                    "last_modified_at": entry["last_modified_at"],
+                    "link": str(link),
+                    "target": entry["path"],
+                }
+            )
+    if domain is None and project is None:
+        for entry in active_automation_entries(os_root):
+            target = Path(entry["path"])
+            link = automation_links / safe_link_name(entry["id"])
+            create_link(link, target)
+            index["automations"].append({**entry, "link": str(link)})
+
+    readme = container / "README.md"
+    readme.write_text(
+        "# Global Active Work\n\n"
+        "This folder is generated by `agentic-os project work-item sync-active`.\n"
+        "Symlinks point to active filesystem work items, active project worktrees, and active automations.\n"
+        "Do not edit generated links by hand; update the source work item, worktree registry, or active-work file, then resync.\n",
+        encoding="utf-8",
+    )
+    index_path = container / "index.yml"
+    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+    return {
+        "container": str(container),
+        "index": str(index_path),
+        "work_items": len(index["work_items"]),
+        "worktrees": len(index["worktrees"]),
+        "automations": len(index["automations"]),
+    }

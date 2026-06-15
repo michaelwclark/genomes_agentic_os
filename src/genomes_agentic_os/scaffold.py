@@ -180,6 +180,7 @@ AUTOMATION_FILES = (
 
 NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
 WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+SPOTLIGHT_NEVER_INDEX_FILENAME = ".metadata_never_index"
 
 
 @dataclass
@@ -305,6 +306,10 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     result.created.append(path)
+
+
+def ensure_spotlight_never_index(directory: Path, result: ScaffoldResult) -> None:
+    write_file_once(directory / SPOTLIGHT_NEVER_INDEX_FILENAME, "", result)
 
 
 def ensure_codex_config(root: Path, layer: str, result: ScaffoldResult) -> None:
@@ -906,6 +911,7 @@ the source of truth by themselves.
 | `automation-qualifier` | Decide whether a process is safe to automate. | `shared_factory/05-knowledge/skills/automation-qualifier/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
 | `thread-finalizer` | Finalize substantive threads with worklog, next-action, memory, evidence, and Notion projection receipts. | `shared_factory/05-knowledge/skills/thread-finalizer/` |
+| `os-cleaner` | Reconcile OS worktrees and work items after Jira terminal states or merged pull requests. | `shared_factory/05-knowledge/skills/os-cleaner/` |
 
 ## Commands
 
@@ -925,6 +931,9 @@ the source of truth by themselves.
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
 | `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
 | `agentic-os project worktree add` | Register a visible worktree link inside a project. | Keeps the real checkout outside the OS. |
+| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Use `--remove-files` only for clean in-project checkouts. |
+| `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and refresh the global active symlink container. | Use after closeout/stale-finalization cleanup. |
+| `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view. | Uses filesystem work-items, project worktrees, and active automations. |
 | `agentic-os thread stale-finalize --dry-run` | List work items untouched for more than 3 days before applying conservative closeout. | Dry-run by default. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
 | `agentic-os config install-tree` | Install Codex config across routed OS layers. | Dry-run by default. |
@@ -2195,8 +2204,11 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project src` | Create or repair the canonical `src` link. | The link stays scoped inside this project folder. |
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
+| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Use `--remove-files` only for clean in-project checkouts. |
 | `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
 | `agentic-os project work-item repair` | Backfill missing lifecycle packet files and log folders on legacy or partial work items. | Use before full validation when a `work-item.md`-only packet blocks the OS. |
+| `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and update the global active symlink container. | Use after thread closeout or stale-finalization leaves finished/documented packets under `02-active/`. |
+| `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view from active work items, worktrees, and automations. | Use after changing active work, worktree registry entries, or automation active-work rows. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
 
@@ -2405,6 +2417,9 @@ def worktrees_readme(project: str) -> str:
 This folder contains active project worktrees. Checkouts may live in-place as
 real directories under this folder, or stay where they already live with a
 visible symlink registered here.
+
+This folder includes `.metadata_never_index` so macOS Spotlight does not index
+in-place worktree checkouts.
 
 Create an in-place worktree from a repo branch (the directory is named after
 the branch, slashes become hyphens, unless a name is given):
@@ -2695,6 +2710,7 @@ def ensure_project_operating_surface(
     for lane_name in ("01-intake", "02-active", "03-complete"):
         ensure_dir(project_root / "work-items" / lane_name, result)
     ensure_dir(project_root / "worktrees", result)
+    ensure_spotlight_never_index(project_root / "worktrees", result)
     write_project_file(
         project_root / "AGENTS.md",
         project_agents(domain, project, remotes=remotes),

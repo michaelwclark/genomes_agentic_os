@@ -256,6 +256,35 @@ Status: **OK** (rc 0)
 
 ---
 
+### `project worktree cleanup-closed`
+
+Move registered worktrees with cached terminal Jira state, merged PR state, or
+terminal worktree status out of active registries and into `worktrees/closed.yml`.
+Dry-run by default; file removal is opt-in and only removes clean checkouts
+inside the project `worktrees/` directory.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--domain` | No | Limit cleanup to one domain |
+| `--project` | No | Limit cleanup to one project |
+| `--root` | No | Installed OS root path |
+| `--dry-run` | No (default) | Preview candidates without writing |
+| `--apply` | No | Move matching registry entries to `worktrees/closed.yml` |
+| `--remove-files` | No | Also remove clean in-project checkout directories |
+
+Reads: `<project>/config/worktrees.yml` and `<project>/worktrees/index.yml`.
+Writes: `<project>/worktrees/closed.yml`, the source worktree registry, and the
+root active-work symlink container when `--apply` is used.
+
+```bash
+agentic-os project worktree cleanup-closed --root /tmp/aos-ref --dry-run
+agentic-os project worktree cleanup-closed --root /tmp/aos-ref --apply --remove-files
+```
+
+Status: **OK** (unit-tested; rc 0)
+
+---
+
 ### `project link-source` / `project src`
 
 Create or repair a project-scoped `src` symlink to a local repository.

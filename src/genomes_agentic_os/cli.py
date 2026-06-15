@@ -31,7 +31,8 @@ from .event_graph import (
 )
 from .hook_ops import hook_doctor, hook_sync
 from .losmon import format_losmon_result, losmon_validate
-from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item, repair_project_work_item
+from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, repair_project_work_item
+from .lifecycle import finalize_lingering_work_items, sync_active_container
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
@@ -293,6 +294,22 @@ def build_parser() -> argparse.ArgumentParser:
     project_worktree_create.add_argument("--branch", required=True, help="Branch to check out; created from HEAD when it does not exist.")
     project_worktree_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_create.set_defaults(handler=handle_project_worktree_create)
+    project_worktree_cleanup_closed = project_worktree_subparsers.add_parser(
+        "cleanup-closed",
+        help="Close registered worktrees whose cached Jira status or PR state is terminal.",
+    )
+    project_worktree_cleanup_closed.add_argument("--domain", help="Limit cleanup to a domain.")
+    project_worktree_cleanup_closed.add_argument("--project", help="Limit cleanup to a project.")
+    cleanup_mode = project_worktree_cleanup_closed.add_mutually_exclusive_group()
+    cleanup_mode.add_argument("--dry-run", action="store_true", default=True, help="Show cleanup candidates without writing.")
+    cleanup_mode.add_argument("--apply", action="store_true", help="Move matching registry entries to worktrees/closed.yml.")
+    project_worktree_cleanup_closed.add_argument(
+        "--remove-files",
+        action="store_true",
+        help="Also remove clean in-project worktree directories after closing their registry entries.",
+    )
+    project_worktree_cleanup_closed.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_worktree_cleanup_closed.set_defaults(handler=handle_project_worktree_cleanup_closed)
     project_work_item = project_subparsers.add_parser("work-item", help="Manage project lifecycle work items.")
     project_work_item_subparsers = project_work_item.add_subparsers(dest="project_work_item_command", required=True)
     project_work_item_create = project_work_item_subparsers.add_parser("create", help="Create a project lifecycle work item.")
@@ -318,6 +335,25 @@ def build_parser() -> argparse.ArgumentParser:
     project_work_item_repair.add_argument("--all", action="store_true", help="Repair every folder-format project work item.")
     project_work_item_repair.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_repair.set_defaults(handler=handle_project_work_item_repair)
+    project_work_item_sync_active = project_work_item_subparsers.add_parser(
+        "sync-active",
+        help="Rebuild the root global active-work symlink container from work items, worktrees, and automations.",
+    )
+    project_work_item_sync_active.add_argument("--domain", help="Limit active work-item/worktree links to a domain.")
+    project_work_item_sync_active.add_argument("--project", help="Limit active work-item/worktree links to a project.")
+    project_work_item_sync_active.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_work_item_sync_active.set_defaults(handler=handle_project_work_item_sync_active)
+    project_work_item_finalize_lingering = project_work_item_subparsers.add_parser(
+        "finalize-lingering",
+        help="Move terminal-status packets out of active lanes, update indexes, and refresh the global active container.",
+    )
+    project_work_item_finalize_lingering.add_argument("--domain", help="Limit cleanup to a domain.")
+    project_work_item_finalize_lingering.add_argument("--project", help="Limit cleanup to a project.")
+    lingering_mode = project_work_item_finalize_lingering.add_mutually_exclusive_group()
+    lingering_mode.add_argument("--dry-run", action="store_true", default=True, help="Show stale terminal packets without writing.")
+    lingering_mode.add_argument("--apply", action="store_true", help="Move stale terminal packets and refresh active links.")
+    project_work_item_finalize_lingering.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_work_item_finalize_lingering.set_defaults(handler=handle_project_work_item_finalize_lingering)
 
     project_sync_remote = project_subparsers.add_parser(
         "sync-remote",
@@ -1148,6 +1184,21 @@ def handle_project_worktree_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_project_worktree_cleanup_closed(args: argparse.Namespace) -> int:
+    print(
+        yaml_dump(
+            cleanup_terminal_worktrees(
+                args.root,
+                domain=args.domain,
+                project=args.project,
+                apply=args.apply,
+                remove_files=args.remove_files,
+            )
+        )
+    )
+    return 0
+
+
 def handle_project_work_item_create(args: argparse.Namespace) -> int:
     print_result(
         create_project_work_item(
@@ -1174,6 +1225,16 @@ def handle_project_work_item_repair(args: argparse.Namespace) -> int:
             all_items=args.all,
         )
     )
+    return 0
+
+
+def handle_project_work_item_sync_active(args: argparse.Namespace) -> int:
+    print(yaml_dump(sync_active_container(args.root, domain=args.domain, project=args.project)))
+    return 0
+
+
+def handle_project_work_item_finalize_lingering(args: argparse.Namespace) -> int:
+    print(yaml_dump(finalize_lingering_work_items(args.root, domain=args.domain, project=args.project, apply=args.apply)))
     return 0
 
 
