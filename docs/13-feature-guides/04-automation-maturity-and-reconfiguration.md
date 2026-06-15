@@ -74,8 +74,8 @@ uv run agentic-os validate --root "$TMP_ROOT"
 
 ## Source Artifacts
 
-- Source plan: `PLANS/04-automation-maturity-and-reconfiguration.md`
-- Feature audit folder: `features/04-automation-maturity-and-reconfiguration/`
+- Installed spec: `SPECS/04-automation-maturity-and-reconfiguration/SPEC.md`
+- Installed worklog folder: `worklogs/source-features/04-automation-maturity-and-reconfiguration/`
 - Implementation: `src/genomes_agentic_os/automation_ops.py`
 - CLI parser: `src/genomes_agentic_os/cli.py`
 

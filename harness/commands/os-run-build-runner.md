@@ -16,7 +16,8 @@ the shared `build-runner` skill.
    - git status
    - target branch detection
    - baseline verification commands
-   - existing `features/`, `PLANS/`, `BUILD_LOGS/`, and `RUN_STATE.json`
+   - existing installed OS `worklogs/source-features/`, `SPECS/`,
+     `worklogs/source-build-logs/`, and any configured `RUN_STATE.json`
 9. Start with the first unblocked, incomplete card.
 10. Execute the build-runner phases for that card.
 11. Persist `RUN_STATE.json` after every phase.

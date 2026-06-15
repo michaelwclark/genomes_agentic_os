@@ -83,9 +83,9 @@ The capture path should preserve installed root validation.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/09-future-ideas-intake.md`
-- Feature spec: `features/09-future-ideas-intake/SPEC.md`
-- Feature QA: `features/09-future-ideas-intake/HOLDOUT_QA.md`
+- Installed spec: `SPECS/09-future-ideas-intake/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/09-future-ideas-intake/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/09-future-ideas-intake/HOLDOUT_QA.md`
 - Implementation: `src/genomes_agentic_os/plans.py`
 - CLI wiring: `src/genomes_agentic_os/cli.py`
 - Test coverage: `tests/test_cli_scaffold.py`

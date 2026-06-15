@@ -122,9 +122,9 @@ after `agentic-os docs update --root <root>` restores missing managed files.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/13-reference-and-skill-index-layer.md`
-- Feature spec: `features/13-reference-and-skill-index-layer/SPEC.md`
-- Feature QA: `features/13-reference-and-skill-index-layer/HOLDOUT_QA.md`
+- Installed spec: `SPECS/13-reference-and-skill-index-layer/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/13-reference-and-skill-index-layer/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/13-reference-and-skill-index-layer/HOLDOUT_QA.md`
 - Reference templates: `templates/reference/`
 - Skill registry: `harness/skills/skill-registry.yml`
 - Context builder: `src/genomes_agentic_os/routing.py`

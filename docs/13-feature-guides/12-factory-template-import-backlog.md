@@ -110,9 +110,9 @@ Validation should pass after the missing managed template is restored.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/12-factory-template-import-backlog.md`
-- Feature spec: `features/12-factory-template-import-backlog/SPEC.md`
-- Feature QA: `features/12-factory-template-import-backlog/HOLDOUT_QA.md`
+- Installed spec: `SPECS/12-factory-template-import-backlog/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/12-factory-template-import-backlog/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/12-factory-template-import-backlog/HOLDOUT_QA.md`
 - Factory policy docs: `docs/12-factory-patterns/README.md`
 - Source templates: `templates/`
 - Runtime install logic: `src/genomes_agentic_os/scaffold.py`

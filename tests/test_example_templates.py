@@ -114,9 +114,9 @@ def test_os_capture_plan_template_is_installed(tmp_path: Path) -> None:
     assert capture_plan.is_file()
     content = capture_plan.read_text(encoding="utf-8")
     assert "Where To Put New Plans" in content
-    assert "PLANS/" in content
-    assert "shared_factory/05-knowledge/plans/" in content
-    assert "feature-spec.md" in content
+    assert "Do not create a source-repo planning file" in content
+    assert "Installed project `SPECS/<slug>/SPEC.md`" in content
+    assert "SPEC.md" in content
 
 
 def test_thread_closeout_templates_are_installed(tmp_path: Path) -> None:

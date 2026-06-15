@@ -137,9 +137,9 @@ files.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/05-customer-os-factory.md`
-- Feature spec: `features/05-customer-os-factory/SPEC.md`
-- Feature QA: `features/05-customer-os-factory/HOLDOUT_QA.md`
+- Installed spec: `SPECS/05-customer-os-factory/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/05-customer-os-factory/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/05-customer-os-factory/HOLDOUT_QA.md`
 - CLI: `src/genomes_agentic_os/cli.py`
 - Customer factory implementation: `src/genomes_agentic_os/customer.py`
 - Example profile: `customer_profiles/example-customer.yml`

@@ -122,8 +122,8 @@ uv run agentic-os context build --domain los --project losmon_replacement --root
 
 ## Source Artifacts
 
-- Source plan: `PLANS/02-routing-and-context-builder.md`
-- Feature audit folder: `features/02-routing-and-context-builder/`
+- Installed spec: `SPECS/02-routing-and-context-builder/SPEC.md`
+- Installed worklog folder: `worklogs/source-features/02-routing-and-context-builder/`
 - Implementation: `src/genomes_agentic_os/routing.py`
 - CLI parser: `src/genomes_agentic_os/cli.py`
 - Tests: `tests/test_cli_scaffold.py`

@@ -77,8 +77,8 @@ uv run agentic-os validate --root "$TMP_ROOT"
 
 ## Source Artifacts
 
-- Source plan: `PLANS/03-workflow-readiness-and-run-closeout.md`
-- Feature audit folder: `features/03-workflow-readiness-and-run-closeout/`
+- Installed spec: `SPECS/03-workflow-readiness-and-run-closeout/SPEC.md`
+- Installed worklog folder: `worklogs/source-features/03-workflow-readiness-and-run-closeout/`
 - Implementation: `src/genomes_agentic_os/workflow_ops.py`
 - CLI parser: `src/genomes_agentic_os/cli.py`
 

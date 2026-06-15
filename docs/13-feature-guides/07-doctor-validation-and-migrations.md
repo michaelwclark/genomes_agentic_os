@@ -115,9 +115,9 @@ preview matches the intended change.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/07-doctor-validation-and-migrations.md`
-- Feature spec: `features/07-doctor-validation-and-migrations/SPEC.md`
-- Feature QA: `features/07-doctor-validation-and-migrations/HOLDOUT_QA.md`
+- Installed spec: `SPECS/07-doctor-validation-and-migrations/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/07-doctor-validation-and-migrations/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/07-doctor-validation-and-migrations/HOLDOUT_QA.md`
 - Doctor implementation: `src/genomes_agentic_os/doctor.py`
 - Migration implementation: `src/genomes_agentic_os/migrations.py`
 - CLI wiring: `src/genomes_agentic_os/cli.py`

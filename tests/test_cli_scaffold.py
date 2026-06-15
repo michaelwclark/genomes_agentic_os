@@ -278,30 +278,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-event.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-chain.md").is_file()
-    assert (shared_factory(root) / "05-knowledge" / "plans" / "README.md").is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "00-current-state-and-gap-map.md"
-    ).is_file()
-    assert (shared_factory(root) / "05-knowledge" / "plans" / "09-future-ideas-intake.md").is_file()
-    assert (shared_factory(root) / "05-knowledge" / "plans" / "11-room-first-installer-and-routing.md").is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "12-factory-template-import-backlog.md"
-    ).is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "13-reference-and-skill-index-layer.md"
-    ).is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "14-client-automation-and-control-plane-playbooks.md"
-    ).is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "15-always-on-runtime-heartbeats-schedules-and-integrations.md"
-    ).is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "16-connected-source-watch-registry.md"
-    ).is_file()
-    assert (
-        shared_factory(root) / "05-knowledge" / "plans" / "17-event-graph-and-chained-automations.md"
-    ).is_file()
+    assert not (shared_factory(root) / "05-knowledge" / "plans").exists()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "room-builder" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
@@ -1489,12 +1466,10 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     watch_template = shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-source.yml"
     event_command = shared_factory(root) / "05-knowledge" / "commands" / "os-event.md"
     event_template = shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml"
-    plan_readme = shared_factory(root) / "05-knowledge" / "plans" / "README.md"
-    plan_file = shared_factory(root) / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
+    plans_root = shared_factory(root) / "05-knowledge" / "plans"
     planning_template = shared_factory(root) / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
     domain_context_template = shared_factory(root) / "05-knowledge" / "templates" / "domain" / "context.md"
     manual_readme.write_text("# local edit\n", encoding="utf-8")
-    plan_readme.write_text("# local plan edit\n", encoding="utf-8")
     command_file.unlink()
     playbook_command.unlink()
     playbook_skill.unlink()
@@ -1502,7 +1477,6 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     watch_template.unlink()
     event_command.unlink()
     event_template.unlink()
-    plan_file.unlink()
     planning_template.unlink()
     domain_context_template.unlink()
 
@@ -1510,7 +1484,6 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
 
     content = manual_readme.read_text(encoding="utf-8")
     assert content == "# local edit\n"
-    assert plan_readme.read_text(encoding="utf-8") == "# local plan edit\n"
     assert command_file.is_file()
     assert playbook_command.is_file()
     assert playbook_skill.is_file()
@@ -1518,7 +1491,7 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert watch_template.is_file()
     assert event_command.is_file()
     assert event_template.is_file()
-    assert plan_file.is_file()
+    assert not plans_root.exists()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-update.md").is_file()
@@ -1529,7 +1502,7 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert main(["validate", "--root", str(root)]) == 0
     assert main(["docs", "update", "--root", str(root)]) == 0
     assert manual_readme.read_text(encoding="utf-8") == "# local edit\n"
-    assert plan_readme.read_text(encoding="utf-8") == "# local plan edit\n"
+    assert not plans_root.exists()
 
 
 def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:

@@ -139,9 +139,9 @@ additively.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/15-always-on-runtime-heartbeats-schedules-and-integrations.md`
-- Feature spec: `features/15-always-on-runtime-heartbeats-schedules-and-integrations/SPEC.md`
-- Feature QA: `features/15-always-on-runtime-heartbeats-schedules-and-integrations/HOLDOUT_QA.md`
+- Installed spec: `SPECS/15-always-on-runtime-heartbeats-schedules-and-integrations/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/15-always-on-runtime-heartbeats-schedules-and-integrations/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/15-always-on-runtime-heartbeats-schedules-and-integrations/HOLDOUT_QA.md`
 - Runtime implementation: `src/genomes_agentic_os/runtime_ops.py`
 - Notion tracking: `src/genomes_agentic_os/notion_sync.py`
 - Runtime templates: `templates/runtime/`

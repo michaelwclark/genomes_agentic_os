@@ -93,9 +93,9 @@ reviewed repository path.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/08-losmon-replacement-validation.md`
-- Feature spec: `features/08-losmon-replacement-validation/SPEC.md`
-- Feature QA: `features/08-losmon-replacement-validation/HOLDOUT_QA.md`
+- Installed spec: `SPECS/08-losmon-replacement-validation/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/08-losmon-replacement-validation/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/08-losmon-replacement-validation/HOLDOUT_QA.md`
 - Implementation: `src/genomes_agentic_os/losmon.py`
 - CLI wiring: `src/genomes_agentic_os/cli.py`
 - Test coverage: `tests/test_cli_scaffold.py`

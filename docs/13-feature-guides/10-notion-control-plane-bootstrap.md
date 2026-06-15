@@ -64,9 +64,9 @@ plane. Review it before treating any remote Notion surface as current.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/10-notion-control-plane-bootstrap.md`
-- Feature spec: `features/10-notion-control-plane-bootstrap/SPEC.md`
-- Feature QA: `features/10-notion-control-plane-bootstrap/HOLDOUT_QA.md`
+- Installed spec: `SPECS/10-notion-control-plane-bootstrap/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/10-notion-control-plane-bootstrap/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/10-notion-control-plane-bootstrap/HOLDOUT_QA.md`
 - Implementation: `src/genomes_agentic_os/notion_sync.py`
 - CLI wiring: `src/genomes_agentic_os/cli.py`
 - Test coverage: `tests/test_cli_scaffold.py`

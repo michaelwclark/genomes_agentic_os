@@ -33,7 +33,8 @@ state stops scaling — it is not required for V1.
 ### When to introduce the runtime database (F-023)
 
 Do **not** add a database until at least one of these conditions is true
-(from [`spec/data-model.md`](../spec/data-model.md)):
+(from the migrated source product spec at
+`SPECS/source-product-specs/data-model/SPEC.md` in the installed OS project):
 
 | Condition | Why it triggers the database |
 | --- | --- |

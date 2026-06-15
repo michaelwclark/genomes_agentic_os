@@ -282,7 +282,9 @@ agentic-os init --target ~/agentic_os
 - Copies the operating manual into `shared_factory/05-knowledge/operating-manual/`.
 - Copies harness command prompts into `shared_factory/05-knowledge/commands/`.
 - Copies harness skill specs into `shared_factory/05-knowledge/skills/`.
-- Copies the source-package build backlog into `shared_factory/05-knowledge/plans/`.
+- Keeps project planning and work history in the installed Agentic OS project;
+  this source package no longer stores lifecycle backlogs in repository-root
+  `PLANS/`, `features/`, `BUILD_LOGS/`, or `spec/` folders.
 - Creates timestamped run folders under the selected domain.
 - Validates the required domain-first tree plus JSON/YAML parseability.
 - Keeps generated files safe to rerun by not overwriting existing hand-authored content.
@@ -302,8 +304,6 @@ agentic-os init --target ~/agentic_os
 
 ```text
 docs/       Human-readable operating manual and diagrams.
-PLANS/     Feature specs and future build backlog.
-spec/       Product and implementation specs.
 templates/  Copyable source templates for installed OS objects.
 schemas/    JSON schemas for future stricter validation.
 examples/   Example domain operating systems.
@@ -313,6 +313,15 @@ config/     Example configuration files.
 src/        Installable Python CLI package.
 tests/      CLI and scaffold smoke tests.
 ```
+
+Project lifecycle state for this repository lives in the installed OS project:
+
+```text
+/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/
+```
+
+See [Lifecycle Location](LIFECYCLE.md) for the canonical `SPECS/`,
+`work-items/`, `worklogs/`, `logs/`, and `artifacts/` surfaces.
 
 Key starting points:
 
@@ -325,7 +334,7 @@ Key starting points:
 - [Factory patterns](docs/12-factory-patterns/README.md)
 - [Automation guide](docs/05-automations/README.md)
 - [Storage model](docs/09-storage-model/README.md)
-- [Spec index](spec/README.md)
+- [Lifecycle location](LIFECYCLE.md)
 - [Templates](templates/README.md)
 
 ## Customization

@@ -33,6 +33,13 @@ The human-facing handbook lives in [`docs/`](docs/) and is built from and valida
 | `~/agentic_os` | Installed operating system for live work. |
 | `~/projects/*` | Product/client/code repositories operated by the OS. |
 
+Project lifecycle state for this source package belongs in the installed OS
+project at
+`/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/`.
+Do not recreate source-root `PLANS/`, `features/`, `BUILD_LOGS/`, or `spec/`
+for Agentic OS planning or work history; use `SPECS/`, `work-items/`,
+`worklogs/`, `logs/`, and `artifacts/` under the installed project instead.
+
 ## System Shell And Host Tools
 
 - Treat host-level shell setup as part of the OS product surface.
@@ -46,3 +53,5 @@ The human-facing handbook lives in [`docs/`](docs/) and is built from and valida
 - Keep templates copyable.
 - Keep specs precise enough to become implementation tasks.
 - Preserve existing user-authored content.
+- For new source-package work, add or update an installed OS work item/spec
+  first; keep this repo focused on product source files.

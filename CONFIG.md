@@ -181,9 +181,9 @@ Notes:
 ## Core Paths
 
 ```env
-BUILD_RUNNER_FEATURE_DIR=./features/
-BUILD_RUNNER_PLAN_DIR=./PLANS/
-BUILD_RUNNER_LOG_DIR=./BUILD_LOGS/
+BUILD_RUNNER_FEATURE_DIR=/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-features/
+BUILD_RUNNER_PLAN_DIR=/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/SPECS/
+BUILD_RUNNER_LOG_DIR=/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/
 BUILD_RUNNER_TARGET_BRANCH=auto
@@ -192,20 +192,24 @@ BUILD_RUNNER_BRANCH_PREFIX=codex/
 
 ### `BUILD_RUNNER_FEATURE_DIR`
 
-Default: `./features/`
+Default for this source package: installed OS `worklogs/source-features/`
 
-Controls where build-runner creates one feature folder per Kanban card.
+Controls where build-runner stores human-readable work history for source
+package cards.
 
 Valid options:
 
-- Relative path inside the repository, such as `./features/`.
+- Installed OS project path, such as
+  `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-features/`.
+- Relative path inside the repository only for legacy compatibility.
 - Relative hidden path, such as `./.features/`.
 - Absolute path, only when the user explicitly wants artifacts outside the
   repository.
 
 Notes:
 
-- Use `features/<prefix-slug>/` by default for this repository.
+- Do not create source-root `features/` for this repository. Use the installed
+  OS project `worklogs/source-features/<prefix-slug>/` bucket.
 - If a host project already uses `features/` for tests, prefer `.features/`.
 - Each feature folder contains `SPEC.md`, `INVESTIGATION.md`, `PLAN.md`,
   `MEMORY.md`, `WORKLOG.md`, `SUMMARY.md`, `NEXT.md`, `HOLDOUT_QA.md`,
@@ -215,18 +219,21 @@ Notes:
 
 ### `BUILD_RUNNER_PLAN_DIR`
 
-Default: `./PLANS/`
+Default for this source package: installed OS `SPECS/`
 
-Controls where source plan files and generated prerequisite task files live.
+Controls where specs and generated prerequisite task files live.
 
 Valid options:
 
-- Relative repository path.
+- Installed OS project path, such as
+  `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/SPECS/`.
+- Relative repository path only for legacy compatibility.
 - Absolute path only when explicitly requested.
 
 Notes:
 
-- Current source plan files use numeric prefixes from `00` through `17`.
+- Existing source plan files were consolidated into installed OS `SPECS/` on
+  2026-06-15.
 - Generated subtasks should use:
 
 ```text
@@ -241,14 +248,15 @@ Example:
 
 ### `BUILD_RUNNER_LOG_DIR`
 
-Default: `./BUILD_LOGS/`
+Default for this source package: installed OS `worklogs/source-build-logs/`
 
-Controls where completed per-feature artifacts are appended into shared build
-logs.
+Controls where completed source-package work summaries are appended.
 
 Valid options:
 
-- Relative repository path.
+- Installed OS project path, such as
+  `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-build-logs/`.
+- Relative repository path only for legacy compatibility.
 - Absolute path only when explicitly requested.
 
 Notes:
@@ -507,7 +515,8 @@ Valid options:
 Notes:
 
 - The current database has 18 cards, all currently in `Ready`.
-- The current local `PLANS/` folder mirrors cards `00` through `17`.
+- Existing local `PLANS/` content was migrated to the installed OS `SPECS/`
+  bucket on 2026-06-15.
 
 ### Lanes And Statuses
 
@@ -555,7 +564,7 @@ Current derived properties:
 | `Notion Tracker URL` | url | Link to detailed tracker page when one exists. |
 | `Blocker` | rich_text | Reason a card cannot proceed. |
 | `Owner` | rich_text | Person or agent responsible. |
-| `Plan File` | rich_text | Local `PLANS/*.md` path. |
+| `Plan File` | rich_text | Installed OS `SPECS/*/SPEC.md` path. |
 | `Canonical Source` | checkbox | Marks whether this card maps to canonical local source. |
 | `Installed Runtime Path` | rich_text | Installed OS path affected by the card. |
 | `Source Path` | rich_text | Source repo path affected by the card. |
@@ -637,8 +646,8 @@ Verification:
 Blockers: <none or list>
 Follow-ups: <none or list>
 Artifacts:
-- features/<feature-slug>/
-- BUILD_LOGS/*.md
+- worklogs/source-features/<feature-slug>/
+- worklogs/source-build-logs/*.md
 ```
 
 ## Stop Conditions
@@ -662,9 +671,9 @@ Notion board has been connected yet.
 For fresh installs:
 
 ```env
-BUILD_RUNNER_FEATURE_DIR=./features/
-BUILD_RUNNER_PLAN_DIR=./PLANS/
-BUILD_RUNNER_LOG_DIR=./BUILD_LOGS/
+BUILD_RUNNER_FEATURE_DIR=./worklogs/source-features/
+BUILD_RUNNER_PLAN_DIR=./SPECS/
+BUILD_RUNNER_LOG_DIR=./worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/
 BUILD_RUNNER_TARGET_BRANCH=auto

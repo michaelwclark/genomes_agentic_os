@@ -291,6 +291,13 @@ def plans_source_dir() -> Path:
     raise FileNotFoundError("Could not find repository PLANS directory")
 
 
+def optional_plans_source_dir() -> Path | None:
+    candidate = repo_root() / "PLANS"
+    if candidate.is_dir():
+        return candidate
+    return None
+
+
 def ensure_dir(path: Path, result: ScaffoldResult) -> None:
     if path.is_dir():
         result.skipped.append(path)
@@ -1889,12 +1896,14 @@ def install_docs(root: str | Path) -> ScaffoldResult:
                 shared_factory_path(os_root, "05-knowledge", "hooks"),
             )
         )
-    result.extend(
-        copy_tree(
-            plans_source_dir(),
-            shared_factory_path(os_root, "05-knowledge", "plans"),
+    plans_root = optional_plans_source_dir()
+    if plans_root is not None:
+        result.extend(
+            copy_tree(
+                plans_root,
+                shared_factory_path(os_root, "05-knowledge", "plans"),
+            )
         )
-    )
     result.extend(
         copy_tree(
             template_source_dir() / "reference",

@@ -7,25 +7,25 @@ finding should become durable OS planning material.
 
 | Plan Type | Source Repo Location | Installed Location |
 | --- | --- | --- |
-| OS product feature or roadmap item | `PLANS/<NNN>-<slug>.md` in the source repo | `shared_factory/05-knowledge/plans/` |
-| Customer-specific OS need | Customer domain inbox or project folder | Link the reusable pattern back to shared plans |
-| Loose idea not yet scoped | `shared_factory/01-inbox/raw-ideas.md` | — |
-| Already-scoped idea ready to plan | `shared_factory/05-knowledge/plans/<NNN>-<slug>.md` | — |
+| OS product feature or roadmap item | Do not create a source-repo planning file | Installed project `SPECS/<slug>/SPEC.md` |
+| Customer-specific OS need | Do not create a source-repo planning file | Customer domain inbox or project `work-items/01-intake/` |
+| Loose idea not yet scoped | Do not create a source-repo planning file | Installed domain `01-inbox/raw-ideas.md` |
+| Already-scoped idea ready to plan | Do not create a source-repo planning file | Installed project `SPECS/<slug>/SPEC.md` or `work-items/02-active/<slug>/` |
 
 ## Naming Convention
 
-Plans use a sequential three-digit number prefix: `NNN-slug-with-dashes.md`.
-Read the highest existing number in `PLANS/` or `shared_factory/05-knowledge/plans/`
-and increment by one. Allocate the number before writing; do not let parallel
-agents pick the same number.
+Specs use the installed OS project naming convention. Allocate the destination
+through the project work-item/spec intake surface before writing; do not let
+parallel agents pick the same number or slug.
 
 ## Procedure
 
 1. Route the idea to a domain if it is domain-specific.
-2. If it is reusable OS product work, record it under `shared_factory/05-knowledge/plans/`.
+2. If it is reusable OS product work, record it under the installed OS project
+   `SPECS/` or `work-items/`.
 3. If it is customer-specific, record it in the customer domain inbox or project folder
    and link the reusable pattern back to shared plans.
-4. Use the `templates/planning/feature-spec.md` template structure.
+4. Use `SPEC.md` as the raw-capture plus refined-spec file.
 5. Capture problem, user outcome, scope, non-goals, affected surfaces,
    acceptance criteria, validation, and rollout notes.
 6. Update active work only when the plan is ready to build.
@@ -43,5 +43,5 @@ agents pick the same number.
 
 ## Output
 
-A numbered plan file at the correct location, referencing relevant prior plans
-under `Relationship To Other Plans`.
+A spec/work-item path in the installed OS project, referencing related specs or
+work items where useful.

@@ -164,9 +164,9 @@ agentic-os validate --root /tmp/customer-os
 
 ## Source Artifacts
 
-- Source plan: `PLANS/11-room-first-installer-and-routing.md`
-- Feature spec: `features/11-room-first-installer-and-routing/SPEC.md`
-- Feature QA: `features/11-room-first-installer-and-routing/HOLDOUT_QA.md`
+- Installed spec: `SPECS/11-room-first-installer-and-routing/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/11-room-first-installer-and-routing/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/11-room-first-installer-and-routing/HOLDOUT_QA.md`
 - Implementation: `src/genomes_agentic_os/room_profile.py`
 - CLI wiring: `src/genomes_agentic_os/cli.py`
 - Default scaffold support: `src/genomes_agentic_os/scaffold.py`

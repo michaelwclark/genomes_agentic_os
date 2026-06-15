@@ -115,9 +115,9 @@ the customer workspace from that profile.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/06-notion-control-plane-sync.md`
-- Feature spec: `features/06-notion-control-plane-sync/SPEC.md`
-- Feature QA: `features/06-notion-control-plane-sync/HOLDOUT_QA.md`
+- Installed spec: `SPECS/06-notion-control-plane-sync/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/06-notion-control-plane-sync/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/06-notion-control-plane-sync/HOLDOUT_QA.md`
 - Sync implementation: `src/genomes_agentic_os/notion_sync.py`
 - CLI wiring: `src/genomes_agentic_os/cli.py`
 - Test coverage: `tests/test_cli_scaffold.py`

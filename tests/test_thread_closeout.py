@@ -304,6 +304,12 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
         handle.write(
             "| `test_auto` automation | `active` | OS Owner | Keep running. | `04-automations/engineering/test_auto` |\n"
         )
+    shared_automation_root = root / "harness" / "shared_factory" / "04-automations" / "engineering" / "shared_auto"
+    shared_automation_root.mkdir(parents=True)
+    with (root / "harness" / "shared_factory" / "00-control-plane" / "active-work.md").open("a", encoding="utf-8") as handle:
+        handle.write(
+            "| `shared_auto` automation | `active` | OS Owner | Keep running. | `04-automations/engineering/shared_auto` |\n"
+        )
     capsys.readouterr()
 
     assert (
@@ -365,9 +371,9 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     assert [item["id"] for item in active_index["work_items"]] == ["002_still_active"]
     assert active_index["work_items"][0]["created_at"]
     assert active_index["work_items"][0]["last_modified_at"] == "2026-06-16T00:00:00Z"
-    assert [item["id"] for item in active_index["automations"]] == ["test_auto automation"]
-    assert active_index["automations"][0]["created_at"]
-    assert active_index["automations"][0]["last_modified_at"]
+    assert {item["id"] for item in active_index["automations"]} == {"test_auto automation", "shared_auto automation"}
+    assert all(item["created_at"] for item in active_index["automations"])
+    assert all(item["last_modified_at"] for item in active_index["automations"])
     assert (root / "00-control-plane" / "active" / "worktrees" / ".metadata_never_index").is_file()
     active_link = Path(active_index["work_items"][0]["link"])
     assert active_link.is_symlink()

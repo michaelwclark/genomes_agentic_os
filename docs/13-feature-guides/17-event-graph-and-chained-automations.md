@@ -274,10 +274,10 @@ agentic-os event replay <event_id> --root ~/agentic_os --dry-run
 
 ## Source Artifacts
 
-- Source plan: `PLANS/17-event-graph-and-chained-automations.md`
-- Feature spec: `features/17-event-graph-and-chained-automations/SPEC.md`
-- Feature QA: `features/17-event-graph-and-chained-automations/HOLDOUT_QA.md`
-- Feature QA results: `features/17-event-graph-and-chained-automations/HOLDOUT_QA_RESULTS.md`
+- Installed spec: `SPECS/17-event-graph-and-chained-automations/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/17-event-graph-and-chained-automations/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/17-event-graph-and-chained-automations/HOLDOUT_QA.md`
+- Installed worklog QA results: `worklogs/source-features/17-event-graph-and-chained-automations/HOLDOUT_QA_RESULTS.md`
 - Command prompts: `harness/commands/os-event.md`, `harness/commands/os-chain.md`
 - Skill: `harness/skills/event-graph-operator/SKILL.md`
 - Runtime templates: `templates/runtime/event-envelope.yml`, `templates/runtime/event-ledger-index.md`, `templates/runtime/chain-rule.yml`, `templates/runtime/event-processing-result.yml`, `templates/runtime/dead-letter-event.yml`

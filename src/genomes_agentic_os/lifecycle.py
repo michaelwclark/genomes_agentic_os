@@ -1506,7 +1506,11 @@ def active_worktree_entries(project_root: Path) -> list[dict[str, str]]:
 def active_automation_entries(root: Path) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     inactive = {"done", "finished", "documented", "archived", "inactive"}
-    for active_work in sorted(root.glob("*/00-control-plane/active-work.md")):
+    active_work_paths = list(root.glob("*/00-control-plane/active-work.md"))
+    shared_factory_active_work = root / "harness" / "shared_factory" / "00-control-plane" / "active-work.md"
+    if shared_factory_active_work.is_file():
+        active_work_paths.append(shared_factory_active_work)
+    for active_work in sorted(set(active_work_paths)):
         domain_root = active_work.parent.parent
         for line in active_work.read_text(encoding="utf-8").splitlines():
             if "04-automations/" not in line or not line.startswith("|"):

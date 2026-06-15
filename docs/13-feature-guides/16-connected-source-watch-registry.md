@@ -279,10 +279,10 @@ Notion.
 
 ## Source Artifacts
 
-- Source plan: `PLANS/16-connected-source-watch-registry.md`
-- Feature spec: `features/16-connected-source-watch-registry/SPEC.md`
-- Feature QA: `features/16-connected-source-watch-registry/HOLDOUT_QA.md`
-- Feature QA results: `features/16-connected-source-watch-registry/HOLDOUT_QA_RESULTS.md`
+- Installed spec: `SPECS/16-connected-source-watch-registry/SPEC.md`
+- Installed worklog spec: `worklogs/source-features/16-connected-source-watch-registry/SPEC.md`
+- Installed worklog QA: `worklogs/source-features/16-connected-source-watch-registry/HOLDOUT_QA.md`
+- Installed worklog QA results: `worklogs/source-features/16-connected-source-watch-registry/HOLDOUT_QA_RESULTS.md`
 - Command prompt: `harness/commands/os-watch-source.md`
 - Skill: `harness/skills/source-watcher/SKILL.md`
 - Runtime templates: `templates/runtime/connected-system.yml`, `templates/runtime/source-provider.yml`, `templates/runtime/watch-source.yml`, `templates/runtime/watch-cursor.yml`, `templates/runtime/source-event.yml`, `templates/runtime/trigger-rule.yml`
