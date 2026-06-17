@@ -22,6 +22,7 @@ from .lifecycle import (
     today_iso,
 )
 from .scaffold import domain_path, expand_path, normalize_domain, validate_name
+from .validate import lifecycle_closeout_readiness_check
 
 
 WORK_LEVELS = ("trivial", "contextual", "artifact", "implementation", "operational")
@@ -700,6 +701,16 @@ def close_thread(
         timestamp=timestamp,
     )
 
+    # Advisory readiness gate (WI-004): non-blocking. Findings are surfaced as
+    # warnings in the return dict. Closeout always proceeds regardless of findings.
+    readiness_findings: list[dict[str, str]] = []
+    if target.work_item is not None:
+        readiness_findings = lifecycle_closeout_readiness_check(target.work_item.path)
+        for finding in readiness_findings:
+            sev = finding.get("severity", "advisory")
+            msg = finding.get("message", "")
+            print(f"[closeout advisory] {sev}: {msg}")
+
     target.artifact_root.mkdir(parents=True, exist_ok=True)
     updated_paths = update_work_item_files(
         target,
@@ -807,7 +818,11 @@ def close_thread(
         },
         "updated": [path_for_display(path) for path in updated_paths],
         "notion_sync": notion_payload,
-        "warnings": [] if notion_payload["status"] != "warning" else [str(notion_payload["warning"])],
+        "warnings": (
+            ([] if notion_payload["status"] != "warning" else [str(notion_payload["warning"])])
+            + [f["message"] for f in readiness_findings]
+        ),
+        "readiness": readiness_findings,
     }
 
 

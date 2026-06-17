@@ -18,6 +18,7 @@ from .lifecycle import (
     WORK_ITEM_DIRECTORIES,
     WORK_ITEM_METADATA_FILES,
     WORK_LIFECYCLE_STATES,
+    WorkItemRecord,
     contains_token_shaped_value,
     conversation_log_files,
     lifecycle_status,
@@ -1067,6 +1068,62 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
                             ),
                         }
                     )
+
+    return findings
+
+
+def lifecycle_closeout_readiness_check(work_item_root: Path) -> list[dict[str, str]]:
+    """Check whether a single work item is ready for thread closeout.
+
+    Returns advisory findings (non-blocking) — callers surface these as warnings,
+    not errors. Composes existing lifecycle primitives rather than duplicating logic:
+    ``WorkItemRecord.missing_required_files`` provides the canonical state-required
+    file check (defined in ``STATE_REQUIRED_FILES`` in lifecycle.py).
+
+    Each finding is a dict with keys: ``severity``, ``path``, ``message``.
+    Returns an empty list when the work item packet is fully ready.
+    """
+    findings: list[dict[str, str]] = []
+
+    metadata_path = metadata_path_for(work_item_root)
+    if metadata_path is None:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(work_item_root),
+                "message": (
+                    f"work item missing metadata file "
+                    f"({', '.join(WORK_ITEM_METADATA_FILES)}): {work_item_root.name}"
+                ),
+            }
+        )
+        return findings
+
+    metadata = load_yaml_mapping(metadata_path)
+    status = lifecycle_status(metadata)
+
+    # Reuse WorkItemRecord.missing_required_files — the canonical source of
+    # state-required file logic lives in lifecycle.py, not here.
+    record = WorkItemRecord(
+        path=work_item_root,
+        metadata_path=metadata_path,
+        status=status,
+        title=str(metadata.get("title") or work_item_root.name),
+        slug=str(metadata.get("slug") or metadata.get("id") or work_item_root.name),
+        source="project_work_item",
+        metadata=metadata,
+    )
+    for missing_path in record.missing_required_files:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(work_item_root),
+                "message": (
+                    f"work item {work_item_root.name!r} status {status!r} "
+                    f"missing required file: {missing_path.name}"
+                ),
+            }
+        )
 
     return findings
 
