@@ -5,13 +5,29 @@ schedule_target:
   id: self_improvement_review
   enabled: false
   cadence: weekly
-  command: agentic-os self-improvement run --root <root> --dry-run
+  command: agentic-os self-improvement run --root <root> --apply
 evidence_roots:
   - path: harness/shared_factory/06-runs-and-logs
     legacy_read_only: false
   - path: harness/shared_factory/05-knowledge
     legacy_read_only: false
   - path: harness/logs
+    legacy_read_only: false
+  - path: harness/logs/conversations
+    legacy_read_only: false
+  - path: clarks_consulting/02-projects/genomes_agentic_os/logs/conversations
+    legacy_read_only: false
+  - path: harness/skills
+    legacy_read_only: false
+  - path: harness/commands
+    legacy_read_only: false
+  - path: harness/rules
+    legacy_read_only: false
+  - path: TOOLS.md
+    legacy_read_only: false
+  - path: RULES.md
+    legacy_read_only: false
+  - path: ROUTER.md
     legacy_read_only: false
   - path: shared_factory
     legacy_read_only: true

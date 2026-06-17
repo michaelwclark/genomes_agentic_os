@@ -833,20 +833,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_improvement_run = self_improvement_subparsers.add_parser(
         "run",
-        help="Run a no-write self-improvement review.",
+        help="Run a self-improvement review (dry-run by default; use --apply to persist + document).",
     )
     self_improvement_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_run_mode = self_improvement_run.add_mutually_exclusive_group()
     self_improvement_run_mode.add_argument(
         "--dry-run",
         action="store_true",
-        default=True,
-        help="Print a review without writing run records or proposals.",
+        help="Print a review without writing run records, proposals, or a report (default behaviour).",
     )
     self_improvement_run_mode.add_argument(
         "--apply",
         action="store_true",
-        help="Write run records and proposal files under the configured self-improvement output paths.",
+        help="Persist mode: write run records, proposals, daily report, and Notion projection.",
     )
     self_improvement_run.set_defaults(handler=handle_self_improvement_run)
     self_improvement_status_parser = self_improvement_subparsers.add_parser(
@@ -1705,6 +1704,8 @@ def handle_plan_capture(args: argparse.Namespace) -> int:
 
 
 def handle_self_improvement_run(args: argparse.Namespace) -> int:
+    # Bare invocation and --dry-run both produce dry_run=True (read-only, SPEC 15 first-run safety).
+    # Only --apply flips to persist mode.
     print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
     return 0
 

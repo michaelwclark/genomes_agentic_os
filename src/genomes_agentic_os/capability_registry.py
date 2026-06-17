@@ -148,8 +148,8 @@ def command_entries() -> list[dict[str, str]]:
         },
         {
             "id": "self-improvement-run",
-            "command": "agentic-os self-improvement run --dry-run",
-            "description": "Review durable local evidence for proposal-only OS improvement opportunities.",
+            "command": "agentic-os self-improvement run",
+            "description": "Dry-run review of durable local evidence for proposal-only OS improvements (prints findings; use --apply to persist run records, proposals, and daily report).",
             "source": "harness/commands/os-self-improvement.md",
         },
     ]

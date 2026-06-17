@@ -16,13 +16,18 @@ from typing import Any
 
 import yaml
 
+from . import notion_api
 from .lifecycle import TOKEN_SHAPED_VALUE_RE
 from .scaffold import expand_path
 
 
 CONFIG_PATH = "harness/shared_factory/00-control-plane/self-improvement.yml"
 OUTPUT_ROOT = "harness/shared_factory/06-runs-and-logs/self-improvement"
-MAX_EVIDENCE_FILES = 200
+NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
+NOTION_SELF_IMPROVEMENT_DB = "Self Improvement"
+NOTION_TOKEN_ENV = "GENOMES_NOTION_PAT"
+MAX_EVIDENCE_FILES = 400
+MAX_EVIDENCE_FILES_PER_ROOT = 40
 MAX_EVIDENCE_BYTES = 16_000
 EVIDENCE_SUFFIXES = {".md", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".log"}
 APPROVED_TARGETS = {
@@ -49,6 +54,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"path": "harness/shared_factory/06-runs-and-logs", "legacy_read_only": False},
         {"path": "harness/shared_factory/05-knowledge", "legacy_read_only": False},
         {"path": "harness/logs", "legacy_read_only": False},
+        {"path": "harness/logs/conversations", "legacy_read_only": False},
+        {"path": "clarks_consulting/02-projects/genomes_agentic_os/logs/conversations", "legacy_read_only": False},
+        {"path": "harness/skills", "legacy_read_only": False},
+        {"path": "harness/commands", "legacy_read_only": False},
+        {"path": "harness/rules", "legacy_read_only": False},
+        {"path": "TOOLS.md", "legacy_read_only": False},
+        {"path": "RULES.md", "legacy_read_only": False},
+        {"path": "ROUTER.md", "legacy_read_only": False},
         {"path": "shared_factory", "legacy_read_only": True},
     ],
     "proposal_thresholds": {"minimum_total": 18, "minimum_confidence": 3},
@@ -295,22 +308,29 @@ def _configured_evidence_roots(root: Path, config: dict[str, Any]) -> list[dict[
     return resolved_entries
 
 
-def _evidence_files(path: Path) -> list[Path]:
+def _candidate_sort_key(path: Path) -> tuple[float, str]:
+    """Newest-first ordering with a stable path tiebreak for determinism."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return (-mtime, path.as_posix())
+
+
+def _evidence_files(path: Path, *, limit: int = MAX_EVIDENCE_FILES_PER_ROOT) -> list[Path]:
     if not path.exists():
         return []
     if path.is_file():
         return [path] if path.suffix.lower() in EVIDENCE_SUFFIXES else []
-    files = []
-    for candidate in sorted(path.rglob("*")):
-        if len(files) >= MAX_EVIDENCE_FILES:
-            break
-        if not candidate.is_file():
-            continue
-        if OUTPUT_ROOT in candidate.as_posix():
-            continue
-        if candidate.suffix.lower() in EVIDENCE_SUFFIXES:
-            files.append(candidate)
-    return files
+    eligible = [
+        candidate
+        for candidate in path.rglob("*")
+        if candidate.is_file()
+        and OUTPUT_ROOT not in candidate.as_posix()
+        and candidate.suffix.lower() in EVIDENCE_SUFFIXES
+    ]
+    eligible.sort(key=_candidate_sort_key)
+    return eligible[:limit]
 
 
 def _redact(text: str) -> tuple[str, int]:
@@ -321,9 +341,21 @@ def _redact(text: str) -> tuple[str, int]:
 
 
 def _collect_evidence(evidence_roots: list[dict[str, Any]]) -> list[EvidenceRecord]:
+    """Sample evidence from every configured root.
+
+    A per-root cap (``MAX_EVIDENCE_FILES_PER_ROOT``) guarantees that small but
+    high-signal roots (conversation logs, OS-shape files) are always represented
+    even when a large root such as ``06-runs-and-logs`` could otherwise exhaust a
+    single global budget. The global ceiling (``MAX_EVIDENCE_FILES``) still bounds
+    total work for a daily run.
+    """
     records: list[EvidenceRecord] = []
+    seen: set[Path] = set()
     for entry in evidence_roots:
         for path in _evidence_files(entry["resolved"]):
+            if path in seen:
+                continue
+            seen.add(path)
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")[:MAX_EVIDENCE_BYTES]
             except OSError:
@@ -685,6 +717,253 @@ def _write_proposals(root: Path, config: dict[str, Any], candidates: list[dict[s
     return {"written": written, "suppressed": suppressed}
 
 
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _cell(value: str, *, limit: int = 200) -> str:
+    """Sanitize a value for a single Markdown table cell."""
+    escaped = value.replace("|", "\\|").replace("\n", " ").strip()
+    return escaped[:limit]
+
+
+def _report_markdown(root: Path, result: dict[str, Any]) -> str:
+    """Render a human-readable daily report from a persisted run result.
+
+    Built only from already-redacted finding/proposal/evidence fields so the
+    payload never carries a token-shaped value (which the atomic writer refuses).
+    """
+    run_id = str(result.get("run_id") or "(no run id)")
+    title = f"Self-Improvement Daily Report — {_today()}"
+    findings = result.get("findings") or []
+    proposals = result.get("proposal_candidates") or []
+    evidence_files = int(result.get("evidence_files") or 0)
+    present_roots = [entry for entry in result.get("evidence_roots") or [] if entry.get("exists")]
+
+    lines: list[str] = [f"# {title}", ""]
+    if findings:
+        summary = (
+            f"The self-improvement heartbeat scanned {evidence_files} evidence files across "
+            f"{len(present_roots)} present roots (conversations and OS shape included) and surfaced "
+            f"{len(findings)} deterministic finding(s) yielding {len(proposals)} proposal candidate(s)."
+        )
+    else:
+        summary = (
+            f"The self-improvement heartbeat scanned {evidence_files} evidence files across "
+            f"{len(present_roots)} present roots and found no patterns above the reporting threshold."
+        )
+    lines.extend([summary, ""])
+    lines.append(
+        f"Counts: evidence files scanned = {evidence_files} | findings = {len(findings)} | "
+        f"proposals = {len(proposals)}"
+    )
+    lines.append(f"Run ID: `{run_id}`")
+    lines.append("")
+
+    lines.append("## Findings")
+    lines.append("")
+    if not findings:
+        lines.append("_No findings above the reporting threshold._")
+    else:
+        lines.append("| Title | Type | Score | Evidence locator |")
+        lines.append("| --- | --- | --- | --- |")
+        for finding in findings:
+            score = (finding.get("score") or {}).get("total", "")
+            title_cell = _cell(str(finding.get("title") or ""))
+            type_cell = _cell(str(finding.get("type") or ""))
+            evidence = _cell(str(finding.get("evidence") or ""), limit=160)
+            lines.append(f"| {title_cell} | {type_cell} | {score} | {evidence} |")
+    lines.append("")
+
+    lines.append("## Proposals")
+    lines.append("")
+    if not proposals:
+        lines.append("_No proposal candidates this run._")
+    else:
+        lines.append("| Proposal ID | Summary | Recommended artifact | Score | Evidence path |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for proposal in proposals:
+            score = (proposal.get("score") or {}).get("total", "")
+            summary_cell = _cell(str(proposal.get("summary") or ""), limit=160)
+            artifact_cell = _cell(str(proposal.get("recommended_artifact") or ""))
+            evidence_items = proposal.get("evidence") or []
+            locator = _cell(str((evidence_items[0] or {}).get("locator"))) if evidence_items else "none"
+            lines.append(
+                f"| `{proposal.get('proposal_id')}` | {summary_cell} "
+                f"| {artifact_cell} | {score} | {locator} |"
+            )
+    lines.append("")
+
+    lines.append("## Recommended next actions")
+    lines.append("")
+    if not findings:
+        lines.append("- No action required; keep accumulating evidence for the next heartbeat.")
+    else:
+        lines.append(
+            "- Review the proposals above with `agentic-os self-improvement list` and "
+            "`agentic-os self-improvement show <id>`."
+        )
+        lines.append(
+            "- Approve and promote any proposal you want drafted; promotion writes draft "
+            "artifacts only and never mutates live shared surfaces."
+        )
+        lines.append("- Reject noise to start its cooldown and keep future reports focused.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_daily_report(root: Path, result: dict[str, Any]) -> dict[str, str]:
+    """Write the stable latest report plus an archived timestamped copy.
+
+    Returns the relative paths written. The report directory lives under
+    ``OUTPUT_ROOT`` but outside the four validated output_paths, so it is
+    resolved directly rather than through ``_output_path``.
+    """
+    content = _report_markdown(root, result)
+    output_root = _resolve_root_relative(root, OUTPUT_ROOT)
+    reports_dir = _safe_descendant(root, output_root, "reports")
+    _ensure_safe_dir(root, reports_dir)
+    latest_path = _safe_child(root, output_root, "latest-report.md")
+    archive_path = _safe_child(root, reports_dir, f"{_stamp()}.md")
+    _atomic_write_text(root, latest_path, content)
+    _atomic_write_text(root, archive_path, content)
+    return {
+        "latest": str(latest_path.relative_to(root)),
+        "archive": str(archive_path.relative_to(root)),
+    }
+
+
+def _notion_manifest(root: Path) -> dict[str, Any]:
+    path = root / NOTION_RUNTIME_MANIFEST
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _notion_projection_properties(
+    available: dict[str, str],
+    *,
+    title: str,
+    summary: str,
+    score: int,
+    run_id: str,
+    evidence_path: str,
+) -> dict[str, Any]:
+    """Build only the properties that exist on the live database.
+
+    The title property is mandatory and always emitted under whatever name the
+    database uses for its title column. Other fields are emitted only when a
+    matching, type-compatible column exists, so an out-of-band schema cannot
+    cause a 400.
+    """
+    properties: dict[str, Any] = {}
+    title_name = next((name for name, kind in available.items() if kind == "title"), "Name")
+    properties[title_name] = notion_api._title_prop(title)
+
+    candidates: dict[str, tuple[str, Any]] = {
+        "Summary": ("rich_text", summary),
+        "Status": ("select", "proposed"),
+        "Score": ("number", score),
+        "Evidence Path": ("rich_text", evidence_path),
+        "Run ID": ("rich_text", run_id),
+        "Date": ("date", _today()),
+        "Updated": ("date", _now()),
+    }
+    for name, (expected_type, value) in candidates.items():
+        actual = available.get(name)
+        if actual != expected_type:
+            continue
+        if expected_type == "rich_text":
+            properties[name] = notion_api._rich_text_prop(str(value))
+        elif expected_type == "select":
+            properties[name] = notion_api._select_prop(str(value))
+        elif expected_type == "number":
+            properties[name] = {"number": value}
+        elif expected_type == "date":
+            properties[name] = notion_api._date_prop(str(value))
+    return properties
+
+
+def _project_run_to_notion(
+    root: Path,
+    result: dict[str, Any],
+    report_paths: dict[str, str],
+    *,
+    fetcher: Any = None,
+) -> dict[str, Any]:
+    """Project the run summary into the "Self Improvement" Notion database.
+
+    Degrades gracefully: any missing credential, workspace mismatch, manifest
+    gap, or API error writes a projection-draft file under ``reports/`` and
+    returns ``{"projected": False, ...}`` without raising. The filesystem report
+    must always succeed regardless of Notion availability.
+
+    ``fetcher`` is the injectable HTTP transport seam (mirrors ``notion_api``);
+    tests pass a fake. When ``None``, the module default transport is used.
+    """
+    transport = fetcher or notion_api._default_fetcher
+    findings = result.get("findings") or []
+    proposals = result.get("proposal_candidates") or []
+    run_id = str(result.get("run_id") or "")
+    title = f"Self-Improvement Daily Report — {_today()}"
+    summary = (
+        f"{len(findings)} finding(s), {len(proposals)} proposal(s) from "
+        f"{int(result.get('evidence_files') or 0)} evidence files."
+    )
+    score = max((int((finding.get("score") or {}).get("total") or 0) for finding in findings), default=0)
+    evidence_path = report_paths.get("latest", "")
+
+    def _degrade(reason: str) -> dict[str, Any]:
+        draft = (
+            f"# Notion projection draft — {_today()}\n\n"
+            f"Notion projection was not performed: {reason}.\n\n"
+            f"- Name: {title}\n- Date: {_today()}\n- Summary: {summary}\n"
+            f"- Score: {score}\n- Status: proposed\n- Evidence Path: {evidence_path}\n- Run ID: {run_id}\n"
+        )
+        output_root = _resolve_root_relative(root, OUTPUT_ROOT)
+        reports_dir = _safe_descendant(root, output_root, "reports")
+        _ensure_safe_dir(root, reports_dir)
+        draft_path = _safe_child(root, reports_dir, f"{_stamp()}-notion-draft.md")
+        _atomic_write_text(root, draft_path, draft)
+        return {"projected": False, "reason": reason, "draft": str(draft_path.relative_to(root))}
+
+    manifest = _notion_manifest(root)
+    if not manifest.get("live"):
+        return _degrade("notion runtime tracking is not live in the manifest")
+    expected_workspace = str(manifest.get("workspace") or "")
+    if "michael clark" in expected_workspace.lower() or "personal" in expected_workspace.lower():
+        return _degrade("manifest workspace appears to be a personal Notion")
+    database_id = (manifest.get("database_ids") or {}).get(NOTION_SELF_IMPROVEMENT_DB)
+    if not database_id:
+        return _degrade(f"manifest has no {NOTION_SELF_IMPROVEMENT_DB!r} database id")
+    if not notion_api.resolve_token(NOTION_TOKEN_ENV):
+        return _degrade(f"notion token env var {NOTION_TOKEN_ENV!r} is not set")
+
+    try:
+        bot_workspace = notion_api.get_bot_workspace(NOTION_TOKEN_ENV, fetcher=transport)
+        if expected_workspace and bot_workspace != expected_workspace:
+            return _degrade(
+                f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}"
+            )
+        available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
+        properties = _notion_projection_properties(
+            available,
+            title=title,
+            summary=summary,
+            score=score,
+            run_id=run_id,
+            evidence_path=evidence_path,
+        )
+        page_id = notion_api.create_database_page(database_id, properties, NOTION_TOKEN_ENV, fetcher=transport)
+    except (RuntimeError, OSError, KeyError, ValueError) as exc:
+        return _degrade(f"notion projection failed: {exc}")
+    return {"projected": True, "page_id": page_id, "database": NOTION_SELF_IMPROVEMENT_DB}
+
+
 def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
     config_path = os_root / CONFIG_PATH
@@ -740,6 +1019,19 @@ def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str,
     result["run_id"] = run_id
     result["writes"] = [{"type": "run", "path": str(run_path.relative_to(os_root))}, *proposal_result["written"]]
     result["suppressed"] = proposal_result["suppressed"]
+
+    report_paths = _write_daily_report(os_root, result)
+    result["report"] = report_paths
+    result["writes"].extend(
+        [
+            {"type": "report", "path": report_paths["latest"]},
+            {"type": "report", "path": report_paths["archive"]},
+        ]
+    )
+    notion_projection = _project_run_to_notion(os_root, result, report_paths)
+    result["notion_projection"] = notion_projection
+    if notion_projection.get("draft"):
+        result["writes"].append({"type": "notion-draft", "path": notion_projection["draft"]})
     return result
 
 
@@ -1019,7 +1311,7 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
 
     lines.append("")
     if result["mode"] == "dry-run":
-        lines.extend(["Proposal writes: disabled in dry-run", "Next step: rerun with --apply to write gated proposal files."])
+        lines.extend(["Proposal writes: disabled in dry-run", "Next step: rerun without --dry-run to document a report and write gated proposal files."])
     else:
         lines.append("Proposal writes:")
         writes = [write for write in result.get("writes") or [] if write.get("proposal_id")]
@@ -1031,4 +1323,12 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
         if suppressed:
             lines.append("Suppressed:")
             lines.extend(f"- {item.get('proposal_id')}: {item.get('reason')}" for item in suppressed)
+        report = result.get("report") or {}
+        if report.get("latest"):
+            lines.append(f"Report: {report['latest']}")
+        projection = result.get("notion_projection") or {}
+        if projection.get("projected"):
+            lines.append(f"Notion: row created in {projection.get('database')}")
+        elif projection.get("draft"):
+            lines.append(f"Notion: degraded to draft ({projection.get('reason')}): {projection['draft']}")
     return "\n".join(lines)
