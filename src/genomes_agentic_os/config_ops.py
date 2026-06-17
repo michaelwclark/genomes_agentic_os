@@ -218,6 +218,8 @@ class CodexLayerPolicy:
     role_summary: str
     model: str
     model_reasoning_effort: str
+    model_verbosity: str
+    model_reasoning_summary: str
     approval_policy: str
     sandbox_mode: str
     prompt_files: tuple[str, ...]
@@ -238,6 +240,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         role_summary="Route personal work, gather lightweight context, and hand off to the narrowest useful layer.",
         model="gpt-5.4-mini",
         model_reasoning_effort="medium",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -252,6 +256,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         role_summary="Navigate the installed OS, read shared rules, and prepare context before routing work deeper.",
         model="gpt-5.4-mini",
         model_reasoning_effort="medium",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -266,6 +272,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         role_summary="Stay inside the customer boundary, route to approved customer surfaces, and avoid cross-customer context.",
         model="gpt-5.4-mini",
         model_reasoning_effort="medium",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -280,6 +288,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         role_summary="Classify work for this domain and route to the correct project, workflow, or automation layer.",
         model="gpt-5.4-mini",
         model_reasoning_effort="medium",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -298,6 +308,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         ),
         model="gpt-5.5",
         model_reasoning_effort="high",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -312,6 +324,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         role_summary="Run workflow-scoped heavy work, track acceptance criteria, verify delegated outputs, and record evidence.",
         model="gpt-5.5",
         model_reasoning_effort="high",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -326,6 +340,8 @@ LAYER_POLICIES: dict[str, CodexLayerPolicy] = {
         role_summary="Execute only within the automation contract, preserve evidence, and stop when approvals or safety gates are missing.",
         model="gpt-5.5",
         model_reasoning_effort="high",
+        model_verbosity="low",
+        model_reasoning_summary="concise",
         approval_policy="on-request",
         sandbox_mode="workspace-write",
         prompt_files=BASE_PROMPT_FILES,
@@ -457,6 +473,8 @@ def profile_toml_block(policy: CodexLayerPolicy, profile_name: str) -> str:
     return f"""[profiles.{profile_name}]
 model = "{policy.model}"
 model_reasoning_effort = "{policy.model_reasoning_effort}"
+model_verbosity = "{policy.model_verbosity}"
+model_reasoning_summary = "{policy.model_reasoning_summary}"
 approval_policy = "{policy.approval_policy}"
 sandbox_mode = "{policy.sandbox_mode}"
 
@@ -480,6 +498,8 @@ def config_template(layer: str, root: str | Path | None = None) -> str:
 
 model = "{policy.model}"
 model_reasoning_effort = "{policy.model_reasoning_effort}"
+model_verbosity = "{policy.model_verbosity}"
+model_reasoning_summary = "{policy.model_reasoning_summary}"
 approval_policy = "{policy.approval_policy}"
 sandbox_mode = "{policy.sandbox_mode}"
 project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
@@ -567,6 +587,8 @@ def sidecar_payload(policy: CodexLayerPolicy) -> dict[str, Any]:
         "role_summary": policy.role_summary,
         "model": policy.model,
         "model_reasoning_effort": policy.model_reasoning_effort,
+        "model_verbosity": policy.model_verbosity,
+        "model_reasoning_summary": policy.model_reasoning_summary,
         "prompt_files": list(policy.prompt_files),
         "mcp_availability": policy.mcp_scope,
         "customer_safe": policy.customer_safe,
@@ -924,6 +946,8 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
     required = [
         (None, "model", "Add a model matching the layer policy."),
         (None, "model_reasoning_effort", "Add model_reasoning_effort matching the layer policy."),
+        (None, "model_verbosity", "Add model_verbosity matching the layer policy."),
+        (None, "model_reasoning_summary", "Add model_reasoning_summary matching the layer policy."),
         (None, "approval_policy", "Add an approval_policy matching the layer contract."),
         (None, "sandbox_mode", "Add a sandbox_mode matching the layer contract."),
         (None, "project_root_markers", "Add project_root_markers with .agentic_root so the installed OS root is discoverable."),
@@ -953,6 +977,12 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
                     f"profiles.{profile_name}",
                     "model_reasoning_effort",
                     f"Add model_reasoning_effort for profile {profile_name}.",
+                ),
+                (f"profiles.{profile_name}", "model_verbosity", f"Add model_verbosity for profile {profile_name}."),
+                (
+                    f"profiles.{profile_name}",
+                    "model_reasoning_summary",
+                    f"Add model_reasoning_summary for profile {profile_name}.",
                 ),
                 (f"profiles.{profile_name}", "approval_policy", f"Add approval_policy for profile {profile_name}."),
                 (f"profiles.{profile_name}", "sandbox_mode", f"Add sandbox_mode for profile {profile_name}."),

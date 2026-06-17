@@ -526,11 +526,18 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
     )
     assert schedules["self_improvement_review"]["enabled"] is False
     assert schedules["self_improvement_review"]["command"] == "agentic-os self-improvement run --root <root> --dry-run"
-    assert schedules["closed_worktree_cleanup_prepare"]["enabled"] is False
+    assert schedules["closed_worktree_cleanup_0500"]["enabled"] is True
     assert (
-        schedules["closed_worktree_cleanup_prepare"]["command"]
+        schedules["closed_worktree_cleanup_0500"]["command"]
         == "agentic-os project worktree cleanup-closed --root <root> --apply"
     )
+    assert schedules["closed_worktree_cleanup_0500"]["local_time"] == "05:00"
+    assert schedules["closed_worktree_cleanup_2200"]["enabled"] is True
+    assert (
+        schedules["closed_worktree_cleanup_2200"]["command"]
+        == "agentic-os project worktree cleanup-closed --root <root> --apply"
+    )
+    assert schedules["closed_worktree_cleanup_2200"]["local_time"] == "22:00"
 
     for schedule in registry["schedules"]:
         schedule["enabled"] = schedule["id"] == "self_improvement_review"
@@ -1239,11 +1246,14 @@ def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> No
         parsed_config = tomllib.loads(config_path.read_text(encoding="utf-8"))
         assert parsed_config["model"] == policy.model
         assert parsed_config["model_reasoning_effort"] == policy.model_reasoning_effort
+        assert parsed_config["model_verbosity"] == policy.model_verbosity
+        assert parsed_config["model_reasoning_summary"] == policy.model_reasoning_summary
         assert parsed_config["project_doc_fallback_filenames"][0] == "PROFILE.md"
         assert policy.profile in parsed_config["profiles"]
         for legacy_profile in policy.legacy_profiles:
             assert legacy_profile in parsed_config["profiles"]
             assert parsed_config["profiles"][legacy_profile]["model"] == policy.model
+            assert parsed_config["profiles"][legacy_profile]["model_verbosity"] == policy.model_verbosity
         for filename in ("AGENTS.md", "PROFILE.md", "CLAUDE.md", *expected_files):
             assert (root / filename).is_file()
         agents = (root / "AGENTS.md").read_text(encoding="utf-8")
@@ -1263,6 +1273,8 @@ def test_config_install_layers_create_expected_prompt_sets(tmp_path: Path) -> No
         assert sidecar["role"] == policy.role
         assert sidecar["model"] == policy.model
         assert sidecar["model_reasoning_effort"] == policy.model_reasoning_effort
+        assert sidecar["model_verbosity"] == policy.model_verbosity
+        assert sidecar["model_reasoning_summary"] == policy.model_reasoning_summary
         assert sidecar["prompt_files"] == list(policy.prompt_files)
         assert "PROFILE.md" in sidecar["prompt_files"]
 
@@ -2760,6 +2772,8 @@ def test_customer_init_generates_public_customer_os_from_profile(tmp_path: Path,
     root_sidecar = yaml.safe_load(sidecar_path(root).read_text(encoding="utf-8"))
     assert root_sidecar["role"] == "customer_navigator"
     assert root_sidecar["model"] == "gpt-5.4-mini"
+    assert root_sidecar["model_verbosity"] == "low"
+    assert root_sidecar["model_reasoning_summary"] == "concise"
     automation_sidecar = yaml.safe_load(
         sidecar_path(root / "support" / "04-automations" / "support" / "thread_intake").read_text(encoding="utf-8")
     )

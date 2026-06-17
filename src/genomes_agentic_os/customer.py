@@ -383,6 +383,8 @@ def customer_layer_config(layer: str) -> str:
 
 model = "{policy.model}"
 model_reasoning_effort = "{policy.model_reasoning_effort}"
+model_verbosity = "{policy.model_verbosity}"
+model_reasoning_summary = "{policy.model_reasoning_summary}"
 approval_policy = "{policy.approval_policy}"
 sandbox_mode = "{policy.sandbox_mode}"
 project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]

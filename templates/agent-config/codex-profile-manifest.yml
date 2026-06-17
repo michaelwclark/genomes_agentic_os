@@ -45,6 +45,8 @@ role_policy:
     role: navigator
     model: gpt-5.4-mini
     model_reasoning_effort: medium
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: user-approved only
   agentic_os_root:
     profile: agentic_os_root
@@ -52,6 +54,8 @@ role_policy:
     role: os_navigator
     model: gpt-5.4-mini
     model_reasoning_effort: medium
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: source package and local filesystem tools
   customer_os_root:
     profile: customer_os_root
@@ -59,6 +63,8 @@ role_policy:
     role: customer_navigator
     model: gpt-5.4-mini
     model_reasoning_effort: medium
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: approved customer systems only
   domain_or_lane:
     profile: domain_or_lane
@@ -66,6 +72,8 @@ role_policy:
     role: domain_navigator
     model: gpt-5.4-mini
     model_reasoning_effort: medium
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: domain-approved systems only
   project:
     profile: project_orchestrator
@@ -74,6 +82,8 @@ role_policy:
     role: orchestrator
     model: gpt-5.5
     model_reasoning_effort: high
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: project-approved systems only
   workflow_or_task:
     profile: workflow_orchestrator
@@ -82,6 +92,8 @@ role_policy:
     role: orchestrator
     model: gpt-5.5
     model_reasoning_effort: high
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: workflow-approved systems only
   automation:
     profile: automation_guard
@@ -90,6 +102,8 @@ role_policy:
     role: automation_guard
     model: gpt-5.5
     model_reasoning_effort: high
+    model_verbosity: low
+    model_reasoning_summary: concise
     mcp_availability: explicit automation contract only
 profiles:
   global_user_harness:

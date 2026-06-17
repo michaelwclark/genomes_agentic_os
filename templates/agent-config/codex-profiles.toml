@@ -6,30 +6,40 @@
 [profiles.global_user_harness]
 model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 [profiles.agentic_os_root]
 model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 [profiles.customer_os_root]
 model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 [profiles.domain_or_lane]
 model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 [profiles.project_orchestrator]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
@@ -37,12 +47,16 @@ sandbox_mode = "workspace-write"
 [profiles.project]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 [profiles.workflow_orchestrator]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
@@ -50,12 +64,16 @@ sandbox_mode = "workspace-write"
 [profiles.workflow_or_task]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
 [profiles.automation_guard]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 
@@ -63,5 +81,7 @@ sandbox_mode = "workspace-write"
 [profiles.automation]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"

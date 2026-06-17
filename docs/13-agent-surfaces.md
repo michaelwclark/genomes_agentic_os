@@ -206,13 +206,16 @@ built-in defaults.
 Each `config.toml` carries one canonical `[profiles.<name>]` section and, where
 needed, compatibility aliases for older generated profile names. Navigation
 layers use `gpt-5.4-mini` with medium reasoning; project, workflow, and
-automation layers use `gpt-5.5` with high reasoning. The four keys that govern
-runtime posture:
+automation layers use `gpt-5.5` with high reasoning. Generated profiles keep
+chat output restrained with low verbosity and concise reasoning summaries. The
+keys that govern runtime posture:
 
 | Key | What it controls |
 |---|---|
 | `model` | Which model Codex uses for this layer |
 | `model_reasoning_effort` | Reasoning budget: `low` / `medium` / `high` |
+| `model_verbosity` | User-visible response verbosity: `low` / `medium` / `high` |
+| `model_reasoning_summary` | Reasoning summary output: `none` / `concise` / `auto` / `detailed` |
 | `approval_policy` | When to pause for human approval: `on-request` / `never` / `always` |
 | `sandbox_mode` | Filesystem access boundary: `workspace-write` / `read-only` |
 
@@ -311,6 +314,8 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   +
   +model = "gpt-5.4-mini"
   +model_reasoning_effort = "medium"
+  +model_verbosity = "low"
+  +model_reasoning_summary = "concise"
   +approval_policy = "on-request"
   +sandbox_mode = "workspace-write"
   +project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", ...]
@@ -319,6 +324,8 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   +[profiles.agentic_os_root]
   +model = "gpt-5.4-mini"
   +model_reasoning_effort = "medium"
+  +model_verbosity = "low"
+  +model_reasoning_summary = "concise"
   +approval_policy = "on-request"
   +sandbox_mode = "workspace-write"
   +
