@@ -977,9 +977,13 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
 
     Returns a list of finding dicts with keys: severity, path, message.
 
-    Two conditions are detected (plan-22 AC):
+    Four conditions are detected (WI-005 scope):
       (a) Work items stuck in ``building`` state past BUILDING_STALE_DAYS.
       (b) Work items in ``finished`` state that are missing SUMMARY.md.
+      (c) Work items in ``finished`` state missing HOLDOUT_QA_RESULTS.md
+          (validation evidence).
+      (d) Work items in ``documented`` state missing MEMORY.md
+          (memory/docs evidence).
     """
     findings: list[dict[str, str]] = []
     now = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -1034,6 +1038,32 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
                             "message": (
                                 f"work item is 'finished' but missing required SUMMARY.md: "
                                 f"{work_item_root.name}"
+                            ),
+                        }
+                    )
+                qa_results_path = work_item_root / "HOLDOUT_QA_RESULTS.md"
+                if not qa_results_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "fix-soon",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'finished' but missing validation evidence "
+                                f"(HOLDOUT_QA_RESULTS.md): {work_item_root.name}"
+                            ),
+                        }
+                    )
+
+            elif status == "documented":
+                memory_path = work_item_root / "MEMORY.md"
+                if not memory_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "observation",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'documented' but missing MEMORY.md "
+                                f"(no memory evidence): {work_item_root.name}"
                             ),
                         }
                     )

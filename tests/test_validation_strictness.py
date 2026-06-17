@@ -244,12 +244,13 @@ def test_lifecycle_staleness_detects_stale_building_item(tmp_path: Path) -> None
     assert all(f["severity"] == "fix-soon" for f in findings)
 
 
-def test_lifecycle_staleness_no_finding_for_finished_item_with_summary(tmp_path: Path) -> None:
-    """A 'finished' item that has SUMMARY.md does not produce a finding."""
+def test_lifecycle_staleness_no_finding_for_finished_item_with_all_required_files(tmp_path: Path) -> None:
+    """A 'finished' item with SUMMARY.md and HOLDOUT_QA_RESULTS.md has no findings."""
     root = tmp_path
-    _make_work_item(root, status="finished", mtime_days_ago=0)
+    work_item_root = _make_work_item(root, status="finished", mtime_days_ago=0)
+    (work_item_root / "HOLDOUT_QA_RESULTS.md").write_text("# QA Results\nPassed.\n", encoding="utf-8")
     findings = lifecycle_staleness_findings(root)
-    assert findings == []
+    assert findings == [], f"Unexpected findings: {findings}"
 
 
 def test_lifecycle_staleness_detects_finished_item_missing_summary(tmp_path: Path) -> None:
@@ -262,6 +263,56 @@ def test_lifecycle_staleness_detects_finished_item_missing_summary(tmp_path: Pat
     assert findings, "Expected a finding for finished item missing SUMMARY.md"
     assert any("finished" in f["message"] for f in findings)
     assert all(f["severity"] == "fix-soon" for f in findings)
+
+
+def test_lifecycle_staleness_detects_finished_item_missing_qa_results(tmp_path: Path) -> None:
+    """A 'finished' work-item without HOLDOUT_QA_RESULTS.md triggers a finding."""
+    root = tmp_path
+    work_item_root = _make_work_item(root, status="finished", mtime_days_ago=0)
+    # SUMMARY.md was written by the helper; we want to isolate the QA check
+    assert (work_item_root / "SUMMARY.md").is_file()
+    # HOLDOUT_QA_RESULTS.md is never written by the helper, so it is absent
+    assert not (work_item_root / "HOLDOUT_QA_RESULTS.md").exists()
+
+    findings = lifecycle_staleness_findings(root)
+    qa_findings = [f for f in findings if "HOLDOUT_QA_RESULTS" in f["message"]]
+    assert qa_findings, "Expected a finding for finished item missing HOLDOUT_QA_RESULTS.md"
+    assert all(f["severity"] == "fix-soon" for f in qa_findings)
+
+
+def test_lifecycle_staleness_no_qa_finding_when_results_present(tmp_path: Path) -> None:
+    """A 'finished' work-item with HOLDOUT_QA_RESULTS.md does not produce a QA finding."""
+    root = tmp_path
+    work_item_root = _make_work_item(root, status="finished", mtime_days_ago=0)
+    (work_item_root / "HOLDOUT_QA_RESULTS.md").write_text("# QA Results\nPassed.\n", encoding="utf-8")
+
+    findings = lifecycle_staleness_findings(root)
+    qa_findings = [f for f in findings if "HOLDOUT_QA_RESULTS" in f["message"]]
+    assert qa_findings == [], f"Unexpected QA finding when file is present: {qa_findings}"
+
+
+def test_lifecycle_staleness_detects_documented_item_missing_memory(tmp_path: Path) -> None:
+    """A 'documented' work-item without MEMORY.md triggers an observation finding."""
+    root = tmp_path
+    work_item_root = _make_work_item(root, status="documented", mtime_days_ago=0)
+    # MEMORY.md is never written by the helper, so it is absent
+    assert not (work_item_root / "MEMORY.md").exists()
+
+    findings = lifecycle_staleness_findings(root)
+    mem_findings = [f for f in findings if "MEMORY.md" in f["message"]]
+    assert mem_findings, "Expected a finding for documented item missing MEMORY.md"
+    assert all(f["severity"] == "observation" for f in mem_findings)
+
+
+def test_lifecycle_staleness_no_memory_finding_when_present(tmp_path: Path) -> None:
+    """A 'documented' work-item with MEMORY.md does not produce a memory finding."""
+    root = tmp_path
+    work_item_root = _make_work_item(root, status="documented", mtime_days_ago=0)
+    (work_item_root / "MEMORY.md").write_text("# Memory\nRecorded.\n", encoding="utf-8")
+
+    findings = lifecycle_staleness_findings(root)
+    mem_findings = [f for f in findings if "MEMORY.md" in f["message"]]
+    assert mem_findings == [], f"Unexpected memory finding when file is present: {mem_findings}"
 
 
 def test_validate_root_includes_lifecycle_staleness_as_warnings(tmp_path: Path) -> None:
