@@ -11,13 +11,16 @@
   <key>Label</key>
   <string>{{LABEL}}</string>
   <key>ProgramArguments</key>
+  <!--
+    Run via `zsh -c` so ~/.zshenv is sourced and operator secrets (e.g.
+    GENOMES_NOTION_PAT) are present. launchd does NOT source the shell profile,
+    so a bare invocation cannot reach those vars and Notion writes degrade to
+    drafts. The secret stays in ~/.zshenv; it is never written into this plist.
+  -->
   <array>
-    <string>{{AGENTIC_OS}}</string>
-    <string>runtime</string>
-    <string>supervise</string>
-    <string>--root</string>
-    <string>{{ROOT}}</string>
-    <string>--apply</string>
+    <string>/bin/zsh</string>
+    <string>-c</string>
+    <string>{{AGENTIC_OS}} runtime supervise --root {{ROOT}} --apply</string>
   </array>
   <key>StartInterval</key>
   <integer>{{INTERVAL_SECONDS}}</integer>
