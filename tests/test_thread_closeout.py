@@ -563,3 +563,81 @@ def test_cleanup_closed_worktrees_removes_only_clean_in_project_checkouts(tmp_pa
         {"path": str(dirty_worktree), "reason": "git checkout has uncommitted changes"},
         {"path": str(external_worktree), "reason": "target is outside project worktrees/"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# WI-004: lifecycle_closeout_readiness_check
+# ---------------------------------------------------------------------------
+
+def test_lifecycle_closeout_readiness_check_incomplete_packet(tmp_path: Path) -> None:
+    """Readiness check returns findings when a state-required file is missing."""
+    from genomes_agentic_os.validate import lifecycle_closeout_readiness_check
+
+    root = tmp_path / "agentic_os"
+    work_root = create_project_with_work_item(root)
+
+    # Work item is created with status "specified" which requires SPEC.md.
+    # Delete SPEC.md to make the packet incomplete.
+    spec_path = work_root / "SPEC.md"
+    assert spec_path.is_file(), "expected SPEC.md from scaffold"
+    spec_path.unlink()
+
+    findings = lifecycle_closeout_readiness_check(work_root)
+    assert findings, "expected at least one finding for missing SPEC.md"
+    messages = [f["message"] for f in findings]
+    assert any("SPEC.md" in m for m in messages), f"expected SPEC.md in findings: {messages}"
+    for finding in findings:
+        assert "severity" in finding
+        assert "path" in finding
+        assert "message" in finding
+
+
+def test_lifecycle_closeout_readiness_check_complete_packet(tmp_path: Path) -> None:
+    """Readiness check returns empty list when the packet has all required files."""
+    from genomes_agentic_os.validate import lifecycle_closeout_readiness_check
+
+    root = tmp_path / "agentic_os"
+    work_root = create_project_with_work_item(root)
+
+    # The scaffold creates a complete packet; no files removed.
+    findings = lifecycle_closeout_readiness_check(work_root)
+    assert findings == [], f"expected no findings for complete packet, got: {findings}"
+
+
+def test_thread_end_succeeds_despite_readiness_findings(tmp_path: Path) -> None:
+    """Closeout must succeed (exit 0) even when readiness findings exist (non-blocking gate)."""
+    root = tmp_path / "agentic_os"
+    work_root = create_project_with_work_item(root)
+
+    # Make the packet incomplete so readiness findings will be generated.
+    spec_path = work_root / "SPEC.md"
+    assert spec_path.is_file()
+    spec_path.unlink()
+
+    exit_code = main(
+        [
+            "thread",
+            "end",
+            "--root",
+            str(root),
+            "--domain",
+            "shared_factory",
+            "--project",
+            "genomes_agentic_os",
+            "--thread-id",
+            "readiness_gate_test",
+            "--summary",
+            "Closeout with incomplete packet.",
+            "--next-action",
+            "None",
+            "--skip-notion",
+        ]
+    )
+    # Gate is advisory — closeout must not abort.
+    assert exit_code == 0, "closeout must succeed even when readiness findings exist"
+
+    closeout_root = work_root / "artifacts" / "thread-closeouts" / "readiness_gate_test"
+    assert (closeout_root / "thread-closeout.yml").is_file()
+
+    payload = yaml.safe_load((closeout_root / "thread-closeout.yml").read_text(encoding="utf-8"))
+    assert payload["thread"]["id"] == "readiness_gate_test"

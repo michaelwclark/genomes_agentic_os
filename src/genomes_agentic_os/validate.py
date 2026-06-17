@@ -18,6 +18,7 @@ from .lifecycle import (
     WORK_ITEM_DIRECTORIES,
     WORK_ITEM_METADATA_FILES,
     WORK_LIFECYCLE_STATES,
+    WorkItemRecord,
     contains_token_shaped_value,
     conversation_log_files,
     lifecycle_status,
@@ -977,9 +978,13 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
 
     Returns a list of finding dicts with keys: severity, path, message.
 
-    Two conditions are detected (plan-22 AC):
+    Four conditions are detected (WI-005 scope):
       (a) Work items stuck in ``building`` state past BUILDING_STALE_DAYS.
       (b) Work items in ``finished`` state that are missing SUMMARY.md.
+      (c) Work items in ``finished`` state missing HOLDOUT_QA_RESULTS.md
+          (validation evidence).
+      (d) Work items in ``documented`` state missing MEMORY.md
+          (memory/docs evidence).
     """
     findings: list[dict[str, str]] = []
     now = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -1037,6 +1042,88 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
                             ),
                         }
                     )
+                qa_results_path = work_item_root / "HOLDOUT_QA_RESULTS.md"
+                if not qa_results_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "fix-soon",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'finished' but missing validation evidence "
+                                f"(HOLDOUT_QA_RESULTS.md): {work_item_root.name}"
+                            ),
+                        }
+                    )
+
+            elif status == "documented":
+                memory_path = work_item_root / "MEMORY.md"
+                if not memory_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "observation",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'documented' but missing MEMORY.md "
+                                f"(no memory evidence): {work_item_root.name}"
+                            ),
+                        }
+                    )
+
+    return findings
+
+
+def lifecycle_closeout_readiness_check(work_item_root: Path) -> list[dict[str, str]]:
+    """Check whether a single work item is ready for thread closeout.
+
+    Returns advisory findings (non-blocking) — callers surface these as warnings,
+    not errors. Composes existing lifecycle primitives rather than duplicating logic:
+    ``WorkItemRecord.missing_required_files`` provides the canonical state-required
+    file check (defined in ``STATE_REQUIRED_FILES`` in lifecycle.py).
+
+    Each finding is a dict with keys: ``severity``, ``path``, ``message``.
+    Returns an empty list when the work item packet is fully ready.
+    """
+    findings: list[dict[str, str]] = []
+
+    metadata_path = metadata_path_for(work_item_root)
+    if metadata_path is None:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(work_item_root),
+                "message": (
+                    f"work item missing metadata file "
+                    f"({', '.join(WORK_ITEM_METADATA_FILES)}): {work_item_root.name}"
+                ),
+            }
+        )
+        return findings
+
+    metadata = load_yaml_mapping(metadata_path)
+    status = lifecycle_status(metadata)
+
+    # Reuse WorkItemRecord.missing_required_files — the canonical source of
+    # state-required file logic lives in lifecycle.py, not here.
+    record = WorkItemRecord(
+        path=work_item_root,
+        metadata_path=metadata_path,
+        status=status,
+        title=str(metadata.get("title") or work_item_root.name),
+        slug=str(metadata.get("slug") or metadata.get("id") or work_item_root.name),
+        source="project_work_item",
+        metadata=metadata,
+    )
+    for missing_path in record.missing_required_files:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(work_item_root),
+                "message": (
+                    f"work item {work_item_root.name!r} status {status!r} "
+                    f"missing required file: {missing_path.name}"
+                ),
+            }
+        )
 
     return findings
 

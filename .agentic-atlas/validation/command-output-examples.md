@@ -36,7 +36,9 @@ created: /private/tmp/aos-validate/root/harness/hooks/conversation-auto-log.py
 created: /private/tmp/aos-validate/root/harness/hooks/harness-emit-trace.sh
 created: /private/tmp/aos-validate/root/harness/hooks/memory-session-start.sh
 created: /private/tmp/aos-validate/root/harness/hooks/memory-stop.sh
+created: /private/tmp/aos-validate/root/harness/hooks/session-prayer-start.sh
 created: /private/tmp/aos-validate/root/harness/schemas
+created: /private/tmp/aos-validate/root/harness/schemas/archive-manifest.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/automation.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/backup-policy.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/capability-registry.schema.json
@@ -44,6 +46,7 @@ created: /private/tmp/aos-validate/root/harness/schemas/command-registry.schema.
 created: /private/tmp/aos-validate/root/harness/schemas/composio-tool-routing.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/domain.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/hook-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/hosts.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/library-registry.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/managed-templates.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/mcp-server-registry.schema.json
@@ -56,6 +59,8 @@ created: /private/tmp/aos-validate/root/harness/schemas/self-improvement-review.
 created: /private/tmp/aos-validate/root/harness/schemas/self-improvement-sidecar-usage.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/skill-registry.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/skill-visibility-registry.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/thread-closeout.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/thread.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/update-grant.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/update-manifest.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/workflow.schema.json
@@ -556,6 +561,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/heartbeat.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/integration.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/managed-templates.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/notion-tracking.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/run-queue-item.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/schedule.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/self-improvement-proposal.yml
@@ -575,6 +581,15 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/system
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/system/host-tool-registry.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/system/shell-shape.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/README.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/archive-manifest.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/closeout.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/evidence.jsonl
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/memory-write-receipts.jsonl
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/notion-sync.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/thread-closeout.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/thread.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/work-item
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/work-item/HOLDOUT_QA.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/work-item/HOLDOUT_QA_RESULTS.md
@@ -604,6 +619,7 @@ created: /private/tmp/aos-validate/root/harness/bin/README.md
 created: /private/tmp/aos-validate/root/harness/commands/composio-debug-bundle.md
 created: /private/tmp/aos-validate/root/harness/commands/os-capture-plan.md
 created: /private/tmp/aos-validate/root/harness/commands/os-chain.md
+created: /private/tmp/aos-validate/root/harness/commands/os-clean-worktrees.md
 created: /private/tmp/aos-validate/root/harness/commands/os-client-automation-brief.md
 created: /private/tmp/aos-validate/root/harness/commands/os-context-audit.md
 created: /private/tmp/aos-validate/root/harness/commands/os-control-plane-bootstrap.md
@@ -611,6 +627,7 @@ created: /private/tmp/aos-validate/root/harness/commands/os-create-automation.md
 created: /private/tmp/aos-validate/root/harness/commands/os-create-workflow.md
 created: /private/tmp/aos-validate/root/harness/commands/os-discover-rooms.md
 created: /private/tmp/aos-validate/root/harness/commands/os-doctor.md
+created: /private/tmp/aos-validate/root/harness/commands/os-end-chat.md
 created: /private/tmp/aos-validate/root/harness/commands/os-event.md
 created: /private/tmp/aos-validate/root/harness/commands/os-heartbeat.md
 created: /private/tmp/aos-validate/root/harness/commands/os-integration-setup.md
@@ -619,6 +636,7 @@ created: /private/tmp/aos-validate/root/harness/commands/os-run-build-runner.md
 created: /private/tmp/aos-validate/root/harness/commands/os-run-log.md
 created: /private/tmp/aos-validate/root/harness/commands/os-runtime-init.md
 created: /private/tmp/aos-validate/root/harness/commands/os-self-improvement.md
+created: /private/tmp/aos-validate/root/harness/commands/os-status-report.md
 created: /private/tmp/aos-validate/root/harness/commands/os-sync-notion.md
 created: /private/tmp/aos-validate/root/harness/commands/os-update.md
 created: /private/tmp/aos-validate/root/harness/commands/os-watch-source.md
@@ -643,6 +661,8 @@ created: /private/tmp/aos-validate/root/harness/skills/integration-setup
 created: /private/tmp/aos-validate/root/harness/skills/integration-setup/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/learning-promoter
 created: /private/tmp/aos-validate/root/harness/skills/learning-promoter/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/os-cleaner
+created: /private/tmp/aos-validate/root/harness/skills/os-cleaner/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/os-doctor
 created: /private/tmp/aos-validate/root/harness/skills/os-doctor/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/os-navigator
@@ -656,6 +676,10 @@ created: /private/tmp/aos-validate/root/harness/skills/runtime-operator/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/skill-registry.yml
 created: /private/tmp/aos-validate/root/harness/skills/source-watcher
 created: /private/tmp/aos-validate/root/harness/skills/source-watcher/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/status-report
+created: /private/tmp/aos-validate/root/harness/skills/status-report/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/thread-finalizer
+created: /private/tmp/aos-validate/root/harness/skills/thread-finalizer/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/toolsmith-reviewer
 created: /private/tmp/aos-validate/root/harness/skills/toolsmith-reviewer/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/workflow-builder
@@ -692,6 +716,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/oper
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/composio-debug-bundle.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-capture-plan.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-chain.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-clean-worktrees.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-client-automation-brief.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-context-audit.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-control-plane-bootstrap.md
@@ -699,6 +724,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/comm
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-create-workflow.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-discover-rooms.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-doctor.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-end-chat.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-event.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-heartbeat.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-integration-setup.md
@@ -707,6 +733,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/comm
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-run-log.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-runtime-init.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-self-improvement.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-status-report.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-sync-notion.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-update.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-watch-source.md
@@ -731,6 +758,8 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skil
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/integration-setup/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/learning-promoter
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/learning-promoter/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-cleaner
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-cleaner/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-doctor
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-doctor/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-navigator
@@ -744,6 +773,10 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skil
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/skill-registry.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/source-watcher
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/source-watcher/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/status-report
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/status-report/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/thread-finalizer
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/thread-finalizer/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/toolsmith-reviewer
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/toolsmith-reviewer/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/workflow-builder
@@ -754,37 +787,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hook
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/harness-emit-trace.sh
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/memory-session-start.sh
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/memory-stop.sh
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/00-current-state-and-gap-map.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/01-project-create-and-active-work.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/02-routing-and-context-builder.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/03-workflow-readiness-and-run-closeout.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/04-automation-maturity-and-reconfiguration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/05-customer-os-factory.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/06-notion-control-plane-sync.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/07-doctor-validation-and-migrations.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/08-losmon-replacement-validation.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/09-future-ideas-intake.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/10-notion-control-plane-bootstrap.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/11-room-first-installer-and-routing.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/12-factory-template-import-backlog.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/13-reference-and-skill-index-layer.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/14-client-automation-and-control-plane-playbooks.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/15-always-on-runtime-heartbeats-schedules-and-integrations.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/15-always-on-runtime-heartbeats-schedules-and-integrations.orchestration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/16-connected-source-watch-registry.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/16-connected-source-watch-registry.orchestration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/17-event-graph-and-chained-automations.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/17-event-graph-and-chained-automations.orchestration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/18-visible-capability-registry.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/18-visible-capability-registry.orchestration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/19-update-channel-and-customer-fleet.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/19-update-channel-and-customer-fleet.orchestration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/20-operator-pushed-customer-updates-and-backups.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/20-operator-pushed-customer-updates-and-backups.orchestration.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/21-harness-context-contract-and-config-toml.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/22-project-work-lifecycle-and-conversation-auto-logging.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/README.md
-created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/remaining-roadmap-orchestration-index.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/session-prayer-start.sh
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/decision-log.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/naming-conventions.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/source-priority.md
@@ -797,6 +800,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/self-improvement.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/04-workflows/self-improvement-review.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/managed-templates.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/notion-tracking.yml
 updated: /private/tmp/aos-validate/root/harness/AGENTS.md
 updated: /private/tmp/aos-validate/root/personal/AGENTS.md
 updated: /private/tmp/aos-validate/root/clarks_consulting/AGENTS.md
@@ -950,6 +954,7 @@ created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-in
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/02-active
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/03-complete
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/.metadata_never_index
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/ROUTER.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/CONTEXT.md
@@ -988,6 +993,8 @@ updated: /private/tmp/aos-validate/root/acme/00-control-plane/state-index.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/src
 updated: /private/tmp/aos-validate/root/acme/02-projects/launch/project.yml
 updated: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
 ```
 
 ## 08-project_onboard_acme_launch
@@ -995,7 +1002,8 @@ updated: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os project onboard acme launch --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-no changes
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
 ```
 
 ## 09-project_work-item_create_intake
@@ -1045,6 +1053,8 @@ updated: /private/tmp/aos-validate/root/acme/MEMORY.md
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/source_worktree
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
+updated: /private/tmp/aos-validate/root/acme/02-projects/launch/AGENTS.md
 updated: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/index.yml
 updated: /private/tmp/aos-validate/root/acme/02-projects/launch/config/worktrees.yml
 ```
@@ -1249,17 +1259,17 @@ decision_log: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log create acme launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/artifacts
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/run-log.md
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/artifacts
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/run-log.md
 ```
 
-## 19-run-log_close_20260610T143042Z-acme-launch_blog
+## 19-run-log_close_20260617T154127Z-acme-launch_blog
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260610T143042Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260617T154127Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/run-log.md
+run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/run-log.md
 status: done
 workflow_or_automation: launch_blog
 activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.md
@@ -1300,7 +1310,7 @@ skipped:
 - /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 - /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/runs
 docs_created: 0
-docs_skipped: 343
+docs_skipped: 370
 ```
 
 ## 23-runtime_doctor
@@ -1311,12 +1321,12 @@ docs_skipped: 343
 root: /private/tmp/aos-validate/root
 ok: true
 findings:
-- severity: fix-soon
-  path: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/runtime-registry.yml
-  message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
-- severity: fix-soon
-  path: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/integration-registry.yml
-  message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
+- severity: observation
+  path: /private/tmp/aos-validate/root/harness/logs/conversations
+  message: 'configured conversation evidence root is missing: harness/logs/conversations'
+- severity: observation
+  path: /private/tmp/aos-validate/root/clarks_consulting/02-projects/genomes_agentic_os/logs/conversations
+  message: 'configured conversation evidence root is missing: clarks_consulting/02-projects/genomes_agentic_os/logs/conversations'
 ```
 
 ## 24-runtime_run-next_dry
@@ -1335,7 +1345,7 @@ message: no queued runtime work
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-10T14:30:43Z'
+tick: '2026-06-17T15:41:28Z'
 root: /tmp/aos-validate/root
 dry_run: true
 ok: true
@@ -1350,8 +1360,8 @@ steps:
   ok: true
   summary:
     status: dry-run
-    queued_count: 1
-    skipped_count: 1
+    queued_count: 3
+    skipped_count: 2
 - step: watch_sources
   ok: true
   summary:
@@ -1379,7 +1389,7 @@ steps:
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --apply
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-10T14:30:43Z'
+tick: '2026-06-17T15:41:28Z'
 root: /tmp/aos-validate/root
 dry_run: false
 ok: true
@@ -1394,8 +1404,8 @@ steps:
   ok: true
   summary:
     status: queued
-    queued_count: 1
-    skipped_count: 1
+    queued_count: 3
+    skipped_count: 2
 - step: watch_sources
   ok: true
   summary:
@@ -1476,12 +1486,12 @@ heartbeats:
 root: /private/tmp/aos-validate/root
 ok: true
 findings:
-- severity: fix-soon
-  path: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/runtime-registry.yml
-  message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
-- severity: fix-soon
-  path: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/integration-registry.yml
-  message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
+- severity: observation
+  path: /private/tmp/aos-validate/root/harness/logs/conversations
+  message: 'configured conversation evidence root is missing: harness/logs/conversations'
+- severity: observation
+  path: /private/tmp/aos-validate/root/clarks_consulting/02-projects/genomes_agentic_os/logs/conversations
+  message: 'configured conversation evidence root is missing: clarks_consulting/02-projects/genomes_agentic_os/logs/conversations'
 ```
 
 ## 29-schedule_create_demo
@@ -1517,28 +1527,37 @@ registry: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 root: /private/tmp/aos-validate/root
 status: dry-run
 queued:
-- id: queue_7478eaec27c4
+- id: queue_bcb88a98d507
   kind: schedule
   ref: demo
   status: dry-run
   approval_state: not_required
-  created_at: '2026-06-10T14:30:43.737775+00:00'
+  created_at: '2026-06-17T15:41:29.135584+00:00'
   dry_run: true
-  due_at: '2026-06-10T05:00:00Z'
-  idempotency_key: schedule:demo:2026-06-10T05:00:00Z
+  due_at: '2026-06-17T05:00:00Z'
+  idempotency_key: schedule:demo:2026-06-17T05:00:00Z
   execution_target: script
   command: agentic-os validate --root <root>
-  log: harness/shared_factory/06-runs-and-logs/runs/20260610T143043Z-7478eaec-demo/run-log.yml
+  log: harness/shared_factory/06-runs-and-logs/runs/20260617T154129Z-bcb88a98-demo/run-log.yml
   evidence:
   - type: run_log
-    path: harness/shared_factory/06-runs-and-logs/runs/20260610T143043Z-7478eaec-demo/run-log.yml
+    path: harness/shared_factory/06-runs-and-logs/runs/20260617T154129Z-bcb88a98-demo/run-log.yml
   blocked_reason: null
-  updated_at: '2026-06-10T14:30:43.737775+00:00'
+  updated_at: '2026-06-17T15:41:29.135584+00:00'
   created: true
 skipped:
 - schedule: daily_agentic_os_doctor
   reason: not due
-  next_due_at: '2026-06-11T05:00:00Z'
+  next_due_at: '2026-06-18T05:00:00Z'
+- schedule: stale_thread_finalizer
+  reason: not due
+  next_due_at: '2026-06-18T05:00:00Z'
+- schedule: closed_worktree_cleanup_0500
+  reason: not due
+  next_due_at: '2026-06-18T10:00:00Z'
+- schedule: closed_worktree_cleanup_2200
+  reason: not due
+  next_due_at: null
 - schedule: self_improvement_review
   reason: disabled
 ```
@@ -1707,9 +1726,9 @@ integrations:
 root: /private/tmp/aos-validate/root
 ok: true
 findings:
-- severity: fix-soon
+- severity: observation
   path: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/integration-registry.yml
-  message: 'credential environment variable is not set: AGENTMAIL_API_KEY'
+  message: integration setup contract is complete
 ```
 
 ## 33-event_list
@@ -1727,7 +1746,41 @@ ledger: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/e
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 last_events: []
-pending_follow_up: []
+pending_follow_up:
+- id: queue_080f31346994
+  kind: schedule
+  ref: stale_thread_finalizer
+  status: queued
+  approval_state: not_required
+  created_at: '2026-06-17T15:41:28.425356+00:00'
+  dry_run: false
+  due_at: '2026-06-17T05:00:00Z'
+  idempotency_key: schedule:stale_thread_finalizer:2026-06-17T05:00:00Z
+  execution_target: script
+  command: agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply
+  log: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-080f3134-stale_thread_finalizer/run-log.yml
+  evidence:
+  - type: run_log
+    path: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-080f3134-stale_thread_finalizer/run-log.yml
+  blocked_reason: null
+  updated_at: '2026-06-17T15:41:28.552735+00:00'
+- id: queue_af6f1a90f4c9
+  kind: schedule
+  ref: closed_worktree_cleanup_0500
+  status: queued
+  approval_state: not_required
+  created_at: '2026-06-17T15:41:28.427049+00:00'
+  dry_run: false
+  due_at: '2026-06-17T10:00:00Z'
+  idempotency_key: schedule:closed_worktree_cleanup_0500:2026-06-17T10:00:00Z
+  execution_target: script
+  command: agentic-os project worktree cleanup-closed --root <root> --apply
+  log: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-af6f1a90-closed_worktree_cleanup_0500/run-log.yml
+  evidence:
+  - type: run_log
+    path: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-af6f1a90-closed_worktree_cleanup_0500/run-log.yml
+  blocked_reason: null
+  updated_at: '2026-06-17T15:41:28.555465+00:00'
 dead_letters: []
 processing_results: []
 ledger: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/events/event-ledger-index.md
@@ -2156,7 +2209,27 @@ connected_systems:
 watch_sources: []
 ```
 
-## 40-notion_plan-sync
+## 40-mount-remote_dry-run
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os project mount-remote rmtest losmon --root /tmp/aos-validate/root --dry-run
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+# remote: losmon (genomesbox:/home/genome/projects/losmon -> /tmp/SSH_genomesbox/losmon)
+sshfs genomesbox:/home/genome/projects/losmon /tmp/SSH_genomesbox/losmon -o reconnect -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+(dry-run; use --apply to mount)
+```
+
+## 41-unmount-remote_dry-run
+```text
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os project unmount-remote rmtest losmon --root /tmp/aos-validate/root --dry-run
+# CWD: /Users/genome/projects/genomes_agentic_os
+# ---
+# remote: losmon (unmount /tmp/SSH_genomesbox/losmon)
+umount /tmp/SSH_genomesbox/losmon
+(dry-run; use --apply to unmount)
+```
+
+## 42-notion_plan-sync
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os notion plan-sync --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2196,7 +2269,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
   record_key: decisions:acme
   notion_id: null
-  fingerprint: b3759d97ced8d549d80a0ed5850cb9567bcdcc403215766447b91ae46a2c2472
+  fingerprint: 18d336f3af90790877631af6083162c1ce76fe07fd1cfe38805157a184166e2a
 - action: create
   kind: state_index
   key: acme
@@ -2204,7 +2277,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/state-index.md
   record_key: state_index:acme
   notion_id: null
-  fingerprint: 6ac2b7e925c853c09377c9909f5f37c9dde5048251afc80eeff99de0e2d63a31
+  fingerprint: ccb8c70093d71fc0d77e94f5f65ac17e25f3dad1f81b94329c5c6c8bacfbce14
 - action: create
   kind: metrics
   key: acme
@@ -2239,12 +2312,12 @@ actions:
   fingerprint: 2467a03437db66b972d87026ae73645a3b653003aea3a2c2dfbc7ca0ce8850a3
 - action: create
   kind: run
-  key: acme/20260610T143042Z-acme-launch_blog
-  title: 20260610T143042Z-acme-launch_blog
-  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260610T143042Z-acme-launch_blog/run-log.md
-  record_key: run:acme/20260610T143042Z-acme-launch_blog
+  key: acme/20260617T154127Z-acme-launch_blog
+  title: 20260617T154127Z-acme-launch_blog
+  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/run-log.md
+  record_key: run:acme/20260617T154127Z-acme-launch_blog
   notion_id: null
-  fingerprint: 4536b4e5456db613f4618344cdcf3d44c34f20f007e6eb7914a13d59a57d8a03
+  fingerprint: 9581e40528828edeac8003d4b170830a30533dfc80b92e2b42c759ca1ed41cad
 - action: create
   kind: domain
   key: archive
@@ -2485,9 +2558,65 @@ actions:
   record_key: metrics:personal
   notion_id: null
   fingerprint: affb51b87794a757181e64eb51b56aaeaec56f4f0960a820256bba39d81eea0a
+- action: create
+  kind: domain
+  key: rmtest
+  title: rmtest
+  path: /private/tmp/aos-validate/root/rmtest/domain.yml
+  record_key: domain:rmtest
+  notion_id: null
+  fingerprint: fc0598138ffa922be32c5b365e4f728cc466007c41efeeee12f2ec9d67ce174d
+- action: create
+  kind: active_work
+  key: rmtest
+  title: rmtest active work
+  path: /private/tmp/aos-validate/root/rmtest/00-control-plane/active-work.md
+  record_key: active_work:rmtest
+  notion_id: null
+  fingerprint: cf1a5539550746edcd43463197b94c4783b8d58a76808b21190a809667aae894
+- action: create
+  kind: approvals
+  key: rmtest
+  title: rmtest approvals
+  path: /private/tmp/aos-validate/root/rmtest/00-control-plane/approval-rules.md
+  record_key: approvals:rmtest
+  notion_id: null
+  fingerprint: c3fcaaa99f75073b8da8fa339c8882f23a48720f088bcfb4f95cd84a214b28cf
+- action: create
+  kind: decisions
+  key: rmtest
+  title: rmtest decisions
+  path: /private/tmp/aos-validate/root/rmtest/00-control-plane/decisions.md
+  record_key: decisions:rmtest
+  notion_id: null
+  fingerprint: 65931033cdebc34768cf56208d015e4e42cb2f8440d206a89df56991ade1a66b
+- action: create
+  kind: state_index
+  key: rmtest
+  title: rmtest state index
+  path: /private/tmp/aos-validate/root/rmtest/00-control-plane/state-index.md
+  record_key: state_index:rmtest
+  notion_id: null
+  fingerprint: 405b4676778357eac494e913a44da7884b40b68acd05b8149683d678beab1d98
+- action: create
+  kind: metrics
+  key: rmtest
+  title: rmtest metrics
+  path: /private/tmp/aos-validate/root/rmtest/07-metrics/scorecards.md
+  record_key: metrics:rmtest
+  notion_id: null
+  fingerprint: 0218b9c6dd519424967344b1d57a306a15d13797c61fda8c34c194aac74fa8cb
+- action: create
+  kind: project
+  key: rmtest/losmon
+  title: losmon
+  path: /private/tmp/aos-validate/root/rmtest/02-projects/losmon/project.yml
+  record_key: project:rmtest/losmon
+  notion_id: null
+  fingerprint: 87b044d04391b51f6bfb3f200a7bd71db1a22462b136e1bb768c8dbd32fc0f1f
 ```
 
-## 41-config_doctor_layer
+## 43-config_doctor_layer
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config doctor --root /tmp/aos-validate/root --layer agentic_os_root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2503,7 +2632,7 @@ findings:
     --layer agentic_os_root --dry-run, review the diff, then rerun with --apply.
 ```
 
-## 42-config_install_dry
+## 44-config_install_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config install --root /tmp/aos-validate/config-layer --layer agentic_os_root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2533,7 +2662,7 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
 
   +++ /private/tmp/aos-validate/config-layer/config.toml:after
 
-  @@ -0,0 +1,53 @@
+  @@ -0,0 +1,57 @@
 
   +# Agentic OS Codex config template
 
@@ -2546,6 +2675,10 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   +model = "gpt-5.4-mini"
 
   +model_reasoning_effort = "medium"
+
+  +model_verbosity = "low"
+
+  +model_reasoning_summary = "concise"
 
   +approval_policy = "on-request"
 
@@ -2564,6 +2697,10 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   +model = "gpt-5.4-mini"
 
   +model_reasoning_effort = "medium"
+
+  +model_verbosity = "low"
+
+  +model_reasoning_summary = "concise"
 
   +approval_policy = "on-request"
 
@@ -2678,7 +2815,7 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
 
   +++ /private/tmp/aos-validate/config-layer/config/codex-profile.yml:after
 
-  @@ -0,0 +1,22 @@
+  @@ -0,0 +1,24 @@
 
   +layer: agentic_os_root
 
@@ -2696,6 +2833,10 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   +model: gpt-5.4-mini
 
   +model_reasoning_effort: medium
+
+  +model_verbosity: low
+
+  +model_reasoning_summary: concise
 
   +prompt_files:
 
@@ -2802,7 +2943,7 @@ diff: '--- /private/tmp/aos-validate/config-layer/config.toml:before
   '
 ```
 
-## 43-config_install-tree_dry
+## 45-config_install-tree_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os config install-tree --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -2841,6 +2982,12 @@ targets:
 - root: /private/tmp/aos-validate/root/personal
   layer: domain_or_lane
   reason: domain.yml
+- root: /private/tmp/aos-validate/root/rmtest
+  layer: domain_or_lane
+  reason: domain.yml
+- root: /private/tmp/aos-validate/root/rmtest/02-projects/losmon
+  layer: project
+  reason: project.yml
 installations:
 - root: /private/tmp/aos-validate/root/harness
   layer: agentic_os_root
@@ -2896,7 +3043,7 @@ installations:
 
     +++ /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/config.toml:after
 
-    @@ -0,0 +1,69 @@
+    @@ -0,0 +1,75 @@
 
     +# Agentic OS Codex config template
 
@@ -2909,6 +3056,10 @@ installations:
     +model = "gpt-5.5"
 
     +model_reasoning_effort = "high"
+
+    +model_verbosity = "low"
+
+    +model_reasoning_summary = "concise"
 
     +approval_policy = "on-request"
 
@@ -2927,6 +3078,10 @@ installations:
     +model = "gpt-5.5"
 
     +model_reasoning_effort = "high"
+
+    +model_verbosity = "low"
+
+    +model_reasoning_summary = "concise"
 
     +approval_policy = "on-request"
 
@@ -2960,6 +3115,10 @@ installations:
     +model = "gpt-5.5"
 
     +model_reasoning_effort = "high"
+
+    +model_verbosity = "low"
+
+    +model_reasoning_summary = "concise"
 
     +approval_policy = "on-request"
 
@@ -3074,7 +3233,7 @@ installations:
 
     +++ /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/config/codex-profile.yml:after
 
-    @@ -0,0 +1,23 @@
+    @@ -0,0 +1,25 @@
 
     +layer: workflow_or_task
 
@@ -3094,6 +3253,10 @@ installations:
     +model: gpt-5.5
 
     +model_reasoning_effort: high
+
+    +model_verbosity: low
+
+    +model_reasoning_summary: concise
 
     +prompt_files:
 
@@ -3222,7 +3385,7 @@ installations:
 
     +++ /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/config.toml:after
 
-    @@ -0,0 +1,69 @@
+    @@ -0,0 +1,75 @@
 
     +# Agentic OS Codex config template
 
@@ -3235,6 +3398,10 @@ installations:
     +model = "gpt-5.5"
 
     +model_reasoning_effort = "high"
+
+    +model_verbosity = "low"
+
+    +model_reasoning_summary = "concise"
 
     +approval_policy = "on-request"
 
@@ -3253,6 +3420,10 @@ installations:
     +model = "gpt-5.5"
 
     +model_reasoning_effort = "high"
+
+    +model_verbosity = "low"
+
+    +model_reasoning_summary = "concise"
 
     +approval_policy = "on-request"
 
@@ -3286,6 +3457,10 @@ installations:
     +model = "gpt-5.5"
 
     +model_reasoning_effort = "high"
+
+    +model_verbosity = "low"
+
+    +model_reasoning_summary = "concise"
 
     +approval_policy = "on-request"
 
@@ -3400,7 +3575,7 @@ installations:
 
     +++ /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/config/codex-profile.yml:after
 
-    @@ -0,0 +1,23 @@
+    @@ -0,0 +1,25 @@
 
     +layer: automation
 
@@ -3420,6 +3595,10 @@ installations:
     +model: gpt-5.5
 
     +model_reasoning_effort: high
+
+    +model_verbosity: low
+
+    +model_reasoning_summary: concise
 
     +prompt_files:
 
@@ -3574,9 +3753,29 @@ installations:
   conflicts: []
   blocked: false
   diff: ''
+- root: /private/tmp/aos-validate/root/rmtest
+  layer: domain_or_lane
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
+- root: /private/tmp/aos-validate/root/rmtest/02-projects/losmon
+  layer: project
+  dry_run: true
+  created: []
+  updated: []
+  skipped: []
+  backups: []
+  conflicts: []
+  blocked: false
+  diff: ''
 ```
 
-## 44-license_activate
+## 46-license_activate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os license activate --key VALIDATION-TEST-KEY --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3584,11 +3783,11 @@ installations:
 root: /private/tmp/aos-validate/root
 license:
   status: active
-  activated_at: '2026-06-10T14:30:44Z'
+  activated_at: '2026-06-17T15:41:30Z'
   key_hash: 98f9006c28109fe76a6960274702c0b357b598b264e22716aa50ba6e18296bab
 ```
 
-## 45-update_register
+## 47-update_register
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update register --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3606,14 +3805,14 @@ remotes:
     url: git@github.com:genome/local-agentic-os-backups.git
     access: write
 public_keys:
-  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDakNcuyiTwBWVSwLO3dBt/Q8ecUdAeL/WLb0TdmIWh9
+  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINDRoC7sUOZfpcCC7LxHGPcnkpB9/ZtxGpfAHdFMmKBD
     agentic-os-update_ed25519
-  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ4+Rj7T1cVGIG4/VBVYvS8QC37Vm5jGDj2tMlCwjqH8
+  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIjOUiz7KcK1tKndcccQXZZ3N2UObCe+jPifsJx4gsNO
     agentic-os-backup_ed25519
 private_keys: stored locally under harness/security/ssh with mode 0600
 ```
 
-## 46-update_check
+## 48-update_check
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update check --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3628,7 +3827,7 @@ mutated: false
 risky_changes: []
 ```
 
-## 47-update_status
+## 49-update_status
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os update status --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3644,16 +3843,16 @@ status:
 plan_path: ''
 ```
 
-## 48-backup_run_dry
+## 50-backup_run_dry
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os backup run --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 root: /private/tmp/aos-validate/root
-log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260610143045.yml
+log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260617154131.yml
 status: planned
 dry_run: true
-created_at: '2026-06-10T14:30:45Z'
+created_at: '2026-06-17T15:41:31Z'
 remote:
   name: agentic-os-backup
   url: git@github.com:genome/local-agentic-os-backups.git
@@ -3677,7 +3876,7 @@ exclude:
 manifest: []
 ```
 
-## 49-migrate_plan
+## 51-migrate_plan
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os migrate plan --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3718,7 +3917,7 @@ migrations:
 plan_path: /private/tmp/aos-validate/root/.migrations/notion-sync-readme-v1.yml
 ```
 
-## 50-losmon_validate
+## 52-losmon_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os losmon validate --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3731,13 +3930,13 @@ created_or_verified:
 - /private/tmp/aos-validate/root/los/03-workflows/operations/deploy_planning
 - /private/tmp/aos-validate/root/los/04-automations/support/thread_intake
 run_logs:
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260610T143045Z-los-pr_review/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260610T143045Z-los-failing_ci_triage/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260610T143045Z-los-deploy_planning/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260617T154131Z-los-pr_review/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260617T154131Z-los-failing_ci_triage/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260617T154131Z-los-deploy_planning/run-log.md
 comparison: /private/tmp/aos-validate/root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
 ```
 
-## 51-plan_capture
+## 53-plan_capture
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os plan capture --title weekly report automation --summary automate the weekly report --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3747,7 +3946,7 @@ kind: os
 status: captured
 ```
 
-## 52-docs_install
+## 54-docs_install
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os docs install --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3755,7 +3954,7 @@ status: captured
 no changes
 ```
 
-## 53-customer_init_example
+## 55-customer_init_example
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os customer init acme_ops --profile /Users/genome/projects/genomes_agentic_os/customer_profiles/example-customer.yml --target /tmp/aos-validate/customer
 # CWD: /Users/genome/projects/genomes_agentic_os
@@ -3784,6 +3983,7 @@ created:
 - /private/tmp/aos-validate/customer/harness/registries/composio-tools.yml
 - /private/tmp/aos-validate/customer/harness/INVENTORY.md
 - /private/tmp/aos-validate/customer/harness/schemas
+- /private/tmp/aos-validate/customer/harness/schemas/archive-manifest.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/automation.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/backup-policy.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/capability-registry.schema.json
@@ -3791,6 +3991,7 @@ created:
 - /private/tmp/aos-validate/customer/harness/schemas/composio-tool-routing.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/domain.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/hook-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/hosts.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/library-registry.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/managed-templates.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/mcp-server-registry.schema.json
@@ -3803,6 +4004,8 @@ created:
 - /private/tmp/aos-validate/customer/harness/schemas/self-improvement-sidecar-usage.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/skill-registry.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/skill-visibility-registry.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/thread-closeout.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/thread.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/update-grant.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/update-manifest.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/workflow.schema.json
@@ -4174,7 +4377,7 @@ skipped:
 - /private/tmp/aos-validate/customer/support/config/codex-profile.yml
 ```
 
-## 54-customer_validate
+## 56-customer_validate
 ```text
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os customer validate --root /tmp/aos-validate/customer
 # CWD: /Users/genome/projects/genomes_agentic_os

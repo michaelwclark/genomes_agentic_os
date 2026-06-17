@@ -891,6 +891,15 @@ These root rules apply unless a narrower layer provides a stricter rule.
 - Keep secrets out of prompts, logs, docs, generated config, and run artifacts.
 - Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read the host tool registry when it exists.
 
+## SSH Remote Namespace Convention
+
+Any path component named `SSH_<host>` marks an SSHFS remote namespace.
+Files under it may be read or edited locally, but repo commands (git, builds,
+tests, package installs, dev servers, services, watchers) must execute on
+`<host>` unless the operator explicitly asks for local-mount execution.
+Mount and unmount are explicit operator actions — this OS never silently
+mounts remote hosts or installs kernel extensions on its own.
+
 ## Precedence
 
 Narrower rules override broader rules unless the broader rule is stricter for
@@ -2083,11 +2092,24 @@ def project_agents(domain: str, project: str, remotes: list[dict[str, str]] | No
                 if authority == "remote"
                 else "Local copy is authoritative; remote is a deploy/reference copy."
             )
+            mount = r.get("mount") or {}
+            mount_note = ""
+            if isinstance(mount, dict) and mount.get("namespace"):
+                ns = mount["namespace"]
+                local_path = mount.get("local_path", f"~/{ns}/{name}")
+                mount_note = (
+                    f"\n  SSHFS namespace: `{local_path}` → `{host}:{path}`."
+                    " Files may be read/edited locally; repo commands run remotely."
+                )
             lines.append(
                 f"- **{name}** (`{host}:{path}`): {auth_note}\n"
                 f"  Reach via commands in `remote/{name}/REMOTE.md`.\n"
                 f"  Artifacts, work-items, and decisions stay local in this room."
+                f"{mount_note}"
             )
+        ssh_rule = _ssh_namespace_rule_section(remotes)
+        if ssh_rule:
+            lines.append(ssh_rule)
         remote_section = "\n".join(lines)
     return f"""# Agent Entry Point: {project}
 
@@ -2183,7 +2205,25 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 """
 
 
-def project_rules(domain: str, project: str) -> str:
+def _ssh_namespace_rule_section(remotes: list[dict[str, str]] | None) -> str:
+    """Return the SSH_<host> managed rule section when any remote has a mount block."""
+    if not remotes:
+        return ""
+    has_mount = any(r.get("mount") for r in remotes)
+    if not has_mount:
+        return ""
+    return (
+        "\n## SSH Remote Namespace Rule\n\n"
+        "Any path component named `SSH_<host>` is an SSHFS remote namespace. "
+        "Files under it may be read or edited locally, but repo commands run on "
+        "`<host>` with the remote cwd from the project manifest. "
+        "Do not run builds, tests, package installs, git, or watchers locally "
+        "from an SSHFS path unless the operator explicitly asks for local-mount execution.\n"
+    )
+
+
+def project_rules(domain: str, project: str, remotes: list[dict[str, str]] | None = None) -> str:
+    ssh_section = _ssh_namespace_rule_section(remotes)
     return f"""# Rules: {project}
 
 These rules apply to `{domain}/02-projects/{project}` unless a narrower source
@@ -2198,7 +2238,7 @@ checkout or feature artifact defines a stricter rule.
 - Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
-"""
+{ssh_section}"""
 
 
 def project_tools(domain: str, project: str) -> str:
@@ -2740,7 +2780,7 @@ def ensure_project_operating_surface(
     )
     write_project_file(
         project_root / "RULES.md",
-        project_rules(domain, project),
+        project_rules(domain, project, remotes=remotes),
         result,
         replace_markers=("Record local constraints, approval gates, safety boundaries",),
     )
@@ -2990,6 +3030,12 @@ def link_project_remote(
         project_context(domain, project, remotes=all_remotes),
         result,
         replace_markers=("Describe the local room, source systems, routing hints",),
+    )
+    write_project_file(
+        project_root / "RULES.md",
+        project_rules(domain, project, remotes=all_remotes),
+        result,
+        replace_markers=("Record local constraints, approval gates, safety boundaries",),
     )
     return result
 

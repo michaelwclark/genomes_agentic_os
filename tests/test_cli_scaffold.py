@@ -352,6 +352,39 @@ def test_self_improvement_dry_run_reports_seeded_evidence_without_writes(tmp_pat
     assert "redactions: 1" in output
 
 
+def test_self_improvement_bare_run_is_dry_run_writes_nothing(tmp_path: Path, capsys) -> None:
+    """Bare `self-improvement run` (no flag) must be dry-run — SPEC 15 first-run safety."""
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    evidence = shared_factory(root) / "06-runs-and-logs" / "runs" / "bare-run-evidence.md"
+    evidence.write_text(
+        "Validation failed after repeated manual command sequence.\n"
+        "Validation failed after repeated manual command sequence.\n"
+        "Manual command workaround should become a shared workflow.\n",
+        encoding="utf-8",
+    )
+    self_improvement_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement"
+    before = {
+        path.relative_to(self_improvement_root)
+        for path in self_improvement_root.rglob("*")
+        if path.is_file()
+    }
+
+    # Bare invocation — no --dry-run, no --apply.
+    assert main(["self-improvement", "run", "--root", str(root)]) == 0
+
+    after = {
+        path.relative_to(self_improvement_root)
+        for path in self_improvement_root.rglob("*")
+        if path.is_file()
+    }
+    assert before == after, "Bare run must write nothing (dry-run by default)"
+    output = capsys.readouterr().out
+    assert "Self Improvement Dry Run" in output
+    assert "writes: none" in output
+
+
 def test_self_improvement_apply_writes_proposals_and_dedupes(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
@@ -525,7 +558,7 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
         == "agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply"
     )
     assert schedules["self_improvement_review"]["enabled"] is False
-    assert schedules["self_improvement_review"]["command"] == "agentic-os self-improvement run --root <root> --dry-run"
+    assert schedules["self_improvement_review"]["command"] == "agentic-os self-improvement run --root <root> --apply"
     assert schedules["closed_worktree_cleanup_0500"]["enabled"] is True
     assert (
         schedules["closed_worktree_cleanup_0500"]["command"]
@@ -552,8 +585,11 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
     assert main(["runtime", "run-next", "--root", str(root), "--item-id", item_id, "--apply"]) == 0
     dispatched = yaml.safe_load(capsys.readouterr().out)
     assert dispatched["status"] == "done"
+    # Dispatch now persists and documents: a run record is written and the daily
+    # report is rendered (the heartbeat documents, it does not mutate live OS surfaces).
     self_improvement_root = shared_factory(root) / "06-runs-and-logs" / "self-improvement"
-    assert not list(self_improvement_root.rglob("*.yml"))
+    assert list((self_improvement_root / "runs").glob("*.yml"))
+    assert (self_improvement_root / "latest-report.md").is_file()
 
 
 def test_validate_fails_when_declared_capability_is_missing_from_registry(tmp_path: Path) -> None:

@@ -497,7 +497,7 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "cadence": "weekly",
             "timezone": "America/Chicago",
             "execution_target": "script",
-            "command": "agentic-os self-improvement run --root <root> --dry-run",
+            "command": "agentic-os self-improvement run --root <root> --apply",
             "outputs": ["harness/shared_factory/06-runs-and-logs/self-improvement/runs/"],
             "notion_update": {"object": "Self Improvement", "status_field": "Last Status"},
             "next_due_at": None,
@@ -967,12 +967,20 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "errors": validation.errors,
             "warnings": validation.warnings,
         }
-    if normalized in {
+    _si_persist_forms = {
+        f"agentic-os self-improvement run --root {root} --apply",
+        f"agentic-os self-improvement run --root {str(root)} --apply",
+    }
+    _si_dry_forms = {
+        f"agentic-os self-improvement run --root {root}",
+        f"agentic-os self-improvement run --root {str(root)}",
         f"agentic-os self-improvement run --root {root} --dry-run",
         f"agentic-os self-improvement run --root {str(root)} --dry-run",
-    }:
+    }
+    if normalized in _si_persist_forms | _si_dry_forms:
+        _dry = normalized not in _si_persist_forms
         try:
-            result = run_self_improvement(root, dry_run=True)
+            result = run_self_improvement(root, dry_run=_dry)
         except ValueError as exc:
             return {
                 "supported": True,
@@ -981,6 +989,8 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
                 "errors": [str(exc)],
                 "warnings": [],
             }
+        report = result.get("report") or {}
+        notion_projection = result.get("notion_projection") or {}
         return {
             "supported": True,
             "ok": bool(result.get("ok")),
@@ -989,6 +999,8 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "warnings": [],
             "evidence_files": result.get("evidence_files"),
             "findings": len(result.get("findings") or []),
+            "report_path": report.get("latest"),
+            "notion_projected": bool(notion_projection.get("projected")),
         }
     if normalized in {
         f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
@@ -1172,6 +1184,93 @@ def _credential_findings(path: Path, item: dict[str, Any]) -> list[dict[str, str
     return findings
 
 
+SELF_IMPROVEMENT_CONFIG = "harness/shared_factory/00-control-plane/self-improvement.yml"
+SELF_IMPROVEMENT_OUTPUT = "harness/shared_factory/06-runs-and-logs/self-improvement"
+SELF_IMPROVEMENT_REPORT = f"{SELF_IMPROVEMENT_OUTPUT}/latest-report.md"
+SELF_IMPROVEMENT_RUNS = f"{SELF_IMPROVEMENT_OUTPUT}/runs"
+REPORT_STALE_DAYS = 2
+
+
+def _self_improvement_doctor_findings(os_root: Path) -> list[dict[str, str]]:
+    """Heartbeat health checks for the self-improvement documentation loop.
+
+    All findings are advisory (``fix-soon``/``observation``) so they surface in
+    the doctor report without flipping ``ok`` to False. Each check is gated on the
+    existence of its inputs so a fresh install missing these files is silent.
+    """
+    findings: list[dict[str, str]] = []
+    config_path = _runtime_path(os_root, SELF_IMPROVEMENT_CONFIG)
+    if not config_path.is_file():
+        return findings
+    config = _load_yaml(config_path, {})
+
+    # 1. Enabled but never ran (no run records present).
+    runs_dir = _runtime_path(os_root, SELF_IMPROVEMENT_RUNS)
+    has_run = runs_dir.is_dir() and any(runs_dir.glob("*.yml"))
+    if config.get("enabled") and not has_run:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(runs_dir),
+                "message": "self-improvement is enabled but has never produced a run record",
+            }
+        )
+
+    # 2. latest-report.md missing or stale (>REPORT_STALE_DAYS old) once enabled.
+    report_path = _runtime_path(os_root, SELF_IMPROVEMENT_REPORT)
+    if config.get("enabled"):
+        if not report_path.is_file():
+            if has_run:
+                findings.append(
+                    {
+                        "severity": "fix-soon",
+                        "path": str(report_path),
+                        "message": "self-improvement has run records but no latest-report.md",
+                    }
+                )
+        else:
+            age_days = (datetime.now(timezone.utc).timestamp() - report_path.stat().st_mtime) / 86400.0
+            if age_days > REPORT_STALE_DAYS:
+                findings.append(
+                    {
+                        "severity": "fix-soon",
+                        "path": str(report_path),
+                        "message": f"self-improvement latest-report.md is stale ({age_days:.1f} days old)",
+                    }
+                )
+
+    # 3. Missing "Self Improvement" Notion DB id in the runtime tracking manifest.
+    manifest_path = _runtime_path(os_root, NOTION_RUNTIME_MANIFEST)
+    if manifest_path.is_file():
+        manifest = _load_yaml(manifest_path, {})
+        if manifest.get("live") and not (manifest.get("database_ids") or {}).get("Self Improvement"):
+            findings.append(
+                {
+                    "severity": "fix-soon",
+                    "path": str(manifest_path),
+                    "message": "Notion runtime tracking is live but has no 'Self Improvement' database id",
+                }
+            )
+
+    # 4. Configured conversation evidence roots that resolve to a missing dir.
+    for entry in config.get("evidence_roots") or []:
+        if not isinstance(entry, dict):
+            continue
+        path_value = str(entry.get("path") or "")
+        if "conversations" not in path_value:
+            continue
+        resolved = _runtime_path(os_root, path_value)
+        if not resolved.exists():
+            findings.append(
+                {
+                    "severity": "observation",
+                    "path": str(resolved),
+                    "message": f"configured conversation evidence root is missing: {path_value}",
+                }
+            )
+    return findings
+
+
 def runtime_doctor(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
     findings: list[dict[str, str]] = []
@@ -1251,6 +1350,7 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
             findings.append({"severity": "blocker", "path": str(queue_path), "message": f"approval-needed item must have approval_state required: {item_id}"})
         if status not in TERMINAL_RUN_QUEUE_STATES and not item.get("idempotency_key"):
             findings.append({"severity": "fix-soon", "path": str(queue_path), "message": f"non-terminal queue item lacks idempotency_key: {item_id}"})
+    findings.extend(_self_improvement_doctor_findings(os_root))
     if not findings:
         findings.append({"severity": "observation", "path": str(os_root), "message": "runtime registries and heartbeat log folders are present"})
     return {"root": str(os_root), "ok": not any(finding["severity"] == "blocker" for finding in findings), "findings": findings}

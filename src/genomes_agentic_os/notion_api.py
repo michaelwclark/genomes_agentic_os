@@ -241,6 +241,26 @@ def query_database_by_key(
     return None
 
 
+def get_database_property_types(
+    database_id: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> dict[str, str]:
+    """Return a mapping of *database_id* property name -> Notion property type.
+
+    Lets callers send only properties that actually exist on a database that
+    may have been provisioned out-of-band. Raises ``RuntimeError`` on failure.
+    """
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    url = f"{_NOTION_API_BASE}/databases/{database_id}"
+    data = _json_request("GET", url, _auth_headers(token), None, fetcher)
+    properties = data.get("properties") or {}
+    return {name: str((spec or {}).get("type") or "") for name, spec in properties.items()}
+
+
 def create_database_page(
     database_id: str,
     properties: dict[str, Any],

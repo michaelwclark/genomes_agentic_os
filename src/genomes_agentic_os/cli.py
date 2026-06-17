@@ -81,6 +81,7 @@ from .scaffold import (
 )
 from .hosts import upsert_host, list_hosts
 from .remote_ops import sync_project_remote
+from .remote_mounts import exec_remote, mount_remote, unmount_remote
 from .source_watch import (
     create_watch_source,
     doctor_connected_system,
@@ -115,11 +116,72 @@ from .update_ops import (
     update_rollback,
     update_status,
 )
+from .capability_registry import (
+    REGISTRY_FILES,
+    inventory_markdown,
+    load_registry,
+    registry_payloads,
+)
 from .validate import StrictFinding, validate_root, validate_schemas_strict
 from .workflow_ops import check_workflow, close_run_log, format_findings
 
 
 DEFAULT_ROOT = "~/agentic_os"
+
+
+def handle_capability_list(args: argparse.Namespace) -> int:
+    """List capabilities from installed registry files, optionally filtered by type."""
+    root = Path(args.root).expanduser()
+    cap_type = getattr(args, "type", None)
+    payloads = registry_payloads()
+    if cap_type:
+        if cap_type not in payloads:
+            print(f"Unknown capability type '{cap_type}'. Known types: {', '.join(sorted(payloads))}")
+            return 1
+        types_to_show = {cap_type: payloads[cap_type]}
+    else:
+        types_to_show = payloads
+    for name, payload in types_to_show.items():
+        collection_key = next(iter(payload))
+        entries = payload[collection_key]
+        print(f"\n## {name} ({len(entries)})")
+        for entry in entries:
+            entry_id = entry.get("id") or entry.get("command") or "(unknown)"
+            description = entry.get("description", "")
+            print(f"  {entry_id}" + (f" — {description}" if description else ""))
+    installed_path = root / REGISTRY_FILES.get("capabilities", "harness/registries/capabilities.yml")
+    if installed_path.exists():
+        installed = load_registry(installed_path, "capabilities")
+        if installed:
+            print(f"\n## installed capabilities ({len(installed)})")
+            for cap in installed:
+                ref = cap.get("ref", "")
+                cap_type_label = cap.get("type", "")
+                print(f"  {ref}" + (f" [{cap_type_label}]" if cap_type_label else ""))
+    return 0
+
+
+def handle_capability_inventory(args: argparse.Namespace) -> int:
+    """Show or regenerate INVENTORY.md from installed registry state."""
+    root = Path(args.root).expanduser()
+    content = inventory_markdown()
+    if getattr(args, "regenerate", False):
+        from .scaffold import harness_path, write_file_once
+        from .scaffold import ScaffoldResult
+
+        result = ScaffoldResult()
+        write_file_once(harness_path(root) / "INVENTORY.md", content, result)
+        for msg in result.messages():
+            print(msg)
+        if not result.messages():
+            print("INVENTORY.md already up to date")
+    else:
+        inventory_path = root / "harness" / "INVENTORY.md"
+        if inventory_path.exists():
+            print(inventory_path.read_text(encoding="utf-8"))
+        else:
+            print(content)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -365,6 +427,47 @@ def build_parser() -> argparse.ArgumentParser:
     project_sync_remote.add_argument("--timeout", type=int, default=20, help="SSH command timeout in seconds (default: 20).")
     project_sync_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_sync_remote.set_defaults(handler=handle_project_sync_remote)
+
+    project_mount_remote = project_subparsers.add_parser(
+        "mount-remote",
+        help="Plan or execute an SSHFS mount for a declared remote source (dry-run by default).",
+    )
+    project_mount_remote.add_argument("domain")
+    project_mount_remote.add_argument("project")
+    project_mount_remote.add_argument("--name", help="Name of the remote to mount (default: first with a mount block).")
+    project_mount_remote.add_argument("--namespace", help="Override the local mount namespace path.")
+    project_mount_remote.add_argument("--timeout", type=int, default=20, help="SSHFS command timeout in seconds (default: 20).")
+    project_mount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _mount_mode = project_mount_remote.add_mutually_exclusive_group()
+    _mount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned SSHFS command without mounting (default).")
+    _mount_mode.add_argument("--apply", action="store_true", help="Execute the SSHFS mount if sshfs is available and path is in an approved namespace.")
+    project_mount_remote.set_defaults(handler=handle_project_mount_remote)
+
+    project_unmount_remote = project_subparsers.add_parser(
+        "unmount-remote",
+        help="Plan or execute an SSHFS unmount for a declared remote source (dry-run by default).",
+    )
+    project_unmount_remote.add_argument("domain")
+    project_unmount_remote.add_argument("project")
+    project_unmount_remote.add_argument("--name", help="Name of the remote to unmount (default: all with a mount block).")
+    project_unmount_remote.add_argument("--timeout", type=int, default=20, help="Unmount command timeout in seconds (default: 20).")
+    project_unmount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _unmount_mode = project_unmount_remote.add_mutually_exclusive_group()
+    _unmount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned unmount command without unmounting (default).")
+    _unmount_mode.add_argument("--apply", action="store_true", help="Execute the platform-appropriate unmount command.")
+    project_unmount_remote.set_defaults(handler=handle_project_unmount_remote)
+
+    project_exec = project_subparsers.add_parser(
+        "exec",
+        help="Run a command on the remote host for a remote-authoritative project.",
+    )
+    project_exec.add_argument("domain")
+    project_exec.add_argument("project")
+    project_exec.add_argument("--name", help="Name of the remote to use (default: first remote-authoritative).")
+    project_exec.add_argument("--timeout", type=int, default=60, help="SSH command timeout in seconds (default: 60).")
+    project_exec.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_exec.add_argument("cmd", nargs="*", metavar="command", help="Command to run remotely. Use -- to separate from options: exec acme proj -- git status")
+    project_exec.set_defaults(handler=handle_project_exec)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -833,20 +936,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     self_improvement_run = self_improvement_subparsers.add_parser(
         "run",
-        help="Run a no-write self-improvement review.",
+        help="Run a self-improvement review (dry-run by default; use --apply to persist + document).",
     )
     self_improvement_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_run_mode = self_improvement_run.add_mutually_exclusive_group()
     self_improvement_run_mode.add_argument(
         "--dry-run",
         action="store_true",
-        default=True,
-        help="Print a review without writing run records or proposals.",
+        help="Print a review without writing run records, proposals, or a report (default behaviour).",
     )
     self_improvement_run_mode.add_argument(
         "--apply",
         action="store_true",
-        help="Write run records and proposal files under the configured self-improvement output paths.",
+        help="Persist mode: write run records, proposals, daily report, and Notion projection.",
     )
     self_improvement_run.set_defaults(handler=handle_self_improvement_run)
     self_improvement_status_parser = self_improvement_subparsers.add_parser(
@@ -995,6 +1097,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     docs_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_update.set_defaults(handler=handle_docs_update)
+
+    capability_parser = subparsers.add_parser("capability", help="Inspect installed OS capabilities.")
+    capability_subparsers = capability_parser.add_subparsers(dest="capability_command", required=True)
+    capability_list_parser = capability_subparsers.add_parser("list", help="List capabilities from installed registry.")
+    capability_list_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    capability_list_parser.add_argument("--type", dest="type", help="Filter by capability type (e.g. commands, skills, mcp_servers).")
+    capability_list_parser.set_defaults(handler=handle_capability_list)
+    capability_inventory_parser = capability_subparsers.add_parser("inventory", help="Show or regenerate INVENTORY.md.")
+    capability_inventory_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    capability_inventory_parser.add_argument("--regenerate", action="store_true", help="Rewrite INVENTORY.md from current registry state.")
+    capability_inventory_parser.set_defaults(handler=handle_capability_inventory)
 
     return parser
 
@@ -1154,6 +1267,75 @@ def handle_project_sync_remote(args: argparse.Namespace) -> int:
     else:
         print("no remotes synced")
     return 1 if result.get("errors") else 0
+
+
+def handle_project_mount_remote(args: argparse.Namespace) -> int:
+    apply = getattr(args, "apply", False)
+    result = mount_remote(
+        args.root,
+        args.domain,
+        args.project,
+        name=getattr(args, "name", None),
+        namespace=getattr(args, "namespace", None),
+        apply=apply,
+        timeout=getattr(args, "timeout", 20),
+    )
+    for line in result.get("plan", []):
+        print(line)
+    for w in result.get("warnings", []):
+        print(f"warning: {w}")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    if not apply:
+        print("(dry-run; use --apply to mount)")
+    elif result.get("applied"):
+        print("mount applied")
+    return 1 if result.get("errors") else 0
+
+
+def handle_project_unmount_remote(args: argparse.Namespace) -> int:
+    apply = getattr(args, "apply", False)
+    result = unmount_remote(
+        args.root,
+        args.domain,
+        args.project,
+        name=getattr(args, "name", None),
+        apply=apply,
+        timeout=getattr(args, "timeout", 20),
+    )
+    for line in result.get("plan", []):
+        print(line)
+    for w in result.get("warnings", []):
+        print(f"warning: {w}")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    if not apply:
+        print("(dry-run; use --apply to unmount)")
+    elif result.get("applied"):
+        print("unmount applied")
+    return 1 if result.get("errors") else 0
+
+
+def handle_project_exec(args: argparse.Namespace) -> int:
+    cmd_parts: list[str] = [c for c in (args.cmd or []) if c != "--"]
+    if not cmd_parts:
+        print("error: no command specified; use: agentic-os project exec <domain> <project> -- <command...>")
+        return 1
+    result = exec_remote(
+        args.root,
+        args.domain,
+        args.project,
+        cmd_parts,
+        name=getattr(args, "name", None),
+        timeout=getattr(args, "timeout", 60),
+    )
+    if result.get("stdout"):
+        print(result["stdout"], end="")
+    if result.get("stderr"):
+        print(result["stderr"], end="")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    return 0 if result.get("ok") else 1
 
 
 def handle_project_worktree_add(args: argparse.Namespace) -> int:
@@ -1705,6 +1887,8 @@ def handle_plan_capture(args: argparse.Namespace) -> int:
 
 
 def handle_self_improvement_run(args: argparse.Namespace) -> int:
+    # Bare invocation and --dry-run both produce dry_run=True (read-only, SPEC 15 first-run safety).
+    # Only --apply flips to persist mode.
     print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
     return 0
 
