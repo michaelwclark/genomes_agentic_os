@@ -169,6 +169,19 @@ skills:
     bootstrap: false
     purpose: >
       Capture run closeout notes into OS logs.
+  - id: status-report
+    title: Status Report
+    source_path: harness/skills/status-report
+    installed_path: shared_factory/05-knowledge/skills/status-report
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Generate recent Agentic OS status reports from Claude/Codex logs,
+      OS state, source status, Notion projection state, and gap analysis.
   - id: thread-finalizer
     title: Thread Finalizer
     source_path: harness/skills/thread-finalizer
