@@ -126,6 +126,28 @@ def _next_due_after(base: datetime, cadence: str, timezone_name: str) -> str | N
     return _iso(local_base + delta)
 
 
+def _local_time_parts(value: Any, *, field: str) -> tuple[int, int] | None:
+    if value in (None, ""):
+        return None
+    match = re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", str(value))
+    if not match:
+        raise ValueError(f"invalid {field}: {value}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def _local_time_due_at(schedule: dict[str, Any], now: datetime) -> datetime | None:
+    local_time = _local_time_parts(schedule.get("local_time"), field=f"{schedule.get('id', '<unknown>')}.local_time")
+    if local_time is None:
+        return None
+    cadence = str(schedule.get("cadence") or "")
+    if cadence != "daily":
+        raise ValueError(f"{schedule.get('id', '<unknown>')}.local_time requires daily cadence")
+    zone = _timezone(str(schedule.get("timezone") or "UTC"))
+    local_now = now.astimezone(zone)
+    hour, minute = local_time
+    return local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
 def _due_window_start(now: datetime, cadence: str, timezone_name: str) -> str:
     zone = _timezone(timezone_name)
     local_now = now.astimezone(zone)
@@ -161,7 +183,26 @@ def _is_due(schedule: dict[str, Any], now: datetime) -> bool:
         return False
     _timezone(str(schedule.get("timezone") or "UTC"))
     next_due = _parse_time(schedule.get("next_due_at"), field=f"{schedule.get('id', '<unknown>')}.next_due_at")
-    return next_due is None or next_due <= now
+    if next_due is not None:
+        return next_due <= now
+    local_due = _local_time_due_at(schedule, now)
+    if local_due is not None:
+        return local_due <= now
+    return True
+
+
+def _due_at_for_schedule(schedule: dict[str, Any], now: datetime) -> str:
+    next_due = schedule.get("next_due_at")
+    if next_due:
+        return str(next_due)
+    local_due = _local_time_due_at(schedule, now)
+    if local_due is not None:
+        return _iso(local_due)
+    return _due_window_start(
+        now,
+        str(schedule.get("cadence")),
+        str(schedule.get("timezone") or "UTC"),
+    )
 
 
 def _requires_approval(record: dict[str, Any]) -> bool:
@@ -422,11 +463,26 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "last_queued_at": None,
         },
         {
-            "id": "closed_worktree_cleanup_prepare",
-            "display_name": "Closed worktree cleanup prepare",
-            "enabled": False,
+            "id": "closed_worktree_cleanup_0500",
+            "display_name": "Closed worktree cleanup 05:00",
+            "enabled": True,
             "cadence": "daily",
             "timezone": "America/Chicago",
+            "local_time": "05:00",
+            "execution_target": "script",
+            "command": "agentic-os project worktree cleanup-closed --root <root> --apply",
+            "outputs": ["00-control-plane/active/", "*/02-projects/*/worktrees/closed.yml"],
+            "notion_update": {"object": "OS Cleanup", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "closed_worktree_cleanup_2200",
+            "display_name": "Closed worktree cleanup 22:00",
+            "enabled": True,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "local_time": "22:00",
             "execution_target": "script",
             "command": "agentic-os project worktree cleanup-closed --root <root> --apply",
             "outputs": ["00-control-plane/active/", "*/02-projects/*/worktrees/closed.yml"],
@@ -816,11 +872,7 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
         if not due:
             skipped.append({"schedule": schedule_id, "reason": "not due", "next_due_at": schedule.get("next_due_at")})
             continue
-        due_at = schedule.get("next_due_at") or _due_window_start(
-            now,
-            str(schedule.get("cadence")),
-            str(schedule.get("timezone") or "UTC"),
-        )
+        due_at = _due_at_for_schedule(schedule, now)
         idempotency_key = f"schedule:{schedule_id}:{due_at}"
         item_id = f"queue_{_digest(idempotency_key)}"
         gate = _runtime_gate(schedule, registry, dry_run=dry_run)
@@ -1161,6 +1213,7 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
             _cadence_delta(str(schedule.get("cadence") or ""))
             _timezone(str(schedule.get("timezone") or ""))
             _parse_time(schedule.get("next_due_at"), field=f"{schedule.get('id', '<unknown>')}.next_due_at")
+            _local_time_due_at(schedule, datetime.now(timezone.utc))
         except ValueError as exc:
             findings.append({"severity": "blocker", "path": str(registry_path), "message": f"{schedule.get('id', '<unknown>')} {exc}"})
         else:

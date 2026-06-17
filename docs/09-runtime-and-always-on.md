@@ -91,6 +91,7 @@ Key fields in a schedule entry:
 | `id` | snake_case identifier |
 | `cadence` | `daily`, `weekly`, or a supported cron string |
 | `timezone` | IANA timezone, defaults to `America/Chicago` |
+| `local_time` | Optional `HH:MM` local wall-clock time for `daily` schedules |
 | `command` | Shell command to invoke when due |
 | `next_due_at` | Set by `schedule run-due`; blank until first tick |
 

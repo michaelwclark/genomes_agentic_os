@@ -17,10 +17,11 @@ GitHub pull request is merged.
 | Command doc | `harness/commands/os-clean-worktrees.md` |
 | Skill | `harness/skills/os-cleaner/SKILL.md` |
 | Codex adapter | `.agents/skills/os-cleaner/SKILL.md` |
-| Runtime schedule | `closed_worktree_cleanup_prepare` in `harness/shared_factory/00-control-plane/runtime-registry.yml` |
+| Runtime schedules | `closed_worktree_cleanup_0500` and `closed_worktree_cleanup_2200` in `harness/shared_factory/00-control-plane/runtime-registry.yml` |
 
-The installed runtime schedule is disabled by default. Keep it disabled until
-the Jira and GitHub metadata refresh step is proven for the target projects.
+The installed runtime schedules run daily at 05:00 and 22:00
+`America/Chicago`. They remain registry-only cleanup schedules and must not pass
+`--remove-files`.
 
 ## Primary Command
 
@@ -136,6 +137,6 @@ The initial installed dry-run completed with `candidate_count=0`. That means no
 registered worktree entry currently had cached terminal Jira or merged PR
 metadata. It does not prove that every stale worktree is already clean.
 
-Before enabling `closed_worktree_cleanup_prepare`, capture at least one
-reviewed dry-run after the metadata refresh step is wired for the projects that
-own the worktree registries.
+The runtime entries are enabled for 05:00 and 22:00 `America/Chicago`, but they
+only use registry cleanup. Capture reviewed dry-run evidence after the metadata
+refresh step is wired for the projects that own the worktree registries.
