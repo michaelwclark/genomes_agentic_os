@@ -108,6 +108,33 @@ run "chain doctor"                   "$AOS" chain doctor --root "$ROOT"
 echo "---- CONNECTED SOURCES / WATCH ----"
 run "connected-system list"          "$AOS" connected-system list --root "$ROOT"
 run "watch-source list"              "$AOS" watch-source list --root "$ROOT"
+echo "---- SSHFS REMOTE MOUNTS (feat-64, dry-run only — no network) ----"
+# Set up a minimal project with a mount block and a hosts.yml for dry-run
+RM_DOM="rmtest"; RM_PROJ="losmon"
+"$AOS" domain create "$RM_DOM" --root "$ROOT" >/dev/null 2>&1
+"$AOS" project create "$RM_DOM" "$RM_PROJ" --root "$ROOT" >/dev/null 2>&1
+mkdir -p "$ROOT/config"
+printf 'hosts:\n  genomesbox:\n    ssh_alias: genomesbox\n    ssh_options: []\n' \
+  > "$ROOT/config/hosts.yml"
+RM_YML="$ROOT/$RM_DOM/02-projects/$RM_PROJ/project.yml"
+python3 - "$RM_YML" <<'PYEOF'
+import sys, yaml
+path = sys.argv[1]
+data = yaml.safe_load(open(path).read()) or {}
+data.setdefault("sources", {})["remotes"] = [{
+    "name": "losmon", "host": "genomesbox",
+    "path": "/home/genome/projects/losmon",
+    "kind": "git", "authority": "remote",
+    "mount": {
+        "namespace": "SSH_genomesbox",
+        "local_path": "/tmp/SSH_genomesbox/losmon",
+        "access": "sshfs", "execution": "remote",
+    },
+}]
+open(path, "w").write(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+PYEOF
+run "mount-remote (dry-run)"    "$AOS" project mount-remote "$RM_DOM" "$RM_PROJ" --root "$ROOT" --dry-run
+run "unmount-remote (dry-run)"  "$AOS" project unmount-remote "$RM_DOM" "$RM_PROJ" --root "$ROOT" --dry-run
 echo "---- NOTION CONTROL PLANE (plan only) ----"
 run "notion plan-sync"               "$AOS" notion plan-sync --root "$ROOT"
 echo "---- CONFIG (Codex) ----"

@@ -24,7 +24,7 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 | 17 | OK | 0 | automation attach -> launch |
 | 18 | OK | 0 | automation set-maturity prepare |
 | 19 | OK | 0 | run-log create |
-| 20 | OK | 0 | run-log close (20260610T143042Z-acme-launch_blog) |
+| 20 | OK | 0 | run-log close (20260617T154127Z-acme-launch_blog) |
 | 21 | OK | 0 | profile create |
 | 22 | OK | 0 | profile validate |
 | 23 | OK | 0 | runtime init |
@@ -45,23 +45,25 @@ Status: OK=succeeded · USAGE=arg error · ERR=handled error · TRACEBACK=defect
 | 38 | OK | 0 | chain doctor |
 | 39 | OK | 0 | connected-system list |
 | 40 | OK | 0 | watch-source list |
-| 41 | OK | 0 | notion plan-sync |
-| 42 | GUARDED | 1 | config doctor (layer) |
-| 43 | OK | 0 | config install (dry) |
-| 44 | OK | 0 | config install-tree (dry) |
-| 45 | OK | 0 | license activate |
-| 46 | OK | 0 | update register |
-| 47 | OK | 0 | update check |
-| 48 | OK | 0 | update status |
-| 49 | OK | 0 | backup run (dry) |
-| 50 | OK | 0 | migrate plan |
-| 51 | OK | 0 | losmon validate |
-| 52 | OK | 0 | plan capture |
-| 53 | OK | 0 | docs install |
-| 54 | OK | 0 | customer init (example) |
-| 55 | OK | 0 | customer validate |
+| 41 | OK | 0 | mount-remote (dry-run) |
+| 42 | OK | 0 | unmount-remote (dry-run) |
+| 43 | OK | 0 | notion plan-sync |
+| 44 | GUARDED | 1 | config doctor (layer) |
+| 45 | OK | 0 | config install (dry) |
+| 46 | OK | 0 | config install-tree (dry) |
+| 47 | OK | 0 | license activate |
+| 48 | OK | 0 | update register |
+| 49 | OK | 0 | update check |
+| 50 | OK | 0 | update status |
+| 51 | OK | 0 | backup run (dry) |
+| 52 | OK | 0 | migrate plan |
+| 53 | OK | 0 | losmon validate |
+| 54 | OK | 0 | plan capture |
+| 55 | OK | 0 | docs install |
+| 56 | OK | 0 | customer init (example) |
+| 57 | OK | 0 | customer validate |
 
 ## Totals
 
-- OK: 53
+- OK: 55
 - GUARDED: 2

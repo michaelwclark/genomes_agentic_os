@@ -81,6 +81,7 @@ from .scaffold import (
 )
 from .hosts import upsert_host, list_hosts
 from .remote_ops import sync_project_remote
+from .remote_mounts import exec_remote, mount_remote, unmount_remote
 from .source_watch import (
     create_watch_source,
     doctor_connected_system,
@@ -426,6 +427,47 @@ def build_parser() -> argparse.ArgumentParser:
     project_sync_remote.add_argument("--timeout", type=int, default=20, help="SSH command timeout in seconds (default: 20).")
     project_sync_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_sync_remote.set_defaults(handler=handle_project_sync_remote)
+
+    project_mount_remote = project_subparsers.add_parser(
+        "mount-remote",
+        help="Plan or execute an SSHFS mount for a declared remote source (dry-run by default).",
+    )
+    project_mount_remote.add_argument("domain")
+    project_mount_remote.add_argument("project")
+    project_mount_remote.add_argument("--name", help="Name of the remote to mount (default: first with a mount block).")
+    project_mount_remote.add_argument("--namespace", help="Override the local mount namespace path.")
+    project_mount_remote.add_argument("--timeout", type=int, default=20, help="SSHFS command timeout in seconds (default: 20).")
+    project_mount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _mount_mode = project_mount_remote.add_mutually_exclusive_group()
+    _mount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned SSHFS command without mounting (default).")
+    _mount_mode.add_argument("--apply", action="store_true", help="Execute the SSHFS mount if sshfs is available and path is in an approved namespace.")
+    project_mount_remote.set_defaults(handler=handle_project_mount_remote)
+
+    project_unmount_remote = project_subparsers.add_parser(
+        "unmount-remote",
+        help="Plan or execute an SSHFS unmount for a declared remote source (dry-run by default).",
+    )
+    project_unmount_remote.add_argument("domain")
+    project_unmount_remote.add_argument("project")
+    project_unmount_remote.add_argument("--name", help="Name of the remote to unmount (default: all with a mount block).")
+    project_unmount_remote.add_argument("--timeout", type=int, default=20, help="Unmount command timeout in seconds (default: 20).")
+    project_unmount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _unmount_mode = project_unmount_remote.add_mutually_exclusive_group()
+    _unmount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned unmount command without unmounting (default).")
+    _unmount_mode.add_argument("--apply", action="store_true", help="Execute the platform-appropriate unmount command.")
+    project_unmount_remote.set_defaults(handler=handle_project_unmount_remote)
+
+    project_exec = project_subparsers.add_parser(
+        "exec",
+        help="Run a command on the remote host for a remote-authoritative project.",
+    )
+    project_exec.add_argument("domain")
+    project_exec.add_argument("project")
+    project_exec.add_argument("--name", help="Name of the remote to use (default: first remote-authoritative).")
+    project_exec.add_argument("--timeout", type=int, default=60, help="SSH command timeout in seconds (default: 60).")
+    project_exec.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_exec.add_argument("cmd", nargs="*", metavar="command", help="Command to run remotely. Use -- to separate from options: exec acme proj -- git status")
+    project_exec.set_defaults(handler=handle_project_exec)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -1225,6 +1267,75 @@ def handle_project_sync_remote(args: argparse.Namespace) -> int:
     else:
         print("no remotes synced")
     return 1 if result.get("errors") else 0
+
+
+def handle_project_mount_remote(args: argparse.Namespace) -> int:
+    apply = getattr(args, "apply", False)
+    result = mount_remote(
+        args.root,
+        args.domain,
+        args.project,
+        name=getattr(args, "name", None),
+        namespace=getattr(args, "namespace", None),
+        apply=apply,
+        timeout=getattr(args, "timeout", 20),
+    )
+    for line in result.get("plan", []):
+        print(line)
+    for w in result.get("warnings", []):
+        print(f"warning: {w}")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    if not apply:
+        print("(dry-run; use --apply to mount)")
+    elif result.get("applied"):
+        print("mount applied")
+    return 1 if result.get("errors") else 0
+
+
+def handle_project_unmount_remote(args: argparse.Namespace) -> int:
+    apply = getattr(args, "apply", False)
+    result = unmount_remote(
+        args.root,
+        args.domain,
+        args.project,
+        name=getattr(args, "name", None),
+        apply=apply,
+        timeout=getattr(args, "timeout", 20),
+    )
+    for line in result.get("plan", []):
+        print(line)
+    for w in result.get("warnings", []):
+        print(f"warning: {w}")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    if not apply:
+        print("(dry-run; use --apply to unmount)")
+    elif result.get("applied"):
+        print("unmount applied")
+    return 1 if result.get("errors") else 0
+
+
+def handle_project_exec(args: argparse.Namespace) -> int:
+    cmd_parts: list[str] = [c for c in (args.cmd or []) if c != "--"]
+    if not cmd_parts:
+        print("error: no command specified; use: agentic-os project exec <domain> <project> -- <command...>")
+        return 1
+    result = exec_remote(
+        args.root,
+        args.domain,
+        args.project,
+        cmd_parts,
+        name=getattr(args, "name", None),
+        timeout=getattr(args, "timeout", 60),
+    )
+    if result.get("stdout"):
+        print(result["stdout"], end="")
+    if result.get("stderr"):
+        print(result["stderr"], end="")
+    for e in result.get("errors", []):
+        print(f"error: {e}")
+    return 0 if result.get("ok") else 1
 
 
 def handle_project_worktree_add(args: argparse.Namespace) -> int:
