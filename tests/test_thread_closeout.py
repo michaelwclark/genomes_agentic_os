@@ -362,7 +362,13 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     ).read_text(encoding="utf-8")
     active_worklog = project_root / "work-items" / "02-active" / "002_still_active" / "WORKLOG.md"
     active_worklog_marker = datetime(2026, 6, 16, tzinfo=timezone.utc).timestamp()
-    os.utime(active_worklog, (active_worklog_marker, active_worklog_marker))
+    for path in active_worklog.parent.rglob("*"):
+        if path.is_file():
+            os.utime(path, (active_worklog_marker, active_worklog_marker))
+    for path in sorted(active_worklog.parent.rglob("*"), reverse=True):
+        if path.is_dir():
+            os.utime(path, (active_worklog_marker, active_worklog_marker))
+    os.utime(active_worklog.parent, (active_worklog_marker, active_worklog_marker))
 
     assert main(["project", "work-item", "sync-active", "--root", str(root)]) == 0
     capsys.readouterr()
