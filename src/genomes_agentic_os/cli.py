@@ -34,7 +34,15 @@ from .losmon import format_losmon_result, losmon_validate
 from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, repair_project_work_item
 from .lifecycle import finalize_lingering_work_items, sync_active_container
 from .migrations import format_migration_result, migrate_apply, migrate_plan
-from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
+from .notion_sync import (
+    apply_active_work_sync,
+    apply_bootstrap_plan,
+    apply_sync_plan,
+    build_active_work_sync_plan,
+    build_bootstrap_plan,
+    build_sync_plan,
+    format_sync_result,
+)
 from .plans import capture_plan, format_plan_result
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
 from .routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
@@ -827,6 +835,18 @@ def build_parser() -> argparse.ArgumentParser:
     notion_track_runtime_mode.add_argument("--apply", action="store_true")
     notion_track_runtime.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_track_runtime.set_defaults(handler=handle_notion_track_runtime)
+    notion_active_work = notion_subparsers.add_parser(
+        "active-work-sync",
+        help="Plan or apply guarded Notion sync for the generated OS Active Work database.",
+    )
+    notion_active_work.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_active_work_mode = notion_active_work.add_mutually_exclusive_group(required=True)
+    notion_active_work_mode.add_argument("--dry-run", action="store_true")
+    notion_active_work_mode.add_argument("--apply", action="store_true")
+    notion_active_work.add_argument("--database-id", help="Existing OS Active Work Notion database id.")
+    notion_active_work.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
+    notion_active_work.add_argument("--token-env", default="GENOMES_NOTION_PAT", help="Environment variable containing the Notion token.")
+    notion_active_work.set_defaults(handler=handle_notion_active_work_sync)
 
     runtime_parser = subparsers.add_parser("runtime", help="Manage file-backed runtime state.")
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
@@ -1789,6 +1809,23 @@ def handle_notion_track_runtime(args: argparse.Namespace) -> int:
         print(format_runtime_result(build_runtime_tracking_plan(args.root)))
     else:
         print(format_runtime_result(apply_runtime_tracking(args.root, verified_workspace=args.verified_workspace)))
+    return 0
+
+
+def handle_notion_active_work_sync(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_sync_result(build_active_work_sync_plan(args.root, database_id=args.database_id)))
+    else:
+        print(
+            format_sync_result(
+                apply_active_work_sync(
+                    args.root,
+                    database_id=args.database_id,
+                    verified_workspace=args.verified_workspace,
+                    token_env=args.token_env,
+                )
+            )
+        )
     return 0
 
 
