@@ -541,6 +541,8 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     for directory in DOMAIN_DIRECTORIES:
         require_dir(domain_root / directory, result)
 
+    require_file(domain_root / "00-programs" / "README.md", result)
+
     for filename in CONTROL_PLANE_FILES:
         require_file(domain_root / "00-control-plane" / filename, result)
 

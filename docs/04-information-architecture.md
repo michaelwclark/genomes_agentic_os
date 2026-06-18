@@ -1,7 +1,7 @@
 # 04 · Information Architecture
 
 > **Purpose:** understand how the installed OS is organized on disk — the root
-> layout, the five default domains, the eight numbered operating lanes inside each
+> layout, the five default domains, the numbered operating lanes inside each
 > domain, and the context files that make every layer agent-readable. This is the
 > physical shape that routing matches against.
 >
@@ -23,7 +23,7 @@ The hierarchy has three levels:
 | --- | --- | --- |
 | **OS root** | `~/agentic_os/` | `agentic-os init` |
 | **Domain** | `personal/`, `los/`, `clarks_consulting/` | `init` (defaults) or `domain create` |
-| **Numbered lane** | `00-control-plane/` … `08-archive/` | created inside every domain |
+| **Numbered lane** | `00-programs/`, `00-control-plane/` … `08-archive/` | created inside every domain |
 
 ---
 
@@ -77,17 +77,18 @@ structure as the defaults.
 
 ## Domain anatomy diagram
 
-![Domain anatomy: the OS root holds five default domains; each domain contains harness context files plus eight numbered operating lanes (00-control-plane through 08-archive); the 03-workflows and 04-automations lanes are each sub-divided into the eight standard lanes](diagrams/infoarch-domain-anatomy.png)
+![Domain anatomy: the OS root holds five default domains; each domain contains harness context files plus numbered operating lanes including 00-programs, 00-control-plane, and 01-inbox through 08-archive; the 03-workflows and 04-automations lanes are each sub-divided into the eight standard lanes](diagrams/infoarch-domain-anatomy.png)
 
 ---
 
-## The eight numbered operating lanes
+## The numbered operating lanes
 
 Every domain contains the same numbered structure, created atomically by the
 scaffolder:
 
 | Lane | Purpose | Files created |
 | --- | --- | --- |
+| `00-programs/` | Named capability ownership and CRUD context bundles. Use this when a subsystem spans skills, commands, workflows, automations, scripts, docs, schedules, Notion, and state. | `README.md` |
 | `00-control-plane/` | Active work, routing, approvals, and decisions. | `active-work.md`, `decisions.md`, `routing-rules.md`, `approval-rules.md` |
 | `01-inbox/` | Raw capture and triage — where unprocessed input lands first. | `raw-ideas.md`, `triage.md` |
 | `02-projects/` | One folder per active project; each project is its own routed operating surface with source and worktree links. | `README.md` |
@@ -118,6 +119,10 @@ scaffolder:
 
 A workflow spec lives at e.g. `los/03-workflows/engineering/deploy_release/`.
 An automation spec lives at e.g. `los/04-automations/support/ticket_intake/`.
+
+An instance program lives at e.g. `los/00-programs/team_pr_sync/`. Shared
+programs live under `harness/shared_factory/00-programs/<program>/`; see
+[21 · OS Programs](21-os-programs.md).
 
 ---
 
@@ -231,6 +236,7 @@ created: ~/agentic_os/acme/RULES.md
 created: ~/agentic_os/acme/TOOLS.md
 created: ~/agentic_os/acme/REFERENCES.md
 created: ~/agentic_os/acme/domain.yml
+created: ~/agentic_os/acme/00-programs
 created: ~/agentic_os/acme/00-control-plane
 created: ~/agentic_os/acme/01-inbox
 created: ~/agentic_os/acme/02-projects
@@ -242,6 +248,7 @@ created: ~/agentic_os/acme/06-runs-and-logs/runs
 created: ~/agentic_os/acme/06-runs-and-logs/failures
 created: ~/agentic_os/acme/07-metrics
 created: ~/agentic_os/acme/08-archive
+created: ~/agentic_os/acme/00-programs/README.md
 created: ~/agentic_os/acme/00-control-plane/active-work.md
 created: ~/agentic_os/acme/00-control-plane/decisions.md
 created: ~/agentic_os/acme/00-control-plane/routing-rules.md

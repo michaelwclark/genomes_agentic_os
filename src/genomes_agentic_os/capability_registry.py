@@ -75,6 +75,18 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-create-workflow.md",
         },
         {
+            "id": "create-program",
+            "command": "/create-program",
+            "description": "Create a shared OSProgram contract and context bundle.",
+            "source": "harness/commands/os-create-program.md",
+        },
+        {
+            "id": "create-instance-program",
+            "command": "/create-instance-program",
+            "description": "Create a domain-local InstanceOSProgram contract and context bundle.",
+            "source": "harness/commands/os-create-instance-program.md",
+        },
+        {
             "id": "orchestrate",
             "command": "/orchestrate",
             "description": "Plan, decompose, delegate, verify, and merge feature work.",
@@ -109,6 +121,18 @@ def command_entries() -> list[dict[str, str]]:
             "command": "agentic-os validate",
             "description": "Validate an installed OS root against the source package contract.",
             "source": "agentic-os validate",
+        },
+        {
+            "id": "program-create",
+            "command": "agentic-os program create",
+            "description": "Create a shared OSProgram under harness/shared_factory/00-programs/.",
+            "source": "agentic-os program create",
+        },
+        {
+            "id": "instance-program-create",
+            "command": "agentic-os instance-program create",
+            "description": "Create a domain-local InstanceOSProgram under <domain>/00-programs/.",
+            "source": "agentic-os instance-program create",
         },
         {
             "id": "project-onboard",
@@ -168,6 +192,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Workflow Builder",
             "description": "Create or refine reusable workflow contracts.",
             "source": "harness/skills/workflow-builder/SKILL.md",
+        },
+        {
+            "id": "program-builder",
+            "name": "Program Builder",
+            "description": "Create or refine OSProgram and InstanceOSProgram context bundles.",
+            "source": "harness/skills/program-builder/SKILL.md",
         },
         {
             "id": "automation-qualifier",

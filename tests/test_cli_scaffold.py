@@ -75,6 +75,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "MEMORY.md").is_file()
         assert (domain_root / "REFERENCES.md").is_file()
         assert not (domain_root / "AGENT.md").exists()
+        assert (domain_root / "00-programs" / "README.md").is_file()
         assert (domain_root / "00-control-plane" / "routing-rules.md").is_file()
         assert (domain_root / "01-inbox" / "triage.md").is_file()
         assert (domain_root / "03-workflows" / "README.md").is_file()
@@ -1418,7 +1419,9 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
     assert (domain_root / "REFERENCES.md").is_file()
     domain_config = (domain_root / "domain.yml").read_text(encoding="utf-8")
     assert domain_config.startswith("id: client_delivery")
+    assert "programs: 00-programs" in domain_config
     assert "context_loading:" in domain_config
+    assert (domain_root / "00-programs" / "README.md").is_file()
     assert (domain_root / "00-control-plane" / "active-work.md").is_file()
     assert (domain_root / "00-control-plane" / "approval-rules.md").is_file()
     assert (domain_root / "01-inbox" / "raw-ideas.md").is_file()
@@ -1486,6 +1489,37 @@ def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
     assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
     run_logs = list((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
     assert len(run_logs) == 1
+    assert validate_root(root).ok
+    assert main(["validate", "--root", str(root)]) == 0
+
+
+def test_program_and_instance_program_scaffolds(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["program", "create", "os_program_lifecycle", "--root", str(root)]) == 0
+    program_root = root / "harness" / "shared_factory" / "00-programs" / "os_program_lifecycle"
+    assert (program_root / "program.md").is_file()
+    assert (program_root / "components.yml").is_file()
+    assert (program_root / "crud.md").is_file()
+    assert (program_root / "documentation.md").is_file()
+    assert (program_root / "config.toml").is_file()
+    components = yaml.safe_load((program_root / "components.yml").read_text(encoding="utf-8"))
+    assert components["type"] == "OSProgram"
+    assert components["documentation_required"] is True
+
+    assert main(["instance-program", "create", "los", "team_pr_sync", "--root", str(root)]) == 0
+    instance_root = root / "los" / "00-programs" / "team_pr_sync"
+    assert (instance_root / "AGENTS.md").is_file()
+    assert (instance_root / "program.md").is_file()
+    assert (instance_root / "components.yml").is_file()
+    assert (instance_root / "context-pack.md").is_file()
+    assert (instance_root / "runbook.md").is_file()
+    assert (instance_root / "tests.md").is_file()
+    assert (instance_root / "artifacts").is_dir()
+    instance_components = yaml.safe_load((instance_root / "components.yml").read_text(encoding="utf-8"))
+    assert instance_components["type"] == "InstanceOSProgram"
+    assert "Program Status" in (root / "los" / "00-control-plane" / "state-index.md").read_text(encoding="utf-8")
     assert validate_root(root).ok
     assert main(["validate", "--root", str(root)]) == 0
 

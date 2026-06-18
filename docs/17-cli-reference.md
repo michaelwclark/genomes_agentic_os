@@ -69,6 +69,13 @@ atlas command reference for the full flag table and real captured output.
 | `here route <request>` | Route from the current working directory (exits 2 on low confidence) | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `here context build` | Context-build scoped to cwd | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 
+### Programs
+
+| Command(s) | What it does | Handbook | Atlas |
+| --- | --- | --- | --- |
+| `program create <name>` | Scaffold a shared OSProgram under `harness/shared_factory/00-programs/` | [21 · OS Programs](21-os-programs.md) | pending |
+| `instance-program create <domain> <name>` | Scaffold a domain-local InstanceOSProgram under `<domain>/00-programs/` | [21 · OS Programs](21-os-programs.md) | pending |
+
 ### Workflows, automations & run logs
 
 | Command(s) | What it does | Handbook | Atlas |

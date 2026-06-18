@@ -69,6 +69,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [15 · Customer OS Factory](15-customer-os-factory.md) | `customer init/validate` + profiles/rooms — spinning up an isolated client OS. |
 | [16 · Health, Doctor & Validation](16-health-doctor-validation.md) | `doctor`, the subsystem doctors, `validate`, the capability registry, the monitoring gap. |
 | [20 · OS Cleanup Lifecycle](20-os-cleanup-lifecycle.md) | Cleanup workflow for terminal Jira or merged-PR worktrees, closed registry buckets, and active-work refresh. |
+| [21 · OS Programs](21-os-programs.md) | OSProgram and InstanceOSProgram conventions for named capability CRUD across skills, commands, workflows, automations, docs, and state. |
 
 ### Reference
 | Page | What it covers |
