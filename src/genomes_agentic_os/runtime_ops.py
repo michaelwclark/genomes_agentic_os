@@ -8,6 +8,8 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -967,6 +969,12 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "errors": validation.errors,
             "warnings": validation.warnings,
         }
+    watch_source_result = _run_watch_source_script(root, normalized)
+    if watch_source_result is not None:
+        return watch_source_result
+    quiet_run_result = _run_quiet_run_script(root, normalized)
+    if quiet_run_result is not None:
+        return quiet_run_result
     _si_persist_forms = {
         f"agentic-os self-improvement run --root {root} --apply",
         f"agentic-os self-improvement run --root {str(root)} --apply",
@@ -1037,6 +1045,161 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
         "command": normalized,
         "errors": ["unsupported local script command"],
         "warnings": [],
+    }
+
+
+def _run_watch_source_script(root: Path, command: str) -> dict[str, Any] | None:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [f"invalid watch-source command: {exc}"],
+            "warnings": [],
+        }
+    if len(parts) < 3 or parts[:2] != ["agentic-os", "watch-source"]:
+        return None
+
+    mode = parts[2]
+    if mode not in {"poll", "run-due"}:
+        return None
+
+    source_id: str | None = None
+    command_root = root
+    apply = False
+    dry_run_flag = False
+    index = 3
+    if mode == "poll":
+        if index >= len(parts) or parts[index].startswith("-"):
+            return {
+                "supported": True,
+                "ok": False,
+                "command": command,
+                "errors": ["watch-source poll command is missing source_id"],
+                "warnings": [],
+            }
+        source_id = parts[index]
+        index += 1
+    while index < len(parts):
+        token = parts[index]
+        if token == "--root":
+            index += 1
+            if index >= len(parts):
+                return {
+                    "supported": True,
+                    "ok": False,
+                    "command": command,
+                    "errors": ["watch-source command is missing --root value"],
+                    "warnings": [],
+                }
+            command_root = expand_path(parts[index])
+        elif token == "--apply":
+            apply = True
+        elif token == "--dry-run":
+            dry_run_flag = True
+        else:
+            return {
+                "supported": True,
+                "ok": False,
+                "command": command,
+                "errors": [f"unsupported watch-source argument: {token}"],
+                "warnings": [],
+            }
+        index += 1
+    if command_root != root:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [f"watch-source root mismatch: {command_root}"],
+            "warnings": [],
+        }
+
+    from .source_watch import poll_watch_source, run_due_watch_sources
+
+    try:
+        result = (
+            poll_watch_source(root, str(source_id), dry_run=not apply)
+            if mode == "poll"
+            else run_due_watch_sources(root, dry_run=not apply)
+        )
+    except ValueError as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [str(exc)],
+            "warnings": [],
+        }
+    ok = bool(result.get("ok", True))
+    if mode == "run-due":
+        ok = all(action.get("ok", True) for action in result.get("actions", []))
+    warnings: list[str] = []
+    if dry_run_flag and apply:
+        warnings.append("both --dry-run and --apply were present; --apply took precedence")
+    return {
+        "supported": True,
+        "ok": ok,
+        "command": command,
+        "errors": [] if ok else [str(result.get("findings") or result)],
+        "warnings": warnings,
+        "watch_source": result,
+    }
+
+
+def _run_quiet_run_script(root: Path, command: str) -> dict[str, Any] | None:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [f"invalid quiet-run command: {exc}"],
+            "warnings": [],
+        }
+    if not parts:
+        return None
+    quiet_run = root / "harness" / "bin" / "agentic-os-quiet-run"
+    if parts[0] not in {str(quiet_run), "harness/bin/agentic-os-quiet-run"}:
+        return None
+    if len(parts) < 2 or parts[1] != "start":
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": ["only agentic-os-quiet-run start is supported by runtime dispatch"],
+            "warnings": [],
+        }
+    resolved_parts = [str(quiet_run), *parts[1:]]
+    try:
+        completed = subprocess.run(
+            resolved_parts,
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:  # pragma: no cover - defensive CLI boundary
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [repr(exc)],
+            "warnings": [],
+        }
+    return {
+        "supported": True,
+        "ok": completed.returncode == 0,
+        "command": command,
+        "errors": [] if completed.returncode == 0 else [completed.stderr.strip() or completed.stdout.strip()],
+        "warnings": [],
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+        "exit_code": completed.returncode,
     }
 
 

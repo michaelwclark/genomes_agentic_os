@@ -605,7 +605,7 @@ def queue_item_for_trigger(rule: dict[str, Any], event: dict[str, Any]) -> dict[
     enqueue = ((rule.get("then") or {}).get("enqueue")) or {}
     approval_required = bool((rule.get("approval") or {}).get("required"))
     key = trigger_idempotency_key(rule, event)
-    return {
+    item = {
         "id": f"queue_{hashlib.sha256(key.encode()).hexdigest()[:12]}",
         "kind": "source_trigger",
         "ref": rule["id"],
@@ -623,6 +623,13 @@ def queue_item_for_trigger(rule: dict[str, Any], event: dict[str, Any]) -> dict[
         "created_at": utc_now(),
         "evidence": [{"type": "source_event", "path": event.get("path")}],
     }
+    command = enqueue.get("command") or enqueue.get("worker_command")
+    if command:
+        item["command"] = format_template(str(command), trigger_format_values(rule, event))
+    execution_target = enqueue.get("execution_target")
+    if execution_target:
+        item["execution_target"] = execution_target
+    return item
 
 
 def apply_trigger_rules(
