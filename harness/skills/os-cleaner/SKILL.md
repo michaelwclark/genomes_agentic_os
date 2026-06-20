@@ -33,19 +33,20 @@ Use when the user asks to clean, audit, or reconcile Agentic OS project worktree
    agentic-os project worktree cleanup-closed --root <os-root> --apply
    ```
 
-4. Run `--remove-files` only when the user has asked for physical checkout removal or the automation approval record explicitly allows it.
+4. Run `--remove-files` when the user has asked for physical checkout removal or the automation approval record explicitly allows it. For merged-PR cleanup, dirty status is not a blocker unless `REOPEN.md` exists.
 5. Run:
 
    ```sh
    agentic-os project work-item finalize-lingering --root <os-root> --apply
    ```
 
-6. Record candidate counts, closed registry path, skipped dirty checkouts, and active-container index path in the worklog or automation log.
+6. Record candidate counts, closed registry path, removed merged worktrees, `REOPEN.md` holds, and active-container index path in the worklog or automation log.
 
 ## Safety Rules
 
 - Never delete an external checkout path outside a project `worktrees/` directory.
-- Never delete a Git checkout with uncommitted changes.
+- Never delete a reopened checkout with `REOPEN.md` without asking.
+- For confirmed merged PRs, delete the worktree even when it contains local dirt such as `.cursor/`, `.claude/`, `.features/`, watch folders, `peak-styles.css`, or submodule state.
 - Treat missing Jira/GitHub metadata as not eligible for automated cleanup.
 - Registry cleanup is reversible from `worktrees/closed.yml`; physical deletion is not.
 - External writes, Jira updates, and GitHub writes still require layer approval.

@@ -29,11 +29,20 @@ The installed runtime schedules run daily at 05:00 and 22:00
 agentic-os project worktree cleanup-closed --root <os-root> --dry-run
 agentic-os project worktree cleanup-closed --root <os-root> --apply
 agentic-os project worktree cleanup-closed --root <os-root> --apply --remove-files
+agentic-os project work-item infer-complete --root <os-root> --dry-run
+agentic-os project work-item infer-complete --root <os-root> --apply
 ```
 
 Use `--dry-run` first. Use `--apply` to move eligible registry entries out of
-active state. Use `--remove-files` only after explicit approval because it can
-delete clean local checkout directories.
+active state. Use `--remove-files` only after explicit approval or a written
+guarded automation rule because it can delete local checkout directories. For
+confirmed merged PR cleanup, local dirt is allowed unless root `REOPEN.md` is
+present.
+
+Use `infer-complete` before `finalize-lingering` when active work items appear
+finished but still live in `02-active/`. The command treats stale-only work as
+active; it needs terminal evidence plus completion artifacts plus clear
+`NEXT.md` plus a quiet conversation window before it marks a packet `finished`.
 
 ## Candidate Signals
 
@@ -80,6 +89,8 @@ worktree, it:
 Run this companion cleanup for stale work-item packets:
 
 ```sh
+agentic-os project work-item infer-complete --root /Users/genome/agentic_os --dry-run
+agentic-os project work-item infer-complete --root /Users/genome/agentic_os --apply
 agentic-os project work-item finalize-lingering --root /Users/genome/agentic_os --apply
 agentic-os project work-item sync-active --root /Users/genome/agentic_os
 agentic-os validate --root /Users/genome/agentic_os
@@ -98,10 +109,15 @@ File removal only succeeds when all of these are true:
 - The user or automation approval record explicitly allows file removal.
 - The target path exists under the owning project's `worktrees/` directory.
 - The target is a Git checkout.
-- `git status --porcelain` is clean.
+- The cleanup reason is a confirmed merged PR, or `git status --porcelain` is
+  clean.
+- Root `REOPEN.md` is absent.
 
-The command skips dirty checkouts and external paths. External checkouts can be
-closed in the registry, but they are not deleted.
+The command removes dirty merged-PR checkouts when `REOPEN.md` is absent.
+Known disposable merged-PR dirt includes `.cursor/`, `.claude/`, `.features/`,
+watch folders, `peak-styles.css`, and submodule state. The command skips dirty
+unknown/unmerged checkouts and external paths. External checkouts can be closed
+in the registry, but they are not deleted.
 
 ## Operator Runbook
 
@@ -109,6 +125,7 @@ closed in the registry, but they are not deleted.
 2. Run:
 
    ```sh
+   agentic-os project work-item infer-complete --root /Users/genome/agentic_os --dry-run
    agentic-os project worktree cleanup-closed --root /Users/genome/agentic_os --dry-run
    ```
 
@@ -117,6 +134,7 @@ closed in the registry, but they are not deleted.
 4. If candidates are correct, run:
 
    ```sh
+   agentic-os project work-item infer-complete --root /Users/genome/agentic_os --apply
    agentic-os project worktree cleanup-closed --root /Users/genome/agentic_os --apply
    ```
 

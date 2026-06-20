@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import re
 import shutil
@@ -106,6 +107,7 @@ ACTIVE_WORK_ITEM_STATES = {
 ACTIVE_CONTAINER_WORK_ITEM_STATES = {"specified", "ready", "building", "validating", "blocked"}
 
 TERMINAL_WORK_ITEM_STATES = {"finished", "documented", "archived"}
+COMPLETION_INFERENCE_DECISIONS = ("finish-ready", "needs-thread-finalizer", "manual-review", "keep-active")
 
 WORK_ITEM_INDEX_RE = re.compile(r"^(?P<index>\d{3})[_-](?P<slug>.+)$")
 
@@ -1048,6 +1050,345 @@ def is_lingering_terminal_record(record: WorkItemRecord) -> bool:
     return record.source == "project_work_item" and record.status in TERMINAL_WORK_ITEM_STATES and current_lane(record) != lane_for_status(record.status)
 
 
+def file_has_substantive_content(path: Path, *, empty_markers: tuple[str, ...] = ("pending", "tbd")) -> bool:
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not text:
+        return False
+    body_lines = [
+        line.strip().lower().strip("-* ")
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    body = "\n".join(body_lines).strip()
+    if not body:
+        return False
+    return not any(marker in body for marker in empty_markers)
+
+
+def closeout_artifact_paths(work_item_root: Path) -> list[Path]:
+    if work_item_root.is_file():
+        artifact_root = work_item_root.parent / f"{work_item_root.stem}.artifacts" / "thread-closeouts"
+    else:
+        artifact_root = work_item_root / "artifacts" / "thread-closeouts"
+    if not artifact_root.is_dir():
+        return []
+    return [path for path in sorted(artifact_root.rglob("*")) if path.is_file() and path.name in {"closeout.md", "thread-closeout.yml", "thread.yml"}]
+
+
+def latest_file_mtime(paths: list[Path]) -> datetime | None:
+    latest: float | None = None
+    for path in paths:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if latest is None or mtime > latest:
+            latest = mtime
+    if latest is None:
+        return None
+    return datetime.fromtimestamp(latest, tz=timezone.utc)
+
+
+def conversation_activity_files_for_inference(work_item_root: Path) -> list[Path]:
+    if work_item_root.is_file():
+        roots = [work_item_root.parent / f"{work_item_root.stem}.logs" / "conversations"]
+    else:
+        roots = [work_item_root / "logs" / "conversations"]
+    files: list[Path] = []
+    for root in roots:
+        if root.is_file():
+            files.append(root)
+        elif root.is_dir():
+            files.extend(path for path in root.rglob("*") if path.is_file())
+    return files
+
+
+def next_action_clear(work_item_root: Path) -> bool:
+    path = work_item_root if work_item_root.is_file() else work_item_root / "NEXT.md"
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8", errors="ignore").lower()
+    clear_markers = (
+        "next action: none",
+        "next action\n\nnone",
+        "- next action: none",
+        "- none",
+        "none recorded",
+        "no next action",
+    )
+    if any(marker in text for marker in clear_markers):
+        return True
+    unresolved_markers = ("implement ", "continue ", "review ", "fix ", "blocked", "pending", "tbd")
+    return not any(marker in text for marker in unresolved_markers)
+
+
+def work_item_pr_watch_terminal(work_item_root: Path) -> tuple[bool, list[str]]:
+    artifacts_root = work_item_root.parent / f"{work_item_root.stem}.artifacts" if work_item_root.is_file() else work_item_root / "artifacts"
+    evidence: list[str] = []
+    if not artifacts_root.is_dir():
+        return False, evidence
+    for path in sorted(artifacts_root.rglob("pr-*-watch-state.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        text = yaml.safe_dump(payload, sort_keys=True).lower()
+        if "merged" in text or "success" in text or "passed" in text:
+            evidence.append(str(path))
+    return bool(evidence), evidence
+
+
+def worktree_entries_for_project(project_root: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for path in (project_root / "config" / "worktrees.yml", project_root / "worktrees" / "index.yml"):
+        payload = load_yaml_mapping(path)
+        raw = payload.get("worktrees")
+        if isinstance(raw, dict):
+            candidate = raw.get("registered") or raw.get("worktrees") or []
+        else:
+            candidate = raw or payload.get("registered") or []
+        if not isinstance(candidate, list):
+            continue
+        for entry in candidate:
+            if isinstance(entry, dict):
+                with_source = dict(entry)
+                with_source.setdefault("_source", str(path))
+                entries.append(with_source)
+    return entries
+
+
+def worktree_entries_for_record(project_root: Path, record: WorkItemRecord) -> list[dict[str, Any]]:
+    labels = {label for label in normalized_labels(record) if label and len(label) >= 3}
+    matches: list[dict[str, Any]] = []
+    for entry in worktree_entries_for_project(project_root):
+        fields = [
+            entry.get("id"),
+            entry.get("name"),
+            entry.get("work_item"),
+            entry.get("work_item_id"),
+            entry.get("feature"),
+            entry.get("ticket"),
+            entry.get("branch"),
+            entry.get("path"),
+            entry.get("link"),
+        ]
+        field_text = " ".join(str(value or "").lower().replace("-", "_") for value in fields)
+        if any(label.replace("-", "_").replace(" ", "_") in field_text for label in labels):
+            matches.append(entry)
+    return matches
+
+
+def infer_completion_decision(
+    project_root: Path,
+    record: WorkItemRecord,
+    *,
+    older_than_days: int,
+    include_blocked: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=older_than_days)
+    record_domain = str(record.metadata.get("domain") or project_domain(project_root))
+    record_project = str(record.metadata.get("project") or project_root.name)
+    evidence_paths: list[str] = []
+    reasons: list[str] = []
+    missing: list[str] = []
+
+    terminal_reason = worktree_cleanup_reason(record.metadata)
+    terminal_sources: list[str] = []
+    if terminal_reason:
+        terminal_sources.append(f"work_item:{terminal_reason}")
+    local_terminal = record.status in TERMINAL_WORK_ITEM_STATES
+    if local_terminal:
+        terminal_sources.append(f"work_item_status:{record.status}")
+    for entry in worktree_entries_for_record(project_root, record):
+        reason = worktree_cleanup_reason(entry)
+        if reason:
+            terminal_sources.append(f"worktree:{reason}")
+            evidence_paths.append(str(entry.get("_source") or "worktree registry"))
+    pr_watch_terminal, pr_watch_paths = work_item_pr_watch_terminal(record.path)
+    if pr_watch_terminal:
+        terminal_sources.append("pr_watch:terminal")
+        evidence_paths.extend(pr_watch_paths)
+
+    closeout_paths = closeout_artifact_paths(record.path)
+    evidence_paths.extend(str(path) for path in closeout_paths)
+    has_summary = file_has_substantive_content(record.path / "SUMMARY.md") if record.path.is_dir() else False
+    has_holdout = file_has_substantive_content(record.path / "HOLDOUT_QA_RESULTS.md") if record.path.is_dir() else False
+    has_completion_artifact = bool(closeout_paths) or has_summary or has_holdout
+    has_closeout = bool(closeout_paths)
+    clear_next = next_action_clear(record.path)
+    latest_activity = latest_file_mtime(conversation_activity_files_for_inference(record.path))
+    recent_activity = bool(latest_activity and latest_activity > cutoff)
+    recent_activity_blocks = recent_activity and not local_terminal
+    blocked_status = record.status == "blocked"
+
+    if terminal_sources:
+        reasons.extend(terminal_sources)
+    else:
+        missing.append("terminal evidence")
+    if has_summary:
+        reasons.append("summary present")
+        evidence_paths.append(str(record.path / "SUMMARY.md"))
+    if has_holdout:
+        reasons.append("holdout QA results present")
+        evidence_paths.append(str(record.path / "HOLDOUT_QA_RESULTS.md"))
+    if has_closeout:
+        reasons.append("thread closeout present")
+    if not has_completion_artifact:
+        missing.append("completion artifact")
+    if not clear_next:
+        missing.append("clear next action")
+    if recent_activity_blocks:
+        missing.append("quiet window")
+    if blocked_status and not include_blocked:
+        missing.append("blocked status requires --include-blocked")
+
+    if not terminal_sources:
+        decision = "keep-active"
+        confidence = "low"
+        next_action = "Keep active until terminal PR/Jira/worktree evidence exists."
+    elif recent_activity_blocks:
+        decision = "keep-active"
+        confidence = "medium"
+        next_action = "Keep active until the quiet window passes."
+    elif blocked_status and not include_blocked:
+        decision = "manual-review"
+        confidence = "medium"
+        next_action = "Review blocked item before automatic completion."
+    elif not has_completion_artifact:
+        decision = "manual-review"
+        confidence = "medium"
+        next_action = "Add completion artifact or run thread-finalizer after review."
+    elif not clear_next:
+        decision = "manual-review"
+        confidence = "medium"
+        next_action = "Resolve NEXT.md before automatic completion."
+    elif local_terminal:
+        decision = "finish-ready"
+        confidence = "high"
+        next_action = "Move terminal local status to 03-complete."
+    elif has_closeout:
+        decision = "finish-ready"
+        confidence = "high"
+        next_action = "Mark finished and move to 03-complete."
+    else:
+        decision = "needs-thread-finalizer"
+        confidence = "high"
+        next_action = "Run thread-finalizer, then mark finished."
+
+    return {
+        "domain": record_domain,
+        "project": record_project,
+        "work_item": record.slug or record.path.name,
+        "title": record.title,
+        "current_status": record.status,
+        "path": str(record.path),
+        "decision": decision,
+        "confidence": confidence,
+        "evidence": {
+            "terminal_sources": terminal_sources,
+            "completion_artifacts": {
+                "thread_closeout": has_closeout,
+                "summary": has_summary,
+                "holdout_qa_results": has_holdout,
+            },
+            "clear_next_action": clear_next,
+            "last_activity": latest_activity.isoformat().replace("+00:00", "Z") if latest_activity else None,
+            "recent_activity": recent_activity,
+            "blocked_status": blocked_status,
+        },
+        "evidence_paths": sorted(set(evidence_paths)),
+        "reasons": reasons,
+        "missing": missing,
+        "next_action": next_action,
+    }
+
+
+def infer_complete_work_items(
+    root: str | Path,
+    *,
+    domain: str | None = None,
+    project: str | None = None,
+    older_than_days: int = 3,
+    min_confidence: str = "high",
+    include_blocked: bool = False,
+    apply: bool = False,
+) -> dict[str, Any]:
+    if older_than_days < 1:
+        raise ValueError("older-than-days must be at least 1")
+    if min_confidence not in {"high", "medium", "low"}:
+        raise ValueError("min-confidence must be high, medium, or low")
+    os_root = expand_path(root)
+    decisions: list[dict[str, Any]] = []
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for project_root in root_project_dirs(os_root, domain=domain, project=project):
+        for record in local_project_work_items(project_root):
+            if record.source != "project_work_item" or current_lane(record) != "02-active":
+                continue
+            decision = infer_completion_decision(
+                project_root,
+                record,
+                older_than_days=older_than_days,
+                include_blocked=include_blocked,
+            )
+            decisions.append(decision)
+            if not apply:
+                continue
+            if decision["decision"] not in {"finish-ready", "needs-thread-finalizer"}:
+                skipped.append({"work_item": decision["work_item"], "reason": decision["decision"]})
+                continue
+            if decision["confidence"] != "high" and min_confidence == "high":
+                skipped.append({"work_item": decision["work_item"], "reason": f"confidence:{decision['confidence']}"})
+                continue
+            closeout_artifact: str | None = None
+            if decision["decision"] == "needs-thread-finalizer":
+                from .thread_closeout import close_thread
+
+                closeout = close_thread(
+                    os_root,
+                    mode="artifact-closeout",
+                    thread_id=f"infer_complete_{record.slug or record.path.name}",
+                    domain=decision["domain"],
+                    project=decision["project"],
+                    work_item=str(decision["work_item"]),
+                    work_level="artifact",
+                    summary=f"Completion inference finalized {record.title}.",
+                    next_action="None",
+                    skip_notion=True,
+                    cwd=record.path,
+                )
+                closeout_artifact = str((Path(closeout["artifact_root"]) / "closeout.md")) if closeout.get("artifact_root") else None
+            update_work_item_metadata(record, status="finished", lane="02-active", metadata_path=record.metadata_path)
+            applied.append(
+                {
+                    "domain": decision["domain"],
+                    "project": decision["project"],
+                    "work_item": decision["work_item"],
+                    "decision": decision["decision"],
+                    "closeout_artifact": closeout_artifact,
+                    "marked_status": "finished",
+                }
+            )
+    finalize_result = finalize_lingering_work_items(os_root, domain=domain, project=project, apply=True) if apply else None
+    return {
+        "mode": "apply" if apply else "dry-run",
+        "older_than_days": older_than_days,
+        "min_confidence": min_confidence,
+        "include_blocked": include_blocked,
+        "decision_counts": {decision: sum(1 for row in decisions if row["decision"] == decision) for decision in COMPLETION_INFERENCE_DECISIONS},
+        "decisions": decisions,
+        "candidate_count": sum(1 for row in decisions if row["decision"] in {"finish-ready", "needs-thread-finalizer"}),
+        "applied": applied,
+        "skipped": skipped,
+        "finalize_lingering": finalize_result,
+        "active_container": finalize_result.get("active_container") if isinstance(finalize_result, dict) else None,
+    }
+
+
 def update_work_item_metadata(record: WorkItemRecord, *, status: str, lane: str, metadata_path: Path) -> None:
     payload = dict(record.metadata)
     payload["status"] = status
@@ -1357,16 +1698,23 @@ def archive_worktree_entry(project_root: Path, entry: dict[str, Any], *, reason:
     return {"path": str(closed_path), "entry": archived}
 
 
-def clean_git_checkout(path: Path) -> tuple[bool, str]:
+def removable_git_checkout(path: Path, *, allow_dirty: bool = False) -> tuple[bool, str]:
     if not path.exists():
         return True, "missing"
     probe = subprocess.run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, check=False)
     if probe.returncode != 0:
         return False, "not a git checkout"
-    status = subprocess.run(["git", "-C", str(path), "status", "--porcelain"], capture_output=True, text=True, check=False)
+    status = subprocess.run(
+        ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if status.returncode != 0:
         return False, (status.stderr or status.stdout or "git status failed").strip()
     if status.stdout.strip():
+        if allow_dirty:
+            return True, "dirty ignored for merged PR cleanup"
         return False, "git checkout has uncommitted changes"
     return True, "clean"
 
@@ -1382,10 +1730,16 @@ def remove_worktree_files(project_root: Path, entry: dict[str, Any]) -> tuple[bo
         return False, str(exc)
     if not target_resolved.is_relative_to(managed_root):
         return False, "target is outside project worktrees/"
-    clean, reason = clean_git_checkout(target_resolved)
-    if not clean:
+    if (target_resolved / "REOPEN.md").exists():
+        return False, "REOPEN.md present; ask before cleanup"
+    cleanup_reason = worktree_cleanup_reason(entry) or ""
+    allow_dirty = cleanup_reason.startswith("pr")
+    removable, reason = removable_git_checkout(target_resolved, allow_dirty=allow_dirty)
+    if not removable:
         return False, reason
     shutil.rmtree(target_resolved)
+    if reason == "dirty ignored for merged PR cleanup":
+        return True, "removed dirty merged worktree"
     return True, "removed"
 
 

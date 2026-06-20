@@ -31,7 +31,7 @@ from .event_graph import (
 )
 from .hook_ops import hook_doctor, hook_sync
 from .losmon import format_losmon_result, losmon_validate
-from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, repair_project_work_item
+from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, infer_complete_work_items, repair_project_work_item
 from .lifecycle import finalize_lingering_work_items, sync_active_container
 from .migrations import format_migration_result, migrate_apply, migrate_plan
 from .notion_sync import (
@@ -378,7 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_worktree_cleanup_closed.add_argument(
         "--remove-files",
         action="store_true",
-        help="Also remove clean in-project worktree directories after closing their registry entries.",
+        help="Also remove in-project worktree directories after closing their registry entries; merged PR dirt is ignored unless REOPEN.md is present.",
     )
     project_worktree_cleanup_closed.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_cleanup_closed.set_defaults(handler=handle_project_worktree_cleanup_closed)
@@ -426,6 +426,34 @@ def build_parser() -> argparse.ArgumentParser:
     lingering_mode.add_argument("--apply", action="store_true", help="Move stale terminal packets and refresh active links.")
     project_work_item_finalize_lingering.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_finalize_lingering.set_defaults(handler=handle_project_work_item_finalize_lingering)
+    project_work_item_infer_complete = project_work_item_subparsers.add_parser(
+        "infer-complete",
+        help="Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity.",
+    )
+    project_work_item_infer_complete.add_argument("--domain", help="Limit inference to a domain.")
+    project_work_item_infer_complete.add_argument("--project", help="Limit inference to a project.")
+    infer_mode = project_work_item_infer_complete.add_mutually_exclusive_group()
+    infer_mode.add_argument("--dry-run", action="store_true", default=True, help="Report completion decisions without writing.")
+    infer_mode.add_argument("--apply", action="store_true", help="Finalize high-confidence completed packets and refresh active links.")
+    project_work_item_infer_complete.add_argument(
+        "--older-than-days",
+        type=int,
+        default=3,
+        help="Conversation quiet-window threshold before automatic completion.",
+    )
+    project_work_item_infer_complete.add_argument(
+        "--min-confidence",
+        choices=("high", "medium", "low"),
+        default="high",
+        help="Minimum confidence accepted in apply mode.",
+    )
+    project_work_item_infer_complete.add_argument(
+        "--include-blocked",
+        action="store_true",
+        help="Allow blocked items to be completed when all other high-confidence gates pass.",
+    )
+    project_work_item_infer_complete.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_work_item_infer_complete.set_defaults(handler=handle_project_work_item_infer_complete)
 
     project_sync_remote = project_subparsers.add_parser(
         "sync-remote",
@@ -1457,6 +1485,23 @@ def handle_project_work_item_sync_active(args: argparse.Namespace) -> int:
 
 def handle_project_work_item_finalize_lingering(args: argparse.Namespace) -> int:
     print(yaml_dump(finalize_lingering_work_items(args.root, domain=args.domain, project=args.project, apply=args.apply)))
+    return 0
+
+
+def handle_project_work_item_infer_complete(args: argparse.Namespace) -> int:
+    print(
+        yaml_dump(
+            infer_complete_work_items(
+                args.root,
+                domain=args.domain,
+                project=args.project,
+                older_than_days=args.older_than_days,
+                min_confidence=args.min_confidence,
+                include_blocked=args.include_blocked,
+                apply=args.apply,
+            )
+        )
+    )
     return 0
 
 

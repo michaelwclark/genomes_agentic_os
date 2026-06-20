@@ -18,7 +18,7 @@ agentic-os project worktree cleanup-closed --root <os-root> --apply --remove-fil
 2. Refresh cached worktree metadata from Jira and GitHub before applying cleanup.
 3. Run `--dry-run` first and inspect the candidate list.
 4. Use `--apply` to move terminal worktree registrations into `worktrees/closed.yml`, remove generated symlinks, and rebuild `00-control-plane/active/`.
-5. Use `--remove-files` only when clean in-project worktree directories should be deleted.
+5. Use `--remove-files` when in-project merged-PR worktree directories should be deleted. Dirty files are ignored for merged PR cleanup unless `REOPEN.md` is present.
 6. Run `agentic-os project work-item finalize-lingering --apply` when related work-item packets have terminal statuses.
 7. Record the cleanup result in the project worklog or automation log.
 
@@ -29,6 +29,7 @@ Cleanup candidates are worktree entries with cached Jira status `QA Ready`, `Don
 ## Safety
 
 - The command does not query Jira or GitHub itself; the workflow refreshes those cached fields.
-- Physical deletion requires `--remove-files`, a clean Git status, and a target under the project `worktrees/` directory.
+- Physical deletion requires `--remove-files` and a target under the project `worktrees/` directory.
+- Merged-PR worktrees are removed even when dirty. Use `REOPEN.md` to preserve a reopened worktree for a follow-up PR.
 - External worktree paths are closed in the registry but not deleted.
-- Dirty checkouts are skipped and reported.
+- Dirty non-merged checkouts are skipped and reported.
