@@ -13,6 +13,12 @@ from .automation_ops import (
     format_automation_check,
     set_automation_maturity,
 )
+from .automation_control import (
+    automation_control_doctor,
+    format_automation_control_result,
+    list_automation_control,
+    run_automation_control,
+)
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
@@ -548,6 +554,28 @@ def build_parser() -> argparse.ArgumentParser:
     automation_maturity.add_argument("level", choices=AUTOMATION_MATURITY_LEVELS)
     automation_maturity.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     automation_maturity.set_defaults(handler=handle_automation_set_maturity)
+
+    automation_control_parser = subparsers.add_parser(
+        "automation-control",
+        help="Gate expensive automations from deterministic source activity.",
+    )
+    automation_control_subparsers = automation_control_parser.add_subparsers(
+        dest="automation_control_command",
+        required=True,
+    )
+    automation_control_list = automation_control_subparsers.add_parser("list", help="List managed automation gates.")
+    automation_control_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    automation_control_list.set_defaults(handler=handle_automation_control_list)
+    automation_control_doctor_parser = automation_control_subparsers.add_parser("doctor", help="Check automation-control config.")
+    automation_control_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    automation_control_doctor_parser.set_defaults(handler=handle_automation_control_doctor)
+    automation_control_run = automation_control_subparsers.add_parser("run", help="Run one automation-control tick.")
+    automation_control_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    automation_control_run.add_argument("--automation-id", help="Run only one managed automation id.")
+    automation_control_run_mode = automation_control_run.add_mutually_exclusive_group()
+    automation_control_run_mode.add_argument("--dry-run", action="store_true", default=True)
+    automation_control_run_mode.add_argument("--apply", action="store_true")
+    automation_control_run.set_defaults(handler=handle_automation_control_run)
 
     run_log_parser = subparsers.add_parser("run-log", help="Manage run logs.")
     run_log_subparsers = run_log_parser.add_subparsers(dest="run_log_command", required=True)
@@ -2010,6 +2038,24 @@ def handle_watch_source_run_due(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_automation_control_list(args: argparse.Namespace) -> int:
+    print(format_automation_control_result(list_automation_control(args.root)))
+    return 0
+
+
+def handle_automation_control_doctor(args: argparse.Namespace) -> int:
+    result = automation_control_doctor(args.root)
+    print(format_automation_control_result(result))
+    return 0 if result.get("ok") else 1
+
+
+def handle_automation_control_run(args: argparse.Namespace) -> int:
+    result = run_automation_control(args.root, dry_run=not args.apply, automation_id=args.automation_id)
+    print(format_automation_control_result(result))
+    has_unknown = any(action.get("decision") == "unknown" for action in result.get("actions") or [])
+    return 1 if has_unknown else 0
+
+
 def handle_event_append(args: argparse.Namespace) -> int:
     print(
         format_event_graph_result(
@@ -2093,7 +2139,15 @@ def handle_docs_update(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    parse_argv = list(sys.argv[1:] if argv is None else argv)
+    project_exec_cmd: list[str] | None = None
+    if parse_argv[:2] == ["project", "exec"] and "--" in parse_argv:
+        separator = parse_argv.index("--")
+        project_exec_cmd = parse_argv[separator + 1 :]
+        parse_argv = parse_argv[:separator]
+    args = parser.parse_args(parse_argv)
+    if project_exec_cmd is not None and getattr(args, "handler", None) == handle_project_exec:
+        args.cmd = project_exec_cmd
     try:
         return args.handler(args)
     except ValueError as exc:

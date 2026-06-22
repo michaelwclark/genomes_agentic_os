@@ -1031,6 +1031,43 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "closed_count": len(result.get("closed") or []),
             "skipped_count": len(result.get("skipped") or []),
         }
+    if normalized in {
+        f"agentic-os automation-control run --root {root} --apply",
+        f"agentic-os automation-control run --root {str(root)} --apply",
+    }:
+        from .automation_control import run_automation_control
+
+        result = run_automation_control(root, dry_run=False)
+        enqueued_count = len([action for action in result.get("actions") or [] if action.get("action") == "enqueued"])
+        return {
+            "supported": True,
+            "ok": True,
+            "command": normalized,
+            "errors": [],
+            "warnings": [],
+            "receipt": result.get("receipt"),
+            "enqueued_count": enqueued_count,
+        }
+    if normalized.startswith("agentic-os watch-source poll ") and normalized.endswith(f" --root {root} --apply"):
+        from .source_watch import poll_watch_source
+
+        parts = normalized.split()
+        if len(parts) == 7:
+            source_id = parts[3]
+            result = poll_watch_source(root, source_id, dry_run=False)
+            return {
+                "supported": True,
+                "ok": bool(result.get("ok")),
+                "command": normalized,
+                "errors": [] if result.get("ok") else [
+                    finding.get("message", "watch-source poll failed")
+                    for finding in result.get("findings") or []
+                ],
+                "warnings": [],
+                "source_id": source_id,
+                "events_count": len(result.get("events") or []),
+                "trigger_actions_count": len(result.get("trigger_actions") or []),
+            }
     return {
         "supported": False,
         "ok": False,

@@ -23,7 +23,7 @@ never change.
 | **Exit 0** | Success. |
 | **Exit 1** | Health check "not ok" — `doctor` / `validate` commands report a problem. Fix it and re-run. |
 | **Exit 2** | Argparse usage error **or** deliberate handled refusal — e.g. `here route` when routing confidence is low, `config install` when blocked by conflicts. Exit 2 is not a crash; it is the OS saying "I won't guess." |
-| **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
+| **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `schedule run-due`, `automation-control run`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
 | **`config` subcommands** | Exactly `install`, `install-tree`, and `doctor` — no `config layers` subcommand exists. |
 
@@ -110,6 +110,9 @@ atlas command reference for the full flag table and real captured output.
 | `heartbeat doctor` | Health-check heartbeat config | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `schedule create <name>` | Define a named cron-style schedule | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `schedule run-due` | Preview or enqueue schedules that are due (`--apply` to enqueue) | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
+| `automation-control list` | List source-gated automation targets | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | pending |
+| `automation-control doctor` | Validate source-gated automation config | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | pending |
+| `automation-control run` | Preview or enqueue source-gated automation targets (`--apply` to enqueue) | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | pending |
 | `integration list` | List registered integrations | [11 · Connected Sources](11-connected-sources.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `integration doctor` | Health-check integration credentials | [11 · Connected Sources](11-connected-sources.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `integration setup` | Configure an integration (dry-run by default) | [11 · Connected Sources](11-connected-sources.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
