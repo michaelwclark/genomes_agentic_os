@@ -24,6 +24,7 @@ import yaml
 
 from genomes_agentic_os.cli import main
 from genomes_agentic_os import self_improvement as si
+from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.runtime_ops import runtime_doctor
 
 
@@ -173,6 +174,85 @@ def test_dry_run_writes_no_report(tmp_path: Path) -> None:
     assert not (_self_improvement_root(root) / "latest-report.md").exists()
 
 
+def test_morning_report_dry_run_writes_no_morning_artifacts(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    result = si.run_self_improvement_morning_report(root, dry_run=True)
+
+    assert result["action"] == "morning-report"
+    assert result["mode"] == "dry-run"
+    assert not (_self_improvement_root(root) / "morning-reports").exists()
+
+
+def test_morning_report_apply_writes_filesystem_report_and_logs(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("GENOMES_NOTION_PAT", None)
+        result = si.run_self_improvement_morning_report(root, dry_run=False)
+
+    report = root / result["morning_report"]["report"]
+    logs = root / result["morning_report"]["logs"]
+    receipt = root / result["morning_report"]["receipt"]
+    assert report.is_file()
+    assert logs.is_file()
+    assert receipt.is_file()
+    text = report.read_text(encoding="utf-8")
+    assert "## What Was Analyzed" in text
+    assert "## What Was Found" in text
+    assert "## What Was Updated" in text
+    assert result["notion_page_projection"]["projected"] is False
+    assert "notion token" in result["notion_page_projection"]["reason"]
+
+
+def test_runtime_dispatch_supports_morning_report_command(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("GENOMES_NOTION_PAT", None)
+        execution = runtime_ops._run_local_script(
+            root,
+            f"agentic-os self-improvement morning-report --root {root} --apply",
+        )
+
+    assert execution["supported"] is True
+    assert execution["ok"] is True
+    assert execution["report_path"].endswith("report.md")
+    assert execution["logs_path"].endswith("logs.yml")
+
+
+def test_repair_validation_drift_creates_work_item_placeholders_and_json_backup(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    root.mkdir()
+    work_item = root / "domain" / "02-projects" / "project" / "work-items" / "01-intake" / "001_missing"
+    work_item.mkdir(parents=True)
+    (work_item / "work.yml").write_text(
+        yaml.safe_dump({"title": "Missing Packet", "summary": "Needs structural repair."}),
+        encoding="utf-8",
+    )
+    bad_json = root / "artifacts" / "broken.json"
+    bad_json.parent.mkdir()
+    bad_json.write_text("{not json", encoding="utf-8")
+    validation = {
+        "errors": [
+            f"work item 001_missing status 'captured' missing required file: {work_item / 'IDEA.md'}",
+            f"invalid JSON: {bad_json}: Expecting property name enclosed in double quotes",
+        ],
+        "warnings": [],
+    }
+
+    repair = si._repair_validation_drift(root, validation, apply=True)
+
+    assert repair["applied_count"] == 2
+    assert (work_item / "IDEA.md").is_file()
+    repaired = json.loads(bad_json.read_text(encoding="utf-8"))
+    assert repaired["status"] == "repaired_invalid_json_placeholder"
+    assert list(bad_json.parent.glob("broken.json.invalid-*"))
+
+
 # ---------------------------------------------------------------------------
 # Notion projection
 # ---------------------------------------------------------------------------
@@ -253,6 +333,55 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
     assert set(body["properties"]).issubset({"Name", "Summary", "Score", "Status", "Run ID", "Date"})
     assert body["properties"]["Score"]["number"] == 21
     # Token must never appear in any request body or URL.
+    for req in transport.requests:
+        payload = (req["data"] or b"").decode("utf-8", errors="replace")
+        assert SENTINEL_TOKEN not in payload
+        assert SENTINEL_TOKEN not in req["url"]
+
+
+def test_morning_report_notion_page_projection_creates_report_and_logs_pages(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    result = si.run_self_improvement_morning_report(root, dry_run=True)
+    result["morning_report"] = {"report": "local-report.md", "logs": "local-logs.yml", "receipt": "receipt.yml"}
+
+    responses = [
+        {"bot": {"workspace_name": "Genome's Notion"}},
+        {
+            "results": [
+                {
+                    "object": "page",
+                    "id": "parent-page-id",
+                    "url": "https://notion.test/parent",
+                    "properties": {
+                        "title": {
+                            "type": "title",
+                            "title": [{"plain_text": "Genome's Agentic OS"}],
+                        }
+                    },
+                }
+            ]
+        },
+        {"results": []},  # no Self Improvement Reports child page
+        {"id": "reports-page-id"},
+        {},  # append intro blocks
+        {"results": []},  # no daily page
+        {"id": "daily-page-id"},
+        {"id": "logs-page-id"},
+        {},  # append daily blocks
+        {},  # append log blocks
+    ]
+    transport = _FakeTransport(responses)
+
+    with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
+        projection = si._project_morning_report_to_notion(root, result, fetcher=transport)
+
+    assert projection["projected"] is True
+    assert projection["report_page_id"] == "dailypageid"
+    assert projection["logs_page_id"] == "logspageid"
+    methods = [request["method"] for request in transport.requests]
+    assert methods.count("POST") == 4
+    assert methods.count("PATCH") == 3
     for req in transport.requests:
         payload = (req["data"] or b"").decode("utf-8", errors="replace")
         assert SENTINEL_TOKEN not in payload

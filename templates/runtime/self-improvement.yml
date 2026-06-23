@@ -5,7 +5,7 @@ schedule_target:
   id: self_improvement_review
   enabled: false
   cadence: weekly
-  command: agentic-os self-improvement run --root <root> --apply
+  command: agentic-os self-improvement morning-report --root <root> --apply
 evidence_roots:
   - path: harness/shared_factory/06-runs-and-logs
     legacy_read_only: false
@@ -31,7 +31,20 @@ evidence_roots:
     legacy_read_only: false
   - path: shared_factory
     legacy_read_only: true
-external_sources: []
+external_sources:
+  - id: notion_genome
+    provider: notion
+    mode: report_projection
+    token_env: GENOMES_NOTION_PAT
+    target: "Genome's Agentic OS / Self Improvement Reports"
+  - id: linear_genome
+    provider: linear
+    mode: readiness_snapshot
+    token_env: LINEAR_TOKEN
+notion_report:
+  parent_title: "Genome's Agentic OS"
+  parent_page_id: ""
+  reports_page_title: Self Improvement Reports
 proposal_thresholds:
   minimum_total: 18
   minimum_confidence: 3

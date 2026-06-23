@@ -66,6 +66,7 @@ from .self_improvement import (
     promote_self_improvement_proposal,
     reject_self_improvement_proposal,
     run_self_improvement,
+    run_self_improvement_morning_report,
     self_improvement_status,
     show_self_improvement_proposal,
 )
@@ -999,6 +1000,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Persist mode: write run records, proposals, daily report, and Notion projection.",
     )
     self_improvement_run.set_defaults(handler=handle_self_improvement_run)
+    self_improvement_morning = self_improvement_subparsers.add_parser(
+        "morning-report",
+        help="Run deterministic doctor-fix, self-improvement review, filesystem report, and Notion page projection.",
+    )
+    self_improvement_morning.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_morning_mode = self_improvement_morning.add_mutually_exclusive_group()
+    self_improvement_morning_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the morning report without writing repairs, reports, or Notion pages (default behaviour).",
+    )
+    self_improvement_morning_mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply deterministic repairs, write filesystem report/logs, and project to Notion.",
+    )
+    self_improvement_morning.add_argument(
+        "--no-notion",
+        action="store_true",
+        help="Write filesystem report/logs but skip Notion page projection.",
+    )
+    self_improvement_morning.add_argument(
+        "--no-fix",
+        action="store_true",
+        help="Write the morning report without applying deterministic validation repairs.",
+    )
+    self_improvement_morning.set_defaults(handler=handle_self_improvement_morning_report)
     self_improvement_status_parser = self_improvement_subparsers.add_parser(
         "status",
         help="Summarize self-improvement run and proposal state.",
@@ -1948,6 +1976,20 @@ def handle_self_improvement_run(args: argparse.Namespace) -> int:
     # Bare invocation and --dry-run both produce dry_run=True (read-only, SPEC 15 first-run safety).
     # Only --apply flips to persist mode.
     print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_morning_report(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            run_self_improvement_morning_report(
+                args.root,
+                dry_run=not args.apply,
+                publish_notion=not args.no_notion,
+                auto_fix=not args.no_fix,
+            )
+        )
+    )
     return 0
 
 

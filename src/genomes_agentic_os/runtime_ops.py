@@ -16,7 +16,7 @@ import yaml
 from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
-from .self_improvement import run_self_improvement
+from .self_improvement import run_self_improvement, run_self_improvement_morning_report
 from .thread_closeout import stale_finalize_threads
 from .validate import validate_root
 
@@ -966,6 +966,43 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "command": normalized,
             "errors": validation.errors,
             "warnings": validation.warnings,
+        }
+    _si_morning_persist_forms = {
+        f"agentic-os self-improvement morning-report --root {root} --apply",
+        f"agentic-os self-improvement morning-report --root {str(root)} --apply",
+    }
+    _si_morning_dry_forms = {
+        f"agentic-os self-improvement morning-report --root {root}",
+        f"agentic-os self-improvement morning-report --root {str(root)}",
+        f"agentic-os self-improvement morning-report --root {root} --dry-run",
+        f"agentic-os self-improvement morning-report --root {str(root)} --dry-run",
+    }
+    if normalized in _si_morning_persist_forms | _si_morning_dry_forms:
+        _dry = normalized not in _si_morning_persist_forms
+        try:
+            result = run_self_improvement_morning_report(root, dry_run=_dry)
+        except ValueError as exc:
+            return {
+                "supported": True,
+                "ok": False,
+                "command": normalized,
+                "errors": [str(exc)],
+                "warnings": [],
+            }
+        morning_report = result.get("morning_report") or {}
+        notion_projection = result.get("notion_page_projection") or {}
+        validation_after = result.get("validation_after") or {}
+        return {
+            "supported": True,
+            "ok": bool(result.get("ok")),
+            "command": normalized,
+            "errors": [],
+            "warnings": validation_after.get("warnings") or [],
+            "validation_errors": validation_after.get("error_count"),
+            "repairs_applied": (result.get("repair") or {}).get("applied_count"),
+            "report_path": morning_report.get("report"),
+            "logs_path": morning_report.get("logs"),
+            "notion_projected": bool(notion_projection.get("projected")),
         }
     _si_persist_forms = {
         f"agentic-os self-improvement run --root {root} --apply",

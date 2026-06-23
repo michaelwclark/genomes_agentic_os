@@ -135,6 +135,72 @@ def search_child_pages(
     return pages
 
 
+def _page_title(page: dict[str, Any]) -> str:
+    properties = page.get("properties") or {}
+    for value in properties.values():
+        if not isinstance(value, dict) or value.get("type") != "title":
+            continue
+        title_items = value.get("title") or []
+        return "".join(str(item.get("plain_text") or "") for item in title_items if isinstance(item, dict))
+    return ""
+
+
+def search_pages(
+    query: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    page_size: int = 25,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Search accessible pages by title/query and return safe summaries."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    body: dict[str, Any] = {
+        "query": query,
+        "filter": {"value": "page", "property": "object"},
+        "page_size": max(1, min(page_size, 100)),
+    }
+    data = _json_request("POST", f"{_NOTION_API_BASE}/search", _auth_headers(token), body, fetcher)
+    pages = []
+    for page in data.get("results") or []:
+        if not isinstance(page, dict) or page.get("object") != "page":
+            continue
+        title = _page_title(page)
+        pages.append(
+            {
+                "id": str(page.get("id") or "").replace("-", ""),
+                "id_dashed": page.get("id"),
+                "title": title,
+                "url": page.get("url"),
+            }
+        )
+    return pages
+
+
+def append_block_children(
+    block_id: str,
+    children: list[dict[str, Any]],
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> None:
+    """Append children blocks to a page/block in chunks of 100."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    for index in range(0, len(children), 100):
+        chunk = children[index : index + 100]
+        body = {"children": chunk}
+        _json_request(
+            "PATCH",
+            f"{_NOTION_API_BASE}/blocks/{block_id}/children",
+            _auth_headers(token),
+            body,
+            fetcher,
+        )
+
+
 def search_child_databases(
     parent_page_id: str,
     token_env: str = _DEFAULT_TOKEN_ENV,

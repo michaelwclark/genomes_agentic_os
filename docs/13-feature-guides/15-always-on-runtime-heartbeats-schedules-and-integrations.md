@@ -72,6 +72,20 @@ agentic-os schedule create smoke_runtime_doctor --root ~/agentic_os --target run
 agentic-os schedule run-due --root ~/agentic_os --dry-run
 ```
 
+The daily self-improvement schedule should target the morning report command
+when the operator wants autonomous filesystem repair plus a Notion reading
+surface:
+
+```bash
+agentic-os self-improvement morning-report --root ~/agentic_os --apply
+```
+
+Runtime dispatch supports this command through the local script target. The
+command writes dated filesystem reports and logs under
+`harness/shared_factory/06-runs-and-logs/self-improvement/morning-reports/` and
+projects to `Genome's Agentic OS / Self Improvement Reports` only after Notion
+workspace verification.
+
 Inspect and prepare integrations:
 
 ```bash
