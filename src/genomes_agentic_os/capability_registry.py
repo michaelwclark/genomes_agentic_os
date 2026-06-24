@@ -149,7 +149,7 @@ def command_entries() -> list[dict[str, str]]:
         {
             "id": "project-worktree-cleanup-closed",
             "command": "agentic-os project worktree cleanup-closed",
-            "description": "Close terminal Jira or merged-PR worktree registrations and optionally remove in-project directories, preserving reopened worktrees with REOPEN.md.",
+            "description": "Close terminal Jira or merged-PR worktree registrations and optionally remove merged in-project directories unless REOPEN.md is present.",
             "source": "harness/commands/os-clean-worktrees.md",
         },
         {

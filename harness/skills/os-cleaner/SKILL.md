@@ -7,6 +7,10 @@ description: Keep Agentic OS worktree and work-item state clean after Jira termi
 
 Use when the user asks to clean, audit, or reconcile Agentic OS project worktrees, stateful directories, or stale work items after Jira or GitHub lifecycle closure.
 
+Canonical workflow: `harness/shared_factory/03-workflows/engineering/os_cleanup/`.
+This skill is an invocation mirror for that workflow, not an independent policy
+source.
+
 ## Load
 
 1. Route to the owning project layer.
@@ -24,23 +28,30 @@ Use when the user asks to clean, audit, or reconcile Agentic OS project worktree
 2. Run:
 
    ```sh
+   agentic-os project work-item infer-complete --root <os-root> --dry-run
    agentic-os project worktree cleanup-closed --root <os-root> --dry-run
    ```
 
-3. If the dry-run candidates are correct, run:
+3. If the active work inference decisions are correct, run:
+
+   ```sh
+   agentic-os project work-item infer-complete --root <os-root> --apply
+   ```
+
+4. If the worktree dry-run candidates are correct, run:
 
    ```sh
    agentic-os project worktree cleanup-closed --root <os-root> --apply
    ```
 
-4. Run `--remove-files` when the user has asked for physical checkout removal or the automation approval record explicitly allows it. For merged-PR cleanup, dirty status is not a blocker unless `REOPEN.md` exists.
-5. Run:
+5. Run `--remove-files` when the user has asked for physical checkout removal or the automation approval record explicitly allows it. For merged-PR cleanup, dirty status is not a blocker unless `REOPEN.md` exists.
+6. Run:
 
    ```sh
    agentic-os project work-item finalize-lingering --root <os-root> --apply
    ```
 
-6. Record candidate counts, closed registry path, removed merged worktrees, `REOPEN.md` holds, and active-container index path in the worklog or automation log.
+7. Record inference decisions, candidate counts, closed registry path, removed merged worktrees, `REOPEN.md` holds, and active-container index path in the worklog or automation log.
 
 ## Safety Rules
 
