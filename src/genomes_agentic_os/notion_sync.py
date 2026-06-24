@@ -15,8 +15,20 @@ from .scaffold import expand_path, shared_factory_path
 
 MAPPING_PATH = ".notion-sync/mapping.yml"
 BOOTSTRAP_MANIFEST_PATH = ".notion-control-plane/manifest.yml"
+ACTIVE_WORK_SYNC_MANIFEST_PATH = ".notion-active-work-sync/last-run.yml"
 GENOME_NOTION = "Genome's Notion"
 BLOCKED_WORKSPACE_MARKERS = ("michael clark", "michaelwclark", "personal notion")
+
+ACTIVE_WORK_REQUIRED_PROPERTIES: dict[str, str] = {
+    "Name": "title",
+    "Type": "select",
+    "Status": "select",
+    "Domain": "rich_text",
+    "Project": "rich_text",
+    "Active Link": "rich_text",
+    "Source Path": "rich_text",
+    "Last Synced": "date",
+}
 
 
 @dataclass(frozen=True)
@@ -198,6 +210,223 @@ def apply_sync_plan(root: str | Path, *, verified_workspace: str | None) -> dict
 
 def format_sync_result(result: dict[str, Any]) -> str:
     return yaml.safe_dump(result, sort_keys=False).strip()
+
+
+def _active_index_path(os_root: Path) -> Path:
+    return os_root / "00-control-plane" / "active" / "index.yml"
+
+
+def _load_active_index(os_root: Path) -> dict[str, Any]:
+    path = _active_index_path(os_root)
+    if not path.is_file():
+        raise ValueError(f"active index is missing; run `agentic-os project work-item sync-active --root {os_root}` first")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"active index is not a mapping: {path}")
+    return data
+
+
+def _active_row_name(kind: str, entry: dict[str, Any]) -> str:
+    if kind == "automation":
+        return str(entry.get("id") or "")
+    project = str(entry.get("project") or "")
+    item_id = str(entry.get("id") or "")
+    return f"{project} / {item_id}" if project else item_id
+
+
+def build_active_work_sync_plan(root: str | Path, *, database_id: str | None = None) -> dict[str, Any]:
+    """Build a deterministic row plan for the live ``OS Active Work`` database."""
+    os_root = expand_path(root)
+    index = _load_active_index(os_root)
+    rows: list[dict[str, Any]] = []
+    for kind, source_key, notion_type, status_default in (
+        ("work_item", "work_items", "Work Item", None),
+        ("worktree", "worktrees", "Worktree", "active"),
+        ("automation", "automations", "Automation", None),
+    ):
+        for entry in index.get(source_key) or []:
+            if not isinstance(entry, dict):
+                continue
+            source_path = entry.get("target") or entry.get("path") or ""
+            rows.append(
+                {
+                    "kind": kind,
+                    "name": _active_row_name(kind, entry),
+                    "type": notion_type,
+                    "status": str(entry.get("status") or status_default or ""),
+                    "domain": str(entry.get("domain") or ""),
+                    "project": str(entry.get("project") or ""),
+                    "active_link": str(entry.get("link") or ""),
+                    "source_path": str(source_path),
+                }
+            )
+    rows.sort(key=lambda row: (row["type"], row["name"], row["active_link"]))
+    return {
+        "mode": "dry-run",
+        "root": str(os_root),
+        "workspace": target_workspace(os_root),
+        "database_id": database_id,
+        "active_index": str(_active_index_path(os_root)),
+        "planned": len(rows),
+        "rows": [{**row, "action": "planned"} for row in rows],
+    }
+
+
+def _title_prop(value: str) -> dict[str, Any]:
+    return {"title": [{"type": "text", "text": {"content": value[:2000]}}]}
+
+
+def _rich_text_prop(value: str) -> dict[str, Any]:
+    if not value:
+        return {"rich_text": []}
+    return {"rich_text": [{"type": "text", "text": {"content": value[:2000]}}]}
+
+
+def _select_prop(value: str) -> dict[str, Any]:
+    return {"select": {"name": value[:100]}} if value else {"select": None}
+
+
+def _date_prop(value: str) -> dict[str, Any]:
+    return {"date": {"start": value}}
+
+
+def _active_work_properties(row: dict[str, Any], synced_date: str) -> dict[str, Any]:
+    return {
+        "Name": _title_prop(row["name"]),
+        "Type": _select_prop(row["type"]),
+        "Status": _select_prop(row["status"]),
+        "Domain": _rich_text_prop(row["domain"]),
+        "Project": _rich_text_prop(row["project"]),
+        "Active Link": _rich_text_prop(row["active_link"]),
+        "Source Path": _rich_text_prop(row["source_path"]),
+        "Last Synced": _date_prop(synced_date),
+    }
+
+
+def _plain_text(items: list[dict[str, Any]]) -> str:
+    return "".join(str(item.get("plain_text") or (item.get("text") or {}).get("content") or "") for item in items)
+
+
+def _property_value(properties: dict[str, Any], name: str) -> str:
+    prop = properties.get(name) or {}
+    prop_type = prop.get("type")
+    if prop_type == "title":
+        return _plain_text(prop.get("title") or [])
+    if prop_type == "rich_text":
+        return _plain_text(prop.get("rich_text") or [])
+    if prop_type == "select":
+        return str(((prop.get("select") or {}).get("name")) or "")
+    if prop_type == "date":
+        return str(((prop.get("date") or {}).get("start")) or "")
+    return ""
+
+
+def _desired_values(row: dict[str, Any], synced_date: str) -> dict[str, str]:
+    return {
+        "Name": row["name"],
+        "Type": row["type"],
+        "Status": row["status"],
+        "Domain": row["domain"],
+        "Project": row["project"],
+        "Active Link": row["active_link"],
+        "Source Path": row["source_path"],
+        "Last Synced": synced_date,
+    }
+
+
+def _missing_active_work_properties(property_types: dict[str, str]) -> list[str]:
+    missing = []
+    for name, expected_type in ACTIVE_WORK_REQUIRED_PROPERTIES.items():
+        if property_types.get(name) != expected_type:
+            missing.append(f"{name} ({expected_type})")
+    return missing
+
+
+def apply_active_work_sync(
+    root: str | Path,
+    *,
+    database_id: str | None,
+    verified_workspace: str | None,
+    token_env: str = "GENOMES_NOTION_PAT",
+    fetcher: Any | None = None,
+) -> dict[str, Any]:
+    """Upsert the filesystem active index into the live ``OS Active Work`` DB."""
+    if not database_id:
+        raise ValueError("cannot apply active-work Notion sync without --database-id")
+    os_root = expand_path(root)
+    workspace = verify_workspace(os_root, verified_workspace)
+    plan = build_active_work_sync_plan(os_root, database_id=database_id)
+
+    from .notion_api import (
+        _default_fetcher,
+        create_database_page,
+        get_bot_workspace,
+        get_database_property_types,
+        query_database_by_rich_text_property,
+        update_database_page,
+    )
+
+    active_fetcher = fetcher or _default_fetcher
+    bot_workspace = get_bot_workspace(token_env, fetcher=active_fetcher)
+    if bot_workspace != workspace:
+        raise ValueError(
+            f"live API workspace mismatch: bot reports {bot_workspace!r} "
+            f"but verified_workspace expects {workspace!r}; refusing Notion write"
+        )
+    missing = _missing_active_work_properties(get_database_property_types(database_id, token_env, fetcher=active_fetcher))
+    if missing:
+        raise ValueError("OS Active Work database is missing required properties: " + ", ".join(missing))
+
+    synced_date = datetime.now(timezone.utc).date().isoformat()
+    rows: list[dict[str, Any]] = []
+    counts = {"created": 0, "updated": 0, "unchanged": 0}
+    for row in plan["rows"]:
+        desired = _desired_values(row, synced_date)
+        matches = query_database_by_rich_text_property(
+            database_id,
+            "Active Link",
+            row["active_link"],
+            token_env,
+            fetcher=active_fetcher,
+        )
+        props = _active_work_properties(row, synced_date)
+        if matches:
+            page = matches[0]
+            existing = {name: _property_value(page.get("properties") or {}, name) for name in desired}
+            if existing == desired:
+                action = "unchanged"
+                counts["unchanged"] += 1
+                notion_id = str(page.get("id") or "").replace("-", "")
+            else:
+                update_database_page(str(page["id"]), props, token_env, fetcher=active_fetcher)
+                action = "updated"
+                counts["updated"] += 1
+                notion_id = str(page.get("id") or "").replace("-", "")
+        else:
+            notion_id = create_database_page(database_id, props, token_env, fetcher=active_fetcher)
+            action = "created"
+            counts["created"] += 1
+        rows.append({**row, "action": action, "notion_id": notion_id})
+
+    result = {
+        "mode": "apply",
+        "live": True,
+        "root": str(os_root),
+        "workspace": workspace,
+        "database_id": database_id,
+        "active_index": plan["active_index"],
+        "manifest_path": str(os_root / ACTIVE_WORK_SYNC_MANIFEST_PATH),
+        "planned": len(rows),
+        "counts": counts,
+        **counts,
+        "rows": rows,
+    }
+    manifest = {key: value for key, value in result.items() if key != "rows"}
+    manifest["rows"] = rows
+    manifest_path = os_root / ACTIVE_WORK_SYNC_MANIFEST_PATH
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    return result
 
 
 CONTROL_PLANE_DATABASES = (

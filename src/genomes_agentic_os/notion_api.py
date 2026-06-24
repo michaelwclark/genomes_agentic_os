@@ -241,6 +241,33 @@ def query_database_by_key(
     return None
 
 
+def query_database_by_rich_text_property(
+    database_id: str,
+    property_name: str,
+    value: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Query *database_id* for pages whose rich-text property equals *value*.
+
+    Returns the sanitized Notion page payloads from the response. Callers use
+    this for databases whose idempotency key is not named ``Key``.
+    """
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    body: dict[str, Any] = {
+        "filter": {
+            "property": property_name,
+            "rich_text": {"equals": value},
+        }
+    }
+    url = f"{_NOTION_API_BASE}/databases/{database_id}/query"
+    data = _json_request("POST", url, _auth_headers(token), body, fetcher)
+    return list(data.get("results") or [])
+
+
 def get_database_property_types(
     database_id: str,
     token_env: str = _DEFAULT_TOKEN_ENV,

@@ -627,6 +627,38 @@ class TestPollWatchSourceGithub:
         assert event["dry_run"] is True
         assert "registry" in event["payload_ref"]["type"]
 
+    def test_trigger_enqueue_preserves_worker_command(self, tmp_path, monkeypatch) -> None:
+        root = _make_github_watch_root(tmp_path)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        ws_path = root / "harness" / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+        data = yaml.safe_load(ws_path.read_text(encoding="utf-8"))
+        source = data["watch_sources"][0]
+        source["trigger_rules"] = [
+            {
+                "id": "run_selected_worker",
+                "enabled": True,
+                "when": {"event_type": "github_repo.polled"},
+                "then": {
+                    "enqueue": {
+                        "work_type": "implementation",
+                        "route_to": "los/00-programs/auto_dev_queue",
+                        "execution_target": "script",
+                        "command": "agentic-os watch-source poll github_pr_watch --root {database_url} --apply",
+                    }
+                },
+                "approval": {"required": False},
+                "idempotency": {"key": "{event_id}:run_selected_worker"},
+            }
+        ]
+        source["external_ref"]["database_url"] = str(root)
+        ws_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        result = poll_watch_source(root, "github_pr_watch", dry_run=True)
+
+        action = result["trigger_actions"][0]
+        assert action["queue_item"]["command"] == f"agentic-os watch-source poll github_pr_watch --root {root} --apply"
+        assert action["queue_item"]["execution_target"] == "script"
+
     def test_secrets_in_config_propagates_as_blocker(self, tmp_path, monkeypatch) -> None:
         root = _make_github_watch_root(tmp_path)
         # Inject a token-shaped value into the watch source config
