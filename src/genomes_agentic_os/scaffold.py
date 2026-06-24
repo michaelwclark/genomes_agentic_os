@@ -611,6 +611,20 @@ def ensure_notion_tracking_config(root: Path, result: ScaffoldResult) -> None:
     result.created.append(destination)
 
 
+def ensure_automation_control_config(root: Path, result: ScaffoldResult) -> None:
+    """Install automation-control.yml into 00-control-plane if absent."""
+    destination = shared_factory_path(root, "00-control-plane", "automation-control.yml")
+    if destination.exists():
+        result.skipped.append(destination)
+        return
+    source = source_relative_path("templates/runtime/automation-control.yml")
+    if not source.is_file():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    result.created.append(destination)
+
+
 def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     for directory in ("runs", "proposals", "approvals", "drafts"):
         ensure_dir(shared_factory_path(root, "06-runs-and-logs", "self-improvement", directory), result)
@@ -634,6 +648,7 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
         result.updated.append(manifest_path)
 
     ensure_notion_tracking_config(root, result)
+    ensure_automation_control_config(root, result)
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:

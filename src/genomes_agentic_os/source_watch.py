@@ -479,7 +479,8 @@ def normalized_source_event(
             ("\n".join(sorted_keys)).encode()
         ).hexdigest()[:12]
         live_event_key = f"{event_key}\nlive_digest:{live_digest}"
-        live_event_id = f"src_evt_{hashlib.sha256(f'{source['id']}:{live_event_key}'.encode()).hexdigest()[:10]}"
+        live_event_seed = f"{source['id']}:{live_event_key}"
+        live_event_id = f"src_evt_{hashlib.sha256(live_event_seed.encode()).hexdigest()[:10]}"
         effective_event_id = live_event_id
         # Idempotency key for deduplication: live items hash, not a timestamp
         effective_idempotency_key = f"{source.get('source_type')}:{source.get('id')}:{live_digest}"

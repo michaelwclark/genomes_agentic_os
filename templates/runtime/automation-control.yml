@@ -1,0 +1,27 @@
+schema_version: 1
+enabled: true
+managed_automations:
+  - id: auto_dev_queue
+    display_name: Auto Dev Queue
+    enabled: true
+    owner: OS Owner
+    mode: apply
+    source_probe:
+      type: notion_queue
+      watch_source_id: los_auto_dev_queue_start
+      status_field: Status
+      actionable_statuses:
+        - Queue Start
+      in_flight_statuses:
+        - Running
+        - Watching PR
+        - Ready for Merge
+      max_in_flight: 3
+      token_env: GENOMES_NOTION_PAT
+    target:
+      execution_target: script
+      command: agentic-os watch-source poll los_auto_dev_queue_start --root <root> --apply
+    desired_idle_state: paused
+    cooldown_minutes: 10
+    failure_policy: fail_closed
+    idempotency_key: "automation_control:{automation_id}:{source_id}:{source_digest}"

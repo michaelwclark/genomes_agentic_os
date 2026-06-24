@@ -176,6 +176,12 @@ def command_entries() -> list[dict[str, str]]:
             "description": "Dry-run review of durable local evidence for proposal-only OS improvements (prints findings; use --apply to persist run records, proposals, and daily report).",
             "source": "harness/commands/os-self-improvement.md",
         },
+        {
+            "id": "automation-control",
+            "command": "agentic-os automation-control",
+            "description": "Gate expensive automations from source activity before enqueuing runtime work.",
+            "source": "harness/commands/os-automation-control.md",
+        },
     ]
 
 

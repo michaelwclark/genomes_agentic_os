@@ -62,12 +62,12 @@ def _json_request(
     return json.loads(raw)
 
 
-def _auth_headers(token: str) -> dict[str, str]:
+def _auth_headers(token: str, notion_version: str = _NOTION_API_VERSION) -> dict[str, str]:
     """Build request headers. The token value is embedded here and must not
     leave this scope as a plain string in any return value."""
     return {
         "Authorization": f"Bearer {token}",
-        "Notion-Version": _NOTION_API_VERSION,
+        "Notion-Version": notion_version,
         "Content-Type": "application/json",
     }
 
@@ -133,6 +133,72 @@ def search_child_pages(
         title = (block.get("child_page") or {}).get("title") or ""
         pages.append({"id": block["id"].replace("-", ""), "id_dashed": block["id"], "title": title})
     return pages
+
+
+def _page_title(page: dict[str, Any]) -> str:
+    properties = page.get("properties") or {}
+    for value in properties.values():
+        if not isinstance(value, dict) or value.get("type") != "title":
+            continue
+        title_items = value.get("title") or []
+        return "".join(str(item.get("plain_text") or "") for item in title_items if isinstance(item, dict))
+    return ""
+
+
+def search_pages(
+    query: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    page_size: int = 25,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Search accessible pages by title/query and return safe summaries."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    body: dict[str, Any] = {
+        "query": query,
+        "filter": {"value": "page", "property": "object"},
+        "page_size": max(1, min(page_size, 100)),
+    }
+    data = _json_request("POST", f"{_NOTION_API_BASE}/search", _auth_headers(token), body, fetcher)
+    pages = []
+    for page in data.get("results") or []:
+        if not isinstance(page, dict) or page.get("object") != "page":
+            continue
+        title = _page_title(page)
+        pages.append(
+            {
+                "id": str(page.get("id") or "").replace("-", ""),
+                "id_dashed": page.get("id"),
+                "title": title,
+                "url": page.get("url"),
+            }
+        )
+    return pages
+
+
+def append_block_children(
+    block_id: str,
+    children: list[dict[str, Any]],
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> None:
+    """Append children blocks to a page/block in chunks of 100."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    for index in range(0, len(children), 100):
+        chunk = children[index : index + 100]
+        body = {"children": chunk}
+        _json_request(
+            "PATCH",
+            f"{_NOTION_API_BASE}/blocks/{block_id}/children",
+            _auth_headers(token),
+            body,
+            fetcher,
+        )
 
 
 def search_child_databases(
@@ -323,6 +389,99 @@ def update_database_page(
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
     body: dict[str, Any] = {"properties": properties}
     _json_request("PATCH", f"{_NOTION_API_BASE}/pages/{page_id}", _auth_headers(token), body, fetcher)
+
+
+def _query_collection(
+    endpoint: str,
+    body: dict[str, Any],
+    token_env: str,
+    notion_version: str,
+    fetcher: Callable[[urllib.request.Request], Any],
+) -> list[dict[str, Any]]:
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    data = _json_request("POST", endpoint, _auth_headers(token, notion_version), body, fetcher)
+    return [row for row in data.get("results") or [] if isinstance(row, dict)]
+
+
+def query_database_pages(
+    database_id: str,
+    *,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    page_size: int = 100,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Query a legacy Notion database and return safe page summaries."""
+    body = {"page_size": max(1, min(page_size, 100))}
+    rows = _query_collection(
+        f"{_NOTION_API_BASE}/databases/{database_id}/query",
+        body,
+        token_env,
+        _NOTION_API_VERSION,
+        fetcher,
+    )
+    return [notion_page_summary(row) for row in rows]
+
+
+def query_data_source_pages(
+    data_source_id: str,
+    *,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    page_size: int = 100,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Query a Notion data source and return safe page summaries."""
+    body = {"page_size": max(1, min(page_size, 100))}
+    rows = _query_collection(
+        f"{_NOTION_API_BASE}/data_sources/{data_source_id}/query",
+        body,
+        token_env,
+        "2025-09-03",
+        fetcher,
+    )
+    return [notion_page_summary(row) for row in rows]
+
+
+def plain_property_value(property_value: dict[str, Any]) -> Any:
+    """Convert a Notion page property value into a compact scalar."""
+    prop_type = property_value.get("type")
+    value = property_value.get(prop_type) if prop_type else None
+    if prop_type in {"title", "rich_text"} and isinstance(value, list):
+        return "".join(str(part.get("plain_text") or "") for part in value if isinstance(part, dict))
+    if prop_type in {"select", "status"} and isinstance(value, dict):
+        return value.get("name")
+    if prop_type == "checkbox":
+        return bool(value)
+    if prop_type in {"number", "url", "email", "phone_number"}:
+        return value
+    if prop_type == "date" and isinstance(value, dict):
+        return value.get("start")
+    if prop_type == "multi_select" and isinstance(value, list):
+        return [item.get("name") for item in value if isinstance(item, dict)]
+    if prop_type == "people" and isinstance(value, list):
+        return [item.get("name") or item.get("id") for item in value if isinstance(item, dict)]
+    if prop_type == "formula" and isinstance(value, dict):
+        nested_type = value.get("type")
+        if nested_type:
+            return plain_property_value({"type": nested_type, nested_type: value.get(nested_type)})
+    return None
+
+
+def notion_page_summary(page: dict[str, Any]) -> dict[str, Any]:
+    """Return a safe, trimmed summary for a Notion page/database row."""
+    properties = page.get("properties") or {}
+    return {
+        "id": str(page.get("id") or "").replace("-", ""),
+        "id_dashed": page.get("id"),
+        "last_edited_time": page.get("last_edited_time"),
+        "url": page.get("url"),
+        "properties": {
+            name: plain_property_value(value)
+            for name, value in properties.items()
+            if isinstance(value, dict)
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@
 > **You'll use:** `agentic-os runtime {init,doctor,run-next,supervise}`,
 > `agentic-os heartbeat {list,run,doctor}`,
 > `agentic-os schedule {create,run-due}`,
+> `agentic-os automation-control {list,doctor,run}`,
 > `agentic-os integration {list,setup,doctor}`, `installers/install-scheduler.sh`.
 >
 > **Prereqs:** an installed OS root
@@ -27,6 +28,10 @@ The Agentic OS runtime layer manages four file-backed registries that describe
 | Integration registry | `shared_factory/00-control-plane/integration-registry.yml` | Integration contracts, credentials, approval gates |
 | Run queue | `shared_factory/00-control-plane/run-queue.yml` | Queued, approval-needed, and dispatched items |
 | Heartbeat logs | `shared_factory/06-runs-and-logs/heartbeats/` | Per-run log files written by `heartbeat run` |
+
+`automation-control.yml` is the source-aware gate for expensive schedules. A
+cheap controller tick probes the source first, then enqueues the expensive target
+only when actionable source rows exist and configured capacity is available.
 
 These files are the source of truth. Every CLI command reads and writes them
 directly — there is no in-memory state, no database, no network call at the
@@ -190,6 +195,38 @@ items but does **not** execute them — dispatch happens via `runtime run-next
 | `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
 | `--dry-run` | — | Preview which schedules are due (default). |
 | `--apply` | — | Actually enqueue due schedules. |
+
+### `agentic-os automation-control list`
+
+List source-gated automations from
+`shared_factory/00-control-plane/automation-control.yml`.
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
+
+### `agentic-os automation-control doctor`
+
+Check that enabled managed automations point at an existing watch source and a
+supported script target. Exits 1 on blocker findings.
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
+
+### `agentic-os automation-control run`
+
+Run one controller tick. Dry-run is the default. The tick writes a receipt under
+`shared_factory/06-runs-and-logs/automation-control/`. With `--apply`, it appends
+one idempotent `automation_control` run-queue item only when the source probe is
+`ready`.
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
+| `--automation-id` | — | Limit the tick to one managed automation. |
+| `--dry-run` | — | Preview only (default). |
+| `--apply` | — | Enqueue ready target work. |
 
 ### `agentic-os integration list`
 
@@ -456,6 +493,46 @@ deliberate, per-host choice.
 > **Manual fallback:** run `runtime supervise --apply` by hand, or wire it into any
 > scheduler you prefer. The registry, queue, and log contracts are stable.
 
+### Gate expensive schedules — `automation-control`
+
+Use one frequent, cheap schedule for the controller and keep expensive
+automations paused until the controller finds work.
+
+```bash
+# Inspect configured targets:
+agentic-os automation-control list --root ~/agentic_os
+
+# Verify source and target wiring:
+agentic-os automation-control doctor --root ~/agentic_os
+
+# Preview the decisions:
+agentic-os automation-control run --root ~/agentic_os --dry-run
+
+# Enqueue only ready targets:
+agentic-os automation-control run --root ~/agentic_os --apply
+```
+
+The default controller config manages the Auto Dev Queue. It probes the configured
+Notion queue for `Status = Queue Start`, counts in-flight rows such as `Running`,
+`Watching PR`, and `Ready for Merge`, and only queues
+`watch-source poll los_auto_dev_queue_start --apply` when capacity remains. If the
+queue is empty, saturated, disabled, or unavailable, the controller writes a
+receipt and does not enqueue the expensive automation.
+
+The schedule that drives it is intentionally small:
+
+```yaml
+id: automation_control_tick
+enabled: true
+cadence: every_10_minutes
+execution_target: script
+command: agentic-os automation-control run --root <root> --apply
+```
+
+The target command is idempotent by
+`automation_control:{automation_id}:{source_id}:{source_digest}`, so repeated
+controller ticks do not duplicate the same work.
+
 ---
 
 ## Running this from Claude vs Codex
@@ -477,9 +554,9 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 ## Guardrails & gotchas
 
 - **Dry-run by default.** Every command that enqueues or dispatches work (`heartbeat
-  run`, `schedule run-due`, `runtime run-next`, `integration setup`) is dry-run
-  unless you pass `--apply`. Output printed to stdout; nothing written to the
-  queue or logs until you confirm.
+  run`, `schedule run-due`, `automation-control run`, `runtime run-next`,
+  `integration setup`) is dry-run unless you pass `--apply`. Output printed to
+  stdout; nothing written to the queue or logs until you confirm.
 - **`--apply` exits 1 on blocked items.** If a queue item is blocked (approval
   needed, integration unhealthy), `runtime run-next --apply` exits 1 and reports
   the `blocked_reason`. Fix the blocker, then retry.

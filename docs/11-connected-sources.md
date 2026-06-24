@@ -63,6 +63,12 @@ rule's idempotency key, so re-running `run-due` is always safe.
 > driving `run-due` on a schedule (see [09 · Runtime & Always-On](09-runtime-and-always-on.md)
 > and [Gap A](../.agentic-atlas/gap-register.md)).
 
+`automation-control` has a narrower Notion status probe for gating expensive
+runtime work. It reads a configured watch source's Notion database or data source
+ID, counts rows whose status is actionable, and enqueues the target automation
+only when capacity is available. That probe is for control decisions; it does not
+replace the general `watch-source poll` provider adapter contract.
+
 ---
 
 ## Secrets contract
@@ -436,8 +442,10 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **Live polling for GitHub and Slack (Gap F partial).** When `GITHUB_TOKEN` or
   `SLACK_BOT_TOKEN` is set, `poll` makes a real API call and populates live items
   in the event.  When the credential is absent, the existing registry dry-run path
-  is used unchanged — no error.  Other providers (Notion, Jira, etc.) still use
-  the registry dry-run path (see [Secrets contract](#secrets-contract) above).
+  is used unchanged — no error.  Other providers (Jira, Linear, etc.) still use
+  the registry dry-run path. Notion has a narrow status probe in
+  `automation-control` for gating, not a general source-event adapter (see
+  [Secrets contract](#secrets-contract) above).
 - **Secrets are never stored in registry files.** `credential_refs.env_vars` lists
   env var *names* only. The values must be present in the shell environment when a
   live adapter eventually reads them.
