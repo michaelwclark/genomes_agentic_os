@@ -297,6 +297,7 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
             "properties": {
                 "Name": {"type": "title"},
                 "Summary": {"type": "rich_text"},
+                "Proposed Spec": {"type": "rich_text"},
                 "Score": {"type": "number"},
                 "Status": {"type": "select"},
                 "Evidence Path": {"type": "rich_text"},
@@ -309,6 +310,7 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
                 "Recommended Artifact": {"type": "rich_text"},
                 "Action Status": {"type": "select"},
                 "Action Log": {"type": "rich_text"},
+                "Auto Groom": {"type": "checkbox"},
                 "Run Grooming": {"type": "checkbox"},
                 "Auto-dev Implementation": {"type": "checkbox"},
             }
@@ -331,6 +333,7 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
         {
             "Name",
             "Summary",
+            "Proposed Spec",
             "Score",
             "Status",
             "Evidence Path",
@@ -343,6 +346,7 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
             "Recommended Artifact",
             "Action Status",
             "Action Log",
+            "Auto Groom",
             "Run Grooming",
             "Auto-dev Implementation",
         }
@@ -410,6 +414,7 @@ def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
             "properties": {
                 "Name": {"type": "title"},
                 "Summary": {"type": "rich_text"},
+                "Proposed Spec": {"type": "rich_text"},
                 "Score": {"type": "number"},
                 "Status": {"type": "select"},
                 "Evidence Path": {"type": "rich_text"},
@@ -422,6 +427,7 @@ def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
                 "Recommended Artifact": {"type": "rich_text"},
                 "Action Status": {"type": "select"},
                 "Action Log": {"type": "rich_text"},
+                "Auto Groom": {"type": "checkbox"},
                 "Run Grooming": {"type": "checkbox"},
                 "Auto-dev Implementation": {"type": "checkbox"},
             }
@@ -435,7 +441,8 @@ def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
                         "Type": {"type": "select", "select": {"name": "Suggestion"}},
                         "Proposal ID": {"type": "rich_text", "rich_text": [{"plain_text": "si-action123"}]},
                         "Action Status": {"type": "select", "select": {"name": "ready"}},
-                        "Run Grooming": {"type": "checkbox", "checkbox": True},
+                        "Auto Groom": {"type": "checkbox", "checkbox": True},
+                        "Run Grooming": {"type": "checkbox", "checkbox": False},
                         "Auto-dev Implementation": {"type": "checkbox", "checkbox": False},
                     },
                 }
@@ -459,6 +466,7 @@ def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
     assert queue["run_queue"][0]["id"] == queued["id"]
     update_req = transport.requests[-1]
     update_body = json.loads(update_req["data"].decode("utf-8"))
+    assert update_body["properties"]["Auto Groom"]["checkbox"] is False
     assert update_body["properties"]["Run Grooming"]["checkbox"] is False
     assert update_body["properties"]["Action Status"]["select"]["name"] == "queued"
 
