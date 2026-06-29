@@ -124,6 +124,71 @@ def test_evidence_files_orders_newest_first(tmp_path: Path) -> None:
     assert ordered[1] == older
 
 
+def test_repeated_evidence_filters_structured_noise_and_semantic_dedupe(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    root.mkdir()
+    actionable = "Operator handoff is blocked because unsupported local script command needs a runtime adapter."
+    records_a = [
+        si.EvidenceRecord(
+            path=root / "run-a.yml",
+            text="",
+            redacted_text="\n".join(
+                [
+                    "created_at: 2026-06-28T00:00:00Z",
+                    "idempotency_key: schedule:automation_control_tick:2026-06-28T00:00:00Z",
+                    actionable,
+                ]
+            ),
+            redactions=0,
+        ),
+        si.EvidenceRecord(
+            path=root / "run-b.yml",
+            text="",
+            redacted_text=f"queue_id: queue_deadbeef1234\n{actionable}\n",
+            redactions=0,
+        ),
+    ]
+    findings = si._findings(root, records_a)
+    repeated = next(finding for finding in findings if finding["type"] == "repeated_evidence")
+
+    assert "unsupported local script command" in repeated["evidence"]
+    assert "created_at" not in repeated["evidence"]
+
+    proposal_a = si._proposal_from_finding(root, records_a, repeated)
+    records_b = [
+        si.EvidenceRecord(path=root / "other-a.yml", text="", redacted_text=actionable, redactions=0),
+        si.EvidenceRecord(path=root / "other-b.yml", text="", redacted_text=actionable, redactions=0),
+    ]
+    proposal_b = si._proposal_from_finding(root, records_b, repeated)
+    assert proposal_a["dedupe_key"] == proposal_b["dedupe_key"]
+
+
+def test_candidate_evidence_prefers_actionable_lines_over_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    root.mkdir()
+    record = si.EvidenceRecord(
+        path=root / "run.yml",
+        text="",
+        redacted_text=(
+            "created_at: 2026-06-28T00:00:00Z\n"
+            "status: queued\n"
+            "Manual review is repeatedly blocked because the proposal report lacks owner next action.\n"
+        ),
+        redactions=0,
+    )
+    evidence = si._candidate_evidence(
+        root,
+        [record],
+        {
+            "type": "repeated_evidence",
+            "evidence": "manual review is repeatedly blocked because the proposal report lacks owner next action.",
+        },
+    )
+
+    assert evidence
+    assert evidence[0]["excerpt"].startswith("Manual review")
+
+
 # ---------------------------------------------------------------------------
 # Daily report renderer
 # ---------------------------------------------------------------------------
@@ -539,6 +604,45 @@ def _enable_self_improvement(root: Path) -> None:
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
+def _write_successful_self_improvement_run(root: Path, *, completed_at: str = "2026-06-28T12:00:00Z") -> None:
+    runs_dir = _self_improvement_root(root) / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "20260628T120000Z-test"
+    (runs_dir / f"{run_id}.yml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "started_at": "2026-06-28T11:59:00Z",
+                "completed_at": completed_at,
+                "mode": "apply",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_stale_self_improvement_queue(root: Path) -> None:
+    queue_path = _shared_factory(root) / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    item = {
+        "id": "queue_self_improvement_old",
+        "kind": "schedule",
+        "ref": "self_improvement_review",
+        "status": "queued",
+        "approval_state": "not_required",
+        "dry_run": False,
+        "due_at": "2000-01-01T00:00:00Z",
+        "idempotency_key": "schedule:self_improvement_review:2000-01-01T00:00:00Z",
+        "execution_target": "script",
+        "command": "agentic-os self-improvement run --root <root> --apply",
+    }
+    queue["items"] = [item]
+    queue["run_queue"] = [item]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+
 def test_doctor_flags_enabled_but_never_ran(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
@@ -551,6 +655,78 @@ def test_doctor_flags_enabled_but_never_ran(tmp_path: Path) -> None:
     # Advisory only: never a blocker.
     si_findings = [f for f in report["findings"] if "self-improvement" in f["message"]]
     assert all(f["severity"] != "blocker" for f in si_findings)
+
+
+def test_status_reports_stale_self_improvement_queue_item(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    _enable_self_improvement(root)
+    _write_successful_self_improvement_run(root)
+    _write_stale_self_improvement_queue(root)
+
+    result = si.self_improvement_status(root)
+    assert result["queue_health"]["status"] == "stale"
+    assert result["queue_health"]["stale_items"][0]["id"] == "queue_self_improvement_old"
+
+    formatted = si.format_self_improvement_result(result)
+    assert "queue_health:" in formatted
+    assert "queue_self_improvement_old" in formatted
+
+
+def test_doctor_flags_stale_self_improvement_queue_item(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    _enable_self_improvement(root)
+    _write_successful_self_improvement_run(root)
+    _write_stale_self_improvement_queue(root)
+
+    report = runtime_doctor(root)
+    messages = [f["message"] for f in report["findings"]]
+    assert any("self-improvement review queue item is stale: queue_self_improvement_old" in m for m in messages)
+    assert report["ok"] is True
+
+
+def test_apply_run_reconciles_covered_self_improvement_queue_item(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    _enable_self_improvement(root)
+    _write_stale_self_improvement_queue(root)
+    _seed_conversation(
+        root,
+        "session.md",
+        "Validation failed after repeated manual command sequence.\n"
+        "Validation failed after repeated manual command sequence.\n",
+    )
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("GENOMES_NOTION_PAT", None)
+        result = si.run_self_improvement(root, dry_run=False)
+
+    assert result["queue_reconciliation"]["reconciled"][0]["id"] == "queue_self_improvement_old"
+    queue = yaml.safe_load((_shared_factory(root) / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    item = queue["run_queue"][0]
+    assert item["status"] == "done"
+    assert item["reconcile_reason"] == "covered_by_later_self_improvement_run"
+    assert item["covered_by_run_id"] == result["run_id"]
+
+
+def test_reconcile_queue_cli_applies_covered_self_improvement_queue_item(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    _enable_self_improvement(root)
+    _write_successful_self_improvement_run(root)
+    _write_stale_self_improvement_queue(root)
+
+    assert main(["self-improvement", "reconcile-queue", "--root", str(root), "--apply"]) == 0
+
+    queue = yaml.safe_load((_shared_factory(root) / "00-control-plane" / "run-queue.yml").read_text(encoding="utf-8"))
+    item = queue["run_queue"][0]
+    assert item["status"] == "done"
+    assert item["covered_by_run_id"] == "20260628T120000Z-test"
 
 
 def test_doctor_flags_missing_conversation_root(tmp_path: Path) -> None:

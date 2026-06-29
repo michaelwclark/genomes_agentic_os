@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS documentation upkeep registry",
+  "type": "object",
+  "required": ["schema_version", "id", "mode", "registry"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string"},
+    "display_name": {"type": "string"},
+    "owner": {"type": "string"},
+    "mode": {"enum": ["observe", "draft", "apply"]},
+    "notion": {
+      "type": "object",
+      "properties": {
+        "workspace": {"type": "string"},
+        "writes_enabled": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "receipt_root": {"type": "string"},
+    "registry": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "scope", "title", "sources", "target"],
+        "properties": {
+          "id": {"type": "string"},
+          "scope": {"enum": ["os", "domain", "project", "workflow", "automation"]},
+          "domain": {"type": "string"},
+          "project": {"type": "string"},
+          "title": {"type": "string"},
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          },
+          "target": {
+            "type": "object",
+            "required": ["system", "path"],
+            "properties": {
+              "system": {"type": "string"},
+              "path": {"type": "string"}
+            },
+            "additionalProperties": true
+          },
+          "last_source_hash": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

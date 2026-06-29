@@ -386,6 +386,202 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     assert active_link.resolve() == (project_root / "work-items" / "02-active" / "002_still_active")
 
 
+def test_infer_complete_reports_needs_thread_finalizer_without_writing(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "shared_factory", "genomes_agentic_os", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "shared_factory",
+                "genomes_agentic_os",
+                "--root",
+                str(root),
+                "--work-id",
+                "001_merged_without_closeout",
+                "--title",
+                "Merged Without Closeout",
+                "--summary",
+                "Merged but still active.",
+                "--status",
+                "validating",
+                "--format",
+                "packet",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
+    item = project_root / "work-items" / "02-active" / "001_merged_without_closeout"
+    metadata_path = item / "work.yml"
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    metadata["pull_request"] = {"state": "merged"}
+    metadata_path.write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
+    (item / "SUMMARY.md").write_text("# Summary\n\nImplemented and merged.\n", encoding="utf-8")
+    (item / "HOLDOUT_QA_RESULTS.md").write_text("# Holdout QA Results\n\nPassed.\n", encoding="utf-8")
+    (item / "NEXT.md").write_text("# Next\n\n## Next Action\n\n- None\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "infer-complete",
+                "--root",
+                str(root),
+                "--domain",
+                "shared_factory",
+                "--project",
+                "genomes_agentic_os",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["mode"] == "dry-run"
+    assert result["decision_counts"]["needs-thread-finalizer"] == 1
+    assert result["candidate_count"] == 1
+    assert item.is_dir()
+
+
+def test_infer_complete_keeps_recent_conversation_active(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "shared_factory", "genomes_agentic_os", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "shared_factory",
+                "genomes_agentic_os",
+                "--root",
+                str(root),
+                "--work-id",
+                "001_recent_conversation",
+                "--title",
+                "Recent Conversation",
+                "--summary",
+                "Merged but discussion continues.",
+                "--status",
+                "validating",
+                "--format",
+                "packet",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    item = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os" / "work-items" / "02-active" / "001_recent_conversation"
+    metadata_path = item / "work.yml"
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    metadata["pull_request"] = {"state": "merged"}
+    metadata_path.write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
+    (item / "SUMMARY.md").write_text("# Summary\n\nImplemented and merged.\n", encoding="utf-8")
+    (item / "HOLDOUT_QA_RESULTS.md").write_text("# Holdout QA Results\n\nPassed.\n", encoding="utf-8")
+    (item / "NEXT.md").write_text("# Next\n\n## Next Action\n\n- None\n", encoding="utf-8")
+    log_file = item / "logs" / "conversations" / "recent.md"
+    log_file.write_text("recent discussion\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "infer-complete",
+                "--root",
+                str(root),
+                "--domain",
+                "shared_factory",
+                "--project",
+                "genomes_agentic_os",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert result["decision_counts"]["keep-active"] == 1
+    assert "quiet window" in result["decisions"][0]["missing"]
+
+
+def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["project", "create", "shared_factory", "genomes_agentic_os", "--root", str(root)]) == 0
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "create",
+                "shared_factory",
+                "genomes_agentic_os",
+                "--root",
+                str(root),
+                "--work-id",
+                "001_ready_to_finish",
+                "--title",
+                "Ready To Finish",
+                "--summary",
+                "Merged and closed out.",
+                "--status",
+                "validating",
+                "--format",
+                "packet",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
+    item = project_root / "work-items" / "02-active" / "001_ready_to_finish"
+    metadata_path = item / "work.yml"
+    metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    metadata["pull_request"] = {"state": "merged"}
+    metadata_path.write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
+    (item / "SUMMARY.md").write_text("# Summary\n\nImplemented and merged.\n", encoding="utf-8")
+    (item / "HOLDOUT_QA_RESULTS.md").write_text("# Holdout QA Results\n\nPassed.\n", encoding="utf-8")
+    (item / "NEXT.md").write_text("# Next\n\n## Next Action\n\n- None\n", encoding="utf-8")
+    closeout = item / "artifacts" / "thread-closeouts" / "manual" / "closeout.md"
+    closeout.parent.mkdir(parents=True)
+    closeout.write_text("# Thread Closeout\n\nDone.\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "project",
+                "work-item",
+                "infer-complete",
+                "--root",
+                str(root),
+                "--domain",
+                "shared_factory",
+                "--project",
+                "genomes_agentic_os",
+                "--apply",
+            ]
+        )
+        == 0
+    )
+    result = yaml.safe_load(capsys.readouterr().out)
+    completed = project_root / "work-items" / "03-complete" / "001_ready_to_finish"
+    assert result["mode"] == "apply"
+    assert result["decision_counts"]["finish-ready"] == 1
+    assert result["applied"][0]["marked_status"] == "finished"
+    assert completed.is_dir()
+    assert not item.exists()
+    completed_metadata = yaml.safe_load((completed / "work.yml").read_text(encoding="utf-8"))
+    assert completed_metadata["status"] == "finished"
+    assert completed_metadata["lane"] == "03-complete"
+
+
 def test_cleanup_closed_worktrees_moves_terminal_entries_to_closed_bucket(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
@@ -487,21 +683,25 @@ def test_cleanup_closed_worktrees_moves_terminal_entries_to_closed_bucket(tmp_pa
     assert [entry["id"] for entry in active_index["worktrees"]] == ["feature-active"]
 
 
-def test_cleanup_closed_worktrees_removes_only_clean_in_project_checkouts(tmp_path: Path, capsys) -> None:
+def test_cleanup_closed_worktrees_removes_merged_project_checkouts_unless_reopened(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
     assert main(["project", "create", "shared_factory", "genomes_agentic_os", "--root", str(root)]) == 0
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
     clean_worktree = project_root / "worktrees" / "clean-merged"
     dirty_worktree = project_root / "worktrees" / "dirty-merged"
+    reopened_worktree = project_root / "worktrees" / "reopened-merged"
     external_worktree = tmp_path / "external-merged"
     clean_worktree.mkdir(parents=True)
     dirty_worktree.mkdir(parents=True)
+    reopened_worktree.mkdir(parents=True)
     external_worktree.mkdir(parents=True)
     subprocess.run(["git", "init"], cwd=clean_worktree, check=True, capture_output=True)
     subprocess.run(["git", "init"], cwd=dirty_worktree, check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=reopened_worktree, check=True, capture_output=True)
     subprocess.run(["git", "init"], cwd=external_worktree, check=True, capture_output=True)
     (dirty_worktree / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+    (reopened_worktree / "REOPEN.md").write_text("Reopened for QA follow-up.\n", encoding="utf-8")
     index_path = project_root / "worktrees" / "index.yml"
     index_path.write_text(
         yaml.safe_dump(
@@ -519,6 +719,13 @@ def test_cleanup_closed_worktrees_removes_only_clean_in_project_checkouts(tmp_pa
                         "id": "dirty-merged",
                         "path": str(dirty_worktree),
                         "link": "worktrees/dirty-merged",
+                        "status": "active",
+                        "pull_request": {"merged": True},
+                    },
+                    {
+                        "id": "reopened-merged",
+                        "path": str(reopened_worktree),
+                        "link": "worktrees/reopened-merged",
                         "status": "active",
                         "pull_request": {"merged": True},
                     },
@@ -555,12 +762,13 @@ def test_cleanup_closed_worktrees_removes_only_clean_in_project_checkouts(tmp_pa
         == 0
     )
     applied = yaml.safe_load(capsys.readouterr().out)
-    assert applied["candidate_count"] == 3
+    assert applied["candidate_count"] == 4
     assert not clean_worktree.exists()
-    assert dirty_worktree.is_dir()
+    assert not dirty_worktree.exists()
+    assert reopened_worktree.is_dir()
     assert external_worktree.is_dir()
     assert applied["skipped"] == [
-        {"path": str(dirty_worktree), "reason": "git checkout has uncommitted changes"},
+        {"path": str(reopened_worktree), "reason": "REOPEN.md present; ask before cleanup"},
         {"path": str(external_worktree), "reason": "target is outside project worktrees/"},
     ]
 

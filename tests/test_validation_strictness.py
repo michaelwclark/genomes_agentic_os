@@ -21,7 +21,9 @@ from genomes_agentic_os.validate import (
     BUILDING_STALE_DAYS,
     SCHEMA_TARGETS,
     StrictFinding,
+    ValidationResult,
     lifecycle_staleness_findings,
+    validate_automation_projection_registry,
     validate_root,
     validate_schemas_strict,
 )
@@ -144,19 +146,6 @@ def test_validate_strict_cli_flag_passes_on_fresh_install(tmp_path: Path, capsys
     assert exit_code == 0, f"strict violations on fresh install: {capsys.readouterr().out}"
 
 
-def test_validate_warns_on_legacy_project_buckets(tmp_path: Path) -> None:
-    """Project-level legacy planning/work-history buckets warn without failing."""
-    root = tmp_path / "agentic_os"
-    assert main(["project", "create", "los", "bucket_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "bucket_project"
-    (project_root / "BUILD_LOGS").mkdir()
-
-    result = validate_root(root)
-
-    assert result.ok
-    assert any("legacy project bucket present" in warning for warning in result.warnings)
-
-
 def test_validate_strict_detects_schema_violation(tmp_path: Path) -> None:
     """validate --strict reports a schema violation when a registry file is malformed."""
     root = tmp_path / "agentic_os"
@@ -234,36 +223,65 @@ def test_validate_composio_tools_registry_file_is_required(tmp_path: Path) -> No
     assert composio_path.is_file(), "composio-tools.yml must exist after init"
 
 
-def test_validate_accepts_runtime_registered_active_automation(tmp_path: Path) -> None:
-    """An active automation may be exposed by a runtime schedule registry entry."""
+def test_validate_requires_automation_run_tracking_representation(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
-    assert main(["automation", "create", "los", "engineering", "security_scan", "--root", str(root)]) == 0
-    assert main(["runtime", "init", "--root", str(root)]) == 0
-
-    automation_path = root / "los" / "04-automations" / "engineering" / "security_scan" / "automation.md"
-    content = automation_path.read_text(encoding="utf-8")
-    content = content.replace("| Status | `draft` |", "| Status | `active` |")
-    content = content.replace("| Level | `observe` |", "| Level | `execute_guarded` |")
-    automation_path.write_text(content, encoding="utf-8")
-
-    runtime_path = harness(root) / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
-    runtime = yaml.safe_load(runtime_path.read_text(encoding="utf-8"))
-    runtime["schedules"].append(
-        {
-            "id": "los_engineering_security_scan",
-            "display_name": "LOS security scan",
-            "enabled": True,
-            "cadence": "daily",
-            "timezone": "America/Chicago",
-            "execution_target": "script",
-            "command": "agentic-os automation run los engineering security_scan --root <root>",
-            "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
-        }
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
     )
-    runtime_path.write_text(yaml.safe_dump(runtime, sort_keys=False), encoding="utf-8")
+    tracking_path.parent.mkdir(parents=True)
+    tracking_path.write_text(
+        yaml.safe_dump(
+            {"automations": {}, "excluded_automations": {}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    automation_root = root / "personal/04-automations/personal_admin/example_auto"
+    automation_root.mkdir(parents=True)
+    (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
 
-    result = validate_root(root)
-    assert not any("automation `security_scan` missing matching" in error for error in result.errors)
+    result = ValidationResult(root=root)
+    validate_automation_projection_registry(root, result)
+
+    assert any(
+        "missing automation-run-tracking representation" in error
+        for error in result.errors
+    )
+
+
+def test_validate_accepts_explicit_automation_run_tracking_exclusion(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    automation_root = root / "personal/04-automations/personal_admin/example_auto"
+    automation_root.mkdir(parents=True)
+    (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
+    )
+    tracking_path.parent.mkdir(parents=True)
+    tracking_path.write_text(
+        yaml.safe_dump(
+            {
+                "automations": {},
+                "excluded_automations": {
+                    "example-auto": {
+                        "name": "Example Auto",
+                        "reason": "Local-only test automation.",
+                        "cwd": "personal/04-automations/personal_admin/example_auto",
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = ValidationResult(root=root)
+    validate_automation_projection_registry(root, result)
+
+    assert not any(
+        "missing automation-run-tracking representation" in error
+        for error in result.errors
+    )
 
 
 # ---------------------------------------------------------------------------

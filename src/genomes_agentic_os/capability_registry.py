@@ -75,16 +75,76 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-create-workflow.md",
         },
         {
+            "id": "create-program",
+            "command": "/create-program",
+            "description": "Create a shared OSProgram contract and context bundle.",
+            "source": "harness/commands/os-create-program.md",
+        },
+        {
+            "id": "create-instance-program",
+            "command": "/create-instance-program",
+            "description": "Create a domain-local InstanceOSProgram contract and context bundle.",
+            "source": "harness/commands/os-create-instance-program.md",
+        },
+        {
             "id": "orchestrate",
             "command": "/orchestrate",
             "description": "Plan, decompose, delegate, verify, and merge feature work.",
             "source": "harness/skills/orchestrate/SKILL.md",
         },
         {
+            "id": "end-chat",
+            "command": "/end-chat",
+            "description": "Finalize a substantive Agentic OS thread with receipts and next-action capture.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
+            "id": "finalize",
+            "command": "/finalize",
+            "description": "Alias for /end-chat when explicit finalization language is preferred.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
+            "id": "cleanup-thread",
+            "command": "/cleanup-thread",
+            "description": "Finalize the current thread and classify generated dirt before cleanup.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
+            "id": "archive",
+            "command": "/archive",
+            "description": "Finalize and archive only when no unresolved next action remains.",
+            "source": "harness/commands/os-end-chat.md",
+        },
+        {
             "id": "validate",
             "command": "agentic-os validate",
             "description": "Validate an installed OS root against the source package contract.",
             "source": "agentic-os validate",
+        },
+        {
+            "id": "ps",
+            "command": "agentic-os ps",
+            "description": "Show Agentic OS work running right now; use --active for queued/configured work and stale thread candidates.",
+            "source": "harness/commands/os-ps.md",
+        },
+        {
+            "id": "aos",
+            "command": "aos",
+            "description": "Short alias for the agentic-os CLI.",
+            "source": "pyproject.toml",
+        },
+        {
+            "id": "program-create",
+            "command": "agentic-os program create",
+            "description": "Create a shared OSProgram under harness/shared_factory/00-programs/.",
+            "source": "agentic-os program create",
+        },
+        {
+            "id": "instance-program-create",
+            "command": "agentic-os instance-program create",
+            "description": "Create a domain-local InstanceOSProgram under <domain>/00-programs/.",
+            "source": "agentic-os instance-program create",
         },
         {
             "id": "project-onboard",
@@ -97,6 +157,12 @@ def command_entries() -> list[dict[str, str]]:
             "command": "agentic-os project worktree add",
             "description": "Register a visible project worktree symlink and routing index entry.",
             "source": "agentic-os project worktree add",
+        },
+        {
+            "id": "project-worktree-cleanup-closed",
+            "command": "agentic-os project worktree cleanup-closed",
+            "description": "Close terminal Jira or merged-PR worktree registrations and optionally remove clean in-project worktree directories.",
+            "source": "harness/commands/os-clean-worktrees.md",
         },
         {
             "id": "quiet-run",
@@ -175,6 +241,12 @@ def command_entries() -> list[dict[str, str]]:
             "command": "agentic-os self-improvement run --dry-run",
             "description": "Review durable local evidence for proposal-only OS improvement opportunities.",
             "source": "harness/commands/os-self-improvement.md",
+        },
+        {
+            "id": "docs-upkeep",
+            "command": "agentic-os docs upkeep",
+            "description": "Run the observe-mode canonical documentation upkeep registry and local drift planner.",
+            "source": "harness/commands/os-docs-upkeep.md",
         },
         {
             "id": "composio-debug-bundle",
@@ -308,6 +380,12 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/workflow-builder/SKILL.md",
         },
         {
+            "id": "program-builder",
+            "name": "Program Builder",
+            "description": "Create or refine OSProgram and InstanceOSProgram context bundles.",
+            "source": "harness/skills/program-builder/SKILL.md",
+        },
+        {
             "id": "doc-config-router",
             "name": "Doc Config Router",
             "description": "Route document captures to the configured Agentic OS filesystem and Notion destinations.",
@@ -366,6 +444,18 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Quiet Async Runner",
             "description": "Run long commands, tests, Docker setup, PR checks, and watchers through artifact-backed async state instead of chat polling.",
             "source": "harness/skills/quiet-async-runner/SKILL.md",
+        },
+        {
+            "id": "thread-finalizer",
+            "name": "Thread Finalizer",
+            "description": "Finalize substantive Agentic OS threads with worklog, next-action, memory, evidence, and Notion projection receipts.",
+            "source": "harness/skills/thread-finalizer/SKILL.md",
+        },
+        {
+            "id": "os-cleaner",
+            "name": "OS Cleaner",
+            "description": "Reconcile Agentic OS worktree and work-item state after terminal tracker states or merged pull requests.",
+            "source": "harness/skills/os-cleaner/SKILL.md",
         },
         {
             "id": "orchestrate",
