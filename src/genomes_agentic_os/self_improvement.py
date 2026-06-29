@@ -1424,6 +1424,7 @@ def _notion_manifest(root: Path) -> dict[str, Any]:
 
 SELF_IMPROVEMENT_DB_SCHEMA: dict[str, dict[str, Any]] = {
     "Summary": {"rich_text": {}},
+    "Proposed Spec": {"rich_text": {}},
     "Status": {"select": {}},
     "Score": {"number": {}},
     "Evidence Path": {"rich_text": {}},
@@ -1436,6 +1437,7 @@ SELF_IMPROVEMENT_DB_SCHEMA: dict[str, dict[str, Any]] = {
     "Recommended Artifact": {"rich_text": {}},
     "Action Status": {"select": {}},
     "Action Log": {"rich_text": {}},
+    "Auto Groom": {"checkbox": {}},
     "Run Grooming": {"checkbox": {}},
     "Auto-dev Implementation": {"checkbox": {}},
 }
@@ -1521,16 +1523,46 @@ def _summary_blocks(root: Path, result: dict[str, Any], report_paths: dict[str, 
             _heading(2, "Suggestion Pages"),
             _paragraph(
                 "Open the suggestion rows linked to this run. Each suggestion page has two action checkboxes: "
-                "Run Grooming and Auto-dev Implementation."
+                "Auto Groom and Auto-dev Implementation."
             ),
         ]
     )
     return blocks
 
 
+def _proposal_spec_outline(proposal: dict[str, Any]) -> str:
+    title = str(proposal.get("title") or proposal.get("proposal_id") or "Self-improvement suggestion")
+    summary = str(proposal.get("summary") or "")
+    recommended_artifact = str(proposal.get("recommended_artifact") or "spec")
+    evidence = proposal.get("evidence") or []
+    validation = proposal.get("validation_plan") or []
+    evidence_lines = [
+        f"- {item.get('locator') or 'evidence'}: {item.get('excerpt') or ''}"
+        for item in evidence[:3]
+    ]
+    validation_lines = [f"- {item}" for item in validation[:5]]
+    lines = [
+        f"Title: {title}",
+        f"Problem: {summary or 'Clarify the proposed Agentic OS improvement.'}",
+        f"Target artifact: {recommended_artifact}.",
+        "Scope: Groom this self-improvement idea into an Agentic OS spec packet and a Linear issue under the Agentic OS project.",
+        "Acceptance criteria:",
+        "- Problem, scope, non-goals, implementation notes, QA, rollout, and open questions are explicit.",
+        "- Linear content is sanitized: no local filesystem paths, private Notion links, secrets, or private run-log paths.",
+    ]
+    if evidence_lines:
+        lines.append("Evidence:")
+        lines.extend(evidence_lines)
+    if validation_lines:
+        lines.append("Validation:")
+        lines.extend(validation_lines)
+    return "\n".join(lines)
+
+
 def _proposal_blocks(proposal: dict[str, Any], *, run_id: str) -> list[dict[str, Any]]:
     evidence = proposal.get("evidence") or []
     validation = proposal.get("validation_plan") or []
+    proposed_spec = _proposal_spec_outline(proposal)
     blocks: list[dict[str, Any]] = [
         _heading(2, "Recommendation"),
         _paragraph(str(proposal.get("summary") or "")),
@@ -1539,8 +1571,11 @@ def _proposal_blocks(proposal: dict[str, Any], *, run_id: str) -> list[dict[str,
         _bullet(f"Recommended artifact: {proposal.get('recommended_artifact') or ''}"),
         _bullet(f"Promotion status: {proposal.get('promotion_status') or 'proposed'}"),
         _divider(),
+        _heading(2, "Proposed Spec Draft"),
+        _paragraph(proposed_spec),
+        _divider(),
         _heading(2, "Actions"),
-        _bullet("Run Grooming: check the page property to queue spec grooming."),
+        _bullet("Auto Groom: check the page property to queue Agentic OS spec grooming and Linear issue creation."),
         _bullet("Auto-dev Implementation: check the page property to queue implementation."),
         _divider(),
         _heading(2, "Evidence"),
@@ -1571,6 +1606,8 @@ def _notion_projection_properties(
     proposal_id: str = "",
     parent_run_id: str = "",
     recommended_artifact: str = "",
+    proposed_spec: str = "",
+    auto_groom: bool = False,
     run_grooming: bool = False,
     auto_dev: bool = False,
     action_status: str = "",
@@ -1599,6 +1636,8 @@ def _notion_projection_properties(
         "Proposal ID": ("rich_text", proposal_id),
         "Parent Run ID": ("rich_text", parent_run_id),
         "Recommended Artifact": ("rich_text", recommended_artifact),
+        "Proposed Spec": ("rich_text", proposed_spec),
+        "Auto Groom": ("checkbox", auto_groom),
         "Run Grooming": ("checkbox", run_grooming),
         "Auto-dev Implementation": ("checkbox", auto_dev),
         "Action Status": ("select", action_status),
@@ -1709,6 +1748,7 @@ def _project_run_to_notion(
             proposal_summary = str(proposal.get("summary") or "")
             evidence_items = proposal.get("evidence") or []
             proposal_evidence = str((evidence_items[0] or {}).get("locator")) if evidence_items else evidence_path
+            proposed_spec = _proposal_spec_outline(proposal)
             proposal_properties = _notion_projection_properties(
                 available,
                 title=proposal_title,
@@ -1720,6 +1760,8 @@ def _project_run_to_notion(
                 proposal_id=proposal_id,
                 parent_run_id=run_id,
                 recommended_artifact=str(proposal.get("recommended_artifact") or ""),
+                proposed_spec=proposed_spec,
+                auto_groom=False,
                 run_grooming=False,
                 auto_dev=False,
                 action_status="ready",
@@ -1765,6 +1807,7 @@ def _proposal_action_filter() -> dict[str, Any]:
             {"property": "Type", "select": {"equals": "Suggestion"}},
             {
                 "or": [
+                    {"property": "Auto Groom", "checkbox": {"equals": True}},
                     {"property": "Run Grooming", "checkbox": {"equals": True}},
                     {"property": "Auto-dev Implementation", "checkbox": {"equals": True}},
                 ]
@@ -1783,8 +1826,10 @@ def _action_prompt(proposal: dict[str, Any], *, action_type: str, page_id: str) 
     title = str(proposal.get("title") or proposal_id or "Self-improvement suggestion")
     if action_type == "groom":
         objective = (
-            "Run a grooming pass that turns this suggestion into a sharper spec, "
-            "implementation plan, validation plan, and clear next action. Do not mutate live shared OS surfaces."
+            "Use $aos-product-orchestrator to turn this suggestion into a proper Agentic OS spec packet "
+            "and a Linear issue under the Agentic OS project. Resolve the Linear workspace, team, and project "
+            "before any write. Do not mutate live shared OS surfaces except for the approved spec/Linear "
+            "tracking outputs and receipt updates."
         )
     else:
         objective = (
@@ -1810,6 +1855,7 @@ Work item: {SELF_IMPROVEMENT_WORK_ITEM}
 - Keep filesystem work items and receipts as the source of truth.
 - Verify Genome's Notion before any Notion write.
 - Do not publish local paths or private Notion links to Jira, GitHub, Slack, or email.
+- For grooming, create or update the Linear issue in the Agentic OS project only after workspace/project/team verification.
 - If implementation is unsafe or underspecified, stop with a blocker-grade receipt instead of guessing.
 
 ## Proposal
@@ -1945,7 +1991,9 @@ def process_self_improvement_actions(
         properties = page.get("properties") or {}
         proposal_id = _property_text(properties, "Proposal ID")
         action_status = _property_text(properties, "Action Status")
-        wants_grooming = _property_checkbox(properties, "Run Grooming")
+        wants_auto_groom = _property_checkbox(properties, "Auto Groom")
+        wants_run_grooming = _property_checkbox(properties, "Run Grooming")
+        wants_grooming = wants_auto_groom or wants_run_grooming
         wants_auto_dev = _property_checkbox(properties, "Auto-dev Implementation")
         if action_status in {"queued", "running"}:
             result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": f"already_{action_status}"})
@@ -2000,6 +2048,7 @@ def process_self_improvement_actions(
             "Action Log": notion_api._rich_text_prop(f"Queued {item['id']} at {_now()}."),
         }
         if action_type == "groom":
+            update_props["Auto Groom"] = notion_api._checkbox_prop(False)
             update_props["Run Grooming"] = notion_api._checkbox_prop(False)
         else:
             update_props["Auto-dev Implementation"] = notion_api._checkbox_prop(False)
