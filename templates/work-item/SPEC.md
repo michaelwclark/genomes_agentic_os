@@ -1,8 +1,12 @@
 # Spec: <title>
 
-## Problem
+## Raw Capture
 
 <summary>
+
+## Problem
+
+-
 
 ## Outcome
 
@@ -21,4 +25,3 @@
 ## Acceptance Criteria
 
 -
-

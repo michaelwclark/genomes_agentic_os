@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""Start long-running commands with artifact-backed state and no chat polling."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path("/Users/genome/agentic_os")
+DEFAULT_ASYNC_ROOT = ROOT / "harness/shared_factory/06-runs-and-logs/async-runs"
+
+
+def now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def slugify(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "-", value.strip().lower()).strip("-")
+    return cleaned[:48] or "quiet-run"
+
+
+def write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def append_event(run_dir: Path, event: str, **fields: object) -> None:
+    payload = {"ts": now(), "event": event, **fields}
+    with (run_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def resolve_async_root(artifact_dir: str | None) -> Path:
+    if artifact_dir:
+        base = Path(artifact_dir).expanduser()
+    elif os.environ.get("AGENTIC_OS_ACTIVE_WORK_ITEM"):
+        base = Path(os.environ["AGENTIC_OS_ACTIVE_WORK_ITEM"]).expanduser() / "artifacts"
+    else:
+        return DEFAULT_ASYNC_ROOT
+
+    return base if base.name == "async-runs" else base / "async-runs"
+
+
+def summarize_command(command: list[str], shell: bool) -> str:
+    return " ".join(command) if shell else json.dumps(command)
+
+
+def command_after_separator(command: list[str]) -> list[str]:
+    if command and command[0] == "--":
+        return command[1:]
+    return command
+
+
+def start(args: argparse.Namespace) -> int:
+    command = command_after_separator(args.command)
+    if not command:
+        print("error: command required after --", file=sys.stderr)
+        return 2
+
+    async_root = resolve_async_root(args.artifact_dir)
+    label = args.label or command[0]
+    run_id = args.run_id or f"{dt.datetime.now().strftime('%Y%m%dT%H%M%S')}-{slugify(label)}"
+    run_dir = async_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+
+    started = now()
+    work_dir = str(Path(args.work_dir or os.getcwd()).expanduser().resolve())
+    command_payload = {
+        "id": run_id,
+        "label": label,
+        "command": command,
+        "command_display": summarize_command(command, args.shell),
+        "shell": args.shell,
+        "work_dir": work_dir,
+        "timeout_minutes": args.timeout_minutes,
+        "created_at": started,
+    }
+    write_json(run_dir / "command.json", command_payload)
+    write_json(
+        run_dir / "state.json",
+        {
+            "id": run_id,
+            "label": label,
+            "status": "queued",
+            "created_at": started,
+            "updated_at": started,
+            "run_dir": str(run_dir),
+            "work_dir": work_dir,
+        },
+    )
+    write_summary(
+        run_dir,
+        command_payload,
+        {
+            "status": "queued",
+            "exit_code": None,
+            "run_dir": str(run_dir),
+            "work_dir": work_dir,
+            "output_log": str(run_dir / "output.log"),
+        },
+    )
+    append_event(run_dir, "queued", label=label, work_dir=work_dir)
+
+    monitor = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "_monitor", str(run_dir)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    state = read_json(run_dir / "state.json")
+    state.update({"monitor_pid": monitor.pid, "updated_at": now()})
+    write_json(run_dir / "state.json", state)
+    append_event(run_dir, "monitor_started", monitor_pid=monitor.pid)
+
+    print(f"run_dir={run_dir}")
+    print(f"state={run_dir / 'state.json'}")
+    print(f"summary={run_dir / 'summary.md'}")
+    print(f"monitor_pid={monitor.pid}")
+    return 0
+
+
+def monitor(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    command_payload = read_json(run_dir / "command.json")
+    command = command_payload["command"]
+    timeout = command_payload.get("timeout_minutes")
+    started = now()
+    output_log = run_dir / "output.log"
+    state_path = run_dir / "state.json"
+
+    with output_log.open("ab") as log_handle:
+        process = subprocess.Popen(
+            command_payload["command_display"] if command_payload.get("shell") else command,
+            cwd=command_payload["work_dir"],
+            shell=bool(command_payload.get("shell")),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        write_json(
+            state_path,
+            {
+                "id": command_payload["id"],
+                "label": command_payload["label"],
+                "status": "running",
+                "created_at": command_payload["created_at"],
+                "started_at": started,
+                "updated_at": started,
+                "pid": process.pid,
+                "run_dir": str(run_dir),
+                "work_dir": command_payload["work_dir"],
+                "output_log": str(output_log),
+            },
+        )
+        append_event(run_dir, "started", pid=process.pid)
+        status = "error"
+        exit_code: int | None = None
+        error: str | None = None
+        try:
+            exit_code = process.wait(timeout=(timeout * 60 if timeout else None))
+            status = "success" if exit_code == 0 else "failure"
+        except subprocess.TimeoutExpired:
+            status = "timeout"
+            error = f"timed out after {timeout} minutes"
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=30)
+            except Exception:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except Exception:
+                    pass
+            exit_code = process.poll()
+        except Exception as exc:  # pragma: no cover - defensive CLI boundary
+            status = "error"
+            error = repr(exc)
+            exit_code = process.poll()
+
+    finished = now()
+    state = {
+        "id": command_payload["id"],
+        "label": command_payload["label"],
+        "status": status,
+        "created_at": command_payload["created_at"],
+        "started_at": started,
+        "finished_at": finished,
+        "updated_at": finished,
+        "exit_code": exit_code,
+        "run_dir": str(run_dir),
+        "work_dir": command_payload["work_dir"],
+        "output_log": str(output_log),
+    }
+    if error:
+        state["error"] = error
+    write_json(state_path, state)
+    append_event(run_dir, "finished", status=status, exit_code=exit_code, error=error)
+    write_summary(run_dir, command_payload, state)
+    return 0
+
+
+def write_summary(run_dir: Path, command_payload: dict, state: dict) -> None:
+    lines = [
+        f"# {command_payload['label']}",
+        "",
+        f"Updated: {now()}",
+        f"Status: {state['status']}",
+        f"Exit code: {state.get('exit_code')}",
+        f"Work dir: `{command_payload['work_dir']}`",
+        f"Command: `{command_payload['command_display']}`",
+        f"State: `{run_dir / 'state.json'}`",
+        f"Events: `{run_dir / 'events.jsonl'}`",
+        f"Log: `{run_dir / 'output.log'}`",
+    ]
+    if state.get("error"):
+        lines.append(f"Error: {state['error']}")
+    (run_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def status(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir).expanduser()
+    state = read_json(run_dir / "state.json")
+    if args.json:
+        print(json.dumps(state, indent=2, sort_keys=True))
+    else:
+        print(f"{state.get('status')} {state.get('label')} {run_dir}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="agentic-os-quiet-run")
+    subparsers = parser.add_subparsers(dest="cmd", required=True)
+
+    start_parser = subparsers.add_parser("start", help="start a detached quiet run")
+    start_parser.add_argument("--artifact-dir")
+    start_parser.add_argument("--label")
+    start_parser.add_argument("--run-id")
+    start_parser.add_argument("--work-dir")
+    start_parser.add_argument("--timeout-minutes", type=int)
+    start_parser.add_argument("--shell", action="store_true")
+    start_parser.add_argument("command", nargs=argparse.REMAINDER)
+    start_parser.set_defaults(func=start)
+
+    status_parser = subparsers.add_parser("status", help="print quiet run status")
+    status_parser.add_argument("--run-dir", required=True)
+    status_parser.add_argument("--json", action="store_true")
+    status_parser.set_defaults(func=status)
+
+    monitor_parser = subparsers.add_parser("_monitor")
+    monitor_parser.add_argument("run_dir")
+    monitor_parser.set_defaults(func=monitor)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

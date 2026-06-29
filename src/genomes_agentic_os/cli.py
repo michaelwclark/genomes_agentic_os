@@ -16,6 +16,7 @@ from .automation_ops import (
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
+from .doc_config import build_doc_route_plan, doc_config_doctor, ensure_doc_config
 from .doctor import doctor, doctor_all, format_doctor_result
 from .event_graph import (
     append_event,
@@ -33,6 +34,7 @@ from .hook_ops import hook_doctor, hook_sync
 from .losmon import format_losmon_result, losmon_validate
 from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item
 from .migrations import format_migration_result, migrate_apply, migrate_plan
+from .notion_org import notion_org_doctor
 from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
@@ -516,6 +518,36 @@ def build_parser() -> argparse.ArgumentParser:
     config_doctor.add_argument("--root", default=DEFAULT_ROOT, help="Directory containing config.toml.")
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
     config_doctor.set_defaults(handler=handle_config_doctor)
+
+    doc_config_parser = subparsers.add_parser("doc-config", help="Manage document routing configuration.")
+    doc_config_subparsers = doc_config_parser.add_subparsers(dest="doc_config_command", required=True)
+    doc_config_init = doc_config_subparsers.add_parser("init", help="Install the default doc routing config if missing.")
+    doc_config_init.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_init.add_argument("--domain", help="Project domain for a project-level override.")
+    doc_config_init.add_argument("--project", help="Project slug for a project-level override.")
+    doc_config_init.set_defaults(handler=handle_doc_config_init)
+    doc_config_plan = doc_config_subparsers.add_parser("plan", help="Build a dry-run document destination plan.")
+    doc_config_plan.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_plan.add_argument("--request", required=True, help="Document request or note to route.")
+    doc_config_plan.add_argument("--domain", help="Known target domain.")
+    doc_config_plan.add_argument("--project", help="Known target project.")
+    doc_config_plan.add_argument("--work-item", help="Known target work item or feature slug.")
+    doc_config_plan.add_argument("--target-kind", default="spec", choices=("spec", "feature", "project", "run", "decision", "reference"))
+    doc_config_plan.add_argument("--questions-present", action="store_true", help="Include the QUESTIONS bucket in the plan.")
+    doc_config_plan.set_defaults(handler=handle_doc_config_plan)
+    doc_config_doctor_parser = doc_config_subparsers.add_parser("doctor", help="Validate doc routing config.")
+    doc_config_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_doctor_parser.add_argument("--domain", help="Project domain for a project-level override.")
+    doc_config_doctor_parser.add_argument("--project", help="Project slug for a project-level override.")
+    doc_config_doctor_parser.set_defaults(handler=handle_doc_config_doctor)
+
+    notion_org_parser = subparsers.add_parser("notion-org", help="Check Notion organization conventions.")
+    notion_org_subparsers = notion_org_parser.add_subparsers(dest="notion_org_command", required=True)
+    notion_org_doctor_parser = notion_org_subparsers.add_parser("doctor", help="Check OS and Notion backup organization.")
+    notion_org_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_org_doctor_parser.add_argument("--backup-dir", help="Local Notion backup snapshot directory.")
+    notion_org_doctor_parser.add_argument("--config", help="Optional override config path.")
+    notion_org_doctor_parser.set_defaults(handler=handle_notion_org_doctor)
 
     hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
     hook_subparsers = hook_parser.add_subparsers(dest="hook_command", required=True)
@@ -1260,6 +1292,41 @@ def handle_config_doctor(args: argparse.Namespace) -> int:
     result = doctor_config(args.root, layer=args.layer)
     print(yaml_dump(result))
     return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
+
+
+def handle_doc_config_init(args: argparse.Namespace) -> int:
+    if bool(args.domain) != bool(args.project):
+        raise ValueError("--domain and --project must be provided together for project-level doc config")
+    print_result(ensure_doc_config(args.root, domain=args.domain, project=args.project))
+    return 0
+
+
+def handle_doc_config_plan(args: argparse.Namespace) -> int:
+    result = build_doc_route_plan(
+        args.root,
+        request=args.request,
+        domain=args.domain,
+        project=args.project,
+        work_item=args.work_item,
+        target_kind=args.target_kind,
+        questions_present=args.questions_present,
+    )
+    print(yaml_dump(result))
+    return 0
+
+
+def handle_doc_config_doctor(args: argparse.Namespace) -> int:
+    if bool(args.domain) != bool(args.project):
+        raise ValueError("--domain and --project must be provided together for project-level doc config")
+    result = doc_config_doctor(args.root, domain=args.domain, project=args.project)
+    print(yaml_dump(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_notion_org_doctor(args: argparse.Namespace) -> int:
+    result = notion_org_doctor(args.root, backup_dir=args.backup_dir, config=args.config)
+    print(yaml_dump(result))
+    return 0 if result["ok"] else 1
 
 
 def handle_hook_sync(args: argparse.Namespace) -> int:

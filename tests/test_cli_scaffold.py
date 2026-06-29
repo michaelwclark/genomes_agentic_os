@@ -187,6 +187,10 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (
         shared_factory(root) / "05-knowledge" / "templates" / "reference" / "naming-conventions.md"
     ).is_file()
+    assert (
+        shared_factory(root) / "05-knowledge" / "templates" / "reference" / "os-conventions.md"
+    ).is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "os-conventions.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "references" / "tool-index.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "reference" / "tool-index.md").is_file()
     assert (
@@ -197,6 +201,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     ).is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "reference" / "decision-log.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "references" / "naming-conventions.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "references" / "os-conventions.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "references" / "tool-index.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "references" / "source-priority.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "references" / "style-and-output-rules.md").is_file()
@@ -1475,6 +1480,7 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     plan_file = shared_factory(root) / "05-knowledge" / "plans" / "09-future-ideas-intake.md"
     planning_template = shared_factory(root) / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
     domain_context_template = shared_factory(root) / "05-knowledge" / "templates" / "domain" / "context.md"
+    convention_reference = shared_factory(root) / "05-knowledge" / "references" / "os-conventions.md"
     manual_readme.write_text("# local edit\n", encoding="utf-8")
     plan_readme.write_text("# local plan edit\n", encoding="utf-8")
     command_file.unlink()
@@ -1487,6 +1493,7 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     plan_file.unlink()
     planning_template.unlink()
     domain_context_template.unlink()
+    convention_reference.unlink()
 
     assert main(["docs", "update", "--root", str(root)]) == 0
 
@@ -1503,6 +1510,7 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert plan_file.is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
+    assert convention_reference.is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-update.md").is_file()
     assert (
         shared_factory(root) / "05-knowledge" / "operating-manual" / "00-start-here" / "update-contract.md"
@@ -1559,6 +1567,8 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert (project_root / "source-map.md").is_file()
     assert (project_root / "artifacts").is_dir()
     assert (project_root / "config").is_dir()
+    assert (project_root / "SPECS" / "README.md").is_file()
+    assert (project_root / "worklogs" / "README.md").is_file()
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
     assert (project_root / "work-items" / "01-intake").is_dir()
     assert (project_root / "work-items" / "02-active").is_dir()
@@ -1575,6 +1585,8 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert "worktrees/index.yml" in agents
     output_artifacts = yaml.safe_load((project_root / "config" / "output-artifacts.yml").read_text(encoding="utf-8"))
     assert output_artifacts["output_artifacts"]["feature_root"] == "work-items/02-active/{ticket_or_slug}/artifacts"
+    assert output_artifacts["output_artifacts"]["spec_root"] == "SPECS/{ticket_or_slug}"
+    assert output_artifacts["output_artifacts"]["worklog_root"] == "worklogs/{ticket_or_slug}"
     work_lifecycle = yaml.safe_load((project_root / "config" / "work-lifecycle.yml").read_text(encoding="utf-8"))
     assert work_lifecycle["work_lifecycle"]["lanes"] == {
         "intake": "01-intake",
@@ -2040,6 +2052,14 @@ def write_ready_automation_contract(path: Path) -> None:
 | Level | `observe` |
 | Owner | `OS Owner` |
 | Last Reviewed | `2026-05-21` |
+
+## Invocation Contract
+
+| Field | Value |
+| --- | --- |
+| Trigger | `manual support queue review` |
+| Registry Entry | `support-runbook` |
+| Owner | `OS Owner` |
 
 ## Trigger
 
@@ -3335,10 +3355,13 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         / "002_duel_expanded_idea"
     )
     assert (intake_packet / "work.yml").is_file()
-    assert (intake_packet / "IDEA.md").is_file()
+    assert (intake_packet / "SPEC.md").is_file()
+    assert not (intake_packet / "IDEA.md").exists()
     intake_metadata = yaml.safe_load((intake_packet / "work.yml").read_text(encoding="utf-8"))
     assert intake_metadata["lane"] == "01-intake"
     assert intake_metadata["format"] == "folder"
+    assert "SPEC.md" in intake_metadata["lifecycle"]["required_files"]
+    assert "IDEA.md" not in intake_metadata["lifecycle"]["required_files"]
     assert main(["route", "run duel expanded packet for losmon_replacement", "--root", str(root)]) == 0
     packet = yaml.safe_load(capsys.readouterr().out)
     assert packet["object_type"] == "work_item"

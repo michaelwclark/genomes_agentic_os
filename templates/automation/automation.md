@@ -15,6 +15,15 @@
 
 State what the automation does and what decision it helps with.
 
+## Invocation Contract
+
+| Surface | Value |
+| --- | --- |
+| Trigger or command |  |
+| Registry entry | `harness/registries/commands.yml`, `harness/registries/skills.yml`, source watcher, schedule, or runtime registry |
+| Authoring rules | `harness/rules/os-authoring-rules.md` |
+| Convention reference | `harness/shared_factory/05-knowledge/references/os-conventions.md` |
+
 ## Trigger
 
 - Type: `schedule | webhook | message | manual | state_change`
@@ -77,6 +86,8 @@ Do not move beyond `observe` or `prepare` unless this checklist is true.
 7. Validate result.
 8. Record run.
 9. Route next action.
+10. Update the relevant work item `WORKLOG.md` and domain/project control
+    surface when automation state changes.
 
 ## Outputs
 

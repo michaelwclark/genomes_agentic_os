@@ -56,7 +56,22 @@ STANDARD_LANES = (
     "learning",
 )
 
-SELF_IMPROVEMENT_MANAGED_FILES = (
+MANAGED_RUNTIME_FILES = (
+    (
+        "templates/runtime/spec-intake-workflow.md",
+        "harness/shared_factory/04-workflows/spec-intake.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/feature-intake-workflow.md",
+        "harness/shared_factory/04-workflows/feature-intake.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/bug-intake-workflow.md",
+        "harness/shared_factory/04-workflows/bug-intake.md",
+        "replace_if_managed_unchanged",
+    ),
     (
         "templates/runtime/self-improvement.yml",
         "harness/shared_factory/00-control-plane/self-improvement.yml",
@@ -88,8 +103,28 @@ SELF_IMPROVEMENT_MANAGED_FILES = (
         "replace_if_managed_unchanged",
     ),
     (
+        "harness/commands/os-quiet-run.md",
+        "harness/shared_factory/05-knowledge/commands/os-quiet-run.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/notion-organization.yml",
+        "harness/shared_factory/00-control-plane/notion-organization.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/commands/os-notion-org.md",
+        "harness/shared_factory/05-knowledge/commands/os-notion-org.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "harness/skills/toolsmith-reviewer/SKILL.md",
         "harness/shared_factory/05-knowledge/skills/toolsmith-reviewer/SKILL.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/skills/quiet-async-runner/SKILL.md",
+        "harness/shared_factory/05-knowledge/skills/quiet-async-runner/SKILL.md",
         "replace_if_managed_unchanged",
     ),
 )
@@ -482,7 +517,7 @@ def file_sha256(path: Path) -> str:
 
 def managed_templates_payload() -> dict[str, object]:
     entries = []
-    for source, destination, merge_policy in SELF_IMPROVEMENT_MANAGED_FILES:
+    for source, destination, merge_policy in MANAGED_RUNTIME_FILES:
         source_path = source_relative_path(source)
         checksum = file_sha256(source_path) if source_path.is_file() else "sha256:missing"
         entries.append(
@@ -575,7 +610,7 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
 
     manifest_path = shared_factory_path(root, "00-control-plane", "managed-templates.yml")
     previous_checksums = previous_managed_checksums(manifest_path)
-    for source, destination, _merge_policy in SELF_IMPROVEMENT_MANAGED_FILES:
+    for source, destination, _merge_policy in MANAGED_RUNTIME_FILES:
         source_path = source_relative_path(source)
         destination_path = root / destination
         write_managed_file(source_path, destination_path, previous_checksums.get(destination), result)
@@ -636,11 +671,20 @@ def merge_registry_file(path: Path, payload: dict[str, list[dict[str, str]]], re
             existing[key] = []
             current = existing[key]
             changed = True
-        existing_ids = {entry.get("id") for entry in current if isinstance(entry, dict)}
+        current_by_id = {entry.get("id"): entry for entry in current if isinstance(entry, dict)}
+        existing_ids = set(current_by_id)
         for entry in entries:
             if entry.get("id") not in existing_ids:
                 current.append(entry)
                 existing_ids.add(entry.get("id"))
+                changed = True
+                continue
+            existing_entry = current_by_id.get(entry.get("id"))
+            if not isinstance(existing_entry, dict):
+                continue
+            source = entry.get("source")
+            if source and existing_entry.get("source") != source:
+                existing_entry["source"] = source
                 changed = True
     if changed:
         path.write_text(yaml.safe_dump(existing, sort_keys=False), encoding="utf-8")
@@ -860,6 +904,11 @@ These root rules apply unless a narrower layer provides a stricter rule.
 - Preserve source links and validation evidence.
 - Keep secrets out of prompts, logs, docs, generated config, and run artifacts.
 - Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read the host tool registry when it exists.
+- When creating or changing Agentic OS commands, skills, workflows,
+  automations, tools, registries, feature intake, bug intake, or project
+  worktrees, follow `harness/rules/os-authoring-rules.md`.
+- External source checkouts used for project work must be visible through the
+  project `worktrees/` registry/link surface.
 
 ## Precedence
 
@@ -885,7 +934,15 @@ the source of truth by themselves.
 | --- | --- | --- |
 | `os-navigator` | Route work through installed OS rooms. | `shared_factory/05-knowledge/skills/os-navigator/` |
 | `workflow-builder` | Create or improve reusable workflows. | `shared_factory/05-knowledge/skills/workflow-builder/` |
+| `doc-config-router` | Decide where docs belong before filesystem or Notion projection work. | `shared_factory/05-knowledge/skills/doc-config-router/` |
+| `spec-intake-router` | Capture new specs and future work through doc-config and work-item intake. | `shared_factory/05-knowledge/skills/spec-intake-router/` |
+| `feature-intake-router` | Deprecated alias for spec intake. | `shared_factory/05-knowledge/skills/feature-intake-router/` |
+| `bug-intake-router` | Capture bugs and missed enforcement through doc-config and work-item intake. | `shared_factory/05-knowledge/skills/bug-intake-router/` |
+| `auto-spec-intake` | Create/update spec packets for long OS-shaping requests. | `shared_factory/05-knowledge/skills/auto-spec-intake/` |
+| `auto-feature-intake` | Deprecated alias for auto spec intake. | `shared_factory/05-knowledge/skills/auto-feature-intake/` |
+| `os-authoring-guard` | Apply compact OS authoring rules to reusable surface changes. | `shared_factory/05-knowledge/skills/os-authoring-guard/` |
 | `automation-qualifier` | Decide whether a process is safe to automate. | `shared_factory/05-knowledge/skills/automation-qualifier/` |
+| `quiet-async-runner` | Run long waits through artifact-backed async state instead of chat polling. | `shared_factory/05-knowledge/skills/quiet-async-runner/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
 
 ## Commands
@@ -896,13 +953,20 @@ the source of truth by themselves.
 | `/make-domain` | Create a routed OS domain or room. | Declared in `registries/commands.yml`. |
 | `/make-automation` | Create a guarded automation spec. | Declared in `registries/commands.yml`. |
 | `/make-workflow` | Create a reusable workflow contract. | Declared in `registries/commands.yml`. |
+| `/add-spec` | Capture future work through the configured spec intake workflow. | Declared in `registries/commands.yml`. |
+| `/new-feature` | Deprecated alias for `/add-spec`. | Declared in `registries/commands.yml`. |
+| `/add-bug` | Capture a bug or missed OS enforcement into a routed work item. | Declared in `registries/commands.yml`. |
+| `/auto-add-spec` | Create/update a spec packet for long OS-shaping requests. | Declared in `registries/commands.yml`. |
+| `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Declared in `registries/commands.yml`. |
 | `/orchestrate` | Decompose, delegate, verify, and merge feature work. | Declared in `registries/commands.yml`. |
 | `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
 | `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
 | `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
 | `agentic-os project worktree add` | Register a visible worktree link inside a project. | Keeps the real checkout outside the OS. |
+| `harness/bin/agentic-os-quiet-run` | Run long local commands with file-backed state. | Use for tests, setup, watchers, and slow waits. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
+| `agentic-os doc-config plan` | Resolve filesystem and Notion projection destinations for documents. | Dry-run planner; external writes still require verification. |
 | `agentic-os config install-tree` | Install Codex config across routed OS layers. | Dry-run by default. |
 
 ## MCP Servers
@@ -924,6 +988,7 @@ the source of truth by themselves.
 | Wrapper | Use When | Path |
 | --- | --- | --- |
 | host tool registry | Shell, terminal, runtime, package-manager, and cleanup work. | `shared_factory/05-knowledge/host-tool-registry.<host>.yml` |
+| agentic-os quiet run | Detached local commands with `state.json`, `events.jsonl`, `summary.md`, and `output.log`. | `harness/bin/agentic-os-quiet-run` |
 
 ## Hooks
 
@@ -1822,8 +1887,19 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
     result.extend(mirror_visible_capability_assets(os_root))
+    ensure_capability_registries(os_root, result)
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)
+    copy_file(
+        template_source_dir() / "runtime" / "doc-config.yml",
+        shared_factory_path(os_root, "00-control-plane", "doc-config.yml"),
+        result,
+    )
+    copy_file(
+        template_source_dir() / "runtime" / "notion-organization.yml",
+        shared_factory_path(os_root, "00-control-plane", "notion-organization.yml"),
+        result,
+    )
     result.extend(
         copy_tree(
             template_source_dir(),
@@ -1846,6 +1922,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         copy_tree(
             harness_source_dir() / "skills",
             shared_factory_path(os_root, "05-knowledge", "skills"),
+        )
+    )
+    result.extend(
+        copy_tree(
+            harness_source_dir() / "rules",
+            shared_factory_path(os_root, "05-knowledge", "rules"),
         )
     )
     hooks_root = harness_source_dir() / "hooks"
@@ -2067,6 +2149,7 @@ This is the project-local entrypoint for `{domain}/02-projects/{project}`.
 - `project.yml` and `source-map.md` identify the project and canonical sources.
 - `config/work-lifecycle.yml` declares lifecycle lanes and naming rules.
 - `config/output-artifacts.yml` declares feature artifact roots such as `work-items/02-active/{{ticket_or_slug}}/artifacts`.
+- Source repository `features/` and `.features/` folders are mirrors/artifact locations unless project config explicitly assigns lifecycle ownership there.
 - `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
 {remote_section}
 """
@@ -2085,7 +2168,7 @@ Route project work to the narrowest local surface before acting.
 | Expanded idea packet from duel/spec work | `work-items/01-intake/<index>_<slug>/` until promoted |
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
-| Feature implementation | `src/` or a registered `worktrees/<name>` link |
+| Feature implementation | OS `work-items/02-active/<index>_<slug>/` for lifecycle state, then `src/` or a registered `worktrees/<name>` link for source edits |
 | Feature artifact or generated output | `artifacts/` or configured source artifact root |
 | Durable decision | `decisions.md` |
 
@@ -2151,9 +2234,11 @@ checkout or feature artifact defines a stricter rule.
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `work-items/01-intake/` for raw project-known ideas. `ideas/` is a compatibility index, not the lifecycle source of truth.
-- Keep exactly one canonical work object per idea. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
+- Use `SPECS/` for user-facing future work and `work-items/01-intake/` for internal lifecycle intake. `ideas/` is a compatibility index, not the lifecycle source of truth.
+- Use `WORKLOGS/` or `worklogs/` for human-readable work history; lowercase `logs/` is reserved for raw system output and transcripts.
+- Keep exactly one canonical work object per spec. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
 - Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
+- Treat OS `work-items/` as the lifecycle source of truth. Source repo `features/` or `.features/` folders are mirrors/artifact locations unless `config/work-lifecycle.yml` explicitly says otherwise.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
 """
@@ -2174,6 +2259,10 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet. | Use for handoffs. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
+| `/add-spec` | Capture future work through doc-config and project work-item intake. | Primary command for proposed features/specs. |
+| `/auto-add-spec` | Create or update a spec packet for long OS-shaping requests. | Use before implementation continues. |
+| `/new-feature` | Deprecated alias for `/add-spec`. | Compatibility only. |
+| `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Compatibility only. |
 
 ## Local Paths
 
@@ -2182,8 +2271,10 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `src/` | Canonical source checkout for this project. |
 | `worktrees/` | Visible links to active worktrees. |
 | `config/` | Parsed project defaults and tool/workflow configuration. |
-| `ideas/` | Compatibility index for project ideas; do not use as the lifecycle source of truth. |
-| `work-items/01-intake/` | Raw project-known ideas, defaulting to `001_idea_slug.md`; expanded idea packets keep the same index as `001_idea_slug/`. |
+| `SPECS/` | User-facing future work, rough requests, proposed features, and reviewable specs. |
+| `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
+| `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
+| `work-items/01-intake/` | Internal lifecycle intake, defaulting to `001_spec_slug.md`; expanded packets keep the same index as `001_spec_slug/`. |
 | `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
 | `work-items/03-complete/` | Finished, documented, or archived work packets. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
@@ -2224,6 +2315,8 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "lane": lane_value,
                     "entrypoint": "AGENTS.md",
                     "canonical_source": "src",
+                    "specs": "SPECS",
+                    "worklogs": "worklogs",
                     "ideas": "work-items/01-intake",
                     "artifacts": "artifacts",
                 }
@@ -2250,6 +2343,8 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "enabled": True,
                     "source_of_truth": "agentic_os",
                     "work_items_root": "work-items",
+                    "specs_root": "SPECS",
+                    "worklogs_root": "worklogs",
                     "default_state": "captured",
                     "lanes": {
                         "intake": "01-intake",
@@ -2261,12 +2356,14 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                         "02-active": ["specified", "ready", "building", "validating", "blocked"],
                         "03-complete": ["finished", "documented", "archived"],
                     },
-                        "naming": {
-                            "intake_pattern": "{index:03d}_{slug}.md",
-                            "expanded_intake_pattern": "{index:03d}_{slug}/",
-                            "packet_pattern": "{index:03d}_{slug}/",
-                            "subtask_pattern": "{parent_index:03d}_{subindex:02d}_{slug}.md",
-                            "default_intake_format": "single_markdown",
+                    "naming": {
+                        "intake_pattern": "{index:03d}_{slug}.md",
+                        "expanded_intake_pattern": "{index:03d}_{slug}/",
+                        "packet_pattern": "{index:03d}_{slug}/",
+                        "subtask_pattern": "{parent_index:03d}_{subindex:02d}_{slug}.md",
+                        "default_intake_format": "single_markdown",
+                        "default_packet_capture_file": "SPEC.md",
+                        "legacy_capture_file": "IDEA.md",
                     },
                     "states": [
                         "captured",
@@ -2303,9 +2400,12 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
             {
                 "output_artifacts": {
                     "feature_root": "work-items/02-active/{ticket_or_slug}/artifacts",
+                    "spec_root": "SPECS/{ticket_or_slug}",
+                    "worklog_root": "worklogs/{ticket_or_slug}",
                     "project_artifacts": "artifacts",
                     "run_logs": "../../06-runs-and-logs/runs",
                     "front_matter": True,
+                    "source_repo_feature_root": "src/features/{ticket_or_slug}",
                     "legacy_source_feature_root": "src/.features/{ticket_or_slug}",
                     "source_of_truth": "agentic_os",
                 }
@@ -2413,6 +2513,37 @@ Use this table only as a compatibility index.
 
 | Date | Source | Idea | Next Step |
 | --- | --- | --- | --- |
+"""
+
+
+def worklogs_dir_name(project_root: Path) -> str:
+    uppercase_markers = {"PLANS", "BUILD_LOGS", "WORKLOGS"}
+    existing_names = {path.name for path in project_root.iterdir()} if project_root.exists() else set()
+    if uppercase_markers.intersection(existing_names):
+        return "WORKLOGS"
+    return "worklogs"
+
+
+def specs_readme(project: str) -> str:
+    return f"""# Specs: {project}
+
+Use this folder for user-facing future work, rough requests, proposed features,
+planning docs, and reviewable specs.
+
+The lifecycle source of truth remains `work-items/` unless project config
+explicitly declares another owner. Link specs to their work item instead of
+creating a second lifecycle record.
+"""
+
+
+def worklogs_readme(project: str) -> str:
+    return f"""# Worklogs: {project}
+
+Use this folder for human-readable work history, status receipts, and links to
+evidence.
+
+Raw command output, transcripts, async state, and large machine artifacts belong
+under lowercase `logs/` or `artifacts/`, not here.
 """
 
 
@@ -2655,8 +2786,11 @@ def ensure_project_operating_surface(
     root: str | Path | None = None,
     repo: str | None = None,
 ) -> None:
+    worklogs_dir = worklogs_dir_name(project_root)
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
+    ensure_dir(project_root / "SPECS", result)
+    ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
     for lane_name in ("01-intake", "02-active", "03-complete"):
@@ -2700,6 +2834,8 @@ def ensure_project_operating_surface(
     )
     write_file_once(project_root / "worktrees" / "README.md", worktrees_readme(project), result)
     write_file_once(project_root / "worktrees" / "index.yml", worktrees_index(project), result)
+    write_file_once(project_root / "SPECS" / "README.md", specs_readme(project), result)
+    write_file_once(project_root / worklogs_dir / "README.md", worklogs_readme(project), result)
     write_file_once(project_root / "ideas" / "README.md", ideas_readme(project), result)
     write_file_once(project_root / "ideas" / "raw-ideas.md", ideas_raw(project), result)
     for filename in PROJECT_CONFIG_FILES:

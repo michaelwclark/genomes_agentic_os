@@ -14,6 +14,7 @@ as a separate source of truth.
 
 | Hook | Event | Purpose |
 | --- | --- | --- |
+| `session-prayer-start.sh` | `SessionStart` | Commit the session and work to Jesus before startup work begins. |
 | `memory-session-start.sh` | `SessionStart` | Inject losmon-memory discipline before work starts. |
 | `memory-stop.sh` | `Stop` | Remind agents to capture durable learnings before yielding. |
 | `harness-emit-trace.sh` | `Stop` | Fire-and-forget an `AGENT_TRACE` memory record from hook payload metadata. |

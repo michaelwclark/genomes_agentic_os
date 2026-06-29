@@ -13,11 +13,21 @@ from .scaffold import expand_path, harness_path
 
 
 HOOK_FILENAMES = (
+    "session-prayer-start.sh",
     "memory-session-start.sh",
     "memory-stop.sh",
     "harness-emit-trace.sh",
+    "conversation-auto-log.py",
     "context-mode-cache-heal.mjs",
 )
+
+
+def context_mode_command(target: str, event: str) -> str:
+    return f"context-mode hook {target} {event}"
+
+
+def mempalace_command(hook: str) -> str:
+    return f"{Path.home()}/.local/share/mempalace-venv/bin/mempalace hook run --hook {hook} --harness claude-code"
 
 
 @dataclass
@@ -161,6 +171,14 @@ def sync_codex_hooks(data: dict[str, Any], root: Path) -> bool:
     changed = ensure_hook_entry(
         data,
         "SessionStart",
+        hook_command(root, "session-prayer-start.sh"),
+        matcher="startup",
+        timeout=5,
+        status_message="Committing the session",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
+        "SessionStart",
         hook_command(root, "memory-session-start.sh"),
         matcher="startup|resume|clear",
         timeout=5,
@@ -180,11 +198,51 @@ def sync_codex_hooks(data: dict[str, Any], root: Path) -> bool:
         timeout=5,
         status_message="Emitting AGENT_TRACE envelope",
     ) or changed
+    changed = ensure_hook_entry(
+        data,
+        "Stop",
+        hook_command(root, "conversation-auto-log.py"),
+        timeout=30,
+        status_message="Logging Agentic OS conversation",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
+        "SessionStart",
+        context_mode_command("codex", "sessionstart"),
+        matcher="",
+    ) or changed
+    changed = ensure_hook_entry(data, "Stop", context_mode_command("codex", "stop"), matcher="") or changed
+    changed = ensure_hook_entry(
+        data,
+        "PreToolUse",
+        context_mode_command("codex", "pretooluse"),
+        matcher=(
+            "local_shell|shell|shell_command|exec_command|Bash|Shell|apply_patch|"
+            "Edit|Write|grep_files|ctx_execute|ctx_execute_file|ctx_batch_execute|"
+            "ctx_fetch_and_index|ctx_search|ctx_index|mcp__"
+        ),
+    ) or changed
+    changed = ensure_hook_entry(data, "PostToolUse", context_mode_command("codex", "posttooluse"), matcher="") or changed
+    changed = ensure_hook_entry(data, "PreCompact", context_mode_command("codex", "precompact"), matcher="") or changed
+    changed = ensure_hook_entry(
+        data,
+        "UserPromptSubmit",
+        context_mode_command("codex", "userpromptsubmit"),
+        matcher="",
+    ) or changed
     return changed
 
 
 def sync_claude_hooks(data: dict[str, Any], root: Path) -> bool:
     changed = replace_legacy_hook_commands(data, root, "claude")
+    changed = ensure_hook_entry(
+        data,
+        "SessionStart",
+        hook_command(root, "session-prayer-start.sh"),
+        matcher="startup",
+        timeout=5,
+        status_message="Committing the session",
+    ) or changed
     changed = ensure_hook_entry(
         data,
         "SessionStart",
@@ -194,22 +252,65 @@ def sync_claude_hooks(data: dict[str, Any], root: Path) -> bool:
     changed = ensure_hook_entry(data, "SessionStart", hook_command(root, "context-mode-cache-heal.mjs")) or changed
     changed = ensure_hook_entry(data, "Stop", hook_command(root, "memory-stop.sh")) or changed
     changed = ensure_hook_entry(data, "Stop", hook_command(root, "harness-emit-trace.sh", "claude")) or changed
+    changed = ensure_hook_entry(
+        data,
+        "Stop",
+        hook_command(root, "conversation-auto-log.py"),
+        timeout=30,
+        status_message="Logging Agentic OS conversation",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
+        "SessionStart",
+        mempalace_command("session-start"),
+        matcher="startup|resume|clear",
+        timeout=30,
+        status_message="MemPalace session-start",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
+        "Stop",
+        mempalace_command("stop"),
+        matcher="*",
+        timeout=30,
+        status_message="MemPalace stop",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
+        "PreCompact",
+        mempalace_command("precompact"),
+        timeout=30,
+        status_message="MemPalace precompact",
+    ) or changed
     return changed
 
 
 def required_commands(root: Path, target: str) -> tuple[str, ...]:
     if target == "codex":
         return (
+            hook_command(root, "session-prayer-start.sh"),
             hook_command(root, "memory-session-start.sh"),
             hook_command(root, "memory-stop.sh"),
             hook_command(root, "harness-emit-trace.sh", "codex"),
+            hook_command(root, "conversation-auto-log.py"),
+            context_mode_command("codex", "sessionstart"),
+            context_mode_command("codex", "stop"),
+            context_mode_command("codex", "pretooluse"),
+            context_mode_command("codex", "posttooluse"),
+            context_mode_command("codex", "precompact"),
+            context_mode_command("codex", "userpromptsubmit"),
         )
     if target == "claude":
         return (
+            hook_command(root, "session-prayer-start.sh"),
             hook_command(root, "memory-session-start.sh"),
             hook_command(root, "memory-stop.sh"),
             hook_command(root, "harness-emit-trace.sh", "claude"),
+            hook_command(root, "conversation-auto-log.py"),
             hook_command(root, "context-mode-cache-heal.mjs"),
+            mempalace_command("session-start"),
+            mempalace_command("stop"),
+            mempalace_command("precompact"),
         )
     raise ValueError(f"unknown hook target: {target}")
 

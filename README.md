@@ -256,8 +256,8 @@ agentic-os init --target ~/agentic_os
 | --- | --- |
 | `agentic-os init --target ~/agentic_os` | Domain-first installed OS with root/domain routers and the standard numbered lanes. |
 | `agentic-os domain create <name> --root ~/agentic_os` | Additional top-level domain with the same router, control plane, inbox, workflow, automation, knowledge, run, metric, and archive structure. |
-| `agentic-os project create <domain> <project> --root ~/agentic_os` | Project folder with local agent files, `config/*.yml`, `ideas/`, `worktrees/`, `artifacts/`, and optional `src` link. |
-| `agentic-os project onboard <domain> <project> --root ~/agentic_os` | Repairs the project-local agent/config/idea/worktree surface for existing projects. |
+| `agentic-os project create <domain> <project> --root ~/agentic_os` | Project folder with local agent files, `config/*.yml`, `SPECS/`, `worklogs/`, `ideas/` compatibility index, `worktrees/`, `artifacts/`, and optional `src` link. |
+| `agentic-os project onboard <domain> <project> --root ~/agentic_os` | Repairs the project-local agent/config/spec/worklog/worktree surface for existing projects. |
 | `agentic-os project worktree add <domain> <project> <name> --path <path>` | Registers a visible worktree symlink and cwd routing target under the project. |
 | `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with outcome brief, alignment questions, PRD, implementation plan, handoff, progress, spec, context pack, approvals, output contract, runbook, examples, and runs folder. |
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
@@ -302,7 +302,8 @@ agentic-os init --target ~/agentic_os
 
 ```text
 docs/       Human-readable operating manual and diagrams.
-PLANS/     Feature specs and future build backlog.
+SPECS/     Preferred future-work specs and planning backlog.
+PLANS/     Legacy source-package plan backlog, still copied for compatibility.
 spec/       Product and implementation specs.
 templates/  Copyable source templates for installed OS objects.
 schemas/    JSON schemas for future stricter validation.

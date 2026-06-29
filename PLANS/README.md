@@ -55,6 +55,7 @@ See `.agentic-atlas/remaining-work-2026-06-09.md` for the itemized state.
 | `20-operator-pushed-customer-updates-and-backups.md` | Build the simpler V1 customer update path with customer-generated SSH keys, Genome billing checks, GitHub update pulls, backup pushes, and operator-pushed releases. | P0 |
 | `21-harness-context-contract-and-config-toml.md` | Normalize Codex/Claude context loading around `config.toml`, `AGENTS.md`, `CLAUDE.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`. | P0 |
 | `22-project-work-lifecycle-and-conversation-auto-logging.md` | Promote feature-style markdown tracking into every project, configure idea-to-spec-to-validation workflows, and add redacted conversation/tool-call logging. | P0 |
+| `23-doc-config-system.md` | Configure where docs, Notion pages, ideas, specs, plans, questions, and worklogs belong across filesystem and Notion surfaces. | P0 |
 
 ## Status Vocabulary
 

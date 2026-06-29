@@ -1,4 +1,7 @@
-# Idea: <title>
+# Legacy Idea: <title>
+
+> New packets use `SPEC.md` with a Raw Capture section. Keep this file only for
+> legacy compatibility when an existing work item has not been migrated.
 
 | Field | Value |
 | --- | --- |
@@ -15,4 +18,3 @@
 ## Source Notes
 
 -
-
