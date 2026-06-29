@@ -227,7 +227,10 @@ The installed command is:
 
 ```bash
 agentic-os --help
+aos --help
 ```
+
+`aos` is the short alias for the same Agentic OS CLI entrypoint.
 
 ### Smoke Test
 

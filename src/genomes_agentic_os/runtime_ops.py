@@ -18,7 +18,11 @@ import yaml
 from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
-from .self_improvement import run_self_improvement, run_self_improvement_morning_report
+from .self_improvement import (
+    process_self_improvement_actions,
+    run_self_improvement,
+    run_self_improvement_morning_report,
+)
 from .thread_closeout import stale_finalize_threads
 from .validate import validate_root
 
@@ -504,7 +508,20 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "notion_update": {"object": "Self Improvement", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,
-        }
+        },
+        {
+            "id": "self_improvement_action_watch",
+            "display_name": "Self-improvement Notion action watch",
+            "enabled": False,
+            "cadence": "every_5_minutes",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os self-improvement actions --root <root> --apply",
+            "outputs": ["harness/shared_factory/06-runs-and-logs/self-improvement/actions/"],
+            "notion_update": {"object": "Self Improvement", "status_field": "Action Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
     ],
 }
 
@@ -1011,6 +1028,30 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "report_path": morning_report.get("report"),
             "logs_path": morning_report.get("logs"),
             "notion_projected": bool(notion_projection.get("projected")),
+        }
+    _si_action_persist_forms = {
+        f"agentic-os self-improvement actions --root {root} --apply",
+        f"agentic-os self-improvement actions --root {str(root)} --apply",
+    }
+    _si_action_dry_forms = {
+        f"agentic-os self-improvement actions --root {root}",
+        f"agentic-os self-improvement actions --root {str(root)}",
+        f"agentic-os self-improvement actions --root {root} --dry-run",
+        f"agentic-os self-improvement actions --root {str(root)} --dry-run",
+    }
+    if normalized in _si_action_persist_forms | _si_action_dry_forms:
+        _dry = normalized not in _si_action_persist_forms
+        result = process_self_improvement_actions(root, dry_run=_dry)
+        return {
+            "supported": True,
+            "ok": bool(result.get("ok")),
+            "command": normalized,
+            "errors": [] if result.get("ok") else [str(result.get("reason") or "self-improvement action watcher failed")],
+            "warnings": [],
+            "status": result.get("status"),
+            "actions": len(result.get("actions") or []),
+            "queued": len(result.get("queued") or []),
+            "skipped": len(result.get("skipped") or []),
         }
     _si_persist_forms = {
         f"agentic-os self-improvement run --root {root} --apply",

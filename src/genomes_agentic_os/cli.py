@@ -50,6 +50,7 @@ from .notion_sync import (
     format_sync_result,
 )
 from .plans import capture_plan, format_plan_result
+from .ps_ops import format_ps_result, ps_snapshot
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
 from .routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
 from .runtime_ops import (
@@ -71,6 +72,7 @@ from .self_improvement import (
     approve_self_improvement_proposal,
     format_self_improvement_result,
     list_self_improvement_proposals,
+    process_self_improvement_actions,
     promote_self_improvement_proposal,
     reject_self_improvement_proposal,
     run_self_improvement,
@@ -201,8 +203,8 @@ def handle_capability_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agentic-os", description="Scaffold and validate an Agentic OS root.")
+def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description="Scaffold and validate an Agentic OS root.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_thread_closeout_args(closeout_parser: argparse.ArgumentParser, mode: str) -> None:
@@ -385,7 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_worktree_cleanup_closed.add_argument(
         "--remove-files",
         action="store_true",
-        help="Also remove clean in-project worktree directories after closing their registry entries.",
+        help="Also remove in-project worktree directories after closing their registry entries; merged PR dirt is ignored unless REOPEN.md is present.",
     )
     project_worktree_cleanup_closed.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_cleanup_closed.set_defaults(handler=handle_project_worktree_cleanup_closed)
@@ -433,7 +435,6 @@ def build_parser() -> argparse.ArgumentParser:
     lingering_mode.add_argument("--apply", action="store_true", help="Move stale terminal packets and refresh active links.")
     project_work_item_finalize_lingering.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_finalize_lingering.set_defaults(handler=handle_project_work_item_finalize_lingering)
-
     project_sync_remote = project_subparsers.add_parser(
         "sync-remote",
         help="Refresh manifest.yml for declared remote SSH sources.",
@@ -585,6 +586,39 @@ def build_parser() -> argparse.ArgumentParser:
     automation_control_run_mode.add_argument("--dry-run", action="store_true", default=True)
     automation_control_run_mode.add_argument("--apply", action="store_true")
     automation_control_run.set_defaults(handler=handle_automation_control_run)
+
+    ps_parser = subparsers.add_parser(
+        "ps",
+        help="Show Agentic OS work running right now; use --active for the broader dashboard.",
+    )
+    ps_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    ps_parser.add_argument("--json", action="store_true", help="Emit the snapshot as JSON.")
+    ps_mode = ps_parser.add_mutually_exclusive_group()
+    ps_mode.add_argument(
+        "--active",
+        action="store_true",
+        help="Show queued work, enabled automations/schedules/watchers, active workflows, and stale thread candidates.",
+    )
+    ps_mode.add_argument("--all", action="store_true", help="Include disabled and terminal registry/queue rows.")
+    ps_parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Colorize table output (default: auto).",
+    )
+    ps_parser.add_argument(
+        "--limit",
+        type=int,
+        default=120,
+        help="Maximum rows to print; use 0 for no limit.",
+    )
+    ps_parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=DEFAULT_STALE_DAYS,
+        help=f"Thread stale-candidate threshold in days (default: {DEFAULT_STALE_DAYS}).",
+    )
+    ps_parser.set_defaults(handler=handle_ps)
 
     run_log_parser = subparsers.add_parser("run-log", help="Manage run logs.")
     run_log_subparsers = run_log_parser.add_subparsers(dest="run_log_command", required=True)
@@ -1080,6 +1114,15 @@ def build_parser() -> argparse.ArgumentParser:
     self_improvement_promote.add_argument("--target", required=True)
     self_improvement_promote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_promote.set_defaults(handler=handle_self_improvement_promote)
+    self_improvement_actions = self_improvement_subparsers.add_parser(
+        "actions",
+        help="Consume checked Notion action boxes on self-improvement suggestion pages.",
+    )
+    self_improvement_actions.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_actions_mode = self_improvement_actions.add_mutually_exclusive_group()
+    self_improvement_actions_mode.add_argument("--dry-run", action="store_true", help="Preview checked action boxes without queuing workers.")
+    self_improvement_actions_mode.add_argument("--apply", action="store_true", help="Queue checked actions and update their Notion pages.")
+    self_improvement_actions.set_defaults(handler=handle_self_improvement_actions)
 
     connected_parser = subparsers.add_parser("connected-system", help="Manage connected source systems.")
     connected_subparsers = connected_parser.add_subparsers(dest="connected_system_command", required=True)
@@ -1556,6 +1599,24 @@ def handle_automation_set_maturity(args: argparse.Namespace) -> int:
     result = set_automation_maturity(args.root, args.domain, args.lane, args.automation, args.level)
     print(yaml_dump(result))
     return 0
+
+
+def handle_automation_control_list(args: argparse.Namespace) -> int:
+    print(format_automation_control_result(list_automation_control(args.root)))
+    return 0
+
+
+def handle_automation_control_doctor(args: argparse.Namespace) -> int:
+    result = automation_control_doctor(args.root)
+    print(format_automation_control_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_automation_control_run(args: argparse.Namespace) -> int:
+    result = run_automation_control(args.root, automation_id=args.automation_id, dry_run=not args.apply)
+    print(format_automation_control_result(result))
+    has_unknown = any(action.get("decision") == "unknown" for action in result.get("actions") or [])
+    return 1 if has_unknown else 0
 
 
 def handle_run_log_create(args: argparse.Namespace) -> int:
@@ -2068,6 +2129,11 @@ def handle_self_improvement_promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_self_improvement_actions(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(process_self_improvement_actions(args.root, dry_run=not args.apply)))
+    return 0
+
+
 def handle_connected_system_list(args: argparse.Namespace) -> int:
     print(format_source_watch_result(list_connected_systems(args.root)))
     return 0
@@ -2117,22 +2183,18 @@ def handle_watch_source_run_due(args: argparse.Namespace) -> int:
     return 0
 
 
-def handle_automation_control_list(args: argparse.Namespace) -> int:
-    print(format_automation_control_result(list_automation_control(args.root)))
+def handle_ps(args: argparse.Namespace) -> int:
+    mode = "all" if args.all else "active" if args.active else "now"
+    color = args.color == "always" or (args.color == "auto" and sys.stdout.isatty())
+    result = ps_snapshot(
+        args.root,
+        mode=mode,
+        limit=args.limit,
+        stale_days=args.stale_days,
+    )
+    result["prog"] = Path(sys.argv[0]).name if Path(sys.argv[0]).name in {"agentic-os", "aos"} else "agentic-os"
+    print(format_ps_result(result, as_json=args.json, color=color))
     return 0
-
-
-def handle_automation_control_doctor(args: argparse.Namespace) -> int:
-    result = automation_control_doctor(args.root)
-    print(format_automation_control_result(result))
-    return 0 if result.get("ok") else 1
-
-
-def handle_automation_control_run(args: argparse.Namespace) -> int:
-    result = run_automation_control(args.root, dry_run=not args.apply, automation_id=args.automation_id)
-    print(format_automation_control_result(result))
-    has_unknown = any(action.get("decision") == "unknown" for action in result.get("actions") or [])
-    return 1 if has_unknown else 0
 
 
 def handle_event_append(args: argparse.Namespace) -> int:
@@ -2217,7 +2279,10 @@ def handle_docs_update(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+    prog = Path(sys.argv[0]).name if argv is None else "agentic-os"
+    if prog not in {"agentic-os", "aos"}:
+        prog = "agentic-os"
+    parser = build_parser(prog=prog)
     parse_argv = list(sys.argv[1:] if argv is None else argv)
     project_exec_cmd: list[str] | None = None
     if parse_argv[:2] == ["project", "exec"] and "--" in parse_argv:

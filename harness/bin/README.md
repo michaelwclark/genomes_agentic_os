@@ -5,6 +5,7 @@ Reserved for executable wrappers owned by the installed Agentic OS harness.
 Current required executables live outside this folder:
 
 - `agentic-os` is the Python package console entrypoint.
+- `aos` is the short Python package console entrypoint for the same CLI.
 - `context-mode` is expected at `/Users/genome/.local/bin/context-mode`.
 - `agentic-os-context-mode` is the local context-mode status and kill-switch wrapper.
 

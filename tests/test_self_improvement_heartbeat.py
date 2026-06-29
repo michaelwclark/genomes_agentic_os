@@ -314,11 +314,22 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
                 "Summary": {"type": "rich_text"},
                 "Score": {"type": "number"},
                 "Status": {"type": "select"},
+                "Evidence Path": {"type": "rich_text"},
                 "Run ID": {"type": "rich_text"},
                 "Date": {"type": "date"},
+                "Updated": {"type": "date"},
+                "Type": {"type": "select"},
+                "Proposal ID": {"type": "rich_text"},
+                "Parent Run ID": {"type": "rich_text"},
+                "Recommended Artifact": {"type": "rich_text"},
+                "Action Status": {"type": "select"},
+                "Action Log": {"type": "rich_text"},
+                "Run Grooming": {"type": "checkbox"},
+                "Auto-dev Implementation": {"type": "checkbox"},
             }
         },
-        {"id": "page-1234"},  # create_database_page
+        {"id": "page-1234"},  # create summary database page
+        {"id": "page-5678"},  # create suggestion database page
     ]
     transport = _FakeTransport(responses)
 
@@ -327,11 +338,33 @@ def test_notion_projection_lands_row_with_fake_transport(tmp_path: Path) -> None
 
     assert projection["projected"] is True
     assert projection["page_id"] == "page1234"
+    assert projection["suggestion_count"] == 1
     # The created page POST must carry only properties that exist on the DB.
-    create_req = transport.requests[-1]
+    create_req = next(req for req in transport.requests if req["method"] == "POST" and req["url"].endswith("/pages"))
     body = json.loads(create_req["data"].decode("utf-8"))
-    assert set(body["properties"]).issubset({"Name", "Summary", "Score", "Status", "Run ID", "Date"})
+    assert set(body["properties"]).issubset(
+        {
+            "Name",
+            "Summary",
+            "Score",
+            "Status",
+            "Evidence Path",
+            "Run ID",
+            "Date",
+            "Updated",
+            "Type",
+            "Proposal ID",
+            "Parent Run ID",
+            "Recommended Artifact",
+            "Action Status",
+            "Action Log",
+            "Run Grooming",
+            "Auto-dev Implementation",
+        }
+    )
     assert body["properties"]["Score"]["number"] == 21
+    assert body["properties"]["Type"]["select"]["name"] == "Daily Summary"
+    assert body["children"]
     # Token must never appear in any request body or URL.
     for req in transport.requests:
         payload = (req["data"] or b"").decode("utf-8", errors="replace")
@@ -401,6 +434,97 @@ def test_notion_projection_degrades_on_workspace_mismatch(tmp_path: Path) -> Non
         projection = si._project_run_to_notion(root, result, report_paths, fetcher=transport)
     assert projection["projected"] is False
     assert "does not match" in projection["reason"]
+
+
+def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    _write_manifest(root, live=True, with_db=True)
+    proposal_dir = _self_improvement_root(root) / "proposals"
+    proposal_dir.mkdir(parents=True, exist_ok=True)
+    proposal = {
+        "schema_version": 1,
+        "proposal_id": "si-action123",
+        "created_at": "2026-06-27T00:00:00Z",
+        "updated_at": "2026-06-27T00:00:00Z",
+        "opportunity_type": "missing_harness_capability",
+        "title": "Actionable suggestion",
+        "summary": "Improve the action flow.",
+        "scope": "installed_os",
+        "evidence": [{"locator": "harness/logs/session.md", "excerpt": "needs action", "signal_type": "test", "redactions": 0}],
+        "deterministic_findings": [],
+        "model_recommendation": None,
+        "score": {"frequency": 3, "severity": 3, "reuse": 3, "confidence": 3, "blast_radius": 3, "staleness": 3, "total": 18},
+        "dedupe_key": "test-action",
+        "cooldown_until": None,
+        "recommended_artifact": "feature-spec",
+        "approval_requirement": "operator_required",
+        "validation_plan": ["Run focused tests."],
+        "reference_migration_plan": [],
+        "redaction_status": "clean",
+        "promotion_status": "proposed",
+        "approval_record_id": None,
+    }
+    proposal["content_hash"] = si._proposal_content_hash(proposal)
+    (proposal_dir / "si-action123.yml").write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    responses = [
+        {"bot": {"workspace_name": "Genome's Notion"}},
+        {
+            "properties": {
+                "Name": {"type": "title"},
+                "Summary": {"type": "rich_text"},
+                "Score": {"type": "number"},
+                "Status": {"type": "select"},
+                "Evidence Path": {"type": "rich_text"},
+                "Run ID": {"type": "rich_text"},
+                "Date": {"type": "date"},
+                "Updated": {"type": "date"},
+                "Type": {"type": "select"},
+                "Proposal ID": {"type": "rich_text"},
+                "Parent Run ID": {"type": "rich_text"},
+                "Recommended Artifact": {"type": "rich_text"},
+                "Action Status": {"type": "select"},
+                "Action Log": {"type": "rich_text"},
+                "Run Grooming": {"type": "checkbox"},
+                "Auto-dev Implementation": {"type": "checkbox"},
+            }
+        },
+        {
+            "results": [
+                {
+                    "id": "page-action-1",
+                    "properties": {
+                        "Name": {"type": "title", "title": [{"plain_text": "Actionable suggestion"}]},
+                        "Type": {"type": "select", "select": {"name": "Suggestion"}},
+                        "Proposal ID": {"type": "rich_text", "rich_text": [{"plain_text": "si-action123"}]},
+                        "Action Status": {"type": "select", "select": {"name": "ready"}},
+                        "Run Grooming": {"type": "checkbox", "checkbox": True},
+                        "Auto-dev Implementation": {"type": "checkbox", "checkbox": False},
+                    },
+                }
+            ]
+        },
+        {"id": "page-action-1"},
+    ]
+    transport = _FakeTransport(responses)
+
+    with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
+        result = si.process_self_improvement_actions(root, dry_run=False, fetcher=transport)
+
+    assert result["status"] == "processed"
+    assert len(result["queued"]) == 1
+    queued = result["queued"][0]
+    assert queued["kind"] == "self_improvement_action"
+    assert queued["work_type"] == "self_improvement_groom"
+    assert "agentic-os-quiet-run start" in queued["command"]
+    queue_path = _shared_factory(root) / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    assert queue["run_queue"][0]["id"] == queued["id"]
+    update_req = transport.requests[-1]
+    update_body = json.loads(update_req["data"].decode("utf-8"))
+    assert update_body["properties"]["Run Grooming"]["checkbox"] is False
+    assert update_body["properties"]["Action Status"]["select"]["name"] == "queued"
 
 
 # ---------------------------------------------------------------------------

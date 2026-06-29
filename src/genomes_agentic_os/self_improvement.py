@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import tempfile
 from typing import Any
 
@@ -31,6 +32,8 @@ NOTION_SELF_IMPROVEMENT_DB = "Self Improvement"
 NOTION_TOKEN_ENV = "GENOMES_NOTION_PAT"
 NOTION_REPORT_PARENT_TITLE = "Genome's Agentic OS"
 NOTION_REPORTS_PAGE_TITLE = "Self Improvement Reports"
+ACTION_OUTPUT_ROOT = f"{OUTPUT_ROOT}/actions"
+SELF_IMPROVEMENT_WORK_ITEM = "clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
 MAX_EVIDENCE_FILES = 400
 MAX_EVIDENCE_FILES_PER_ROOT = 40
 MAX_EVIDENCE_BYTES = 16_000
@@ -1107,6 +1110,143 @@ def _notion_manifest(root: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+SELF_IMPROVEMENT_DB_SCHEMA: dict[str, dict[str, Any]] = {
+    "Summary": {"rich_text": {}},
+    "Status": {"select": {}},
+    "Score": {"number": {}},
+    "Evidence Path": {"rich_text": {}},
+    "Run ID": {"rich_text": {}},
+    "Date": {"date": {}},
+    "Updated": {"date": {}},
+    "Type": {"select": {}},
+    "Proposal ID": {"rich_text": {}},
+    "Parent Run ID": {"rich_text": {}},
+    "Recommended Artifact": {"rich_text": {}},
+    "Action Status": {"select": {}},
+    "Action Log": {"rich_text": {}},
+    "Run Grooming": {"checkbox": {}},
+    "Auto-dev Implementation": {"checkbox": {}},
+}
+
+
+def _ensure_self_improvement_schema(
+    database_id: str,
+    available: dict[str, str],
+    *,
+    fetcher: Any,
+) -> dict[str, str]:
+    missing = {
+        name: schema
+        for name, schema in SELF_IMPROVEMENT_DB_SCHEMA.items()
+        if name not in available
+    }
+    if not missing:
+        return available
+    notion_api.update_database_schema(database_id, missing, NOTION_TOKEN_ENV, fetcher=fetcher)
+    return notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=fetcher)
+
+
+def _rt(value: str) -> list[dict[str, Any]]:
+    return [{"type": "text", "text": {"content": value[:2000]}}] if value else []
+
+
+def _paragraph(text: str) -> dict[str, Any]:
+    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rt(text)}}
+
+
+def _heading(level: int, text: str) -> dict[str, Any]:
+    key = f"heading_{level}"
+    return {"object": "block", "type": key, key: {"rich_text": _rt(text)}}
+
+
+def _bullet(text: str) -> dict[str, Any]:
+    return {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rt(text)}}
+
+
+def _todo(text: str, *, checked: bool = False) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "to_do",
+        "to_do": {"rich_text": _rt(text), "checked": checked},
+    }
+
+
+def _divider() -> dict[str, Any]:
+    return {"object": "block", "type": "divider", "divider": {}}
+
+
+def _summary_blocks(root: Path, result: dict[str, Any], report_paths: dict[str, str]) -> list[dict[str, Any]]:
+    findings = result.get("findings") or []
+    proposals = result.get("proposal_candidates") or []
+    evidence_files = int(result.get("evidence_files") or 0)
+    report_path = report_paths.get("latest", "")
+    blocks: list[dict[str, Any]] = [
+        _heading(2, "Run Summary"),
+        _paragraph(
+            f"Scanned {evidence_files} evidence files and surfaced "
+            f"{len(findings)} finding(s) with {len(proposals)} suggestion(s)."
+        ),
+        _bullet(f"Run ID: {result.get('run_id') or ''}"),
+        _bullet(f"Filesystem report: {report_path}"),
+        _bullet("Filesystem remains the source of truth; Notion is the review and action projection."),
+        _divider(),
+        _heading(2, "Findings"),
+    ]
+    if not findings:
+        blocks.append(_paragraph("No findings crossed the reporting threshold."))
+    else:
+        for finding in findings[:10]:
+            score = (finding.get("score") or {}).get("total", "")
+            blocks.append(
+                _bullet(
+                    f"{finding.get('title') or 'Finding'}: "
+                    f"{finding.get('summary') or ''} Score {score}."
+                )
+            )
+    blocks.extend(
+        [
+            _divider(),
+            _heading(2, "Suggestion Pages"),
+            _paragraph(
+                "Open the suggestion rows linked to this run. Each suggestion page has two action checkboxes: "
+                "Run Grooming and Auto-dev Implementation."
+            ),
+        ]
+    )
+    return blocks
+
+
+def _proposal_blocks(proposal: dict[str, Any], *, run_id: str) -> list[dict[str, Any]]:
+    evidence = proposal.get("evidence") or []
+    validation = proposal.get("validation_plan") or []
+    blocks: list[dict[str, Any]] = [
+        _heading(2, "Recommendation"),
+        _paragraph(str(proposal.get("summary") or "")),
+        _bullet(f"Proposal ID: {proposal.get('proposal_id') or ''}"),
+        _bullet(f"Run ID: {run_id}"),
+        _bullet(f"Recommended artifact: {proposal.get('recommended_artifact') or ''}"),
+        _bullet(f"Promotion status: {proposal.get('promotion_status') or 'proposed'}"),
+        _divider(),
+        _heading(2, "Actions"),
+        _bullet("Run Grooming: check the page property to queue spec grooming."),
+        _bullet("Auto-dev Implementation: check the page property to queue implementation."),
+        _divider(),
+        _heading(2, "Evidence"),
+    ]
+    if not evidence:
+        blocks.append(_paragraph("No evidence attached."))
+    else:
+        for item in evidence[:8]:
+            blocks.append(_bullet(f"{item.get('locator') or 'evidence'}: {item.get('excerpt') or ''}"))
+    blocks.append(_heading(2, "Validation Plan"))
+    if not validation:
+        blocks.append(_paragraph("No validation plan recorded."))
+    else:
+        for item in validation:
+            blocks.append(_bullet(str(item)))
+    return blocks
+
+
 def _notion_projection_properties(
     available: dict[str, str],
     *,
@@ -1115,6 +1255,14 @@ def _notion_projection_properties(
     score: int,
     run_id: str,
     evidence_path: str,
+    page_type: str = "Daily Summary",
+    proposal_id: str = "",
+    parent_run_id: str = "",
+    recommended_artifact: str = "",
+    run_grooming: bool = False,
+    auto_dev: bool = False,
+    action_status: str = "",
+    action_log: str = "",
 ) -> dict[str, Any]:
     """Build only the properties that exist on the live database.
 
@@ -1135,6 +1283,14 @@ def _notion_projection_properties(
         "Run ID": ("rich_text", run_id),
         "Date": ("date", _today()),
         "Updated": ("date", _now()),
+        "Type": ("select", page_type),
+        "Proposal ID": ("rich_text", proposal_id),
+        "Parent Run ID": ("rich_text", parent_run_id),
+        "Recommended Artifact": ("rich_text", recommended_artifact),
+        "Run Grooming": ("checkbox", run_grooming),
+        "Auto-dev Implementation": ("checkbox", auto_dev),
+        "Action Status": ("select", action_status),
+        "Action Log": ("rich_text", action_log),
     }
     for name, (expected_type, value) in candidates.items():
         actual = available.get(name)
@@ -1148,6 +1304,8 @@ def _notion_projection_properties(
             properties[name] = {"number": value}
         elif expected_type == "date":
             properties[name] = notion_api._date_prop(str(value))
+        elif expected_type == "checkbox":
+            properties[name] = notion_api._checkbox_prop(bool(value))
     return properties
 
 
@@ -1213,6 +1371,7 @@ def _project_run_to_notion(
                 f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}"
             )
         available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
+        available = _ensure_self_improvement_schema(database_id, available, fetcher=transport)
         properties = _notion_projection_properties(
             available,
             title=title,
@@ -1220,11 +1379,322 @@ def _project_run_to_notion(
             score=score,
             run_id=run_id,
             evidence_path=evidence_path,
+            page_type="Daily Summary",
+            action_status="ready",
         )
-        page_id = notion_api.create_database_page(database_id, properties, NOTION_TOKEN_ENV, fetcher=transport)
+        page_id = notion_api.create_database_page(
+            database_id,
+            properties,
+            NOTION_TOKEN_ENV,
+            children=_summary_blocks(root, result, report_paths),
+            fetcher=transport,
+        )
+        suggestion_pages = []
+        for proposal in proposals:
+            proposal_id = str(proposal.get("proposal_id") or "")
+            proposal_score = int((proposal.get("score") or {}).get("total") or 0)
+            proposal_title = str(proposal.get("title") or proposal_id or "Self-improvement suggestion")
+            proposal_summary = str(proposal.get("summary") or "")
+            evidence_items = proposal.get("evidence") or []
+            proposal_evidence = str((evidence_items[0] or {}).get("locator")) if evidence_items else evidence_path
+            proposal_properties = _notion_projection_properties(
+                available,
+                title=proposal_title,
+                summary=proposal_summary,
+                score=proposal_score,
+                run_id=run_id,
+                evidence_path=proposal_evidence,
+                page_type="Suggestion",
+                proposal_id=proposal_id,
+                parent_run_id=run_id,
+                recommended_artifact=str(proposal.get("recommended_artifact") or ""),
+                run_grooming=False,
+                auto_dev=False,
+                action_status="ready",
+                action_log="",
+            )
+            proposal_page_id = notion_api.create_database_page(
+                database_id,
+                proposal_properties,
+                NOTION_TOKEN_ENV,
+                children=_proposal_blocks(proposal, run_id=run_id),
+                fetcher=transport,
+            )
+            suggestion_pages.append({"proposal_id": proposal_id, "page_id": proposal_page_id})
     except (RuntimeError, OSError, KeyError, ValueError) as exc:
         return _degrade(f"notion projection failed: {exc}")
-    return {"projected": True, "page_id": page_id, "database": NOTION_SELF_IMPROVEMENT_DB}
+    return {
+        "projected": True,
+        "page_id": page_id,
+        "database": NOTION_SELF_IMPROVEMENT_DB,
+        "suggestion_pages": suggestion_pages,
+        "suggestion_count": len(suggestion_pages),
+    }
+
+
+def _property_text(properties: dict[str, Any], name: str) -> str:
+    prop = properties.get(name) or {}
+    kind = prop.get("type")
+    if kind in {"title", "rich_text"}:
+        return "".join((item.get("plain_text") or "") for item in prop.get(kind) or [])
+    if kind == "select":
+        return str(((prop.get("select") or {}).get("name")) or "")
+    return ""
+
+
+def _property_checkbox(properties: dict[str, Any], name: str) -> bool:
+    prop = properties.get(name) or {}
+    return bool(prop.get("checkbox")) if prop.get("type") == "checkbox" else False
+
+
+def _proposal_action_filter() -> dict[str, Any]:
+    return {
+        "and": [
+            {"property": "Type", "select": {"equals": "Suggestion"}},
+            {
+                "or": [
+                    {"property": "Run Grooming", "checkbox": {"equals": True}},
+                    {"property": "Auto-dev Implementation", "checkbox": {"equals": True}},
+                ]
+            },
+        ]
+    }
+
+
+def _action_slug(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
+    return cleaned[:80] or "self-improvement-action"
+
+
+def _action_prompt(proposal: dict[str, Any], *, action_type: str, page_id: str) -> str:
+    proposal_id = str(proposal.get("proposal_id") or "")
+    title = str(proposal.get("title") or proposal_id or "Self-improvement suggestion")
+    if action_type == "groom":
+        objective = (
+            "Run a grooming pass that turns this suggestion into a sharper spec, "
+            "implementation plan, validation plan, and clear next action. Do not mutate live shared OS surfaces."
+        )
+    else:
+        objective = (
+            "Run the implementation workflow start to finish for this suggestion. "
+            "Route through the Agentic OS work item, make code or documentation changes as needed, "
+            "run focused validation, and leave receipt-backed status."
+        )
+    proposal_yaml = yaml.safe_dump(proposal, sort_keys=False)
+    return f"""# Self-Improvement Action Worker
+
+Action: {action_type}
+Proposal: {proposal_id}
+Notion page: {page_id}
+Work item: {SELF_IMPROVEMENT_WORK_ITEM}
+
+## Objective
+
+{objective}
+
+## Operating Rules
+
+- Load the Agentic OS routing/context files before acting.
+- Keep filesystem work items and receipts as the source of truth.
+- Verify Genome's Notion before any Notion write.
+- Do not publish local paths or private Notion links to Jira, GitHub, Slack, or email.
+- If implementation is unsafe or underspecified, stop with a blocker-grade receipt instead of guessing.
+
+## Proposal
+
+```yaml
+{proposal_yaml}```
+"""
+
+
+def _write_action_worker(root: Path, proposal: dict[str, Any], *, action_type: str, page_id: str) -> dict[str, str]:
+    proposal_id = str(proposal.get("proposal_id") or "unknown")
+    action_root = _ensure_safe_dir(root, _resolve_root_relative(root, ACTION_OUTPUT_ROOT))
+    prompts_dir = _safe_descendant(root, action_root, "prompts")
+    scripts_dir = _safe_descendant(root, action_root, "scripts")
+    _ensure_safe_dir(root, prompts_dir)
+    _ensure_safe_dir(root, scripts_dir)
+    stamp = _stamp()
+    basename = _action_slug(f"{stamp}-{action_type}-{proposal_id}-{page_id[:8]}")
+    prompt_path = _safe_child(root, prompts_dir, f"{basename}.md")
+    script_path = _safe_child(root, scripts_dir, f"{basename}.sh")
+    _atomic_write_text(root, prompt_path, _action_prompt(proposal, action_type=action_type, page_id=page_id))
+    script = f"""#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT={shlex.quote(str(root))}
+PROMPT={shlex.quote(str(prompt_path))}
+
+cd "$ROOT"
+exec codex exec -p automation_guard --cd "$ROOT" --skip-git-repo-check "$(cat "$PROMPT")"
+"""
+    _atomic_write_text(root, script_path, script)
+    script_path.chmod(0o755)
+    return {
+        "prompt": str(prompt_path.relative_to(root)),
+        "script": str(script_path.relative_to(root)),
+        "action_root": str(action_root),
+    }
+
+
+def _action_queue_item(
+    root: Path,
+    proposal: dict[str, Any],
+    *,
+    action_type: str,
+    page_id: str,
+    worker: dict[str, str],
+) -> dict[str, Any]:
+    proposal_id = str(proposal.get("proposal_id") or "unknown")
+    queue_id = f"queue_self_improvement_{_digest(f'{page_id}:{proposal_id}:{action_type}', 12)}"
+    label = f"self-improvement-{action_type}-{proposal_id}"
+    command = (
+        f"harness/bin/agentic-os-quiet-run start "
+        f"--artifact-dir {shlex.quote(worker['action_root'])} "
+        f"--label {shlex.quote(label)} "
+        f"--timeout-minutes 720 "
+        f"--work-dir {shlex.quote(str(root))} "
+        f"-- {shlex.quote(str(root / worker['script']))}"
+    )
+    return {
+        "id": queue_id,
+        "kind": "self_improvement_action",
+        "ref": proposal_id,
+        "status": "queued",
+        "approval_state": "not_required",
+        "dry_run": False,
+        "idempotency_key": f"self-improvement-action:{page_id}:{proposal_id}:{action_type}",
+        "execution_target": "script",
+        "work_type": f"self_improvement_{action_type}",
+        "route_to": SELF_IMPROVEMENT_WORK_ITEM,
+        "command": command,
+        "evidence": [
+            {"type": "notion_page", "page_id": page_id},
+            {"type": "proposal", "proposal_id": proposal_id},
+            {"type": "prompt", "path": worker["prompt"]},
+        ],
+    }
+
+
+def process_self_improvement_actions(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    fetcher: Any = None,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    transport = fetcher or notion_api._default_fetcher
+    result: dict[str, Any] = {
+        "action": "actions",
+        "root": str(os_root),
+        "mode": "dry-run" if dry_run else "apply",
+        "ok": True,
+        "actions": [],
+        "queued": [],
+        "skipped": [],
+    }
+
+    manifest = _notion_manifest(os_root)
+    if not manifest.get("live"):
+        result.update({"status": "blocked", "reason": "notion runtime tracking is not live in the manifest"})
+        return result
+    expected_workspace = str(manifest.get("workspace") or "")
+    if "michael clark" in expected_workspace.lower() or "personal" in expected_workspace.lower():
+        result.update({"status": "blocked", "reason": "manifest workspace appears to be a personal Notion"})
+        return result
+    database_id = (manifest.get("database_ids") or {}).get(NOTION_SELF_IMPROVEMENT_DB)
+    if not database_id:
+        result.update({"status": "blocked", "reason": f"manifest has no {NOTION_SELF_IMPROVEMENT_DB!r} database id"})
+        return result
+    if not notion_api.resolve_token(NOTION_TOKEN_ENV):
+        result.update({"status": "blocked", "reason": f"notion token env var {NOTION_TOKEN_ENV!r} is not set"})
+        return result
+
+    try:
+        bot_workspace = notion_api.get_bot_workspace(NOTION_TOKEN_ENV, fetcher=transport)
+        if expected_workspace and bot_workspace != expected_workspace:
+            result.update(
+                {
+                    "status": "blocked",
+                    "reason": f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}",
+                }
+            )
+            return result
+        available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
+        _ensure_self_improvement_schema(database_id, available, fetcher=transport)
+        pages = notion_api.query_database(database_id, _proposal_action_filter(), NOTION_TOKEN_ENV, fetcher=transport)
+    except (RuntimeError, OSError, KeyError, ValueError) as exc:
+        result.update({"ok": False, "status": "failed", "reason": str(exc)})
+        return result
+
+    for page in pages:
+        page_id = str(page.get("id") or "").replace("-", "")
+        properties = page.get("properties") or {}
+        proposal_id = _property_text(properties, "Proposal ID")
+        action_status = _property_text(properties, "Action Status")
+        wants_grooming = _property_checkbox(properties, "Run Grooming")
+        wants_auto_dev = _property_checkbox(properties, "Auto-dev Implementation")
+        if action_status in {"queued", "running"}:
+            result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": f"already_{action_status}"})
+            continue
+        if wants_grooming and wants_auto_dev:
+            result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": "needs_single_action"})
+            if not dry_run:
+                notion_api.update_database_page(
+                    page_id,
+                    {
+                        "Action Status": notion_api._select_prop("needs_choice"),
+                        "Action Log": notion_api._rich_text_prop("Both action boxes were checked; clear one and the next watcher tick will queue it."),
+                    },
+                    NOTION_TOKEN_ENV,
+                    fetcher=transport,
+                )
+            continue
+        action_type = "groom" if wants_grooming else "auto_dev" if wants_auto_dev else ""
+        if not action_type:
+            continue
+        if not proposal_id:
+            result["skipped"].append({"page_id": page_id, "reason": "missing_proposal_id"})
+            continue
+        try:
+            proposal = _load_proposal(os_root, config, proposal_id)
+        except ValueError as exc:
+            result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": str(exc)})
+            if not dry_run:
+                notion_api.update_database_page(
+                    page_id,
+                    {
+                        "Action Status": notion_api._select_prop("blocked"),
+                        "Action Log": notion_api._rich_text_prop(str(exc)),
+                    },
+                    NOTION_TOKEN_ENV,
+                    fetcher=transport,
+                )
+            continue
+
+        if dry_run:
+            result["actions"].append({"page_id": page_id, "proposal_id": proposal_id, "action_type": action_type})
+            continue
+        worker = _write_action_worker(os_root, proposal, action_type=action_type, page_id=page_id)
+        item = _action_queue_item(os_root, proposal, action_type=action_type, page_id=page_id, worker=worker)
+        result["actions"].append({"page_id": page_id, "proposal_id": proposal_id, "action_type": action_type, "queue_item": item})
+        from .runtime_ops import append_run_queue_item
+
+        queued = append_run_queue_item(os_root, item)
+        result["queued"].append(queued["queue_item"])
+        update_props = {
+            "Action Status": notion_api._select_prop("queued"),
+            "Action Log": notion_api._rich_text_prop(f"Queued {item['id']} at {_now()}."),
+        }
+        if action_type == "groom":
+            update_props["Run Grooming"] = notion_api._checkbox_prop(False)
+        else:
+            update_props["Auto-dev Implementation"] = notion_api._checkbox_prop(False)
+        notion_api.update_database_page(page_id, update_props, NOTION_TOKEN_ENV, fetcher=transport)
+
+    result["status"] = "dry-run" if dry_run else "processed"
+    return result
 
 
 def _markdown_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]]) -> list[str]:
@@ -1968,6 +2438,20 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
 
     if action == "show":
         return yaml.safe_dump(result["proposal"], sort_keys=False)
+
+    if action == "actions":
+        lines = [
+            "Self Improvement Actions",
+            f"root: {result['root']}",
+            f"mode: {result['mode']}",
+            f"status: {result.get('status') or 'unknown'}",
+            f"actions: {len(result.get('actions') or [])}",
+            f"queued: {len(result.get('queued') or [])}",
+            f"skipped: {len(result.get('skipped') or [])}",
+        ]
+        if result.get("reason"):
+            lines.append(f"reason: {result['reason']}")
+        return "\n".join(lines)
 
     if action in {"approve", "reject", "promote"}:
         lines = [f"Self Improvement {str(action).title()}"]

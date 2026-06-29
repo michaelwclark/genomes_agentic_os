@@ -123,6 +123,18 @@ def command_entries() -> list[dict[str, str]]:
             "source": "agentic-os validate",
         },
         {
+            "id": "ps",
+            "command": "agentic-os ps",
+            "description": "Show Agentic OS work running right now; use --active for queued/configured work and stale thread candidates.",
+            "source": "harness/commands/os-ps.md",
+        },
+        {
+            "id": "aos",
+            "command": "aos",
+            "description": "Short alias for the agentic-os CLI.",
+            "source": "pyproject.toml",
+        },
+        {
             "id": "program-create",
             "command": "agentic-os program create",
             "description": "Create a shared OSProgram under harness/shared_factory/00-programs/.",
