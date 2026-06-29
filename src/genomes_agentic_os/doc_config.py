@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import hashlib
+import re
 import shutil
 
 import yaml
 
-from .scaffold import expand_path
+from .scaffold import domain_path, expand_path, titleize_name, validate_name
 
 
 CONFIG_RELATIVE_PATH = Path("harness/shared_factory/00-control-plane/doc-config.yml")
@@ -28,7 +30,7 @@ class DocConfigBucket:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -42,21 +44,39 @@ def doc_config_path(root: str | Path) -> Path:
     return expand_path(root) / CONFIG_RELATIVE_PATH
 
 
+def project_doc_config_path(root: str | Path, domain: str, project: str) -> Path:
+    domain = validate_name(domain, "domain")
+    project = validate_name(project, "project")
+    return domain_path(expand_path(root), domain) / "02-projects" / project / "config" / "doc-config.yml"
+
+
 def doc_config_template_path() -> Path:
     return _repo_root() / TEMPLATE_RELATIVE_PATH
 
 
-def load_doc_config(root: str | Path) -> tuple[Path, dict[str, Any]]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def load_doc_config(root: str | Path, *, domain: str | None = None, project: str | None = None) -> tuple[Path, dict[str, Any]]:
     path = doc_config_path(root)
-    config = _load_yaml(path)
-    if config:
-        return path, config
-    template = doc_config_template_path()
-    return path, _load_yaml(template)
+    config = _deep_merge(_load_yaml(doc_config_template_path()), _load_yaml(path))
+    if domain and project:
+        project_path = project_doc_config_path(root, domain, project)
+        if project_path.is_file():
+            config = _deep_merge(config, _load_yaml(project_path))
+            path = project_path
+    return path, config
 
 
 def init_doc_config(root: str | Path, *, domain: str | None = None, project: str | None = None) -> dict[str, Any]:
-    path = doc_config_path(root)
+    path = project_doc_config_path(root, domain, project) if domain and project else doc_config_path(root)
     template = doc_config_template_path()
     if not template.is_file():
         raise ValueError(f"doc-config template not found: {template}")
@@ -91,6 +111,19 @@ def _enabled_search_methods(config: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return sorted(rows, key=lambda row: (row["priority"], row["id"]))
+
+
+def _disabled_search_methods(config: dict[str, Any]) -> list[str]:
+    methods = config.get("search_methods") if isinstance(config.get("search_methods"), dict) else {}
+    return sorted(
+        str(method_id)
+        for method_id, method in methods.items()
+        if isinstance(method, dict) and not method.get("enabled", False)
+    )
+
+
+def _tokens(value: str) -> set[str]:
+    return {token for token in re.split(r"[^a-z0-9_]+", value.lower()) if token}
 
 
 def _bucket_from_mapping(mapping: dict[str, Any]) -> DocConfigBucket:
@@ -140,16 +173,39 @@ def _infer_area(config: dict[str, Any], request: str, domain: str | None, projec
             if project and area.get("project") != project:
                 continue
             return area
-    request_l = request.lower()
+    request_tokens = _tokens(request)
+    best_area = None
+    best_score = 0
     for area in areas:
-        terms = []
+        terms = [
+            str(area.get("id") or ""),
+            str(area.get("title") or ""),
+            str(area.get("domain") or ""),
+            str(area.get("project") or ""),
+        ]
         for key in ("aliases", "keywords"):
             values = area.get(key, [])
             if isinstance(values, list):
-                terms.extend(str(value).lower() for value in values)
-        if any(term and term in request_l for term in terms):
-            return area
-    return areas[0] if areas else None
+                terms.extend(str(value) for value in values)
+        area_tokens: set[str] = set()
+        for term in terms:
+            area_tokens.update(_tokens(term))
+        score = len(request_tokens & area_tokens)
+        if score > best_score:
+            best_area = area
+            best_score = score
+    return best_area
+
+
+def _notion_path(base: str | None, namespace: str, work_item: str | None, *, include_namespace: bool = True) -> str | None:
+    if not base:
+        return None
+    parts = [base]
+    if include_namespace:
+        parts.append(namespace)
+    if work_item:
+        parts.append(work_item)
+    return " -> ".join(part for part in parts if part)
 
 
 def build_doc_config_plan(
@@ -161,12 +217,19 @@ def build_doc_config_plan(
     work_item: str | None = None,
     questions_present: bool = False,
 ) -> dict[str, Any]:
-    path, config = load_doc_config(root)
+    path, config = load_doc_config(root, domain=domain, project=project)
     routing = config.get("routing") if isinstance(config.get("routing"), dict) else {}
     area = _infer_area(config, request, domain, project)
     destination_domain = domain or (area or {}).get("domain")
     destination_project = project or (area or {}).get("project")
     namespace = str(routing.get("feature_namespace") or "Specs")
+    filesystem_destination = None
+    if destination_domain and destination_project:
+        project_root = domain_path(expand_path(root), validate_name(str(destination_domain), "domain")) / "02-projects" / validate_name(str(destination_project), "project")
+        filesystem_destination = str(project_root / "work-items" / "02-active" / work_item) if work_item else str(project_root / "work-items" / "02-active")
+    base_notion_path = (area or {}).get("notion_path")
+    if not base_notion_path and destination_project:
+        base_notion_path = f"Projects -> {titleize_name(str(destination_project))}"
     request_hash = hashlib.sha256(request.encode("utf-8")).hexdigest()[:16]
     return {
         "ok": True,
@@ -176,17 +239,26 @@ def build_doc_config_plan(
         "request_hash": request_hash,
         "request": request,
         "source_of_truth": routing.get("source_of_truth", config.get("source_of_truth", "filesystem")),
+        "target_kind": "spec",
         "destination": {
+            "work_area": (area or {}).get("id"),
+            "work_area_confidence": "high" if area else "none",
             "domain": destination_domain,
             "project": destination_project,
             "work_item": work_item,
+            "filesystem": filesystem_destination,
             "filesystem_bucket": "work-items" if destination_project else "01-inbox",
-            "notion_path": (area or {}).get("notion_path"),
+            "notion_path": _notion_path(base_notion_path, namespace, work_item),
             "notion_namespace": namespace,
             "compatibility_namespaces": routing.get("compatibility_namespaces", ["Features"]),
         },
+        "filesystem_mirror": config.get("filesystem_mirror") or {},
         "buckets": _plan_buckets(config, questions_present=questions_present),
-        "search_methods": _enabled_search_methods(config),
+        "search_methods": {
+            "enabled": _enabled_search_methods(config),
+            "disabled": _disabled_search_methods(config),
+        },
+        "notion": config.get("notion") or {},
         "notion_workspace": ((config.get("notion") or {}).get("workspace") or {}).get("expected"),
         "workspace_verification_required": bool(routing.get("external_writes_require_workspace_verification", True)),
         "next_actions": [
@@ -205,6 +277,8 @@ def doc_config_doctor(root: str | Path) -> dict[str, Any]:
         if key not in config:
             findings.append({"severity": "blocker", "path": str(path), "message": f"missing required key: {key}"})
     methods = _enabled_search_methods(config)
+    if not methods:
+        findings.append({"severity": "blocker", "path": str(path), "message": "at least one search method must be enabled"})
     method_ids = {method["id"] for method in methods}
     required_methods = {"config", "markdown", "ripgrep", "filesystem", "notion", "context_mode", "memory"}
     for method_id in sorted(required_methods - method_ids):
@@ -223,6 +297,7 @@ def doc_config_doctor(root: str | Path) -> dict[str, Any]:
         "config_path": str(path),
         "findings": findings,
         "enabled_search_methods": [method["id"] for method in methods],
+        "disabled_search_methods": _disabled_search_methods(config),
     }
 
 

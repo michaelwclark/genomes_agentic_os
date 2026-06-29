@@ -171,6 +171,18 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-quiet-run.md",
         },
         {
+            "id": "automation-control",
+            "command": "agentic-os automation-control",
+            "description": "Gate expensive recurring automations behind cheap source-readiness probes.",
+            "source": "harness/commands/os-automation-control.md",
+        },
+        {
+            "id": "status-report",
+            "command": "/status-report",
+            "description": "Generate recent Agentic OS status reports from logs, OS state, source status, and Notion projection state.",
+            "source": "harness/commands/os-status-report.md",
+        },
+        {
             "id": "config-doctor",
             "command": "agentic-os config doctor",
             "description": "Validate Codex config and MCP registration contracts.",
@@ -384,6 +396,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Program Builder",
             "description": "Create or refine OSProgram and InstanceOSProgram context bundles.",
             "source": "harness/skills/program-builder/SKILL.md",
+        },
+        {
+            "id": "status-report",
+            "name": "Status Report",
+            "description": "Generate recent-work Agentic OS status reports with filesystem and guarded Notion projection receipts.",
+            "source": "harness/skills/status-report/SKILL.md",
         },
         {
             "id": "doc-config-router",

@@ -284,7 +284,8 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-event.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-chain.md").is_file()
-    assert not (shared_factory(root) / "05-knowledge" / "plans").exists()
+    assert (shared_factory(root) / "05-knowledge" / "plans" / "README.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "plans" / "23-doc-config-system.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "room-builder" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
@@ -420,10 +421,10 @@ def test_self_improvement_apply_writes_proposals_and_dedupes(tmp_path: Path, cap
     proposal_files = sorted((self_improvement_root / "proposals").glob("*.yml"))
     assert run_files
     assert proposal_files
-    assert [path.stem for path in proposal_files] == [str(index) for index in range(1, len(proposal_files) + 1)]
+    assert all(path.stem.startswith("si-") for path in proposal_files)
+    assert len({path.stem for path in proposal_files}) == len(proposal_files)
     first_count = len(proposal_files)
     proposal = yaml.safe_load(proposal_files[0].read_text(encoding="utf-8"))
-    assert proposal["proposal_id"] == "1"
     assert proposal["proposal_id"] == proposal_files[0].stem
     assert proposal["content_hash"].startswith("sha256:")
     assert proposal["promotion_status"] == "proposed"
@@ -438,7 +439,7 @@ def test_self_improvement_apply_writes_proposals_and_dedupes(tmp_path: Path, cap
     assert main(["self-improvement", "status", "--root", str(root)]) == 0
     status_output = capsys.readouterr().out
     assert "proposal_counts:" in status_output
-    assert "proposal_lifecycle:" in status_output
+    assert "queue_health:" in status_output
     assert main(["self-improvement", "list", "--root", str(root)]) == 0
     assert proposal_id in capsys.readouterr().out
     assert main(["self-improvement", "show", proposal_id, "--root", str(root)]) == 0
@@ -1589,7 +1590,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert watch_template.is_file()
     assert event_command.is_file()
     assert event_template.is_file()
-    assert not plans_root.exists()
+    assert (plans_root / "README.md").is_file()
+    assert (plans_root / "23-doc-config-system.md").is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
     assert convention_reference.is_file()
@@ -1601,7 +1603,8 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert main(["validate", "--root", str(root)]) == 0
     assert main(["docs", "update", "--root", str(root)]) == 0
     assert manual_readme.read_text(encoding="utf-8") == "# local edit\n"
-    assert not plans_root.exists()
+    assert (plans_root / "README.md").is_file()
+    assert (plans_root / "23-doc-config-system.md").is_file()
 
 
 def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:

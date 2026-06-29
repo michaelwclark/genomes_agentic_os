@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 
 import yaml
 
@@ -174,6 +175,7 @@ METRIC_FILES = (
 )
 
 DOMAIN_DIRECTORIES = (
+    "00-programs",
     "00-control-plane",
     "01-inbox",
     "02-projects",
@@ -213,7 +215,20 @@ AUTOMATION_FILES = (
     "tests.md",
 )
 
+PROGRAM_FILES = (
+    "program.md",
+    "components.yml",
+    "context-pack.md",
+    "crud.md",
+    "documentation.md",
+    "runbook.md",
+    "tests.md",
+    "worklog.md",
+)
+
 NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
+WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+SPOTLIGHT_NEVER_INDEX_FILENAME = ".metadata_never_index"
 
 
 @dataclass
@@ -270,6 +285,22 @@ def validate_name(value: str, label: str = "name") -> str:
     return value
 
 
+def validate_worktree_name(value: str) -> str:
+    if not WORKTREE_NAME_PATTERN.fullmatch(value):
+        raise ValueError(
+            "worktree name must start with a lowercase letter or number and use lowercase letters, "
+            f"numbers, dots, hyphens, and underscores only: {value!r}"
+        )
+    return value
+
+
+def worktree_name_from_branch(branch: str) -> str:
+    name = re.sub(r"[^a-z0-9._-]+", "-", branch.lower()).strip("-.")
+    if not name:
+        raise ValueError(f"cannot derive a worktree name from branch: {branch!r}")
+    return validate_worktree_name(name)
+
+
 def normalize_domain(value: str) -> str:
     domain = validate_name(value, "domain")
     return DOMAIN_ALIASES.get(domain, domain)
@@ -322,6 +353,10 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     result.created.append(path)
+
+
+def ensure_spotlight_never_index(directory: Path, result: ScaffoldResult) -> None:
+    write_file_once(directory / SPOTLIGHT_NEVER_INDEX_FILENAME, "", result)
 
 
 def ensure_codex_config(root: Path, layer: str, result: ScaffoldResult) -> None:
@@ -643,6 +678,7 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     ensure_runtime_control_config(root, "documentation-upkeep.yml", "documentation-upkeep.yml", result)
     ensure_runtime_control_config(root, "doc-config.yml", "doc-config.yml", result)
     ensure_runtime_control_config(root, "notion-organization.yml", "notion-organization.yml", result)
+    ensure_runtime_control_config(root, "automation-control.yml", "automation-control.yml", result)
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
@@ -1044,6 +1080,7 @@ lanes:
 {lanes}
 
 directories:
+  programs: 00-programs
   control_plane: 00-control-plane
   inbox: 01-inbox
   projects: 02-projects
@@ -1831,6 +1868,8 @@ def create_domain_structure(
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
 
+    write_file_once(domain_root / "00-programs" / "README.md", programs_readme(domain), result)
+
     for filename in CONTROL_PLANE_FILES:
         write_file_once(domain_root / "00-control-plane" / filename, control_file_content(domain, filename), result)
 
@@ -2143,11 +2182,24 @@ def project_agents(domain: str, project: str, remotes: list[dict[str, str]] | No
                 if authority == "remote"
                 else "Local copy is authoritative; remote is a deploy/reference copy."
             )
+            mount = r.get("mount") or {}
+            mount_note = ""
+            if isinstance(mount, dict) and mount.get("namespace"):
+                ns = mount["namespace"]
+                local_path = mount.get("local_path", f"~/{ns}/{name}")
+                mount_note = (
+                    f"\n  SSHFS namespace: `{local_path}` -> `{host}:{path}`."
+                    " Files may be read/edited locally; repo commands run remotely."
+                )
             lines.append(
                 f"- **{name}** (`{host}:{path}`): {auth_note}\n"
                 f"  Reach via commands in `remote/{name}/REMOTE.md`.\n"
                 f"  Artifacts, work-items, and decisions stay local in this room."
+                f"{mount_note}"
             )
+        ssh_rule = _ssh_namespace_rule_section(remotes)
+        if ssh_rule:
+            lines.append(ssh_rule)
         remote_section = "\n".join(lines)
     return f"""# Agent Entry Point: {project}
 
@@ -2244,7 +2296,25 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 """
 
 
-def project_rules(domain: str, project: str) -> str:
+def _ssh_namespace_rule_section(remotes: list[dict[str, str]] | None) -> str:
+    """Return the SSH_<host> managed rule section when any remote has a mount block."""
+    if not remotes:
+        return ""
+    has_mount = any(r.get("mount") for r in remotes)
+    if not has_mount:
+        return ""
+    return (
+        "\n## SSH Remote Namespace Rule\n\n"
+        "Any path component named `SSH_<host>` is an SSHFS remote namespace. "
+        "Files under it may be read or edited locally, but repo commands run on "
+        "`<host>` with the remote cwd from the project manifest. "
+        "Do not run builds, tests, package installs, git, or watchers locally "
+        "from an SSHFS path unless the operator explicitly asks for local-mount execution.\n"
+    )
+
+
+def project_rules(domain: str, project: str, remotes: list[dict[str, str]] | None = None) -> str:
+    ssh_section = _ssh_namespace_rule_section(remotes)
     return f"""# Rules: {project}
 
 These rules apply to `{domain}/02-projects/{project}` unless a narrower source
@@ -2261,6 +2331,7 @@ checkout or feature artifact defines a stricter rule.
 - Treat OS `work-items/` as the lifecycle source of truth. Source repo `features/` or `.features/` folders are mirrors/artifact locations unless `config/work-lifecycle.yml` explicitly says otherwise.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
+{ssh_section}
 """
 
 
@@ -2821,6 +2892,7 @@ def ensure_project_operating_surface(
     for lane_name in ("01-intake", "02-active", "03-complete"):
         ensure_dir(project_root / "work-items" / lane_name, result)
     ensure_dir(project_root / "worktrees", result)
+    ensure_spotlight_never_index(project_root / "worktrees", result)
     write_project_file(
         project_root / "AGENTS.md",
         project_agents(domain, project, remotes=remotes),
@@ -2841,7 +2913,7 @@ def ensure_project_operating_surface(
     )
     write_project_file(
         project_root / "RULES.md",
-        project_rules(domain, project),
+        project_rules(domain, project, remotes=remotes),
         result,
         replace_markers=("Record local constraints, approval gates, safety boundaries",),
     )
@@ -3153,14 +3225,20 @@ def write_project_worktree_index(project_root: Path, data: dict[str, object], re
 
 def sync_project_worktree_config(project_root: Path, index_data: dict[str, object], result: ScaffoldResult) -> None:
     config_path = project_root / "config" / "worktrees.yml"
+    entries = [entry for entry in index_data.get("worktrees") or [] if isinstance(entry, dict)]
+    link_policy = (
+        "symlink_to_external_worktree"
+        if any(entry.get("link_policy") == "symlink_to_external_worktree" for entry in entries)
+        else "in_place_worktree"
+    )
     before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     after = yaml.safe_dump(
         {
             "worktrees": {
                 "directory": "worktrees",
                 "index": "worktrees/index.yml",
-                "link_policy": "symlink_to_external_worktree",
-                "registered": index_data.get("worktrees") or [],
+                "link_policy": link_policy,
+                "registered": entries,
             }
         },
         sort_keys=False,
@@ -3183,7 +3261,7 @@ def register_project_worktree(
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
-    name = validate_name(name, "worktree")
+    name = validate_worktree_name(name)
     os_root = expand_path(root)
     project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
@@ -3194,7 +3272,13 @@ def register_project_worktree(
 
     result = onboard_project(os_root, domain, project)
     link_path = project_root / "worktrees" / name
-    if link_path.is_symlink():
+    worktrees_root = (project_root / "worktrees").resolve()
+    in_place = target.is_relative_to(worktrees_root)
+    if in_place:
+        if target != worktrees_root / name:
+            raise ValueError(f"in-place worktree path must be the worktrees/{name} directory itself: {target}")
+        result.skipped.append(link_path)
+    elif link_path.is_symlink():
         if link_path.resolve() == target:
             result.skipped.append(link_path)
         elif force:
@@ -3216,6 +3300,7 @@ def register_project_worktree(
         "path": str(target),
         "link": f"worktrees/{name}",
         "status": "active",
+        "link_policy": "in_place_worktree" if in_place else "symlink_to_external_worktree",
     }
     replaced = False
     for offset, existing in enumerate(entries):
@@ -3230,6 +3315,46 @@ def register_project_worktree(
     write_project_worktree_index(project_root, index_data, result)
     sync_project_worktree_config(project_root, index_data, result)
     return result
+
+
+def create_project_worktree(
+    root: str | Path,
+    domain: str,
+    project: str,
+    name: str | None = None,
+    *,
+    repo: str | Path,
+    branch: str,
+    runner: object | None = None,
+) -> ScaffoldResult:
+    domain = normalize_domain(domain)
+    project = validate_name(project, "project")
+    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
+    os_root = expand_path(root)
+    project_root = domain_path(os_root, domain) / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+    repo_path = expand_path(repo)
+    if not repo_path.is_dir():
+        raise ValueError(f"worktree repo must be an existing local directory: {repo_path}")
+    destination = project_root / "worktrees" / name
+    if destination.is_symlink() or destination.exists():
+        raise ValueError(f"worktree destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    run = runner or (lambda args: subprocess.run(args, capture_output=True, text=True, timeout=120))  # noqa: S603
+    probe = run(["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
+    if probe.returncode == 0:
+        command = ["git", "-C", str(repo_path), "worktree", "add", str(destination), branch]
+    else:
+        command = ["git", "-C", str(repo_path), "worktree", "add", "-b", branch, str(destination)]
+    created = run(command)
+    if created.returncode != 0:
+        detail = (created.stderr or created.stdout or "").strip()
+        raise ValueError(f"git worktree add failed for {destination}: {detail}")
+    if not destination.is_dir():
+        raise ValueError(f"git worktree add did not produce a directory: {destination}")
+    return register_project_worktree(os_root, domain, project, name, path=destination)
 
 
 def create_project(
@@ -3277,6 +3402,336 @@ def create_project(
     append_project_source_refs(project_root / "source-map.md", repo, notion, jira, result)
     if remotes:
         append_project_remote_refs(project_root / "source-map.md", remotes, result)
+    return result
+
+
+def programs_readme(scope: str) -> str:
+    display_name = titleize_name(scope)
+    return f"""# Programs: {display_name}
+
+This folder contains OSProgram and InstanceOSProgram contracts for discrete
+capabilities that span multiple skills, commands, workflows, automations,
+scripts, templates, schedules, documentation, or external state surfaces.
+
+Create one folder per program and keep `components.yml`, `documentation.md`,
+`runbook.md`, `tests.md`, and `worklog.md` current with the owned surfaces.
+"""
+
+
+def program_agent_entrypoint(program_type: str, name: str) -> str:
+    return f"""# Agent Entry Point: {name}
+
+This layer owns the `{name}` {program_type}.
+
+## Startup Loop
+
+1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `program.md`.
+2. Classify the request as create, read, update, delete, investigate, operate,
+   validate, document, or promote.
+3. Load `components.yml` and only the linked surfaces needed for that operation.
+4. Make the requested change across every affected component.
+5. Update `documentation.md`, `worklog.md`, and validation receipts before handoff.
+
+## Precedence
+
+Active user instructions win. The strictest safety, approval, privacy, Notion,
+secret-handling, and destructive-action rule wins across all loaded files.
+"""
+
+
+def program_router(program_type: str, name: str) -> str:
+    return f"""# Router: {name}
+
+Use this router when a prompt names `{name}` or any alias listed in `program.md`.
+
+## CRUD Routes
+
+| Intent | Load First | Also Inspect | Required Output |
+| --- | --- | --- | --- |
+| Create capability surface | `program.md`, `components.yml`, `documentation.md` | command docs, skill adapters, workflow/automation specs | scaffolded files plus updated docs |
+| Read or explain behavior | `context-pack.md`, `components.yml` | source scripts, run logs, Notion/database links | concise source-backed explanation |
+| Update or tweak behavior | `crud.md`, `components.yml`, owning component specs | scripts, commands, schedules, templates, tests | changed component plus docs/worklog/tests |
+| Delete or retire | `RULES.md`, `components.yml`, `runbook.md` | schedules, Notion pages, archives | explicit approval before destructive action |
+| Investigate failure | `runbook.md`, `tests.md`, latest logs/state | external source receipts | root cause, fix, validation receipt |
+| Promote to shared OS | `documentation.md`, `components.yml` | source package docs/templates/tests | source-package patch and migration notes |
+
+## Routing Rules
+
+- Treat the program as the ownership boundary for named capability changes.
+- Route to the narrowest linked workflow, automation, skill, command, or script
+  only after this program context is loaded.
+- Update surrounding docs, tests, routing, schedules, and registries when a
+  behavior change affects them.
+"""
+
+
+def program_context(program_type: str, name: str) -> str:
+    return f"""# Context: {name}
+
+`{name}` is a {program_type}: a discrete OS capability that may span multiple
+execution and documentation surfaces.
+
+## Load Order
+
+1. `program.md` for purpose, aliases, owner, status, and linked surfaces.
+2. `components.yml` for canonical component paths.
+3. `crud.md` for how create/read/update/delete work should propagate.
+4. `runbook.md` and `tests.md` for operation and validation.
+5. Linked component files only as needed.
+
+## Documentation Contract
+
+Every material OS-level feature change must update filesystem docs, affected
+linked surfaces, Notion projection notes when present, and `worklog.md`.
+"""
+
+
+def program_rules(program_type: str, name: str) -> str:
+    return f"""# Rules: {name}
+
+The strictest applicable rule wins across parent domain, shared factory,
+component, and program files.
+
+## Program Boundaries
+
+- This folder owns context and documentation for the `{name}` {program_type}.
+- Do not update a linked skill, command, workflow, automation, schedule, Notion
+  database, script, or template without updating this program's documentation.
+- Do not create undocumented OS-level behavior.
+
+## Safety
+
+- Secrets stay out of prompts, docs, logs, code, generated config, and Notion.
+- External writes, destructive actions, production changes, billing/legal
+  changes, and customer-visible output require approval gates.
+"""
+
+
+def program_tools(program_type: str, name: str) -> str:
+    return f"""# Tools: {name}
+
+List the tools, commands, skills, scripts, and external systems this {program_type}
+is allowed to use.
+
+## Skills
+
+| Skill | Use When | Source |
+| --- | --- | --- |
+| `program-builder` | Creating or updating OSProgram / InstanceOSProgram contracts. | `harness/skills/program-builder/SKILL.md` |
+| `os-authoring-guard` | Editing OS commands, skills, workflows, automations, tools, registries, or templates. | `harness/skills/os-authoring-guard/SKILL.md` |
+
+## Commands
+
+| Command | Use When | Notes |
+| --- | --- | --- |
+| `agentic-os program create` | Create a shared OSProgram. | Writes under `harness/shared_factory/00-programs/`. |
+| `agentic-os instance-program create` | Create an instance/domain program. | Writes under `<domain>/00-programs/`. |
+"""
+
+
+def program_components(name: str, program_type: str) -> str:
+    return yaml.safe_dump(
+        {
+            "schema_version": 1,
+            "name": name,
+            "type": program_type,
+            "aliases": [],
+            "components": {
+                "skills": [],
+                "commands": [],
+                "workflows": [],
+                "automations": [],
+                "scripts": [],
+                "templates": [],
+                "documentation": [],
+                "notion": [],
+                "schedules": [],
+                "state": [],
+            },
+            "context_routes": {
+                "create": ["program.md", "components.yml", "documentation.md"],
+                "read": ["context-pack.md", "components.yml"],
+                "update": ["crud.md", "components.yml", "tests.md"],
+                "delete": ["RULES.md", "components.yml", "runbook.md"],
+                "investigate": ["runbook.md", "tests.md", "worklog.md"],
+            },
+            "documentation_required": True,
+        },
+        sort_keys=False,
+    )
+
+
+def program_scaffold_content(
+    name: str,
+    filename: str,
+    *,
+    program_type: str,
+    domain: str | None = None,
+) -> str:
+    scope = domain or "shared_factory"
+    created = datetime.now(timezone.utc).date().isoformat()
+    if filename == "program.md":
+        return f"""# {program_type}: {name}
+
+## Status
+
+- Status: scaffolded
+- Owner: OS Owner
+- Created: {created}
+- Scope: `{scope}`
+- Documentation required: yes
+
+## Purpose
+
+Explain what discrete OS capability this program owns and why it exists.
+
+## Aliases
+
+- `{name}`
+
+## Owned Surfaces
+
+List every skill, command, workflow, automation, script, template, Notion page or
+database, schedule, state file, and documentation surface this program owns.
+Keep `components.yml` as the machine-readable source of truth.
+"""
+    if filename == "components.yml":
+        return program_components(name, program_type)
+    if filename == "context-pack.md":
+        return f"""# Context Pack: {name}
+
+## Load First
+
+1. `program.md`
+2. `components.yml`
+3. `crud.md`
+4. `runbook.md`
+5. `tests.md`
+"""
+    if filename == "crud.md":
+        return f"""# CRUD Contract: {name}
+
+## Create
+
+- Add the new component surface.
+- Register it in `components.yml`.
+- Add routing/docs/tests before use.
+
+## Read
+
+- Explain behavior from `program.md`, `components.yml`, source scripts, and latest receipts.
+
+## Update
+
+- Patch the owning component.
+- Update linked docs, commands, skills, workflows, automations, templates,
+  schedules, state docs, and tests affected by the change.
+- Record validation in `worklog.md`.
+
+## Delete / Retire
+
+- Require explicit approval before destructive changes.
+- Disable schedules before removing files or external surfaces.
+"""
+    if filename == "documentation.md":
+        return f"""# Documentation Map: {name}
+
+## Filesystem Documentation
+
+| Surface | Path | Update Trigger |
+| --- | --- | --- |
+| Program contract | `program.md` | Any ownership or behavior change |
+| Components registry | `components.yml` | Any linked surface change |
+| CRUD contract | `crud.md` | Any routing/update policy change |
+| Runbook/tests | `runbook.md`, `tests.md` | Any operation or validation change |
+"""
+    if filename == "runbook.md":
+        return f"""# Runbook: {name}
+
+## Investigate
+
+1. Load the program startup loop.
+2. Read `components.yml`.
+3. Inspect latest logs/state for linked automations or workflows.
+4. Identify whether the issue is routing, source data, permissions, schedule,
+   code, documentation drift, or external system access.
+
+## Update
+
+1. Patch the narrowest owning component.
+2. Update surrounding docs and registries.
+3. Run focused validation.
+4. Record the receipt in `worklog.md`.
+"""
+    if filename == "tests.md":
+        return f"""# Tests: {name}
+
+## Static Checks
+
+- `components.yml` lists every owned surface.
+- `program.md`, `crud.md`, `documentation.md`, and `runbook.md` are current.
+- Linked command/skill/workflow/automation docs match implementation.
+"""
+    return f"""# Worklog: {name}
+
+| Date | Actor | Change | Validation | Follow-up |
+| --- | --- | --- | --- | --- |
+"""
+
+
+def create_program(root: str | Path, name: str) -> ScaffoldResult:
+    name = validate_name(name, "program")
+    os_root = expand_path(root)
+    result = ScaffoldResult()
+    programs_root = shared_factory_path(os_root, "00-programs")
+    ensure_dir(programs_root, result)
+    write_file_once(programs_root / "README.md", programs_readme("shared_factory"), result)
+    program_root = programs_root / name
+    ensure_dir(program_root, result)
+    ensure_dir(program_root / "artifacts", result)
+    write_file_once(program_root / "AGENTS.md", program_agent_entrypoint("OSProgram", name), result)
+    write_file_once(program_root / "ROUTER.md", program_router("OSProgram", name), result)
+    write_file_once(program_root / "CONTEXT.md", program_context("OSProgram", name), result)
+    write_file_once(program_root / "RULES.md", program_rules("OSProgram", name), result)
+    write_file_once(program_root / "TOOLS.md", program_tools("OSProgram", name), result)
+    for filename in PROGRAM_FILES:
+        write_file_once(program_root / filename, program_scaffold_content(name, filename, program_type="OSProgram"), result)
+    ensure_codex_config(program_root, "workflow_or_task", result)
+    return result
+
+
+def create_instance_program(root: str | Path, domain: str, name: str) -> ScaffoldResult:
+    domain = normalize_domain(domain)
+    name = validate_name(name, "instance program")
+    result = create_domain(root, domain)
+    domain_root = domain_path(root, domain)
+    programs_root = domain_root / "00-programs"
+    ensure_dir(programs_root, result)
+    write_file_once(programs_root / "README.md", programs_readme(domain), result)
+    program_root = programs_root / name
+    ensure_dir(program_root, result)
+    ensure_dir(program_root / "artifacts", result)
+    write_file_once(program_root / "AGENTS.md", program_agent_entrypoint("InstanceOSProgram", name), result)
+    write_file_once(program_root / "ROUTER.md", program_router("InstanceOSProgram", name), result)
+    write_file_once(program_root / "CONTEXT.md", program_context("InstanceOSProgram", name), result)
+    write_file_once(program_root / "RULES.md", program_rules("InstanceOSProgram", name), result)
+    write_file_once(program_root / "TOOLS.md", program_tools("InstanceOSProgram", name), result)
+    for filename in PROGRAM_FILES:
+        write_file_once(
+            program_root / filename,
+            program_scaffold_content(name, filename, program_type="InstanceOSProgram", domain=domain),
+            result,
+        )
+    ensure_codex_config(program_root, "workflow_or_task", result)
+    append_control_signal(
+        domain_root,
+        "Program Status",
+        f"`{name}`",
+        "scaffolded",
+        f"`00-programs/{name}/`",
+        "InstanceOSProgram scaffold owns context routing for a discrete capability.",
+        result,
+    )
     return result
 
 

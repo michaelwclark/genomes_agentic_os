@@ -27,6 +27,7 @@ from .validate import validate_root
 CONFIG_PATH = "harness/shared_factory/00-control-plane/self-improvement.yml"
 OUTPUT_ROOT = "harness/shared_factory/06-runs-and-logs/self-improvement"
 MORNING_REPORT_ROOT = f"{OUTPUT_ROOT}/morning-reports"
+RUN_QUEUE_PATH = "harness/shared_factory/00-control-plane/run-queue.yml"
 NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 NOTION_SELF_IMPROVEMENT_DB = "Self Improvement"
 NOTION_TOKEN_ENV = "GENOMES_NOTION_PAT"
@@ -34,10 +35,50 @@ NOTION_REPORT_PARENT_TITLE = "Genome's Agentic OS"
 NOTION_REPORTS_PAGE_TITLE = "Self Improvement Reports"
 ACTION_OUTPUT_ROOT = f"{OUTPUT_ROOT}/actions"
 SELF_IMPROVEMENT_WORK_ITEM = "clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
+STALE_QUEUE_GRACE = timedelta(hours=24)
 MAX_EVIDENCE_FILES = 400
 MAX_EVIDENCE_FILES_PER_ROOT = 40
 MAX_EVIDENCE_BYTES = 16_000
 EVIDENCE_SUFFIXES = {".md", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".log"}
+ACTIONABLE_EVIDENCE_TERMS = (
+    "blocked",
+    "failed",
+    "failure",
+    "error",
+    "manual",
+    "missing",
+    "needs",
+    "unsupported",
+    "duplicate",
+    "stale",
+    "workaround",
+    "workflow gap",
+    "operator friction",
+    "queue",
+)
+LOW_VALUE_EVIDENCE_FIELDS = {
+    "id",
+    "run_id",
+    "queue_item_id",
+    "proposal_id",
+    "approval_id",
+    "content_hash",
+    "dedupe_key",
+    "created_at",
+    "updated_at",
+    "started_at",
+    "finished_at",
+    "completed_at",
+    "due_at",
+    "idempotency_key",
+    "root",
+    "path",
+    "log",
+    "dispatch_log",
+    "evidence",
+    "dry_run",
+    "external_effect",
+}
 AGENT_LAYER_FILES = {"config.toml", "AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"}
 APPROVED_TARGETS = {
     "feature-spec",
@@ -111,6 +152,10 @@ def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _digest(value: Any, length: int = 16) -> str:
     if isinstance(value, str):
         payload = value
@@ -141,6 +186,15 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def _read_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
+
+
+def _read_yaml_if_present(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        return _read_yaml(path)
+    except (OSError, yaml.YAMLError):
+        return {}
 
 
 def _duration(value: str | None, default_days: int = 14) -> timedelta:
@@ -376,17 +430,64 @@ def _collect_evidence(evidence_roots: list[dict[str, Any]]) -> list[EvidenceReco
     return records
 
 
+def _has_actionable_signal(line: str) -> bool:
+    lower = line.lower()
+    return any(term in lower for term in ACTIONABLE_EVIDENCE_TERMS)
+
+
+def _is_low_value_evidence_line(line: str) -> bool:
+    lower = " ".join(line.strip().lower().split())
+    if len(lower) < 20:
+        return True
+    if lower.startswith(("#", "---", "|")):
+        return True
+    field_match = re.match(r"^-?\s*([a-z0-9_ -]{2,40})\s*:", lower)
+    if field_match:
+        field = field_match.group(1).strip().replace("-", "_").replace(" ", "_")
+        if field in LOW_VALUE_EVIDENCE_FIELDS and not _has_actionable_signal(lower):
+            return True
+    volatile_markers = (
+        "sha256:",
+        "queue_",
+        "/users/genome/",
+        "harness/shared_factory/06-runs-and-logs/runs/",
+    )
+    if any(marker in lower for marker in volatile_markers) and not _has_actionable_signal(lower):
+        return True
+    if re.search(r"\b20\d\d-\d\d-\d\d[t ]\d\d:\d\d", lower) and not _has_actionable_signal(lower):
+        return True
+    return False
+
+
+def _semantic_signature(text: str) -> str:
+    normalized = text.lower()
+    normalized = re.sub(r"/users/genome/\S+", " local_path ", normalized)
+    normalized = re.sub(r"\bqueue_[a-f0-9]{8,}\b", " queue_id ", normalized)
+    normalized = re.sub(r"\bsi-[a-f0-9]{8,}\b", " proposal_id ", normalized)
+    normalized = re.sub(r"\bsha256:[a-f0-9]{16,}\b", " hash ", normalized)
+    normalized = re.sub(r"\b[a-f0-9]{12,}\b", " hash ", normalized)
+    normalized = re.sub(r"\b20\d\d-\d\d-\d\d[t ][0-9:.+\-z]+\b", " timestamp ", normalized)
+    normalized = re.sub(r"\b\d+\b", " number ", normalized)
+    tokens = re.findall(r"[a-z][a-z0-9_'-]{2,}", normalized)
+    stopwords = {"the", "and", "for", "with", "this", "that", "from", "into", "under", "over"}
+    kept = [token for token in tokens if token not in stopwords]
+    return " ".join(kept[:32])
+
+
 def _line_counts(records: list[EvidenceRecord]) -> Counter[str]:
-    counter: Counter[str] = Counter()
+    signature_counts: Counter[str] = Counter()
+    examples: dict[str, str] = {}
     for record in records:
         for raw_line in record.redacted_text.splitlines():
             line = " ".join(raw_line.strip().lower().split())
-            if len(line) < 20:
+            if _is_low_value_evidence_line(line):
                 continue
-            if line.startswith(("#", "---", "|")):
+            signature = _semantic_signature(line)
+            if len(signature) < 20:
                 continue
-            counter[line] += 1
-    return counter
+            signature_counts[signature] += 1
+            examples.setdefault(signature, line)
+    return Counter({examples[signature]: count for signature, count in signature_counts.items()})
 
 
 def _keyword_hits(records: list[EvidenceRecord], keywords: tuple[str, ...]) -> int:
@@ -466,24 +567,42 @@ def _record_locator(root: Path, record: EvidenceRecord) -> str:
         return record.path.as_posix()
 
 
+def _evidence_line_score(line: str, finding_text: str) -> int:
+    lower = line.lower()
+    score = 0
+    if finding_text and finding_text[:80].lower() in lower:
+        score += 6
+    if _has_actionable_signal(lower):
+        score += 3
+    if any(term in lower for term in ("should", "because", "needs", "cannot", "blocked")):
+        score += 1
+    return score
+
+
 def _candidate_evidence(root: Path, records: list[EvidenceRecord], finding: dict[str, Any]) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     finding_text = str(finding.get("evidence") or "")
+    seen: set[tuple[str, str]] = set()
     for record in records[:10]:
-        excerpt = ""
-        for line in record.redacted_text.splitlines():
+        candidates: list[tuple[int, int, str]] = []
+        for index, line in enumerate(record.redacted_text.splitlines()):
             normalized = " ".join(line.strip().split())
-            if not normalized:
+            if not normalized or _is_low_value_evidence_line(normalized):
                 continue
-            if finding_text and finding_text[:80].lower() in normalized.lower():
-                excerpt = normalized[:300]
-                break
-            if not excerpt:
-                excerpt = normalized[:300]
+            candidates.append((_evidence_line_score(normalized, finding_text), index, normalized[:300]))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        excerpt = candidates[0][2]
+        locator = _record_locator(root, record)
+        key = (locator, excerpt)
+        if key in seen:
+            continue
+        seen.add(key)
         if excerpt:
             evidence.append(
                 {
-                    "locator": _record_locator(root, record),
+                    "locator": locator,
                     "excerpt": excerpt,
                     "signal_type": finding.get("type") or "deterministic",
                     "redactions": record.redactions,
@@ -528,8 +647,11 @@ def _proposal_from_finding(root: Path, records: list[EvidenceRecord], finding: d
     evidence = _candidate_evidence(root, records, finding)
     title = str(finding.get("title") or "Self-improvement proposal")
     opportunity_type = str(finding.get("type") or "deterministic")
-    primary_cluster = "|".join(str(item.get("locator")) for item in evidence) or title
-    dedupe_key = _sha256(f"{opportunity_type}|{title.lower()}|{recommended_artifact}|{primary_cluster}")
+    evidence_basis = str(finding.get("evidence") or "")
+    if opportunity_type != "repeated_evidence" or _is_low_value_evidence_line(evidence_basis):
+        evidence_basis = str(finding.get("summary") or title)
+    semantic_cluster = _semantic_signature(evidence_basis) or title.lower()
+    dedupe_key = _sha256(f"{opportunity_type}|{recommended_artifact}|{semantic_cluster}")
     proposal_id = "si-" + _digest(dedupe_key, 12)
     now = _now()
     proposal = {
@@ -596,6 +718,196 @@ def _proposal_files(root: Path, config: dict[str, Any]) -> list[Path]:
     if not directory.exists():
         return []
     return sorted(path for path in directory.glob("*.yml") if path.is_file())
+
+
+def _latest_run_record(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    runs_dir = _output_path(root, config, "runs")
+    if not runs_dir.exists():
+        return {}
+    candidates: list[tuple[datetime, Path, dict[str, Any]]] = []
+    for path in runs_dir.glob("*.yml"):
+        if not path.is_file():
+            continue
+        record = _read_yaml_if_present(path)
+        completed = _parse_time(record.get("completed_at")) or _parse_time(record.get("started_at"))
+        if completed is None:
+            completed = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        candidates.append((completed, path, record))
+    if not candidates:
+        return {}
+    completed, path, record = max(candidates, key=lambda item: (item[0], item[1].name))
+    return {
+        "path": str(path.relative_to(root)),
+        "run_id": record.get("run_id") or path.stem,
+        "completed_at": _iso(completed),
+        "status": record.get("status") or "done",
+    }
+
+
+def _run_queue_items(root: Path) -> list[dict[str, Any]]:
+    queue = _read_yaml_if_present(root / RUN_QUEUE_PATH)
+    items = queue.get("items")
+    run_queue = queue.get("run_queue")
+    if not isinstance(items, list):
+        items = run_queue if isinstance(run_queue, list) else []
+    if not isinstance(run_queue, list):
+        run_queue = items
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*items, *run_queue]:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("idempotency_key") or item.get("id") or len(merged))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def _load_run_queue(root: Path) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
+    queue_path = root / RUN_QUEUE_PATH
+    queue = _read_yaml_if_present(queue_path)
+    items = queue.get("items")
+    run_queue = queue.get("run_queue")
+    if not isinstance(items, list):
+        items = run_queue if isinstance(run_queue, list) else []
+    if not isinstance(run_queue, list):
+        run_queue = items
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*items, *run_queue]:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("idempotency_key") or item.get("id") or len(merged))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    queue["items"] = merged
+    queue["run_queue"] = merged
+    return queue_path, queue, merged
+
+
+def _queue_item_reason(item: dict[str, Any], latest_run: dict[str, Any], now: datetime) -> str | None:
+    status = str(item.get("status") or "")
+    if status != "queued":
+        return None
+    due_at = _parse_time(item.get("due_at"))
+    latest_completed = _parse_time(latest_run.get("completed_at"))
+    if due_at and latest_completed and latest_completed >= due_at:
+        return "covered_by_later_self_improvement_run"
+    if due_at and now - due_at > STALE_QUEUE_GRACE:
+        return "queued_past_24h_grace"
+    created_at = _parse_time(item.get("created_at"))
+    if created_at and now - created_at > STALE_QUEUE_GRACE:
+        return "created_past_24h_grace"
+    return None
+
+
+def self_improvement_queue_health(root: str | Path) -> dict[str, Any]:
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    latest_run = _latest_run_record(os_root, config)
+    now = datetime.now(timezone.utc)
+    items: list[dict[str, Any]] = []
+    stale_items: list[dict[str, Any]] = []
+    for item in _run_queue_items(os_root):
+        if item.get("kind") != "schedule" or item.get("ref") != "self_improvement_review":
+            continue
+        row = {
+            "id": item.get("id"),
+            "status": item.get("status"),
+            "due_at": item.get("due_at"),
+            "created_at": item.get("created_at"),
+            "idempotency_key": item.get("idempotency_key"),
+        }
+        reason = _queue_item_reason(item, latest_run, now)
+        if reason:
+            row["stale_reason"] = reason
+            stale_items.append(row)
+        items.append(row)
+    current_status = "stale" if stale_items else "queued" if any(item.get("status") == "queued" for item in items) else "clear"
+    return {
+        "queue_path": RUN_QUEUE_PATH,
+        "status": current_status,
+        "latest_run": latest_run,
+        "items": items,
+        "stale_items": stale_items,
+        "stale_count": len(stale_items),
+    }
+
+
+def reconcile_self_improvement_queue(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    latest_run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    queue_path, queue, items = _load_run_queue(os_root)
+    latest = latest_run or _latest_run_record(os_root, config)
+    latest_completed = _parse_time(latest.get("completed_at"))
+    result: dict[str, Any] = {
+        "action": "reconcile-queue",
+        "root": str(os_root),
+        "mode": "dry-run" if dry_run else "apply",
+        "queue_path": RUN_QUEUE_PATH,
+        "latest_run": latest,
+        "reconciled": [],
+        "skipped": [],
+    }
+    if not latest_completed:
+        result["skipped"].append({"reason": "no_successful_self_improvement_run"})
+        result["changed"] = False
+        return result
+
+    changed = False
+    for item in items:
+        if item.get("kind") != "schedule" or item.get("ref") != "self_improvement_review":
+            continue
+        reason = _queue_item_reason(item, latest, latest_completed)
+        if reason != "covered_by_later_self_improvement_run":
+            result["skipped"].append(
+                {
+                    "id": item.get("id"),
+                    "status": item.get("status"),
+                    "reason": reason or "not_covered_by_latest_run",
+                }
+            )
+            continue
+        row = {
+            "id": item.get("id"),
+            "previous_status": item.get("status"),
+            "reconcile_reason": reason,
+            "covered_by_run_id": latest.get("run_id"),
+        }
+        result["reconciled"].append(row)
+        if dry_run:
+            continue
+        item["status"] = "done"
+        item["finished_at"] = latest.get("completed_at")
+        item["updated_at"] = _now()
+        item["reconcile_reason"] = reason
+        item["covered_by_run_id"] = latest.get("run_id")
+        item.setdefault("evidence", []).append(
+            {
+                "type": "self_improvement_run",
+                "run_id": latest.get("run_id"),
+                "path": latest.get("path"),
+            }
+        )
+        changed = True
+
+    if changed:
+        queue["items"] = items
+        queue["run_queue"] = items
+        queue["updated_at"] = _now()
+        _assert_safe_payload(yaml.safe_dump(queue, sort_keys=False))
+        queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    result["changed"] = changed
+    return result
 
 
 def _load_proposal(root: Path, config: dict[str, Any], proposal_id: str) -> dict[str, Any]:
@@ -2101,6 +2413,11 @@ def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str,
     result["run_id"] = run_id
     result["writes"] = [{"type": "run", "path": str(run_path.relative_to(os_root))}, *proposal_result["written"]]
     result["suppressed"] = proposal_result["suppressed"]
+    result["queue_reconciliation"] = reconcile_self_improvement_queue(
+        os_root,
+        dry_run=False,
+        latest_run={**run_record, "path": str(run_path.relative_to(os_root))},
+    )
 
     report_paths = _write_daily_report(os_root, result)
     result["report"] = report_paths
@@ -2194,6 +2511,7 @@ def self_improvement_status(root: str | Path) -> dict[str, Any]:
         "schedule_mode": config.get("schedule_mode"),
         "latest_run": latest_run,
         "proposal_counts": dict(sorted(counts.items())),
+        "queue_health": self_improvement_queue_health(os_root),
     }
 
 
@@ -2300,6 +2618,8 @@ def _draft_payloads(proposal: dict[str, Any], target: str) -> dict[str, str]:
     title = str(proposal.get("title") or proposal.get("proposal_id"))
     summary = str(proposal.get("summary") or "")
     proposal_id = str(proposal.get("proposal_id"))
+    validation_items = [str(item) for item in proposal.get("validation_plan") or []]
+    validation_markdown = "\n".join(f"- {item}" for item in validation_items) or "- Define validation before implementation."
     if target == "feature-spec":
         return {
             "feature.yml": yaml.safe_dump(
@@ -2312,8 +2632,17 @@ def _draft_payloads(proposal: dict[str, Any], target: str) -> dict[str, str]:
                 },
                 sort_keys=False,
             ),
-            "SPEC.md": f"# {title}\n\n{summary}\n\n## Evidence\n\n{_evidence_markdown(proposal)}\n",
+            "SPEC.md": (
+                f"# {title}\n\n"
+                f"Proposal: `{proposal_id}`\n\n"
+                f"{summary}\n\n"
+                "## Acceptance Criteria\n\n"
+                f"{validation_markdown}\n\n"
+                "## Evidence\n\n"
+                f"{_evidence_markdown(proposal)}\n"
+            ),
             "PLAN.md": "# Plan\n\n- Review the proposal evidence.\n- Implement the draft behind normal validation gates.\n",
+            "VALIDATION.md": f"# Validation\n\n{validation_markdown}\n",
             "NEXT.md": "# Next\n\nReview this self-improvement draft and decide whether to promote it into active feature work.\n",
         }
     return {
@@ -2422,6 +2751,15 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
             lines.append("- none")
         else:
             lines.extend(f"- {status}: {count}" for status, count in counts.items())
+        queue_health = result.get("queue_health") or {}
+        lines.append("queue_health:")
+        lines.append(f"- status: {queue_health.get('status') or 'unknown'}")
+        lines.append(f"- stale_items: {queue_health.get('stale_count') or 0}")
+        latest_run = queue_health.get("latest_run") or {}
+        if latest_run:
+            lines.append(f"- latest_run: {latest_run.get('run_id')} at {latest_run.get('completed_at')}")
+        for item in queue_health.get("stale_items") or []:
+            lines.append(f"- stale: {item.get('id')} ({item.get('stale_reason')})")
         return "\n".join(lines)
 
     if action == "list":
@@ -2451,6 +2789,22 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
         ]
         if result.get("reason"):
             lines.append(f"reason: {result['reason']}")
+        return "\n".join(lines)
+
+    if action == "reconcile-queue":
+        lines = [
+            "Self Improvement Queue Reconciliation",
+            f"root: {result['root']}",
+            f"mode: {result['mode']}",
+            f"queue_path: {result['queue_path']}",
+            f"changed: {result.get('changed', False)}",
+            f"reconciled: {len(result.get('reconciled') or [])}",
+            f"skipped: {len(result.get('skipped') or [])}",
+        ]
+        for item in result.get("reconciled") or []:
+            lines.append(f"- reconciled {item.get('id')}: {item.get('reconcile_reason')}")
+        for item in result.get("skipped") or []:
+            lines.append(f"- skipped {item.get('id', 'none')}: {item.get('reason')}")
         return "\n".join(lines)
 
     if action in {"approve", "reject", "promote"}:

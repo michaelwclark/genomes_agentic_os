@@ -214,7 +214,7 @@ def test_runtime_doctor_reports_run_queue_health(tmp_path: Path) -> None:
             "created_at": "2026-06-01T04:00:00Z",
             "idempotency_key": "test:unsupported",
             "execution_target": "script",
-            "command": "agentic-os self-improvement morning-report --root <root> --apply",
+            "command": "agentic-os unsupported-active --root <root>",
         },
         {
             "id": "queue_unknown_schedule",

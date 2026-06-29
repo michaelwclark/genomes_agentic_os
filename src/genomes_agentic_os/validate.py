@@ -18,6 +18,7 @@ from .lifecycle import (
     WORK_ITEM_DIRECTORIES,
     WORK_ITEM_METADATA_FILES,
     WORK_LIFECYCLE_STATES,
+    WorkItemRecord,
     contains_token_shaped_value,
     conversation_log_files,
     lifecycle_status,
@@ -219,16 +220,7 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-end-chat.md",
     "commands/system-tool-registry.md",
     "plans/README.md",
-    "plans/00-current-state-and-gap-map.md",
-    "plans/09-future-ideas-intake.md",
-    "plans/11-room-first-installer-and-routing.md",
-    "plans/12-factory-template-import-backlog.md",
-    "plans/13-reference-and-skill-index-layer.md",
-    "plans/14-client-automation-and-control-plane-playbooks.md",
-    "plans/15-always-on-runtime-heartbeats-schedules-and-integrations.md",
-    "plans/16-connected-source-watch-registry.md",
-    "plans/17-event-graph-and-chained-automations.md",
-    "plans/22-project-work-lifecycle-and-conversation-auto-logging.md",
+    "plans/23-doc-config-system.md",
     "skills/os-navigator/SKILL.md",
     "skills/room-builder/SKILL.md",
     "skills/workflow-builder/SKILL.md",
@@ -1273,6 +1265,76 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
                             ),
                         }
                     )
+                qa_results_path = work_item_root / "HOLDOUT_QA_RESULTS.md"
+                if not qa_results_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "fix-soon",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'finished' but missing validation evidence "
+                                f"(HOLDOUT_QA_RESULTS.md): {work_item_root.name}"
+                            ),
+                        }
+                    )
+
+            elif status == "documented":
+                memory_path = work_item_root / "MEMORY.md"
+                if not memory_path.is_file():
+                    findings.append(
+                        {
+                            "severity": "observation",
+                            "path": str(work_item_root),
+                            "message": (
+                                f"work item is 'documented' but missing MEMORY.md "
+                                f"(no memory evidence): {work_item_root.name}"
+                            ),
+                        }
+                    )
+
+    return findings
+
+
+def lifecycle_closeout_readiness_check(work_item_root: Path) -> list[dict[str, str]]:
+    """Return advisory closeout findings for one work-item packet."""
+    findings: list[dict[str, str]] = []
+
+    metadata_path = metadata_path_for(work_item_root)
+    if metadata_path is None:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(work_item_root),
+                "message": (
+                    f"work item missing metadata file "
+                    f"({', '.join(WORK_ITEM_METADATA_FILES)}): {work_item_root.name}"
+                ),
+            }
+        )
+        return findings
+
+    metadata = load_yaml_mapping(metadata_path)
+    status = lifecycle_status(metadata)
+    record = WorkItemRecord(
+        path=work_item_root,
+        metadata_path=metadata_path,
+        status=status,
+        title=str(metadata.get("title") or work_item_root.name),
+        slug=str(metadata.get("slug") or metadata.get("id") or work_item_root.name),
+        source="project_work_item",
+        metadata=metadata,
+    )
+    for missing_path in record.missing_required_files:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(work_item_root),
+                "message": (
+                    f"work item {work_item_root.name!r} status {status!r} "
+                    f"missing required file: {missing_path.name}"
+                ),
+            }
+        )
 
     return findings
 

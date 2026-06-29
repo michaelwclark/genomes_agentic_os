@@ -13,6 +13,12 @@ from .automation_ops import (
     format_automation_check,
     set_automation_maturity,
 )
+from .automation_control import (
+    automation_control_doctor,
+    format_automation_control_result,
+    list_automation_control,
+    run_automation_control,
+)
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
@@ -590,6 +596,33 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     automation_maturity.add_argument("level", choices=AUTOMATION_MATURITY_LEVELS)
     automation_maturity.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     automation_maturity.set_defaults(handler=handle_automation_set_maturity)
+
+    automation_control_parser = subparsers.add_parser(
+        "automation-control",
+        help="Gate expensive automations behind cheap source-readiness probes.",
+    )
+    automation_control_subparsers = automation_control_parser.add_subparsers(
+        dest="automation_control_command",
+        required=True,
+    )
+    automation_control_list = automation_control_subparsers.add_parser("list", help="List managed automation gates.")
+    automation_control_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    automation_control_list.set_defaults(handler=handle_automation_control_list)
+    automation_control_doctor_parser = automation_control_subparsers.add_parser(
+        "doctor",
+        help="Validate managed automation-control config.",
+    )
+    automation_control_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    automation_control_doctor_parser.set_defaults(handler=handle_automation_control_doctor)
+    automation_control_run = automation_control_subparsers.add_parser(
+        "run",
+        help="Evaluate configured automation gates and enqueue ready work.",
+    )
+    automation_control_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    automation_control_run_mode = automation_control_run.add_mutually_exclusive_group()
+    automation_control_run_mode.add_argument("--dry-run", action="store_true", default=True)
+    automation_control_run_mode.add_argument("--apply", action="store_true")
+    automation_control_run.set_defaults(handler=handle_automation_control_run)
 
     ps_parser = subparsers.add_parser(
         "ps",
@@ -1635,6 +1668,22 @@ def handle_automation_attach(args: argparse.Namespace) -> int:
 def handle_automation_set_maturity(args: argparse.Namespace) -> int:
     result = set_automation_maturity(args.root, args.domain, args.lane, args.automation, args.level)
     print(yaml_dump(result))
+    return 0
+
+
+def handle_automation_control_list(args: argparse.Namespace) -> int:
+    print(format_automation_control_result(list_automation_control(args.root)))
+    return 0
+
+
+def handle_automation_control_doctor(args: argparse.Namespace) -> int:
+    result = automation_control_doctor(args.root)
+    print(format_automation_control_result(result))
+    return 0 if result.get("ok") else 1
+
+
+def handle_automation_control_run(args: argparse.Namespace) -> int:
+    print(format_automation_control_result(run_automation_control(args.root, dry_run=not args.apply)))
     return 0
 
 
