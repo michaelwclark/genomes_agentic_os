@@ -8,6 +8,7 @@ finding should become durable OS planning material.
 | Plan Type | Source Repo Location | Installed Location |
 | --- | --- | --- |
 | OS product spec or roadmap item | `SPECS/<NNN>-<slug>.md` in the source repo, with legacy `PLANS/` still readable | `shared_factory/05-knowledge/plans/` |
+| Installed project spec | Do not create a source-repo planning file | Installed project `SPECS/<slug>/SPEC.md` |
 | Customer-specific OS need | Customer domain inbox or project folder | Link the reusable pattern back to shared plans |
 | Loose request not yet scoped | `shared_factory/01-inbox/raw-ideas.md` | — |
 | Already-scoped spec ready to plan | `shared_factory/05-knowledge/plans/<NNN>-<slug>.md` | — |
