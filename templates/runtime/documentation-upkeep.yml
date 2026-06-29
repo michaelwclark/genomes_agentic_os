@@ -1,0 +1,38 @@
+schema_version: 1
+id: documentation_upkeep
+display_name: Canonical Documentation Upkeep
+owner: OS Owner
+mode: observe
+notion:
+  workspace: Genome's Notion
+  writes_enabled: false
+receipt_root: harness/shared_factory/06-runs-and-logs/documentation-upkeep/runs
+registry:
+  - id: agentic_os_root_operating_contract
+    scope: os
+    title: Agentic OS root operating contract
+    sources:
+      - AGENTS.md
+      - ROUTER.md
+      - CONTEXT.md
+      - RULES.md
+      - TOOLS.md
+    target:
+      system: notion
+      path: Projects -> Genome's Agentic OS -> Docs -> Operating Contract
+    last_source_hash: ""
+  - id: genomes_agentic_os_project_status
+    scope: project
+    domain: clarks_consulting
+    project: genomes_agentic_os
+    title: Genome's Agentic OS project status and routing docs
+    sources:
+      - clarks_consulting/02-projects/genomes_agentic_os/status.md
+      - clarks_consulting/02-projects/genomes_agentic_os/ROUTER.md
+      - clarks_consulting/02-projects/genomes_agentic_os/CONTEXT.md
+      - clarks_consulting/02-projects/genomes_agentic_os/RULES.md
+      - clarks_consulting/02-projects/genomes_agentic_os/TOOLS.md
+    target:
+      system: notion
+      path: Projects -> Genome's Agentic OS -> Docs -> Project Status
+    last_source_hash: ""

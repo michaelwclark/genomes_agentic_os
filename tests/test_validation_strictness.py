@@ -21,7 +21,9 @@ from genomes_agentic_os.validate import (
     BUILDING_STALE_DAYS,
     SCHEMA_TARGETS,
     StrictFinding,
+    ValidationResult,
     lifecycle_staleness_findings,
+    validate_automation_projection_registry,
     validate_root,
     validate_schemas_strict,
 )
@@ -219,6 +221,67 @@ def test_validate_composio_tools_registry_file_is_required(tmp_path: Path) -> No
     _init_root(root)
     composio_path = registries(root) / "composio-tools.yml"
     assert composio_path.is_file(), "composio-tools.yml must exist after init"
+
+
+def test_validate_requires_automation_run_tracking_representation(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
+    )
+    tracking_path.parent.mkdir(parents=True)
+    tracking_path.write_text(
+        yaml.safe_dump(
+            {"automations": {}, "excluded_automations": {}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    automation_root = root / "personal/04-automations/personal_admin/example_auto"
+    automation_root.mkdir(parents=True)
+    (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
+
+    result = ValidationResult(root=root)
+    validate_automation_projection_registry(root, result)
+
+    assert any(
+        "missing automation-run-tracking representation" in error
+        for error in result.errors
+    )
+
+
+def test_validate_accepts_explicit_automation_run_tracking_exclusion(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    automation_root = root / "personal/04-automations/personal_admin/example_auto"
+    automation_root.mkdir(parents=True)
+    (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
+    )
+    tracking_path.parent.mkdir(parents=True)
+    tracking_path.write_text(
+        yaml.safe_dump(
+            {
+                "automations": {},
+                "excluded_automations": {
+                    "example-auto": {
+                        "name": "Example Auto",
+                        "reason": "Local-only test automation.",
+                        "cwd": "personal/04-automations/personal_admin/example_auto",
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = ValidationResult(root=root)
+    validate_automation_projection_registry(root, result)
+
+    assert not any(
+        "missing automation-run-tracking representation" in error
+        for error in result.errors
+    )
 
 
 # ---------------------------------------------------------------------------

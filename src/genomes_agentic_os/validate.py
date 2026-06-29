@@ -166,6 +166,9 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/update-grant.json",
     "templates/runtime/backup-policy.yml",
     "templates/runtime/managed-templates.yml",
+    "templates/runtime/documentation-upkeep.yml",
+    "templates/runtime/doc-config.yml",
+    "templates/runtime/notion-organization.yml",
     "templates/runtime/self-improvement.yml",
     "templates/runtime/self-improvement-workflow.md",
     "templates/runtime/self-improvement-review.yml",
@@ -204,9 +207,13 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "commands/os-runtime-init.md",
+    "commands/os-ps.md",
     "commands/os-heartbeat.md",
     "commands/os-integration-setup.md",
     "commands/os-self-improvement.md",
+    "commands/os-docs-upkeep.md",
+    "commands/os-doc-config.md",
+    "commands/os-notion-org.md",
     "commands/os-end-chat.md",
     "commands/system-tool-registry.md",
     "skills/os-navigator/SKILL.md",
@@ -704,6 +711,66 @@ def validate_capability_registries(root: Path, result: ValidationResult) -> None
             )
 
 
+def validate_automation_projection_registry(root: Path, result: ValidationResult) -> None:
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
+    )
+    if not tracking_path.is_file():
+        return
+
+    data = load_control_yaml(tracking_path, result)
+    automations = data.get("automations") or {}
+    excluded = data.get("excluded_automations") or {}
+    if not isinstance(automations, dict):
+        result.errors.append(
+            f"automation run tracking automations must be a mapping: {tracking_path}"
+        )
+        automations = {}
+    if not isinstance(excluded, dict):
+        result.errors.append(
+            f"automation run tracking excluded_automations must be a mapping: {tracking_path}"
+        )
+        excluded = {}
+
+    represented_ids: set[str] = set()
+    represented_paths: set[str] = set()
+    for section_name, entries in (
+        ("automations", automations),
+        ("excluded_automations", excluded),
+    ):
+        for entry_id, entry in entries.items():
+            represented_ids.add(str(entry_id))
+            if not isinstance(entry, dict):
+                result.errors.append(
+                    "automation tracking entry must be a mapping: "
+                    f"{tracking_path}#{section_name}.{entry_id}"
+                )
+                continue
+            cwd = str(entry.get("cwd") or "").strip()
+            if cwd and cwd != ".":
+                represented_paths.add(cwd.rstrip("/"))
+            if (
+                section_name == "automations"
+                and not entry.get("page_id")
+                and not entry.get("external_projection_blocker")
+            ):
+                result.errors.append(
+                    f"automation tracking entry {entry_id!r} missing page_id "
+                    f"or external_projection_blocker: {tracking_path}"
+                )
+
+    for automation_md in sorted(root.glob("*/04-automations/*/*/automation.md")):
+        automation_root = automation_md.parent
+        automation_id = automation_root.name
+        automation_path = automation_root.relative_to(root).as_posix()
+        if automation_id in represented_ids or automation_path in represented_paths:
+            continue
+        result.errors.append(
+            "automation folder missing automation-run-tracking representation "
+            f"(add to automations or excluded_automations): {automation_path}"
+        )
+
+
 def validate_registered_hooks(root: Path, result: ValidationResult) -> None:
     hooks_path = root / REGISTRY_FILES["hooks"]
     if not hooks_path.is_file():
@@ -803,6 +870,8 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "composio-tool-routing.schema.json": [REGISTRY_FILES["composio_tools"]],
     "update-grant.schema.json": ["harness/registries/update-grant.json"],
     "backup-policy.schema.json": ["harness/registries/backup-policy.yml"],
+    "documentation-upkeep.schema.json": ["harness/shared_factory/00-control-plane/documentation-upkeep.yml"],
+    "doc-config.schema.json": ["harness/shared_factory/00-control-plane/doc-config.yml"],
     "automation.schema.json": ["**/04-automations/*/*/automation.yml"],
     "domain.schema.json": ["**/domain.yml"],
     "run.schema.json": ["**/06-runs-and-logs/runs/*/run.yml"],
@@ -1160,6 +1229,7 @@ def validate_root(root: str | Path) -> ValidationResult:
     require_dir(harness_path(os_root, "logs", "updates"), result)
     require_dir(harness_path(os_root, "logs", "backups"), result)
     validate_capability_registries(os_root, result)
+    validate_automation_projection_registry(os_root, result)
     validate_registered_hooks(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)

@@ -7,6 +7,7 @@ import yaml
 
 from genomes_agentic_os import supervisor
 from genomes_agentic_os.cli import main
+from genomes_agentic_os.runtime_ops import runtime_doctor
 from genomes_agentic_os.supervisor import supervise_tick
 
 STEP_NAMES = {"heartbeats", "schedules", "watch_sources", "events", "run_queue", "health"}
@@ -139,6 +140,109 @@ def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> N
     dispatched = yaml.safe_load(capsys.readouterr().out)
     assert dispatched["status"] == "done"
     assert dispatched["queue_item"]["status"] == "done"
+
+
+def test_runtime_doctor_reports_run_queue_health(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    queue["items"] = [
+        {
+            "id": "queue_stale_daily_one",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T00:00:00Z",
+            "due_at": "2026-06-01T00:00:00Z",
+            "idempotency_key": "test:stale:one",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+        {
+            "id": "queue_stale_daily_two",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T01:00:00Z",
+            "due_at": "2026-06-01T01:00:00Z",
+            "idempotency_key": "test:stale:two",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+        {
+            "id": "queue_duplicate_a",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T02:00:00Z",
+            "idempotency_key": "test:duplicate",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+        {
+            "id": "queue_duplicate_b",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T02:30:00Z",
+            "idempotency_key": "test:duplicate",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+        {
+            "id": "queue_failed_dispatch",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "failed",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T03:00:00Z",
+            "idempotency_key": "test:failed",
+            "execution_target": "script",
+            "command": "agentic-os unsupported --root <root>",
+            "error": "unsupported local script command",
+        },
+        {
+            "id": "queue_unsupported_command",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T04:00:00Z",
+            "idempotency_key": "test:unsupported",
+            "execution_target": "script",
+            "command": "agentic-os self-improvement morning-report --root <root> --apply",
+        },
+        {
+            "id": "queue_unknown_schedule",
+            "kind": "schedule",
+            "ref": "missing_schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-01T05:00:00Z",
+            "idempotency_key": "test:unknown-schedule",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+    ]
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+    report = runtime_doctor(root)
+    messages = "\n".join(finding["message"] for finding in report["findings"])
+    assert report["ok"] is True
+    assert "queued run queue items are stale: daily_agentic_os_doctor due_at_past_24h_grace" in messages
+    assert "sample=queue_stale_daily_one" in messages
+    assert "duplicate active run queue idempotency_key: test:duplicate" in messages
+    assert "multiple active schedule queue items: daily_agentic_os_doctor" in messages
+    assert "run queue items failed: unsupported local script command" in messages
+    assert "sample=queue_failed_dispatch" in messages
+    assert "script commands are unsupported by runtime dispatch: daily_agentic_os_doctor" in messages
+    assert "sample=queue_unsupported_command" in messages
+    assert "schedule queue items reference unknown schedule: missing_schedule" in messages
 
 
 def test_supervise_isolates_a_failing_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

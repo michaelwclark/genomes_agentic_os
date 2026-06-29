@@ -1,0 +1,199 @@
+schema_version: 1
+id: doc_config
+display_name: Doc Config System
+owner: OS Owner
+source_of_truth: filesystem
+
+routing:
+  source_of_truth: filesystem
+  feature_namespace: Specs
+  compatibility_namespaces:
+    - Features
+  parent_preference:
+    - routed_work_item
+    - routed_project
+    - routed_domain
+    - shared_factory
+  precedence:
+    - active_work_item
+    - routed_project_config
+    - local_doc_config
+    - known_external_ids
+    - search_existing
+    - create_missing
+  duplicate_policy: search_before_create
+  external_writes_require_workspace_verification: true
+  work_areas:
+    - id: genomes_agentic_os
+      title: Genome's Agentic OS
+      domain: clarks_consulting
+      project: genomes_agentic_os
+      notion_path: Projects -> Genome's Agentic OS -> SPEC / OS Spec Backlog
+      aliases:
+        - agentic os
+        - genomes agentic os
+        - doc config
+        - documentation routing
+      keywords:
+        - agentic
+        - os
+        - notion
+        - docs
+        - document
+        - work item
+    - id: clarks_consulting
+      title: Clark's Consulting
+      domain: clarks_consulting
+      project: ''
+      notion_path: Projects -> Clark's Consulting
+      aliases:
+        - clarks consulting
+        - consulting
+      keywords:
+        - client
+        - consulting
+        - sales
+        - service
+    - id: los
+      title: LOS
+      domain: los
+      project: ''
+      notion_path: Projects -> LOS
+      aliases:
+        - lenders cooperative
+        - los
+      keywords:
+        - los
+        - lender
+        - flywl
+        - dlos
+
+notion:
+  workspace:
+    expected: Genome's Notion
+    blocked_markers:
+      - Michael Clark
+      - personal Notion
+  style:
+    use_color_variation: true
+    default_callout_color: blue_background
+    bucket_colors:
+      SPEC: blue_background
+      SPECS: blue_background
+      PLAN: green_background
+      PLANS: green_background
+      QUESTIONS: red_background
+      WORKLOG: gray_background
+      WORKLOGS: gray_background
+      DECISIONS: purple_background
+      ARTIFACTS: orange_background
+      CONVENTIONS: brown_background
+    rich_blocks:
+      - headings
+      - callouts
+      - bullet_lists
+      - numbered_lists
+      - toggle_lists
+      - databases
+      - sub_pages
+      - cross_links
+
+buckets:
+  default:
+    - id: spec
+      title: SPEC
+      aliases:
+        - SPECS
+        - IDEA
+      required: true
+      create_policy: always
+      purpose: Capture raw user language, acceptance criteria, scope boundaries, and behavior contracts.
+    - id: plan
+      title: PLAN
+      aliases:
+        - PLANS
+      required: true
+      create_policy: always
+      purpose: Hold implementation phases, sequencing, dependencies, and validation gates.
+    - id: worklog
+      title: WORKLOG
+      aliases:
+        - WORKLOGS
+      required: true
+      create_policy: always
+      purpose: Append receipt-backed progress, decisions, and validation outcomes.
+  questions:
+    id: questions
+    title: QUESTIONS
+    enabled: true
+    create_policy: when_questions_exist
+    purpose: Track unresolved questions, owner, answer, and date resolved.
+  optional:
+    - id: decisions
+      title: DECISIONS
+      enabled: true
+      create_policy: when_decisions_exist
+      purpose: Preserve durable 50/50 calls separate from transient planning notes.
+    - id: artifacts
+      title: ARTIFACTS
+      enabled: false
+      create_policy: when_artifacts_need_index
+      purpose: Index generated outputs, screenshots, files, and external receipts.
+    - id: conventions
+      title: CONVENTIONS
+      enabled: true
+      create_policy: when_reusable_rules_exist
+      purpose: Capture reusable routing, naming, and Notion layout rules.
+
+search_methods:
+  config:
+    enabled: true
+    priority: 10
+    applies_to: [filesystem, notion]
+    description: Read explicit doc-config files and known page IDs first.
+  markdown:
+    enabled: true
+    priority: 20
+    applies_to: [filesystem]
+    description: Read ROUTER, TOOLS, CONTEXT, RULES, work.yml, and local markdown indexes.
+  ripgrep:
+    enabled: true
+    priority: 30
+    applies_to: [filesystem]
+    command: rg
+    description: Search local docs and work-items when config does not directly answer placement.
+  filesystem:
+    enabled: true
+    priority: 40
+    applies_to: [filesystem]
+    description: Walk known OS folders for existing matching destinations before creating.
+  notion:
+    enabled: true
+    priority: 50
+    applies_to: [notion]
+    workspace_verification_required: true
+    description: Search verified Genome's Notion for existing pages/databases before creating.
+  context_mode:
+    enabled: true
+    priority: 60
+    applies_to: [filesystem, source_repo]
+    description: Use context-mode for large repository or artifact retrieval when available.
+  memory:
+    enabled: true
+    priority: 70
+    applies_to: [memory]
+    description: Read durable memory only after routed local config and active work item hints.
+
+analytics:
+  enabled: true
+  event_log: harness/shared_factory/07-metrics/doc-routing-events.jsonl
+  fields:
+    - timestamp
+    - request_hash
+    - routed_domain
+    - routed_project
+    - routed_work_item
+    - destination_kind
+    - search_methods_used
+    - created_new_destination
+    - workspace_verified

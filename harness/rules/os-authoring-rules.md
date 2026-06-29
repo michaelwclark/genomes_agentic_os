@@ -26,11 +26,19 @@ rules, hooks, or project worktrees.
    after adding or changing Agentic OS skills so Codex repo adapters,
    `$HOME/.agents/skills` registrations, and `$HOME/.codex/skills` launcher
    metadata are regenerated.
-9. When adding or renaming commands, skills, rules, hooks, plugins, libraries,
-   tools, MCP surfaces, or programs, update the visible registries and readable
-   `TOOLS.md` surfaces.
-10. Add validation or tests for new reusable conventions.
-11. Do not ship undocumented OS-level behavior. Every new OS-level feature must
+9. When adding or renaming workflows, automations, commands, skills, rules,
+   hooks, plugins, libraries, tools, MCP surfaces, tool routes, or programs,
+   update every canonical OS registry and readable surface that owns that
+   capability. This includes the relevant `harness/registries/*.yml`, `TOOLS.md`,
+   Codex/Claude adapter metadata, domain or project state indexes, run tracking
+   manifests, doc-config routes, and any configured external documentation or
+   control-plane projection such as Genome's Notion.
+10. If an external projection is configured but cannot be written after target
+   workspace/account verification, record the blocker in the canonical local
+   registry entry. Do not leave the external registry or Notion projection
+   silently stale.
+11. Add validation or tests for new reusable conventions.
+12. Do not ship undocumented OS-level behavior. Every new OS-level feature must
    document ownership, context routing, validation, and projection updates.
 
 ## Context Budget

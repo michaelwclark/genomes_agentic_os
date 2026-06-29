@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import tempfile
 from typing import Any
 
@@ -23,13 +24,56 @@ from .scaffold import expand_path
 
 CONFIG_PATH = "harness/shared_factory/00-control-plane/self-improvement.yml"
 OUTPUT_ROOT = "harness/shared_factory/06-runs-and-logs/self-improvement"
+RUN_QUEUE_PATH = "harness/shared_factory/00-control-plane/run-queue.yml"
 NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 NOTION_SELF_IMPROVEMENT_DB = "Self Improvement"
 NOTION_TOKEN_ENV = "GENOMES_NOTION_PAT"
+ACTION_OUTPUT_ROOT = f"{OUTPUT_ROOT}/actions"
+SELF_IMPROVEMENT_WORK_ITEM = "clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
+STALE_QUEUE_GRACE = timedelta(hours=24)
 MAX_EVIDENCE_FILES = 400
 MAX_EVIDENCE_FILES_PER_ROOT = 40
 MAX_EVIDENCE_BYTES = 16_000
 EVIDENCE_SUFFIXES = {".md", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".log"}
+ACTIONABLE_EVIDENCE_TERMS = (
+    "blocked",
+    "failed",
+    "failure",
+    "error",
+    "manual",
+    "missing",
+    "needs",
+    "unsupported",
+    "duplicate",
+    "stale",
+    "workaround",
+    "workflow gap",
+    "operator friction",
+    "queue",
+)
+LOW_VALUE_EVIDENCE_FIELDS = {
+    "id",
+    "run_id",
+    "queue_item_id",
+    "proposal_id",
+    "approval_id",
+    "content_hash",
+    "dedupe_key",
+    "created_at",
+    "updated_at",
+    "started_at",
+    "finished_at",
+    "completed_at",
+    "due_at",
+    "idempotency_key",
+    "root",
+    "path",
+    "log",
+    "dispatch_log",
+    "evidence",
+    "dry_run",
+    "external_effect",
+}
 APPROVED_TARGETS = {
     "feature-spec",
     "skill-draft",
@@ -102,6 +146,10 @@ def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _digest(value: Any, length: int = 16) -> str:
     if isinstance(value, str):
         payload = value
@@ -132,6 +180,15 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def _read_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
+
+
+def _read_yaml_if_present(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        return _read_yaml(path)
+    except (OSError, yaml.YAMLError):
+        return {}
 
 
 def _duration(value: str | None, default_days: int = 14) -> timedelta:
@@ -367,17 +424,64 @@ def _collect_evidence(evidence_roots: list[dict[str, Any]]) -> list[EvidenceReco
     return records
 
 
+def _has_actionable_signal(line: str) -> bool:
+    lower = line.lower()
+    return any(term in lower for term in ACTIONABLE_EVIDENCE_TERMS)
+
+
+def _is_low_value_evidence_line(line: str) -> bool:
+    lower = " ".join(line.strip().lower().split())
+    if len(lower) < 20:
+        return True
+    if lower.startswith(("#", "---", "|")):
+        return True
+    field_match = re.match(r"^-?\s*([a-z0-9_ -]{2,40})\s*:", lower)
+    if field_match:
+        field = field_match.group(1).strip().replace("-", "_").replace(" ", "_")
+        if field in LOW_VALUE_EVIDENCE_FIELDS and not _has_actionable_signal(lower):
+            return True
+    volatile_markers = (
+        "sha256:",
+        "queue_",
+        "/users/genome/",
+        "harness/shared_factory/06-runs-and-logs/runs/",
+    )
+    if any(marker in lower for marker in volatile_markers) and not _has_actionable_signal(lower):
+        return True
+    if re.search(r"\b20\d\d-\d\d-\d\d[t ]\d\d:\d\d", lower) and not _has_actionable_signal(lower):
+        return True
+    return False
+
+
+def _semantic_signature(text: str) -> str:
+    normalized = text.lower()
+    normalized = re.sub(r"/users/genome/\S+", " local_path ", normalized)
+    normalized = re.sub(r"\bqueue_[a-f0-9]{8,}\b", " queue_id ", normalized)
+    normalized = re.sub(r"\bsi-[a-f0-9]{8,}\b", " proposal_id ", normalized)
+    normalized = re.sub(r"\bsha256:[a-f0-9]{16,}\b", " hash ", normalized)
+    normalized = re.sub(r"\b[a-f0-9]{12,}\b", " hash ", normalized)
+    normalized = re.sub(r"\b20\d\d-\d\d-\d\d[t ][0-9:.+\-z]+\b", " timestamp ", normalized)
+    normalized = re.sub(r"\b\d+\b", " number ", normalized)
+    tokens = re.findall(r"[a-z][a-z0-9_'-]{2,}", normalized)
+    stopwords = {"the", "and", "for", "with", "this", "that", "from", "into", "under", "over"}
+    kept = [token for token in tokens if token not in stopwords]
+    return " ".join(kept[:32])
+
+
 def _line_counts(records: list[EvidenceRecord]) -> Counter[str]:
-    counter: Counter[str] = Counter()
+    signature_counts: Counter[str] = Counter()
+    examples: dict[str, str] = {}
     for record in records:
         for raw_line in record.redacted_text.splitlines():
             line = " ".join(raw_line.strip().lower().split())
-            if len(line) < 20:
+            if _is_low_value_evidence_line(line):
                 continue
-            if line.startswith(("#", "---", "|")):
+            signature = _semantic_signature(line)
+            if len(signature) < 20:
                 continue
-            counter[line] += 1
-    return counter
+            signature_counts[signature] += 1
+            examples.setdefault(signature, line)
+    return Counter({examples[signature]: count for signature, count in signature_counts.items()})
 
 
 def _keyword_hits(records: list[EvidenceRecord], keywords: tuple[str, ...]) -> int:
@@ -457,24 +561,42 @@ def _record_locator(root: Path, record: EvidenceRecord) -> str:
         return record.path.as_posix()
 
 
+def _evidence_line_score(line: str, finding_text: str) -> int:
+    lower = line.lower()
+    score = 0
+    if finding_text and finding_text[:80].lower() in lower:
+        score += 6
+    if _has_actionable_signal(lower):
+        score += 3
+    if any(term in lower for term in ("should", "because", "needs", "cannot", "blocked")):
+        score += 1
+    return score
+
+
 def _candidate_evidence(root: Path, records: list[EvidenceRecord], finding: dict[str, Any]) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     finding_text = str(finding.get("evidence") or "")
+    seen: set[tuple[str, str]] = set()
     for record in records[:10]:
-        excerpt = ""
-        for line in record.redacted_text.splitlines():
+        candidates: list[tuple[int, int, str]] = []
+        for index, line in enumerate(record.redacted_text.splitlines()):
             normalized = " ".join(line.strip().split())
-            if not normalized:
+            if not normalized or _is_low_value_evidence_line(normalized):
                 continue
-            if finding_text and finding_text[:80].lower() in normalized.lower():
-                excerpt = normalized[:300]
-                break
-            if not excerpt:
-                excerpt = normalized[:300]
+            candidates.append((_evidence_line_score(normalized, finding_text), index, normalized[:300]))
+        if not candidates:
+            continue
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        excerpt = candidates[0][2]
+        locator = _record_locator(root, record)
+        key = (locator, excerpt)
+        if key in seen:
+            continue
+        seen.add(key)
         if excerpt:
             evidence.append(
                 {
-                    "locator": _record_locator(root, record),
+                    "locator": locator,
                     "excerpt": excerpt,
                     "signal_type": finding.get("type") or "deterministic",
                     "redactions": record.redactions,
@@ -519,13 +641,15 @@ def _proposal_from_finding(root: Path, records: list[EvidenceRecord], finding: d
     evidence = _candidate_evidence(root, records, finding)
     title = str(finding.get("title") or "Self-improvement proposal")
     opportunity_type = str(finding.get("type") or "deterministic")
-    primary_cluster = "|".join(str(item.get("locator")) for item in evidence) or title
-    dedupe_key = _sha256(f"{opportunity_type}|{title.lower()}|{recommended_artifact}|{primary_cluster}")
-    proposal_id = "si-" + _digest(dedupe_key, 12)
+    evidence_basis = str(finding.get("evidence") or "")
+    if opportunity_type != "repeated_evidence" or _is_low_value_evidence_line(evidence_basis):
+        evidence_basis = str(finding.get("summary") or title)
+    semantic_cluster = _semantic_signature(evidence_basis) or title.lower()
+    dedupe_key = _sha256(f"{opportunity_type}|{recommended_artifact}|{semantic_cluster}")
     now = _now()
     proposal = {
         "schema_version": 1,
-        "proposal_id": proposal_id,
+        "proposal_id": "",
         "created_at": now,
         "updated_at": now,
         "opportunity_type": opportunity_type,
@@ -582,11 +706,207 @@ def _safe_descendant(root: Path, directory: Path, *parts: str) -> Path:
     return target
 
 
+def _proposal_file_sort_key(path: Path) -> tuple[int, int, str]:
+    number = _proposal_sequence_number(path.stem)
+    if number is not None:
+        return (0, number, path.name)
+    return (1, 0, path.name)
+
+
 def _proposal_files(root: Path, config: dict[str, Any]) -> list[Path]:
     directory = _output_path(root, config, "proposals")
     if not directory.exists():
         return []
-    return sorted(path for path in directory.glob("*.yml") if path.is_file())
+    return sorted((path for path in directory.glob("*.yml") if path.is_file()), key=_proposal_file_sort_key)
+
+
+def _latest_run_record(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    runs_dir = _output_path(root, config, "runs")
+    if not runs_dir.exists():
+        return {}
+    candidates: list[tuple[datetime, Path, dict[str, Any]]] = []
+    for path in runs_dir.glob("*.yml"):
+        if not path.is_file():
+            continue
+        record = _read_yaml_if_present(path)
+        completed = _parse_time(record.get("completed_at")) or _parse_time(record.get("started_at"))
+        if completed is None:
+            completed = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        candidates.append((completed, path, record))
+    if not candidates:
+        return {}
+    completed, path, record = max(candidates, key=lambda item: (item[0], item[1].name))
+    return {
+        "path": str(path.relative_to(root)),
+        "run_id": record.get("run_id") or path.stem,
+        "completed_at": _iso(completed),
+        "status": record.get("status") or "done",
+    }
+
+
+def _run_queue_items(root: Path) -> list[dict[str, Any]]:
+    queue = _read_yaml_if_present(root / RUN_QUEUE_PATH)
+    items = queue.get("items")
+    run_queue = queue.get("run_queue")
+    if not isinstance(items, list):
+        items = run_queue if isinstance(run_queue, list) else []
+    if not isinstance(run_queue, list):
+        run_queue = items
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*items, *run_queue]:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("idempotency_key") or item.get("id") or len(merged))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def _load_run_queue(root: Path) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
+    queue_path = root / RUN_QUEUE_PATH
+    queue = _read_yaml_if_present(queue_path)
+    items = queue.get("items")
+    run_queue = queue.get("run_queue")
+    if not isinstance(items, list):
+        items = run_queue if isinstance(run_queue, list) else []
+    if not isinstance(run_queue, list):
+        run_queue = items
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*items, *run_queue]:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("idempotency_key") or item.get("id") or len(merged))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    queue["items"] = merged
+    queue["run_queue"] = merged
+    return queue_path, queue, merged
+
+
+def _queue_item_reason(item: dict[str, Any], latest_run: dict[str, Any], now: datetime) -> str | None:
+    status = str(item.get("status") or "")
+    if status != "queued":
+        return None
+    due_at = _parse_time(item.get("due_at"))
+    latest_completed = _parse_time(latest_run.get("completed_at"))
+    if due_at and latest_completed and latest_completed >= due_at:
+        return "covered_by_later_self_improvement_run"
+    if due_at and now - due_at > STALE_QUEUE_GRACE:
+        return "queued_past_24h_grace"
+    created_at = _parse_time(item.get("created_at"))
+    if created_at and now - created_at > STALE_QUEUE_GRACE:
+        return "created_past_24h_grace"
+    return None
+
+
+def self_improvement_queue_health(root: str | Path) -> dict[str, Any]:
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    latest_run = _latest_run_record(os_root, config)
+    now = datetime.now(timezone.utc)
+    items: list[dict[str, Any]] = []
+    stale_items: list[dict[str, Any]] = []
+    for item in _run_queue_items(os_root):
+        if item.get("kind") != "schedule" or item.get("ref") != "self_improvement_review":
+            continue
+        row = {
+            "id": item.get("id"),
+            "status": item.get("status"),
+            "due_at": item.get("due_at"),
+            "created_at": item.get("created_at"),
+            "idempotency_key": item.get("idempotency_key"),
+        }
+        reason = _queue_item_reason(item, latest_run, now)
+        if reason:
+            row["stale_reason"] = reason
+            stale_items.append(row)
+        items.append(row)
+    current_status = "stale" if stale_items else "queued" if any(item.get("status") == "queued" for item in items) else "clear"
+    return {
+        "queue_path": RUN_QUEUE_PATH,
+        "status": current_status,
+        "latest_run": latest_run,
+        "items": items,
+        "stale_items": stale_items,
+        "stale_count": len(stale_items),
+    }
+
+
+def reconcile_self_improvement_queue(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    latest_run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    queue_path, queue, items = _load_run_queue(os_root)
+    latest = latest_run or _latest_run_record(os_root, config)
+    latest_completed = _parse_time(latest.get("completed_at"))
+    result: dict[str, Any] = {
+        "action": "reconcile-queue",
+        "root": str(os_root),
+        "mode": "dry-run" if dry_run else "apply",
+        "queue_path": RUN_QUEUE_PATH,
+        "latest_run": latest,
+        "reconciled": [],
+        "skipped": [],
+    }
+    if not latest_completed:
+        result["skipped"].append({"reason": "no_successful_self_improvement_run"})
+        return result
+
+    changed = False
+    for item in items:
+        if item.get("kind") != "schedule" or item.get("ref") != "self_improvement_review":
+            continue
+        reason = _queue_item_reason(item, latest, latest_completed)
+        if reason != "covered_by_later_self_improvement_run":
+            result["skipped"].append(
+                {
+                    "id": item.get("id"),
+                    "status": item.get("status"),
+                    "reason": reason or "not_covered_by_latest_run",
+                }
+            )
+            continue
+        row = {
+            "id": item.get("id"),
+            "previous_status": item.get("status"),
+            "reconcile_reason": reason,
+            "covered_by_run_id": latest.get("run_id"),
+        }
+        result["reconciled"].append(row)
+        if dry_run:
+            continue
+        item["status"] = "done"
+        item["finished_at"] = latest.get("completed_at")
+        item["updated_at"] = _now()
+        item["reconcile_reason"] = reason
+        item["covered_by_run_id"] = latest.get("run_id")
+        item.setdefault("evidence", []).append(
+            {
+                "type": "self_improvement_run",
+                "run_id": latest.get("run_id"),
+                "path": latest.get("path"),
+            }
+        )
+        changed = True
+
+    if changed:
+        queue["items"] = items
+        queue["run_queue"] = items
+        queue["updated_at"] = _now()
+        _assert_safe_payload(yaml.safe_dump(queue, sort_keys=False))
+        queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    result["changed"] = changed
+    return result
 
 
 def _load_proposal(root: Path, config: dict[str, Any], proposal_id: str) -> dict[str, Any]:
@@ -675,45 +995,107 @@ def _cooldown_until(config: dict[str, Any], target: str) -> str:
     return (datetime.now(timezone.utc) + duration).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _proposal_sequence_number(proposal_id: Any) -> int | None:
+    raw = str(proposal_id or "").strip()
+    if not raw.isdecimal():
+        return None
+    number = int(raw)
+    return number if number > 0 else None
+
+
+def _proposal_sequence_index(root: Path, config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], set[int]]:
+    existing_by_dedupe: dict[str, dict[str, Any]] = {}
+    used_numbers: set[int] = set()
+    for path in _proposal_files(root, config):
+        proposal = _read_yaml(path)
+        dedupe_key = proposal.get("dedupe_key")
+        if dedupe_key:
+            existing_by_dedupe[str(dedupe_key)] = proposal
+        number = _proposal_sequence_number(proposal.get("proposal_id") or path.stem)
+        if number is not None:
+            used_numbers.add(number)
+    return existing_by_dedupe, used_numbers
+
+
+def _next_proposal_id(used_numbers: set[int]) -> str:
+    candidate = max(used_numbers, default=0) + 1
+    while candidate in used_numbers:
+        candidate += 1
+    used_numbers.add(candidate)
+    return str(candidate)
+
+
+def _set_proposal_id(proposal: dict[str, Any], proposal_id: str) -> None:
+    proposal["proposal_id"] = str(proposal_id)
+    proposal["content_hash"] = _proposal_content_hash(proposal)
+
+
+def _assign_preview_proposal_ids(root: Path, config: dict[str, Any], candidates: list[dict[str, Any]]) -> None:
+    try:
+        existing_by_dedupe, used_numbers = _proposal_sequence_index(root, config)
+    except ValueError:
+        existing_by_dedupe, used_numbers = {}, set()
+    for candidate in candidates:
+        dedupe_key = str(candidate.get("dedupe_key"))
+        existing = existing_by_dedupe.get(str(candidate.get("dedupe_key")))
+        if existing and existing.get("proposal_id"):
+            _set_proposal_id(candidate, str(existing["proposal_id"]))
+            existing_by_dedupe[dedupe_key] = candidate
+            continue
+        proposal_id = str(candidate.get("proposal_id") or "")
+        number = _proposal_sequence_number(proposal_id)
+        if number is None or number in used_numbers:
+            proposal_id = _next_proposal_id(used_numbers)
+        else:
+            used_numbers.add(number)
+        _set_proposal_id(candidate, proposal_id)
+        existing_by_dedupe[dedupe_key] = candidate
+
+
 def _write_proposals(root: Path, config: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     proposals_dir = _output_path(root, config, "proposals")
     _ensure_safe_dir(root, proposals_dir)
-    existing_by_dedupe = {}
-    for path in _proposal_files(root, config):
-        proposal = _read_yaml(path)
-        if proposal.get("dedupe_key"):
-            existing_by_dedupe[str(proposal["dedupe_key"])] = proposal
 
     written: list[dict[str, Any]] = []
     suppressed: list[dict[str, Any]] = []
-    for candidate in candidates:
-        existing = existing_by_dedupe.get(str(candidate.get("dedupe_key")))
-        proposal = candidate
-        if existing:
-            status = str(existing.get("promotion_status") or "proposed")
-            if status == "rejected" and _cooldown_active(existing):
-                suppressed.append(
-                    {
-                        "proposal_id": existing.get("proposal_id"),
-                        "reason": "cooldown_active",
-                        "cooldown_until": existing.get("cooldown_until"),
-                    }
-                )
-                continue
-            if status == "rejected":
-                suppressed.append({"proposal_id": existing.get("proposal_id"), "reason": "existing_rejected"})
-                continue
-            if status in {"approved", "drafted"}:
-                suppressed.append({"proposal_id": existing.get("proposal_id"), "reason": f"existing_{status}"})
-                continue
-            proposal = _merge_evidence(existing, candidate)
+    with _proposal_lock(root, proposals_dir, "sequence"):
+        existing_by_dedupe, used_numbers = _proposal_sequence_index(root, config)
+        for candidate in candidates:
+            existing = existing_by_dedupe.get(str(candidate.get("dedupe_key")))
+            proposal = candidate
+            if existing:
+                status = str(existing.get("promotion_status") or "proposed")
+                if status == "rejected" and _cooldown_active(existing):
+                    suppressed.append(
+                        {
+                            "proposal_id": existing.get("proposal_id"),
+                            "reason": "cooldown_active",
+                            "cooldown_until": existing.get("cooldown_until"),
+                        }
+                    )
+                    continue
+                if status == "rejected":
+                    suppressed.append({"proposal_id": existing.get("proposal_id"), "reason": "existing_rejected"})
+                    continue
+                if status in {"approved", "drafted"}:
+                    suppressed.append({"proposal_id": existing.get("proposal_id"), "reason": f"existing_{status}"})
+                    continue
+                proposal = _merge_evidence(existing, candidate)
 
-        proposal_id = str(proposal["proposal_id"])
-        with _proposal_lock(root, proposals_dir, proposal_id):
+            if not existing:
+                proposal_id = str(proposal.get("proposal_id") or "")
+                number = _proposal_sequence_number(proposal_id)
+                if number is None or number in used_numbers:
+                    proposal_id = _next_proposal_id(used_numbers)
+                else:
+                    used_numbers.add(number)
+                _set_proposal_id(proposal, proposal_id)
+
+            proposal_id = str(proposal["proposal_id"])
             path = _proposal_file(root, config, proposal_id)
             _atomic_write_yaml(root, path, proposal)
-        existing_by_dedupe[str(proposal["dedupe_key"])] = proposal
-        written.append({"proposal_id": proposal_id, "path": str(_proposal_file(root, config, proposal_id).relative_to(root))})
+            existing_by_dedupe[str(proposal["dedupe_key"])] = proposal
+            written.append({"proposal_id": proposal_id, "path": str(path.relative_to(root))})
     return {"written": written, "suppressed": suppressed}
 
 
@@ -844,6 +1226,143 @@ def _notion_manifest(root: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+SELF_IMPROVEMENT_DB_SCHEMA: dict[str, dict[str, Any]] = {
+    "Summary": {"rich_text": {}},
+    "Status": {"select": {}},
+    "Score": {"number": {}},
+    "Evidence Path": {"rich_text": {}},
+    "Run ID": {"rich_text": {}},
+    "Date": {"date": {}},
+    "Updated": {"date": {}},
+    "Type": {"select": {}},
+    "Proposal ID": {"rich_text": {}},
+    "Parent Run ID": {"rich_text": {}},
+    "Recommended Artifact": {"rich_text": {}},
+    "Action Status": {"select": {}},
+    "Action Log": {"rich_text": {}},
+    "Run Grooming": {"checkbox": {}},
+    "Auto-dev Implementation": {"checkbox": {}},
+}
+
+
+def _ensure_self_improvement_schema(
+    database_id: str,
+    available: dict[str, str],
+    *,
+    fetcher: Any,
+) -> dict[str, str]:
+    missing = {
+        name: schema
+        for name, schema in SELF_IMPROVEMENT_DB_SCHEMA.items()
+        if name not in available
+    }
+    if not missing:
+        return available
+    notion_api.update_database_schema(database_id, missing, NOTION_TOKEN_ENV, fetcher=fetcher)
+    return notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=fetcher)
+
+
+def _rt(value: str) -> list[dict[str, Any]]:
+    return [{"type": "text", "text": {"content": value[:2000]}}] if value else []
+
+
+def _paragraph(text: str) -> dict[str, Any]:
+    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rt(text)}}
+
+
+def _heading(level: int, text: str) -> dict[str, Any]:
+    key = f"heading_{level}"
+    return {"object": "block", "type": key, key: {"rich_text": _rt(text)}}
+
+
+def _bullet(text: str) -> dict[str, Any]:
+    return {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rt(text)}}
+
+
+def _todo(text: str, *, checked: bool = False) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "to_do",
+        "to_do": {"rich_text": _rt(text), "checked": checked},
+    }
+
+
+def _divider() -> dict[str, Any]:
+    return {"object": "block", "type": "divider", "divider": {}}
+
+
+def _summary_blocks(root: Path, result: dict[str, Any], report_paths: dict[str, str]) -> list[dict[str, Any]]:
+    findings = result.get("findings") or []
+    proposals = result.get("proposal_candidates") or []
+    evidence_files = int(result.get("evidence_files") or 0)
+    report_path = report_paths.get("latest", "")
+    blocks: list[dict[str, Any]] = [
+        _heading(2, "Run Summary"),
+        _paragraph(
+            f"Scanned {evidence_files} evidence files and surfaced "
+            f"{len(findings)} finding(s) with {len(proposals)} suggestion(s)."
+        ),
+        _bullet(f"Run ID: {result.get('run_id') or ''}"),
+        _bullet(f"Filesystem report: {report_path}"),
+        _bullet("Filesystem remains the source of truth; Notion is the review and action projection."),
+        _divider(),
+        _heading(2, "Findings"),
+    ]
+    if not findings:
+        blocks.append(_paragraph("No findings crossed the reporting threshold."))
+    else:
+        for finding in findings[:10]:
+            score = (finding.get("score") or {}).get("total", "")
+            blocks.append(
+                _bullet(
+                    f"{finding.get('title') or 'Finding'}: "
+                    f"{finding.get('summary') or ''} Score {score}."
+                )
+            )
+    blocks.extend(
+        [
+            _divider(),
+            _heading(2, "Suggestion Pages"),
+            _paragraph(
+                "Open the suggestion rows linked to this run. Each suggestion page has two action checkboxes: "
+                "Run Grooming and Auto-dev Implementation."
+            ),
+        ]
+    )
+    return blocks
+
+
+def _proposal_blocks(proposal: dict[str, Any], *, run_id: str) -> list[dict[str, Any]]:
+    evidence = proposal.get("evidence") or []
+    validation = proposal.get("validation_plan") or []
+    blocks: list[dict[str, Any]] = [
+        _heading(2, "Recommendation"),
+        _paragraph(str(proposal.get("summary") or "")),
+        _bullet(f"Proposal ID: {proposal.get('proposal_id') or ''}"),
+        _bullet(f"Run ID: {run_id}"),
+        _bullet(f"Recommended artifact: {proposal.get('recommended_artifact') or ''}"),
+        _bullet(f"Promotion status: {proposal.get('promotion_status') or 'proposed'}"),
+        _divider(),
+        _heading(2, "Actions"),
+        _bullet("Run Grooming: check the page property to queue spec grooming."),
+        _bullet("Auto-dev Implementation: check the page property to queue implementation."),
+        _divider(),
+        _heading(2, "Evidence"),
+    ]
+    if not evidence:
+        blocks.append(_paragraph("No evidence attached."))
+    else:
+        for item in evidence[:8]:
+            blocks.append(_bullet(f"{item.get('locator') or 'evidence'}: {item.get('excerpt') or ''}"))
+    blocks.append(_heading(2, "Validation Plan"))
+    if not validation:
+        blocks.append(_paragraph("No validation plan recorded."))
+    else:
+        for item in validation:
+            blocks.append(_bullet(str(item)))
+    return blocks
+
+
 def _notion_projection_properties(
     available: dict[str, str],
     *,
@@ -852,6 +1371,14 @@ def _notion_projection_properties(
     score: int,
     run_id: str,
     evidence_path: str,
+    page_type: str = "Daily Summary",
+    proposal_id: str = "",
+    parent_run_id: str = "",
+    recommended_artifact: str = "",
+    run_grooming: bool = False,
+    auto_dev: bool = False,
+    action_status: str = "",
+    action_log: str = "",
 ) -> dict[str, Any]:
     """Build only the properties that exist on the live database.
 
@@ -872,6 +1399,14 @@ def _notion_projection_properties(
         "Run ID": ("rich_text", run_id),
         "Date": ("date", _today()),
         "Updated": ("date", _now()),
+        "Type": ("select", page_type),
+        "Proposal ID": ("rich_text", proposal_id),
+        "Parent Run ID": ("rich_text", parent_run_id),
+        "Recommended Artifact": ("rich_text", recommended_artifact),
+        "Run Grooming": ("checkbox", run_grooming),
+        "Auto-dev Implementation": ("checkbox", auto_dev),
+        "Action Status": ("select", action_status),
+        "Action Log": ("rich_text", action_log),
     }
     for name, (expected_type, value) in candidates.items():
         actual = available.get(name)
@@ -885,6 +1420,8 @@ def _notion_projection_properties(
             properties[name] = {"number": value}
         elif expected_type == "date":
             properties[name] = notion_api._date_prop(str(value))
+        elif expected_type == "checkbox":
+            properties[name] = notion_api._checkbox_prop(bool(value))
     return properties
 
 
@@ -950,6 +1487,7 @@ def _project_run_to_notion(
                 f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}"
             )
         available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
+        available = _ensure_self_improvement_schema(database_id, available, fetcher=transport)
         properties = _notion_projection_properties(
             available,
             title=title,
@@ -957,11 +1495,313 @@ def _project_run_to_notion(
             score=score,
             run_id=run_id,
             evidence_path=evidence_path,
+            page_type="Daily Summary",
+            action_status="ready",
         )
-        page_id = notion_api.create_database_page(database_id, properties, NOTION_TOKEN_ENV, fetcher=transport)
+        page_id = notion_api.create_database_page(
+            database_id,
+            properties,
+            NOTION_TOKEN_ENV,
+            children=_summary_blocks(root, result, report_paths),
+            fetcher=transport,
+        )
+        suggestion_pages = []
+        for proposal in proposals:
+            proposal_id = str(proposal.get("proposal_id") or "")
+            proposal_score = int((proposal.get("score") or {}).get("total") or 0)
+            proposal_title = str(proposal.get("title") or proposal_id or "Self-improvement suggestion")
+            proposal_summary = str(proposal.get("summary") or "")
+            evidence_items = proposal.get("evidence") or []
+            proposal_evidence = str((evidence_items[0] or {}).get("locator")) if evidence_items else evidence_path
+            proposal_properties = _notion_projection_properties(
+                available,
+                title=proposal_title,
+                summary=proposal_summary,
+                score=proposal_score,
+                run_id=run_id,
+                evidence_path=proposal_evidence,
+                page_type="Suggestion",
+                proposal_id=proposal_id,
+                parent_run_id=run_id,
+                recommended_artifact=str(proposal.get("recommended_artifact") or ""),
+                run_grooming=False,
+                auto_dev=False,
+                action_status="ready",
+                action_log="",
+            )
+            proposal_page_id = notion_api.create_database_page(
+                database_id,
+                proposal_properties,
+                NOTION_TOKEN_ENV,
+                children=_proposal_blocks(proposal, run_id=run_id),
+                fetcher=transport,
+            )
+            suggestion_pages.append({"proposal_id": proposal_id, "page_id": proposal_page_id})
     except (RuntimeError, OSError, KeyError, ValueError) as exc:
         return _degrade(f"notion projection failed: {exc}")
-    return {"projected": True, "page_id": page_id, "database": NOTION_SELF_IMPROVEMENT_DB}
+    return {
+        "projected": True,
+        "page_id": page_id,
+        "database": NOTION_SELF_IMPROVEMENT_DB,
+        "suggestion_pages": suggestion_pages,
+        "suggestion_count": len(suggestion_pages),
+    }
+
+
+def _property_text(properties: dict[str, Any], name: str) -> str:
+    prop = properties.get(name) or {}
+    kind = prop.get("type")
+    if kind in {"title", "rich_text"}:
+        return "".join((item.get("plain_text") or "") for item in prop.get(kind) or [])
+    if kind == "select":
+        return str(((prop.get("select") or {}).get("name")) or "")
+    return ""
+
+
+def _property_checkbox(properties: dict[str, Any], name: str) -> bool:
+    prop = properties.get(name) or {}
+    return bool(prop.get("checkbox")) if prop.get("type") == "checkbox" else False
+
+
+def _proposal_action_filter() -> dict[str, Any]:
+    return {
+        "and": [
+            {"property": "Type", "select": {"equals": "Suggestion"}},
+            {
+                "or": [
+                    {"property": "Run Grooming", "checkbox": {"equals": True}},
+                    {"property": "Auto-dev Implementation", "checkbox": {"equals": True}},
+                ]
+            },
+        ]
+    }
+
+
+def _action_slug(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
+    return cleaned[:80] or "self-improvement-action"
+
+
+def _action_prompt(proposal: dict[str, Any], *, action_type: str, page_id: str) -> str:
+    proposal_id = str(proposal.get("proposal_id") or "")
+    title = str(proposal.get("title") or proposal_id or "Self-improvement suggestion")
+    if action_type == "groom":
+        objective = (
+            "Run a grooming pass that turns this suggestion into a sharper spec, "
+            "implementation plan, validation plan, and clear next action. Do not mutate live shared OS surfaces."
+        )
+    else:
+        objective = (
+            "Run the implementation workflow start to finish for this suggestion. "
+            "Route through the Agentic OS work item, make code or documentation changes as needed, "
+            "run focused validation, and leave receipt-backed status."
+        )
+    proposal_yaml = yaml.safe_dump(proposal, sort_keys=False)
+    return f"""# Self-Improvement Action Worker
+
+Action: {action_type}
+Proposal: {proposal_id}
+Notion page: {page_id}
+Work item: {SELF_IMPROVEMENT_WORK_ITEM}
+
+## Objective
+
+{objective}
+
+## Operating Rules
+
+- Load the Agentic OS routing/context files before acting.
+- Keep filesystem work items and receipts as the source of truth.
+- Verify Genome's Notion before any Notion write.
+- Do not publish local paths or private Notion links to Jira, GitHub, Slack, or email.
+- If implementation is unsafe or underspecified, stop with a blocker-grade receipt instead of guessing.
+
+## Proposal
+
+```yaml
+{proposal_yaml}```
+"""
+
+
+def _write_action_worker(root: Path, proposal: dict[str, Any], *, action_type: str, page_id: str) -> dict[str, str]:
+    proposal_id = str(proposal.get("proposal_id") or "unknown")
+    action_root = _ensure_safe_dir(root, _resolve_root_relative(root, ACTION_OUTPUT_ROOT))
+    prompts_dir = _safe_descendant(root, action_root, "prompts")
+    scripts_dir = _safe_descendant(root, action_root, "scripts")
+    _ensure_safe_dir(root, prompts_dir)
+    _ensure_safe_dir(root, scripts_dir)
+    stamp = _stamp()
+    basename = _action_slug(f"{stamp}-{action_type}-{proposal_id}-{page_id[:8]}")
+    prompt_path = _safe_child(root, prompts_dir, f"{basename}.md")
+    script_path = _safe_child(root, scripts_dir, f"{basename}.sh")
+    _atomic_write_text(root, prompt_path, _action_prompt(proposal, action_type=action_type, page_id=page_id))
+    script = f"""#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT={shlex.quote(str(root))}
+PROMPT={shlex.quote(str(prompt_path))}
+
+cd "$ROOT"
+exec codex exec -p automation_guard --cd "$ROOT" --skip-git-repo-check "$(cat "$PROMPT")"
+"""
+    _atomic_write_text(root, script_path, script)
+    script_path.chmod(0o755)
+    return {
+        "prompt": str(prompt_path.relative_to(root)),
+        "script": str(script_path.relative_to(root)),
+        "action_root": str(action_root),
+    }
+
+
+def _action_queue_item(root: Path, proposal: dict[str, Any], *, action_type: str, page_id: str, worker: dict[str, str]) -> dict[str, Any]:
+    proposal_id = str(proposal.get("proposal_id") or "unknown")
+    queue_id = f"queue_self_improvement_{_digest(f'{page_id}:{proposal_id}:{action_type}', 12)}"
+    label = f"self-improvement-{action_type}-{proposal_id}"
+    command = (
+        f"harness/bin/agentic-os-quiet-run start "
+        f"--artifact-dir {shlex.quote(worker['action_root'])} "
+        f"--label {shlex.quote(label)} "
+        f"--timeout-minutes 720 "
+        f"--work-dir {shlex.quote(str(root))} "
+        f"-- {shlex.quote(str(root / worker['script']))}"
+    )
+    return {
+        "id": queue_id,
+        "kind": "self_improvement_action",
+        "ref": proposal_id,
+        "status": "queued",
+        "approval_state": "not_required",
+        "dry_run": False,
+        "idempotency_key": f"self-improvement-action:{page_id}:{proposal_id}:{action_type}",
+        "execution_target": "script",
+        "work_type": f"self_improvement_{action_type}",
+        "route_to": SELF_IMPROVEMENT_WORK_ITEM,
+        "command": command,
+        "evidence": [
+            {"type": "notion_page", "page_id": page_id},
+            {"type": "proposal", "proposal_id": proposal_id},
+            {"type": "prompt", "path": worker["prompt"]},
+        ],
+    }
+
+
+def process_self_improvement_actions(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    fetcher: Any = None,
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    transport = fetcher or notion_api._default_fetcher
+    result: dict[str, Any] = {
+        "action": "actions",
+        "root": str(os_root),
+        "mode": "dry-run" if dry_run else "apply",
+        "ok": True,
+        "actions": [],
+        "queued": [],
+        "skipped": [],
+    }
+
+    manifest = _notion_manifest(os_root)
+    if not manifest.get("live"):
+        result.update({"status": "blocked", "reason": "notion runtime tracking is not live in the manifest"})
+        return result
+    expected_workspace = str(manifest.get("workspace") or "")
+    if "michael clark" in expected_workspace.lower() or "personal" in expected_workspace.lower():
+        result.update({"status": "blocked", "reason": "manifest workspace appears to be a personal Notion"})
+        return result
+    database_id = (manifest.get("database_ids") or {}).get(NOTION_SELF_IMPROVEMENT_DB)
+    if not database_id:
+        result.update({"status": "blocked", "reason": f"manifest has no {NOTION_SELF_IMPROVEMENT_DB!r} database id"})
+        return result
+    if not notion_api.resolve_token(NOTION_TOKEN_ENV):
+        result.update({"status": "blocked", "reason": f"notion token env var {NOTION_TOKEN_ENV!r} is not set"})
+        return result
+
+    try:
+        bot_workspace = notion_api.get_bot_workspace(NOTION_TOKEN_ENV, fetcher=transport)
+        if expected_workspace and bot_workspace != expected_workspace:
+            result.update({
+                "status": "blocked",
+                "reason": f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}",
+            })
+            return result
+        available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
+        available = _ensure_self_improvement_schema(database_id, available, fetcher=transport)
+        pages = notion_api.query_database(database_id, _proposal_action_filter(), NOTION_TOKEN_ENV, fetcher=transport)
+    except (RuntimeError, OSError, KeyError, ValueError) as exc:
+        result.update({"ok": False, "status": "failed", "reason": str(exc)})
+        return result
+
+    for page in pages:
+        page_id = str(page.get("id") or "").replace("-", "")
+        properties = page.get("properties") or {}
+        proposal_id = _property_text(properties, "Proposal ID")
+        action_status = _property_text(properties, "Action Status")
+        wants_grooming = _property_checkbox(properties, "Run Grooming")
+        wants_auto_dev = _property_checkbox(properties, "Auto-dev Implementation")
+        if action_status in {"queued", "running"}:
+            result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": f"already_{action_status}"})
+            continue
+        if wants_grooming and wants_auto_dev:
+            result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": "needs_single_action"})
+            if not dry_run:
+                notion_api.update_database_page(
+                    page_id,
+                    {
+                        "Action Status": notion_api._select_prop("needs_choice"),
+                        "Action Log": notion_api._rich_text_prop("Both action boxes were checked; clear one and the next watcher tick will queue it."),
+                    },
+                    NOTION_TOKEN_ENV,
+                    fetcher=transport,
+                )
+            continue
+        action_type = "groom" if wants_grooming else "auto_dev" if wants_auto_dev else ""
+        if not action_type:
+            continue
+        if not proposal_id:
+            result["skipped"].append({"page_id": page_id, "reason": "missing_proposal_id"})
+            continue
+        try:
+            proposal = _load_proposal(os_root, config, proposal_id)
+        except ValueError as exc:
+            result["skipped"].append({"page_id": page_id, "proposal_id": proposal_id, "reason": str(exc)})
+            if not dry_run:
+                notion_api.update_database_page(
+                    page_id,
+                    {
+                        "Action Status": notion_api._select_prop("blocked"),
+                        "Action Log": notion_api._rich_text_prop(str(exc)),
+                    },
+                    NOTION_TOKEN_ENV,
+                    fetcher=transport,
+                )
+            continue
+
+        if dry_run:
+            result["actions"].append({"page_id": page_id, "proposal_id": proposal_id, "action_type": action_type})
+            continue
+        worker = _write_action_worker(os_root, proposal, action_type=action_type, page_id=page_id)
+        item = _action_queue_item(os_root, proposal, action_type=action_type, page_id=page_id, worker=worker)
+        result["actions"].append({"page_id": page_id, "proposal_id": proposal_id, "action_type": action_type, "queue_item": item})
+        from .runtime_ops import append_run_queue_item  # Local import avoids a module import cycle.
+
+        queued = append_run_queue_item(os_root, item)
+        result["queued"].append(queued["queue_item"])
+        update_props = {
+            "Action Status": notion_api._select_prop("queued"),
+            "Action Log": notion_api._rich_text_prop(f"Queued {item['id']} at {_now()}."),
+        }
+        if action_type == "groom":
+            update_props["Run Grooming"] = notion_api._checkbox_prop(False)
+        else:
+            update_props["Auto-dev Implementation"] = notion_api._checkbox_prop(False)
+        notion_api.update_database_page(page_id, update_props, NOTION_TOKEN_ENV, fetcher=transport)
+
+    result["status"] = "dry-run" if dry_run else "processed"
+    return result
 
 
 def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
@@ -972,6 +1812,7 @@ def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str,
     records = _collect_evidence(evidence_roots)
     findings = _findings(os_root, records)
     candidates = [_proposal_from_finding(os_root, records, finding) for finding in findings]
+    _assign_preview_proposal_ids(os_root, config, candidates)
     redactions = sum(record.redactions for record in records)
     result: dict[str, Any] = {
         "ok": True,
@@ -1019,6 +1860,7 @@ def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str,
     result["run_id"] = run_id
     result["writes"] = [{"type": "run", "path": str(run_path.relative_to(os_root))}, *proposal_result["written"]]
     result["suppressed"] = proposal_result["suppressed"]
+    result["queue_reconciliation"] = reconcile_self_improvement_queue(os_root, dry_run=False, latest_run={**run_record, "path": str(run_path.relative_to(os_root))})
 
     report_paths = _write_daily_report(os_root, result)
     result["report"] = report_paths
@@ -1033,6 +1875,41 @@ def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str,
     if notion_projection.get("draft"):
         result["writes"].append({"type": "notion-draft", "path": notion_projection["draft"]})
     return result
+
+
+def _proposal_lifecycle_metrics(proposals: list[dict[str, Any]]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    status_actions = {
+        "proposed": "review_and_approve_or_reject",
+        "approved": "promote_to_draft",
+        "drafted": "implement_or_archive_draft",
+        "rejected": "observe_until_cooldown_expires",
+    }
+    by_status: dict[str, dict[str, Any]] = {}
+    for proposal in proposals:
+        status = str(proposal.get("promotion_status") or "unknown")
+        created = _parse_time(proposal.get("created_at")) or now
+        age_hours = max(0, int((now - created).total_seconds() // 3600))
+        row = by_status.setdefault(
+            status,
+            {
+                "count": 0,
+                "oldest_age_hours": 0,
+                "next_action": status_actions.get(status, "inspect"),
+            },
+        )
+        row["count"] += 1
+        row["oldest_age_hours"] = max(int(row["oldest_age_hours"]), age_hours)
+    action_needed = sum(
+        data["count"]
+        for status, data in by_status.items()
+        if status in {"proposed", "approved"}
+    )
+    return {
+        "total": len(proposals),
+        "action_needed": action_needed,
+        "by_status": dict(sorted(by_status.items())),
+    }
 
 
 def self_improvement_status(root: str | Path) -> dict[str, Any]:
@@ -1052,6 +1929,8 @@ def self_improvement_status(root: str | Path) -> dict[str, Any]:
         "schedule_mode": config.get("schedule_mode"),
         "latest_run": latest_run,
         "proposal_counts": dict(sorted(counts.items())),
+        "proposal_lifecycle": _proposal_lifecycle_metrics(proposals),
+        "queue_health": self_improvement_queue_health(os_root),
     }
 
 
@@ -1154,11 +2033,28 @@ def _draft_dir(root: Path, config: dict[str, Any], proposal_id: str) -> Path:
     return _safe_child(root, _output_path(root, config, "drafts"), proposal_id)
 
 
+def _validation_markdown(proposal: dict[str, Any]) -> str:
+    return "\n".join(f"- {item}" for item in proposal.get("validation_plan") or []) or "- Define focused validation."
+
+
+def _finding_markdown(proposal: dict[str, Any]) -> str:
+    rows = []
+    for finding in proposal.get("deterministic_findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        score = (finding.get("score") or {}).get("total", "")
+        rows.append(f"- `{finding.get('type', 'finding')}` score={score}: {finding.get('summary') or finding.get('title') or ''}")
+    return "\n".join(rows) or "- No deterministic finding metadata recorded."
+
+
 def _draft_payloads(proposal: dict[str, Any], target: str) -> dict[str, str]:
     title = str(proposal.get("title") or proposal.get("proposal_id"))
     summary = str(proposal.get("summary") or "")
     proposal_id = str(proposal.get("proposal_id"))
     if target == "feature-spec":
+        evidence = _evidence_markdown(proposal)
+        validation = _validation_markdown(proposal)
+        findings = _finding_markdown(proposal)
         return {
             "feature.yml": yaml.safe_dump(
                 {
@@ -1167,12 +2063,48 @@ def _draft_payloads(proposal: dict[str, Any], target: str) -> dict[str, str]:
                     "status": "draft",
                     "source": "self-improvement",
                     "proposal_id": proposal_id,
+                    "opportunity_type": proposal.get("opportunity_type"),
+                    "score": proposal.get("score") or {},
+                    "evidence_count": len(proposal.get("evidence") or []),
+                    "next_action": "review_scope_and_promote_to_active_feature_work",
                 },
                 sort_keys=False,
             ),
-            "SPEC.md": f"# {title}\n\n{summary}\n\n## Evidence\n\n{_evidence_markdown(proposal)}\n",
-            "PLAN.md": "# Plan\n\n- Review the proposal evidence.\n- Implement the draft behind normal validation gates.\n",
-            "NEXT.md": "# Next\n\nReview this self-improvement draft and decide whether to promote it into active feature work.\n",
+            "SPEC.md": (
+                f"# {title}\n\n"
+                f"Proposal: `{proposal_id}`\n\n"
+                "## Problem\n\n"
+                f"{summary}\n\n"
+                "## Evidence\n\n"
+                f"{evidence}\n\n"
+                "## Deterministic Findings\n\n"
+                f"{findings}\n\n"
+                "## Scope\n\n"
+                "- Preserve the cited operator workflow and failure evidence.\n"
+                "- Implement the smallest durable OS change that removes the repeated friction.\n"
+                "- Keep private local paths and Notion links out of external-facing artifacts.\n\n"
+                "## Acceptance Criteria\n\n"
+                "- The implemented change directly addresses the cited evidence pattern.\n"
+                "- Focused validation covers the changed command, skill, workflow, or runtime path.\n"
+                "- The work item records the proposal id, validation receipt, and follow-up owner action.\n\n"
+                "## Non-Goals\n\n"
+                "- Broad refactors unrelated to the cited self-improvement evidence.\n"
+                "- External writes without the normal Agentic OS workspace and approval gates.\n"
+            ),
+            "PLAN.md": (
+                "# Plan\n\n"
+                "1. Re-read the proposal, cited evidence, and routed Agentic OS context.\n"
+                "2. Identify the narrow source, command, skill, or workflow surface that owns the behavior.\n"
+                "3. Implement the smallest durable change and preserve unrelated dirty work.\n"
+                "4. Run focused validation and record receipts in the work item.\n"
+                "5. Update lifecycle status and next action after validation.\n"
+            ),
+            "VALIDATION.md": f"# Validation\n\n{validation}\n",
+            "NEXT.md": (
+                "# Next\n\n"
+                "Review this self-improvement draft, confirm scope, and promote it into active feature work "
+                "when the evidence still matches current operator friction.\n"
+            ),
         }
     return {
         "README.md": f"# {title}\n\n{summary}\n\nTarget: `{target}`\n\n## Evidence\n\n{_evidence_markdown(proposal)}\n",
@@ -1248,6 +2180,25 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
             lines.append("- none")
         else:
             lines.extend(f"- {status}: {count}" for status, count in counts.items())
+        lifecycle = result.get("proposal_lifecycle") or {}
+        lines.append("proposal_lifecycle:")
+        lines.append(f"- total: {lifecycle.get('total', 0)}")
+        lines.append(f"- action_needed: {lifecycle.get('action_needed', 0)}")
+        for status, row in (lifecycle.get("by_status") or {}).items():
+            lines.append(
+                f"- {status}: count={row.get('count', 0)} "
+                f"oldest_age_hours={row.get('oldest_age_hours', 0)} "
+                f"next_action={row.get('next_action', 'inspect')}"
+            )
+        queue_health = result.get("queue_health") or {}
+        lines.append("queue_health:")
+        lines.append(f"- status: {queue_health.get('status') or 'unknown'}")
+        lines.append(f"- stale_items: {queue_health.get('stale_count') or 0}")
+        latest_run = queue_health.get("latest_run") or {}
+        if latest_run:
+            lines.append(f"- latest_completed_run: {latest_run.get('run_id')} at {latest_run.get('completed_at')}")
+        for item in queue_health.get("stale_items") or []:
+            lines.append(f"- stale: {item.get('id')} ({item.get('stale_reason')})")
         return "\n".join(lines)
 
     if action == "list":
@@ -1271,6 +2222,40 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
             if key in {"action", "root"}:
                 continue
             lines.append(f"{key}: {value}")
+        return "\n".join(lines)
+
+    if action == "actions":
+        lines = [
+            "Self Improvement Actions",
+            f"root: {result['root']}",
+            f"mode: {result['mode']}",
+            f"status: {result.get('status', 'unknown')}",
+        ]
+        if result.get("reason"):
+            lines.append(f"reason: {result['reason']}")
+        lines.append(f"actions: {len(result.get('actions') or [])}")
+        lines.append(f"queued: {len(result.get('queued') or [])}")
+        skipped = result.get("skipped") or []
+        if skipped:
+            lines.append("skipped:")
+            for item in skipped:
+                lines.append(f"- {item.get('proposal_id') or item.get('page_id')}: {item.get('reason')}")
+        return "\n".join(lines)
+
+    if action == "reconcile-queue":
+        lines = [
+            "Self Improvement Queue Reconciliation",
+            f"root: {result['root']}",
+            f"mode: {result['mode']}",
+            f"queue_path: {result['queue_path']}",
+            f"reconciled: {len(result.get('reconciled') or [])}",
+            f"skipped: {len(result.get('skipped') or [])}",
+        ]
+        for item in result.get("reconciled") or []:
+            lines.append(
+                f"- {item.get('id')}: {item.get('reconcile_reason')} "
+                f"via {item.get('covered_by_run_id')}"
+            )
         return "\n".join(lines)
 
     lines = [
@@ -1323,6 +2308,13 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
         if suppressed:
             lines.append("Suppressed:")
             lines.extend(f"- {item.get('proposal_id')}: {item.get('reason')}" for item in suppressed)
+        reconciliation = result.get("queue_reconciliation") or {}
+        if reconciliation:
+            lines.append(
+                "Queue reconciliation: "
+                f"{len(reconciliation.get('reconciled') or [])} reconciled, "
+                f"{len(reconciliation.get('skipped') or [])} skipped"
+            )
         report = result.get("report") or {}
         if report.get("latest"):
             lines.append(f"Report: {report['latest']}")

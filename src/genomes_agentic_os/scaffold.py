@@ -611,6 +611,19 @@ def ensure_notion_tracking_config(root: Path, result: ScaffoldResult) -> None:
     result.created.append(destination)
 
 
+def ensure_runtime_control_config(root: Path, template_name: str, destination_name: str, result: ScaffoldResult) -> None:
+    destination = shared_factory_path(root, "00-control-plane", destination_name)
+    if destination.exists():
+        result.skipped.append(destination)
+        return
+    source = source_relative_path(f"templates/runtime/{template_name}")
+    if not source.is_file():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    result.created.append(destination)
+
+
 def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     for directory in ("runs", "proposals", "approvals", "drafts"):
         ensure_dir(shared_factory_path(root, "06-runs-and-logs", "self-improvement", directory), result)
@@ -634,6 +647,9 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
         result.updated.append(manifest_path)
 
     ensure_notion_tracking_config(root, result)
+    ensure_runtime_control_config(root, "documentation-upkeep.yml", "documentation-upkeep.yml", result)
+    ensure_runtime_control_config(root, "doc-config.yml", "doc-config.yml", result)
+    ensure_runtime_control_config(root, "notion-organization.yml", "notion-organization.yml", result)
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:

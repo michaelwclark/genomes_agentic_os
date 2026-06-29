@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS Doc Config",
+  "type": "object",
+  "required": ["schema_version", "routing", "buckets", "search_methods"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string"},
+    "display_name": {"type": "string"},
+    "owner": {"type": "string"},
+    "source_of_truth": {"enum": ["filesystem", "notion", "external"]},
+    "routing": {
+      "type": "object",
+      "required": ["source_of_truth", "precedence"],
+      "properties": {
+        "source_of_truth": {"enum": ["filesystem", "notion", "external"]},
+        "feature_namespace": {"type": "string"},
+        "compatibility_namespaces": {"type": "array", "items": {"type": "string"}},
+        "parent_preference": {"type": "array", "items": {"type": "string"}},
+        "precedence": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "duplicate_policy": {"type": "string"},
+        "external_writes_require_workspace_verification": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "buckets": {
+      "type": "object",
+      "required": ["default"],
+      "properties": {
+        "default": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/bucket"}},
+        "questions": {"$ref": "#/$defs/bucket"},
+        "optional": {"type": "array", "items": {"$ref": "#/$defs/bucket"}}
+      },
+      "additionalProperties": true
+    },
+    "search_methods": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["enabled", "priority"],
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "priority": {"type": "integer", "minimum": 0},
+          "applies_to": {"type": "array", "items": {"type": "string"}},
+          "command": {"type": "string"},
+          "workspace_verification_required": {"type": "boolean"},
+          "description": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "bucket": {
+      "type": "object",
+      "required": ["id", "title", "create_policy", "purpose"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+        "enabled": {"type": "boolean"},
+        "required": {"type": "boolean"},
+        "create_policy": {"type": "string"},
+        "purpose": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

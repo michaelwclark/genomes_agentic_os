@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 agentic-os = "genomes_agentic_os.cli:main"
+aos = "genomes_agentic_os.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

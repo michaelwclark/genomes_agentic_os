@@ -16,6 +16,8 @@ from .automation_ops import (
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
+from .doc_config import build_doc_config_plan, doc_config_doctor, format_doc_config_result, init_doc_config
+from .documentation_upkeep import build_documentation_upkeep_plan, format_documentation_upkeep_result
 from .doctor import doctor, doctor_all, format_doctor_result
 from .event_graph import (
     append_event,
@@ -43,7 +45,9 @@ from .notion_sync import (
     build_sync_plan,
     format_sync_result,
 )
+from .notion_org import doctor_notion_org, format_notion_org_result
 from .plans import capture_plan, format_plan_result
+from .ps_ops import format_ps_result, ps_snapshot
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
 from .routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
 from .runtime_ops import (
@@ -65,7 +69,9 @@ from .self_improvement import (
     approve_self_improvement_proposal,
     format_self_improvement_result,
     list_self_improvement_proposals,
+    process_self_improvement_actions,
     promote_self_improvement_proposal,
+    reconcile_self_improvement_queue,
     reject_self_improvement_proposal,
     run_self_improvement,
     self_improvement_status,
@@ -194,8 +200,8 @@ def handle_capability_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agentic-os", description="Scaffold and validate an Agentic OS root.")
+def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description="Scaffold and validate an Agentic OS root.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_thread_closeout_args(closeout_parser: argparse.ArgumentParser, mode: str) -> None:
@@ -585,6 +591,39 @@ def build_parser() -> argparse.ArgumentParser:
     automation_maturity.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     automation_maturity.set_defaults(handler=handle_automation_set_maturity)
 
+    ps_parser = subparsers.add_parser(
+        "ps",
+        help="Show Agentic OS work running right now; use --active for the broader dashboard.",
+    )
+    ps_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    ps_parser.add_argument("--json", action="store_true", help="Emit the snapshot as JSON.")
+    ps_mode = ps_parser.add_mutually_exclusive_group()
+    ps_mode.add_argument(
+        "--active",
+        action="store_true",
+        help="Show queued work, enabled automations/schedules/watchers, active workflows, and stale thread candidates.",
+    )
+    ps_mode.add_argument("--all", action="store_true", help="Include disabled and terminal registry/queue rows.")
+    ps_parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Colorize table output (default: auto).",
+    )
+    ps_parser.add_argument(
+        "--limit",
+        type=int,
+        default=120,
+        help="Maximum rows to print; use 0 for no limit.",
+    )
+    ps_parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=DEFAULT_STALE_DAYS,
+        help=f"Thread stale-candidate threshold in days (default: {DEFAULT_STALE_DAYS}).",
+    )
+    ps_parser.set_defaults(handler=handle_ps)
+
     run_log_parser = subparsers.add_parser("run-log", help="Manage run logs.")
     run_log_subparsers = run_log_parser.add_subparsers(dest="run_log_command", required=True)
     run_log_create = run_log_subparsers.add_parser("create", help="Create a timestamped run log.")
@@ -814,6 +853,25 @@ def build_parser() -> argparse.ArgumentParser:
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
     config_doctor.set_defaults(handler=handle_config_doctor)
 
+    doc_config_parser = subparsers.add_parser("doc-config", help="Plan and validate document-routing config.")
+    doc_config_subparsers = doc_config_parser.add_subparsers(dest="doc_config_command", required=True)
+    doc_config_init = doc_config_subparsers.add_parser("init", help="Install doc-config.yml if missing.")
+    doc_config_init.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_init.add_argument("--domain", help="Routed domain, when known.")
+    doc_config_init.add_argument("--project", help="Routed project, when known.")
+    doc_config_init.set_defaults(handler=handle_doc_config_init)
+    doc_config_doctor_parser = doc_config_subparsers.add_parser("doctor", help="Check doc-config.yml contracts.")
+    doc_config_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_doctor_parser.set_defaults(handler=handle_doc_config_doctor)
+    doc_config_plan = doc_config_subparsers.add_parser("plan", help="Build a deterministic document-routing plan.")
+    doc_config_plan.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_plan.add_argument("--request", required=True, help="Request or document intent to route.")
+    doc_config_plan.add_argument("--domain", help="Routed domain, when known.")
+    doc_config_plan.add_argument("--project", help="Routed project, when known.")
+    doc_config_plan.add_argument("--work-item", help="Active work item id/slug, when known.")
+    doc_config_plan.add_argument("--questions-present", action="store_true", help="Include QUESTIONS bucket in the plan.")
+    doc_config_plan.set_defaults(handler=handle_doc_config_plan)
+
     hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
     hook_subparsers = hook_parser.add_subparsers(dest="hook_command", required=True)
     hook_sync_parser = hook_subparsers.add_parser("sync", help="Point active harness hook settings at installed OS hooks.")
@@ -875,6 +933,13 @@ def build_parser() -> argparse.ArgumentParser:
     notion_active_work.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_active_work.add_argument("--token-env", default="GENOMES_NOTION_PAT", help="Environment variable containing the Notion token.")
     notion_active_work.set_defaults(handler=handle_notion_active_work_sync)
+
+    notion_org_parser = subparsers.add_parser("notion-org", help="Check Notion IA organization before page moves.")
+    notion_org_subparsers = notion_org_parser.add_subparsers(dest="notion_org_command", required=True)
+    notion_org_doctor_parser = notion_org_subparsers.add_parser("doctor", help="Check Notion organization config and backup readiness.")
+    notion_org_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_org_doctor_parser.add_argument("--backup-dir", help="Local Notion backup directory to verify before moves.")
+    notion_org_doctor_parser.set_defaults(handler=handle_notion_org_doctor)
 
     runtime_parser = subparsers.add_parser("runtime", help="Manage file-backed runtime state.")
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
@@ -1052,6 +1117,24 @@ def build_parser() -> argparse.ArgumentParser:
     self_improvement_promote.add_argument("--target", required=True)
     self_improvement_promote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_promote.set_defaults(handler=handle_self_improvement_promote)
+    self_improvement_actions = self_improvement_subparsers.add_parser(
+        "actions",
+        help="Consume checked Notion action boxes on self-improvement suggestion pages.",
+    )
+    self_improvement_actions.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_actions_mode = self_improvement_actions.add_mutually_exclusive_group()
+    self_improvement_actions_mode.add_argument("--dry-run", action="store_true", help="Preview checked action boxes without queuing workers.")
+    self_improvement_actions_mode.add_argument("--apply", action="store_true", help="Queue checked actions and update their Notion pages.")
+    self_improvement_actions.set_defaults(handler=handle_self_improvement_actions)
+    self_improvement_reconcile = self_improvement_subparsers.add_parser(
+        "reconcile-queue",
+        help="Mark stale self-improvement review queue rows done when covered by a later successful run.",
+    )
+    self_improvement_reconcile.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_reconcile_mode = self_improvement_reconcile.add_mutually_exclusive_group()
+    self_improvement_reconcile_mode.add_argument("--dry-run", action="store_true", help="Preview queue reconciliation without writing.")
+    self_improvement_reconcile_mode.add_argument("--apply", action="store_true", help="Apply local run-queue reconciliation.")
+    self_improvement_reconcile.set_defaults(handler=handle_self_improvement_reconcile_queue)
 
     connected_parser = subparsers.add_parser("connected-system", help="Manage connected source systems.")
     connected_subparsers = connected_parser.add_subparsers(dest="connected_system_command", required=True)
@@ -1165,6 +1248,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     docs_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_update.set_defaults(handler=handle_docs_update)
+    docs_upkeep = docs_subparsers.add_parser(
+        "upkeep",
+        help="Run the observe-mode documentation upkeep registry and drift planner.",
+    )
+    docs_upkeep.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    docs_upkeep.add_argument("--write-receipt", action="store_true", help="Write local YAML/Markdown receipt artifacts.")
+    docs_upkeep.add_argument("--output-dir", help="Optional receipt output directory.")
+    docs_upkeep.set_defaults(handler=handle_docs_upkeep)
 
     capability_parser = subparsers.add_parser("capability", help="Inspect installed OS capabilities.")
     capability_subparsers = capability_parser.add_subparsers(dest="capability_command", required=True)
@@ -1796,6 +1887,33 @@ def handle_config_doctor(args: argparse.Namespace) -> int:
     return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
 
 
+def handle_doc_config_init(args: argparse.Namespace) -> int:
+    print(format_doc_config_result(init_doc_config(args.root, domain=args.domain, project=args.project)))
+    return 0
+
+
+def handle_doc_config_doctor(args: argparse.Namespace) -> int:
+    result = doc_config_doctor(args.root)
+    print(format_doc_config_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_doc_config_plan(args: argparse.Namespace) -> int:
+    print(
+        format_doc_config_result(
+            build_doc_config_plan(
+                args.root,
+                request=args.request,
+                domain=args.domain,
+                project=args.project,
+                work_item=args.work_item,
+                questions_present=args.questions_present,
+            )
+        )
+    )
+    return 0
+
+
 def handle_hook_sync(args: argparse.Namespace) -> int:
     result = hook_sync(
         args.root,
@@ -1872,6 +1990,12 @@ def handle_notion_active_work_sync(args: argparse.Namespace) -> int:
             )
         )
     return 0
+
+
+def handle_notion_org_doctor(args: argparse.Namespace) -> int:
+    result = doctor_notion_org(args.root, backup_dir=args.backup_dir)
+    print(format_notion_org_result(result))
+    return 0 if result["ok"] else 1
 
 
 def handle_runtime_init(args: argparse.Namespace) -> int:
@@ -2043,6 +2167,16 @@ def handle_self_improvement_promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_self_improvement_actions(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(process_self_improvement_actions(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_reconcile_queue(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(reconcile_self_improvement_queue(args.root, dry_run=not args.apply)))
+    return 0
+
+
 def handle_connected_system_list(args: argparse.Namespace) -> int:
     print(format_source_watch_result(list_connected_systems(args.root)))
     return 0
@@ -2089,6 +2223,20 @@ def handle_watch_source_poll(args: argparse.Namespace) -> int:
 
 def handle_watch_source_run_due(args: argparse.Namespace) -> int:
     print(format_source_watch_result(run_due_watch_sources(args.root, dry_run=args.dry_run)))
+    return 0
+
+
+def handle_ps(args: argparse.Namespace) -> int:
+    mode = "all" if args.all else "active" if args.active else "now"
+    color = args.color == "always" or (args.color == "auto" and sys.stdout.isatty())
+    result = ps_snapshot(
+        args.root,
+        mode=mode,
+        limit=args.limit,
+        stale_days=args.stale_days,
+    )
+    result["prog"] = Path(sys.argv[0]).name if Path(sys.argv[0]).name in {"agentic-os", "aos"} else "agentic-os"
+    print(format_ps_result(result, as_json=args.json, color=color))
     return 0
 
 
@@ -2173,9 +2321,30 @@ def handle_docs_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_docs_upkeep(args: argparse.Namespace) -> int:
+    result = build_documentation_upkeep_plan(
+        args.root,
+        write_receipt=bool(args.write_receipt),
+        output_dir=args.output_dir,
+    )
+    print(format_documentation_upkeep_result(result))
+    return 0 if result.get("ok") else 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    prog = Path(sys.argv[0]).name if argv is None else "agentic-os"
+    if prog not in {"agentic-os", "aos"}:
+        prog = "agentic-os"
+    parser = build_parser(prog=prog)
+    parse_argv = list(sys.argv[1:] if argv is None else argv)
+    project_exec_cmd: list[str] | None = None
+    if parse_argv[:2] == ["project", "exec"] and "--" in parse_argv:
+        separator = parse_argv.index("--")
+        project_exec_cmd = parse_argv[separator + 1 :]
+        parse_argv = parse_argv[:separator]
+    args = parser.parse_args(parse_argv)
+    if project_exec_cmd is not None and getattr(args, "handler", None) == handle_project_exec:
+        args.cmd = project_exec_cmd
     try:
         return args.handler(args)
     except ValueError as exc:

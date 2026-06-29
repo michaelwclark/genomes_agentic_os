@@ -293,6 +293,7 @@ def create_database_page(
     properties: dict[str, Any],
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    children: list[dict[str, Any]] | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> str:
     """Create a new page in *database_id* with *properties*.
@@ -306,8 +307,27 @@ def create_database_page(
         "parent": {"type": "database_id", "database_id": database_id},
         "properties": properties,
     }
+    if children:
+        body["children"] = children
     data = _json_request("POST", f"{_NOTION_API_BASE}/pages", _auth_headers(token), body, fetcher)
     return data["id"].replace("-", "")
+
+
+def query_database(
+    database_id: str,
+    filter_body: dict[str, Any],
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Query *database_id* with a caller-supplied Notion filter body."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    body: dict[str, Any] = {"filter": filter_body}
+    url = f"{_NOTION_API_BASE}/databases/{database_id}/query"
+    data = _json_request("POST", url, _auth_headers(token), body, fetcher)
+    return list(data.get("results") or [])
 
 
 def update_database_page(
@@ -323,6 +343,37 @@ def update_database_page(
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
     body: dict[str, Any] = {"properties": properties}
     _json_request("PATCH", f"{_NOTION_API_BASE}/pages/{page_id}", _auth_headers(token), body, fetcher)
+
+
+def update_database_schema(
+    database_id: str,
+    properties: dict[str, Any],
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> None:
+    """Add or update database property schemas on *database_id*."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    body: dict[str, Any] = {"properties": properties}
+    _json_request("PATCH", f"{_NOTION_API_BASE}/databases/{database_id}", _auth_headers(token), body, fetcher)
+
+
+def append_block_children(
+    block_id: str,
+    children: list[dict[str, Any]],
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> None:
+    """Append block children to a Notion page or block."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    for index in range(0, len(children), 100):
+        body: dict[str, Any] = {"children": children[index : index + 100]}
+        _json_request("PATCH", f"{_NOTION_API_BASE}/blocks/{block_id}/children", _auth_headers(token), body, fetcher)
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +394,10 @@ def _select_prop(value: str) -> dict[str, Any]:
 
 def _date_prop(iso_string: str) -> dict[str, Any]:
     return {"date": {"start": iso_string}}
+
+
+def _checkbox_prop(value: bool) -> dict[str, Any]:
+    return {"checkbox": bool(value)}
 
 
 def build_record_properties(record: dict[str, Any], updated_at: str) -> dict[str, Any]:

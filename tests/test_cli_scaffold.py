@@ -415,8 +415,11 @@ def test_self_improvement_apply_writes_proposals_and_dedupes(tmp_path: Path, cap
     proposal_files = sorted((self_improvement_root / "proposals").glob("*.yml"))
     assert run_files
     assert proposal_files
+    assert [path.stem for path in proposal_files] == [str(index) for index in range(1, len(proposal_files) + 1)]
     first_count = len(proposal_files)
     proposal = yaml.safe_load(proposal_files[0].read_text(encoding="utf-8"))
+    assert proposal["proposal_id"] == "1"
+    assert proposal["proposal_id"] == proposal_files[0].stem
     assert proposal["content_hash"].startswith("sha256:")
     assert proposal["promotion_status"] == "proposed"
     assert proposal["approval_requirement"] == "operator_required"
@@ -428,7 +431,9 @@ def test_self_improvement_apply_writes_proposals_and_dedupes(tmp_path: Path, cap
 
     proposal_id = proposal["proposal_id"]
     assert main(["self-improvement", "status", "--root", str(root)]) == 0
-    assert "proposal_counts:" in capsys.readouterr().out
+    status_output = capsys.readouterr().out
+    assert "proposal_counts:" in status_output
+    assert "proposal_lifecycle:" in status_output
     assert main(["self-improvement", "list", "--root", str(root)]) == 0
     assert proposal_id in capsys.readouterr().out
     assert main(["self-improvement", "show", proposal_id, "--root", str(root)]) == 0
@@ -492,7 +497,11 @@ def test_self_improvement_approve_and_promote_feature_draft(tmp_path: Path) -> N
     assert (draft_root / "feature.yml").is_file()
     assert (draft_root / "SPEC.md").is_file()
     assert (draft_root / "PLAN.md").is_file()
+    assert (draft_root / "VALIDATION.md").is_file()
     assert (draft_root / "NEXT.md").is_file()
+    spec = (draft_root / "SPEC.md").read_text(encoding="utf-8")
+    assert "## Acceptance Criteria" in spec
+    assert f"Proposal: `{proposal_id}`" in spec
     drafted = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
     assert drafted["promotion_status"] == "drafted"
 

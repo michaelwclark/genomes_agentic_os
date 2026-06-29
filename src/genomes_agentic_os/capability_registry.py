@@ -123,6 +123,18 @@ def command_entries() -> list[dict[str, str]]:
             "source": "agentic-os validate",
         },
         {
+            "id": "ps",
+            "command": "agentic-os ps",
+            "description": "Show Agentic OS work running right now; use --active for queued/configured work and stale thread candidates.",
+            "source": "harness/commands/os-ps.md",
+        },
+        {
+            "id": "aos",
+            "command": "aos",
+            "description": "Short alias for the agentic-os CLI.",
+            "source": "pyproject.toml",
+        },
+        {
             "id": "program-create",
             "command": "agentic-os program create",
             "description": "Create a shared OSProgram under harness/shared_factory/00-programs/.",
@@ -175,6 +187,12 @@ def command_entries() -> list[dict[str, str]]:
             "command": "agentic-os self-improvement run",
             "description": "Dry-run review of durable local evidence for proposal-only OS improvements (prints findings; use --apply to persist run records, proposals, and daily report).",
             "source": "harness/commands/os-self-improvement.md",
+        },
+        {
+            "id": "docs-upkeep",
+            "command": "agentic-os docs upkeep",
+            "description": "Observe-mode documentation registry drift planner with local receipts and no Notion writes.",
+            "source": "harness/commands/os-docs-upkeep.md",
         },
     ]
 
@@ -396,6 +414,16 @@ def rule_entries() -> list[dict[str, str]]:
             "name": "No secret registry values",
             "description": "Registry and config files reference secret environment variable names only.",
             "source": "RULES.md",
+        },
+        {
+            "id": "canonical-registration-and-projection",
+            "name": "Canonical Registration And Projection",
+            "description": (
+                "New or renamed workflows, automations, skills, commands, rules, tools, "
+                "and programs must be recorded in every owning OS registry plus any "
+                "configured external documentation or control-plane projection."
+            ),
+            "source": "harness/rules/os-authoring-rules.md",
         },
     ]
 

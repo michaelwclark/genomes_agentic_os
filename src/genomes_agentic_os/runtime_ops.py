@@ -18,7 +18,7 @@ import yaml
 from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
-from .self_improvement import run_self_improvement
+from .self_improvement import process_self_improvement_actions, run_self_improvement, self_improvement_queue_health
 from .thread_closeout import stale_finalize_threads
 from .validate import validate_root
 
@@ -43,6 +43,8 @@ REQUIRED_INTEGRATIONS = {"orgo", "composio", "agentmail", "granola", "notion"}
 RUN_QUEUE_STATES = ("dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped")
 APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expired", "blocked")
 TERMINAL_RUN_QUEUE_STATES = {"dry-run", "blocked", "done", "failed", "skipped"}
+ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
+RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script"}
 
 
@@ -502,6 +504,19 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os self-improvement run --root <root> --apply",
             "outputs": ["harness/shared_factory/06-runs-and-logs/self-improvement/runs/"],
             "notion_update": {"object": "Self Improvement", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "self_improvement_action_watch",
+            "display_name": "Self-improvement action watcher",
+            "enabled": False,
+            "cadence": "every_5_minutes",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os self-improvement actions --root <root> --apply",
+            "outputs": ["harness/shared_factory/06-runs-and-logs/self-improvement/actions/"],
+            "notion_update": {"object": "Self Improvement", "status_field": "Action Status"},
             "next_due_at": None,
             "last_queued_at": None,
         }
@@ -1010,6 +1025,29 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "report_path": report.get("latest"),
             "notion_projected": bool(notion_projection.get("projected")),
         }
+    _si_actions_apply_forms = {
+        f"agentic-os self-improvement actions --root {root} --apply",
+        f"agentic-os self-improvement actions --root {str(root)} --apply",
+    }
+    _si_actions_dry_forms = {
+        f"agentic-os self-improvement actions --root {root}",
+        f"agentic-os self-improvement actions --root {str(root)}",
+        f"agentic-os self-improvement actions --root {root} --dry-run",
+        f"agentic-os self-improvement actions --root {str(root)} --dry-run",
+    }
+    if normalized in _si_actions_apply_forms | _si_actions_dry_forms:
+        _dry = normalized not in _si_actions_apply_forms
+        result = process_self_improvement_actions(root, dry_run=_dry)
+        return {
+            "supported": True,
+            "ok": bool(result.get("ok", True)),
+            "command": normalized,
+            "errors": [] if result.get("ok", True) else [str(result.get("reason") or result)],
+            "warnings": [] if not result.get("reason") else [str(result.get("reason"))],
+            "actions": len(result.get("actions") or []),
+            "queued": len(result.get("queued") or []),
+            "status": result.get("status"),
+        }
     if normalized in {
         f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
         f"agentic-os thread stale-finalize --root {str(root)} --older-than-days 3 --apply",
@@ -1046,6 +1084,43 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
         "errors": ["unsupported local script command"],
         "warnings": [],
     }
+
+
+def _local_script_dispatch_preflight(root: Path, command: str) -> str | None:
+    """Return a dispatch blocker that can be detected without running scripts."""
+    normalized = command.replace("<root>", str(root)).strip()
+    supported_exact = {
+        f"agentic-os validate --root {root}",
+        f"agentic-os validate --root {str(root)}",
+        f"agentic-os self-improvement run --root {root} --apply",
+        f"agentic-os self-improvement run --root {str(root)} --apply",
+        f"agentic-os self-improvement run --root {root}",
+        f"agentic-os self-improvement run --root {str(root)}",
+        f"agentic-os self-improvement run --root {root} --dry-run",
+        f"agentic-os self-improvement run --root {str(root)} --dry-run",
+        f"agentic-os self-improvement actions --root {root} --apply",
+        f"agentic-os self-improvement actions --root {str(root)} --apply",
+        f"agentic-os self-improvement actions --root {root}",
+        f"agentic-os self-improvement actions --root {str(root)}",
+        f"agentic-os self-improvement actions --root {root} --dry-run",
+        f"agentic-os self-improvement actions --root {str(root)} --dry-run",
+        f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
+        f"agentic-os thread stale-finalize --root {str(root)} --older-than-days 3 --apply",
+        f"agentic-os project worktree cleanup-closed --root {root} --apply",
+        f"agentic-os project worktree cleanup-closed --root {str(root)} --apply",
+    }
+    if normalized in supported_exact:
+        return None
+    try:
+        parts = shlex.split(normalized)
+    except ValueError as exc:
+        return f"invalid local script command: {exc}"
+    if len(parts) >= 3 and parts[:2] == ["agentic-os", "watch-source"] and parts[2] in {"poll", "run-due"}:
+        return None
+    quiet_run = root / "harness" / "bin" / "agentic-os-quiet-run"
+    if len(parts) >= 2 and parts[0] in {str(quiet_run), "harness/bin/agentic-os-quiet-run"} and parts[1] == "start":
+        return None
+    return "unsupported local script command"
 
 
 def _run_watch_source_script(root: Path, command: str) -> dict[str, Any] | None:
@@ -1332,6 +1407,197 @@ def integration_setup(root: str | Path, integration_id: str, *, dry_run: bool = 
     return result
 
 
+def _raw_queue_items(queue: dict[str, Any]) -> list[dict[str, Any]]:
+    items = queue.get("items")
+    if not isinstance(items, list):
+        items = queue.get("run_queue") if isinstance(queue.get("run_queue"), list) else []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _queue_time(item: dict[str, Any], field: str) -> datetime | None:
+    try:
+        return _parse_time(item.get(field), field=f"{item.get('id', '<unknown>')}.{field}")
+    except ValueError:
+        return None
+
+
+def _run_queue_stale_reason(item: dict[str, Any], now: datetime) -> str | None:
+    due_at = _queue_time(item, "due_at")
+    if due_at and now - due_at > RUN_QUEUE_STALE_GRACE:
+        return "due_at_past_24h_grace"
+    updated_at = _queue_time(item, "updated_at")
+    if updated_at and now - updated_at > RUN_QUEUE_STALE_GRACE:
+        return "updated_past_24h_grace"
+    created_at = _queue_time(item, "created_at")
+    if created_at and now - created_at > RUN_QUEUE_STALE_GRACE:
+        return "created_past_24h_grace"
+    return None
+
+
+def _queue_label(item: dict[str, Any]) -> str:
+    return str(item.get("ref") or item.get("work_type") or item.get("kind") or "<unknown>")
+
+
+def _sample_ids(ids: list[str], *, limit: int = 5) -> str:
+    sample = ", ".join(ids[:limit])
+    suffix = "" if len(ids) <= limit else f", +{len(ids) - limit} more"
+    return f"count={len(ids)}; sample={sample}{suffix}"
+
+
+def _short_text(value: str, *, limit: int = 100) -> str:
+    one_line = " ".join(value.split())
+    if len(one_line) <= limit:
+        return one_line
+    return f"{one_line[: limit - 3]}..."
+
+
+def _short_command(command: str, *, limit: int = 100) -> str:
+    return _short_text(command, limit=limit)
+
+
+def _run_queue_health_findings(
+    os_root: Path,
+    *,
+    registry: dict[str, Any],
+    raw_queue: dict[str, Any],
+    queue: dict[str, Any],
+) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    queue_path = _runtime_path(os_root, RUN_QUEUE)
+    now = datetime.now(timezone.utc)
+    raw_items = _raw_queue_items(raw_queue)
+    active_items = [
+        item
+        for item in queue.get("items") or []
+        if isinstance(item, dict) and item.get("status") in ACTIVE_RUN_QUEUE_STATES
+    ]
+
+    duplicate_keys: dict[str, list[str]] = {}
+    for item in raw_items:
+        if item.get("status") not in ACTIVE_RUN_QUEUE_STATES:
+            continue
+        key = item.get("idempotency_key")
+        if not key:
+            continue
+        duplicate_keys.setdefault(str(key), []).append(str(item.get("id") or "<unknown>"))
+    for key, ids in sorted(duplicate_keys.items()):
+        if len(ids) > 1:
+            findings.append(
+                {
+                    "severity": "fix-soon",
+                    "path": str(queue_path),
+                    "message": f"duplicate active run queue idempotency_key: {key} ({_sample_ids(ids)})",
+                }
+            )
+
+    schedule_ids = set(_items_by_id(registry.get("schedules") or []))
+    active_schedule_refs: dict[str, list[str]] = {}
+    unknown_schedule_refs: dict[str, list[str]] = {}
+    for item in active_items:
+        if item.get("kind") != "schedule":
+            continue
+        ref = str(item.get("ref") or item.get("schedule_id") or "<unknown>")
+        active_schedule_refs.setdefault(ref, []).append(str(item.get("id") or "<unknown>"))
+        if ref not in schedule_ids:
+            unknown_schedule_refs.setdefault(ref, []).append(str(item.get("id") or "<unknown>"))
+    for ref, ids in sorted(unknown_schedule_refs.items()):
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(queue_path),
+                "message": f"schedule queue items reference unknown schedule: {ref} ({_sample_ids(ids)})",
+            }
+        )
+    for ref, ids in sorted(active_schedule_refs.items()):
+        if len(ids) > 1:
+            findings.append(
+                {
+                    "severity": "fix-soon",
+                    "path": str(queue_path),
+                    "message": f"multiple active schedule queue items: {ref} ({_sample_ids(ids)})",
+                }
+            )
+
+    failed_items: dict[str, list[str]] = {}
+    blocked_items: dict[str, list[str]] = {}
+    stale_items: dict[tuple[str, str, str], list[str]] = {}
+    missing_command_items: dict[str, list[str]] = {}
+    unsupported_command_items: dict[tuple[str, str, str], list[str]] = {}
+    for item in queue.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "<unknown>")
+        label = _queue_label(item)
+        status = str(item.get("status") or "")
+        if status == "failed":
+            reason = str(item.get("error") or item.get("blocked_reason") or item.get("dispatch_log") or "no failure detail")
+            failed_items.setdefault(_short_text(reason, limit=180), []).append(item_id)
+        elif status == "blocked":
+            reason = str(item.get("blocked_reason") or item.get("error") or "no blocker detail")
+            blocked_items.setdefault(_short_text(reason, limit=180), []).append(item_id)
+
+        if status in ACTIVE_RUN_QUEUE_STATES:
+            stale_reason = _run_queue_stale_reason(item, now)
+            if stale_reason:
+                stale_items.setdefault((status, label, stale_reason), []).append(item_id)
+
+            target_id = str(item.get("execution_target") or "script")
+            if target_id == "script":
+                command = item.get("command")
+                if not command:
+                    missing_command_items.setdefault(label, []).append(item_id)
+                else:
+                    blocker = _local_script_dispatch_preflight(os_root, str(command))
+                    if blocker:
+                        key = (label, blocker, _short_command(str(command)))
+                        unsupported_command_items.setdefault(key, []).append(item_id)
+
+    for reason, ids in sorted(failed_items.items()):
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(queue_path),
+                "message": f"run queue items failed: {reason} ({_sample_ids(ids)})",
+            }
+        )
+    for reason, ids in sorted(blocked_items.items()):
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(queue_path),
+                "message": f"run queue items blocked: {reason} ({_sample_ids(ids)})",
+            }
+        )
+    for (status, label, stale_reason), ids in sorted(stale_items.items()):
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(queue_path),
+                "message": f"{status} run queue items are stale: {label} {stale_reason} ({_sample_ids(ids)})",
+            }
+        )
+    for label, ids in sorted(missing_command_items.items()):
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(queue_path),
+                "message": f"script queue items have no command: {label} ({_sample_ids(ids)})",
+            }
+        )
+    for (label, blocker, command), ids in sorted(unsupported_command_items.items()):
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(queue_path),
+                "message": (
+                    "script commands are unsupported by runtime dispatch: "
+                    f"{label} ({blocker}; command={command!r}; {_sample_ids(ids)})"
+                ),
+            }
+        )
+    return findings
+
+
 def _credential_findings(path: Path, item: dict[str, Any]) -> list[dict[str, str]]:
     findings = []
     credentials = item.get("credentials") or {}
@@ -1431,6 +1697,19 @@ def _self_improvement_doctor_findings(os_root: Path) -> list[dict[str, str]]:
                     "message": f"configured conversation evidence root is missing: {path_value}",
                 }
             )
+    # 5. Stale self-improvement schedule queue items. The queue is not mutated
+    # here; the doctor only names the item ids that need reconciliation.
+    for item in self_improvement_queue_health(os_root).get("stale_items") or []:
+        findings.append(
+            {
+                "severity": "fix-soon",
+                "path": str(_runtime_path(os_root, RUN_QUEUE)),
+                "message": (
+                    "self-improvement review queue item is stale: "
+                    f"{item.get('id')} ({item.get('stale_reason')})"
+                ),
+            }
+        )
     return findings
 
 
@@ -1492,7 +1771,8 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
             if not integration.get(key):
                 findings.append({"severity": "blocker", "path": str(integration_path), "message": f"integration missing {key}: {integration.get('id', '<unknown>')}"})
         findings.extend(_credential_findings(integration_path, integration))
-    queue = _normalized_queue(_load_yaml(queue_path, DEFAULT_RUN_QUEUE))
+    raw_queue = _load_yaml(queue_path, DEFAULT_RUN_QUEUE)
+    queue = _normalized_queue(raw_queue)
     queue_states = set(queue.get("states") or [])
     missing_states = sorted(set(RUN_QUEUE_STATES) - queue_states)
     for state in missing_states:
@@ -1513,6 +1793,7 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
             findings.append({"severity": "blocker", "path": str(queue_path), "message": f"approval-needed item must have approval_state required: {item_id}"})
         if status not in TERMINAL_RUN_QUEUE_STATES and not item.get("idempotency_key"):
             findings.append({"severity": "fix-soon", "path": str(queue_path), "message": f"non-terminal queue item lacks idempotency_key: {item_id}"})
+    findings.extend(_run_queue_health_findings(os_root, registry=registry, raw_queue=raw_queue, queue=queue))
     findings.extend(_self_improvement_doctor_findings(os_root))
     if not findings:
         findings.append({"severity": "observation", "path": str(os_root), "message": "runtime registries and heartbeat log folders are present"})
