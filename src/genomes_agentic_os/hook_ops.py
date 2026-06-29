@@ -205,7 +205,12 @@ def sync_codex_hooks(data: dict[str, Any], root: Path) -> bool:
         timeout=30,
         status_message="Logging Agentic OS conversation",
     ) or changed
-    changed = ensure_hook_entry(data, "SessionStart", context_mode_command("codex", "sessionstart"), matcher="") or changed
+    changed = ensure_hook_entry(
+        data,
+        "SessionStart",
+        context_mode_command("codex", "sessionstart"),
+        matcher="",
+    ) or changed
     changed = ensure_hook_entry(data, "Stop", context_mode_command("codex", "stop"), matcher="") or changed
     changed = ensure_hook_entry(
         data,

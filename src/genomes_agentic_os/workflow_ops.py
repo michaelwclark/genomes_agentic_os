@@ -14,6 +14,7 @@ from .scaffold import WORKFLOW_FILES, domain_path, expand_path, normalize_domain
 
 CLOSE_STATUSES = ("done", "waiting", "failed", "needs_approval")
 SECTION_REQUIREMENTS = {
+    "workflow.md": ("Invocation Contract",),
     "outcome-brief.md": ("Definition Of Done", "Acceptance Criteria"),
     "alignment-questions.md": ("Required Questions", "Dispatch Decision"),
     "context-pack.md": ("Source Links", "Operating Constraints"),

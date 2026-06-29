@@ -56,7 +56,22 @@ STANDARD_LANES = (
     "learning",
 )
 
-SELF_IMPROVEMENT_MANAGED_FILES = (
+MANAGED_RUNTIME_FILES = (
+    (
+        "templates/runtime/spec-intake-workflow.md",
+        "harness/shared_factory/04-workflows/spec-intake.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/feature-intake-workflow.md",
+        "harness/shared_factory/04-workflows/feature-intake.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/bug-intake-workflow.md",
+        "harness/shared_factory/04-workflows/bug-intake.md",
+        "replace_if_managed_unchanged",
+    ),
     (
         "templates/runtime/self-improvement.yml",
         "harness/shared_factory/00-control-plane/self-improvement.yml",
@@ -88,8 +103,28 @@ SELF_IMPROVEMENT_MANAGED_FILES = (
         "replace_if_managed_unchanged",
     ),
     (
+        "harness/commands/os-quiet-run.md",
+        "harness/shared_factory/05-knowledge/commands/os-quiet-run.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "templates/runtime/notion-organization.yml",
+        "harness/shared_factory/00-control-plane/notion-organization.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/commands/os-notion-org.md",
+        "harness/shared_factory/05-knowledge/commands/os-notion-org.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "harness/skills/toolsmith-reviewer/SKILL.md",
         "harness/shared_factory/05-knowledge/skills/toolsmith-reviewer/SKILL.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/skills/quiet-async-runner/SKILL.md",
+        "harness/shared_factory/05-knowledge/skills/quiet-async-runner/SKILL.md",
         "replace_if_managed_unchanged",
     ),
 )
@@ -139,7 +174,6 @@ METRIC_FILES = (
 )
 
 DOMAIN_DIRECTORIES = (
-    "00-programs",
     "00-control-plane",
     "01-inbox",
     "02-projects",
@@ -179,20 +213,7 @@ AUTOMATION_FILES = (
     "tests.md",
 )
 
-PROGRAM_FILES = (
-    "program.md",
-    "components.yml",
-    "context-pack.md",
-    "crud.md",
-    "documentation.md",
-    "runbook.md",
-    "tests.md",
-    "worklog.md",
-)
-
 NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
-WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-SPOTLIGHT_NEVER_INDEX_FILENAME = ".metadata_never_index"
 
 
 @dataclass
@@ -249,23 +270,6 @@ def validate_name(value: str, label: str = "name") -> str:
     return value
 
 
-def validate_worktree_name(value: str) -> str:
-    """Worktree names mirror git branch names (slashes excepted), so hyphens and dots are allowed."""
-    if not WORKTREE_NAME_PATTERN.fullmatch(value):
-        raise ValueError(
-            "worktree name must start with a lowercase letter or number and use lowercase letters, "
-            f"numbers, dots, hyphens, and underscores only: {value!r}"
-        )
-    return value
-
-
-def worktree_name_from_branch(branch: str) -> str:
-    name = re.sub(r"[^a-z0-9._-]+", "-", branch.lower()).strip("-.")
-    if not name:
-        raise ValueError(f"cannot derive a worktree name from branch: {branch!r}")
-    return validate_worktree_name(name)
-
-
 def normalize_domain(value: str) -> str:
     domain = validate_name(value, "domain")
     return DOMAIN_ALIASES.get(domain, domain)
@@ -303,13 +307,6 @@ def plans_source_dir() -> Path:
     raise FileNotFoundError("Could not find repository PLANS directory")
 
 
-def optional_plans_source_dir() -> Path | None:
-    candidate = repo_root() / "PLANS"
-    if candidate.is_dir():
-        return candidate
-    return None
-
-
 def ensure_dir(path: Path, result: ScaffoldResult) -> None:
     if path.is_dir():
         result.skipped.append(path)
@@ -325,10 +322,6 @@ def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     result.created.append(path)
-
-
-def ensure_spotlight_never_index(directory: Path, result: ScaffoldResult) -> None:
-    write_file_once(directory / SPOTLIGHT_NEVER_INDEX_FILENAME, "", result)
 
 
 def ensure_codex_config(root: Path, layer: str, result: ScaffoldResult) -> None:
@@ -524,7 +517,7 @@ def file_sha256(path: Path) -> str:
 
 def managed_templates_payload() -> dict[str, object]:
     entries = []
-    for source, destination, merge_policy in SELF_IMPROVEMENT_MANAGED_FILES:
+    for source, destination, merge_policy in MANAGED_RUNTIME_FILES:
         source_path = source_relative_path(source)
         checksum = file_sha256(source_path) if source_path.is_file() else "sha256:missing"
         entries.append(
@@ -611,27 +604,13 @@ def ensure_notion_tracking_config(root: Path, result: ScaffoldResult) -> None:
     result.created.append(destination)
 
 
-def ensure_automation_control_config(root: Path, result: ScaffoldResult) -> None:
-    """Install automation-control.yml into 00-control-plane if absent."""
-    destination = shared_factory_path(root, "00-control-plane", "automation-control.yml")
-    if destination.exists():
-        result.skipped.append(destination)
-        return
-    source = source_relative_path("templates/runtime/automation-control.yml")
-    if not source.is_file():
-        return
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    result.created.append(destination)
-
-
 def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     for directory in ("runs", "proposals", "approvals", "drafts"):
         ensure_dir(shared_factory_path(root, "06-runs-and-logs", "self-improvement", directory), result)
 
     manifest_path = shared_factory_path(root, "00-control-plane", "managed-templates.yml")
     previous_checksums = previous_managed_checksums(manifest_path)
-    for source, destination, _merge_policy in SELF_IMPROVEMENT_MANAGED_FILES:
+    for source, destination, _merge_policy in MANAGED_RUNTIME_FILES:
         source_path = source_relative_path(source)
         destination_path = root / destination
         write_managed_file(source_path, destination_path, previous_checksums.get(destination), result)
@@ -648,7 +627,6 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
         result.updated.append(manifest_path)
 
     ensure_notion_tracking_config(root, result)
-    ensure_automation_control_config(root, result)
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
@@ -693,11 +671,20 @@ def merge_registry_file(path: Path, payload: dict[str, list[dict[str, str]]], re
             existing[key] = []
             current = existing[key]
             changed = True
-        existing_ids = {entry.get("id") for entry in current if isinstance(entry, dict)}
+        current_by_id = {entry.get("id"): entry for entry in current if isinstance(entry, dict)}
+        existing_ids = set(current_by_id)
         for entry in entries:
             if entry.get("id") not in existing_ids:
                 current.append(entry)
                 existing_ids.add(entry.get("id"))
+                changed = True
+                continue
+            existing_entry = current_by_id.get(entry.get("id"))
+            if not isinstance(existing_entry, dict):
+                continue
+            source = entry.get("source")
+            if source and existing_entry.get("source") != source:
+                existing_entry["source"] = source
                 changed = True
     if changed:
         path.write_text(yaml.safe_dump(existing, sort_keys=False), encoding="utf-8")
@@ -750,10 +737,7 @@ def root_readme() -> str:
     domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in DEFAULT_DOMAINS)
     return f"""# Installed Agentic OS
 
-This is the live operating system root for agentic work. It is domain-first:
-choose the domain, then use that domain's programs, control plane, inbox,
-projects, workflows, automations, knowledge, runs, metrics, and archive. OS
-brains and harness-visible capabilities live under `harness/`.
+This is the live operating system root for agentic work. It is domain-first: choose the domain, then use that domain's control plane, inbox, projects, workflows, automations, knowledge, runs, metrics, and archive. OS brains and harness-visible capabilities live under `harness/`.
 
 ## Domains
 
@@ -769,7 +753,6 @@ brains and harness-visible capabilities live under `harness/`.
 Each domain uses the same numbered operating lanes:
 
 - `00-control-plane/` - active work, routing, approvals, and decisions.
-- `00-programs/` - named capability ownership and CRUD context bundles.
 - `01-inbox/` - raw capture and triage.
 - `02-projects/` - active project folders.
 - `03-workflows/` - repeatable human-and-agent workflow specs.
@@ -812,20 +795,15 @@ After choosing a domain or narrower layer, change to that directory and read its
 ## Domain Classification
 
 - First identify the project, product, client, or life area named in the request.
-- Route explicit project, product, or capability names to their domain before
-  deciding whether the work is an idea, program, project, workflow, automation,
-  run, or knowledge update.
+- Route explicit project or product names to their domain before deciding whether the work is an idea, project, workflow, automation, run, or knowledge update.
 - Examples: requests mentioning `LOS`, loan origination, lender operations, or LOS engineering route to `los/`; requests mentioning Clark's Consulting route to `clarks_consulting/`.
-- If a request says `add an idea`, `capture an idea`, `idea for`, or similar,
-  route to the matching domain's `01-inbox/` unless the user explicitly asks to
-  create a program, project, workflow, automation, Jira, or implementation branch.
+- If a request says `add an idea`, `capture an idea`, `idea for`, or similar, route to the matching domain's `01-inbox/` unless the user explicitly asks to create a project, workflow, automation, Jira, or implementation branch.
 
 ## Operating Rules
 
-- Pick a domain before creating programs, projects, workflows, automations, or run logs.
+- Pick a domain before creating projects, workflows, automations, or run logs.
 - Repeat the route-read-cd loop after changing directories.
 - Do not create new root-level work folders for active work.
-- Put instance programs in `<domain>/00-programs/<program>/`.
 - Put workflow specs in `<domain>/03-workflows/<lane>/<workflow>/`.
 - Put automation specs in `<domain>/04-automations/<lane>/<automation>/`.
 - Put execution records in `<domain>/06-runs-and-logs/runs/`.
@@ -922,22 +900,15 @@ These root rules apply unless a narrower layer provides a stricter rule.
 ## Operating Rules
 
 - Route before acting.
-- Prefer the narrowest applicable domain, program, project, workflow, automation, or run log.
+- Prefer the narrowest applicable domain, project, workflow, automation, or run log.
 - Preserve source links and validation evidence.
 - Keep secrets out of prompts, logs, docs, generated config, and run artifacts.
-- Every OS-level feature, program, skill, command, workflow, automation, rule,
-  hook, template, or runtime convention must document ownership, context routing,
-  validation, and projection updates before handoff.
 - Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read the host tool registry when it exists.
-
-## SSH Remote Namespace Convention
-
-Any path component named `SSH_<host>` marks an SSHFS remote namespace.
-Files under it may be read or edited locally, but repo commands (git, builds,
-tests, package installs, dev servers, services, watchers) must execute on
-`<host>` unless the operator explicitly asks for local-mount execution.
-Mount and unmount are explicit operator actions — this OS never silently
-mounts remote hosts or installs kernel extensions on its own.
+- When creating or changing Agentic OS commands, skills, workflows,
+  automations, tools, registries, feature intake, bug intake, or project
+  worktrees, follow `harness/rules/os-authoring-rules.md`.
+- External source checkouts used for project work must be visible through the
+  project `worktrees/` registry/link surface.
 
 ## Precedence
 
@@ -963,11 +934,16 @@ the source of truth by themselves.
 | --- | --- | --- |
 | `os-navigator` | Route work through installed OS rooms. | `shared_factory/05-knowledge/skills/os-navigator/` |
 | `workflow-builder` | Create or improve reusable workflows. | `shared_factory/05-knowledge/skills/workflow-builder/` |
-| `program-builder` | Create or refine OSProgram and InstanceOSProgram contracts. | `shared_factory/05-knowledge/skills/program-builder/` |
+| `doc-config-router` | Decide where docs belong before filesystem or Notion projection work. | `shared_factory/05-knowledge/skills/doc-config-router/` |
+| `spec-intake-router` | Capture new specs and future work through doc-config and work-item intake. | `shared_factory/05-knowledge/skills/spec-intake-router/` |
+| `feature-intake-router` | Deprecated alias for spec intake. | `shared_factory/05-knowledge/skills/feature-intake-router/` |
+| `bug-intake-router` | Capture bugs and missed enforcement through doc-config and work-item intake. | `shared_factory/05-knowledge/skills/bug-intake-router/` |
+| `auto-spec-intake` | Create/update spec packets for long OS-shaping requests. | `shared_factory/05-knowledge/skills/auto-spec-intake/` |
+| `auto-feature-intake` | Deprecated alias for auto spec intake. | `shared_factory/05-knowledge/skills/auto-feature-intake/` |
+| `os-authoring-guard` | Apply compact OS authoring rules to reusable surface changes. | `shared_factory/05-knowledge/skills/os-authoring-guard/` |
 | `automation-qualifier` | Decide whether a process is safe to automate. | `shared_factory/05-knowledge/skills/automation-qualifier/` |
+| `quiet-async-runner` | Run long waits through artifact-backed async state instead of chat polling. | `shared_factory/05-knowledge/skills/quiet-async-runner/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
-| `thread-finalizer` | Finalize substantive threads with worklog, next-action, memory, evidence, and Notion projection receipts. | `shared_factory/05-knowledge/skills/thread-finalizer/` |
-| `os-cleaner` | Reconcile OS worktrees and work items after Jira terminal states or merged pull requests. | `shared_factory/05-knowledge/skills/os-cleaner/` |
 
 ## Commands
 
@@ -977,25 +953,20 @@ the source of truth by themselves.
 | `/make-domain` | Create a routed OS domain or room. | Declared in `registries/commands.yml`. |
 | `/make-automation` | Create a guarded automation spec. | Declared in `registries/commands.yml`. |
 | `/make-workflow` | Create a reusable workflow contract. | Declared in `registries/commands.yml`. |
-| `/create-program` | Create a shared OSProgram contract and context bundle. | Declared in `registries/commands.yml`. |
-| `/create-instance-program` | Create a domain-local InstanceOSProgram contract and context bundle. | Declared in `registries/commands.yml`. |
+| `/add-spec` | Capture future work through the configured spec intake workflow. | Declared in `registries/commands.yml`. |
+| `/new-feature` | Deprecated alias for `/add-spec`. | Declared in `registries/commands.yml`. |
+| `/add-bug` | Capture a bug or missed OS enforcement into a routed work item. | Declared in `registries/commands.yml`. |
+| `/auto-add-spec` | Create/update a spec packet for long OS-shaping requests. | Declared in `registries/commands.yml`. |
+| `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Declared in `registries/commands.yml`. |
 | `/orchestrate` | Decompose, delegate, verify, and merge feature work. | Declared in `registries/commands.yml`. |
-| `/end-chat` | Finalize the current substantive thread without archiving by default. | Runs `agentic-os thread end`. |
-| `/finalize` | Alias for `/end-chat` when explicit finalization language is preferred. | Runs `agentic-os thread finalize`. |
-| `/cleanup-thread` | Finalize and classify generated dirt before any allowlisted cleanup. | Runs `agentic-os thread cleanup`. |
-| `/archive` | Finalize and archive only when no unresolved next action remains. | Runs `agentic-os thread archive`. |
 | `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
 | `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
-| `agentic-os program create` | Create a shared OSProgram. | Writes under `harness/shared_factory/00-programs/`. |
-| `agentic-os instance-program create` | Create a domain-local InstanceOSProgram. | Writes under `<domain>/00-programs/`. |
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
 | `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
 | `agentic-os project worktree add` | Register a visible worktree link inside a project. | Keeps the real checkout outside the OS. |
-| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Use `--remove-files` only for clean in-project checkouts. |
-| `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and refresh the global active symlink container. | Use after closeout/stale-finalization cleanup. |
-| `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view. | Uses filesystem work-items, project worktrees, and active automations. |
-| `agentic-os thread stale-finalize --dry-run` | List work items untouched for more than 3 days before applying conservative closeout. | Dry-run by default. |
+| `harness/bin/agentic-os-quiet-run` | Run long local commands with file-backed state. | Use for tests, setup, watchers, and slow waits. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
+| `agentic-os doc-config plan` | Resolve filesystem and Notion projection destinations for documents. | Dry-run planner; external writes still require verification. |
 | `agentic-os config install-tree` | Install Codex config across routed OS layers. | Dry-run by default. |
 
 ## MCP Servers
@@ -1017,6 +988,7 @@ the source of truth by themselves.
 | Wrapper | Use When | Path |
 | --- | --- | --- |
 | host tool registry | Shell, terminal, runtime, package-manager, and cleanup work. | `shared_factory/05-knowledge/host-tool-registry.<host>.yml` |
+| agentic-os quiet run | Detached local commands with `state.json`, `events.jsonl`, `summary.md`, and `output.log`. | `harness/bin/agentic-os-quiet-run` |
 
 ## Hooks
 
@@ -1052,7 +1024,6 @@ lanes:
 {lanes}
 
 directories:
-  programs: 00-programs
   control_plane: 00-control-plane
   inbox: 01-inbox
   projects: 02-projects
@@ -1151,10 +1122,6 @@ See `00-control-plane/approval-rules.md`.
 
 Workflows live under `03-workflows/<lane>/<workflow>/`.
 
-## Programs
-
-Named capability programs live under `00-programs/<program>/`.
-
 ## Active Automations
 
 Automations live under `04-automations/<lane>/<automation>/`.
@@ -1175,7 +1142,7 @@ def domain_router(domain: str) -> str:
 
 ## First Decision
 
-Classify the request into one of this domain's operating lanes, then choose the narrowest matching program, project, workflow, or automation.
+Classify the request into one of this domain's operating lanes, then choose the narrowest matching project, workflow, or automation.
 
 ## Where To Put Work
 
@@ -1184,7 +1151,6 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Idea spec or rough idea capture | `01-inbox/<idea-slug>.md` |
 | Raw capture | `01-inbox/raw-ideas.md` |
 | Triage notes | `01-inbox/triage.md` |
-| Instance program contract | `00-programs/<program>/program.md` |
 | Domain context | `CONTEXT.md` |
 | Domain references | `REFERENCES.md` |
 | Active project | `02-projects/<project>/` |
@@ -1201,10 +1167,7 @@ Classify the request into one of this domain's operating lanes, then choose the 
 - Read `AGENTS.md`, then `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`.
 - If the prompt says `add an idea`, `capture an idea`, `idea for`, `rough idea`, or similar, write the idea to `01-inbox/` first. Do not route it directly to `02-projects`, `03-workflows`, `04-automations`, Jira, or a code repository unless the user explicitly asks for that escalation.
 - Treat ideas as pre-routing inputs. A systems idea is different from a code feature, Jira implementation task, or active project.
-- If the prompt names a discrete OS capability, subsystem, workflow set,
-  automation set, or program, check `00-programs/` before editing component
-  internals.
-- If a program, project, workflow, automation, or run-log directory narrows the route, change there and repeat the local context-file load before acting.
+- If a project, workflow, automation, or run-log directory narrows the route, change there and repeat the local context-file load before acting.
 - Read `00-control-plane/routing-rules.md` before creating a new workflow or automation.
 - Read `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `REFERENCES.md` before doing domain-specific work.
 - Use `03-workflows` when judgment, context assembly, or approval gates are central.
@@ -1218,7 +1181,6 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Understand the room | `CONTEXT.md`, `domain.yml` | Other domains |
 | Find source truth | `REFERENCES.md`, `05-knowledge/source-map.md` | Full private docs unless needed |
 | Resume active work | `00-control-plane/active-work.md`, matching project status | Unrelated project folders |
-| Change named capability | Matching program `program.md`, `components.yml`, `crud.md` | Unrelated component internals |
 | Run a workflow | Matching workflow `quick-reference.md`, `context-pack.md`, `runbook.md` | Automation logs |
 | Review an automation | Matching automation spec, permissions, tests, logs | Workflow internals outside the linked process |
 
@@ -1243,7 +1205,6 @@ This file teaches agents how work inside `{domain}` should be understood before 
 ## Inputs
 
 - Raw requests, notes, tickets, messages, or ideas.
-- Program contracts under `00-programs/`.
 - Existing project state under `02-projects/`.
 - Workflow and automation specs under `03-workflows/` and `04-automations/`.
 - Source systems listed in `REFERENCES.md` and `05-knowledge/source-map.md`.
@@ -1252,7 +1213,7 @@ This file teaches agents how work inside `{domain}` should be understood before 
 
 1. Read `ROUTER.md`, this file, `RULES.md`, `TOOLS.md`, and the matching row in `## What To Load`.
 2. Check `00-control-plane/active-work.md` before creating new work.
-3. Reuse an existing program, project, workflow, automation, or run log when one fits.
+3. Reuse an existing project, workflow, automation, or run log when one fits.
 4. Read only the references required for the routed task.
 5. Record validation, next action, and durable learning before ending.
 6. When a new idea, workflow opportunity, automation state, project feature, bug fix, or research thread appears, update `00-control-plane/state-index.md` and `MEMORY.md`.
@@ -1260,7 +1221,6 @@ This file teaches agents how work inside `{domain}` should be understood before 
 ## Output Folders
 
 - `00-control-plane/` - routing, approvals, active work, and decisions.
-- `00-programs/` - named capability ownership and CRUD context bundles.
 - `01-inbox/` - untriaged capture and routing notes.
 - `02-projects/` - project-specific state, source maps, status, and artifacts.
 - `03-workflows/` - repeatable judgment-heavy processes.
@@ -1276,7 +1236,6 @@ This file teaches agents how work inside `{domain}` should be understood before 
 | --- | --- | --- | --- | --- |
 | Raw capture | `01-inbox/raw-ideas.md` | `REFERENCES.md` | workflow internals | `01-inbox/raw-ideas.md` |
 | Route work | `ROUTER.md`, `00-control-plane/routing-rules.md` | `00-control-plane/active-work.md` | unrelated domain folders | `01-inbox/triage.md` or target object |
-| Program CRUD | `00-programs/<program>/program.md`, `components.yml`, `crud.md` | linked skills, commands, workflows, automations, docs, scripts, schedules, state | unrelated programs | `00-programs/<program>/` plus linked components |
 | Project work | `02-projects/<project>/status.md`, `source-map.md` | linked repo, linked Notion/Jira | unrelated projects | `02-projects/<project>/` |
 | Workflow run | `03-workflows/<lane>/<workflow>/quick-reference.md`, `context-pack.md` | runbook, examples, source maps | automations unless the workflow says so | `06-runs-and-logs/runs/` |
 | Automation review | `04-automations/<lane>/<automation>/automation.md`, `permissions.md` | tests, logs, failure modes | unrelated workflows | `04-automations/<lane>/<automation>/` |
@@ -1289,7 +1248,7 @@ This file teaches agents how work inside `{domain}` should be understood before 
 
 ## Done Means
 
-- It routes work to the correct program, project, workflow, automation, or run log.
+- It routes work to the correct project, workflow, automation, or run log.
 - It preserves source links and evidence.
 - It follows approval rules before external, production, destructive, billing, legal, or customer-visible action.
 - It updates active state or records a next action before the session ends.
@@ -1366,9 +1325,8 @@ libraries, and wrappers for `{domain}`.
 
 | Skill | Use When | Source |
 | --- | --- | --- |
-| `os-navigator` | Route domain work to the correct program, project, workflow, automation, or run log. | inherited from `harness/shared_factory` |
+| `os-navigator` | Route domain work to the correct project, workflow, automation, or run log. | inherited from `harness/shared_factory` |
 | `workflow-builder` | Create or refine repeatable workflows. | inherited from `harness/shared_factory` |
-| `program-builder` | Create or refine named capability programs. | inherited from `harness/shared_factory` |
 | `automation-qualifier` | Decide whether a repeatable process should become an automation. | inherited from `harness/shared_factory` |
 
 ## Commands
@@ -1376,7 +1334,6 @@ libraries, and wrappers for `{domain}`.
 | Command | Use When | Notes |
 | --- | --- | --- |
 | `agentic-os project create` | Create a domain project. | Use after checking active work. |
-| `agentic-os instance-program create` | Create a domain-local InstanceOSProgram. | Use when a named capability spans multiple local components. |
 | `agentic-os workflow create` | Create a reusable workflow. | Use when the pattern should repeat. |
 | `agentic-os automation create` | Create a guarded automation spec. | Start in observe or prepare mode. |
 | `agentic-os validate` | Validate domain and root structure. | Run before handoff after structural changes. |
@@ -1854,8 +1811,6 @@ def create_domain_structure(
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
 
-    write_file_once(domain_root / "00-programs" / "README.md", programs_readme(domain), result)
-
     for filename in CONTROL_PLANE_FILES:
         write_file_once(domain_root / "00-control-plane" / filename, control_file_content(domain, filename), result)
 
@@ -1932,8 +1887,19 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
     result.extend(mirror_visible_capability_assets(os_root))
+    ensure_capability_registries(os_root, result)
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)
+    copy_file(
+        template_source_dir() / "runtime" / "doc-config.yml",
+        shared_factory_path(os_root, "00-control-plane", "doc-config.yml"),
+        result,
+    )
+    copy_file(
+        template_source_dir() / "runtime" / "notion-organization.yml",
+        shared_factory_path(os_root, "00-control-plane", "notion-organization.yml"),
+        result,
+    )
     result.extend(
         copy_tree(
             template_source_dir(),
@@ -1958,6 +1924,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
             shared_factory_path(os_root, "05-knowledge", "skills"),
         )
     )
+    result.extend(
+        copy_tree(
+            harness_source_dir() / "rules",
+            shared_factory_path(os_root, "05-knowledge", "rules"),
+        )
+    )
     hooks_root = harness_source_dir() / "hooks"
     if hooks_root.is_dir():
         result.extend(
@@ -1966,14 +1938,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
                 shared_factory_path(os_root, "05-knowledge", "hooks"),
             )
         )
-    plans_root = optional_plans_source_dir()
-    if plans_root is not None:
-        result.extend(
-            copy_tree(
-                plans_root,
-                shared_factory_path(os_root, "05-knowledge", "plans"),
-            )
+    result.extend(
+        copy_tree(
+            plans_source_dir(),
+            shared_factory_path(os_root, "05-knowledge", "plans"),
         )
+    )
     result.extend(
         copy_tree(
             template_source_dir() / "reference",
@@ -2153,24 +2123,11 @@ def project_agents(domain: str, project: str, remotes: list[dict[str, str]] | No
                 if authority == "remote"
                 else "Local copy is authoritative; remote is a deploy/reference copy."
             )
-            mount = r.get("mount") or {}
-            mount_note = ""
-            if isinstance(mount, dict) and mount.get("namespace"):
-                ns = mount["namespace"]
-                local_path = mount.get("local_path", f"~/{ns}/{name}")
-                mount_note = (
-                    f"\n  SSHFS namespace: `{local_path}` → `{host}:{path}`."
-                    " Files may be read/edited locally; repo commands run remotely."
-                )
             lines.append(
                 f"- **{name}** (`{host}:{path}`): {auth_note}\n"
                 f"  Reach via commands in `remote/{name}/REMOTE.md`.\n"
                 f"  Artifacts, work-items, and decisions stay local in this room."
-                f"{mount_note}"
             )
-        ssh_rule = _ssh_namespace_rule_section(remotes)
-        if ssh_rule:
-            lines.append(ssh_rule)
         remote_section = "\n".join(lines)
     return f"""# Agent Entry Point: {project}
 
@@ -2192,6 +2149,7 @@ This is the project-local entrypoint for `{domain}/02-projects/{project}`.
 - `project.yml` and `source-map.md` identify the project and canonical sources.
 - `config/work-lifecycle.yml` declares lifecycle lanes and naming rules.
 - `config/output-artifacts.yml` declares feature artifact roots such as `work-items/02-active/{{ticket_or_slug}}/artifacts`.
+- Source repository `features/` and `.features/` folders are mirrors/artifact locations unless project config explicitly assigns lifecycle ownership there.
 - `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
 {remote_section}
 """
@@ -2210,7 +2168,7 @@ Route project work to the narrowest local surface before acting.
 | Expanded idea packet from duel/spec work | `work-items/01-intake/<index>_<slug>/` until promoted |
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
-| Feature implementation | `src/` or a registered `worktrees/<name>` link |
+| Feature implementation | OS `work-items/02-active/<index>_<slug>/` for lifecycle state, then `src/` or a registered `worktrees/<name>` link for source edits |
 | Feature artifact or generated output | `artifacts/` or configured source artifact root |
 | Durable decision | `decisions.md` |
 
@@ -2266,25 +2224,7 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 """
 
 
-def _ssh_namespace_rule_section(remotes: list[dict[str, str]] | None) -> str:
-    """Return the SSH_<host> managed rule section when any remote has a mount block."""
-    if not remotes:
-        return ""
-    has_mount = any(r.get("mount") for r in remotes)
-    if not has_mount:
-        return ""
-    return (
-        "\n## SSH Remote Namespace Rule\n\n"
-        "Any path component named `SSH_<host>` is an SSHFS remote namespace. "
-        "Files under it may be read or edited locally, but repo commands run on "
-        "`<host>` with the remote cwd from the project manifest. "
-        "Do not run builds, tests, package installs, git, or watchers locally "
-        "from an SSHFS path unless the operator explicitly asks for local-mount execution.\n"
-    )
-
-
-def project_rules(domain: str, project: str, remotes: list[dict[str, str]] | None = None) -> str:
-    ssh_section = _ssh_namespace_rule_section(remotes)
+def project_rules(domain: str, project: str) -> str:
     return f"""# Rules: {project}
 
 These rules apply to `{domain}/02-projects/{project}` unless a narrower source
@@ -2294,12 +2234,14 @@ checkout or feature artifact defines a stricter rule.
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `work-items/01-intake/` for raw project-known ideas. `ideas/` is a compatibility index, not the lifecycle source of truth.
-- Keep exactly one canonical work object per idea. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
+- Use `SPECS/` for user-facing future work and `work-items/01-intake/` for internal lifecycle intake. `ideas/` is a compatibility index, not the lifecycle source of truth.
+- Use `WORKLOGS/` or `worklogs/` for human-readable work history; lowercase `logs/` is reserved for raw system output and transcripts.
+- Keep exactly one canonical work object per spec. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
 - Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
+- Treat OS `work-items/` as the lifecycle source of truth. Source repo `features/` or `.features/` folders are mirrors/artifact locations unless `config/work-lifecycle.yml` explicitly says otherwise.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
-{ssh_section}"""
+"""
 
 
 def project_tools(domain: str, project: str) -> str:
@@ -2314,13 +2256,13 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project src` | Create or repair the canonical `src` link. | The link stays scoped inside this project folder. |
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
-| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Use `--remove-files` only for clean in-project checkouts. |
 | `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
-| `agentic-os project work-item repair` | Backfill missing lifecycle packet files and log folders on legacy or partial work items. | Use before full validation when a `work-item.md`-only packet blocks the OS. |
-| `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and update the global active symlink container. | Use after thread closeout or stale-finalization leaves finished/documented packets under `02-active/`. |
-| `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view from active work items, worktrees, and automations. | Use after changing active work, worktree registry entries, or automation active-work rows. |
-| `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
+| `agentic-os context build --project {project}` | Build a deterministic project context packet. | Use for handoffs. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
+| `/add-spec` | Capture future work through doc-config and project work-item intake. | Primary command for proposed features/specs. |
+| `/auto-add-spec` | Create or update a spec packet for long OS-shaping requests. | Use before implementation continues. |
+| `/new-feature` | Deprecated alias for `/add-spec`. | Compatibility only. |
+| `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Compatibility only. |
 
 ## Local Paths
 
@@ -2329,8 +2271,10 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `src/` | Canonical source checkout for this project. |
 | `worktrees/` | Visible links to active worktrees. |
 | `config/` | Parsed project defaults and tool/workflow configuration. |
-| `ideas/` | Compatibility index for project ideas; do not use as the lifecycle source of truth. |
-| `work-items/01-intake/` | Raw project-known ideas, defaulting to `001_idea_slug.md`; expanded idea packets keep the same index as `001_idea_slug/`. |
+| `SPECS/` | User-facing future work, rough requests, proposed features, and reviewable specs. |
+| `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
+| `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
+| `work-items/01-intake/` | Internal lifecycle intake, defaulting to `001_spec_slug.md`; expanded packets keep the same index as `001_spec_slug/`. |
 | `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
 | `work-items/03-complete/` | Finished, documented, or archived work packets. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
@@ -2371,6 +2315,8 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "lane": lane_value,
                     "entrypoint": "AGENTS.md",
                     "canonical_source": "src",
+                    "specs": "SPECS",
+                    "worklogs": "worklogs",
                     "ideas": "work-items/01-intake",
                     "artifacts": "artifacts",
                 }
@@ -2397,6 +2343,8 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "enabled": True,
                     "source_of_truth": "agentic_os",
                     "work_items_root": "work-items",
+                    "specs_root": "SPECS",
+                    "worklogs_root": "worklogs",
                     "default_state": "captured",
                     "lanes": {
                         "intake": "01-intake",
@@ -2408,12 +2356,14 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                         "02-active": ["specified", "ready", "building", "validating", "blocked"],
                         "03-complete": ["finished", "documented", "archived"],
                     },
-                        "naming": {
-                            "intake_pattern": "{index:03d}_{slug}.md",
-                            "expanded_intake_pattern": "{index:03d}_{slug}/",
-                            "packet_pattern": "{index:03d}_{slug}/",
-                            "subtask_pattern": "{parent_index:03d}_{subindex:02d}_{slug}.md",
-                            "default_intake_format": "single_markdown",
+                    "naming": {
+                        "intake_pattern": "{index:03d}_{slug}.md",
+                        "expanded_intake_pattern": "{index:03d}_{slug}/",
+                        "packet_pattern": "{index:03d}_{slug}/",
+                        "subtask_pattern": "{parent_index:03d}_{subindex:02d}_{slug}.md",
+                        "default_intake_format": "single_markdown",
+                        "default_packet_capture_file": "SPEC.md",
+                        "legacy_capture_file": "IDEA.md",
                     },
                     "states": [
                         "captured",
@@ -2450,9 +2400,12 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
             {
                 "output_artifacts": {
                     "feature_root": "work-items/02-active/{ticket_or_slug}/artifacts",
+                    "spec_root": "SPECS/{ticket_or_slug}",
+                    "worklog_root": "worklogs/{ticket_or_slug}",
                     "project_artifacts": "artifacts",
                     "run_logs": "../../06-runs-and-logs/runs",
                     "front_matter": True,
+                    "source_repo_feature_root": "src/features/{ticket_or_slug}",
                     "legacy_source_feature_root": "src/.features/{ticket_or_slug}",
                     "source_of_truth": "agentic_os",
                 }
@@ -2524,22 +2477,11 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
 def worktrees_readme(project: str) -> str:
     return f"""# Worktrees: {project}
 
-This folder contains active project worktrees. Checkouts may live in-place as
-real directories under this folder, or stay where they already live with a
-visible symlink registered here.
+This folder contains visible links to active project worktrees. The source
+checkouts stay where they already live; this folder makes them discoverable from
+the project operating surface.
 
-This folder includes `.metadata_never_index` so macOS Spotlight does not index
-in-place worktree checkouts.
-
-Create an in-place worktree from a repo branch (the directory is named after
-the branch, slashes become hyphens, unless a name is given):
-
-```bash
-agentic-os project worktree create <domain> {project} [<name>] --repo <repo> --branch <branch>
-```
-
-Register an existing worktree (paths inside this folder register in place,
-without a symlink):
+Register a worktree:
 
 ```bash
 agentic-os project worktree add <domain> {project} <name> --path <path>
@@ -2571,6 +2513,37 @@ Use this table only as a compatibility index.
 
 | Date | Source | Idea | Next Step |
 | --- | --- | --- | --- |
+"""
+
+
+def worklogs_dir_name(project_root: Path) -> str:
+    uppercase_markers = {"PLANS", "BUILD_LOGS", "WORKLOGS"}
+    existing_names = {path.name for path in project_root.iterdir()} if project_root.exists() else set()
+    if uppercase_markers.intersection(existing_names):
+        return "WORKLOGS"
+    return "worklogs"
+
+
+def specs_readme(project: str) -> str:
+    return f"""# Specs: {project}
+
+Use this folder for user-facing future work, rough requests, proposed features,
+planning docs, and reviewable specs.
+
+The lifecycle source of truth remains `work-items/` unless project config
+explicitly declares another owner. Link specs to their work item instead of
+creating a second lifecycle record.
+"""
+
+
+def worklogs_readme(project: str) -> str:
+    return f"""# Worklogs: {project}
+
+Use this folder for human-readable work history, status receipts, and links to
+evidence.
+
+Raw command output, transcripts, async state, and large machine artifacts belong
+under lowercase `logs/` or `artifacts/`, not here.
 """
 
 
@@ -2813,14 +2786,16 @@ def ensure_project_operating_surface(
     root: str | Path | None = None,
     repo: str | None = None,
 ) -> None:
+    worklogs_dir = worklogs_dir_name(project_root)
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
+    ensure_dir(project_root / "SPECS", result)
+    ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
     for lane_name in ("01-intake", "02-active", "03-complete"):
         ensure_dir(project_root / "work-items" / lane_name, result)
     ensure_dir(project_root / "worktrees", result)
-    ensure_spotlight_never_index(project_root / "worktrees", result)
     write_project_file(
         project_root / "AGENTS.md",
         project_agents(domain, project, remotes=remotes),
@@ -2841,7 +2816,7 @@ def ensure_project_operating_surface(
     )
     write_project_file(
         project_root / "RULES.md",
-        project_rules(domain, project, remotes=remotes),
+        project_rules(domain, project),
         result,
         replace_markers=("Record local constraints, approval gates, safety boundaries",),
     )
@@ -2859,6 +2834,8 @@ def ensure_project_operating_surface(
     )
     write_file_once(project_root / "worktrees" / "README.md", worktrees_readme(project), result)
     write_file_once(project_root / "worktrees" / "index.yml", worktrees_index(project), result)
+    write_file_once(project_root / "SPECS" / "README.md", specs_readme(project), result)
+    write_file_once(project_root / worklogs_dir / "README.md", worklogs_readme(project), result)
     write_file_once(project_root / "ideas" / "README.md", ideas_readme(project), result)
     write_file_once(project_root / "ideas" / "raw-ideas.md", ideas_raw(project), result)
     for filename in PROJECT_CONFIG_FILES:
@@ -3092,12 +3069,6 @@ def link_project_remote(
         result,
         replace_markers=("Describe the local room, source systems, routing hints",),
     )
-    write_project_file(
-        project_root / "RULES.md",
-        project_rules(domain, project, remotes=all_remotes),
-        result,
-        replace_markers=("Record local constraints, approval gates, safety boundaries",),
-    )
     return result
 
 
@@ -3155,23 +3126,15 @@ def write_project_worktree_index(project_root: Path, data: dict[str, object], re
     result.updated.append(index_path) if before else result.created.append(index_path)
 
 
-def project_worktree_link_policy(entries: list[dict[str, object]]) -> str:
-    policies = {str(entry.get("link_policy") or "symlink_to_external_worktree") for entry in entries}
-    if entries and policies == {"in_place_worktree"}:
-        return "in_place_worktree"
-    return "symlink_to_external_worktree"
-
-
 def sync_project_worktree_config(project_root: Path, index_data: dict[str, object], result: ScaffoldResult) -> None:
     config_path = project_root / "config" / "worktrees.yml"
     before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    entries = [entry for entry in index_data.get("worktrees") or [] if isinstance(entry, dict)]
     after = yaml.safe_dump(
         {
             "worktrees": {
                 "directory": "worktrees",
                 "index": "worktrees/index.yml",
-                "link_policy": project_worktree_link_policy(entries),
+                "link_policy": "symlink_to_external_worktree",
                 "registered": index_data.get("worktrees") or [],
             }
         },
@@ -3195,7 +3158,7 @@ def register_project_worktree(
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
-    name = validate_worktree_name(name)
+    name = validate_name(name, "worktree")
     os_root = expand_path(root)
     project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
@@ -3206,14 +3169,7 @@ def register_project_worktree(
 
     result = onboard_project(os_root, domain, project)
     link_path = project_root / "worktrees" / name
-    worktrees_root = (project_root / "worktrees").resolve()
-    in_place = target.is_relative_to(worktrees_root)
-    if in_place:
-        # The checkout itself lives under worktrees/; register it without a symlink.
-        if target != worktrees_root / name:
-            raise ValueError(f"in-place worktree path must be the worktrees/{name} directory itself: {target}")
-        result.skipped.append(link_path)
-    elif link_path.is_symlink():
+    if link_path.is_symlink():
         if link_path.resolve() == target:
             result.skipped.append(link_path)
         elif force:
@@ -3235,7 +3191,6 @@ def register_project_worktree(
         "path": str(target),
         "link": f"worktrees/{name}",
         "status": "active",
-        "link_policy": "in_place_worktree" if in_place else "symlink_to_external_worktree",
     }
     replaced = False
     for offset, existing in enumerate(entries):
@@ -3250,57 +3205,6 @@ def register_project_worktree(
     write_project_worktree_index(project_root, index_data, result)
     sync_project_worktree_config(project_root, index_data, result)
     return result
-
-
-def _default_git_runner(args: list[str], *, timeout: int = 60) -> object:
-    import subprocess  # noqa: PLC0415
-
-    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)  # noqa: S603
-
-
-def create_project_worktree(
-    root: str | Path,
-    domain: str,
-    project: str,
-    name: str | None = None,
-    *,
-    repo: str | Path,
-    branch: str,
-    runner: object | None = None,
-) -> ScaffoldResult:
-    """Create an in-place git worktree under the project worktrees directory and register it.
-
-    The worktree directory is named after the branch (slashes become hyphens)
-    unless an explicit name is given.
-    """
-    domain = normalize_domain(domain)
-    project = validate_name(project, "project")
-    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
-    os_root = expand_path(root)
-    project_root = domain_path(os_root, domain) / "02-projects" / project
-    if not (project_root / "project.yml").is_file():
-        raise ValueError(f"project not found: {domain}/{project}")
-    repo_path = expand_path(repo)
-    if not repo_path.is_dir():
-        raise ValueError(f"worktree repo must be an existing local directory: {repo_path}")
-    destination = project_root / "worktrees" / name
-    if destination.is_symlink() or destination.exists():
-        raise ValueError(f"worktree destination already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    run = runner or _default_git_runner
-    probe = run(["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
-    if probe.returncode == 0:
-        command = ["git", "-C", str(repo_path), "worktree", "add", str(destination), branch]
-    else:
-        command = ["git", "-C", str(repo_path), "worktree", "add", "-b", branch, str(destination)]
-    created = run(command)
-    if created.returncode != 0:
-        detail = (created.stderr or created.stdout or "").strip()
-        raise ValueError(f"git worktree add failed for {destination}: {detail}")
-    if not destination.is_dir():
-        raise ValueError(f"git worktree add did not produce a directory: {destination}")
-    return register_project_worktree(os_root, domain, project, name, path=destination)
 
 
 def create_project(
@@ -3348,429 +3252,6 @@ def create_project(
     append_project_source_refs(project_root / "source-map.md", repo, notion, jira, result)
     if remotes:
         append_project_remote_refs(project_root / "source-map.md", remotes, result)
-    return result
-
-
-def programs_readme(scope: str) -> str:
-    return f"""# Programs: {titleize_name(scope)}
-
-Programs are ownership and context bundles for discrete OS capabilities. A program
-can contain skills, commands, workflows, automations, docs, templates, state, and
-external surfaces. Workflows and automations still execute the work; programs
-make CRUD-style changes easy to route by name.
-
-## Program Types
-
-| Type | Path | Use When |
-| --- | --- | --- |
-| `OSProgram` | `harness/shared_factory/00-programs/<program>/` | The capability should ship with Genomes Agentic OS and be reusable across installs. |
-| `InstanceOSProgram` | `<domain>/00-programs/<program>/` | The capability belongs only to this installed OS instance or domain. |
-
-## Folder Format
-
-```text
-<program>/
-  AGENTS.md
-  ROUTER.md
-  CONTEXT.md
-  RULES.md
-  TOOLS.md
-  program.md
-  components.yml
-  context-pack.md
-  crud.md
-  documentation.md
-  runbook.md
-  tests.md
-  worklog.md
-  artifacts/
-```
-
-## Update Rule
-
-Any change to an OS-level feature must update the matching program docs, routing
-context, validation evidence, and filesystem/Notion documentation projections.
-"""
-
-
-def program_agent_entrypoint(program_type: str, name: str) -> str:
-    return f"""# Agent Entry Point: {name}
-
-This layer owns the `{name}` {program_type}.
-
-## Startup Loop
-
-1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `program.md`.
-2. Classify the request as create, read, update, delete, investigate, operate,
-   validate, document, or promote.
-3. Load `components.yml` and only the linked skills, commands, workflows,
-   automations, docs, templates, run logs, and state needed for that operation.
-4. Make the requested change across every affected component, not just the file
-   named in the prompt.
-5. Update `documentation.md`, `worklog.md`, and validation receipts before
-   handoff.
-
-## Precedence
-
-Active user instructions win. The strictest safety, approval, privacy, Notion,
-secret-handling, and destructive-action rule wins across all loaded files.
-"""
-
-
-def program_router(program_type: str, name: str) -> str:
-    return f"""# Router: {name}
-
-Use this router when a prompt names `{name}` or any alias listed in `program.md`.
-
-## CRUD Routes
-
-| Intent | Load First | Also Inspect | Required Output |
-| --- | --- | --- | --- |
-| Create capability surface | `program.md`, `components.yml`, `documentation.md` | command docs, skill adapters, workflow/automation specs | scaffolded files plus updated docs |
-| Read or explain behavior | `context-pack.md`, `components.yml` | source scripts, run logs, Notion/database links | concise source-backed explanation |
-| Update or tweak behavior | `crud.md`, `components.yml`, owning component specs | scripts, commands, schedules, templates, tests | changed component plus docs/worklog/tests |
-| Delete or retire | `RULES.md`, `components.yml`, `runbook.md` | schedules, Notion pages, archives | explicit approval before destructive action |
-| Investigate failure | `runbook.md`, `tests.md`, latest logs/state | external source receipts | root cause, fix, validation receipt |
-| Promote to shared OS | `documentation.md`, `components.yml` | source package docs/templates/tests | source-package patch and migration notes |
-
-## Routing Rules
-
-- Treat the program as the ownership boundary for named capability changes.
-- Route to the narrowest linked workflow, automation, skill, command, or script
-  only after this program context is loaded.
-- Update surrounding docs, tests, routing, schedules, and registries when a
-  behavior change affects them.
-- Never mutate external systems unless the program rules and linked component
-  permissions allow it.
-"""
-
-
-def program_context(program_type: str, name: str) -> str:
-    return f"""# Context: {name}
-
-`{name}` is a {program_type}: a discrete OS capability that may span multiple
-execution and documentation surfaces.
-
-## Load Order
-
-1. `program.md` for purpose, aliases, owner, status, and linked surfaces.
-2. `components.yml` for canonical component paths.
-3. `crud.md` for how create/read/update/delete work should propagate.
-4. `runbook.md` and `tests.md` for operation and validation.
-5. Linked component files only as needed.
-
-## Context Budget
-
-Load summaries first. Use targeted reads or context-mode for large logs, source
-trees, Notion exports, generated artifacts, and run transcripts.
-
-## Documentation Contract
-
-Every material OS-level feature change must update:
-
-- Filesystem docs in this program folder.
-- Linked command/skill/workflow/automation docs affected by the change.
-- Notion projection notes when this program has a Notion surface.
-- `worklog.md` with what changed and how it was validated.
-"""
-
-
-def program_rules(program_type: str, name: str) -> str:
-    return f"""# Rules: {name}
-
-The strictest applicable rule wins across parent domain, shared factory,
-component, and program files.
-
-## Program Boundaries
-
-- This folder owns context and documentation for the `{name}` {program_type}.
-- Do not update a linked skill, command, workflow, automation, schedule, Notion
-  database, script, or template without updating this program's documentation.
-- Do not create undocumented OS-level behavior. New OS features must have a
-  program, workflow, automation, or project work item that explains ownership,
-  context routing, validation, and docs projection.
-
-## Safety
-
-- Secrets stay out of prompts, docs, logs, code, generated config, and Notion.
-- External writes, destructive actions, production changes, billing/legal
-  changes, and customer-visible output require the approval gates declared by
-  the linked component.
-"""
-
-
-def program_tools(program_type: str, name: str) -> str:
-    return f"""# Tools: {name}
-
-List the tools, commands, skills, scripts, and external systems this {program_type}
-is allowed to use.
-
-## Skills
-
-| Skill | Use When | Source |
-| --- | --- | --- |
-| `program-builder` | Creating or updating OSProgram / InstanceOSProgram contracts. | `harness/skills/program-builder/SKILL.md` |
-| `os-authoring-guard` | Editing OS commands, skills, workflows, automations, tools, registries, or templates. | `harness/skills/os-authoring-guard/SKILL.md` |
-
-## Commands
-
-| Command | Use When | Notes |
-| --- | --- | --- |
-| `agentic-os program create` | Create a shared OSProgram. | Writes under `harness/shared_factory/00-programs/`. |
-| `agentic-os instance-program create` | Create an instance/domain program. | Writes under `<domain>/00-programs/`. |
-
-## External Systems
-
-| System | Access | Boundary |
-| --- | --- | --- |
-|  |  |  |
-"""
-
-
-def program_components(name: str, program_type: str) -> str:
-    return yaml.safe_dump(
-        {
-            "schema_version": 1,
-            "name": name,
-            "type": program_type,
-            "aliases": [],
-            "components": {
-                "skills": [],
-                "commands": [],
-                "workflows": [],
-                "automations": [],
-                "scripts": [],
-                "templates": [],
-                "documentation": [],
-                "notion": [],
-                "schedules": [],
-                "state": [],
-            },
-            "context_routes": {
-                "create": ["program.md", "components.yml", "documentation.md"],
-                "read": ["context-pack.md", "components.yml"],
-                "update": ["crud.md", "components.yml", "tests.md"],
-                "delete": ["RULES.md", "components.yml", "runbook.md"],
-                "investigate": ["runbook.md", "tests.md", "worklog.md"],
-            },
-            "documentation_required": True,
-        },
-        sort_keys=False,
-    )
-
-
-def program_scaffold_content(
-    name: str,
-    filename: str,
-    *,
-    program_type: str,
-    domain: str | None = None,
-) -> str:
-    scope = domain or "shared_factory"
-    created = datetime.now(timezone.utc).date().isoformat()
-    if filename == "program.md":
-        return f"""# {program_type}: {name}
-
-## Status
-
-- Status: scaffolded
-- Owner: OS Owner
-- Created: {created}
-- Scope: `{scope}`
-- Documentation required: yes
-
-## Purpose
-
-Explain what discrete OS capability this program owns and why it exists.
-
-## Aliases
-
-- `{name}`
-
-## Owned Surfaces
-
-List every skill, command, workflow, automation, script, template, Notion page or
-database, schedule, state file, and documentation surface this program owns.
-Keep `components.yml` as the machine-readable source of truth.
-
-## Change Policy
-
-When updating this program, update all affected component docs, this program
-context, validation evidence, and Notion/filesystem documentation projections.
-"""
-    if filename == "components.yml":
-        return program_components(name, program_type)
-    if filename == "context-pack.md":
-        return f"""# Context Pack: {name}
-
-## Load First
-
-1. `program.md`
-2. `components.yml`
-3. `crud.md`
-4. `runbook.md`
-5. `tests.md`
-
-## Load By Operation
-
-| Operation | Additional Context |
-| --- | --- |
-| explain | linked docs, latest successful run log |
-| investigate | latest logs, state files, source scripts |
-| update | target component files plus documentation surfaces |
-| schedule or automation change | automation spec, permissions, Codex automation config, logs |
-| Notion change | verified workspace, parent/database URL, schema, sync logs |
-"""
-    if filename == "crud.md":
-        return f"""# CRUD Contract: {name}
-
-## Create
-
-- Add the new component surface.
-- Register it in `components.yml`.
-- Add routing/docs/tests before use.
-
-## Read
-
-- Explain behavior from `program.md`, `components.yml`, source scripts, and
-  latest receipts.
-- Distinguish user-facing behavior from internal implementation.
-
-## Update
-
-- Patch the owning component.
-- Update linked docs, commands, skills, workflows, automations, templates,
-  schedules, state docs, and tests affected by the change.
-- Record validation in `worklog.md`.
-
-## Delete / Retire
-
-- Require explicit approval before destructive changes.
-- Disable schedules before removing files or external surfaces.
-- Archive docs and write final state.
-"""
-    if filename == "documentation.md":
-        return f"""# Documentation Map: {name}
-
-## Filesystem Documentation
-
-| Surface | Path | Update Trigger |
-| --- | --- | --- |
-| Program contract | `program.md` | Any ownership or behavior change |
-| Components registry | `components.yml` | Any linked surface change |
-| CRUD contract | `crud.md` | Any routing/update policy change |
-| Runbook/tests | `runbook.md`, `tests.md` | Any operation or validation change |
-
-## Notion Projection
-
-| Page / Database | URL / ID | Update Trigger |
-| --- | --- | --- |
-|  |  |  |
-
-## Global Rule
-
-Every new OS-level feature or program behavior change must be documented before
-handoff.
-"""
-    if filename == "runbook.md":
-        return f"""# Runbook: {name}
-
-## Investigate
-
-1. Load the program startup loop.
-2. Read `components.yml`.
-3. Inspect latest logs/state for linked automations or workflows.
-4. Identify whether the issue is routing, source data, permissions, schedule,
-   code, documentation drift, or external system access.
-
-## Update
-
-1. Patch the narrowest owning component.
-2. Update surrounding docs and registries.
-3. Run focused validation.
-4. Record the receipt in `worklog.md`.
-
-## Recover
-
-- Preserve failing inputs and logs.
-- Disable schedules only when repeated writes would cause harm.
-- Escalate before destructive external changes.
-"""
-    if filename == "tests.md":
-        return f"""# Tests: {name}
-
-## Static Checks
-
-- `components.yml` lists every owned surface.
-- `program.md`, `crud.md`, `documentation.md`, and `runbook.md` are current.
-- Linked command/skill/workflow/automation docs match implementation.
-
-## Behavior Checks
-
-- Read/explain path can answer from source-backed context.
-- Update path changes all affected surfaces.
-- Documentation updates accompany behavior changes.
-"""
-    return f"""# Worklog: {name}
-
-| Date | Actor | Change | Validation | Follow-up |
-| --- | --- | --- | --- | --- |
-"""
-
-
-def create_program(root: str | Path, name: str) -> ScaffoldResult:
-    name = validate_name(name, "program")
-    os_root = expand_path(root)
-    result = ScaffoldResult()
-    programs_root = shared_factory_path(os_root, "00-programs")
-    ensure_dir(programs_root, result)
-    write_file_once(programs_root / "README.md", programs_readme("shared_factory"), result)
-    program_root = programs_root / name
-    ensure_dir(program_root, result)
-    ensure_dir(program_root / "artifacts", result)
-    write_file_once(program_root / "AGENTS.md", program_agent_entrypoint("OSProgram", name), result)
-    write_file_once(program_root / "ROUTER.md", program_router("OSProgram", name), result)
-    write_file_once(program_root / "CONTEXT.md", program_context("OSProgram", name), result)
-    write_file_once(program_root / "RULES.md", program_rules("OSProgram", name), result)
-    write_file_once(program_root / "TOOLS.md", program_tools("OSProgram", name), result)
-    for filename in PROGRAM_FILES:
-        write_file_once(program_root / filename, program_scaffold_content(name, filename, program_type="OSProgram"), result)
-    ensure_codex_config(program_root, "workflow_or_task", result)
-    return result
-
-
-def create_instance_program(root: str | Path, domain: str, name: str) -> ScaffoldResult:
-    domain = normalize_domain(domain)
-    name = validate_name(name, "instance program")
-    result = create_domain(root, domain)
-    domain_root = domain_path(root, domain)
-    programs_root = domain_root / "00-programs"
-    ensure_dir(programs_root, result)
-    write_file_once(programs_root / "README.md", programs_readme(domain), result)
-    program_root = programs_root / name
-    ensure_dir(program_root, result)
-    ensure_dir(program_root / "artifacts", result)
-    write_file_once(program_root / "AGENTS.md", program_agent_entrypoint("InstanceOSProgram", name), result)
-    write_file_once(program_root / "ROUTER.md", program_router("InstanceOSProgram", name), result)
-    write_file_once(program_root / "CONTEXT.md", program_context("InstanceOSProgram", name), result)
-    write_file_once(program_root / "RULES.md", program_rules("InstanceOSProgram", name), result)
-    write_file_once(program_root / "TOOLS.md", program_tools("InstanceOSProgram", name), result)
-    for filename in PROGRAM_FILES:
-        write_file_once(
-            program_root / filename,
-            program_scaffold_content(name, filename, program_type="InstanceOSProgram", domain=domain),
-            result,
-        )
-    ensure_codex_config(program_root, "workflow_or_task", result)
-    append_control_signal(
-        domain_root,
-        "Program Status",
-        f"`{name}`",
-        "scaffolded",
-        f"`00-programs/{name}/`",
-        "InstanceOSProgram scaffold owns context routing for a discrete capability.",
-        result,
-    )
     return result
 
 

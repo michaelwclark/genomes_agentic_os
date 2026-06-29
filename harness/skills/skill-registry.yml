@@ -45,6 +45,19 @@ skills:
     bootstrap: false
     purpose: >
       Decide whether a workflow should become an always-on automation.
+  - id: quiet-async-runner
+    title: Quiet Async Runner
+    source_path: harness/skills/quiet-async-runner
+    installed_path: shared_factory/05-knowledge/skills/quiet-async-runner
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Run long commands, tests, Docker setup, PR checks, and watchers through
+      artifact-backed async state instead of chat polling.
   - id: context-pack-builder
     title: Context Pack Builder
     source_path: harness/skills/context-pack-builder
@@ -208,3 +221,92 @@ skills:
     bootstrap: false
     purpose: >
       Create reusable workflow specs inside the OS.
+  - id: doc-config-router
+    title: Doc Config Router
+    source_path: harness/skills/doc-config-router
+    installed_path: shared_factory/05-knowledge/skills/doc-config-router
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Route document captures to configured Agentic OS filesystem and Notion
+      destinations before creating pages, work-item files, or knowledge docs.
+  - id: spec-intake-router
+    title: Spec Intake Router
+    source_path: harness/skills/spec-intake-router
+    installed_path: shared_factory/05-knowledge/skills/spec-intake-router
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Capture new spec and future-work intake through doc-config routing, project
+      work items, and optional Notion projection.
+  - id: feature-intake-router
+    title: Feature Intake Router
+    source_path: harness/skills/feature-intake-router
+    installed_path: shared_factory/05-knowledge/skills/feature-intake-router
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Deprecated compatibility alias for spec-intake-router.
+  - id: bug-intake-router
+    title: Bug Intake Router
+    source_path: harness/skills/bug-intake-router
+    installed_path: shared_factory/05-knowledge/skills/bug-intake-router
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Capture bug reports and missed enforcement through doc-config routing,
+      project work items, and optional Notion projection.
+  - id: auto-spec-intake
+    title: Auto Spec Intake
+    source_path: harness/skills/auto-spec-intake
+    installed_path: shared_factory/05-knowledge/skills/auto-spec-intake
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Create or update local spec packets for long OS-shaping requests before
+      implementation work proceeds.
+  - id: auto-feature-intake
+    title: Auto Feature Intake
+    source_path: harness/skills/auto-feature-intake
+    installed_path: shared_factory/05-knowledge/skills/auto-feature-intake
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Deprecated compatibility alias for auto-spec-intake.
+  - id: os-authoring-guard
+    title: OS Authoring Guard
+    source_path: harness/skills/os-authoring-guard
+    installed_path: shared_factory/05-knowledge/skills/os-authoring-guard
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Apply compact OS authoring rules to commands, skills, workflows,
+      automations, tools, registries, runtime templates, and worktrees.

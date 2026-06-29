@@ -1,31 +1,32 @@
 # OS Capture Plan
 
-Use when a future idea, implementation gap, customer OS need, or validation
+Use when a future spec, implementation gap, customer OS need, or validation
 finding should become durable OS planning material.
 
 ## Where To Put New Plans
 
 | Plan Type | Source Repo Location | Installed Location |
 | --- | --- | --- |
-| OS product feature or roadmap item | Do not create a source-repo planning file | Installed project `SPECS/<slug>/SPEC.md` |
-| Customer-specific OS need | Do not create a source-repo planning file | Customer domain inbox or project `work-items/01-intake/` |
-| Loose idea not yet scoped | Do not create a source-repo planning file | Installed domain `01-inbox/raw-ideas.md` |
-| Already-scoped idea ready to plan | Do not create a source-repo planning file | Installed project `SPECS/<slug>/SPEC.md` or `work-items/02-active/<slug>/` |
+| OS product spec or roadmap item | `SPECS/<NNN>-<slug>.md` in the source repo, with legacy `PLANS/` still readable | `shared_factory/05-knowledge/plans/` |
+| Customer-specific OS need | Customer domain inbox or project folder | Link the reusable pattern back to shared plans |
+| Loose request not yet scoped | `shared_factory/01-inbox/raw-ideas.md` | — |
+| Already-scoped spec ready to plan | `shared_factory/05-knowledge/plans/<NNN>-<slug>.md` | — |
 
 ## Naming Convention
 
-Specs use the installed OS project naming convention. Allocate the destination
-through the project work-item/spec intake surface before writing; do not let
-parallel agents pick the same number or slug.
+Specs use a sequential three-digit number prefix: `NNN-slug-with-dashes.md`.
+Read the highest existing number in `SPECS/`, legacy `PLANS/`, or `shared_factory/05-knowledge/plans/`
+and increment by one. Allocate the number before writing; do not let parallel
+agents pick the same number.
 
 ## Procedure
 
-1. Route the idea to a domain if it is domain-specific.
-2. If it is reusable OS product work, record it under the installed OS project
-   `SPECS/` or `work-items/`.
+1. Route the request to a domain if it is domain-specific.
+2. If it is reusable OS product work, record it under `shared_factory/05-knowledge/plans/`.
 3. If it is customer-specific, record it in the customer domain inbox or project folder
    and link the reusable pattern back to shared plans.
-4. Use `SPEC.md` as the raw-capture plus refined-spec file.
+4. Use the `templates/planning/feature-spec.md` template structure until a
+   dedicated spec template replaces it.
 5. Capture problem, user outcome, scope, non-goals, affected surfaces,
    acceptance criteria, validation, and rollout notes.
 6. Update active work only when the plan is ready to build.
@@ -43,5 +44,5 @@ parallel agents pick the same number or slug.
 
 ## Output
 
-A spec/work-item path in the installed OS project, referencing related specs or
-work items where useful.
+A numbered plan file at the correct location, referencing relevant prior plans
+under `Relationship To Other Plans`.

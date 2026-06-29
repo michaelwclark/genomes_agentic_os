@@ -52,7 +52,6 @@ WORK_ITEM_STATE_LANES = {
 }
 
 WORK_ITEM_MARKDOWN_FILES = (
-    "IDEA.md",
     "SPEC.md",
     "PLAN.md",
     "INVESTIGATION.md",
@@ -74,8 +73,8 @@ WORK_ITEM_REQUIRED_PATHS = (
 )
 
 STATE_CONTEXT_FILES = {
-    "captured": ("IDEA.md", "work.yml"),
-    "triaged": ("JUDGMENT.md", "work.yml"),
+    "captured": ("SPEC.md", "work.yml"),
+    "triaged": ("SPEC.md", "JUDGMENT.md", "work.yml"),
     "specified": ("SPEC.md", "JUDGMENT.md", "work.yml"),
     "ready": ("PLAN.md", "NEXT.md", "work.yml"),
     "building": ("WORKLOG.md", "INVESTIGATION.md", "NEXT.md", "work.yml"),
@@ -99,6 +98,10 @@ SOURCE_FEATURE_CONTEXT_FILES = (
     "SUMMARY.md",
     "MEMORY.md",
 )
+
+LEGACY_FILE_ALIASES = {
+    "SPEC.md": ("IDEA.md",),
+}
 
 
 def utc_timestamp() -> str:
@@ -259,8 +262,8 @@ def render_work_metadata(
         "spec_destination": config["spec_destination"],
         "external_tracker": config["external_tracker"],
         "files": {
-            "idea": "IDEA.md",
             "spec": "SPEC.md",
+            "legacy_idea": "IDEA.md",
             "plan": "PLAN.md",
             "investigation": "INVESTIGATION.md",
             "judgment": "JUDGMENT.md",
@@ -522,6 +525,12 @@ def work_item_context_files(work_item_root: Path, state: str) -> list[Path]:
         path = work_item_root / filename
         if filename == "work.yml" and not path.is_file() and (work_item_root / "feature.yml").is_file():
             path = work_item_root / "feature.yml"
+        elif not path.is_file():
+            for alias in LEGACY_FILE_ALIASES.get(filename, ()):
+                alias_path = work_item_root / alias
+                if alias_path.is_file():
+                    path = alias_path
+                    break
         paths.append(path)
     return paths
 

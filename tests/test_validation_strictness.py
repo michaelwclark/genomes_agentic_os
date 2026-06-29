@@ -144,6 +144,19 @@ def test_validate_strict_cli_flag_passes_on_fresh_install(tmp_path: Path, capsys
     assert exit_code == 0, f"strict violations on fresh install: {capsys.readouterr().out}"
 
 
+def test_validate_warns_on_legacy_project_buckets(tmp_path: Path) -> None:
+    """Project-level legacy planning/work-history buckets warn without failing."""
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "bucket_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "bucket_project"
+    (project_root / "BUILD_LOGS").mkdir()
+
+    result = validate_root(root)
+
+    assert result.ok
+    assert any("legacy project bucket present" in warning for warning in result.warnings)
+
+
 def test_validate_strict_detects_schema_violation(tmp_path: Path) -> None:
     """validate --strict reports a schema violation when a registry file is malformed."""
     root = tmp_path / "agentic_os"
@@ -219,6 +232,38 @@ def test_validate_composio_tools_registry_file_is_required(tmp_path: Path) -> No
     _init_root(root)
     composio_path = registries(root) / "composio-tools.yml"
     assert composio_path.is_file(), "composio-tools.yml must exist after init"
+
+
+def test_validate_accepts_runtime_registered_active_automation(tmp_path: Path) -> None:
+    """An active automation may be exposed by a runtime schedule registry entry."""
+    root = tmp_path / "agentic_os"
+    assert main(["automation", "create", "los", "engineering", "security_scan", "--root", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+
+    automation_path = root / "los" / "04-automations" / "engineering" / "security_scan" / "automation.md"
+    content = automation_path.read_text(encoding="utf-8")
+    content = content.replace("| Status | `draft` |", "| Status | `active` |")
+    content = content.replace("| Level | `observe` |", "| Level | `execute_guarded` |")
+    automation_path.write_text(content, encoding="utf-8")
+
+    runtime_path = harness(root) / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
+    runtime = yaml.safe_load(runtime_path.read_text(encoding="utf-8"))
+    runtime["schedules"].append(
+        {
+            "id": "los_engineering_security_scan",
+            "display_name": "LOS security scan",
+            "enabled": True,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os automation run los engineering security_scan --root <root>",
+            "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
+        }
+    )
+    runtime_path.write_text(yaml.safe_dump(runtime, sort_keys=False), encoding="utf-8")
+
+    result = validate_root(root)
+    assert not any("automation `security_scan` missing matching" in error for error in result.errors)
 
 
 # ---------------------------------------------------------------------------

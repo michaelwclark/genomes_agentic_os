@@ -13,15 +13,10 @@ from .automation_ops import (
     format_automation_check,
     set_automation_maturity,
 )
-from .automation_control import (
-    automation_control_doctor,
-    format_automation_control_result,
-    list_automation_control,
-    run_automation_control,
-)
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
+from .doc_config import build_doc_route_plan, doc_config_doctor, ensure_doc_config
 from .doctor import doctor, doctor_all, format_doctor_result
 from .event_graph import (
     append_event,
@@ -37,22 +32,13 @@ from .event_graph import (
 )
 from .hook_ops import hook_doctor, hook_sync
 from .losmon import format_losmon_result, losmon_validate
-from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, repair_project_work_item
-from .lifecycle import finalize_lingering_work_items, sync_active_container
+from .lifecycle import WORK_LIFECYCLE_STATES, create_project_work_item
 from .migrations import format_migration_result, migrate_apply, migrate_plan
-from .notion_sync import (
-    apply_active_work_sync,
-    apply_bootstrap_plan,
-    apply_sync_plan,
-    build_active_work_sync_plan,
-    build_bootstrap_plan,
-    build_sync_plan,
-    format_sync_result,
-)
+from .notion_org import notion_org_doctor
+from .notion_sync import apply_bootstrap_plan, apply_sync_plan, build_bootstrap_plan, build_sync_plan, format_sync_result
 from .plans import capture_plan, format_plan_result
-from .ps_ops import format_ps_result, ps_snapshot
 from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
-from .routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
+from .routing import build_context, context_from_here, format_packet, route_request
 from .runtime_ops import (
     apply_runtime_tracking,
     build_runtime_tracking_plan,
@@ -72,11 +58,9 @@ from .self_improvement import (
     approve_self_improvement_proposal,
     format_self_improvement_result,
     list_self_improvement_proposals,
-    process_self_improvement_actions,
     promote_self_improvement_proposal,
     reject_self_improvement_proposal,
     run_self_improvement,
-    run_self_improvement_morning_report,
     self_improvement_status,
     show_self_improvement_proposal,
 )
@@ -85,10 +69,7 @@ from .scaffold import (
     DEFAULT_PROJECTS_SOURCE,
     create_automation,
     create_domain,
-    create_instance_program,
-    create_program,
     create_project,
-    create_project_worktree,
     create_run_log,
     create_workflow,
     install_docs,
@@ -100,7 +81,6 @@ from .scaffold import (
 )
 from .hosts import upsert_host, list_hosts
 from .remote_ops import sync_project_remote
-from .remote_mounts import exec_remote, mount_remote, unmount_remote
 from .source_watch import (
     create_watch_source,
     doctor_connected_system,
@@ -111,13 +91,6 @@ from .source_watch import (
     parse_external_refs,
     poll_watch_source,
     run_due_watch_sources,
-)
-from .thread_closeout import (
-    DEFAULT_STALE_DAYS,
-    WORK_LEVELS,
-    close_thread,
-    format_thread_closeout_result,
-    stale_finalize_threads,
 )
 from .metrics_ops import format_metrics_result, metrics_refresh
 from .update_ops import (
@@ -135,12 +108,6 @@ from .update_ops import (
     update_rollback,
     update_status,
 )
-from .capability_registry import (
-    REGISTRY_FILES,
-    inventory_markdown,
-    load_registry,
-    registry_payloads,
-)
 from .validate import StrictFinding, validate_root, validate_schemas_strict
 from .workflow_ops import check_workflow, close_run_log, format_findings
 
@@ -148,108 +115,9 @@ from .workflow_ops import check_workflow, close_run_log, format_findings
 DEFAULT_ROOT = "~/agentic_os"
 
 
-def handle_capability_list(args: argparse.Namespace) -> int:
-    """List capabilities from installed registry files, optionally filtered by type."""
-    root = Path(args.root).expanduser()
-    cap_type = getattr(args, "type", None)
-    payloads = registry_payloads()
-    if cap_type:
-        if cap_type not in payloads:
-            print(f"Unknown capability type '{cap_type}'. Known types: {', '.join(sorted(payloads))}")
-            return 1
-        types_to_show = {cap_type: payloads[cap_type]}
-    else:
-        types_to_show = payloads
-    for name, payload in types_to_show.items():
-        collection_key = next(iter(payload))
-        entries = payload[collection_key]
-        print(f"\n## {name} ({len(entries)})")
-        for entry in entries:
-            entry_id = entry.get("id") or entry.get("command") or "(unknown)"
-            description = entry.get("description", "")
-            print(f"  {entry_id}" + (f" — {description}" if description else ""))
-    installed_path = root / REGISTRY_FILES.get("capabilities", "harness/registries/capabilities.yml")
-    if installed_path.exists():
-        installed = load_registry(installed_path, "capabilities")
-        if installed:
-            print(f"\n## installed capabilities ({len(installed)})")
-            for cap in installed:
-                ref = cap.get("ref", "")
-                cap_type_label = cap.get("type", "")
-                print(f"  {ref}" + (f" [{cap_type_label}]" if cap_type_label else ""))
-    return 0
-
-
-def handle_capability_inventory(args: argparse.Namespace) -> int:
-    """Show or regenerate INVENTORY.md from installed registry state."""
-    root = Path(args.root).expanduser()
-    content = inventory_markdown()
-    if getattr(args, "regenerate", False):
-        from .scaffold import harness_path, write_file_once
-        from .scaffold import ScaffoldResult
-
-        result = ScaffoldResult()
-        write_file_once(harness_path(root) / "INVENTORY.md", content, result)
-        for msg in result.messages():
-            print(msg)
-        if not result.messages():
-            print("INVENTORY.md already up to date")
-    else:
-        inventory_path = root / "harness" / "INVENTORY.md"
-        if inventory_path.exists():
-            print(inventory_path.read_text(encoding="utf-8"))
-        else:
-            print(content)
-    return 0
-
-
-def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="Scaffold and validate an Agentic OS root.")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="agentic-os", description="Scaffold and validate an Agentic OS root.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    def add_thread_closeout_args(closeout_parser: argparse.ArgumentParser, mode: str) -> None:
-        closeout_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-        closeout_parser.add_argument("--domain", help="Domain that owns the work item.")
-        closeout_parser.add_argument("--project", help="Project that owns the work item.")
-        closeout_parser.add_argument("--work-item", help="Work item id, slug, title, or ticket.")
-        closeout_parser.add_argument("--thread-id", help="Stable closeout id. Defaults to a timestamped id.")
-        closeout_parser.add_argument("--work-level", choices=WORK_LEVELS, help="Closeout work level.")
-        closeout_parser.add_argument("--summary", help="One-line closeout result.")
-        closeout_parser.add_argument("--next-action", help="Concrete next action, or None.")
-        closeout_parser.add_argument("--validation", action="append", default=[], help="Validation receipt to record.")
-        closeout_parser.add_argument("--artifact", action="append", default=[], help="Artifact path or identifier to record.")
-        closeout_parser.add_argument("--receipt", action="append", default=[], help="Command, PR, ticket, or external receipt.")
-        closeout_parser.add_argument("--memory-receipt", action="append", default=[], help="Durable memory write or skip receipt.")
-        closeout_parser.add_argument("--notion-url", help="Verified Genome's Notion projection URL to record.")
-        closeout_parser.add_argument("--notion-warning", help="Non-blocking Notion projection warning to record.")
-        closeout_parser.add_argument(
-            "--verified-notion-workspace",
-            help="Workspace verified for a supplied Notion projection. Must be Genome's Notion.",
-        )
-        closeout_parser.add_argument("--skip-notion", action="store_true", help="Record Notion projection as skipped.")
-        closeout_parser.add_argument(
-            "--allow-blocked-archive",
-            action="store_true",
-            help="Allow archive mode even when --next-action is unresolved.",
-        )
-        closeout_parser.add_argument("--request", help="Optional request text used for work-item disambiguation.")
-        closeout_parser.add_argument("--cwd", help="Current working directory for context detection. Defaults to process cwd.")
-        closeout_parser.set_defaults(handler=handle_thread_closeout, closeout_mode=mode)
-
-    def add_stale_finalize_args(stale_parser: argparse.ArgumentParser) -> None:
-        stale_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-        stale_parser.add_argument("--domain", help="Limit stale sweep to a domain.")
-        stale_parser.add_argument("--project", help="Limit stale sweep to a project.")
-        stale_parser.add_argument(
-            "--older-than-days",
-            type=int,
-            default=DEFAULT_STALE_DAYS,
-            help=f"Finalize candidates untouched for more than this many days (default: {DEFAULT_STALE_DAYS}).",
-        )
-        stale_mode = stale_parser.add_mutually_exclusive_group()
-        stale_mode.add_argument("--dry-run", action="store_true", default=True, help="List candidates without writing.")
-        stale_mode.add_argument("--apply", action="store_true", help="Write conservative status-only closeouts.")
-        stale_parser.set_defaults(handler=handle_thread_stale_finalize)
 
     init_parser = subparsers.add_parser("init", help="Create the base installed OS tree.")
     init_parser.add_argument("--target", default=DEFAULT_ROOT, help="Installed OS target path.")
@@ -348,49 +216,14 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     project_link_remote.set_defaults(handler=handle_project_link_remote)
     project_worktree = project_subparsers.add_parser("worktree", help="Manage visible project worktree links.")
     project_worktree_subparsers = project_worktree.add_subparsers(dest="project_worktree_command", required=True)
-    project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree.")
+    project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree symlink.")
     project_worktree_add.add_argument("domain")
     project_worktree_add.add_argument("project")
     project_worktree_add.add_argument("name")
-    project_worktree_add.add_argument(
-        "--path",
-        required=True,
-        help="Existing worktree directory; paths inside the project worktrees directory register in place, others get a symlink.",
-    )
+    project_worktree_add.add_argument("--path", required=True, help="Existing worktree directory to link.")
     project_worktree_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_add.add_argument("--force", action="store_true", help="Replace an existing worktree symlink that points elsewhere.")
     project_worktree_add.set_defaults(handler=handle_project_worktree_add)
-    project_worktree_create = project_worktree_subparsers.add_parser(
-        "create", help="Create an in-place git worktree under the project worktrees directory and register it."
-    )
-    project_worktree_create.add_argument("domain")
-    project_worktree_create.add_argument("project")
-    project_worktree_create.add_argument(
-        "name",
-        nargs="?",
-        default=None,
-        help="Worktree directory name; defaults to the branch name with slashes replaced by hyphens.",
-    )
-    project_worktree_create.add_argument("--repo", required=True, help="Existing local git repository to create the worktree from.")
-    project_worktree_create.add_argument("--branch", required=True, help="Branch to check out; created from HEAD when it does not exist.")
-    project_worktree_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_worktree_create.set_defaults(handler=handle_project_worktree_create)
-    project_worktree_cleanup_closed = project_worktree_subparsers.add_parser(
-        "cleanup-closed",
-        help="Close registered worktrees whose cached Jira status or PR state is terminal.",
-    )
-    project_worktree_cleanup_closed.add_argument("--domain", help="Limit cleanup to a domain.")
-    project_worktree_cleanup_closed.add_argument("--project", help="Limit cleanup to a project.")
-    cleanup_mode = project_worktree_cleanup_closed.add_mutually_exclusive_group()
-    cleanup_mode.add_argument("--dry-run", action="store_true", default=True, help="Show cleanup candidates without writing.")
-    cleanup_mode.add_argument("--apply", action="store_true", help="Move matching registry entries to worktrees/closed.yml.")
-    project_worktree_cleanup_closed.add_argument(
-        "--remove-files",
-        action="store_true",
-        help="Also remove in-project worktree directories after closing their registry entries; merged PR dirt is ignored unless REOPEN.md is present.",
-    )
-    project_worktree_cleanup_closed.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_worktree_cleanup_closed.set_defaults(handler=handle_project_worktree_cleanup_closed)
     project_work_item = project_subparsers.add_parser("work-item", help="Manage project lifecycle work items.")
     project_work_item_subparsers = project_work_item.add_subparsers(dest="project_work_item_command", required=True)
     project_work_item_create = project_work_item_subparsers.add_parser("create", help="Create a project lifecycle work item.")
@@ -407,34 +240,7 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     )
     project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_create.set_defaults(handler=handle_project_work_item_create)
-    project_work_item_repair = project_work_item_subparsers.add_parser(
-        "repair", help="Backfill missing lifecycle packet files and folders without overwriting local edits."
-    )
-    project_work_item_repair.add_argument("domain")
-    project_work_item_repair.add_argument("project")
-    project_work_item_repair.add_argument("--work-item", help="Specific work item id, slug, title, or ticket to repair.")
-    project_work_item_repair.add_argument("--all", action="store_true", help="Repair every folder-format project work item.")
-    project_work_item_repair.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_repair.set_defaults(handler=handle_project_work_item_repair)
-    project_work_item_sync_active = project_work_item_subparsers.add_parser(
-        "sync-active",
-        help="Rebuild the root global active-work symlink container from work items, worktrees, and automations.",
-    )
-    project_work_item_sync_active.add_argument("--domain", help="Limit active work-item/worktree links to a domain.")
-    project_work_item_sync_active.add_argument("--project", help="Limit active work-item/worktree links to a project.")
-    project_work_item_sync_active.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_sync_active.set_defaults(handler=handle_project_work_item_sync_active)
-    project_work_item_finalize_lingering = project_work_item_subparsers.add_parser(
-        "finalize-lingering",
-        help="Move terminal-status packets out of active lanes, update indexes, and refresh the global active container.",
-    )
-    project_work_item_finalize_lingering.add_argument("--domain", help="Limit cleanup to a domain.")
-    project_work_item_finalize_lingering.add_argument("--project", help="Limit cleanup to a project.")
-    lingering_mode = project_work_item_finalize_lingering.add_mutually_exclusive_group()
-    lingering_mode.add_argument("--dry-run", action="store_true", default=True, help="Show stale terminal packets without writing.")
-    lingering_mode.add_argument("--apply", action="store_true", help="Move stale terminal packets and refresh active links.")
-    project_work_item_finalize_lingering.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_finalize_lingering.set_defaults(handler=handle_project_work_item_finalize_lingering)
+
     project_sync_remote = project_subparsers.add_parser(
         "sync-remote",
         help="Refresh manifest.yml for declared remote SSH sources.",
@@ -445,47 +251,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     project_sync_remote.add_argument("--timeout", type=int, default=20, help="SSH command timeout in seconds (default: 20).")
     project_sync_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_sync_remote.set_defaults(handler=handle_project_sync_remote)
-
-    project_mount_remote = project_subparsers.add_parser(
-        "mount-remote",
-        help="Plan or execute an SSHFS mount for a declared remote source (dry-run by default).",
-    )
-    project_mount_remote.add_argument("domain")
-    project_mount_remote.add_argument("project")
-    project_mount_remote.add_argument("--name", help="Name of the remote to mount (default: first with a mount block).")
-    project_mount_remote.add_argument("--namespace", help="Override the local mount namespace path.")
-    project_mount_remote.add_argument("--timeout", type=int, default=20, help="SSHFS command timeout in seconds (default: 20).")
-    project_mount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    _mount_mode = project_mount_remote.add_mutually_exclusive_group()
-    _mount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned SSHFS command without mounting (default).")
-    _mount_mode.add_argument("--apply", action="store_true", help="Execute the SSHFS mount if sshfs is available and path is in an approved namespace.")
-    project_mount_remote.set_defaults(handler=handle_project_mount_remote)
-
-    project_unmount_remote = project_subparsers.add_parser(
-        "unmount-remote",
-        help="Plan or execute an SSHFS unmount for a declared remote source (dry-run by default).",
-    )
-    project_unmount_remote.add_argument("domain")
-    project_unmount_remote.add_argument("project")
-    project_unmount_remote.add_argument("--name", help="Name of the remote to unmount (default: all with a mount block).")
-    project_unmount_remote.add_argument("--timeout", type=int, default=20, help="Unmount command timeout in seconds (default: 20).")
-    project_unmount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    _unmount_mode = project_unmount_remote.add_mutually_exclusive_group()
-    _unmount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned unmount command without unmounting (default).")
-    _unmount_mode.add_argument("--apply", action="store_true", help="Execute the platform-appropriate unmount command.")
-    project_unmount_remote.set_defaults(handler=handle_project_unmount_remote)
-
-    project_exec = project_subparsers.add_parser(
-        "exec",
-        help="Run a command on the remote host for a remote-authoritative project.",
-    )
-    project_exec.add_argument("domain")
-    project_exec.add_argument("project")
-    project_exec.add_argument("--name", help="Name of the remote to use (default: first remote-authoritative).")
-    project_exec.add_argument("--timeout", type=int, default=60, help="SSH command timeout in seconds (default: 60).")
-    project_exec.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_exec.add_argument("cmd", nargs="*", metavar="command", help="Command to run remotely. Use -- to separate from options: exec acme proj -- git status")
-    project_exec.set_defaults(handler=handle_project_exec)
 
     workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
     workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
@@ -501,24 +266,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     workflow_check.add_argument("workflow")
     workflow_check.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     workflow_check.set_defaults(handler=handle_workflow_check)
-
-    program_parser = subparsers.add_parser("program", help="Manage shared OS programs.")
-    program_subparsers = program_parser.add_subparsers(dest="program_command", required=True)
-    program_create = program_subparsers.add_parser("create", help="Create a shared OSProgram scaffold.")
-    program_create.add_argument("name")
-    program_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    program_create.set_defaults(handler=handle_program_create)
-
-    instance_program_parser = subparsers.add_parser("instance-program", help="Manage domain-local OS programs.")
-    instance_program_subparsers = instance_program_parser.add_subparsers(dest="instance_program_command", required=True)
-    instance_program_create = instance_program_subparsers.add_parser(
-        "create",
-        help="Create a domain-local InstanceOSProgram scaffold.",
-    )
-    instance_program_create.add_argument("domain")
-    instance_program_create.add_argument("name")
-    instance_program_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    instance_program_create.set_defaults(handler=handle_instance_program_create)
 
     host_parser = subparsers.add_parser("host", help="Manage the SSH host registry (config/hosts.yml).")
     host_subparsers = host_parser.add_subparsers(dest="host_command", required=True)
@@ -565,61 +312,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     automation_maturity.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     automation_maturity.set_defaults(handler=handle_automation_set_maturity)
 
-    automation_control_parser = subparsers.add_parser(
-        "automation-control",
-        help="Gate expensive automations from deterministic source activity.",
-    )
-    automation_control_subparsers = automation_control_parser.add_subparsers(
-        dest="automation_control_command",
-        required=True,
-    )
-    automation_control_list = automation_control_subparsers.add_parser("list", help="List managed automation gates.")
-    automation_control_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    automation_control_list.set_defaults(handler=handle_automation_control_list)
-    automation_control_doctor_parser = automation_control_subparsers.add_parser("doctor", help="Check automation-control config.")
-    automation_control_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    automation_control_doctor_parser.set_defaults(handler=handle_automation_control_doctor)
-    automation_control_run = automation_control_subparsers.add_parser("run", help="Run one automation-control tick.")
-    automation_control_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    automation_control_run.add_argument("--automation-id", help="Run only one managed automation id.")
-    automation_control_run_mode = automation_control_run.add_mutually_exclusive_group()
-    automation_control_run_mode.add_argument("--dry-run", action="store_true", default=True)
-    automation_control_run_mode.add_argument("--apply", action="store_true")
-    automation_control_run.set_defaults(handler=handle_automation_control_run)
-
-    ps_parser = subparsers.add_parser(
-        "ps",
-        help="Show Agentic OS work running right now; use --active for the broader dashboard.",
-    )
-    ps_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    ps_parser.add_argument("--json", action="store_true", help="Emit the snapshot as JSON.")
-    ps_mode = ps_parser.add_mutually_exclusive_group()
-    ps_mode.add_argument(
-        "--active",
-        action="store_true",
-        help="Show queued work, enabled automations/schedules/watchers, active workflows, and stale thread candidates.",
-    )
-    ps_mode.add_argument("--all", action="store_true", help="Include disabled and terminal registry/queue rows.")
-    ps_parser.add_argument(
-        "--color",
-        choices=("auto", "always", "never"),
-        default="auto",
-        help="Colorize table output (default: auto).",
-    )
-    ps_parser.add_argument(
-        "--limit",
-        type=int,
-        default=120,
-        help="Maximum rows to print; use 0 for no limit.",
-    )
-    ps_parser.add_argument(
-        "--stale-days",
-        type=int,
-        default=DEFAULT_STALE_DAYS,
-        help=f"Thread stale-candidate threshold in days (default: {DEFAULT_STALE_DAYS}).",
-    )
-    ps_parser.set_defaults(handler=handle_ps)
-
     run_log_parser = subparsers.add_parser("run-log", help="Manage run logs.")
     run_log_subparsers = run_log_parser.add_subparsers(dest="run_log_command", required=True)
     run_log_create = run_log_subparsers.add_parser("create", help="Create a timestamped run log.")
@@ -643,28 +335,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     run_log_close.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     run_log_close.set_defaults(handler=handle_run_log_close)
 
-    thread_parser = subparsers.add_parser("thread", help="Manage thread lifecycle closeouts.")
-    thread_subparsers = thread_parser.add_subparsers(dest="thread_command", required=True)
-    thread_end = thread_subparsers.add_parser("end", help="Finalize the current thread without archiving.")
-    add_thread_closeout_args(thread_end, "artifact-closeout")
-    thread_finalize = thread_subparsers.add_parser("finalize", help="Alias for thread end.")
-    add_thread_closeout_args(thread_finalize, "artifact-closeout")
-    thread_cleanup = thread_subparsers.add_parser("cleanup", help="Finalize and classify generated dirt without deletion.")
-    add_thread_closeout_args(thread_cleanup, "cleanup")
-    thread_archive = thread_subparsers.add_parser("archive", help="Finalize and archive when no unresolved next action remains.")
-    add_thread_closeout_args(thread_archive, "archive")
-    thread_stale = thread_subparsers.add_parser("stale-finalize", help="Dry-run or apply stale thread finalization.")
-    add_stale_finalize_args(thread_stale)
-
-    end_chat_parser = subparsers.add_parser("end-chat", help="Alias for agentic-os thread end.")
-    add_thread_closeout_args(end_chat_parser, "artifact-closeout")
-    finalize_parser = subparsers.add_parser("finalize", help="Alias for agentic-os thread finalize.")
-    add_thread_closeout_args(finalize_parser, "artifact-closeout")
-    cleanup_thread_parser = subparsers.add_parser("cleanup-thread", help="Alias for agentic-os thread cleanup.")
-    add_thread_closeout_args(cleanup_thread_parser, "cleanup")
-    archive_thread_parser = subparsers.add_parser("archive", help="Alias for agentic-os thread archive.")
-    add_thread_closeout_args(archive_thread_parser, "archive")
-
     route_parser = subparsers.add_parser("route", help="Route a request to a domain, project, or workflow.")
     route_parser.add_argument("request")
     route_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -673,7 +343,7 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     context_parser = subparsers.add_parser("context", help="Build deterministic context packets.")
     context_subparsers = context_parser.add_subparsers(dest="context_command", required=True)
     context_build = context_subparsers.add_parser("build", help="Build a context packet.")
-    context_build.add_argument("--domain")
+    context_build.add_argument("--domain", required=True)
     context_build.add_argument("--project")
     context_build.add_argument("--work-item")
     context_build.add_argument("--workflow")
@@ -849,6 +519,36 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
     config_doctor.set_defaults(handler=handle_config_doctor)
 
+    doc_config_parser = subparsers.add_parser("doc-config", help="Manage document routing configuration.")
+    doc_config_subparsers = doc_config_parser.add_subparsers(dest="doc_config_command", required=True)
+    doc_config_init = doc_config_subparsers.add_parser("init", help="Install the default doc routing config if missing.")
+    doc_config_init.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_init.add_argument("--domain", help="Project domain for a project-level override.")
+    doc_config_init.add_argument("--project", help="Project slug for a project-level override.")
+    doc_config_init.set_defaults(handler=handle_doc_config_init)
+    doc_config_plan = doc_config_subparsers.add_parser("plan", help="Build a dry-run document destination plan.")
+    doc_config_plan.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_plan.add_argument("--request", required=True, help="Document request or note to route.")
+    doc_config_plan.add_argument("--domain", help="Known target domain.")
+    doc_config_plan.add_argument("--project", help="Known target project.")
+    doc_config_plan.add_argument("--work-item", help="Known target work item or feature slug.")
+    doc_config_plan.add_argument("--target-kind", default="spec", choices=("spec", "feature", "project", "run", "decision", "reference"))
+    doc_config_plan.add_argument("--questions-present", action="store_true", help="Include the QUESTIONS bucket in the plan.")
+    doc_config_plan.set_defaults(handler=handle_doc_config_plan)
+    doc_config_doctor_parser = doc_config_subparsers.add_parser("doctor", help="Validate doc routing config.")
+    doc_config_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doc_config_doctor_parser.add_argument("--domain", help="Project domain for a project-level override.")
+    doc_config_doctor_parser.add_argument("--project", help="Project slug for a project-level override.")
+    doc_config_doctor_parser.set_defaults(handler=handle_doc_config_doctor)
+
+    notion_org_parser = subparsers.add_parser("notion-org", help="Check Notion organization conventions.")
+    notion_org_subparsers = notion_org_parser.add_subparsers(dest="notion_org_command", required=True)
+    notion_org_doctor_parser = notion_org_subparsers.add_parser("doctor", help="Check OS and Notion backup organization.")
+    notion_org_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    notion_org_doctor_parser.add_argument("--backup-dir", help="Local Notion backup snapshot directory.")
+    notion_org_doctor_parser.add_argument("--config", help="Optional override config path.")
+    notion_org_doctor_parser.set_defaults(handler=handle_notion_org_doctor)
+
     hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
     hook_subparsers = hook_parser.add_subparsers(dest="hook_command", required=True)
     hook_sync_parser = hook_subparsers.add_parser("sync", help="Point active harness hook settings at installed OS hooks.")
@@ -898,18 +598,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     notion_track_runtime_mode.add_argument("--apply", action="store_true")
     notion_track_runtime.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_track_runtime.set_defaults(handler=handle_notion_track_runtime)
-    notion_active_work = notion_subparsers.add_parser(
-        "active-work-sync",
-        help="Plan or apply guarded Notion sync for the generated OS Active Work database.",
-    )
-    notion_active_work.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    notion_active_work_mode = notion_active_work.add_mutually_exclusive_group(required=True)
-    notion_active_work_mode.add_argument("--dry-run", action="store_true")
-    notion_active_work_mode.add_argument("--apply", action="store_true")
-    notion_active_work.add_argument("--database-id", help="Existing OS Active Work Notion database id.")
-    notion_active_work.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
-    notion_active_work.add_argument("--token-env", default="GENOMES_NOTION_PAT", help="Environment variable containing the Notion token.")
-    notion_active_work.set_defaults(handler=handle_notion_active_work_sync)
 
     runtime_parser = subparsers.add_parser("runtime", help="Manage file-backed runtime state.")
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
@@ -1039,48 +727,22 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     )
     self_improvement_run = self_improvement_subparsers.add_parser(
         "run",
-        help="Run a self-improvement review (dry-run by default; use --apply to persist + document).",
+        help="Run a no-write self-improvement review.",
     )
     self_improvement_run.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_run_mode = self_improvement_run.add_mutually_exclusive_group()
     self_improvement_run_mode.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print a review without writing run records, proposals, or a report (default behaviour).",
+        default=True,
+        help="Print a review without writing run records or proposals.",
     )
     self_improvement_run_mode.add_argument(
         "--apply",
         action="store_true",
-        help="Persist mode: write run records, proposals, daily report, and Notion projection.",
+        help="Write run records and proposal files under the configured self-improvement output paths.",
     )
     self_improvement_run.set_defaults(handler=handle_self_improvement_run)
-    self_improvement_morning = self_improvement_subparsers.add_parser(
-        "morning-report",
-        help="Run deterministic doctor-fix, self-improvement review, filesystem report, and Notion page projection.",
-    )
-    self_improvement_morning.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    self_improvement_morning_mode = self_improvement_morning.add_mutually_exclusive_group()
-    self_improvement_morning_mode.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview the morning report without writing repairs, reports, or Notion pages (default behaviour).",
-    )
-    self_improvement_morning_mode.add_argument(
-        "--apply",
-        action="store_true",
-        help="Apply deterministic repairs, write filesystem report/logs, and project to Notion.",
-    )
-    self_improvement_morning.add_argument(
-        "--no-notion",
-        action="store_true",
-        help="Write filesystem report/logs but skip Notion page projection.",
-    )
-    self_improvement_morning.add_argument(
-        "--no-fix",
-        action="store_true",
-        help="Write the morning report without applying deterministic validation repairs.",
-    )
-    self_improvement_morning.set_defaults(handler=handle_self_improvement_morning_report)
     self_improvement_status_parser = self_improvement_subparsers.add_parser(
         "status",
         help="Summarize self-improvement run and proposal state.",
@@ -1114,15 +776,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     self_improvement_promote.add_argument("--target", required=True)
     self_improvement_promote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_promote.set_defaults(handler=handle_self_improvement_promote)
-    self_improvement_actions = self_improvement_subparsers.add_parser(
-        "actions",
-        help="Consume checked Notion action boxes on self-improvement suggestion pages.",
-    )
-    self_improvement_actions.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    self_improvement_actions_mode = self_improvement_actions.add_mutually_exclusive_group()
-    self_improvement_actions_mode.add_argument("--dry-run", action="store_true", help="Preview checked action boxes without queuing workers.")
-    self_improvement_actions_mode.add_argument("--apply", action="store_true", help="Queue checked actions and update their Notion pages.")
-    self_improvement_actions.set_defaults(handler=handle_self_improvement_actions)
 
     connected_parser = subparsers.add_parser("connected-system", help="Manage connected source systems.")
     connected_subparsers = connected_parser.add_subparsers(dest="connected_system_command", required=True)
@@ -1236,17 +889,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     )
     docs_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     docs_update.set_defaults(handler=handle_docs_update)
-
-    capability_parser = subparsers.add_parser("capability", help="Inspect installed OS capabilities.")
-    capability_subparsers = capability_parser.add_subparsers(dest="capability_command", required=True)
-    capability_list_parser = capability_subparsers.add_parser("list", help="List capabilities from installed registry.")
-    capability_list_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    capability_list_parser.add_argument("--type", dest="type", help="Filter by capability type (e.g. commands, skills, mcp_servers).")
-    capability_list_parser.set_defaults(handler=handle_capability_list)
-    capability_inventory_parser = capability_subparsers.add_parser("inventory", help="Show or regenerate INVENTORY.md.")
-    capability_inventory_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    capability_inventory_parser.add_argument("--regenerate", action="store_true", help="Rewrite INVENTORY.md from current registry state.")
-    capability_inventory_parser.set_defaults(handler=handle_capability_inventory)
 
     return parser
 
@@ -1408,75 +1050,6 @@ def handle_project_sync_remote(args: argparse.Namespace) -> int:
     return 1 if result.get("errors") else 0
 
 
-def handle_project_mount_remote(args: argparse.Namespace) -> int:
-    apply = getattr(args, "apply", False)
-    result = mount_remote(
-        args.root,
-        args.domain,
-        args.project,
-        name=getattr(args, "name", None),
-        namespace=getattr(args, "namespace", None),
-        apply=apply,
-        timeout=getattr(args, "timeout", 20),
-    )
-    for line in result.get("plan", []):
-        print(line)
-    for w in result.get("warnings", []):
-        print(f"warning: {w}")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    if not apply:
-        print("(dry-run; use --apply to mount)")
-    elif result.get("applied"):
-        print("mount applied")
-    return 1 if result.get("errors") else 0
-
-
-def handle_project_unmount_remote(args: argparse.Namespace) -> int:
-    apply = getattr(args, "apply", False)
-    result = unmount_remote(
-        args.root,
-        args.domain,
-        args.project,
-        name=getattr(args, "name", None),
-        apply=apply,
-        timeout=getattr(args, "timeout", 20),
-    )
-    for line in result.get("plan", []):
-        print(line)
-    for w in result.get("warnings", []):
-        print(f"warning: {w}")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    if not apply:
-        print("(dry-run; use --apply to unmount)")
-    elif result.get("applied"):
-        print("unmount applied")
-    return 1 if result.get("errors") else 0
-
-
-def handle_project_exec(args: argparse.Namespace) -> int:
-    cmd_parts: list[str] = [c for c in (args.cmd or []) if c != "--"]
-    if not cmd_parts:
-        print("error: no command specified; use: agentic-os project exec <domain> <project> -- <command...>")
-        return 1
-    result = exec_remote(
-        args.root,
-        args.domain,
-        args.project,
-        cmd_parts,
-        name=getattr(args, "name", None),
-        timeout=getattr(args, "timeout", 60),
-    )
-    if result.get("stdout"):
-        print(result["stdout"], end="")
-    if result.get("stderr"):
-        print(result["stderr"], end="")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    return 0 if result.get("ok") else 1
-
-
 def handle_project_worktree_add(args: argparse.Namespace) -> int:
     print_result(
         register_project_worktree(
@@ -1486,35 +1059,6 @@ def handle_project_worktree_add(args: argparse.Namespace) -> int:
             args.name,
             path=args.path,
             force=args.force,
-        )
-    )
-    return 0
-
-
-def handle_project_worktree_create(args: argparse.Namespace) -> int:
-    print_result(
-        create_project_worktree(
-            args.root,
-            args.domain,
-            args.project,
-            args.name,
-            repo=args.repo,
-            branch=args.branch,
-        )
-    )
-    return 0
-
-
-def handle_project_worktree_cleanup_closed(args: argparse.Namespace) -> int:
-    print(
-        yaml_dump(
-            cleanup_terminal_worktrees(
-                args.root,
-                domain=args.domain,
-                project=args.project,
-                apply=args.apply,
-                remove_files=args.remove_files,
-            )
         )
     )
     return 0
@@ -1536,29 +1080,6 @@ def handle_project_work_item_create(args: argparse.Namespace) -> int:
     return 0
 
 
-def handle_project_work_item_repair(args: argparse.Namespace) -> int:
-    print_result(
-        repair_project_work_item(
-            args.root,
-            args.domain,
-            args.project,
-            work_item=args.work_item,
-            all_items=args.all,
-        )
-    )
-    return 0
-
-
-def handle_project_work_item_sync_active(args: argparse.Namespace) -> int:
-    print(yaml_dump(sync_active_container(args.root, domain=args.domain, project=args.project)))
-    return 0
-
-
-def handle_project_work_item_finalize_lingering(args: argparse.Namespace) -> int:
-    print(yaml_dump(finalize_lingering_work_items(args.root, domain=args.domain, project=args.project, apply=args.apply)))
-    return 0
-
-
 def handle_workflow_create(args: argparse.Namespace) -> int:
     print_result(create_workflow(args.root, args.domain, args.lane, args.name))
     return 0
@@ -1566,16 +1087,6 @@ def handle_workflow_create(args: argparse.Namespace) -> int:
 
 def handle_workflow_check(args: argparse.Namespace) -> int:
     print(format_findings(check_workflow(args.root, args.domain, args.lane, args.workflow)))
-    return 0
-
-
-def handle_program_create(args: argparse.Namespace) -> int:
-    print_result(create_program(args.root, args.name))
-    return 0
-
-
-def handle_instance_program_create(args: argparse.Namespace) -> int:
-    print_result(create_instance_program(args.root, args.domain, args.name))
     return 0
 
 
@@ -1599,24 +1110,6 @@ def handle_automation_set_maturity(args: argparse.Namespace) -> int:
     result = set_automation_maturity(args.root, args.domain, args.lane, args.automation, args.level)
     print(yaml_dump(result))
     return 0
-
-
-def handle_automation_control_list(args: argparse.Namespace) -> int:
-    print(format_automation_control_result(list_automation_control(args.root)))
-    return 0
-
-
-def handle_automation_control_doctor(args: argparse.Namespace) -> int:
-    result = automation_control_doctor(args.root)
-    print(format_automation_control_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_automation_control_run(args: argparse.Namespace) -> int:
-    result = run_automation_control(args.root, automation_id=args.automation_id, dry_run=not args.apply)
-    print(format_automation_control_result(result))
-    has_unknown = any(action.get("decision") == "unknown" for action in result.get("actions") or [])
-    return 1 if has_unknown else 0
 
 
 def handle_run_log_create(args: argparse.Namespace) -> int:
@@ -1645,45 +1138,6 @@ def handle_run_log_close(args: argparse.Namespace) -> int:
     return 0
 
 
-def handle_thread_closeout(args: argparse.Namespace) -> int:
-    result = close_thread(
-        args.root,
-        mode=args.closeout_mode,
-        thread_id=args.thread_id,
-        domain=args.domain,
-        project=args.project,
-        work_item=args.work_item,
-        work_level=args.work_level,
-        summary=args.summary,
-        next_action=args.next_action,
-        validations=args.validation,
-        artifacts=args.artifact,
-        receipts=args.receipt,
-        memory_receipts=args.memory_receipt,
-        notion_url=args.notion_url,
-        notion_warning=args.notion_warning,
-        verified_notion_workspace=args.verified_notion_workspace,
-        skip_notion=args.skip_notion,
-        allow_blocked_archive=args.allow_blocked_archive,
-        request=args.request,
-        cwd=args.cwd,
-    )
-    print(format_thread_closeout_result(result))
-    return 0
-
-
-def handle_thread_stale_finalize(args: argparse.Namespace) -> int:
-    result = stale_finalize_threads(
-        args.root,
-        older_than_days=args.older_than_days,
-        domain=args.domain,
-        project=args.project,
-        apply=args.apply,
-    )
-    print(format_thread_closeout_result(result))
-    return 0
-
-
 def yaml_dump(value) -> str:
     import yaml
 
@@ -1696,43 +1150,15 @@ def handle_route(args: argparse.Namespace) -> int:
 
 
 def handle_context_build(args: argparse.Namespace) -> int:
-    domain = args.domain
-    project = args.project
-    workflow = args.workflow
-    lane = args.lane
-    cwd = Path.cwd()
-
-    if not domain:
-        inferred = detect_from_cwd(Path(args.root).expanduser().resolve(), cwd)
-        domain = inferred.get("domain")
-        if not project:
-            project = inferred.get("project")
-        if not workflow:
-            workflow = inferred.get("workflow")
-        if not lane:
-            lane = inferred.get("lane")
-
-    if not domain and project:
-        matches = [record for record in project_records(Path(args.root).expanduser().resolve()) if record["project"] == project]
-        if len(matches) == 1:
-            domain = matches[0]["domain"]
-            lane = lane or matches[0].get("lane") or None
-        elif len(matches) > 1:
-            raise ValueError(f"project is ambiguous; specify --domain: {project}")
-
-    if not domain:
-        raise ValueError("domain is required unless current directory or unique --project identifies a domain")
-
     print(
         format_packet(
             build_context(
                 args.root,
-                domain=domain,
-                project=project,
+                domain=args.domain,
+                project=args.project,
                 work_item=args.work_item,
-                workflow=workflow,
-                lane=lane,
-                cwd=cwd,
+                workflow=args.workflow,
+                lane=args.lane,
             )
         )
     )
@@ -1868,6 +1294,41 @@ def handle_config_doctor(args: argparse.Namespace) -> int:
     return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
 
 
+def handle_doc_config_init(args: argparse.Namespace) -> int:
+    if bool(args.domain) != bool(args.project):
+        raise ValueError("--domain and --project must be provided together for project-level doc config")
+    print_result(ensure_doc_config(args.root, domain=args.domain, project=args.project))
+    return 0
+
+
+def handle_doc_config_plan(args: argparse.Namespace) -> int:
+    result = build_doc_route_plan(
+        args.root,
+        request=args.request,
+        domain=args.domain,
+        project=args.project,
+        work_item=args.work_item,
+        target_kind=args.target_kind,
+        questions_present=args.questions_present,
+    )
+    print(yaml_dump(result))
+    return 0
+
+
+def handle_doc_config_doctor(args: argparse.Namespace) -> int:
+    if bool(args.domain) != bool(args.project):
+        raise ValueError("--domain and --project must be provided together for project-level doc config")
+    result = doc_config_doctor(args.root, domain=args.domain, project=args.project)
+    print(yaml_dump(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_notion_org_doctor(args: argparse.Namespace) -> int:
+    result = notion_org_doctor(args.root, backup_dir=args.backup_dir, config=args.config)
+    print(yaml_dump(result))
+    return 0 if result["ok"] else 1
+
+
 def handle_hook_sync(args: argparse.Namespace) -> int:
     result = hook_sync(
         args.root,
@@ -1926,23 +1387,6 @@ def handle_notion_track_runtime(args: argparse.Namespace) -> int:
         print(format_runtime_result(build_runtime_tracking_plan(args.root)))
     else:
         print(format_runtime_result(apply_runtime_tracking(args.root, verified_workspace=args.verified_workspace)))
-    return 0
-
-
-def handle_notion_active_work_sync(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        print(format_sync_result(build_active_work_sync_plan(args.root, database_id=args.database_id)))
-    else:
-        print(
-            format_sync_result(
-                apply_active_work_sync(
-                    args.root,
-                    database_id=args.database_id,
-                    verified_workspace=args.verified_workspace,
-                    token_env=args.token_env,
-                )
-            )
-        )
     return 0
 
 
@@ -2071,23 +1515,7 @@ def handle_plan_capture(args: argparse.Namespace) -> int:
 
 
 def handle_self_improvement_run(args: argparse.Namespace) -> int:
-    # Bare invocation and --dry-run both produce dry_run=True (read-only, SPEC 15 first-run safety).
-    # Only --apply flips to persist mode.
     print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_self_improvement_morning_report(args: argparse.Namespace) -> int:
-    print(
-        format_self_improvement_result(
-            run_self_improvement_morning_report(
-                args.root,
-                dry_run=not args.apply,
-                publish_notion=not args.no_notion,
-                auto_fix=not args.no_fix,
-            )
-        )
-    )
     return 0
 
 
@@ -2126,11 +1554,6 @@ def handle_self_improvement_promote(args: argparse.Namespace) -> int:
             promote_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
         )
     )
-    return 0
-
-
-def handle_self_improvement_actions(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(process_self_improvement_actions(args.root, dry_run=not args.apply)))
     return 0
 
 
@@ -2180,20 +1603,6 @@ def handle_watch_source_poll(args: argparse.Namespace) -> int:
 
 def handle_watch_source_run_due(args: argparse.Namespace) -> int:
     print(format_source_watch_result(run_due_watch_sources(args.root, dry_run=args.dry_run)))
-    return 0
-
-
-def handle_ps(args: argparse.Namespace) -> int:
-    mode = "all" if args.all else "active" if args.active else "now"
-    color = args.color == "always" or (args.color == "auto" and sys.stdout.isatty())
-    result = ps_snapshot(
-        args.root,
-        mode=mode,
-        limit=args.limit,
-        stale_days=args.stale_days,
-    )
-    result["prog"] = Path(sys.argv[0]).name if Path(sys.argv[0]).name in {"agentic-os", "aos"} else "agentic-os"
-    print(format_ps_result(result, as_json=args.json, color=color))
     return 0
 
 
@@ -2279,19 +1688,8 @@ def handle_docs_update(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    prog = Path(sys.argv[0]).name if argv is None else "agentic-os"
-    if prog not in {"agentic-os", "aos"}:
-        prog = "agentic-os"
-    parser = build_parser(prog=prog)
-    parse_argv = list(sys.argv[1:] if argv is None else argv)
-    project_exec_cmd: list[str] | None = None
-    if parse_argv[:2] == ["project", "exec"] and "--" in parse_argv:
-        separator = parse_argv.index("--")
-        project_exec_cmd = parse_argv[separator + 1 :]
-        parse_argv = parse_argv[:separator]
-    args = parser.parse_args(parse_argv)
-    if project_exec_cmd is not None and getattr(args, "handler", None) == handle_project_exec:
-        args.cmd = project_exec_cmd
+    parser = build_parser()
+    args = parser.parse_args(argv)
     try:
         return args.handler(args)
     except ValueError as exc:

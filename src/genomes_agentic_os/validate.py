@@ -18,7 +18,6 @@ from .lifecycle import (
     WORK_ITEM_DIRECTORIES,
     WORK_ITEM_METADATA_FILES,
     WORK_LIFECYCLE_STATES,
-    WorkItemRecord,
     contains_token_shaped_value,
     conversation_log_files,
     lifecycle_status,
@@ -120,11 +119,13 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/room/routing-table.md",
     "templates/stage/stage-context.md",
     "templates/reference/naming-conventions.md",
+    "templates/reference/os-conventions.md",
     "templates/reference/tool-index.md",
     "templates/reference/style-and-output-rules.md",
     "templates/reference/source-priority.md",
     "templates/reference/decision-log.md",
     "references/naming-conventions.md",
+    "references/os-conventions.md",
     "references/tool-index.md",
     "references/style-and-output-rules.md",
     "references/source-priority.md",
@@ -133,16 +134,9 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/customer/client-automation-brief.md",
     "templates/customer/automation-fit-matrix.md",
     "templates/customer/customer-handoff-checklist.md",
+    "templates/planning/bug-report.md",
     "templates/planning/feature-spec.md",
     "templates/planning/future-idea.md",
-    "templates/thread/README.md",
-    "templates/thread/thread.yml",
-    "templates/thread/thread-closeout.yml",
-    "templates/thread/closeout.md",
-    "templates/thread/evidence.jsonl",
-    "templates/thread/memory-write-receipts.jsonl",
-    "templates/thread/notion-sync.md",
-    "templates/thread/archive-manifest.yml",
     "templates/system/host-tool-registry.yml",
     "templates/system/shell-shape.yml",
     "templates/runtime/heartbeat.yml",
@@ -166,6 +160,11 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/update-grant.json",
     "templates/runtime/backup-policy.yml",
     "templates/runtime/managed-templates.yml",
+    "templates/runtime/doc-config.yml",
+    "templates/runtime/notion-organization.yml",
+    "templates/runtime/spec-intake-workflow.md",
+    "templates/runtime/feature-intake-workflow.md",
+    "templates/runtime/bug-intake-workflow.md",
     "templates/runtime/self-improvement.yml",
     "templates/runtime/self-improvement-workflow.md",
     "templates/runtime/self-improvement-review.yml",
@@ -204,15 +203,38 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "commands/os-runtime-init.md",
-    "commands/os-ps.md",
     "commands/os-heartbeat.md",
     "commands/os-integration-setup.md",
     "commands/os-self-improvement.md",
-    "commands/os-end-chat.md",
+    "commands/os-doc-config.md",
+    "commands/os-notion-org.md",
+    "commands/os-add-spec.md",
+    "commands/os-new-feature.md",
+    "commands/os-add-bug.md",
+    "commands/os-auto-add-spec.md",
+    "commands/os-auto-add-feature.md",
     "commands/system-tool-registry.md",
+    "plans/README.md",
+    "plans/00-current-state-and-gap-map.md",
+    "plans/09-future-ideas-intake.md",
+    "plans/11-room-first-installer-and-routing.md",
+    "plans/12-factory-template-import-backlog.md",
+    "plans/13-reference-and-skill-index-layer.md",
+    "plans/14-client-automation-and-control-plane-playbooks.md",
+    "plans/15-always-on-runtime-heartbeats-schedules-and-integrations.md",
+    "plans/16-connected-source-watch-registry.md",
+    "plans/17-event-graph-and-chained-automations.md",
+    "plans/22-project-work-lifecycle-and-conversation-auto-logging.md",
     "skills/os-navigator/SKILL.md",
     "skills/room-builder/SKILL.md",
     "skills/workflow-builder/SKILL.md",
+    "skills/doc-config-router/SKILL.md",
+    "skills/spec-intake-router/SKILL.md",
+    "skills/feature-intake-router/SKILL.md",
+    "skills/bug-intake-router/SKILL.md",
+    "skills/auto-spec-intake/SKILL.md",
+    "skills/auto-feature-intake/SKILL.md",
+    "skills/os-authoring-guard/SKILL.md",
     "skills/automation-qualifier/SKILL.md",
     "skills/os-doctor/SKILL.md",
     "skills/client-automation-brief/SKILL.md",
@@ -223,7 +245,7 @@ SHARED_KNOWLEDGE_FILES = (
     "skills/source-watcher/SKILL.md",
     "skills/event-graph-operator/SKILL.md",
     "skills/toolsmith-reviewer/SKILL.md",
-    "skills/thread-finalizer/SKILL.md",
+    "rules/os-authoring-rules.md",
 )
 
 SELF_IMPROVEMENT_REQUIRED_FILES = (
@@ -330,10 +352,26 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / filename, result)
     for directory in ("artifacts", "config", "ideas", "work-items", "worktrees"):
         require_dir(project_root / directory, result)
+    if not (project_root / "SPECS").is_dir():
+        result.warnings.append(f"missing recommended specs folder: {project_root / 'SPECS'}")
+    if not ((project_root / "worklogs").is_dir() or (project_root / "WORKLOGS").is_dir()):
+        result.warnings.append(f"missing recommended worklogs folder: {project_root / 'worklogs'} or {project_root / 'WORKLOGS'}")
+    for legacy_bucket in ("features", ".features", "PLANS", "BUILD_LOGS"):
+        legacy_path = project_root / legacy_bucket
+        if legacy_path.exists():
+            result.warnings.append(
+                f"legacy project bucket present; prefer SPECS/ or worklogs/: {legacy_path}"
+            )
     for filename in PROJECT_CONFIG_FILES:
         require_file(project_root / "config" / filename, result)
+    if (project_root / "SPECS").is_dir():
+        require_file(project_root / "SPECS" / "README.md", result)
     require_file(project_root / "ideas" / "README.md", result)
     require_file(project_root / "ideas" / "raw-ideas.md", result)
+    if (project_root / "WORKLOGS").is_dir():
+        require_file(project_root / "WORKLOGS" / "README.md", result)
+    else:
+        require_file(project_root / "worklogs" / "README.md", result)
     for lane in WORK_ITEM_LANES:
         require_dir(project_root / "work-items" / lane, result)
     require_file(project_root / "worktrees" / "README.md", result)
@@ -542,8 +580,6 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     for directory in DOMAIN_DIRECTORIES:
         require_dir(domain_root / directory, result)
 
-    require_file(domain_root / "00-programs" / "README.md", result)
-
     for filename in CONTROL_PLANE_FILES:
         require_file(domain_root / "00-control-plane" / filename, result)
 
@@ -705,6 +741,151 @@ def validate_capability_registries(root: Path, result: ValidationResult) -> None
             )
 
 
+def _registry_sources(root: Path, registry_name: str, collection: str) -> set[str]:
+    path = root / REGISTRY_FILES[registry_name]
+    if not path.is_file():
+        return set()
+    return {str(entry.get("source") or "") for entry in load_registry(path, collection)}
+
+
+def _registry_ids(root: Path, registry_name: str, collection: str) -> set[str]:
+    path = root / REGISTRY_FILES[registry_name]
+    if not path.is_file():
+        return set()
+    return {str(entry.get("id") or "") for entry in load_registry(path, collection)}
+
+
+def validate_command_skill_registry_coverage(root: Path, result: ValidationResult) -> None:
+    command_sources = _registry_sources(root, "commands", "commands")
+    for command_doc in sorted(harness_path(root, "commands").glob("*.md")):
+        relative = command_doc.relative_to(root).as_posix()
+        if relative not in command_sources:
+            result.errors.append(f"command doc missing registry entry: {relative}")
+
+    skill_sources = _registry_sources(root, "skills", "skills")
+    for skill_doc in sorted(harness_path(root, "skills").glob("*/SKILL.md")):
+        relative = skill_doc.relative_to(root).as_posix()
+        if relative not in skill_sources:
+            result.errors.append(f"skill doc missing registry entry: {relative}")
+
+
+def _markdown_table_field(content: str, field: str) -> str:
+    prefix = f"| {field} |"
+    for line in content.splitlines():
+        if line.startswith(prefix):
+            cells = [cell.strip().strip("`") for cell in line.strip("|").split("|")]
+            if len(cells) >= 2:
+                return cells[1]
+    return ""
+
+
+def _runtime_invocation_ids(root: Path) -> set[str]:
+    ids: set[str] = set()
+    control = shared_factory_path(root, "00-control-plane")
+
+    runtime_path = control / "runtime-registry.yml"
+    if runtime_path.is_file():
+        try:
+            runtime = yaml.safe_load(runtime_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            runtime = {}
+        for collection in ("schedules", "heartbeats", "execution_targets"):
+            for entry in runtime.get(collection, []) or []:
+                if isinstance(entry, dict) and entry.get("id"):
+                    ids.add(str(entry["id"]))
+
+    watch_sources_path = control / "watch-sources.yml"
+    if watch_sources_path.is_file():
+        try:
+            watch_sources = yaml.safe_load(watch_sources_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            watch_sources = {}
+        for source in watch_sources.get("watch_sources", []) or []:
+            if not isinstance(source, dict):
+                continue
+            if source.get("id"):
+                ids.add(str(source["id"]))
+            for rule in source.get("trigger_rules", []) or []:
+                if isinstance(rule, dict) and rule.get("id"):
+                    ids.add(str(rule["id"]))
+
+    run_queue_path = control / "run-queue.yml"
+    if run_queue_path.is_file():
+        try:
+            run_queue = yaml.safe_load(run_queue_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            run_queue = {}
+        for collection in ("items", "run_queue"):
+            for entry in run_queue.get(collection, []) or []:
+                if isinstance(entry, dict) and entry.get("ref"):
+                    ids.add(str(entry["ref"]))
+
+    return ids
+
+
+def _has_registered_invocation(
+    root: Path,
+    relative_folder: str,
+    object_id: str,
+    *,
+    include_runtime: bool = False,
+) -> bool:
+    command_sources = _registry_sources(root, "commands", "commands")
+    skill_sources = _registry_sources(root, "skills", "skills")
+    if any(source.startswith(f"{relative_folder}/") for source in command_sources | skill_sources):
+        return True
+    command_ids = _registry_ids(root, "commands", "commands")
+    skill_ids = _registry_ids(root, "skills", "skills")
+    candidates = {object_id, object_id.replace("_", "-")}
+    if include_runtime:
+        parts = relative_folder.split("/")
+        if len(parts) >= 4:
+            domain, lane = parts[0], parts[2]
+            candidates.add(f"{domain}_{lane}_{object_id}")
+            candidates.add(f"{domain}-{lane}-{object_id.replace('_', '-')}")
+        runtime_ids = _runtime_invocation_ids(root)
+        if candidates & runtime_ids:
+            return True
+        if any(runtime_id.endswith(f"_{object_id}") for runtime_id in runtime_ids):
+            return True
+    return bool(candidates & command_ids or candidates & skill_ids)
+
+
+def validate_workflow_automation_invocations(root: Path, result: ValidationResult) -> None:
+    for workflow_spec in sorted(root.glob("*/03-workflows/*/*/workflow.md")):
+        relative_folder = workflow_spec.parent.relative_to(root).as_posix()
+        workflow_id = workflow_spec.parent.name
+        content = workflow_spec.read_text(encoding="utf-8", errors="replace")
+        status = _markdown_table_field(content, "Status") or "draft"
+        if _has_registered_invocation(root, relative_folder, workflow_id):
+            continue
+        message = (
+            f"workflow `{workflow_id}` missing matching command or skill registry entry: "
+            f"{relative_folder}"
+        )
+        if status == "active":
+            result.errors.append(message)
+        else:
+            result.warnings.append(message)
+
+    for automation_spec in sorted(root.glob("*/04-automations/*/*/automation.md")):
+        relative_folder = automation_spec.parent.relative_to(root).as_posix()
+        automation_id = automation_spec.parent.name
+        content = automation_spec.read_text(encoding="utf-8", errors="replace")
+        status = _markdown_table_field(content, "Status") or "draft"
+        level = _markdown_table_field(content, "Level") or "observe"
+        if _has_registered_invocation(root, relative_folder, automation_id, include_runtime=True):
+            continue
+        message = (
+            f"automation `{automation_id}` missing matching command, skill, trigger, or runtime registry entry: "
+            f"{relative_folder}"
+        )
+        if status == "active" or level not in {"observe", "prepare"}:
+            result.errors.append(message)
+        else:
+            result.warnings.append(message)
+
+
 def validate_registered_hooks(root: Path, result: ValidationResult) -> None:
     hooks_path = root / REGISTRY_FILES["hooks"]
     if not hooks_path.is_file():
@@ -808,27 +989,12 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "domain.schema.json": ["**/domain.yml"],
     "run.schema.json": ["**/06-runs-and-logs/runs/*/run.yml"],
     "workflow.schema.json": ["**/03-workflows/*/*/workflow.yml"],
-    "thread.schema.json": [
-        "**/work-items/*/*/thread.yml",
-        "**/work-items/*/*/artifacts/thread-closeouts/*/thread.yml",
-        "**/work-items/*/*.artifacts/thread-closeouts/*/thread.yml",
-        "**/06-runs-and-logs/runs/*/thread.yml",
-    ],
-    "thread-closeout.schema.json": [
-        "**/work-items/*/*/thread-closeout.yml",
-        "**/work-items/*/*/artifacts/thread-closeouts/*/thread-closeout.yml",
-        "**/work-items/*/*.artifacts/thread-closeouts/*/thread-closeout.yml",
-        "**/06-runs-and-logs/runs/*/thread-closeout.yml",
-        "**/artifacts/thread-closeout.yml",
-    ],
-    "archive-manifest.schema.json": [
-        "**/work-items/*/*/archive-manifest.yml",
-        "**/work-items/*/*/artifacts/thread-closeouts/*/archive-manifest.yml",
-        "**/06-runs-and-logs/runs/*/archive-manifest.yml",
-        "**/artifacts/archive-manifest.yml",
-    ],
     "update-manifest.schema.json": [],  # generated; no installed glob
     "hosts.schema.json": ["config/hosts.yml"],
+    "doc-config.schema.json": [
+        "harness/shared_factory/00-control-plane/doc-config.yml",
+        "**/02-projects/*/config/doc-config.yml",
+    ],
 }
 
 
@@ -981,13 +1147,9 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
 
     Returns a list of finding dicts with keys: severity, path, message.
 
-    Four conditions are detected (WI-005 scope):
+    Two conditions are detected (plan-22 AC):
       (a) Work items stuck in ``building`` state past BUILDING_STALE_DAYS.
       (b) Work items in ``finished`` state that are missing SUMMARY.md.
-      (c) Work items in ``finished`` state missing HOLDOUT_QA_RESULTS.md
-          (validation evidence).
-      (d) Work items in ``documented`` state missing MEMORY.md
-          (memory/docs evidence).
     """
     findings: list[dict[str, str]] = []
     now = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -1045,88 +1207,6 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
                             ),
                         }
                     )
-                qa_results_path = work_item_root / "HOLDOUT_QA_RESULTS.md"
-                if not qa_results_path.is_file():
-                    findings.append(
-                        {
-                            "severity": "fix-soon",
-                            "path": str(work_item_root),
-                            "message": (
-                                f"work item is 'finished' but missing validation evidence "
-                                f"(HOLDOUT_QA_RESULTS.md): {work_item_root.name}"
-                            ),
-                        }
-                    )
-
-            elif status == "documented":
-                memory_path = work_item_root / "MEMORY.md"
-                if not memory_path.is_file():
-                    findings.append(
-                        {
-                            "severity": "observation",
-                            "path": str(work_item_root),
-                            "message": (
-                                f"work item is 'documented' but missing MEMORY.md "
-                                f"(no memory evidence): {work_item_root.name}"
-                            ),
-                        }
-                    )
-
-    return findings
-
-
-def lifecycle_closeout_readiness_check(work_item_root: Path) -> list[dict[str, str]]:
-    """Check whether a single work item is ready for thread closeout.
-
-    Returns advisory findings (non-blocking) — callers surface these as warnings,
-    not errors. Composes existing lifecycle primitives rather than duplicating logic:
-    ``WorkItemRecord.missing_required_files`` provides the canonical state-required
-    file check (defined in ``STATE_REQUIRED_FILES`` in lifecycle.py).
-
-    Each finding is a dict with keys: ``severity``, ``path``, ``message``.
-    Returns an empty list when the work item packet is fully ready.
-    """
-    findings: list[dict[str, str]] = []
-
-    metadata_path = metadata_path_for(work_item_root)
-    if metadata_path is None:
-        findings.append(
-            {
-                "severity": "fix-soon",
-                "path": str(work_item_root),
-                "message": (
-                    f"work item missing metadata file "
-                    f"({', '.join(WORK_ITEM_METADATA_FILES)}): {work_item_root.name}"
-                ),
-            }
-        )
-        return findings
-
-    metadata = load_yaml_mapping(metadata_path)
-    status = lifecycle_status(metadata)
-
-    # Reuse WorkItemRecord.missing_required_files — the canonical source of
-    # state-required file logic lives in lifecycle.py, not here.
-    record = WorkItemRecord(
-        path=work_item_root,
-        metadata_path=metadata_path,
-        status=status,
-        title=str(metadata.get("title") or work_item_root.name),
-        slug=str(metadata.get("slug") or metadata.get("id") or work_item_root.name),
-        source="project_work_item",
-        metadata=metadata,
-    )
-    for missing_path in record.missing_required_files:
-        findings.append(
-            {
-                "severity": "fix-soon",
-                "path": str(work_item_root),
-                "message": (
-                    f"work item {work_item_root.name!r} status {status!r} "
-                    f"missing required file: {missing_path.name}"
-                ),
-            }
-        )
 
     return findings
 
@@ -1161,6 +1241,8 @@ def validate_root(root: str | Path) -> ValidationResult:
     require_dir(harness_path(os_root, "logs", "updates"), result)
     require_dir(harness_path(os_root, "logs", "backups"), result)
     validate_capability_registries(os_root, result)
+    validate_command_skill_registry_coverage(os_root, result)
+    validate_workflow_automation_invocations(os_root, result)
     validate_registered_hooks(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)

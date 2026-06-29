@@ -61,7 +61,6 @@ INTAKE_MARKDOWN_STATES = {"captured", "triaged"}
 WORK_ITEM_METADATA_FILES = ("work.yml", "feature.yml", "work-item.md")
 
 WORK_ITEM_FILES = (
-    "IDEA.md",
     "SPEC.md",
     "PLAN.md",
     "INVESTIGATION.md",
@@ -81,9 +80,9 @@ WORK_ITEM_DIRECTORIES = (
 )
 
 STATE_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
-    "captured": ("IDEA.md", "WORKLOG.md", "NEXT.md"),
-    "triaged": ("IDEA.md", "JUDGMENT.md", "WORKLOG.md", "NEXT.md"),
-    "specified": ("IDEA.md", "SPEC.md", "JUDGMENT.md", "WORKLOG.md", "NEXT.md"),
+    "captured": ("SPEC.md", "WORKLOG.md", "NEXT.md"),
+    "triaged": ("SPEC.md", "JUDGMENT.md", "WORKLOG.md", "NEXT.md"),
+    "specified": ("SPEC.md", "JUDGMENT.md", "WORKLOG.md", "NEXT.md"),
     "ready": ("SPEC.md", "PLAN.md", "JUDGMENT.md", "WORKLOG.md", "NEXT.md"),
     "building": ("SPEC.md", "PLAN.md", "WORKLOG.md", "NEXT.md"),
     "validating": ("SPEC.md", "PLAN.md", "HOLDOUT_QA.md", "WORKLOG.md", "NEXT.md"),
@@ -91,6 +90,10 @@ STATE_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
     "documented": ("SUMMARY.md", "MEMORY.md", "WORKLOG.md", "NEXT.md"),
     "blocked": ("JUDGMENT.md", "WORKLOG.md", "NEXT.md"),
     "archived": ("SUMMARY.md", "WORKLOG.md"),
+}
+
+LEGACY_FILE_ALIASES: dict[str, tuple[str, ...]] = {
+    "SPEC.md": ("IDEA.md",),
 }
 
 ACTIVE_WORK_ITEM_STATES = {
@@ -316,7 +319,17 @@ def state_file_paths(work_item_root: Path, state: str) -> list[Path]:
     if work_item_root.is_file():
         return [work_item_root]
     names = STATE_REQUIRED_FILES.get(state, STATE_REQUIRED_FILES["captured"])
-    return [work_item_root / name for name in names]
+    paths = []
+    for name in names:
+        path = work_item_root / name
+        if not path.is_file():
+            for alias in LEGACY_FILE_ALIASES.get(name, ()):
+                alias_path = work_item_root / alias
+                if alias_path.is_file():
+                    path = alias_path
+                    break
+        paths.append(path)
+    return paths
 
 
 def work_item_metadata(
@@ -362,7 +375,7 @@ def work_item_metadata(
     return yaml.safe_dump(payload, sort_keys=False)
 
 
-def intake_idea_markdown(*, domain: str, project: str, work_id: str, title: str, status: str, summary: str) -> str:
+def intake_spec_markdown(*, domain: str, project: str, work_id: str, title: str, status: str, summary: str) -> str:
     metadata = {
         "id": work_id,
         "title": title,
@@ -388,7 +401,7 @@ def intake_idea_markdown(*, domain: str, project: str, work_id: str, title: str,
 {yaml.safe_dump(metadata, sort_keys=False).strip()}
 ---
 
-# Idea: {title}
+# Spec: {title}
 
 ## Captured
 
@@ -399,11 +412,11 @@ def intake_idea_markdown(*, domain: str, project: str, work_id: str, title: str,
 | Work Item | `{work_id}` |
 | Lane | `{lane_for_status(status)}` |
 
-## Raw Idea
+## Raw Capture
 
 {summary}
 
-## Notes
+## Initial Notes
 
 -
 """
@@ -432,9 +445,13 @@ def work_item_file_content(filename: str, *, title: str, summary: str, status: s
     if filename == "SPEC.md":
         return f"""# Spec: {title}
 
-## Problem
+## Raw Capture
 
 {summary}
+
+## Problem
+
+- TBD.
 
 ## Outcome
 
@@ -620,7 +637,7 @@ def create_project_work_item(
     if status in INTAKE_MARKDOWN_STATES and item_format != "packet":
         write_file_once(
             work_item_root,
-            intake_idea_markdown(
+            intake_spec_markdown(
                 domain=domain,
                 project=project,
                 work_id=work_id,

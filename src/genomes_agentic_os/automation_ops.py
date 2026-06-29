@@ -17,6 +17,7 @@ SAFE_START_LEVELS = ("observe", "prepare")
 SECTION_REQUIREMENTS = {
     "automation.md": (
         "Metadata",
+        "Invocation Contract",
         "Trigger",
         "Idempotency",
         "Permissions",

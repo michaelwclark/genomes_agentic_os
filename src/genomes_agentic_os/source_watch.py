@@ -479,8 +479,8 @@ def normalized_source_event(
             ("\n".join(sorted_keys)).encode()
         ).hexdigest()[:12]
         live_event_key = f"{event_key}\nlive_digest:{live_digest}"
-        live_event_seed = f"{source['id']}:{live_event_key}"
-        live_event_id = f"src_evt_{hashlib.sha256(live_event_seed.encode()).hexdigest()[:10]}"
+        source_id = str(source["id"])
+        live_event_id = f"src_evt_{hashlib.sha256(f'{source_id}:{live_event_key}'.encode()).hexdigest()[:10]}"
         effective_event_id = live_event_id
         # Idempotency key for deduplication: live items hash, not a timestamp
         effective_idempotency_key = f"{source.get('source_type')}:{source.get('id')}:{live_digest}"
@@ -606,7 +606,7 @@ def queue_item_for_trigger(rule: dict[str, Any], event: dict[str, Any]) -> dict[
     enqueue = ((rule.get("then") or {}).get("enqueue")) or {}
     approval_required = bool((rule.get("approval") or {}).get("required"))
     key = trigger_idempotency_key(rule, event)
-    item = {
+    return {
         "id": f"queue_{hashlib.sha256(key.encode()).hexdigest()[:12]}",
         "kind": "source_trigger",
         "ref": rule["id"],
@@ -624,13 +624,6 @@ def queue_item_for_trigger(rule: dict[str, Any], event: dict[str, Any]) -> dict[
         "created_at": utc_now(),
         "evidence": [{"type": "source_event", "path": event.get("path")}],
     }
-    command = enqueue.get("command") or enqueue.get("worker_command")
-    if command:
-        item["command"] = format_template(str(command), trigger_format_values(rule, event))
-    execution_target = enqueue.get("execution_target")
-    if execution_target:
-        item["execution_target"] = execution_target
-    return item
 
 
 def apply_trigger_rules(

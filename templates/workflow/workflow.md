@@ -15,6 +15,15 @@
 
 State the concrete outcome this workflow produces.
 
+## Invocation Contract
+
+| Surface | Value |
+| --- | --- |
+| Primary command or skill |  |
+| Registry entry | `harness/registries/commands.yml` or `harness/registries/skills.yml` |
+| Authoring rules | `harness/rules/os-authoring-rules.md` |
+| Convention reference | `harness/shared_factory/05-knowledge/references/os-conventions.md` |
+
 ## Pre-Build Gate
 
 Do not dispatch build work until these files are complete enough for a fresh agent to execute:
@@ -25,6 +34,7 @@ Do not dispatch build work until these files are complete enough for a fresh age
 - `implementation-plan.md` - build stages, file or system scope, risks, and validation plan.
 - `dispatch-handoff.md` - source loading, ownership, constraints, stop conditions, and verification.
 - `progress.md` - current status, blockers, resume point, and next action.
+- Matching command or skill registry entry - required before this workflow is marked active.
 
 ## Use When
 
@@ -74,6 +84,8 @@ Do not dispatch build work until these files are complete enough for a fresh age
 10. Validate output.
 11. Record artifacts and decisions.
 12. Update `progress.md`, state, and next action.
+13. Update the relevant work item `WORKLOG.md` and domain/project control
+    surface when this workflow changes durable state.
 
 ## Validation
 

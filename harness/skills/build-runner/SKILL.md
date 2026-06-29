@@ -1,6 +1,6 @@
 ---
 name: build-runner
-description: Drive a Kanban-backed implementation queue through orchestrate, producing installed OS worklog artifacts, verified worktree merges, holdout QA, build logs, and board writeback. Use when READY cards should be built in prefix order with tracking notes left on the source board.
+description: Drive a Kanban-backed implementation queue through orchestrate, producing local worklog artifacts, verified worktree merges, holdout QA, worklog rollups, and board writeback. Use when READY cards should be built in prefix order with tracking notes left on the source board.
 ---
 
 # Build Runner
@@ -29,14 +29,14 @@ Given a board, column, and ordering rule, Build Runner must:
 1. Verify the board is accessible and safe to write.
 2. Load project `CONFIG.md` when present and use it before skill defaults.
 3. Load the requested cards from the requested queue.
-4. Normalize card specs into installed OS worklog folders.
+4. Normalize card specs into local worklog folders.
 5. Run each card through investigation, planning, implementation, review, QA,
    merge, and board sync.
-6. Append completed work artifacts into the configured installed OS worklog bucket.
+6. Append completed card artifacts into `WORKLOGS/*.md` or `worklogs/*.md`.
 7. Persist enough state to resume after interruption without duplicating work.
 
-The board is the control plane. The repo is the execution surface. The installed
-OS worklog folder is the audit trail. Git is the merge record.
+The board is the control plane. The repo is the execution surface. The worklog
+folder is the audit trail. Git is the merge record.
 
 ## Recommended Changes From The Initial Prompt
 
@@ -46,11 +46,12 @@ OS worklog folder is the audit trail. Git is the merge record.
 - Add a preflight gate for board identity, git state, default branch, test
   commands, and existing artifacts.
 - Add `RUN_STATE.json` so a long queue can resume safely.
-- Add `feature.yml` to every feature folder as the machine-readable anchor.
+- Add `work.yml` to every worklog folder as the machine-readable anchor.
 - Standardize artifact names: `INVESTIGATION.md`, `JUDGMENT.md`, and
   `HOLDOUT_QA_RESULTS.md`.
 - Keep shared writes orchestrator-owned. Subagents return structured results;
-  they do not append to shared worklogs or write board comments directly.
+  they do not append to `WORKLOGS/*.md`, `worklogs/*.md`, or write board
+  comments directly.
 - Make automation finite and checkpointed. "Do not stop" means resumable loop,
   retry limits, timeouts, and kill criteria.
 - Make generated `SPECS/*.md` subtasks idempotent and linked back to the source
@@ -66,12 +67,15 @@ The user should provide:
 - Source queue: for example `READY`.
 - Ordering rule: for example title prefix ascending from `ex00` through `ex99`.
 - Target branch: default to the repo default branch.
-- Artifact root: default to the installed OS project `worklogs/source-features/`.
-- Spec root: default to the installed OS project `SPECS/`.
-- Build log root: default to the installed OS project `worklogs/source-build-logs/`.
+- Worklog root: default to `worklogs/`, or `WORKLOGS/` when the project uses
+  uppercase bucket folders.
+- Spec root: default to `SPECS/`.
+- Legacy artifact roots: read existing `features/`, `.features/`, `PLANS/`,
+  and `BUILD_LOGS/` only as compatibility inputs unless project config says
+  otherwise.
 
 If root `CONFIG.md` exists, read it before applying these defaults. It may
-define board properties, queue names, workflow direction, feature artifact
+define board properties, queue names, workflow direction, spec/worklog artifact
 paths, worktree policy, merge strategy, holdout QA requirements, and writeback
 mode.
 
@@ -127,11 +131,11 @@ the user explicitly asks for lowest prefix to highest prefix.
 
 ## Local Artifact Layout
 
-For every card, create one canonical installed OS worklog directory:
+For every card, create one canonical worklog directory:
 
 ```text
-worklogs/source-features/<prefix-slug>/
-  feature.yml
+worklogs/<prefix-slug>/
+  work.yml
   SPEC.md
   INVESTIGATION.md
   PLAN.md
@@ -144,18 +148,20 @@ worklogs/source-features/<prefix-slug>/
   JUDGMENT.md
 ```
 
+Use `WORKLOGS/<prefix-slug>/` instead of `worklogs/<prefix-slug>/` when the
+project's visible bucket folders are uppercase. Lowercase `logs/` remains raw
+system output only.
+
 Use the spellings above as canonical. Do not create `JUIDGMENT.md`,
 `JUDGEMENT.md`, `INVESTIGATE.md`, or `HOLDOUT_QA_RESUTLS.md`.
 
-`feature.yml` must record source card ID, title, prefix, slug, source URL,
+`work.yml` must record source card ID, title, prefix, slug, source URL,
 status, branch, base SHA, merge SHA, started/completed timestamps, baseline
 verification, and final verification.
 
 ## Run State
 
-Create or update root-level `RUN_STATE.json` only when project config still
-uses a source-root runner state. Prefer an installed OS run artifact when the
-project config provides one.
+Create or update root-level `RUN_STATE.json`.
 
 It must track:
 
@@ -163,13 +169,13 @@ It must track:
 - Board source and workspace/account verification.
 - Queue name and ordering rule.
 - Target branch and base SHA.
-- Feature list with card IDs, slugs, status, branch, and merge commit.
-- Current active feature.
-- Last successful phase per feature.
+- Work list with card IDs, slugs, status, branch, and merge commit.
+- Current active work item.
+- Last successful phase per work item.
 - Generated subtasks.
 - Board sync writes already performed.
 
-Before processing a card, check whether the feature folder, branch, merge
+Before processing a card, check whether the worklog folder, branch, merge
 commit, generated subtask, or board note already exists.
 
 ## State Machine
@@ -217,20 +223,21 @@ Never use `--no-verify`.
 
 ## Orchestration Rules
 
-The main thread is the driver. It owns card loading, ordering, installed OS
-worklog folders, shared logs, worktree creation, merges, scope decisions,
-acceptance-criteria mapping, board updates, and final verification.
+The main thread is the driver. It owns card loading, ordering, worklog folders,
+shared logs, worktree creation, merges, scope decisions, acceptance-criteria
+mapping, board updates, and final verification.
 
 Subagents may own read-only investigation, one isolated implementation plan
 item, focused review, or holdout QA execution.
 
-Subagents must not write shared files such as installed OS worklog rollups,
-`RUN_STATE.json`, or source-board tracking notes. They return structured results
-to the orchestrator, and the orchestrator writes shared state.
+Subagents must not write shared files such as `WORKLOGS/*.md`, `worklogs/*.md`,
+legacy `BUILD_LOGS/*.md`, `RUN_STATE.json`, or source-board tracking notes.
+They return structured results to the orchestrator, and the orchestrator writes
+shared state.
 
 Each implementation subagent prompt must include:
 
-- Feature slug and source card title.
+- Work slug and source card title.
 - Exact plan item it owns.
 - Files it may edit.
 - Files it must not edit.
@@ -250,8 +257,8 @@ Run every card through these phases in order.
 ### 1. Start
 
 Claim the card in `RUN_STATE.json`, add a source-board progress note, create the
-installed OS worklog directory, copy the source spec into `SPEC.md`, create
-`feature.yml`, and initialize the artifact files.
+worklog directory, copy the source spec into `SPEC.md`, create `work.yml`,
+and initialize the artifact files.
 
 ### 2. Investigate
 
@@ -309,32 +316,32 @@ Before merging, re-run orchestrator-side verification, compare final results
 against baseline, confirm test failures do not exceed baseline failures, and
 ensure no acceptance criteria remain open unless explicitly deferred.
 
-After merge, record the merge commit in `feature.yml`, update `SUMMARY.md`,
+After merge, record the merge commit in `work.yml`, update `SUMMARY.md`,
 update `NEXT.md`, update the source card, and move the card only if the board
 convention is known.
 
-### 8. Append Build Logs
+### 8. Append Worklog Rollups
 
-After each feature is complete, append every work artifact to shared installed
-OS worklogs:
+After each work item is complete, append every work artifact to shared worklogs
+when the project uses aggregate rollup files:
 
 ```text
-worklogs/source-build-logs/SPEC.md
-worklogs/source-build-logs/INVESTIGATION.md
-worklogs/source-build-logs/PLAN.md
-worklogs/source-build-logs/MEMORY.md
-worklogs/source-build-logs/WORKLOG.md
-worklogs/source-build-logs/SUMMARY.md
-worklogs/source-build-logs/NEXT.md
-worklogs/source-build-logs/HOLDOUT_QA.md
-worklogs/source-build-logs/HOLDOUT_QA_RESULTS.md
-worklogs/source-build-logs/JUDGMENT.md
+worklogs/SPEC.md or WORKLOGS/SPEC.md
+worklogs/INVESTIGATION.md or WORKLOGS/INVESTIGATION.md
+worklogs/PLAN.md or WORKLOGS/PLAN.md
+worklogs/MEMORY.md or WORKLOGS/MEMORY.md
+worklogs/WORKLOG.md or WORKLOGS/WORKLOG.md
+worklogs/SUMMARY.md or WORKLOGS/SUMMARY.md
+worklogs/NEXT.md or WORKLOGS/NEXT.md
+worklogs/HOLDOUT_QA.md or WORKLOGS/HOLDOUT_QA.md
+worklogs/HOLDOUT_QA_RESULTS.md or WORKLOGS/HOLDOUT_QA_RESULTS.md
+worklogs/JUDGMENT.md or WORKLOGS/JUDGMENT.md
 ```
 
 Each append must start with:
 
 ```markdown
-# FEATURE-<feature-slug>
+# WORK-<work-slug>
 ```
 
 ## Board Writeback Template
@@ -345,7 +352,7 @@ Use a concise tracking note:
 ## Build Runner Update
 
 Status: <state>
-Feature: <feature-slug>
+Work: <work-slug>
 Branch: <branch>
 Commits: <commit list>
 Merge: <merge sha or pending>
@@ -356,8 +363,8 @@ Verification:
 Blockers: <none or list>
 Follow-ups: <none or list>
 Artifacts:
-- worklogs/source-features/<feature-slug>/
-- worklogs/source-build-logs/*.md
+- worklogs/<work-slug>/ or WORKLOGS/<work-slug>/
+- shared worklog rollups when configured
 ```
 
 Never paste secrets or raw token values into board notes.
@@ -415,7 +422,7 @@ Recommended bundled files for a production version:
 harness/skills/build-runner/
   SKILL.md
   templates/
-    feature.yml
+    work.yml
     SPEC.md
     INVESTIGATION.md
     PLAN.md
@@ -444,22 +451,18 @@ directly.
 
 ## Open Questions
 
-1. Should every project use installed OS `worklogs/` by default, or should some
-   source repositories still opt into local `.features/` compatibility folders?
-2. Should completed source cards move to `DONE`, move to `QA`, or stay in place
+1. Should completed source cards move to `DONE`, move to `QA`, or stay in place
    with tracking notes only?
-3. Should generated prerequisite `SPECS/*.md` items enter the active queue
+2. Should generated prerequisite `SPECS/*.md` items enter the active queue
    immediately or wait in backlog for review?
-4. What is the canonical Genome's Notion board schema: status, title, prefix,
+3. What is the canonical Genome's Notion board schema: status, title, prefix,
    acceptance criteria, notes, and done/review properties?
-5. Should each feature merge immediately after passing QA, or should the runner
+4. Should each work item merge immediately after passing QA, or should the runner
    batch merges at the end of a queue run?
-6. Should shared worklog rollups be updated after every feature or only after
-   the whole queue completes?
-7. What is the maximum number of concurrent subagents or worktrees for one run?
-8. Should the runner create a real automation/heartbeat for long runs, or only
+5. What is the maximum number of concurrent subagents or worktrees for one run?
+6. Should the runner create a real automation/heartbeat for long runs, or only
    persist `RUN_STATE.json` and resume when invoked again?
-9. Should board writeback append comments, update the card body, update
+7. Should board writeback append comments, update the card body, update
    structured properties, or do both property updates and a short comment?
-10. Should failed cards block the whole queue, or should the runner mark the
+8. Should failed cards block the whole queue, or should the runner mark the
     card blocked and continue to the next independent card?

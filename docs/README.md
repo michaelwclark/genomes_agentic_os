@@ -76,6 +76,14 @@ vs Codex"** callout for its task; the full mechanics live on
 | --- | --- |
 | [17 · CLI Reference](17-cli-reference.md) | The navigable command map (links into the exhaustive atlas reference). |
 | [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) | Common errors + fixes, the exit-code reference, and the honest known-limitations list. |
+| [20 · Doc Config System](20-doc-config-system.md) | Configurable document routing across Agentic OS filesystem and Notion surfaces. |
+
+Operator shortcut: use `/new-feature` for new feature or idea intake. It routes
+through doc-config first, creates or repairs the project work item, and then
+projects to Notion only after workspace verification.
+Use `/add-bug` for lightweight bug or missed-enforcement capture, and
+`/auto-add-feature` when a long OS-shaping request should become a local feature
+packet before implementation continues.
 
 ---
 
