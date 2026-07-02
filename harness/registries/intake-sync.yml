@@ -76,3 +76,7 @@ back_sync:
   completed_to: "done"
   canceled_to: "dropped"
   duplicate_to: "dropped"
+
+# Rows with the "Jira Tracked" checkbox set are execution items owned by the
+# Jira/PR dashboards — never mirror them to Linear (prevents double-tracking).
+skip_jira_tracked: true

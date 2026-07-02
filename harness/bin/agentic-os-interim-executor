@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""
+agentic-os-interim-executor — INTERIM bridge that directly executes a
+config-flagged subset of runtime-registry.yml schedules on cadence,
+bypassing the queue.
+
+DELETE THIS TOOL when the real runtime dispatch WIP lands (see 023 worklog,
+src/genomes_agentic_os/{runtime_ops,supervisor}.py). Today, runtime_ops.py's
+_run_local_script only VALIDATES scripts ("external_effect: local script
+validation only") — it never actually executes them. The Codex app crons
+that used to carry execution were retired 2026-07-02. This tool is a small,
+deletable stopgap so a handful of time-sensitive schedules keep running
+while that WIP is in flight. It does not read or write next_due_at /
+last_queued_at (those belong to the queue/supervisor); it keeps its own
+cadence state in a separate state file.
+
+Eligible schedules: enabled: true AND interim_execute: true in
+runtime-registry.yml. Everything else is left to the real dispatcher.
+
+ENVIRONMENT
+  AGENTIC_OS_ROOT   Override the installed OS root (default: ~/agentic_os).
+
+FILES
+  harness/shared_factory/00-control-plane/runtime-registry.yml
+      Source of schedules. Only entries with interim_execute: true are considered.
+
+  harness/shared_factory/06-runs-and-logs/interim-executor/state.yml
+      Cadence state: schedule id -> last_run_at (ISO8601 UTC). Stamped on every
+      attempt (success or failure) so a persistently-failing schedule does not
+      retry every tick.
+
+  harness/shared_factory/06-runs-and-logs/interim-executor/<ts>-<id>.log
+      Captured stdout+stderr (last 30 lines) for one run.
+
+  harness/shared_factory/06-runs-and-logs/interim-executor/runs.jsonl
+      Append-only JSONL receipt: one line per attempted run.
+
+EXAMPLES
+  # Show what would run right now, without running it
+  agentic-os-interim-executor --once --dry-run
+
+  # Run one pass for real (default: --once)
+  agentic-os-interim-executor --once
+
+  # Run only one schedule by id, ignoring cadence gating
+  agentic-os-interim-executor --once --only intake_sync
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import yaml
+
+SCRIPT_NAME = "agentic-os-interim-executor"
+DEFAULT_ROOT = Path("/Users/genome/agentic_os")
+REGISTRY_REL = "harness/shared_factory/00-control-plane/runtime-registry.yml"
+STATE_DIR_REL = "harness/shared_factory/06-runs-and-logs/interim-executor"
+STATE_FILE_NAME = "state.yml"
+RECEIPTS_FILE_NAME = "runs.jsonl"
+
+DEFAULT_TIMEOUT_SEC = 1200
+GRACE_SEC = 60  # tolerance for launchd StartInterval drift
+
+CADENCE_SECONDS: dict[str, int] = {
+    "every_5_minutes": 5 * 60,
+    "every_10_minutes": 10 * 60,
+    "every_15_minutes": 15 * 60,
+    "every_30_minutes": 30 * 60,
+    "hourly": 60 * 60,
+    "daily": 24 * 60 * 60,
+    "weekly": 7 * 24 * 60 * 60,
+}
+
+
+def utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def parse_iso(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except ValueError:
+        return None
+
+
+def load_registry(root: Path) -> dict[str, Any]:
+    path = root / REGISTRY_REL
+    if not path.exists():
+        raise SystemExit(f"{SCRIPT_NAME}: registry not found: {path}")
+    with path.open("r") as fh:
+        data = yaml.safe_load(fh) or {}
+    return data
+
+
+def load_state(root: Path) -> dict[str, Any]:
+    path = root / STATE_DIR_REL / STATE_FILE_NAME
+    if not path.exists():
+        return {}
+    with path.open("r") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def save_state(root: Path, state: dict[str, Any]) -> None:
+    state_dir = root / STATE_DIR_REL
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / STATE_FILE_NAME
+    with path.open("w") as fh:
+        yaml.safe_dump(state, fh, sort_keys=False)
+
+
+def append_receipt(root: Path, receipt: dict[str, Any]) -> None:
+    state_dir = root / STATE_DIR_REL
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / RECEIPTS_FILE_NAME
+    with path.open("a") as fh:
+        fh.write(json.dumps(receipt) + "\n")
+
+
+def eligible_schedules(registry: dict[str, Any]) -> list[dict[str, Any]]:
+    schedules = registry.get("schedules") or []
+    out = []
+    for sched in schedules:
+        if not sched.get("enabled", False):
+            continue
+        if not sched.get("interim_execute", False):
+            continue
+        out.append(sched)
+    return out
+
+
+def is_due(sched: dict[str, Any], last_run_at: dt.datetime | None, now: dt.datetime) -> tuple[bool, str]:
+    cadence = sched.get("cadence")
+    sched_id = sched.get("id", "?")
+
+    if last_run_at is None:
+        return True, "never run"
+
+    if cadence == "daily":
+        local_time = sched.get("local_time")
+        if local_time:
+            hh, mm = str(local_time).split(":")
+            tz = ZoneInfo(str(sched.get("timezone") or "America/Chicago"))
+            now_local = now.astimezone(tz)
+            today_local_trigger = now_local.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+            last_run_local = last_run_at.astimezone(tz)
+            if now_local >= today_local_trigger and last_run_local < today_local_trigger:
+                return True, f"due (local_time {local_time} {tz.key} passed, last run before trigger)"
+            return False, f"not due (local_time {local_time} {tz.key} not yet reached or already ran today)"
+        interval = CADENCE_SECONDS["daily"]
+        elapsed = (now - last_run_at).total_seconds()
+        if elapsed >= interval - GRACE_SEC:
+            return True, f"due (elapsed {int(elapsed)}s >= {interval}s - grace)"
+        return False, f"not due (elapsed {int(elapsed)}s < {interval}s - grace)"
+
+    interval = CADENCE_SECONDS.get(cadence)
+    if interval is None:
+        return False, f"unsupported cadence '{cadence}' for schedule {sched_id}"
+
+    elapsed = (now - last_run_at).total_seconds()
+    if elapsed >= interval - GRACE_SEC:
+        return True, f"due (elapsed {int(elapsed)}s >= {interval}s - grace)"
+    return False, f"not due (elapsed {int(elapsed)}s < {interval}s - grace)"
+
+
+def run_schedule(root: Path, sched: dict[str, Any], state_dir: Path) -> dict[str, Any]:
+    sched_id = sched.get("id", "unknown")
+    command = sched.get("command", "")
+    timeout_sec = int(sched.get("interim_timeout_sec", DEFAULT_TIMEOUT_SEC))
+
+    shell_command = f"source ~/.zshenv 2>/dev/null; cd {root} && {command}"
+    argv = ["/bin/zsh", "-c", shell_command]
+
+    started_at = utc_now()
+    start_perf = time.monotonic()
+    exit_code: int
+    output_tail = ""
+    timed_out = False
+
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+        exit_code = proc.returncode
+        combined = (proc.stdout or "") + (proc.stderr or "")
+    except subprocess.TimeoutExpired as exc:
+        exit_code = -1
+        timed_out = True
+        combined = (exc.stdout or "") + (exc.stderr or "") if (exc.stdout or exc.stderr) else ""
+        combined += "\n[interim-executor] TIMEOUT after {}s".format(timeout_sec)
+    except Exception as exc:  # noqa: BLE001 - surface any launch failure as a failed run
+        exit_code = -2
+        combined = f"[interim-executor] failed to launch: {exc}"
+
+    duration_sec = round(time.monotonic() - start_perf, 2)
+    finished_at = utc_now()
+
+    lines = combined.splitlines()
+    output_tail = "\n".join(lines[-30:])
+
+    ts_label = started_at.strftime("%Y%m%dT%H%M%SZ")
+    log_path = state_dir / f"{ts_label}-{sched_id}.log"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w") as fh:
+        fh.write(f"schedule_id: {sched_id}\n")
+        fh.write(f"command: {command}\n")
+        fh.write(f"started_at: {started_at.isoformat()}\n")
+        fh.write(f"finished_at: {finished_at.isoformat()}\n")
+        fh.write(f"exit_code: {exit_code}\n")
+        fh.write(f"timed_out: {timed_out}\n")
+        fh.write("--- last 30 lines of output ---\n")
+        fh.write(output_tail + "\n")
+
+    return {
+        "id": sched_id,
+        "command": command,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "duration_sec": duration_sec,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "log_path": str(log_path),
+    }
+
+
+def notify_failure(sched_id: str, exit_code: int) -> None:
+    notify_bin = Path("/Users/genome/agentic_os/harness/bin/agentic-os-notify")
+    if not notify_bin.exists():
+        return
+    try:
+        subprocess.run(
+            [
+                str(notify_bin),
+                "--source", "automation.interim_executor",
+                "--level", "warn",
+                "--title", f"{sched_id} failed",
+                "--message", f"exit {exit_code}",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:  # noqa: BLE001 - notification is best-effort, never block the run
+        pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog=SCRIPT_NAME,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "INTERIM bridge — directly runs config-flagged runtime-registry.yml "
+            "schedules on cadence, bypassing the (currently validation-only) queue "
+            "dispatcher. Delete when real runtime dispatch WIP lands."
+        ),
+        epilog=(
+            "ENVIRONMENT\n"
+            "  AGENTIC_OS_ROOT   Override the installed OS root (default: ~/agentic_os).\n\n"
+            "FILES\n"
+            f"  {REGISTRY_REL}\n"
+            "      Source of schedules. Only entries with interim_execute: true are considered.\n\n"
+            f"  {STATE_DIR_REL}/{STATE_FILE_NAME}\n"
+            "      Cadence state: schedule id -> last_run_at (stamped on every attempt).\n\n"
+            f"  {STATE_DIR_REL}/<ts>-<id>.log\n"
+            "      Captured output (last 30 lines) for one run.\n\n"
+            f"  {STATE_DIR_REL}/{RECEIPTS_FILE_NAME}\n"
+            "      Append-only JSONL receipt: one line per attempted run.\n\n"
+            "EXAMPLES\n"
+            "  # Show what would run right now, without running it\n"
+            "  agentic-os-interim-executor --once --dry-run\n\n"
+            "  # Run one pass for real\n"
+            "  agentic-os-interim-executor --once\n\n"
+            "  # Run only one schedule by id, ignoring cadence gating\n"
+            "  agentic-os-interim-executor --once --only intake_sync\n"
+        ),
+    )
+    parser.add_argument(
+        "--once", action="store_true", default=True,
+        help="Run a single pass over eligible schedules (default behavior; flag kept for clarity/future --loop).",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="List what would run (and why/why not) without executing anything or writing state.",
+    )
+    parser.add_argument(
+        "--only", metavar="ID",
+        help="Run only the schedule with this id, ignoring cadence gating (still requires enabled+interim_execute).",
+    )
+    parser.add_argument(
+        "--root", type=Path, default=DEFAULT_ROOT,
+        help=f"Agentic OS root (default: {DEFAULT_ROOT}).",
+    )
+    args = parser.parse_args(argv)
+
+    root: Path = args.root
+    registry = load_registry(root)
+    state = load_state(root)
+    now = utc_now()
+
+    schedules = eligible_schedules(registry)
+    if args.only:
+        schedules = [s for s in schedules if s.get("id") == args.only]
+        if not schedules:
+            print(f"{SCRIPT_NAME}: no eligible schedule with id '{args.only}' "
+                  f"(must have enabled: true and interim_execute: true)")
+            return 1
+
+    plan: list[tuple[dict[str, Any], bool, str]] = []
+    for sched in schedules:
+        sched_id = sched.get("id", "?")
+        last_run_at = parse_iso(state.get(sched_id, {}).get("last_run_at") if isinstance(state.get(sched_id), dict) else state.get(sched_id))
+        if args.only:
+            due, reason = True, "forced via --only"
+        else:
+            due, reason = is_due(sched, last_run_at, now)
+        plan.append((sched, due, reason))
+
+    if args.dry_run:
+        print(f"{SCRIPT_NAME}: dry-run plan ({len(plan)} eligible schedule(s))")
+        for sched, due, reason in plan:
+            marker = "RUN " if due else "SKIP"
+            print(f"  [{marker}] {sched.get('id')}: {reason}")
+            if due:
+                print(f"         command: {sched.get('command')}")
+        return 0
+
+    ran = 0
+    for sched, due, reason in plan:
+        sched_id = sched.get("id", "?")
+        if not due:
+            continue
+        ran += 1
+        print(f"{SCRIPT_NAME}: running {sched_id} ({reason})")
+        result = run_schedule(root, sched, root / STATE_DIR_REL)
+
+        # Stamp last_run_at on every attempt (success or failure) so a
+        # persistently-failing schedule doesn't retry on every tick.
+        state[sched_id] = {"last_run_at": result["finished_at"]}
+        save_state(root, state)
+
+        receipt = {
+            "ts": result["finished_at"],
+            "id": sched_id,
+            "exit": result["exit_code"],
+            "duration_sec": result["duration_sec"],
+            "timed_out": result["timed_out"],
+            "log_path": result["log_path"],
+        }
+        append_receipt(root, receipt)
+
+        if result["exit_code"] != 0:
+            print(f"{SCRIPT_NAME}: {sched_id} FAILED exit={result['exit_code']} (see {result['log_path']})")
+            notify_failure(sched_id, result["exit_code"])
+        else:
+            print(f"{SCRIPT_NAME}: {sched_id} ok ({result['duration_sec']}s)")
+
+    if ran == 0:
+        print(f"{SCRIPT_NAME}: nothing due ({len(plan)} eligible schedule(s) checked)")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -450,6 +450,11 @@ def row_to_plan(
     sync_inbox = cfg.get("sync_inbox", False)
 
     # Decide action
+    # Jira-tracked rows are execution items owned by the Jira/PR dashboards;
+    # mirroring them to Linear would double-track the same work.
+    jira_tracked = bool(props.get("Jira Tracked", {}).get("checkbox", False))
+    if jira_tracked and cfg.get("skip_jira_tracked", True):
+        return {"action": "skip", "reason": "jira tracked (excluded from Linear sync)", "page_id": page_id, "name": name}
     if status == "inbox" and not sync_inbox:
         return {"action": "skip", "reason": "inbox excluded", "page_id": page_id, "name": name}
     if status not in synced_statuses and status != "inbox":
