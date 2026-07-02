@@ -40,6 +40,19 @@ agentic-os project work-item create <domain> <project> \
 6. If source work uses an external checkout, confirm it is registered in the
    project `worktrees/` surface.
 7. Project to Notion only after workspace verification.
+8. Create the unified intake row (non-blocking):
+
+```bash
+agentic-os-intake-row \
+  --title "Bug: <short failure>" \
+  --type bug \
+  --route-text '<user's original bug report words>' \
+  --body-file <packet BUG.md or SPEC.md path>
+```
+
+   Example: `--route-text 'in los django the login button stopped working'` resolves to
+   `Project=LOS Django` via NL routing. If the row create fails, record the error
+   in `WORKLOG.md` and continue.
 
 ## Bug Fields
 

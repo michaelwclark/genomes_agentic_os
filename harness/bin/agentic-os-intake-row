@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""agentic-os-intake-row — Create a row in the OS Work Intake Notion database.
+
+Creates one row in the "🧭 OS Work Intake" Notion database (id c442dd56a24340f0880acfd195f34225).
+Pass --route-text (or omit --project) to resolve Project via the routing registry.
+Prints the created row URL on success and exits non-zero on failure.
+
+ENVIRONMENT
+  GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace. Required.
+
+CONFIG FILES (read at runtime)
+  harness/registries/intake-routing.yml
+      Maps Project select values to case-insensitive keyword/phrase lists.
+      Read from the same directory as this script's harness/registries/ sibling.
+
+EXAMPLES
+  agentic-os-intake-row --title 'Unify intake surfaces' --type spec \\
+      --route-text 'intake rewire for agentic os'
+      Route via free text → Project=Agentic OS
+
+  agentic-os-intake-row --title 'LOS Django late fee bug' --type bug \\
+      --project 'LOS Django' --priority P1
+      Explicit project, high priority.
+
+  agentic-os-intake-row --title 'Test row' --type idea \\
+      --route-text 'new kanga idea' --dry-run
+      Preview resolved Project without writing to Notion.
+"""
+
+import argparse
+import json
+import os
+import sys
+import textwrap
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Hardcoded DB ID — not in intake-sync.yml (which covers only Linear-sync config).
+# 50/50 decision: mirror agentic-os-intake-sync's pattern of hardcoding this constant
+# rather than requiring it in a config file that does not currently carry it.
+NOTION_DB_ID = "c442dd56a24340f0880acfd195f34225"
+
+NOTION_API = "https://api.notion.com/v1"
+
+# Notion API version header value — pinned per intake-sync sibling.
+NOTION_VERSION = "2022-06-28"
+
+# Routing registry path — resolved relative to THIS script's parent's parent.
+# Assumes: harness/bin/<this-script>  →  harness/registries/intake-routing.yml
+_SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_ROUTING_REGISTRY = _SCRIPT_DIR.parent / "registries" / "intake-routing.yml"
+
+# Valid Notion select option values (confirmed from DB schema 2026-07-02).
+VALID_TYPES = {"idea", "spec", "feature", "plan", "gap", "bug", "improvement", "investigation"}
+VALID_STATUSES = {"inbox", "triaged", "spec-ready", "queued", "in-progress", "blocked", "done", "dropped"}
+VALID_PRIORITIES = {"P0", "P1", "P2", "P3"}
+VALID_PROJECTS = {
+    "Agentic OS",
+    "Genome's Brain",
+    "LOS Django",
+    "Rules Engine",
+    "LedgerLine",
+    "LOSMON",
+    "Forge",
+    "Kanga",
+    "Grep Memory Battle",
+    "Personal",
+}
+VALID_SOURCES = {"night-run-023", "self-improvement", "slack", "granola", "migration", "manual"}
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+
+
+def load_routing_registry(path: Path) -> dict:
+    """Load intake-routing.yml. Returns raw parsed YAML dict."""
+    if not path.exists():
+        print(f"WARNING: Routing registry not found at {path}. Project routing disabled.", file=sys.stderr)
+        return {}
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
+
+def resolve_project(route_text: str, registry: dict) -> str | None:
+    """Resolve a Project select value from free text using first_match_wins order.
+
+    Returns the matched Project name or None when no keyword matches.
+    """
+    project_keywords: dict = registry.get("project_keywords", {})
+    needle = route_text.lower()
+    for project_name, keywords in project_keywords.items():
+        for kw in keywords:
+            if kw.lower() in needle:
+                return project_name
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Notion HTTP helpers
+# ---------------------------------------------------------------------------
+
+
+def _notion_request(method: str, path: str, token: str, body: dict | None = None) -> dict:
+    """Make a Notion API request. Raises RuntimeError on non-2xx response."""
+    url = f"{NOTION_API}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": NOTION_VERSION,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body_bytes = exc.read()
+        try:
+            err = json.loads(body_bytes)
+            msg = err.get("message", body_bytes.decode(errors="replace"))
+        except Exception:
+            msg = body_bytes.decode(errors="replace")
+        raise RuntimeError(f"Notion API {method} {path} → HTTP {exc.code}: {msg}") from exc
+
+
+def notion_create_page(token: str, properties: dict) -> dict:
+    """Create a Notion page in the intake DB. Returns the full page object."""
+    body = {
+        "parent": {"database_id": NOTION_DB_ID},
+        "properties": properties,
+    }
+    return _notion_request("POST", "/pages", token, body)
+
+
+def notion_patch_page(token: str, page_id: str, properties: dict) -> dict:
+    """Update properties on an existing Notion page."""
+    return _notion_request("PATCH", f"/pages/{page_id}", token, {"properties": properties})
+
+
+# ---------------------------------------------------------------------------
+# Property builders
+# ---------------------------------------------------------------------------
+
+
+def _title_prop(text: str) -> dict:
+    return {"title": [{"type": "text", "text": {"content": text}}]}
+
+
+def _select_prop(value: str) -> dict:
+    return {"select": {"name": value}}
+
+
+def _rich_text_prop(text: str) -> dict:
+    return {"rich_text": [{"type": "text", "text": {"content": text}}]}
+
+
+def build_properties(
+    title: str,
+    type_: str,
+    project: str | None,
+    status: str,
+    priority: str,
+    source: str,
+) -> dict:
+    """Build the Notion properties dict for a new intake row."""
+    props: dict = {
+        "Name": _title_prop(title),
+        "Type": _select_prop(type_),
+        "Status": _select_prop(status),
+        "Priority": _select_prop(priority),
+        "Source": _select_prop(source),
+    }
+    if project is not None:
+        props["Project"] = _select_prop(project)
+    return props
+
+
+# ---------------------------------------------------------------------------
+# Body content helper
+# ---------------------------------------------------------------------------
+
+
+def build_children_from_file(body_file: Path) -> list[dict]:
+    """Read a markdown file and return a list of Notion paragraph blocks.
+
+    Only paragraph blocks are created (no heading parsing). This keeps the
+    body readable without requiring a full markdown parser.
+    """
+    text = body_file.read_text(encoding="utf-8")
+    # Split on double-newlines, trim, and skip blanks
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    blocks = []
+    for para in paragraphs:
+        # Truncate individual paragraphs to Notion's 2000-char limit per block
+        if len(para) > 2000:
+            para = para[:1997] + "..."
+        blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": para}}]
+            },
+        })
+    return blocks[:100]  # Notion limit: 100 children per create call
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+_EPILOG = textwrap.dedent("""\
+    ENVIRONMENT
+      GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace.
+                          Required (never printed).
+
+    CONFIG FILES (read at runtime)
+      harness/registries/intake-routing.yml
+          NL routing registry: Project → keywords. First-match-wins order.
+
+    EXAMPLES
+      agentic-os-intake-row --title 'New idea for LOS Django late fees' \\
+          --type idea --route-text 'idea for los django late fees'
+          Routes to Project=LOS Django automatically.
+
+      agentic-os-intake-row --title 'Kanga Phase 2 planning' --type plan \\
+          --project Kanga --priority P2 --status triaged
+          Explicit project and status.
+
+      agentic-os-intake-row --title 'INTAKE REWIRE SMOKE TEST' --type investigation \\
+          --route-text 'testing the os intake helper' --dry-run
+          Preview resolved Project=Agentic OS without writing.
+
+      agentic-os-intake-row --title 'Big spec' --type spec \\
+          --route-text 'new losmon feature' --body-file SPEC.md
+          Create row and populate page body from a markdown file.
+""")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-intake-row",
+        description=(
+            "Create a row in the OS Work Intake Notion database. "
+            "Use --route-text to resolve Project automatically from free text."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--title",
+        required=True,
+        help="Row title (maps to the Name property). Required.",
+    )
+    parser.add_argument(
+        "--type",
+        required=True,
+        choices=sorted(VALID_TYPES),
+        metavar="TYPE",
+        help=(
+            f"Work type. Valid values: {', '.join(sorted(VALID_TYPES))}. Required."
+        ),
+    )
+    parser.add_argument(
+        "--project",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Project select value. Must exactly match a Notion option "
+            f"({', '.join(sorted(VALID_PROJECTS))}). "
+            "Omit to auto-resolve via --route-text. If neither is given, Project is omitted."
+        ),
+    )
+    parser.add_argument(
+        "--route-text",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "Free text used to auto-resolve Project via intake-routing.yml keyword matching. "
+            "Ignored when --project is explicitly set."
+        ),
+    )
+    parser.add_argument(
+        "--status",
+        default="inbox",
+        choices=sorted(VALID_STATUSES),
+        metavar="STATUS",
+        help=f"Initial status (default: %(default)s). Valid values: {', '.join(sorted(VALID_STATUSES))}.",
+    )
+    parser.add_argument(
+        "--priority",
+        default="P2",
+        choices=sorted(VALID_PRIORITIES),
+        metavar="PRIORITY",
+        help="Priority level (default: %(default)s). Valid values: P0, P1, P2, P3.",
+    )
+    parser.add_argument(
+        "--source",
+        default="manual",
+        choices=sorted(VALID_SOURCES),
+        metavar="SOURCE",
+        help=f"Source tag (default: %(default)s). Valid values: {', '.join(sorted(VALID_SOURCES))}.",
+    )
+    parser.add_argument(
+        "--body-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to a markdown file whose content is appended as paragraph blocks "
+            "in the page body. File must exist and be readable."
+        ),
+    )
+    parser.add_argument(
+        "--routing-registry",
+        default=str(DEFAULT_ROUTING_REGISTRY),
+        metavar="PATH",
+        help=f"Path to intake-routing.yml (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview the resolved project and properties without writing to Notion.",
+    )
+    return parser
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    # Token check — early exit before any resolution
+    token = os.environ.get("GENOMES_NOTION_PAT", "")
+    if not token and not args.dry_run:
+        print("ERROR: GENOMES_NOTION_PAT environment variable is not set.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate --type explicitly (argparse choices already validates, but belt-and-suspenders)
+    if args.type not in VALID_TYPES:
+        print(f"ERROR: --type must be one of: {', '.join(sorted(VALID_TYPES))}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate --project if explicitly given
+    if args.project is not None and args.project not in VALID_PROJECTS:
+        print(
+            f"ERROR: --project {args.project!r} is not a valid Notion option.\n"
+            f"Valid values: {', '.join(sorted(VALID_PROJECTS))}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Resolve project
+    resolved_project: str | None = args.project
+    route_note: str = ""
+    if resolved_project is not None:
+        route_note = f"--project explicitly set: {resolved_project!r}"
+    elif args.route_text:
+        registry = load_routing_registry(Path(args.routing_registry))
+        resolved_project = resolve_project(args.route_text, registry)
+        if resolved_project is not None:
+            route_note = f"Routed via --route-text → Project={resolved_project!r}"
+        else:
+            route_note = "No keyword match in routing registry; Project omitted from row."
+    else:
+        route_note = "No --project or --route-text; Project omitted from row."
+
+    # Read body file if given
+    children: list[dict] = []
+    if args.body_file is not None:
+        body_path = Path(args.body_file)
+        if not body_path.exists():
+            print(f"ERROR: --body-file {args.body_file!r} does not exist.", file=sys.stderr)
+            sys.exit(1)
+        children = build_children_from_file(body_path)
+
+    # Build properties
+    properties = build_properties(
+        title=args.title,
+        type_=args.type,
+        project=resolved_project,
+        status=args.status,
+        priority=args.priority,
+        source=args.source,
+    )
+
+    # Dry-run output
+    if args.dry_run:
+        print("DRY RUN — no Notion write.")
+        print(f"  Title:    {args.title}")
+        print(f"  Type:     {args.type}")
+        print(f"  Project:  {resolved_project if resolved_project else '(omitted)'}")
+        print(f"  Status:   {args.status}")
+        print(f"  Priority: {args.priority}")
+        print(f"  Source:   {args.source}")
+        print(f"  Body:     {len(children)} paragraph block(s) from {args.body_file or '(none)'}")
+        print(f"  Routing:  {route_note}")
+        return
+
+    # Create the page
+    print(f"  {route_note}")
+    try:
+        body: dict = {
+            "parent": {"database_id": NOTION_DB_ID},
+            "properties": properties,
+        }
+        if children:
+            body["children"] = children
+
+        page = _notion_request("POST", "/pages", token, body)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    page_id = page["id"]
+    page_url = page.get("url", f"https://notion.so/{page_id.replace('-', '')}")
+    print(f"Created: {page_url}")
+
+
+if __name__ == "__main__":
+    main()

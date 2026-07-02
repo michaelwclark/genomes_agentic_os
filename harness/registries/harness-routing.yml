@@ -1,0 +1,90 @@
+# harness-routing.yml
+# Routes task types to the appropriate agent harness (claude or gpt/codex).
+# Read by: harness/bin/agentic-harness-run (--harness auto --task-type <key>)
+#          harness/bin/agentic-os-pr-crossreview (for pr_crossreview opposite logic)
+#
+# Harness identifiers:
+#   claude — Claude Code CLI (subscription OAuth; ANTHROPIC_API_KEY is stripped at runtime)
+#   gpt    — Codex CLI (OpenAI/subscription; auth via ~/.codex/auth.json)
+#   auto   — resolve from this file at runtime (valid only in env/override context)
+
+# ── defaults ──────────────────────────────────────────────────────────────────
+# Maps task_type key → harness.
+# "opposite_of_author" is a sentinel used ONLY in pr_crossreview section;
+# it is not valid as a bare defaults value.
+defaults:
+  # Source code implementation tasks: file edits, scaffolding, mechanical changes.
+  implementation: gpt
+
+  # Code review tasks: PR reviews, diff analysis, senior-engineer-style critique.
+  review: claude
+
+  # PR cross-review: reviewed by the harness OPPOSITE to the PR author.
+  # The actual resolution happens in agentic-os-pr-crossreview; this entry
+  # documents the intent and is not parsed by agentic-harness-run directly.
+  pr_crossreview: opposite_of_author
+
+  # Deep research, synthesis, multi-source analysis.
+  research: claude
+
+  # Mechanical/formatting tasks: renames, import sorting, lint fixes.
+  mechanical: gpt
+
+# ── overrides ─────────────────────────────────────────────────────────────────
+# Per-project or per-repo overrides. Keys are project or repository names
+# (matched against the basename of --cwd, e.g. "los-app-los-django").
+# Each entry maps task_type → harness, same keys as defaults above.
+# Only keys present here override the default; absent task types fall through to defaults.
+overrides: {}
+  # Example:
+  # los-app-los-django:
+  #   implementation: claude   # Prefer Claude for Django work in this repo
+  # losmon:
+  #   research: gpt
+
+# ── pr_crossreview ────────────────────────────────────────────────────────────
+# Configuration for agentic-os-pr-crossreview.
+pr_crossreview:
+  # Enable or disable the cross-review feature entirely.
+  enabled: true
+
+  # How reviews are posted when --post is passed to agentic-os-pr-crossreview.
+  # draft   — post as a draft PR review (requires GitHub write access)
+  # comment — post as a regular PR comment via `gh pr comment`
+  # off     — never post; dry-run only
+  post_mode: draft
+
+  # How to detect which harness authored a PR.
+  # Checked in order; first match wins.
+  author_detection:
+    # Scan commit trailers for "Co-Authored-By: Claude" (case-insensitive).
+    # If found, the PR is claude-authored → reviewer is gpt.
+    - commit_trailer
+
+    # Check the branch name prefix (e.g. "claude/" → claude-authored).
+    # Define prefix patterns under branch_prefix_map below.
+    - branch_prefix
+
+    # Fall back to this harness when no other signal is found.
+    - default_author: gpt
+
+  # Branch-name prefixes that indicate authoring harness.
+  # Keys are harness names; values are lists of branch-name prefixes.
+  branch_prefix_map:
+    claude:
+      - "claude/"
+    gpt:
+      - "codex/"
+      - "gpt/"
+      - "feature/codex-"
+
+  # Content scrub rules applied before any --post action.
+  # A review is REJECTED (exit nonzero) if it matches any pattern.
+  # These protect team-visible PR comments from leaking internal tool names,
+  # local filesystem paths, and personal workspace references.
+  scrub_rules_note: >
+    Patterns (regex) that cause a scrub failure and block --post:
+    /Users/genome, agentic_os, notion.so, harness/, SKILL, skill name,
+    /Users/, ~/.claude, ~/.codex.
+    The scrub is also applied to the review artifact written to disk
+    (a warning is emitted but the artifact is still written).

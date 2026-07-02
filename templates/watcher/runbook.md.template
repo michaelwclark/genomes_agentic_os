@@ -1,0 +1,56 @@
+# Runbook: <name>
+
+## What this watcher does
+
+One paragraph: what source it watches, what event triggers it, and what action it takes.
+
+## Expected cadence
+
+Runs every <N> minutes/hours when enabled in the runtime supervisor.
+Run manually:
+```bash
+python3 watchers/<name>/scripts/watch.py --once
+python3 watchers/<name>/scripts/watch.py --once --dry-run
+```
+
+## How to trigger a run
+
+Step-by-step: what the user needs to do in the source system to cause this watcher to fire.
+
+## What to expect
+
+Within one tick after the trigger:
+- <What changes in the source system>
+- <What artifacts are written>
+- <What notification fires>
+
+## Artifacts
+
+```
+watchers/<name>/runs/<YYYYMMDDTHHMMSSZ>-<id>/
+  <describe files written per run>
+```
+
+## Failure playbook
+
+### <Common failure scenario>
+
+1. How to diagnose
+2. How to fix
+3. How to recover
+
+### Watcher not picking up items
+
+1. Run `python3 scripts/watch.py --once --dry-run` to verify the query finds items.
+2. Check environment variables are set (see `watcher.yml` for which ones).
+3. Check `harness/shared_factory/06-runs-and-logs/` for error logs.
+
+## Configuration
+
+See `watcher.yml` for key settings.
+
+## See also
+
+- Source: <link or path>
+- Alerts config: `harness/registries/alerts.yml` → `watchers.<name>`
+- Schedule: `watchers/<name>/schedule.snippet.yml`

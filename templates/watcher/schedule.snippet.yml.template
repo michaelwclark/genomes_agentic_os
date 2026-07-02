@@ -1,0 +1,16 @@
+# Schedule snippet for <name> watcher.
+# Append to: harness/shared_factory/00-control-plane/runtime-registry.yml
+# when ready to activate.
+
+- id: <name>_watcher
+  display_name: <Display Name> watcher
+  enabled: false
+  cadence: every_10_minutes   # adjust: every_5_minutes | every_10_minutes | every_30_minutes | hourly | daily
+  timezone: America/Chicago
+  execution_target: script
+  command: python3 /Users/genome/agentic_os/watchers/<name>/scripts/watch.py --once
+  outputs:
+    - watchers/<name>/runs/
+  notion_update:
+    object: Heartbeats
+    status_field: Last Status

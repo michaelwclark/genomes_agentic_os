@@ -1,0 +1,549 @@
+#!/usr/bin/env python3
+"""Run a senior-engineer PR review using the harness OPPOSITE to the PR's author.
+
+Given a GitHub PR, detects whether the PR was authored by Claude Code or Codex,
+then routes the review to the other harness. This enforces independent review:
+a Codex-written PR is reviewed by Claude; a Claude-written PR is reviewed by Codex.
+
+Detection order (configured in harness-routing.yml → pr_crossreview.author_detection):
+  1. commit_trailer — scan PR commits for "Co-Authored-By:.*Claude" trailer
+  2. branch_prefix  — match branch name against branch_prefix_map
+  3. default_author — fall back to configured default (typically gpt)
+
+The review prompt instructs the reviewer to act as a blocker-focused senior engineer.
+Content scrub runs before any --post action: if the review references internal
+paths, tool names, or personal workspace details, the post is blocked.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+import uuid
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    print("error: PyYAML is required (pip install pyyaml)", file=sys.stderr)
+    sys.exit(2)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+INSTANCE_ROOT = Path("/Users/genome/agentic_os")
+ARTIFACT_DIR = INSTANCE_ROOT / "harness/shared_factory/06-runs-and-logs/harness-runs"
+
+_BIN_DIR = Path(__file__).resolve().parent
+ROUTING_CONFIG = _BIN_DIR.parent / "registries" / "harness-routing.yml"
+HARNESS_RUN_BIN = _BIN_DIR / "agentic-harness-run"
+
+# Maximum diff size to pass directly in the prompt (chars).
+MAX_DIFF_CHARS = 40_000
+
+# Patterns that will fail the scrub gate (regex, applied to review text).
+# This list protects team-visible PR comments from leaking internal details.
+SCRUB_PATTERNS = [
+    r"/Users/genome",
+    r"\bagentic_os\b",
+    r"notion\.so",
+    r"\bharness/\b",
+    r"\bSKILL\b",
+    r"skill name",
+    r"/Users/",
+    r"~/\.claude",
+    r"~/\.codex",
+    r"\.claude/",
+    r"\.codex/",
+]
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_routing() -> dict:
+    try:
+        with ROUTING_CONFIG.open(encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        print(f"warning: could not load routing config: {exc}", file=sys.stderr)
+        return {}
+
+
+def parse_pr_ref(pr_ref: str, repo: str | None) -> tuple[str, int]:
+    """Return (repo, pr_number) from a PR URL or bare number.
+
+    Accepts:
+      - "123"  (requires --repo)
+      - "https://github.com/owner/name/pull/123"
+      - "owner/name#123"
+    """
+    url_match = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_ref)
+    if url_match:
+        return url_match.group(1), int(url_match.group(2))
+
+    hash_match = re.match(r"([^#]+)#(\d+)$", pr_ref)
+    if hash_match:
+        return hash_match.group(1), int(hash_match.group(2))
+
+    if pr_ref.isdigit():
+        if not repo:
+            print("error: --repo owner/name is required when --pr is a bare number.", file=sys.stderr)
+            sys.exit(1)
+        return repo, int(pr_ref)
+
+    print(f"error: cannot parse PR reference '{pr_ref}'. Use a number (with --repo), URL, or owner/name#N.", file=sys.stderr)
+    sys.exit(1)
+
+
+def gh(*args: str, check: bool = True) -> str:
+    """Run a gh CLI command and return stdout."""
+    result = subprocess.run(
+        ["gh", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    if check and result.returncode != 0:
+        print(f"error: gh {' '.join(args)} failed:\n{result.stderr}", file=sys.stderr)
+        sys.exit(1)
+    return result.stdout.strip()
+
+
+def get_pr_meta(repo: str, pr: int) -> dict:
+    """Fetch PR title, body, and head branch via gh API."""
+    raw = gh("api", f"repos/{repo}/pulls/{pr}")
+    data = json.loads(raw)
+    return {
+        "title": data.get("title", ""),
+        "body": data.get("body", "") or "",
+        "head_branch": data.get("head", {}).get("ref", ""),
+        "author_login": data.get("user", {}).get("login", ""),
+    }
+
+
+def get_pr_commits(repo: str, pr: int) -> list[dict]:
+    """Return list of commit objects for the PR (up to 250)."""
+    raw = gh("api", f"repos/{repo}/pulls/{pr}/commits", "--paginate")
+    return json.loads(raw)
+
+
+def get_pr_diff(repo: str, pr: int) -> str:
+    """Return the PR diff text (may be large)."""
+    try:
+        return gh("pr", "diff", str(pr), "--repo", repo)
+    except SystemExit:
+        return "(diff unavailable)"
+
+
+def detect_author_harness(repo: str, pr: int, routing: dict) -> str:
+    """Detect which harness authored the PR.
+
+    Returns 'claude' or 'gpt'.
+    Detection order comes from routing config pr_crossreview.author_detection.
+    """
+    pr_config = routing.get("pr_crossreview") or {}
+    detection_order = pr_config.get("author_detection") or [
+        "commit_trailer",
+        "branch_prefix",
+        {"default_author": "gpt"},
+    ]
+    branch_prefix_map = pr_config.get("branch_prefix_map") or {
+        "claude": ["claude/"],
+        "gpt": ["codex/", "gpt/", "feature/codex-"],
+    }
+
+    # Get PR metadata once.
+    meta = get_pr_meta(repo, pr)
+    head_branch = meta["head_branch"]
+
+    for step in detection_order:
+        if step == "commit_trailer" or (isinstance(step, dict) and "commit_trailer" in step):
+            commits = get_pr_commits(repo, pr)
+            for commit in commits:
+                message = commit.get("commit", {}).get("message", "")
+                # Match "Co-Authored-By:.*Claude" case-insensitively.
+                if re.search(r"Co-Authored-By:.*Claude", message, re.IGNORECASE):
+                    return "claude"
+            # No claude trailer found; continue to next step.
+
+        elif step == "branch_prefix" or (isinstance(step, dict) and "branch_prefix" in step):
+            for harness_name, prefixes in branch_prefix_map.items():
+                for prefix in prefixes:
+                    if head_branch.startswith(prefix):
+                        return harness_name
+            # No branch prefix matched; continue.
+
+        elif isinstance(step, dict) and "default_author" in step:
+            default = step["default_author"]
+            if default in ("claude", "gpt"):
+                return default
+
+        elif step == "default_author":
+            # Plain string form — use config default or fall back to gpt.
+            return pr_config.get("default_author", "gpt")
+
+    return "gpt"
+
+
+def opposite_harness(harness: str) -> str:
+    return "gpt" if harness == "claude" else "claude"
+
+
+def build_review_prompt(repo: str, pr: int, meta: dict, diff: str) -> str:
+    """Build the review prompt handed to the reviewing harness."""
+    diff_section = diff
+    truncated = False
+    if len(diff) > MAX_DIFF_CHARS:
+        diff_section = diff[:MAX_DIFF_CHARS]
+        truncated = True
+
+    truncation_note = (
+        f"\n\n[DIFF TRUNCATED: original was {len(diff):,} chars; showing first {MAX_DIFF_CHARS:,}]"
+        if truncated
+        else ""
+    )
+
+    return textwrap.dedent(f"""\
+        You are a senior engineer doing a blocking PR review. Your job is to find
+        real problems that should block merging: logic errors, security issues,
+        missing error handling, broken contracts, incorrect assumptions, and
+        dangerous migrations. Do NOT raise style nits or formatting preferences.
+
+        Review the following pull request and output GitHub-ready markdown comment(s).
+        Each finding should state: severity (BLOCKER | WARNING | FYI), the file and
+        line range (if known), a concise description of the problem, and a concrete
+        suggestion for fixing it.
+
+        IMPORTANT: Your output will be posted as a public PR comment visible to the
+        whole engineering team. Do NOT mention local filesystem paths, internal tool
+        names, personal workspace names, or anything that only applies to a specific
+        developer's machine. Write as a peer reviewer, not as an automated tool.
+
+        ── PR DETAILS ────────────────────────────────────────────────────────────────
+        Repository: {repo}
+        PR #{pr}: {meta['title']}
+
+        Description:
+        {meta['body'] or '(no description provided)'}
+
+        ── DIFF ──────────────────────────────────────────────────────────────────────
+        {diff_section}{truncation_note}
+
+        ── END DIFF ──────────────────────────────────────────────────────────────────
+
+        Provide your review findings in GitHub-flavored markdown. Start with a one-line
+        summary of your overall assessment, then list findings as separate sections.
+        If you find no blockers, say so explicitly.
+    """)
+
+
+def scrub_check(text: str) -> list[str]:
+    """Return list of matched patterns; empty list means the text passed scrub."""
+    hits = []
+    for pattern in SCRUB_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            hits.append(pattern)
+    return hits
+
+
+def run_harness_review(
+    reviewer_harness: str,
+    prompt: str,
+    model: str | None,
+    timeout_sec: int,
+    output_file: Path,
+) -> tuple[int, str]:
+    """Invoke agentic-harness-run and return (exit_code, review_text).
+
+    The reviewer subprocess runs in a neutral temp directory (not agentic_os)
+    to reduce the risk of the harness ingesting internal context files (CLAUDE.md,
+    AGENTS.md, agentic_os-specific rules) that could leak into the review output.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
+        tf.write(prompt)
+        prompt_file = tf.name
+
+    # Use a neutral temp cwd so the reviewer doesn't pick up internal CLAUDE.md / AGENTS.md.
+    review_cwd = tempfile.mkdtemp(prefix="crossreview-cwd-")
+
+    try:
+        cmd = [
+            sys.executable, str(HARNESS_RUN_BIN),
+            "--harness", reviewer_harness,
+            "--prompt-file", prompt_file,
+            "--output", str(output_file),
+            "--timeout-sec", str(timeout_sec),
+            "--task-type", "review",
+            "--cwd", review_cwd,
+        ]
+        if model:
+            cmd += ["--model", model]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec + 30,
+        )
+        # Read the artifact (output file contains stdout + stderr).
+        if output_file.exists():
+            artifact = output_file.read_text(encoding="utf-8")
+            # Extract just stdout portion.
+            if "=== stdout ===" in artifact:
+                review_text = artifact.split("=== stdout ===", 1)[1]
+                if "=== stderr ===" in review_text:
+                    review_text = review_text.split("=== stderr ===", 1)[0]
+            else:
+                review_text = artifact
+        else:
+            review_text = result.stdout
+
+        return result.returncode, review_text.strip()
+    finally:
+        Path(prompt_file).unlink(missing_ok=True)
+        # Clean up the neutral cwd temp dir.
+        import shutil
+        shutil.rmtree(review_cwd, ignore_errors=True)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+_EPILOG = textwrap.dedent("""\
+    ENVIRONMENT
+      AGENTIC_HARNESS_FORCE   Override the reviewer harness selection. Values: claude | gpt.
+                              Bypasses the author-detection logic entirely.
+      ANTHROPIC_API_KEY       Stripped automatically when the claude harness is used.
+
+    CONFIG FILES (read at runtime)
+      harness/registries/harness-routing.yml
+          pr_crossreview section: author_detection order, branch_prefix_map,
+          default_author, post_mode, scrub rules.
+
+    ARTIFACT FILES (written after every run)
+      /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/<ts>-crossreview-<id>.txt
+          The full review output (stdout+stderr from the reviewing harness).
+      /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/<ts>-crossreview-<id>.meta.json
+          Receipt: PR, repo, author_harness, reviewer_harness, scrub_passed, artifact path.
+
+    EXAMPLES
+      agentic-os-pr-crossreview --repo thesummitgrp/los-app-los-django --pr 25690
+          Detect author harness, pick opposite, run review, print to stdout. No GitHub post.
+
+      agentic-os-pr-crossreview --pr https://github.com/owner/repo/pull/42
+          Resolve PR from URL; no --repo needed.
+
+      agentic-os-pr-crossreview --repo owner/repo --pr 42 --post
+          Run review and post as a PR comment (post_mode from harness-routing.yml).
+
+      agentic-os-pr-crossreview --repo owner/repo --pr 42 --reviewer claude
+          Force the reviewer to claude regardless of author detection.
+""")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-pr-crossreview",
+        description=(
+            "Run a senior-engineer PR review using the harness OPPOSITE to the PR's author. "
+            "Detects authoring harness via commit trailers and branch name, then routes to the other."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--repo",
+        metavar="OWNER/NAME",
+        help="GitHub repository in owner/name format. Required when --pr is a bare number.",
+    )
+    parser.add_argument(
+        "--pr",
+        required=True,
+        metavar="N|URL",
+        help="PR number, full GitHub URL, or owner/name#N reference. Required.",
+    )
+    parser.add_argument(
+        "--reviewer",
+        choices=["claude", "gpt"],
+        help="Force a specific reviewer harness, bypassing author detection.",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="NAME",
+        help="Model override passed to the reviewing harness.",
+    )
+    parser.add_argument(
+        "--timeout-sec",
+        type=int,
+        default=DEFAULT_TIMEOUT_SEC if "DEFAULT_TIMEOUT_SEC" in dir() else 900,
+        metavar="N",
+        help="Kill the reviewer harness after N seconds (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--post",
+        action="store_true",
+        help=(
+            "Post the review to GitHub after passing the scrub gate. "
+            "Post mode (draft/comment) is read from harness-routing.yml → pr_crossreview.post_mode. "
+            "Live mode requires GitHub write access and calls 'gh pr comment' or 'gh pr review'."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        metavar="DIR",
+        help=f"Directory for artifact and receipt files (default: {ARTIFACT_DIR}).",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    routing = load_routing()
+    pr_config = routing.get("pr_crossreview") or {}
+
+    # Parse PR reference.
+    repo, pr_number = parse_pr_ref(args.pr, args.repo)
+
+    # Determine artifact directory.
+    artifact_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else ARTIFACT_DIR
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = uuid.uuid4().hex[:8]
+    artifact_stem = artifact_dir / f"{ts}-crossreview-{run_id}"
+    output_file = Path(str(artifact_stem) + ".txt")
+    meta_file = Path(str(artifact_stem) + ".meta.json")
+
+    print(f"[crossreview] Fetching PR #{pr_number} from {repo} ...", file=sys.stderr)
+
+    # Detect author harness.
+    if args.reviewer:
+        reviewer_harness = args.reviewer
+        author_harness = opposite_harness(reviewer_harness)
+        author_detected_by = "forced-reviewer-flag"
+    else:
+        forced = os.environ.get("AGENTIC_HARNESS_FORCE", "").strip().lower()
+        if forced in ("claude", "gpt"):
+            reviewer_harness = forced
+            author_harness = opposite_harness(reviewer_harness)
+            author_detected_by = "AGENTIC_HARNESS_FORCE"
+        else:
+            print("[crossreview] Detecting author harness from PR commits and branch ...", file=sys.stderr)
+            author_harness = detect_author_harness(repo, pr_number, routing)
+            reviewer_harness = opposite_harness(author_harness)
+            author_detected_by = "auto"
+
+    print(f"[crossreview] Author harness: {author_harness} (detected by: {author_detected_by})", file=sys.stderr)
+    print(f"[crossreview] Reviewer harness: {reviewer_harness}", file=sys.stderr)
+
+    # Fetch PR diff and metadata.
+    meta = get_pr_meta(repo, pr_number)
+    diff = get_pr_diff(repo, pr_number)
+
+    print(f"[crossreview] Diff size: {len(diff):,} chars", file=sys.stderr)
+    if len(diff) > MAX_DIFF_CHARS:
+        print(f"[crossreview] Diff truncated to {MAX_DIFF_CHARS:,} chars in prompt.", file=sys.stderr)
+
+    # Build review prompt.
+    prompt = build_review_prompt(repo, pr_number, meta, diff)
+
+    # Run review.
+    timeout_sec = getattr(args, "timeout_sec", 900)
+    print(f"[crossreview] Running {reviewer_harness} review (timeout: {timeout_sec}s) ...", file=sys.stderr)
+    started = time.monotonic()
+    exit_code, review_text = run_harness_review(
+        reviewer_harness=reviewer_harness,
+        prompt=prompt,
+        model=args.model,
+        timeout_sec=timeout_sec,
+        output_file=output_file,
+    )
+    duration = round(time.monotonic() - started, 2)
+
+    print(f"[crossreview] Review completed in {duration}s (exit: {exit_code})", file=sys.stderr)
+    print(f"[crossreview] Artifact: {output_file}", file=sys.stderr)
+
+    # Scrub check.
+    scrub_hits = scrub_check(review_text)
+    scrub_passed = len(scrub_hits) == 0
+
+    if scrub_hits:
+        print(
+            f"[crossreview] SCRUB FAILED — {len(scrub_hits)} pattern(s) matched: {scrub_hits}",
+            file=sys.stderr,
+        )
+    else:
+        print("[crossreview] Scrub passed.", file=sys.stderr)
+
+    # Write receipt.
+    receipt = {
+        "ts": now_iso(),
+        "repo": repo,
+        "pr": pr_number,
+        "pr_title": meta["title"],
+        "author_harness": author_harness,
+        "author_detected_by": author_detected_by,
+        "reviewer_harness": reviewer_harness,
+        "model": args.model or "(default)",
+        "exit_code": exit_code,
+        "duration_sec": duration,
+        "scrub_passed": scrub_passed,
+        "scrub_hits": scrub_hits,
+        "artifact_file": str(output_file),
+        "posted": False,
+    }
+    meta_file.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"[crossreview] Receipt: {meta_file}", file=sys.stderr)
+
+    # Print review to stdout.
+    print(review_text)
+
+    # Post to GitHub if requested.
+    if args.post:
+        if not scrub_passed:
+            print(
+                f"\n[crossreview] POST BLOCKED — scrub failed. Fix the review text before posting.",
+                file=sys.stderr,
+            )
+            return 1
+
+        post_mode = pr_config.get("post_mode", "comment")
+        print(f"[crossreview] Posting as '{post_mode}' to PR #{pr_number} ...", file=sys.stderr)
+
+        if post_mode == "comment":
+            gh("pr", "comment", str(pr_number), "--repo", repo, "--body", review_text)
+        elif post_mode == "draft":
+            gh("pr", "review", str(pr_number), "--repo", repo, "--comment", "--body", review_text)
+        else:
+            print(f"[crossreview] post_mode '{post_mode}' → no post action.", file=sys.stderr)
+
+        receipt["posted"] = True
+        meta_file.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"[crossreview] Posted successfully.", file=sys.stderr)
+
+    return 0 if (exit_code == 0 and scrub_passed) else (exit_code or 1)
+
+
+# Expose DEFAULT_TIMEOUT_SEC in module scope for argparse default.
+DEFAULT_TIMEOUT_SEC = 900
+
+if __name__ == "__main__":
+    sys.exit(main())

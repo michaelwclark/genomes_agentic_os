@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""
+watch.py — <Name> watcher for Agentic OS.
+
+<One-sentence description of what this watcher does.>
+
+USAGE
+  python3 watch.py --once       # single tick (used by scheduler)
+  python3 watch.py --dry-run    # print actions, no writes
+  python3 watch.py              # continuous loop
+
+ENVIRONMENT
+  <ENV_VAR_NAME>   <description> (required)
+  AGENTIC_OS_ROOT  Override installed OS root (default: ~/agentic_os)
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML is required. pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+WATCHER_DIR = SCRIPT_DIR.parent
+CONFIG_PATH = WATCHER_DIR / "watcher.yml"
+
+POLL_INTERVAL_SEC = 600  # default: 10 minutes — override in main if needed
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+
+def load_config() -> dict[str, Any]:
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f)
+
+
+# ---------------------------------------------------------------------------
+# Source polling
+# TODO: replace with real source logic
+# ---------------------------------------------------------------------------
+
+
+def fetch_items(cfg: dict) -> list[dict]:
+    """Fetch new/changed items from the source. Return a list of dicts."""
+    raise NotImplementedError("Implement fetch_items() for your source.")
+
+
+# ---------------------------------------------------------------------------
+# Action
+# TODO: replace with real action logic
+# ---------------------------------------------------------------------------
+
+
+def process_item(item: dict, cfg: dict, dry_run: bool) -> None:
+    """Process one item from the source."""
+    raise NotImplementedError("Implement process_item() for your source.")
+
+
+# ---------------------------------------------------------------------------
+# Notify
+# ---------------------------------------------------------------------------
+
+
+def fire_notify(
+    agentic_os_root: Path,
+    source: str,
+    title: str,
+    message: str,
+    level: str = "info",
+    dry_run: bool = False,
+) -> None:
+    notify_bin = agentic_os_root / "harness" / "bin" / "agentic-os-notify"
+    if dry_run:
+        print(f"  [dry-run] notify: [{level}] {title} — {message}")
+        return
+    if not notify_bin.exists():
+        return
+    try:
+        subprocess.run(
+            [str(notify_bin), "--source", source, "--title", title, "--message", message, "--level", level],
+            check=False, timeout=10,
+        )
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Tick
+# ---------------------------------------------------------------------------
+
+
+def run_tick(cfg: dict, dry_run: bool) -> None:
+    agentic_os_root = Path(os.environ.get("AGENTIC_OS_ROOT", Path.home() / "agentic_os"))
+    max_items = int(cfg.get("max_rows_per_tick", 5))
+
+    try:
+        items = fetch_items(cfg)
+    except Exception as e:
+        print(f"[error] fetch_items failed: {e}", file=sys.stderr)
+        return
+
+    if not items:
+        print("  No items found.")
+        return
+
+    print(f"  Found {len(items)} item(s). Processing up to {max_items}.")
+    for item in items[:max_items]:
+        try:
+            process_item(item, cfg, dry_run)
+        except Exception as e:
+            print(f"  [error] process_item: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--once", action="store_true", help="Run one tick and exit.")
+    p.add_argument("--dry-run", action="store_true", help="Print actions without writing.")
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    cfg = load_config()
+
+    if args.dry_run:
+        print("[dry-run mode] No writes will occur.")
+
+    if args.once:
+        print(f"[{dt.datetime.now().isoformat()}] Running single tick...")
+        run_tick(cfg, dry_run=args.dry_run)
+        print("Tick complete.")
+        return
+
+    print(f"[{dt.datetime.now().isoformat()}] Starting watcher loop (interval={POLL_INTERVAL_SEC}s)...")
+    while True:
+        print(f"\n[{dt.datetime.now().isoformat()}] Tick...")
+        try:
+            run_tick(cfg, dry_run=args.dry_run)
+        except KeyboardInterrupt:
+            print("\nInterrupted. Exiting.")
+            sys.exit(0)
+        except Exception as e:
+            print(f"[error] tick failed: {e}", file=sys.stderr)
+        time.sleep(POLL_INTERVAL_SEC)
+
+
+if __name__ == "__main__":
+    main()

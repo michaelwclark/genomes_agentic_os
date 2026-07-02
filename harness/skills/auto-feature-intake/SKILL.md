@@ -15,3 +15,6 @@ project work-item intake as `/auto-add-spec`.
 
 - New packets use `SPEC.md` as the raw-capture plus refined-spec file.
 - Existing `IDEA.md` files remain readable legacy capture.
+- All intake ultimately writes a row to the unified "🧭 OS Work Intake" Notion DB
+  (id c442dd56a24340f0880acfd195f34225) via `agentic-os-intake-row`; see
+  `auto-spec-intake` step 8.

@@ -37,6 +37,19 @@ agentic-os doc-config plan --root <root> --request "<request>" [--domain <domain
    `Specs` namespace, color variation, rich blocks, and cross-links.
 10. Update `WORKLOG.md`, `NEXT.md`, and the project/domain control surface when
     the capture changes durable state or routing.
+11. Create the unified intake row (non-blocking):
+
+```bash
+agentic-os-intake-row \
+  --title "<spec title>" \
+  --type spec \
+  --route-text '<user's original words>' \
+  --body-file <packet SPEC.md path>
+```
+
+   If the row create fails, record the error in `WORKLOG.md` and continue.
+   Do not use `--project` directly; let `--route-text` resolve the Project so
+   routing stays in config, not agent memory.
 
 ## Promotion Rule
 

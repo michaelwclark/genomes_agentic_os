@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Run a prompt through one of the installed agent harnesses (Claude Code or Codex).
+
+Dispatches to:
+  claude → env -u ANTHROPIC_API_KEY claude -p <prompt> [--model <m>]
+  gpt    → codex exec --skip-git-repo-check [--model <m>] <prompt>
+  auto   → resolve harness from harness-routing.yml by --task-type; env var
+           AGENTIC_HARNESS_FORCE=claude|gpt overrides everything.
+
+Writes a receipt JSONL line to the runs log and captures all output to
+an artifact file under the configured artifact directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import signal
+import subprocess
+import sys
+import textwrap
+import time
+import uuid
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    print("error: PyYAML is required (pip install pyyaml)", file=sys.stderr)
+    sys.exit(2)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+# Canonical agentic_os instance root (where receipts are written).
+INSTANCE_ROOT = Path("/Users/genome/agentic_os")
+
+# Receipt log — one JSONL line per invocation.
+RUNS_LOG = INSTANCE_ROOT / "harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl"
+
+# Default artifact output directory.
+ARTIFACT_DIR = INSTANCE_ROOT / "harness/shared_factory/06-runs-and-logs/harness-runs"
+
+# Routing config relative to this script's repo root.
+_BIN_DIR = Path(__file__).resolve().parent
+ROUTING_CONFIG = _BIN_DIR.parent / "registries" / "harness-routing.yml"
+
+# Default subprocess timeout in seconds.
+DEFAULT_TIMEOUT_SEC = 900
+
+# Valid harness names (excluding "auto").
+HARNESS_NAMES = ("claude", "gpt")
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_routing() -> dict:
+    """Load harness-routing.yml; return empty dict on failure."""
+    try:
+        with ROUTING_CONFIG.open(encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        print(f"warning: could not load routing config: {exc}", file=sys.stderr)
+        return {}
+
+
+def resolve_harness(harness: str, task_type: str | None, cwd: Path) -> str:
+    """Resolve 'auto' to a concrete harness name.
+
+    Resolution order:
+      1. AGENTIC_HARNESS_FORCE env var (overrides everything).
+      2. If harness != 'auto', return it unchanged.
+      3. task_type lookup: per-project overrides → defaults map.
+    """
+    forced = os.environ.get("AGENTIC_HARNESS_FORCE", "").strip().lower()
+    if forced in HARNESS_NAMES:
+        return forced
+
+    if harness != "auto":
+        return harness
+
+    if not task_type:
+        print(
+            "error: --harness auto requires --task-type (or AGENTIC_HARNESS_FORCE)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    routing = load_routing()
+    # pr_crossreview sentinel cannot be resolved here — crossreview script handles it.
+    if task_type == "pr_crossreview":
+        print(
+            "error: task_type 'pr_crossreview' cannot be resolved by agentic-harness-run directly.\n"
+            "       Use agentic-os-pr-crossreview, which detects the PR author and picks the opposite harness.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    project_name = cwd.name
+    overrides = routing.get("overrides") or {}
+    project_overrides = overrides.get(project_name) or {}
+
+    resolved = project_overrides.get(task_type) or (routing.get("defaults") or {}).get(task_type)
+    if not resolved:
+        print(
+            f"error: no routing entry for task_type '{task_type}' in {ROUTING_CONFIG}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if resolved == "opposite_of_author":
+        print(
+            f"error: task_type '{task_type}' resolves to 'opposite_of_author' — use agentic-os-pr-crossreview.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if resolved not in HARNESS_NAMES:
+        print(
+            f"error: routing config maps '{task_type}' to unknown harness '{resolved}'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return resolved
+
+
+def read_prompt(prompt_file: str | None, prompt_text: str | None) -> str:
+    """Return the prompt string, reading from file if needed."""
+    if prompt_file and prompt_text:
+        print("error: provide --prompt-file OR --prompt, not both.", file=sys.stderr)
+        sys.exit(1)
+    if prompt_file:
+        return Path(prompt_file).read_text(encoding="utf-8")
+    if prompt_text:
+        return prompt_text
+    print("error: one of --prompt-file or --prompt is required.", file=sys.stderr)
+    sys.exit(1)
+
+
+def build_cmd_claude(prompt: str, model: str | None) -> tuple[list[str], dict[str, str]]:
+    """Return (argv, env_overrides) for claude invocation."""
+    cmd = ["claude", "-p", prompt]
+    if model:
+        cmd += ["--model", model]
+    # Strip API key so Claude uses subscription OAuth billing.
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    return cmd, env
+
+
+def build_cmd_gpt(prompt: str, model: str | None, cwd: Path) -> tuple[list[str], dict[str, str]]:
+    """Return (argv, env_overrides) for codex exec invocation."""
+    cmd = ["codex", "exec", "--skip-git-repo-check"]
+    if model:
+        cmd += ["--model", model]
+    cmd.append(prompt)
+    return cmd, dict(os.environ)
+
+
+def run_harness(
+    harness: str,
+    prompt: str,
+    model: str | None,
+    cwd: Path,
+    timeout_sec: int,
+    output_file: Path,
+) -> tuple[int, str, str]:
+    """Run the harness subprocess; return (exit_code, stdout, stderr).
+
+    stdout and stderr are also written to output_file.
+    Kills the process group after timeout_sec.
+    """
+    if harness == "claude":
+        cmd, env = build_cmd_claude(prompt, model)
+    else:
+        cmd, env = build_cmd_gpt(prompt, model, cwd)
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(cwd),
+            env=env,
+            timeout=timeout_sec,
+            start_new_session=True,  # New process group so we can kill it cleanly on timeout.
+        )
+        stdout = result.stdout
+        stderr = result.stderr
+        exit_code = result.returncode
+    except subprocess.TimeoutExpired as exc:
+        stdout = (exc.stdout or b"").decode("utf-8", errors="replace")
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+        stderr += f"\n[agentic-harness-run] timeout after {timeout_sec}s\n"
+        exit_code = 124  # GNU timeout convention
+    except FileNotFoundError:
+        stdout = ""
+        stderr = f"[agentic-harness-run] harness binary not found: {cmd[0]}\n"
+        exit_code = 127
+
+    combined = f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}"
+    output_file.write_text(combined, encoding="utf-8")
+    return exit_code, stdout, stderr
+
+
+def append_receipt(receipt: dict) -> None:
+    """Append one JSONL line to the runs log."""
+    RUNS_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with RUNS_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(receipt, sort_keys=True) + "\n")
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+_EPILOG = textwrap.dedent("""\
+    ENVIRONMENT
+      AGENTIC_HARNESS_FORCE   Override --harness and auto-routing. Values: claude | gpt.
+      ANTHROPIC_API_KEY       Stripped automatically when running the claude harness so
+                              subscription OAuth billing is used instead of API billing.
+
+    CONFIG FILES (read at runtime)
+      harness/registries/harness-routing.yml
+          Routing table for --harness auto. Resolved relative to this script's parent
+          directory (../registries/harness-routing.yml).
+
+    RECEIPT FILE (written after every run)
+      /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
+          One JSONL line per invocation: harness, model, exit_code, duration_sec,
+          output_file, task_type, timestamp.
+
+    EXAMPLES
+      agentic-harness-run --harness claude --prompt 'Summarize the diff' --output /tmp/out.txt
+          Run Claude Code on a prompt and save output to a file.
+
+      agentic-harness-run --harness gpt --prompt-file ~/prompts/impl.txt --model o3 --cwd ~/projects/myapp
+          Run Codex with a prompt file and model override in a specific directory.
+
+      agentic-harness-run --harness auto --task-type review --prompt 'Review this PR' --json
+          Auto-route by task type (resolves to claude per defaults) and emit JSON receipt.
+
+      AGENTIC_HARNESS_FORCE=claude agentic-harness-run --harness auto --task-type mechanical --prompt 'Sort imports'
+          Force claude regardless of routing config.
+""")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentic-harness-run",
+        description=(
+            "Run a prompt through one of the installed agent harnesses (Claude Code or Codex). "
+            "Captures output to an artifact file and writes a receipt JSONL line."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--harness",
+        required=True,
+        choices=["claude", "gpt", "auto"],
+        help="Harness to use: 'claude' (Claude Code), 'gpt' (Codex), or 'auto' (resolve from routing config). Required.",
+    )
+    parser.add_argument(
+        "--prompt-file",
+        metavar="PATH",
+        help="Path to a file whose contents are the prompt. Mutually exclusive with --prompt.",
+    )
+    parser.add_argument(
+        "--prompt",
+        metavar="TEXT",
+        help="Prompt text passed directly. Mutually exclusive with --prompt-file.",
+    )
+    parser.add_argument(
+        "--cwd",
+        metavar="DIR",
+        default=".",
+        help="Working directory for the harness subprocess (default: current directory).",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="NAME",
+        help=(
+            "Model override. For claude: alias (haiku, sonnet, opus) or full model id. "
+            "For gpt/codex: model name passed via --model flag (e.g. o3, o4-mini)."
+        ),
+    )
+    parser.add_argument(
+        "--timeout-sec",
+        type=int,
+        default=DEFAULT_TIMEOUT_SEC,
+        metavar="N",
+        help=f"Kill the harness subprocess after N seconds (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--output",
+        metavar="FILE",
+        help=(
+            "Path to write the harness stdout+stderr artifact. "
+            "Defaults to a timestamped file under the harness-runs artifact directory."
+        ),
+    )
+    parser.add_argument(
+        "--task-type",
+        metavar="KEY",
+        help=(
+            "Task type key for --harness auto routing (e.g. implementation, review, research, mechanical). "
+            "Also used as a label in the receipt. "
+            "Required when --harness auto is used without AGENTIC_HARNESS_FORCE."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_out",
+        help=(
+            "Emit a JSON object to stdout after the run: "
+            "{harness, model, exit_code, duration_sec, output_file, task_type}. "
+            "The harness output itself goes only to --output."
+        ),
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    cwd = Path(args.cwd).expanduser().resolve()
+    prompt = read_prompt(args.prompt_file, args.prompt)
+    harness = resolve_harness(args.harness, args.task_type, cwd)
+
+    # Determine output artifact path.
+    if args.output:
+        output_file = Path(args.output).expanduser().resolve()
+    else:
+        ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        run_id = uuid.uuid4().hex[:8]
+        slug = f"{ts}-{harness}-{run_id}"
+        output_file = ARTIFACT_DIR / f"{slug}.txt"
+
+    started = time.monotonic()
+    start_ts = now_iso()
+
+    exit_code, stdout, _stderr = run_harness(
+        harness=harness,
+        prompt=prompt,
+        model=args.model,
+        cwd=cwd,
+        timeout_sec=args.timeout_sec,
+        output_file=output_file,
+    )
+
+    duration = round(time.monotonic() - started, 2)
+
+    receipt = {
+        "ts": start_ts,
+        "harness": harness,
+        "model": args.model or "(default)",
+        "task_type": args.task_type or "(unset)",
+        "exit_code": exit_code,
+        "duration_sec": duration,
+        "output_file": str(output_file),
+        "cwd": str(cwd),
+    }
+    append_receipt(receipt)
+
+    if args.json_out:
+        json.dump(
+            {
+                "harness": harness,
+                "model": args.model or None,
+                "exit_code": exit_code,
+                "duration_sec": duration,
+                "output_file": str(output_file),
+                "task_type": args.task_type or None,
+            },
+            sys.stdout,
+            indent=2,
+        )
+        sys.stdout.write("\n")
+    else:
+        # Normal mode: echo harness output to stdout.
+        sys.stdout.write(stdout)
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

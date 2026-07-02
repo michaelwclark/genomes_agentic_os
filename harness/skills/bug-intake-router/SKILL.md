@@ -19,6 +19,17 @@ triage without reading the original chat.
 6. Add `BUG.md` when the generic packet files are not enough.
 7. Record evidence in `WORKLOG.md` and next action in `NEXT.md`.
 8. Verify Notion workspace before any projection.
+9. Create the unified intake row (non-blocking):
+
+```bash
+agentic-os-intake-row \
+  --title "Bug: <short failure>" \
+  --type bug \
+  --route-text '<user's original bug report words>' \
+  --body-file <packet BUG.md or SPEC.md path>
+```
+
+   If the row create fails, record the error in `WORKLOG.md` and continue.
 
 ## Required Bug Shape
 

@@ -38,8 +38,19 @@ implementation. Auto Groom is a product/spec grooming action.
 5. Inspect relevant filesystem source, config, tests, docs, and current runtime
    state before writing technical notes.
 6. Create or update a local Agentic OS spec packet as the source of truth.
-7. Create or update a Linear issue in the `Agentic OS` project after verifying
-   Linear workspace, team, project, and duplicate status.
+7. Do NOT create Linear issues directly. Create the unified intake row instead:
+
+```bash
+agentic-os-intake-row \
+  --title "<proposal title>" \
+  --type <idea|spec|investigation|...> \
+  --route-text '<proposal source words>' \
+  --body-file <packet SPEC.md path>
+```
+
+   `agentic-os-intake-sync` will create/update the Linear issue from the intake
+   row — this avoids double-writes. If the row create fails, record the error in
+   the packet worklog and continue.
 8. Leave a receipt that names the spec packet, Linear issue identifier/URL,
    evidence used, skipped items, and blockers.
 
@@ -107,14 +118,22 @@ implementation. Auto Groom is a product/spec grooming action.
    - Record current behavior and the intended behavioral change.
    - Separate confirmed facts from assumptions and questions.
 
-4. Build the Linear issue.
-   - Resolve the Linear `Agentic OS` project and owning team.
-   - Match by title, proposal ID, problem statement, and labels before creating.
-   - Create or update the issue with sanitized content:
-     Problem, Evidence, Impact, Scope, Acceptance Criteria, Technical Notes,
-     QA / Validation, Rollout, Risk, Dependencies, Open Questions.
-   - Add child issues only for separable implementation, QA, migration, or
-     rollout work.
+4. Write the unified intake row (replaces direct Linear issue creation).
+   - Do NOT call the Linear API directly to create issues; this avoids double-writes
+     with `agentic-os-intake-sync`.
+   - Create or update the intake row via `agentic-os-intake-row` (non-blocking):
+
+```bash
+agentic-os-intake-row \
+  --title "<proposal title>" \
+  --type <idea|spec|investigation|...> \
+  --route-text '<proposal source words>' \
+  --body-file <packet SPEC.md path>
+```
+
+   - `agentic-os-intake-sync` propagates the row to Linear automatically.
+   - If the row create fails, record the error in the packet worklog and leave a
+     blocker-grade receipt instead of calling Linear directly.
 
 5. Close the loop.
    - Update the local worklog/NEXT file with the Linear receipt.

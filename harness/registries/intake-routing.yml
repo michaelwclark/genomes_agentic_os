@@ -1,0 +1,103 @@
+# intake-routing.yml — NL routing registry for agentic-os-intake-row
+# Maps each Project select value to a list of case-insensitive keywords/phrases.
+# Tool: harness/bin/agentic-os-intake-row --route-text '<free text>'
+#
+# Policy: first_match_wins — list more-specific projects BEFORE broader ones.
+#   Example: LOSMON before Genome's Brain so "losmon memory" matches LOSMON, not Brain.
+#   Example: LOS Django before generic "los" terms so "los school" routes to Django.
+#
+# Project select values must EXACTLY match the Notion DB options (case-sensitive).
+# Valid values: Agentic OS, Genome's Brain, LOS Django, Rules Engine, LedgerLine,
+#               LOSMON, Forge, Kanga, Grep Memory Battle, Personal
+
+ambiguous_policy: first_match_wins  # order matters; more specific projects listed first
+
+default_project: null  # when no keyword matches, Project property is omitted
+
+project_keywords:
+
+  # LOS Django — match before generic "los" terms
+  "LOS Django":
+    - los django
+    - dlos
+    - flywl
+    - los-app
+    - los school
+    - nfcu
+    - lenders
+    - los app
+    - los-app-los-django
+    - learning operations
+    - django
+
+  # LOSMON — match before Genome's Brain (losmon-memory-mcp belongs to LOSMON)
+  "LOSMON":
+    - losmon
+    - losmon-memory
+    - losmon memory mcp
+
+  # Genome's Brain — after LOSMON so losmon-memory-mcp doesn't double-match
+  "Genome's Brain":
+    - genomes brain
+    - genome brain
+    - genomes-brain
+    - mempalace
+    - mem palace
+    - memory mcp
+    - memory palace
+    - brain mcp
+    - losmon-memory-mcp
+    - memory write
+    - memory read
+    - memory_write
+    - memory_read
+
+  # Agentic OS — after LOS Django so "los" in "the os" doesn't mis-route
+  "Agentic OS":
+    - agentic os
+    - agentic_os
+    - the os
+    - genomes_agentic_os
+    - aos
+    - harness
+    - skill registry
+    - os health
+    - os doctor
+    - os navigator
+    - os intake
+    - os update
+
+  # Rules Engine
+  "Rules Engine":
+    - rules engine
+    - rulesengine
+    - rules-engine
+
+  # LedgerLine
+  "LedgerLine":
+    - ledgerline
+    - ledger line
+    - ledger-line
+
+  # Kanga
+  "Kanga":
+    - kanga
+    - kangabooking
+    - kanga booking
+
+  # Forge
+  "Forge":
+    - forge
+    - forge event
+    - forgeevent
+
+  # Grep Memory Battle
+  "Grep Memory Battle":
+    - grep memory
+    - grep battle
+    - grep memory battle
+    - memory battle
+
+  # Personal
+  "Personal":
+    - personal

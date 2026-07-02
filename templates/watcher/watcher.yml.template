@@ -1,0 +1,36 @@
+# Watcher: <name>
+# One-line description of what this watcher watches and what it does.
+
+id: <name>
+display_name: <Display Name>
+source_type: notion_database | notion_search | slack_channel | filesystem_glob | github_repo
+status: draft  # change to: active when ready to activate
+
+# --- Source ---
+# Fill in the source-specific connection details:
+# For Notion DB: notion_database_id, notion_version, GENOMES_NOTION_PAT env var
+# For Slack: slack_channel_id, SLACK_BOT_TOKEN env var
+# For filesystem: glob_pattern (e.g. /Users/genome/some/dir/**/*.md)
+
+# --- Poll behaviour ---
+max_rows_per_tick: 5        # max items processed per --once run
+concurrency: 1              # keep at 1 unless items are fully independent
+
+# --- CWD resolution (if running a harness) ---
+project_cwd_map:
+  default: /Users/genome/agentic_os
+
+# --- Harness execution (if running a harness) ---
+harness_run_cmd: /Users/genome/agentic_os/harness/bin/agentic-harness-run
+harness_run_timeout_sec: 1800
+
+# --- Artifacts ---
+runs_dir: /Users/genome/agentic_os/watchers/<name>/runs
+
+# --- Standing prompt instructions ---
+standing_instructions: |
+  Work this item. Write results under the run artifacts directory.
+  Do not push or post externally without explicit instruction in the item body.
+
+# --- Notifications ---
+notify_source: watchers.<name>

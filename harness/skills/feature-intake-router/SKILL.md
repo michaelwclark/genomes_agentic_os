@@ -17,3 +17,6 @@ the same doc-config and project work-item intake as `/add-spec`.
 - Existing `IDEA.md` files remain readable legacy capture.
 - Source repository `features/` or `.features/` folders remain mirrors/artifacts
   by default, not lifecycle owners.
+- All intake ultimately writes a row to the unified "🧭 OS Work Intake" Notion DB
+  (id c442dd56a24340f0880acfd195f34225) via `agentic-os-intake-row`; see
+  `spec-intake-router` step 11.

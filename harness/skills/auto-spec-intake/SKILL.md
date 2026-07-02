@@ -18,6 +18,17 @@ the work definition.
 5. Add `CONVENTIONS` when the request creates reusable OS behavior.
 6. Record any required source worktree registration.
 7. Hand the packet path back to the orchestrator before implementation.
+8. Create the unified intake row (non-blocking):
+
+```bash
+agentic-os-intake-row \
+  --title "<spec title>" \
+  --type spec \
+  --route-text '<user's original words>' \
+  --body-file <packet SPEC.md path>
+```
+
+   If the row create fails, record the error in the packet worklog and continue.
 
 ## Context Budget
 

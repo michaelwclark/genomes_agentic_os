@@ -52,6 +52,19 @@ agentic-os project work-item create <domain> <project> \
    preferences from `doc-config.yml`.
 10. Update `WORKLOG.md`, `NEXT.md`, and the project or domain control surface
     when the capture changes durable routing or state.
+11. Create the unified intake row (non-blocking):
+
+```bash
+agentic-os-intake-row \
+  --title "<spec title>" \
+  --type spec \
+  --route-text '<user's original words>' \
+  --body-file <packet SPEC.md path>
+```
+
+   Example: `--route-text 'new idea for LOS Django late fees'` resolves to
+   `Project=LOS Django` via `harness/registries/intake-routing.yml` NL routing.
+   If the row create fails, record the error in `WORKLOG.md` and continue.
 
 ## Required Outputs
 
