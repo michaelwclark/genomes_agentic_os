@@ -1,0 +1,199 @@
+skills:
+- id: make-skill
+  name: Make Skill
+  description: Codex-visible adapter for Agentic OS /make-skill; create or update
+    reusable skills, commands, workflows, or invocation surfaces.
+  source: .agents/skills/make-skill/SKILL.md
+- id: argo-script-prod
+  name: Argo Script Prod
+  description: Build production-safe LOS Django shell scripts for prod debugging,
+    investigation, tenant resolution, and guarded data updates.
+  source: .agents/skills/argo-script-prod/SKILL.md
+- id: los-env-shell
+  name: LOS Environment Shell
+  description: Verify and operate LOS Kubernetes/Django shells by environment using
+    the los_<env>_shell convention, with AWS VPN/SSO/kube preflights, output
+    capture, and approval gates for any shell execution or mutation.
+  source: .agents/skills/los-env-shell/SKILL.md
+- id: os-navigator
+  name: OS Navigator
+  description: Route work through installed Agentic OS rooms.
+  source: harness/skills/os-navigator/SKILL.md
+- id: workflow-builder
+  name: Workflow Builder
+  description: Create or refine reusable workflow contracts.
+  source: harness/skills/workflow-builder/SKILL.md
+- id: status-report
+  name: Status Report
+  description: Generate recent-work Agentic OS status reports with filesystem markdown,
+    Notion projection, dirty-state scan, and next-action gap analysis.
+  source: harness/skills/status-report/SKILL.md
+- id: memory-analytics-viewer
+  name: Memory Analytics Viewer
+  description: "Inspect unified-memory retrieval analytics \u2014 summary, recent\
+    \ runs, method rollups, current-vs-grep-sidecar comparison, health, and markdown/JSON\
+    \ export from the live Atlas memory_ops store. Read-only and redacted."
+  source: harness/skills/memory-analytics-viewer/SKILL.md
+- id: automation-qualifier
+  name: Automation Qualifier
+  description: Decide whether a process is safe to automate.
+  source: harness/skills/automation-qualifier/SKILL.md
+- id: quiet-async-runner
+  name: Quiet Async Runner
+  description: Run long local commands, tests, watchers, or external waits with artifact-backed
+    state instead of chat polling.
+  source: harness/skills/quiet-async-runner/SKILL.md
+- id: orchestrate
+  name: Orchestrate
+  description: Coordinate subagents, verification, and integration.
+  source: harness/skills/orchestrate/SKILL.md
+- id: quiet-workon-orchestrate
+  name: Quiet Workon Orchestrate
+  description: Preferred LOS coding/testing orchestration entrypoint with quiet chat,
+    subagents, receipt-backed artifacts, quality holdouts, PR lifecycle management,
+    pre-commit blocked CI fallback, and mandatory Copilot comment resolution.
+  source: /Users/genome/.agents/skills/quiet-workon-orchestrate/SKILL.md
+- id: finishing-touches-review
+  name: Finishing Touches Review
+  description: Run a deterministic cross-model finishing review loop before PR readiness
+    or after PR creation when checks are the final validation signal.
+  source: harness/skills/finishing-touches-review/SKILL.md
+- id: auto-dev
+  name: Auto Dev
+  description: Run a Jira or Linear tracker item through project-aware SDLC orchestration,
+    state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge
+    or merge-blocked closeout. LOS Work Plan rows are a queue adapter.
+  source: harness/skills/auto-dev/SKILL.md
+- id: toolsmith-reviewer
+  name: Toolsmith Reviewer
+  description: Review redacted evidence bundles and propose draft-only OS improvements.
+  source: harness/skills/toolsmith-reviewer/SKILL.md
+- id: doc-config-router
+  name: Doc Config Router
+  description: Route document captures to the configured Agentic OS filesystem and
+    Notion destinations.
+  source: harness/skills/doc-config-router/SKILL.md
+- id: feature-intake-router
+  name: Feature Intake Router
+  description: Create feature and idea intake work items using doc-config before filesystem
+    or Notion writes.
+  source: harness/skills/feature-intake-router/SKILL.md
+- id: bug-intake-router
+  name: Bug Intake Router
+  description: Capture bug reports and missed enforcement through doc-config and project
+    work-items.
+  source: harness/skills/bug-intake-router/SKILL.md
+- id: auto-feature-intake
+  name: Auto Feature Intake
+  description: Create or update local feature packets for long OS-shaping requests.
+  source: harness/skills/auto-feature-intake/SKILL.md
+- id: os-authoring-guard
+  name: OS Authoring Guard
+  description: Apply compact Agentic OS authoring rules to commands, skills, workflows,
+    automations, tools, registries, and worktrees.
+  source: harness/skills/os-authoring-guard/SKILL.md
+- id: os-doctor
+  name: OS Doctor
+  description: Validate installed OS structure and report drift.
+  source: harness/skills/os-doctor/SKILL.md
+- id: build-runner
+  name: Build Runner
+  description: Drive a Kanban-backed implementation queue through orchestrated build
+    phases.
+  source: harness/skills/build-runner/SKILL.md
+- id: client-automation-brief
+  name: Client Automation Brief
+  description: Turn customer workflow discovery into an automation or workflow brief.
+  source: harness/skills/client-automation-brief/SKILL.md
+- id: context-audit
+  name: Context Audit
+  description: Audit room, workflow, automation, or customer OS context load contracts.
+  source: harness/skills/context-audit/SKILL.md
+- id: context-pack-builder
+  name: Context Pack Builder
+  description: Assemble focused context packs for repeatable OS workflows.
+  source: harness/skills/context-pack-builder/SKILL.md
+- id: initiative-context-resume
+  name: Initiative Context Resume
+  description: Create or refresh durable context packs and discovery indexes for long-running
+    initiatives or subprojects so future agents can resume with the right domain,
+    project, sources, decisions, and next actions.
+  source: harness/skills/initiative-context-resume/SKILL.md
+- id: control-plane-bootstrap
+  name: Control Plane Bootstrap
+  description: Plan a Notion-backed or file-backed operating control plane.
+  source: harness/skills/control-plane-bootstrap/SKILL.md
+- id: domain-setup
+  name: Domain Setup
+  description: Create or improve a domain room inside the OS.
+  source: harness/skills/domain-setup/SKILL.md
+- id: event-graph-operator
+  name: Event Graph Operator
+  description: Append events, inspect the ledger, test chain rules, and process follow-up
+    work.
+  source: harness/skills/event-graph-operator/SKILL.md
+- id: integration-setup
+  name: Integration Setup
+  description: Prepare, dry-run, or diagnose runtime integrations before automation
+    uses them.
+  source: harness/skills/integration-setup/SKILL.md
+- id: learning-promoter
+  name: Learning Promoter
+  description: Promote durable run learnings into the right OS knowledge surface.
+  source: harness/skills/learning-promoter/SKILL.md
+- id: room-builder
+  name: Room Builder
+  description: Turn discovery answers into OS rooms, routers, references, and context
+    contracts.
+  source: harness/skills/room-builder/SKILL.md
+- id: run-logger
+  name: Run Logger
+  description: Record non-trivial OS execution into run logs and closeout surfaces.
+  source: harness/skills/run-logger/SKILL.md
+- id: thread-finalizer
+  name: Thread Finalizer
+  description: Finalize substantial Agentic OS threads with worklog, next-action,
+    memory, evidence, and Notion projection receipts.
+  source: harness/skills/thread-finalizer/SKILL.md
+- id: runtime-operator
+  name: Runtime Operator
+  description: Operate runtime registries, heartbeats, schedules, run queues, and
+    tracking.
+  source: harness/skills/runtime-operator/SKILL.md
+- id: source-watcher
+  name: Source Watcher
+  description: Configure or audit provider-agnostic connected source watchers.
+  source: harness/skills/source-watcher/SKILL.md
+- id: spec-intake-router
+  name: Spec Intake Router
+  description: Create spec and future-work intake items using doc-config before filesystem
+    or Notion writes.
+  source: harness/skills/spec-intake-router/SKILL.md
+- id: auto-spec-intake
+  name: Auto Spec Intake
+  description: Create or update local spec packets for long OS-shaping requests.
+  source: harness/skills/auto-spec-intake/SKILL.md
+- id: aos-product-orchestrator
+  name: AOS Product Orchestrator
+  description: Groom Agentic OS self-improvement proposals into spec packets and Linear
+    issues.
+  source: harness/skills/aos-product-orchestrator/SKILL.md
+- id: os-cleaner
+  name: OS Cleaner
+  description: Reconcile Agentic OS worktree and work-item state after Jira terminal
+    statuses or merged pull requests.
+  source: harness/skills/os-cleaner/SKILL.md
+- id: program-builder
+  name: Program Builder
+  description: Create or refine OSProgram and InstanceOSProgram context bundles.
+  source: harness/skills/program-builder/SKILL.md
+- id: los-release-notes
+  name: LOS Release Notes
+  description: Build LOS app release notes from the latest production build commit
+    and all PRs targeting a requested release or hotfix branch.
+  source: .agents/skills/los-release-notes/SKILL.md
+- id: os-health
+  name: OS Health
+  description: Inspect Mac host speed risks and Agentic OS generated-artifact hygiene
+    with observe-only reports and approval-gated cleanup classes.
+  source: harness/skills/os-health/SKILL.md

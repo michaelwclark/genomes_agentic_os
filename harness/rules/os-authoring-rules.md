@@ -18,14 +18,16 @@ rules, hooks, or project worktrees.
    checkouts. Register active checkouts with `agentic-os project worktree add`.
 6. When a workflow or automation should be directly invoked by a harness, add a
    matching command doc and skill.
-7. When a command or skill should be visible in Codex, create or update a Codex
-   skill adapter under `.agents/skills/<skill-name>/SKILL.md` and ensure
+7. When a command or skill should be visible in Codex or Claude Code, create or
+   update a skill adapter under `.agents/skills/<skill-name>/SKILL.md` with
+   valid `name` and `description` YAML frontmatter, and ensure
    `$HOME/.codex/skills/<skill-name>/agents/openai.yaml` exists for desktop
    `$`/`/` launcher visibility.
-8. Run `harness/bin/register-codex-skills --root /Users/genome/agentic_os --user-scope`
+8. Run `harness/bin/register-harness-skills --root /Users/genome/agentic_os --user-scope`
    after adding or changing Agentic OS skills so Codex repo adapters,
-   `$HOME/.agents/skills` registrations, and `$HOME/.codex/skills` launcher
-   metadata are regenerated.
+   `$HOME/.agents/skills` registrations, `$HOME/.codex/skills` launcher
+   metadata, and `$HOME/.claude/skills` symlinks are all regenerated.
+   (`register-codex-skills` is a deprecated shim that forwards to this tool.)
 9. When adding or renaming workflows, automations, commands, skills, rules,
    hooks, plugins, libraries, tools, MCP surfaces, tool routes, or programs,
    update every canonical OS registry and readable surface that owns that

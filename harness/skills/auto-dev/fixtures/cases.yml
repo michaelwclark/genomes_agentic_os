@@ -1,0 +1,109 @@
+schema_version: 2
+cases:
+  - name: jira_primary_ready_for_merge
+    tracker_kind: jira
+    tracker_id: FLYWL-0001
+    project: los_app_los_django
+    path:
+      - claimed
+      - context_loaded
+      - planned
+      - worktree_ready
+      - implementing
+      - local_validation
+      - finishing_review
+      - pr_open
+      - ci_watch
+      - copilot_watch
+      - finishing_review
+      - ready_for_merge
+    quality_gates:
+      ci_green: passed
+      copilot: passed
+      merge_policy: passed
+      finishing_review: passed
+    post_pr_decision: ready_post_pr_checks
+    expect_state: ready_for_merge
+    expect_decision: ready_for_merge
+    expect_failures: false
+
+  - name: linear_primary_contract
+    tracker_kind: linear
+    tracker_id: LIN-42
+    project: example_linear_project
+    spec_source: linear
+    workflow_source: linear
+    path:
+      - claimed
+      - context_loaded
+      - planned
+    expect_state: planned
+    expect_decision: planned
+    expect_failures: false
+
+  - name: hybrid_jira_linear_blocks_on_product_decision
+    tracker_kind: hybrid
+    tracker_id: FLYWL-0002
+    project: example_hybrid_project
+    spec_source: jira
+    workflow_source: jira
+    personal_todo: linear
+    path:
+      - claimed
+      - context_loaded
+      - planned
+      - blocked
+    expect_state: blocked
+    expect_decision: blocked
+    expect_failures: false
+
+  - name: ready_for_merge_requires_post_pr_finishing
+    tracker_kind: jira
+    tracker_id: FLYWL-0003
+    project: los_app_los_django
+    path:
+      - claimed
+      - context_loaded
+      - planned
+      - worktree_ready
+      - implementing
+      - local_validation
+      - finishing_review
+      - pr_open
+      - ci_watch
+      - copilot_watch
+      - finishing_review
+      - ready_for_merge
+    quality_gates:
+      ci_green: passed
+      copilot: passed
+      merge_policy: passed
+      finishing_review: pending
+    expect_state: ready_for_merge
+    expect_decision: blocked
+    expect_failures: true
+
+  - name: human_reviewer_tier2_ready_pre_pr
+    tracker_kind: jira
+    tracker_id: FLYWL-0004
+    project: los_app_los_django
+    reviewer_mode: human
+    path:
+      - claimed
+      - context_loaded
+      - planned
+      - worktree_ready
+      - implementing
+      - local_validation
+      - finishing_review
+    scenario: human_review
+    mode: pre_pr
+    reviewer_response: |
+      ```json
+      []
+      ```
+      VERDICT: ready
+    expect_state: pr_open
+    expect_decision: pr_open
+    expect_failures: false
+    forbid_decision: blocked_identity_unproven

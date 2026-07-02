@@ -1,0 +1,12 @@
+{
+  "acceptance_criteria": [
+    "The pytest Build Test Image job no longer uses Node 20 JavaScript action majors.",
+    "The pytest workflow uses Node 24-capable action majors where checkout and setup-python are invoked.",
+    "Unrelated frontend application Node version settings remain unchanged."
+  ],
+  "created_at": "2026-06-25T19:34:00Z",
+  "mode": "synthetic_jira_placeholder",
+  "primary_ref": "FLYWL-0000",
+  "source": "user_request",
+  "summary": "Update pytest workflow action runtime versions from Node 20 majors to Node 24 majors."
+}

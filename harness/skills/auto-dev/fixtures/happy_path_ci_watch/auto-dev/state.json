@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "run_id": "flywl-0000-update-node-version-20260625",
+  "work_item_id": "fixture/happy_path_ci_watch",
+  "project": "los_app_los_django",
+  "tracker": {
+    "kind": "jira",
+    "id": "FLYWL-0000",
+    "url": null,
+    "spec_source": "fixture",
+    "workflow_source": "fixture",
+    "personal_todo": "none",
+    "snapshot_ref": "auto-dev/tracker/source-snapshot.json",
+    "snapshot_at": null,
+    "snapshot_hash": "synthetic-local-snapshot-20260625"
+  },
+  "current_state": "ci_watch",
+  "previous_state": "pr_open",
+  "terminal": false,
+  "context": {
+    "repo_path": "/Users/genome/projects/los/app/los-app-los-django",
+    "base_branch": "origin/develop",
+    "branch": "feature/FLYWL-0000-update-node-version",
+    "worktree": "/Users/genome/agentic_os/los/02-projects/los_app_los_django/worktrees/ykf",
+    "test_cmd": null,
+    "merge_policy": "never_auto",
+    "finishing_required": true,
+    "resolved_at": null
+  },
+  "claim": null,
+  "step_ledger_ref": "auto-dev/step-ledger.jsonl",
+  "checklist": [],
+  "quality_gates": {
+    "acceptance_coverage": {
+      "status": "passed"
+    },
+    "local_or_ci_validation": {
+      "status": "passed"
+    },
+    "finishing_review": {
+      "status": "pending"
+    },
+    "ci_green": {
+      "status": "pending"
+    },
+    "copilot": {
+      "status": "pending"
+    },
+    "merge_policy": {
+      "status": "pending"
+    }
+  },
+  "artifacts": {
+    "work_item": "fixture/happy_path_ci_watch",
+    "quality_gates": "artifacts/quality-gates.md",
+    "source_file": ".github/workflows/pytest-fast.yml",
+    "pr_url": "https://github.com/thesummitgrp/los-app-los-django/pull/25442",
+    "pr_watch": "artifacts/pr-watch/pr-25442-watch-state.json",
+    "state_decision": "auto-dev/state-decision.json"
+  },
+  "pr": {
+    "url": "https://github.com/thesummitgrp/los-app-los-django/pull/25442",
+    "ci": {
+      "status": "pending",
+      "ref": "artifacts/pr-watch/pr-25442-watch-state.json"
+    },
+    "copilot": {
+      "status": "pending"
+    }
+  },
+  "finishing": {
+    "pre_pr": {
+      "decision": null,
+      "ref": null
+    },
+    "post_pr": {
+      "decision": null,
+      "ref": null
+    }
+  },
+  "merge": {
+    "state": "not_ready",
+    "policy": "never_auto",
+    "approved_by": null,
+    "merged_sha": null
+  },
+  "blocked": null,
+  "fixture": {
+    "source_run_id": "flywl-0000-update-node-version-20260625",
+    "source_tracker_ref": "FLYWL-0000",
+    "source_pr_url": "https://github.com/thesummitgrp/los-app-los-django/pull/25442",
+    "copied_at": "2026-06-26T19:37:27.033843+00:00",
+    "note": "Synthetic FLYWL-0000 smoke run converted from active work item to fixture; stale lock intentionally omitted."
+  },
+  "updated_at": "2026-06-26T19:37:27.033982+00:00"
+}

@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Deprecated shim — use register-harness-skills instead.
+
+This script is a thin wrapper that forwards all arguments to register-harness-skills,
+which supersedes it with added Claude Code (~/.claude/skills) support.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    print(
+        "DEPRECATED: register-codex-skills is superseded by register-harness-skills.",
+        file=sys.stderr,
+    )
+    sibling = Path(__file__).parent / "register-harness-skills"
+    if not sibling.exists():
+        print(f"error: could not find register-harness-skills at {sibling}", file=sys.stderr)
+        return 2
+    os.execv(sys.executable, [sys.executable, str(sibling)] + sys.argv[1:])
+    return 0  # unreachable
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

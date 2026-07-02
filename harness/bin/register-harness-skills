@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""Register Agentic OS skills in Codex-, Claude-, and Agents-discoverable locations.
+
+This tool supersedes register-codex-skills, adding a Claude Code target
+(~/.claude/skills/<id>) alongside the existing Agents and Codex targets.
+
+Sources (in resolution order, first-found wins per id):
+  1. <root>/.agents/skills/<id>/     — OA: generated adapters (have valid frontmatter)
+  2. <root>/harness/skills/<id>/     — OH: raw skill sources
+
+Targets:
+  ~/.agents/skills/<id>  → symlink to OA skill dir
+  ~/.codex/skills/<id>   → generated SKILL.md adapter + agents/openai.yaml (same as
+                           register-codex-skills; adapters are NOT replaced with symlinks)
+  ~/.claude/skills/<id>  → symlink to OA skill dir when OA SKILL.md has valid name+description
+                           frontmatter; adapter dir otherwise (generated SKILL.md with
+                           frontmatter that reads through to real source)
+
+Safety rules:
+  - Never overwrite a REAL (non-symlink) directory in any target. Skip and report conflict.
+  - Managed symlinks are identified by their target resolving under the agentic_os root,
+    not merely by being symlinks (protects manual composio-cli-style links).
+  - --prune removes managed symlinks whose OA source has vanished.
+  - --force replaces managed symlinks even when already pointing at the right target.
+    Never touches real dirs even with --force.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+from pathlib import Path
+import sys
+import textwrap
+
+try:
+    import yaml
+except Exception as exc:  # pragma: no cover
+    print(f"error: PyYAML is required: {exc}", file=sys.stderr)
+    sys.exit(2)
+
+
+# Marker embedded in every generated SKILL.md so the tool knows it owns the file.
+GENERATED_MARKER = "<!-- generated-by: agentic-os register-harness-skills -->"
+# Also accept the old marker so we can overwrite files created by register-codex-skills.
+OLD_GENERATED_MARKER = "<!-- generated-by: agentic-os register-codex-skills -->"
+
+FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared with original register-codex-skills logic
+# ---------------------------------------------------------------------------
+
+def skill_description(item: dict) -> str:
+    desc = " ".join(str(item.get("description", "")).split())
+    if not desc:
+        desc = f"Use the Agentic OS {item['id']} skill."
+    suffix = (
+        f" Use when the user asks for Agentic OS `{item['id']}` work or when "
+        f"the routed Agentic OS skill registry selects `{item['id']}`."
+    )
+    value = desc.rstrip(".") + "." + suffix
+    return value[:900]
+
+
+def adapter_body_harness(root: Path, item: dict, source_path: Path, source_exists: bool) -> str:
+    """Generate a SKILL.md adapter body with valid frontmatter for both Codex and Claude."""
+    sid = item["id"]
+    title = item.get("name") or sid.replace("-", " ").title()
+    rel_source = item.get("source", "")
+    source_note = (
+        f"Read `{rel_source}` after routing."
+        if source_exists
+        else (
+            f"The registry source `{rel_source}` is missing; "
+            f"report that drift before continuing."
+        )
+    )
+    return f"""---
+name: {sid}
+description: {skill_description(item)}
+---
+
+{GENERATED_MARKER}
+
+# {title}
+
+Harness-visible adapter for the Agentic OS `{sid}` skill.
+
+## Procedure
+
+1. Start from `{root}`.
+2. Follow the Agentic OS startup loop: read `AGENTS.md`, then `ROUTER.md`,
+   `CONTEXT.md`, `RULES.md`, and `TOOLS.md`; when routed deeper, repeat there.
+3. Read `harness/rules/os-authoring-rules.md` before editing Agentic OS
+   commands, skills, workflows, automations, tools, registries, or runtime
+   templates.
+4. {source_note}
+5. Update `harness/registries/skills.yml` and the relevant `TOOLS.md` surface
+   when changing this visible skill invocation.
+6. Validate with the smallest focused check available.
+"""
+
+
+def claude_adapter_body(item: dict, real_skill_md: Path) -> str:
+    """Generate a minimal Claude-adapter SKILL.md that reads through to the real source."""
+    sid = item["id"]
+    return f"""---
+name: {sid}
+description: {skill_description(item)}
+---
+
+{GENERATED_MARKER}
+
+Read and follow {real_skill_md}
+"""
+
+
+def openai_yaml(item: dict) -> str:
+    display = item.get("name") or item["id"].replace("-", " ").title()
+    desc = " ".join(str(item.get("description", "")).split())
+    if not desc:
+        desc = f"Run the Agentic OS {display} workflow."
+    data = {
+        "interface": {
+            "display_name": display,
+            "short_description": desc[:110],
+            "default_prompt": f"Use the Agentic OS {display} skill.",
+        },
+        "policy": {"allow_implicit_invocation": True},
+    }
+    return yaml.safe_dump(data, sort_keys=False)
+
+
+def _has_valid_frontmatter(skill_md: Path) -> bool:
+    """Return True if SKILL.md starts with ---...--- containing name and description."""
+    try:
+        text = skill_md.read_text(errors="replace")
+    except OSError:
+        return False
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return False
+    try:
+        fm = yaml.safe_load(m.group(1))
+    except Exception:
+        return False
+    if not isinstance(fm, dict):
+        return False
+    return bool(fm.get("name")) and bool(fm.get("description"))
+
+
+def _is_managed_symlink(path: Path, os_roots: list[Path]) -> bool:
+    """A symlink is 'managed' (safe to replace) if its target lives under an OS root."""
+    if not path.is_symlink():
+        return False
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return True  # dangling managed symlink — prune-safe
+    return any(
+        str(resolved).startswith(str(r)) for r in os_roots
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-target write/link functions
+# ---------------------------------------------------------------------------
+
+def write_oа_adapter(root: Path, item: dict, dry_run: bool, force: bool) -> tuple[str, str]:
+    """Write/update generated adapter into <root>/.agents/skills/<id>/."""
+    sid = item["id"]
+    src = Path(str(item.get("source", "")))
+    source_path = src if src.is_absolute() else root / src
+    source_exists = source_path.exists()
+    skill_dir = root / ".agents" / "skills" / sid
+    skill_file = skill_dir / "SKILL.md"
+    metadata_file = skill_dir / "agents" / "openai.yaml"
+    existed = skill_file.exists()
+
+    if existed and not force:
+        return "skipped", ""
+
+    if existed:
+        existing = skill_file.read_text(errors="replace")
+        is_generated = GENERATED_MARKER in existing or OLD_GENERATED_MARKER in existing
+        if not is_generated and sid != "make-skill":
+            return "blocked", str(skill_file)
+
+    if dry_run:
+        action = "would-update" if existed else "would-create"
+        return action, "" if source_exists else f"missing source: {source_path}"
+
+    (skill_dir / "agents").mkdir(parents=True, exist_ok=True)
+    skill_file.write_text(adapter_body_harness(root, item, source_path, source_exists))
+    metadata_file.write_text(openai_yaml(item))
+    return ("updated" if existed else "created"), (
+        "" if source_exists else f"missing source: {source_path}"
+    )
+
+
+def link_agents_scope(
+    root: Path, item: dict, os_roots: list[Path], dry_run: bool, force: bool
+) -> tuple[str, str]:
+    """Symlink ~/.agents/skills/<id> → <root>/.agents/skills/<id>."""
+    sid = item["id"]
+    source_dir = root / ".agents" / "skills" / sid
+    user_dir = Path.home() / ".agents" / "skills"
+    target = user_dir / sid
+
+    if target.is_symlink() and target.resolve() == source_dir:
+        return "ok", ""
+    if target.exists() or target.is_symlink():
+        if not force and not _is_managed_symlink(target, os_roots):
+            return "conflict", str(target)
+        if not force:
+            return "skipped", str(target)
+        if target.is_dir() and not target.is_symlink():
+            return "blocked", str(target)
+        if not dry_run:
+            target.unlink()
+    if dry_run:
+        return "would-link", ""
+    if not dry_run:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(source_dir)
+    return "linked", ""
+
+
+def write_codex_scope(
+    root: Path, item: dict, os_roots: list[Path], dry_run: bool, force: bool
+) -> tuple[str, str]:
+    """Write generated adapter into ~/.codex/skills/<id>/ (preserves existing manual dirs)."""
+    sid = item["id"]
+    src = Path(str(item.get("source", "")))
+    source_path = src if src.is_absolute() else root / src
+    source_exists = source_path.exists()
+    skill_dir = Path.home() / ".codex" / "skills" / sid
+    skill_file = skill_dir / "SKILL.md"
+    metadata_file = skill_dir / "agents" / "openai.yaml"
+
+    if skill_file.exists():
+        existing = skill_file.read_text(errors="replace")
+        is_generated = GENERATED_MARKER in existing or OLD_GENERATED_MARKER in existing
+        if is_generated and not force:
+            if not metadata_file.exists():
+                if not dry_run:
+                    (skill_dir / "agents").mkdir(parents=True, exist_ok=True)
+                    metadata_file.write_text(openai_yaml(item))
+                return "metadata_added", ""
+            return "ok", ""
+        if is_generated or force:
+            if skill_dir.exists() and not skill_dir.is_symlink() and force:
+                pass  # real dir — overwrite only generated file, never rm -rf
+            if not dry_run:
+                (skill_dir / "agents").mkdir(parents=True, exist_ok=True)
+                skill_file.write_text(adapter_body_harness(root, item, source_path, source_exists))
+                metadata_file.write_text(openai_yaml(item))
+            return "updated" if not dry_run else "would-update", ""
+        # Manual skill — add metadata only if missing
+        if not metadata_file.exists():
+            if not dry_run:
+                (skill_dir / "agents").mkdir(parents=True, exist_ok=True)
+                metadata_file.write_text(openai_yaml(item))
+            return "metadata_added", ""
+        return "kept_manual", str(skill_file)
+
+    if dry_run:
+        return "would-create", "" if source_exists else f"missing source: {source_path}"
+    (skill_dir / "agents").mkdir(parents=True, exist_ok=True)
+    skill_file.write_text(adapter_body_harness(root, item, source_path, source_exists))
+    metadata_file.write_text(openai_yaml(item))
+    return "created", "" if source_exists else f"missing source: {source_path}"
+
+
+def link_claude_scope(
+    root: Path, item: dict, os_roots: list[Path], dry_run: bool, force: bool
+) -> tuple[str, str]:
+    """Symlink ~/.claude/skills/<id> → OA skill dir, or create an adapter dir if no frontmatter."""
+    sid = item["id"]
+    oa_skill_dir = root / ".agents" / "skills" / sid
+    oa_skill_md = oa_skill_dir / "SKILL.md"
+    target = Path.home() / ".claude" / "skills" / sid
+
+    # Detect if OA SKILL.md has valid frontmatter (it always should for registry skills)
+    has_fm = _has_valid_frontmatter(oa_skill_md)
+
+    if target.exists() or target.is_symlink():
+        if target.is_symlink():
+            if target.resolve() == oa_skill_dir and not force:
+                return "ok", ""
+            # Check managed-ness before touching
+            if not _is_managed_symlink(target, os_roots) and not force:
+                return "conflict", str(target)
+            if not force:
+                return "skipped", str(target)
+            if not dry_run:
+                target.unlink()
+        else:
+            # Real directory — never touch it
+            return "blocked", str(target)
+
+    if has_fm:
+        # Symlink the whole OA skill dir
+        if dry_run:
+            return "would-link", ""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(oa_skill_dir)
+        return "linked", ""
+    else:
+        # Generate a small adapter dir
+        if dry_run:
+            return "would-create-adapter", ""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.mkdir(parents=True, exist_ok=True)
+        src = Path(str(item.get("source", "")))
+        real_skill_md = src if src.is_absolute() else root / src
+        (target / "SKILL.md").write_text(claude_adapter_body(item, real_skill_md))
+        return "created-adapter", ""
+
+
+def prune_managed(surface_dir: Path, os_roots: list[Path], dry_run: bool) -> list[str]:
+    """Remove managed symlinks in surface_dir whose targets have vanished."""
+    pruned = []
+    if not surface_dir.exists():
+        return pruned
+    for name in sorted(os.listdir(surface_dir)):
+        path = surface_dir / name
+        if not _is_managed_symlink(path, os_roots):
+            continue
+        # Check if target exists
+        try:
+            path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            if dry_run:
+                pruned.append(f"would-prune: {path}")
+            else:
+                path.unlink()
+                pruned.append(f"pruned: {path}")
+    return pruned
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    default_root = os.environ.get("AGENTIC_OS_ROOT", "/Users/genome/agentic_os")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Register Agentic OS skills in Agents-, Codex-, and Claude-discoverable locations.\n"
+            "Supersedes register-codex-skills; the old script is now a deprecation shim."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent(f"""
+ENVIRONMENT
+  AGENTIC_OS_ROOT  Override the default Agentic OS root directory.
+                   Default: {default_root}
+
+FILES
+  <root>/harness/registries/skills.yml  Registry of OS-managed skills (required)
+  <root>/.agents/skills/<id>/           OA: generated adapters (source for symlinks)
+  <root>/harness/skills/<id>/           OH: raw skill sources
+  ~/.agents/skills/<id>                 Agents target (symlink → OA)
+  ~/.codex/skills/<id>                  Codex target (generated adapter)
+  ~/.claude/skills/<id>                 Claude Code target (symlink → OA, or adapter dir)
+
+EXAMPLES
+  # Dry-run to see what would change
+  register-harness-skills --dry-run --user-scope
+
+  # Register all skills for all harnesses
+  register-harness-skills --user-scope
+
+  # Register only Claude Code skills
+  register-harness-skills --user-scope --claude-only
+
+  # Prune managed symlinks whose sources have vanished
+  register-harness-skills --user-scope --prune
+
+  # Force re-registration (replaces managed symlinks)
+  register-harness-skills --user-scope --force
+        """),
+    )
+    parser.add_argument(
+        "--root",
+        default=default_root,
+        metavar="DIR",
+        help=f"Agentic OS root directory (default: {default_root})",
+    )
+    parser.add_argument(
+        "--user-scope",
+        action="store_true",
+        help="Also populate ~/.agents/skills, ~/.codex/skills, ~/.claude/skills",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace existing managed symlinks (never touches real dirs)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be done without making any changes",
+    )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Remove managed symlinks in user targets whose OA source has vanished",
+    )
+    filter_group = parser.add_mutually_exclusive_group()
+    filter_group.add_argument(
+        "--claude-only",
+        action="store_true",
+        help="Only update ~/.claude/skills (skip agents and codex targets)",
+    )
+    filter_group.add_argument(
+        "--codex-only",
+        action="store_true",
+        help="Only update ~/.codex/skills (skip agents and claude targets)",
+    )
+    filter_group.add_argument(
+        "--agents-only",
+        action="store_true",
+        help="Only update ~/.agents/skills (skip codex and claude targets)",
+    )
+    args = parser.parse_args()
+
+    root = Path(args.root).expanduser().resolve()
+    registry = root / "harness" / "registries" / "skills.yml"
+
+    if not registry.exists():
+        print(f"error: registry not found: {registry}", file=sys.stderr)
+        return 2
+
+    try:
+        data = yaml.safe_load(registry.read_text())
+    except Exception as exc:
+        print(f"error: could not parse registry: {exc}", file=sys.stderr)
+        return 2
+
+    os_roots = [root]
+
+    if args.dry_run:
+        print("DRY RUN — no changes will be made")
+
+    counts: dict[str, int] = {}
+    warnings: list[str] = []
+
+    def bump(key: str) -> None:
+        counts[key] = counts.get(key, 0) + 1
+
+    def warn(msg: str) -> None:
+        warnings.append(msg)
+
+    # Prune pass (before registration so stale links don't interfere)
+    if args.prune and args.user_scope:
+        for surface, surface_key in [
+            (Path.home() / ".agents" / "skills", "agents"),
+            (Path.home() / ".codex" / "skills", "codex"),
+            (Path.home() / ".claude" / "skills", "claude"),
+        ]:
+            if args.agents_only and surface_key != "agents":
+                continue
+            if args.codex_only and surface_key != "codex":
+                continue
+            if args.claude_only and surface_key != "claude":
+                continue
+            for msg in prune_managed(surface, os_roots, args.dry_run):
+                print(f"  prune/{surface_key}: {msg}")
+
+    for item in data.get("skills", []):
+        sid = item["id"]
+
+        # --- OA adapter (always, unless user_scope filter skips everything) ---
+        if not (args.agents_only or args.codex_only or args.claude_only):
+            status, detail = write_oа_adapter(root, item, args.dry_run, args.force)
+            bump(f"oa_{status}")
+            if detail:
+                if "blocked" in status:
+                    warn(f"blocked OA adapter for {sid}: {detail}")
+                else:
+                    warn(f"OA {status} for {sid}: {detail}")
+
+        if not args.user_scope:
+            continue
+
+        # --- ~/.agents/skills ---
+        if not (args.codex_only or args.claude_only):
+            link_status, link_detail = link_agents_scope(
+                root, item, os_roots, args.dry_run, args.force
+            )
+            bump(f"agents_{link_status}")
+            if link_detail:
+                if "blocked" in link_status:
+                    warn(f"blocked agents link for {sid}: {link_detail}")
+                elif "conflict" in link_status:
+                    warn(f"conflict agents link for {sid} (not managed, use --force): {link_detail}")
+                else:
+                    warn(f"agents {link_status} for {sid}: {link_detail}")
+
+        # --- ~/.codex/skills ---
+        if not (args.agents_only or args.claude_only):
+            codex_status, codex_detail = write_codex_scope(
+                root, item, os_roots, args.dry_run, args.force
+            )
+            bump(f"codex_{codex_status}")
+            if codex_detail:
+                if "kept_manual" in codex_status:
+                    warn(f"codex kept manual for {sid}: {codex_detail}")
+                else:
+                    warn(f"codex {codex_status} for {sid}: {codex_detail}")
+
+        # --- ~/.claude/skills ---
+        if not (args.agents_only or args.codex_only):
+            claude_status, claude_detail = link_claude_scope(
+                root, item, os_roots, args.dry_run, args.force
+            )
+            bump(f"claude_{claude_status}")
+            if claude_detail:
+                if "blocked" in claude_status:
+                    warn(f"blocked claude for {sid}: {claude_detail}")
+                elif "conflict" in claude_status:
+                    warn(f"conflict claude for {sid} (not managed, use --force): {claude_detail}")
+                else:
+                    warn(f"claude {claude_status} for {sid}: {claude_detail}")
+
+    label = "dry_run_plan" if args.dry_run else "registered_harness_skills"
+    print(f"{label}:")
+    for key in sorted(counts):
+        print(f"  {key}: {counts[key]}")
+    if warnings:
+        print("warnings:")
+        for warning in warnings:
+            print(f"  - {warning}")
+
+    # Only hard-fail on OA adapter block (writing a generated file over a non-managed real
+    # file). Claude/agents "blocked" entries are expected skip-and-report for manual dirs.
+    has_blockers = any(w.startswith("blocked OA") for w in warnings)
+    return 1 if has_blockers else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

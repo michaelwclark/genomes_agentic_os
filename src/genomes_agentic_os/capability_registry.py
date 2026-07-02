@@ -565,6 +565,42 @@ def skill_entries() -> list[dict[str, str]]:
             "description": "Configure or audit provider-agnostic connected source watchers.",
             "source": "harness/skills/source-watcher/SKILL.md",
         },
+        {
+            "id": "aos-product-orchestrator",
+            "name": "AOS Product Orchestrator",
+            "description": "Groom Agentic OS self-improvement proposals into spec packets and Linear issues.",
+            "source": "harness/skills/aos-product-orchestrator/SKILL.md",
+        },
+        {
+            "id": "auto-dev",
+            "name": "Auto Dev",
+            "description": "Run a Jira or Linear tracker item through project-aware SDLC orchestration, state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge or merge-blocked closeout.",
+            "source": "harness/skills/auto-dev/SKILL.md",
+        },
+        {
+            "id": "finishing-touches-review",
+            "name": "Finishing Touches Review",
+            "description": "Run a deterministic cross-model finishing review loop before PR readiness or after PR creation when checks are the final validation signal.",
+            "source": "harness/skills/finishing-touches-review/SKILL.md",
+        },
+        {
+            "id": "initiative-context-resume",
+            "name": "Initiative Context Resume",
+            "description": "Create or refresh durable context packs and discovery indexes for long-running initiatives or subprojects.",
+            "source": "harness/skills/initiative-context-resume/SKILL.md",
+        },
+        {
+            "id": "memory-analytics-viewer",
+            "name": "Memory Analytics Viewer",
+            "description": "Inspect unified-memory retrieval analytics from the live memory_ops store. Read-only and redacted.",
+            "source": "harness/skills/memory-analytics-viewer/SKILL.md",
+        },
+        {
+            "id": "os-health",
+            "name": "OS Health",
+            "description": "Inspect host speed risks and Agentic OS generated-artifact hygiene with observe-only reports and approval-gated cleanup classes.",
+            "source": "harness/skills/os-health/SKILL.md",
+        },
     ]
 
 
