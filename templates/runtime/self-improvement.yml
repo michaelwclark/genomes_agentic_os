@@ -71,6 +71,39 @@ promotion_targets:
   - reference-update-plan
   - doctor-check-draft
 approval_required: true
+# Guarded nightly lane that turns low-risk proposals into queued, executable work.
+# Runs after the daily review has produced fresh proposals via
+# `agentic-os self-improvement nightly-apply`. Selection is limited to items still
+# at promotion_status `proposed` that match the auto_approve policy below; the
+# existing approve + promote mechanics are reused (no parallel state store).
+# Defaults to disabled on a fresh install; an operator enables it after review.
+nightly_apply:
+  # Master switch for the nightly-apply lane. When false, `nightly-apply` performs
+  # no auto-approval or promotion regardless of the policy below.
+  enabled: false
+  auto_approve:
+    # Only proposals whose recommended_artifact is in this list are eligible for
+    # automatic approval. doctor-check-draft is the lowest-risk class: it only
+    # ever produces a draft validation/doctor check, never a live surface change.
+    classes:
+      - doctor-check-draft
+    # Minimum proposal score.total required for auto-approval. doctor-check-draft
+    # proposals score 20; feature-spec proposals score 19, so a min_score of 20
+    # deliberately excludes feature specs from the automatic lane.
+    min_score: 20
+    # Hard cap on how many proposals the lane will auto-approve + queue per night.
+    # Protects against a flood of new findings queuing unbounded work.
+    max_per_night: 3
+  # Where queued work rows are projected. `work_intake` maps to the 🧭 OS Work
+  # Intake Notion database; Notion projection is best-effort and never fails the run.
+  queue_target: work_intake
+  # Source/provenance tag stamped on notifications and queued rows so operators
+  # can trace queued work back to this automated lane.
+  notify_source: automation.self_improvement
+  # Proposals older than this many days that do NOT match the auto_approve policy
+  # are surfaced in the run receipt as `stale_triage` for operator visibility.
+  # This is visibility only; it never changes proposal state.
+  stale_after_days: 7
 model_review:
   enabled: false
   sandbox_required: true

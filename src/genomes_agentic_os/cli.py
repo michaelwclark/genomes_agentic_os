@@ -77,6 +77,7 @@ from .self_improvement import (
     approve_self_improvement_proposal,
     format_self_improvement_result,
     list_self_improvement_proposals,
+    nightly_apply_self_improvement,
     process_self_improvement_actions,
     promote_self_improvement_proposal,
     reconcile_self_improvement_queue,
@@ -1411,6 +1412,16 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     self_improvement_reconcile_mode.add_argument("--dry-run", action="store_true", help="Preview queue reconciliation without writing.")
     self_improvement_reconcile_mode.add_argument("--apply", action="store_true", help="Apply local run-queue reconciliation.")
     self_improvement_reconcile.set_defaults(handler=handle_self_improvement_reconcile_queue)
+    self_improvement_nightly = self_improvement_subparsers.add_parser(
+        "nightly-apply",
+        help="Auto-approve low-risk proposals and queue them into OS Work Intake (dry-run by default).",
+    )
+    self_improvement_nightly.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_nightly.add_argument("--limit", type=int, default=None, help="Cap approvals below the configured max_per_night.")
+    self_improvement_nightly_mode = self_improvement_nightly.add_mutually_exclusive_group()
+    self_improvement_nightly_mode.add_argument("--dry-run", action="store_true", help="Preview selection without approving, promoting, or queuing (default behaviour).")
+    self_improvement_nightly_mode.add_argument("--apply", action="store_true", help="Approve, promote, and queue eligible proposals.")
+    self_improvement_nightly.set_defaults(handler=handle_self_improvement_nightly_apply)
 
     connected_parser = subparsers.add_parser("connected-system", help="Manage connected source systems.")
     connected_subparsers = connected_parser.add_subparsers(dest="connected_system_command", required=True)
@@ -2512,6 +2523,15 @@ def handle_self_improvement_actions(args: argparse.Namespace) -> int:
 
 def handle_self_improvement_reconcile_queue(args: argparse.Namespace) -> int:
     print(format_self_improvement_result(reconcile_self_improvement_queue(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_nightly_apply(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            nightly_apply_self_improvement(args.root, dry_run=not args.apply, limit=args.limit)
+        )
+    )
     return 0
 
 

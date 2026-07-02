@@ -34,8 +34,20 @@ NOTION_TOKEN_ENV = "GENOMES_NOTION_PAT"
 NOTION_REPORT_PARENT_TITLE = "Genome's Agentic OS"
 NOTION_REPORTS_PAGE_TITLE = "Self Improvement Reports"
 ACTION_OUTPUT_ROOT = f"{OUTPUT_ROOT}/actions"
+NIGHTLY_APPLY_ROOT = f"{OUTPUT_ROOT}/nightly-apply"
 SELF_IMPROVEMENT_WORK_ITEM = "clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
 STALE_QUEUE_GRACE = timedelta(hours=24)
+# 🧭 OS Work Intake Notion database that receives queued self-improvement work.
+WORK_INTAKE_DB_ID = "c442dd56a24340f0880acfd195f34225"
+# Notification bridge used to emit one summary alert per nightly-apply run.
+NOTIFY_BIN = "harness/bin/agentic-os-notify"
+NIGHTLY_APPLY_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "auto_approve": {"classes": ["doctor-check-draft"], "min_score": 20, "max_per_night": 3},
+    "queue_target": "work_intake",
+    "notify_source": "automation.self_improvement",
+    "stale_after_days": 7,
+}
 MAX_EVIDENCE_FILES = 400
 MAX_EVIDENCE_FILES_PER_ROOT = 40
 MAX_EVIDENCE_BYTES = 16_000
@@ -132,6 +144,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "promotion_targets": sorted(APPROVED_TARGETS),
     "approval_required": True,
+    "nightly_apply": {
+        "enabled": False,
+        "auto_approve": {
+            "classes": ["doctor-check-draft"],
+            "min_score": 20,
+            "max_per_night": 3,
+        },
+        "queue_target": "work_intake",
+        "notify_source": "automation.self_improvement",
+        "stale_after_days": 7,
+    },
     "model_review": {"enabled": False},
 }
 
@@ -2752,8 +2775,393 @@ def promote_self_improvement_proposal(root: str | Path, proposal_id: str, *, tar
     return {"action": "promote", "root": os_root, "proposal_id": proposal_id, "target": target, "draft_paths": written}
 
 
+def _nightly_apply_policy(config: dict[str, Any]) -> dict[str, Any]:
+    """Merge the configured nightly_apply block over safe defaults.
+
+    Keeps the lane deterministic even when the control-plane file predates the
+    nightly_apply key or leaves parts of it unset.
+    """
+    policy = dict(NIGHTLY_APPLY_DEFAULTS)
+    configured = config.get("nightly_apply") or {}
+    if isinstance(configured, dict):
+        policy.update(configured)
+    auto = dict(NIGHTLY_APPLY_DEFAULTS["auto_approve"])
+    configured_auto = configured.get("auto_approve") if isinstance(configured, dict) else None
+    if isinstance(configured_auto, dict):
+        auto.update(configured_auto)
+    policy["auto_approve"] = auto
+    return policy
+
+
+def _proposal_score_total(proposal: dict[str, Any]) -> int:
+    score = proposal.get("score") or {}
+    try:
+        return int(score.get("total") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _proposal_age_days(proposal: dict[str, Any], now: datetime) -> float | None:
+    created = _parse_time(proposal.get("created_at"))
+    if created is None:
+        return None
+    return (now - created).total_seconds() / 86400.0
+
+
+def _nightly_intake_properties(available: dict[str, str], proposal: dict[str, Any]) -> dict[str, Any]:
+    """Build 🧭 OS Work Intake row properties, sending only columns that exist.
+
+    Auto Mode is intentionally left UNCHECKED: an operator (or the Notion watcher)
+    flips it to actually dispatch the queued work.
+    """
+    proposal_id = str(proposal.get("proposal_id"))
+    summary = str(proposal.get("title") or proposal.get("summary") or proposal_id)
+    desired: dict[str, tuple[str, Any]] = {
+        "Name": ("title", f"SI: {summary} ({proposal_id})"),
+        "Type": ("select", "improvement"),
+        "Project": ("select", "Agentic OS"),
+        "Status": ("select", "queued"),
+        "Priority": ("select", "P2"),
+        "Source": ("select", "self-improvement"),
+        "Harness": ("select", "either"),
+        "Auto Mode": ("checkbox", False),
+    }
+    properties: dict[str, Any] = {}
+    for name, (kind, value) in desired.items():
+        if name not in available:
+            continue
+        if kind == "title":
+            properties[name] = notion_api._title_prop(str(value))
+        elif kind == "select":
+            properties[name] = notion_api._select_prop(str(value))
+        elif kind == "checkbox":
+            properties[name] = notion_api._checkbox_prop(bool(value))
+    return properties
+
+
+def _nightly_intake_body(proposal: dict[str, Any], draft_paths: list[str]) -> list[dict[str, Any]]:
+    """Compose the Notion page body: proposal content + draft path + provenance."""
+    blocks: list[dict[str, Any]] = [
+        _heading(2, "Self-improvement proposal"),
+        _paragraph(str(proposal.get("summary") or proposal.get("title") or "")),
+        _heading(3, "Provenance"),
+        _bullet(f"proposal_id: {proposal.get('proposal_id')}"),
+        _bullet(f"recommended_artifact: {proposal.get('recommended_artifact')}"),
+        _bullet(f"score.total: {_proposal_score_total(proposal)}"),
+        _bullet(f"created_at: {proposal.get('created_at')}"),
+        _bullet("source: nightly-apply (automation.self_improvement)"),
+    ]
+    if draft_paths:
+        blocks.append(_heading(3, "Draft artifacts"))
+        blocks.extend(_bullet(path) for path in draft_paths)
+    validation = [str(item) for item in proposal.get("validation_plan") or []]
+    if validation:
+        blocks.append(_heading(3, "Validation plan"))
+        blocks.extend(_bullet(item) for item in validation)
+    return blocks
+
+
+def _project_nightly_row_to_intake(
+    proposal: dict[str, Any],
+    draft_paths: list[str],
+    *,
+    fetcher: Any | None = None,
+) -> dict[str, Any]:
+    """Best-effort projection of one queued item into the OS Work Intake DB.
+
+    Never raises: Notion failures are returned as a degraded record so the caller
+    can log them in the run receipt and continue (projection is best-effort per
+    OS rules).
+    """
+    transport = fetcher or notion_api._default_fetcher
+    if not notion_api.resolve_token(NOTION_TOKEN_ENV):
+        return {"projected": False, "reason": "notion_token_missing"}
+    try:
+        available = notion_api.get_database_property_types(WORK_INTAKE_DB_ID, NOTION_TOKEN_ENV, fetcher=transport)
+        properties = _nightly_intake_properties(available, proposal)
+        if "Name" not in properties:
+            return {"projected": False, "reason": "intake_missing_name_property"}
+        page_id = notion_api.create_database_page(
+            WORK_INTAKE_DB_ID,
+            properties,
+            NOTION_TOKEN_ENV,
+            children=_nightly_intake_body(proposal, draft_paths),
+            fetcher=transport,
+        )
+    except Exception as exc:  # noqa: BLE001 - projection must never fail the run
+        return {"projected": False, "reason": f"notion_error: {type(exc).__name__}: {exc}"[:300]}
+    return {"projected": True, "page_id": page_id, "url": _notion_url(page_id)}
+
+
+def _send_nightly_notification(
+    root: Path,
+    *,
+    source: str,
+    approved: int,
+    queued: int,
+    skipped: int,
+    dry_run: bool,
+    notifier: Any | None = None,
+) -> dict[str, Any]:
+    """Emit one summary notification via agentic-os-notify. Best-effort."""
+    title = "Self-improvement nightly-apply" + (" (dry-run)" if dry_run else "")
+    message = f"approved {approved}, queued {queued}, skipped {skipped}"
+    if notifier is not None:
+        try:
+            notifier(source=source, title=title, message=message, level="info", dry_run=dry_run)
+            return {"sent": True, "message": message}
+        except Exception as exc:  # noqa: BLE001
+            return {"sent": False, "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    notify_bin = root / NOTIFY_BIN
+    if not notify_bin.is_file():
+        return {"sent": False, "reason": "notify_bin_missing"}
+    cmd = [
+        str(notify_bin),
+        "--source",
+        source,
+        "--title",
+        title,
+        "--message",
+        message,
+        "--level",
+        "info",
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+    try:
+        import subprocess
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except Exception as exc:  # noqa: BLE001
+        return {"sent": False, "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    if result.returncode != 0:
+        return {"sent": False, "reason": f"exit_{result.returncode}: {(result.stderr or '').strip()[:160]}"}
+    return {"sent": True, "message": message}
+
+
+def _nightly_apply_receipt_path(root: Path) -> Path:
+    directory = _resolve_root_relative(root, NIGHTLY_APPLY_ROOT)
+    return _safe_child(root, directory, f"{_stamp()}.json")
+
+
+def nightly_apply_self_improvement(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    limit: int | None = None,
+    fetcher: Any | None = None,
+    notifier: Any | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Auto-triage low-risk proposals into queued, executable work.
+
+    Selects proposals still at ``promotion_status == "proposed"`` whose
+    recommended_artifact is in the configured auto_approve.classes and whose
+    score.total meets auto_approve.min_score, capped at max_per_night (and
+    ``limit`` when supplied). Each selected proposal is approved and promoted via
+    the existing mechanics, then projected (best-effort) into the OS Work Intake
+    database. Proposals that stay ``proposed`` past ``stale_after_days`` without
+    matching the policy are surfaced as ``stale_triage`` for operator visibility
+    (no state change). One summary notification is sent per run.
+    """
+    os_root = expand_path(root)
+    config = _load_yaml(os_root / CONFIG_PATH)
+    policy = _nightly_apply_policy(config)
+    auto = policy["auto_approve"]
+    now = now or datetime.now(timezone.utc)
+    classes = {str(item) for item in (auto.get("classes") or [])}
+    min_score = int(auto.get("min_score") or 0)
+    max_per_night = int(auto.get("max_per_night") or 0)
+    if limit is not None:
+        max_per_night = min(max_per_night, max(0, int(limit)))
+    stale_after_days = float(policy.get("stale_after_days") or 7)
+    notify_source = str(policy.get("notify_source") or "automation.self_improvement")
+
+    proposals = [_read_yaml(path) for path in _proposal_files(os_root, config)]
+    eligible: list[dict[str, Any]] = []
+    stale_triage: list[dict[str, Any]] = []
+    for proposal in proposals:
+        if str(proposal.get("promotion_status")) != "proposed":
+            continue
+        artifact = str(proposal.get("recommended_artifact") or "")
+        matches = artifact in classes and _proposal_score_total(proposal) >= min_score
+        if matches:
+            eligible.append(proposal)
+            continue
+        age = _proposal_age_days(proposal, now)
+        if age is not None and age >= stale_after_days:
+            stale_triage.append(
+                {
+                    "proposal_id": proposal.get("proposal_id"),
+                    "recommended_artifact": artifact,
+                    "score": _proposal_score_total(proposal),
+                    "age_days": round(age, 1),
+                    "note": "proposed past stale_after_days and outside auto_approve policy",
+                }
+            )
+
+    enabled = bool(policy.get("enabled"))
+    eligible.sort(key=lambda item: (-_proposal_score_total(item), str(item.get("created_at") or "")))
+    # A disabled lane never selects anything; eligible is still reported for visibility.
+    if not enabled:
+        selected: list[dict[str, Any]] = []
+        deferred_over_cap: list[dict[str, Any]] = []
+    elif max_per_night > 0:
+        selected = eligible[:max_per_night]
+        deferred_over_cap = [
+            {"proposal_id": item.get("proposal_id"), "reason": "over_max_per_night"}
+            for item in eligible[max_per_night:]
+        ]
+    else:
+        selected = []
+        deferred_over_cap = [
+            {"proposal_id": item.get("proposal_id"), "reason": "max_per_night_is_zero"} for item in eligible
+        ]
+
+    result: dict[str, Any] = {
+        "action": "nightly-apply",
+        "ok": True,
+        "root": os_root,
+        "mode": "dry-run" if dry_run else "apply",
+        "enabled": enabled,
+        "policy": {
+            "classes": sorted(classes),
+            "min_score": min_score,
+            "max_per_night": max_per_night,
+            "stale_after_days": stale_after_days,
+            "queue_target": policy.get("queue_target"),
+            "notify_source": notify_source,
+        },
+        "eligible": [item.get("proposal_id") for item in eligible],
+        "selected": [item.get("proposal_id") for item in selected],
+        "deferred_over_cap": deferred_over_cap,
+        "stale_triage": stale_triage,
+        "approved": [],
+        "queued": [],
+        "notion_failures": [],
+        "errors": [],
+    }
+
+    if not enabled:
+        result["skipped_reason"] = "nightly_apply_disabled"
+
+    if dry_run or not selected:
+        # No approvals happen on a dry-run or when nothing is eligible. We
+        # deliberately send the notification in quiet (dry-run) mode here so an
+        # enabled apply-night with zero eligible proposals does not emit an alert
+        # about no-op work — this matches the quiet-by-default operator posture.
+        result["notification"] = _send_nightly_notification(
+            os_root,
+            source=notify_source,
+            approved=len(result["approved"]),
+            queued=len(result["queued"]),
+            skipped=len(stale_triage) + len(deferred_over_cap),
+            dry_run=True,  # quiet: no delivery for a preview or a no-op apply
+            notifier=notifier,
+        )
+        if not dry_run:
+            # Even a no-op apply writes a receipt for the audit trail.
+            result["receipt"] = _write_nightly_apply_receipt(os_root, result)
+        return result
+
+    _validate_output_paths(os_root, config)
+    for proposal in selected:
+        proposal_id = str(proposal.get("proposal_id"))
+        target = str(proposal.get("recommended_artifact") or "")
+        try:
+            approval = approve_self_improvement_proposal(
+                os_root, proposal_id, target=target, approver=notify_source
+            )
+            promotion = promote_self_improvement_proposal(os_root, proposal_id, target=target)
+        except Exception as exc:  # noqa: BLE001 - record and continue with the next item
+            result["errors"].append({"proposal_id": proposal_id, "error": f"{type(exc).__name__}: {exc}"[:300]})
+            continue
+        result["approved"].append({"proposal_id": proposal_id, "approval_id": approval.get("approval_id")})
+        draft_paths = [str(path) for path in promotion.get("draft_paths") or []]
+        refreshed = _load_proposal(os_root, config, proposal_id)
+        projection = _project_nightly_row_to_intake(refreshed, draft_paths, fetcher=fetcher)
+        queued_row = {
+            "proposal_id": proposal_id,
+            "target": target,
+            "draft_paths": draft_paths,
+            "notion": projection,
+        }
+        result["queued"].append(queued_row)
+        if not projection.get("projected"):
+            result["notion_failures"].append({"proposal_id": proposal_id, "reason": projection.get("reason")})
+
+    result["notification"] = _send_nightly_notification(
+        os_root,
+        source=notify_source,
+        approved=len(result["approved"]),
+        queued=len(result["queued"]),
+        skipped=len(stale_triage) + len(deferred_over_cap),
+        dry_run=False,
+        notifier=notifier,
+    )
+    result["receipt"] = _write_nightly_apply_receipt(os_root, result)
+    return result
+
+
+def _write_nightly_apply_receipt(root: Path, result: dict[str, Any]) -> str:
+    path = _nightly_apply_receipt_path(root)
+    payload = {
+        "schema_version": 1,
+        "action": "nightly-apply",
+        "generated_at": _now(),
+        "mode": result.get("mode"),
+        "enabled": result.get("enabled"),
+        "policy": result.get("policy"),
+        "selected": result.get("selected"),
+        "approved": result.get("approved"),
+        "queued": result.get("queued"),
+        "deferred_over_cap": result.get("deferred_over_cap"),
+        "stale_triage": result.get("stale_triage"),
+        "notion_failures": result.get("notion_failures"),
+        "errors": result.get("errors"),
+        "notification": result.get("notification"),
+    }
+    _atomic_write_text(root, path, json.dumps(payload, indent=2, default=str) + "\n")
+    return str(path.relative_to(root))
+
+
 def format_self_improvement_result(result: dict[str, Any]) -> str:
     action = result.get("action")
+    if action == "nightly-apply":
+        lines = [
+            "Self Improvement Nightly Apply" + (" (dry-run)" if result.get("mode") == "dry-run" else ""),
+            f"root: {result['root']}",
+            f"enabled: {result.get('enabled')}",
+        ]
+        if result.get("skipped_reason"):
+            lines.append(f"skipped: {result['skipped_reason']}")
+        policy = result.get("policy") or {}
+        lines.append(
+            "policy: classes="
+            f"{','.join(policy.get('classes') or [])} "
+            f"min_score={policy.get('min_score')} max_per_night={policy.get('max_per_night')}"
+        )
+        lines.append(f"eligible: {len(result.get('eligible') or [])}")
+        lines.append(f"selected: {len(result.get('selected') or [])}")
+        lines.append(f"approved: {len(result.get('approved') or [])}")
+        lines.append(f"queued: {len(result.get('queued') or [])}")
+        lines.append(f"stale_triage: {len(result.get('stale_triage') or [])}")
+        for row in result.get("queued") or []:
+            notion = row.get("notion") or {}
+            state = notion.get("url") if notion.get("projected") else f"notion:{notion.get('reason')}"
+            lines.append(f"- queued {row.get('proposal_id')} ({row.get('target')}) -> {state}")
+        for item in result.get("stale_triage") or []:
+            lines.append(f"- stale_triage {item.get('proposal_id')} ({item.get('age_days')}d, score={item.get('score')})")
+        for item in result.get("errors") or []:
+            lines.append(f"- error {item.get('proposal_id')}: {item.get('error')}")
+        notification = result.get("notification") or {}
+        lines.append(f"notification: {'sent' if notification.get('sent') else notification.get('reason')}")
+        if result.get("receipt"):
+            lines.append(f"receipt: {result['receipt']}")
+        if result.get("mode") == "dry-run":
+            lines.append("Next step: rerun with --apply to approve, promote, and queue eligible proposals.")
+        return "\n".join(lines)
+
     if action == "morning-report":
         validation_before = result.get("validation_before") or {}
         validation_after = result.get("validation_after") or {}
