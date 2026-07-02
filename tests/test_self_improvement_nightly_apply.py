@@ -221,6 +221,7 @@ def test_apply_lands_intake_row_via_fake_transport(tmp_path: Path, monkeypatch: 
 
     transport = _FakeTransport(
         [
+            {"results": []},  # POST dedup query — no existing rows for this proposal
             {  # GET database property types
                 "properties": {
                     "Name": {"type": "title"},
@@ -247,13 +248,16 @@ def test_apply_lands_intake_row_via_fake_transport(tmp_path: Path, monkeypatch: 
     assert result["notion_failures"] == []
 
     # The create-page request targeted the OS Work Intake database, left Auto Mode
-    # unchecked, and never carried the raw token in the body.
-    create = [r for r in transport.requests if r["method"] == "POST"][0]
+    # unchecked, never carried the raw token, and uses the new SI-NNN title format.
+    # The last POST is the page-create (the first POST is the dedup query).
+    create = [r for r in transport.requests if r["method"] == "POST"][-1]
     body = json.loads(create["data"].decode("utf-8"))
     assert body["parent"]["database_id"] == si.WORK_INTAKE_DB_ID
     assert body["properties"]["Auto Mode"]["checkbox"] is False
     assert body["properties"]["Status"]["select"]["name"] == "queued"
-    assert body["properties"]["Name"]["title"][0]["text"]["content"].startswith("SI: ")
+    name_text = body["properties"]["Name"]["title"][0]["text"]["content"]
+    import re as _re
+    assert _re.match(r"^SI-\d{3} — .+", name_text), f"Title did not match SI-NNN format: {name_text!r}"
     assert SENTINEL_TOKEN not in create["data"].decode("utf-8")
 
 
@@ -336,3 +340,161 @@ def test_one_summary_notification_is_emitted(tmp_path: Path) -> None:
     assert call["source"] == "automation.self_improvement"
     assert call["level"] == "info"
     assert "approved" in call["message"] and "queued" in call["message"]
+
+
+# ---------------------------------------------------------------------------
+# New tests: gate-root specificity, re-projection idempotency, title format
+# ---------------------------------------------------------------------------
+
+
+def test_gate_reads_config_from_runtime_root(tmp_path: Path) -> None:
+    """Config is read from the --root argument, not a hardcoded path.
+
+    Two isolated roots with different enabled settings must each see their own
+    config so that a disabled root never projects even when another root is
+    enabled.  This is a regression guard against the 2026-07-02 incident where
+    a build agent invoked _project_nightly_row_to_intake against a root that
+    had enabled=true while the live instance root had enabled=false.
+    """
+    root_enabled = _seed_root(tmp_path / "root_on", enable_nightly=True)
+    root_disabled = _seed_root(tmp_path / "root_off", enable_nightly=False)
+
+    doctor_on = _make_proposal(root_enabled, finding_type="recurring_failure", total_score=20, slug="on")
+    _persist(root_enabled, [doctor_on])
+    doctor_off = _make_proposal(root_disabled, finding_type="recurring_failure", total_score=20, slug="off")
+    _persist(root_disabled, [doctor_off])
+
+    result_on = si.nightly_apply_self_improvement(root_enabled, dry_run=True, notifier=_RecordingNotifier())
+    result_off = si.nightly_apply_self_improvement(root_disabled, dry_run=False, notifier=_RecordingNotifier())
+
+    # Enabled root selects proposals (dry_run so no Notion calls)
+    assert len(result_on["selected"]) == 1
+    # Disabled root is a no-op regardless of dry_run flag
+    assert result_off["skipped_reason"] == "nightly_apply_disabled"
+    assert result_off["approved"] == []
+    assert _status_of(root_disabled, doctor_off["proposal_id"]) == "proposed"
+
+
+def test_re_projection_blocked_by_durable_status_and_notion_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A proposal that was approved+promoted on run N must not re-project on run N+1.
+
+    Layer 1 (durable): After the first apply the proposal is promoted to
+    promotion_status='drafted'.  On the second apply the selection loop skips it
+    because only 'proposed' proposals are eligible.
+
+    Layer 2 (Notion guard): Even if the durable write were to fail, the dedup
+    query fires before create_database_page and returns the existing page id,
+    blocking the second POST.
+    """
+    root = _seed_root(tmp_path, enable_nightly=True)
+    doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
+    _persist(root, [doctor])
+    monkeypatch.setenv(si.NOTION_TOKEN_ENV, SENTINEL_TOKEN)
+    proposal_id = doctor["proposal_id"]
+
+    # First run: dedup query returns empty → create fires → page created
+    transport = _FakeTransport(
+        [
+            {"results": []},  # dedup query — no existing rows
+            {  # GET database property types
+                "properties": {
+                    "Name": {"type": "title"},
+                    "Status": {"type": "select"},
+                    "Auto Mode": {"type": "checkbox"},
+                }
+            },
+            {"id": "intake-page-first"},  # POST create page
+        ]
+    )
+    result1 = si.nightly_apply_self_improvement(
+        root, dry_run=False, fetcher=transport, notifier=_RecordingNotifier()
+    )
+    assert result1["queued"][0]["notion"]["projected"] is True
+    # Layer 1 check: promotion_status must be 'drafted' after first run
+    assert _status_of(root, proposal_id) == "drafted"
+
+    # Second run: proposal is now 'drafted' — selection loop skips it entirely.
+    # Transport has NO responses so any unexpected Notion call raises AssertionError.
+    transport2 = _FakeTransport([])
+    result2 = si.nightly_apply_self_improvement(
+        root, dry_run=False, fetcher=transport2, notifier=_RecordingNotifier()
+    )
+    assert result2["approved"] == [], "drafted proposal must not be re-approved"
+    assert result2["queued"] == [], "drafted proposal must not be re-projected"
+    assert transport2.requests == [], "no Notion calls should fire on re-run"
+
+
+def test_title_format_is_si_seq_imperative_slug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Projected rows use 'SI-NNN — imperative-slug' titles with bold 'What to do:' body.
+
+    Verifies:
+    - Title matches SI-NNN — <slug> where NNN is a zero-padded 3-digit integer
+    - Slug is ≤ 60 characters
+    - First body block is a bold paragraph starting with 'What to do:'
+    - Sequence increments monotonically across two consecutive projections
+    """
+    import re as _re
+
+    root = _seed_root(tmp_path, enable_nightly=True)
+    doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
+    nurse = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="nurse")
+    _persist(root, [doctor, nurse])
+    monkeypatch.setenv(si.NOTION_TOKEN_ENV, SENTINEL_TOKEN)
+
+    # Pre-seed the counter so the first row gets SI-003 (seeds at 3)
+    seq_path = si._si_seq_path(root)
+    seq_path.parent.mkdir(parents=True, exist_ok=True)
+    seq_path.write_text(json.dumps({"next_seq": 3}), encoding="utf-8")
+
+    def _prop_responses() -> list[dict[str, Any]]:
+        return [
+            {"results": []},  # dedup query
+            {
+                "properties": {
+                    "Name": {"type": "title"},
+                    "Status": {"type": "select"},
+                    "Auto Mode": {"type": "checkbox"},
+                }
+            },
+            {"id": "fake-page"},
+        ]
+
+    transport = _FakeTransport(_prop_responses() + _prop_responses())
+    result = si.nightly_apply_self_improvement(
+        root, dry_run=False, fetcher=transport, notifier=_RecordingNotifier()
+    )
+
+    assert len(result["queued"]) == 2, "both proposals should project"
+
+    create_requests = [r for r in transport.requests if r["method"] == "POST" and "/pages" in r["url"]]
+    assert len(create_requests) == 2
+
+    titles: list[str] = []
+    for req in create_requests:
+        body = json.loads(req["data"].decode("utf-8"))
+        name_text = body["properties"]["Name"]["title"][0]["text"]["content"]
+        assert _re.match(r"^SI-\d{3} — .+", name_text), f"Title format wrong: {name_text!r}"
+        slug_part = name_text.split(" — ", 1)[1]
+        assert len(slug_part) <= 60, f"Slug too long ({len(slug_part)}): {slug_part!r}"
+        titles.append(name_text)
+        # Verify bold 'What to do:' is the first child block
+        children = body.get("children") or []
+        assert children, "body must have blocks"
+        first = children[0]
+        assert first["type"] == "paragraph"
+        rich_text = first["paragraph"]["rich_text"]
+        assert rich_text, "first block must have rich_text"
+        first_text = rich_text[0]["text"]["content"]
+        assert first_text.startswith("What to do:"), (
+            f"First body block must start with 'What to do:' — got: {first_text!r}"
+        )
+        bold = rich_text[0].get("annotations", {}).get("bold")
+        assert bold is True, "First body block must be bold"
+
+    # Sequence numbers must be distinct and monotonically increasing
+    seq_nums = [int(_re.search(r"SI-(\d{3})", t).group(1)) for t in titles]  # type: ignore[union-attr]
+    assert seq_nums[1] == seq_nums[0] + 1, f"Seq must increment: {seq_nums}"

@@ -1,102 +1,51 @@
-# alerts.yml — Agentic OS local notification configuration
-#
-# Governs which sources post native macOS alerts, when they are suppressed, and
-# how they are delivered.  Read by harness/bin/agentic-os-notify at call time.
-#
-# Delivery driver priority: terminal-notifier (if on PATH) → osascript fallback.
-# Log: harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl (rotated at 5 MB).
-
-# ---------------------------------------------------------------------------
-# Global settings — apply to every source unless the source overrides.
-# ---------------------------------------------------------------------------
 global:
-  # Master switch.  Set to false to suppress all notifications OS-wide.
   enabled: true
-
-  # Quiet window in 24-hour HH:MM-HH:MM local time.  Overnight ranges cross
-  # midnight (e.g. 23:00-07:00).  Leave empty ("") to disable quiet hours.
-  quiet_hours: "23:00-07:00"
-
-  # IANA timezone name for the quiet-hours window.
-  timezone: "America/Chicago"
-
-  # Notifications at or above this level always fire, even during quiet hours.
-  # Values: info | warn | critical
-  quiet_hours_override_level: "critical"
-
-# ---------------------------------------------------------------------------
-# Per-source settings — keyed by the --source ID passed to agentic-os-notify.
-# Unknown sources fall back to the "default" entry below.
-# ---------------------------------------------------------------------------
+  quiet_hours: 23:00-07:00
+  timezone: America/Chicago
+  quiet_hours_override_level: critical
 sources:
-
-  # ---------- Watchers ----------
-
-  # Notion work-intake watcher: fires when new items land in the intake inbox.
-  # Low signal-to-noise, so info-level is fine and we want all items through.
   watchers.notion_work_intake:
     enabled: true
-    min_level: "info"        # show even info-level pings
-    sound: "Tink"            # subtle chime
-    sticky: false            # dismiss automatically
-
-  # Slack ingest watcher: fires when the Slack digest picks up new items.
-  # Same as Notion intake — lightweight, info-level OK.
+    min_level: info
+    sound: Tink
+    sticky: false
   watchers.slack_ingest:
     enabled: true
-    min_level: "info"
-    sound: "Tink"
+    min_level: info
+    sound: Tink
     sticky: false
-
-  # Granola meeting-note watcher: signals new meeting notes ready to ingest.
   watchers.granola:
     enabled: true
-    min_level: "info"
-    sound: "Tink"
+    min_level: info
+    sound: Tink
     sticky: false
-
-  # ---------- Automations ----------
-
-  # Self-improvement automation: fires when a new OS improvement is proposed.
-  # Worth a slightly stronger alert (default Pop sound), but not sticky.
   automation.self_improvement:
     enabled: true
-    min_level: "warn"
-    sound: "Pop"
+    min_level: warn
+    sound: Pop
     sticky: false
-
-  # Intake sync automation: fires when intake items are synced to work items.
   automation.intake_sync:
     enabled: true
-    min_level: "warn"
-    sound: "Pop"
+    min_level: warn
+    sound: Pop
     sticky: false
-
-  # PR health automation: fires when stale or failing PRs need attention.
-  # Slightly more urgent — use Submarine sound and sticky so it persists.
   automation.pr_health:
     enabled: true
-    min_level: "warn"
-    sound: "Submarine"
-    sticky: true             # stays until dismissed; PR action required
-
-  # ---------- OS doctor ----------
-
-  # OS doctor: fires on critical failures in OS validation or overnight runs.
-  # Always sticky and uses the most attention-grabbing sound.
+    min_level: warn
+    sound: Submarine
+    sticky: true
   os.doctor:
     enabled: true
-    min_level: "critical"    # only fire on critical; doctor is noisy otherwise
-    sound: "Basso"           # deep alert tone — hard to miss
-    sticky: true             # must be dismissed manually
-
-  # ---------- Default (fallback) ----------
-
-  # Used when the --source ID is not listed above.  Warn-level minimum keeps
-  # info-level noise from unknown sources out of the notification centre.
-  # The unregistered source is noted in the delivery log so it can be added here.
+    min_level: critical
+    sound: Basso
+    sticky: true
   default:
     enabled: true
-    min_level: "warn"
-    sound: "default"         # system default notification sound
+    min_level: warn
+    sound: default
+    sticky: false
+  os.health_monitor:
+    enabled: true
+    min_level: warn
+    sound: null
     sticky: false

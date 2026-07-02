@@ -1,0 +1,1156 @@
+#!/usr/bin/env python3
+"""
+agentic-os-monitor — real-time in-shell health monitor for the Agentic OS.
+
+Displays queue depth, running agents per host, recent runs, token usage
+(best-effort), host vitals (CPU/mem/disk), active work, and alert feed.
+
+USAGE
+  agentic-os-monitor                 # live curses UI, refresh every 5s
+  agentic-os-monitor --once --plain  # plain-text snapshot (pipe/cron safe)
+  agentic-os-monitor --help
+
+ENVIRONMENT
+  AGENTIC_OS_ROOT   Override the installed OS root (default: ~/agentic_os).
+
+FILES (read, never written)
+  harness/registries/hosts-routing.yml
+  harness/registries/health-monitor.yml
+  harness/shared_factory/00-control-plane/run-queue.yml        (line-scan, no YAML parse)
+  harness/shared_factory/00-control-plane/runtime-registry.yml
+  harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
+  harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl
+
+HEALTH THRESHOLDS
+  Loaded from harness/registries/health-monitor.yml.
+  Notify fires via agentic-os-notify; debounced 30 min per metric via state file
+  at harness/shared_factory/06-runs-and-logs/health-monitor-state.json.
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+SCRIPT_NAME = "agentic-os-monitor"
+VERSION = "1.0.0"
+REFRESH_SEC = 5           # curses refresh
+VITALS_CACHE_SEC = 10     # host vitals cache
+QUEUE_CACHE_SEC = 30      # run-queue status scan cache
+ALERT_DEBOUNCE_SEC = 1800 # 30 min debounce per metric
+
+AGENT_RE = re.compile(r'claude -p|claude$|codex exec', re.IGNORECASE)
+DAEMON_RE = re.compile(r'app-server|--serve|agentic-os-monitor|codex_server', re.IGNORECASE)
+
+DEFAULT_THRESHOLDS = {
+    "queue_failed_max":   {"value": 1500, "level": "warn"},
+    "queue_queued_max":   {"value": 4000, "level": "warn"},
+    "cpu_pct_max":        {"value": 90,   "level": "warn"},
+    "disk_pct_max":       {"value": 90,   "level": "warn"},
+    "host_unreachable":   {"value": True, "level": "warn"},
+    "agents_max_per_host":{"value": 5,   "level": "warn"},
+}
+
+# ---------------------------------------------------------------------------
+# OS root resolution
+# ---------------------------------------------------------------------------
+def get_os_root() -> Path:
+    env = os.environ.get("AGENTIC_OS_ROOT")
+    if env:
+        return Path(env).expanduser()
+    return Path("~/agentic_os").expanduser()
+
+
+# ---------------------------------------------------------------------------
+# Thresholds / config
+# ---------------------------------------------------------------------------
+def load_thresholds(os_root: Path) -> dict[str, Any]:
+    path = os_root / "harness" / "registries" / "health-monitor.yml"
+    if not path.exists():
+        return DEFAULT_THRESHOLDS.copy()
+    try:
+        import yaml
+        with path.open() as f:
+            data = yaml.safe_load(f) or {}
+        thresholds = data.get("thresholds", {})
+        merged = DEFAULT_THRESHOLDS.copy()
+        merged.update(thresholds)
+        return merged
+    except Exception:
+        return DEFAULT_THRESHOLDS.copy()
+
+
+# ---------------------------------------------------------------------------
+# Queue scan (line-scan — no YAML parse, ~11ms for 4.3MB)
+# ---------------------------------------------------------------------------
+_queue_cache: dict[str, Any] = {}
+_queue_cache_ts: float = 0.0
+
+def scan_queue(os_root: Path) -> dict[str, Any]:
+    global _queue_cache, _queue_cache_ts
+    now = time.time()
+    if now - _queue_cache_ts < QUEUE_CACHE_SEC and _queue_cache:
+        return _queue_cache
+    path = os_root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    counts: dict[str, int] = collections.Counter()  # type: ignore[assignment]
+    total = 0
+    try:
+        with path.open() as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("status: "):
+                    status = s[8:].strip().strip("'\"")
+                    counts[status] += 1
+                    total += 1
+    except Exception as exc:
+        _queue_cache = {"error": str(exc), "total": 0, "counts": {}}
+        _queue_cache_ts = now
+        return _queue_cache
+    result = {"total": total, "counts": dict(counts), "error": None}
+    _queue_cache = result
+    _queue_cache_ts = now
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Runtime registry (schedules) — small YAML, parse fully
+# ---------------------------------------------------------------------------
+_reg_cache: dict[str, Any] = {}
+_reg_cache_ts: float = 0.0
+_REG_CACHE_SEC = 60
+
+def load_runtime_registry(os_root: Path) -> dict[str, Any]:
+    global _reg_cache, _reg_cache_ts
+    now = time.time()
+    if now - _reg_cache_ts < _REG_CACHE_SEC and _reg_cache:
+        return _reg_cache
+    path = os_root / "harness" / "shared_factory" / "00-control-plane" / "runtime-registry.yml"
+    try:
+        import yaml
+        with path.open() as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        data = {}
+    _reg_cache = data
+    _reg_cache_ts = now
+    return data
+
+
+def get_schedule_summary(os_root: Path) -> dict[str, Any]:
+    data = load_runtime_registry(os_root)
+    schedules = data.get("schedules", [])
+    enabled = [s for s in schedules if s.get("enabled", False)]
+    disabled = [s for s in schedules if not s.get("enabled", True)]
+    # next 3 due (among enabled, sorted by next_due_at)
+    upcoming = sorted(
+        [s for s in enabled if s.get("next_due_at")],
+        key=lambda s: s["next_due_at"]
+    )[:3]
+    return {
+        "total": len(schedules),
+        "enabled": len(enabled),
+        "disabled": len(disabled),
+        "upcoming": upcoming,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Host vitals
+# ---------------------------------------------------------------------------
+_vitals_cache: dict[str, Any] = {}
+_vitals_cache_ts: float = 0.0
+
+def _local_vitals() -> dict[str, Any]:
+    """CPU load, memory %, disk % on localhost (macOS)."""
+    vitals: dict[str, Any] = {}
+    try:
+        load_raw = subprocess.check_output(
+            ["sysctl", "-n", "vm.loadavg"], stderr=subprocess.DEVNULL, timeout=3
+        ).decode().strip()
+        # Format: { 0.10 0.20 0.30 }
+        parts = load_raw.strip("{}").split()
+        vitals["load1"] = float(parts[0]) if parts else 0.0
+    except Exception:
+        vitals["load1"] = None
+    try:
+        vm_raw = subprocess.check_output(
+            ["vm_stat"], stderr=subprocess.DEVNULL, timeout=3
+        ).decode()
+        pages: dict[str, int] = {}
+        for line in vm_raw.splitlines():
+            m = re.match(r"Pages\s+([\w ]+):\s+(\d+)", line)
+            if m:
+                pages[m.group(1).strip()] = int(m.group(2))
+        page_size = 4096
+        total_pages = sum(pages.values()) or 1
+        free_pages = pages.get("free", 0) + pages.get("speculative", 0)
+        used_pct = round((1 - free_pages / total_pages) * 100, 1)
+        vitals["mem_pct"] = used_pct
+        total_gb = round(total_pages * page_size / (1024**3), 1)
+        vitals["mem_total_gb"] = total_gb
+    except Exception:
+        vitals["mem_pct"] = None
+        vitals["mem_total_gb"] = None
+    try:
+        df_raw = subprocess.check_output(
+            ["df", "-H", "/"], stderr=subprocess.DEVNULL, timeout=3
+        ).decode().splitlines()
+        if len(df_raw) > 1:
+            parts = df_raw[1].split()
+            vitals["disk_total"] = parts[1] if len(parts) > 1 else "?"
+            vitals["disk_used"] = parts[2] if len(parts) > 2 else "?"
+            vitals["disk_avail"] = parts[3] if len(parts) > 3 else "?"
+            pct_str = parts[4] if len(parts) > 4 else "0%"
+            vitals["disk_pct"] = int(pct_str.rstrip("%"))
+    except Exception:
+        vitals["disk_pct"] = None
+    return vitals
+
+
+def _remote_vitals(host: str, ssh_opts: list[str]) -> dict[str, Any]:
+    cmd = (
+        "loadavg=$(cat /proc/loadavg 2>/dev/null | cut -d' ' -f1); "
+        "mem_total=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}'); "
+        "mem_avail=$(grep MemAvailable /proc/meminfo 2>/dev/null | awk '{print $2}'); "
+        "disk=$(df -BM / 2>/dev/null | tail -1); "
+        "echo \"load:$loadavg mem_total:$mem_total mem_avail:$mem_avail disk:$disk\""
+    )
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"] + ssh_opts + [host, cmd],
+            capture_output=True, text=True, timeout=7
+        )
+        if result.returncode != 0:
+            return {"error": "unreachable"}
+        output = result.stdout.strip()
+        v: dict[str, Any] = {}
+        # parse load
+        m = re.search(r"load:([\d.]+)", output)
+        v["load1"] = float(m.group(1)) if m else None
+        # parse mem
+        mt = re.search(r"mem_total:(\d+)", output)
+        ma = re.search(r"mem_avail:(\d+)", output)
+        if mt and ma:
+            total_kb = int(mt.group(1))
+            avail_kb = int(ma.group(1))
+            v["mem_pct"] = round((1 - avail_kb / max(total_kb, 1)) * 100, 1) if total_kb else None
+            v["mem_total_gb"] = round(total_kb / (1024 * 1024), 1)
+        else:
+            v["mem_pct"] = None
+        m_disk = re.search(r"disk:\S+\s+(\d+)M\s+(\d+)M\s+(\d+)M\s+(\d+)%", output)
+        if m_disk:
+            v["disk_pct"] = int(m_disk.group(4))
+            v["disk_total"] = f"{m_disk.group(1)}M"
+        else:
+            v["disk_pct"] = None
+        return v
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def get_vitals(os_root: Path) -> dict[str, dict[str, Any]]:
+    global _vitals_cache, _vitals_cache_ts
+    now = time.time()
+    if now - _vitals_cache_ts < VITALS_CACHE_SEC and _vitals_cache:
+        return _vitals_cache
+
+    hosts_cfg = load_hosts_routing(os_root)
+    result: dict[str, dict[str, Any]] = {}
+    result["bigmac"] = _local_vitals()
+
+    for alias, hcfg in hosts_cfg.items():
+        if alias == "bigmac":
+            continue
+        ssh_opts = hcfg.get("ssh_options", [])
+        result[alias] = _remote_vitals(alias, ssh_opts)
+
+    _vitals_cache = result
+    _vitals_cache_ts = now
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Hosts routing registry
+# ---------------------------------------------------------------------------
+_hosts_cache: dict[str, Any] = {}
+
+def load_hosts_routing(os_root: Path) -> dict[str, Any]:
+    global _hosts_cache
+    if _hosts_cache:
+        return _hosts_cache
+    path = os_root / "harness" / "registries" / "hosts-routing.yml"
+    try:
+        import yaml
+        with path.open() as f:
+            data = yaml.safe_load(f) or {}
+        _hosts_cache = data.get("hosts", {})
+    except Exception:
+        _hosts_cache = {"bigmac": {"role": "primary", "max_concurrent": 5}}
+    return _hosts_cache
+
+
+# ---------------------------------------------------------------------------
+# Agent detection
+# ---------------------------------------------------------------------------
+def _local_agents() -> list[dict[str, str]]:
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid,etime,command"],
+            capture_output=True, text=True, timeout=5
+        )
+        agents = []
+        for line in result.stdout.splitlines()[1:]:
+            parts = line.split(None, 2)
+            if len(parts) < 3:
+                continue
+            pid, etime, cmd = parts
+            if DAEMON_RE.search(cmd):
+                continue
+            if AGENT_RE.search(cmd):
+                project = _guess_project_from_cmd(cmd)
+                agents.append({"pid": pid, "etime": etime, "cmd": cmd[:60], "project": project, "harness": _guess_harness(cmd)})
+        return agents
+    except Exception:
+        return []
+
+
+def _remote_agents(host: str, ssh_opts: list[str]) -> list[dict[str, str]] | str:
+    cmd = "ps -axo pid,etime,command 2>/dev/null || ps aux"
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"] + ssh_opts + [host, cmd],
+            capture_output=True, text=True, timeout=8
+        )
+        if result.returncode != 0:
+            return "unreachable"
+        agents = []
+        for line in result.stdout.splitlines()[1:]:
+            parts = line.split(None, 2)
+            if len(parts) < 3:
+                continue
+            pid, etime, full_cmd = parts
+            if DAEMON_RE.search(full_cmd):
+                continue
+            if AGENT_RE.search(full_cmd):
+                project = _guess_project_from_cmd(full_cmd)
+                agents.append({"pid": pid, "etime": etime, "cmd": full_cmd[:60], "project": project, "harness": _guess_harness(full_cmd)})
+        return agents
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    except Exception as exc:
+        return f"error:{exc}"
+
+
+def _guess_harness(cmd: str) -> str:
+    if "codex" in cmd.lower():
+        return "gpt"
+    if "claude" in cmd.lower():
+        return "claude"
+    return "?"
+
+
+def _guess_project_from_cmd(cmd: str) -> str:
+    """Extract a short project name from command string."""
+    # Look for known project directory fragments
+    for fragment, name in [
+        ("genomes_agentic_os", "agentic_os"),
+        ("agentic_os", "agentic_os"),
+        ("ledgerline", "ledgerline"),
+        ("losmon", "losmon"),
+        ("los-app", "los-django"),
+        ("kanga", "kanga"),
+    ]:
+        if fragment in cmd:
+            return name
+    # Try to find a -p <path> or similar
+    m = re.search(r'-p\s+(\S+)', cmd)
+    if m:
+        parts = m.group(1).rstrip('/').split('/')
+        return parts[-1][:20] if parts else "?"
+    return "?"
+
+
+def get_agents_per_host(os_root: Path) -> dict[str, Any]:
+    hosts_cfg = load_hosts_routing(os_root)
+    result: dict[str, Any] = {}
+    result["bigmac"] = {"agents": _local_agents(), "status": "ok"}
+    for alias, hcfg in hosts_cfg.items():
+        if alias == "bigmac":
+            continue
+        ssh_opts = hcfg.get("ssh_options", [])
+        agents = _remote_agents(alias, ssh_opts)
+        if isinstance(agents, str):
+            result[alias] = {"agents": [], "status": agents}
+        else:
+            result[alias] = {"agents": agents, "status": "ok"}
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Recent runs
+# ---------------------------------------------------------------------------
+def get_recent_runs(os_root: Path, n: int = 5) -> list[dict[str, Any]]:
+    path = os_root / "harness" / "shared_factory" / "06-runs-and-logs" / "harness-runs" / "runs.jsonl"
+    try:
+        with path.open() as f:
+            lines = [l for l in f if l.strip()]
+        recent = lines[-n:]
+        return [json.loads(l) for l in reversed(recent)]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Token aggregation (best-effort)
+# ---------------------------------------------------------------------------
+_TOKEN_PATTERN = re.compile(r'tokens?\s+used\s*\n?\s*([\d,]+)', re.IGNORECASE)
+
+def _extract_tokens_from_file(path: str) -> int | None:
+    try:
+        with open(path, 'r', errors='replace') as f:
+            content = f.read(8192)
+        m = _TOKEN_PATTERN.search(content)
+        if m:
+            return int(m.group(1).replace(',', ''))
+    except Exception:
+        pass
+    return None
+
+
+def get_token_stats(os_root: Path) -> dict[str, Any]:
+    """Aggregate token usage from runs.jsonl receipts. Best-effort."""
+    runs = get_recent_runs(os_root, n=500)  # read more for aggregation
+    # also read full file for aggregation
+    path = os_root / "harness" / "shared_factory" / "06-runs-and-logs" / "harness-runs" / "runs.jsonl"
+    all_runs: list[dict[str, Any]] = []
+    try:
+        with path.open() as f:
+            all_runs = [json.loads(l) for l in f if l.strip()]
+    except Exception:
+        all_runs = []
+
+    now = dt.datetime.now(dt.timezone.utc)
+    windows = {
+        "1h":  now - dt.timedelta(hours=1),
+        "24h": now - dt.timedelta(hours=24),
+        "7d":  now - dt.timedelta(days=7),
+        "30d": now - dt.timedelta(days=30),
+    }
+    totals: dict[str, int] = {k: 0 for k in windows}
+    found = 0
+    checked = 0
+
+    for r in all_runs:
+        ts_str = r.get("ts", "")
+        op = r.get("output_file", "")
+        if not ts_str or not op:
+            continue
+        try:
+            ts = dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        tokens = _extract_tokens_from_file(op)
+        checked += 1
+        if tokens is not None:
+            found += 1
+            for window_key, cutoff in windows.items():
+                if ts >= cutoff:
+                    totals[window_key] += tokens
+
+    coverage_pct = round(found / checked * 100) if checked else 0
+    return {
+        "totals": totals,
+        "coverage_pct": coverage_pct,
+        "receipts_checked": checked,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Active work
+# ---------------------------------------------------------------------------
+def get_active_work(os_root: Path) -> dict[str, Any]:
+    active_dir = os_root / "00-control-plane" / "active"
+    if not active_dir.exists():
+        return {"count": 0, "items": [], "error": "no active dir"}
+    try:
+        items = sorted(active_dir.iterdir(), key=lambda p: p.name)
+        names = [p.name for p in items]
+        return {"count": len(names), "items": names[:5], "error": None}
+    except Exception as exc:
+        return {"count": 0, "items": [], "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Alerts feed
+# ---------------------------------------------------------------------------
+def get_alerts(os_root: Path, n: int = 5) -> list[dict[str, Any]]:
+    path = os_root / "harness" / "shared_factory" / "06-runs-and-logs" / "alerts" / "alerts.jsonl"
+    try:
+        with path.open() as f:
+            lines = [l for l in f if l.strip()]
+        return [json.loads(l) for l in reversed(lines[-n:])]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Health check + notify (debounced)
+# ---------------------------------------------------------------------------
+def _state_path(os_root: Path) -> Path:
+    return os_root / "harness" / "shared_factory" / "06-runs-and-logs" / "health-monitor-state.json"
+
+
+def _load_state(os_root: Path) -> dict[str, Any]:
+    p = _state_path(os_root)
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def _save_state(os_root: Path, state: dict[str, Any]) -> None:
+    p = _state_path(os_root)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
+
+
+def _fire_notify(os_root: Path, metric: str, level: str, title: str, message: str) -> None:
+    notify = os_root / "harness" / "bin" / "agentic-os-notify"
+    if not notify.exists():
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(notify),
+             "--source", "os.health_monitor",
+             "--level", level,
+             "--title", title,
+             "--message", message],
+            capture_output=True, timeout=10
+        )
+    except Exception:
+        pass
+
+
+def run_health_checks(
+    os_root: Path,
+    thresholds: dict[str, Any],
+    queue: dict[str, Any],
+    agents_data: dict[str, Any],
+    vitals: dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Return list of active alerts; fire notify for state changes (debounced)."""
+    now = time.time()
+    state = _load_state(os_root)
+    alerts: list[dict[str, str]] = []
+
+    def check(metric: str, value: Any, limit: Any, level: str, title: str, msg: str) -> None:
+        fired = str(value) != str(state.get(f"{metric}_last_value", ""))
+        last_notify = state.get(f"{metric}_last_notify_ts", 0)
+        debounce_ok = (now - last_notify) >= ALERT_DEBOUNCE_SEC
+        alerts.append({"metric": metric, "level": level, "title": title, "msg": msg})
+        if fired or debounce_ok:
+            _fire_notify(os_root, metric, level, title, msg)
+            state[f"{metric}_last_notify_ts"] = now
+            state[f"{metric}_last_value"] = str(value)
+
+    # Queue: failed
+    failed = queue.get("counts", {}).get("failed", 0)
+    thr = thresholds.get("queue_failed_max", DEFAULT_THRESHOLDS["queue_failed_max"])
+    limit = thr["value"] if isinstance(thr, dict) else thr
+    level = thr["level"] if isinstance(thr, dict) else "warn"
+    if failed > limit:
+        check("queue_failed", failed, limit, level,
+              f"Queue: {failed} failed items",
+              f"{failed} failed (threshold {limit})")
+
+    # Queue: queued
+    queued = queue.get("counts", {}).get("queued", 0)
+    thr = thresholds.get("queue_queued_max", DEFAULT_THRESHOLDS["queue_queued_max"])
+    limit = thr["value"] if isinstance(thr, dict) else thr
+    level = thr["level"] if isinstance(thr, dict) else "warn"
+    if queued > limit:
+        check("queue_queued", queued, limit, level,
+              f"Queue: {queued} queued items",
+              f"{queued} queued (threshold {limit})")
+
+    # Per-host vitals
+    for host, v in vitals.items():
+        if v.get("error") == "unreachable":
+            thr = thresholds.get("host_unreachable", DEFAULT_THRESHOLDS["host_unreachable"])
+            level = thr["level"] if isinstance(thr, dict) else "warn"
+            check(f"host_unreachable_{host}", True, True, level,
+                  f"Host unreachable: {host}", f"{host} did not respond to vitals probe")
+        cpu = v.get("load1")
+        if cpu is not None:
+            thr = thresholds.get("cpu_pct_max", DEFAULT_THRESHOLDS["cpu_pct_max"])
+            limit = thr["value"] if isinstance(thr, dict) else thr
+            level = thr["level"] if isinstance(thr, dict) else "warn"
+            if cpu > limit:
+                check(f"cpu_{host}", cpu, limit, level,
+                      f"{host} CPU high: {cpu}", f"load avg {cpu} > {limit}")
+        disk = v.get("disk_pct")
+        if disk is not None:
+            thr = thresholds.get("disk_pct_max", DEFAULT_THRESHOLDS["disk_pct_max"])
+            limit = thr["value"] if isinstance(thr, dict) else thr
+            level = thr["level"] if isinstance(thr, dict) else "warn"
+            if disk > limit:
+                check(f"disk_{host}", disk, limit, level,
+                      f"{host} disk: {disk}%", f"disk usage {disk}% > {limit}%")
+
+    # Agents per host
+    for host, hdata in agents_data.items():
+        n_agents = len(hdata.get("agents", []))
+        thr = thresholds.get("agents_max_per_host", DEFAULT_THRESHOLDS["agents_max_per_host"])
+        limit = thr["value"] if isinstance(thr, dict) else thr
+        level = thr["level"] if isinstance(thr, dict) else "warn"
+        if n_agents > limit:
+            check(f"agents_{host}", n_agents, limit, level,
+                  f"{host}: {n_agents} agents running",
+                  f"{n_agents} agents > {limit} threshold")
+
+    _save_state(os_root, state)
+    return alerts
+
+
+# ---------------------------------------------------------------------------
+# Overall health badge
+# ---------------------------------------------------------------------------
+def overall_badge(alerts: list[dict[str, str]]) -> str:
+    if not alerts:
+        return "HEALTHY"
+    levels = [a["level"] for a in alerts]
+    if "critical" in levels:
+        return "CRITICAL"
+    return "WARN"
+
+
+# ---------------------------------------------------------------------------
+# Data snapshot
+# ---------------------------------------------------------------------------
+def collect_snapshot(os_root: Path, thresholds: dict[str, Any]) -> dict[str, Any]:
+    queue = scan_queue(os_root)
+    schedules = get_schedule_summary(os_root)
+    agents_data = get_agents_per_host(os_root)
+    vitals = get_vitals(os_root)
+    runs = get_recent_runs(os_root, n=5)
+    tokens = get_token_stats(os_root)
+    active = get_active_work(os_root)
+    alerts_feed = get_alerts(os_root, n=5)
+    health_alerts = run_health_checks(os_root, thresholds, queue, agents_data, vitals)
+    badge = overall_badge(health_alerts)
+    return {
+        "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "badge": badge,
+        "queue": queue,
+        "schedules": schedules,
+        "agents": agents_data,
+        "vitals": vitals,
+        "runs": runs,
+        "tokens": tokens,
+        "active": active,
+        "alerts_feed": alerts_feed,
+        "health_alerts": health_alerts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plain-text renderer (--once --plain or cron)
+# ---------------------------------------------------------------------------
+def _bar(pct: float | None, width: int = 10) -> str:
+    if pct is None:
+        return "?" * width
+    filled = round(pct / 100 * width)
+    return "#" * filled + "-" * (width - filled)
+
+
+def render_plain(snap: dict[str, Any]) -> str:
+    lines: list[str] = []
+    badge = snap["badge"]
+    badge_sym = {"HEALTHY": "[OK]", "WARN": "[!!]", "CRITICAL": "[XX]"}.get(badge, badge)
+    lines.append(f"=== Agentic OS Health Monitor  {snap['ts']}  {badge_sym} {badge} ===")
+    lines.append("")
+
+    # HOSTS
+    lines.append("--- HOSTS ---")
+    for host, hdata in snap["agents"].items():
+        v = snap["vitals"].get(host, {})
+        status = hdata.get("status", "?")
+        if status != "ok":
+            lines.append(f"  {host:<14} UNREACHABLE ({status})")
+            continue
+        agents = hdata.get("agents", [])
+        n = len(agents)
+        load = v.get("load1")
+        mem = v.get("mem_pct")
+        disk = v.get("disk_pct")
+        load_str = f"{load:.2f}" if load is not None else "n/a"
+        mem_str = f"{mem:.0f}%" if mem is not None else "n/a"
+        disk_str = f"{disk}%" if disk is not None else "n/a"
+        lines.append(f"  {host:<14} load:{load_str:<6} mem:{mem_str:<6} disk:{disk_str:<6} agents:{n}")
+        for a in agents[:3]:
+            lines.append(f"    [{a['harness']}] {a['project']:<16} {a['etime']} pid:{a['pid']}")
+    lines.append("")
+
+    # QUEUE
+    lines.append("--- QUEUE ---")
+    q = snap["queue"]
+    if q.get("error"):
+        lines.append(f"  ERROR: {q['error']}")
+    else:
+        c = q.get("counts", {})
+        lines.append(
+            f"  queued:{c.get('queued',0)}  failed:{c.get('failed',0)}  "
+            f"done:{c.get('done',0)}  skipped:{c.get('skipped',0)}  "
+            f"total:{q.get('total',0)}"
+        )
+    s = snap["schedules"]
+    lines.append(f"  schedules: {s['enabled']} enabled / {s['disabled']} disabled")
+    for sched in s.get("upcoming", []):
+        due = sched.get("next_due_at", "?")[:16]
+        lines.append(f"    next: {sched['id']}  due {due}")
+    lines.append("")
+
+    # RECENT RUNS
+    lines.append("--- RECENT RUNS ---")
+    for r in snap["runs"]:
+        host = r.get("host", "local")
+        harness = r.get("harness", "?")
+        task = r.get("task_type", "?")
+        dur = r.get("duration_sec", 0)
+        rc = r.get("exit_code", "?")
+        ts = r.get("ts", "")[:16]
+        lines.append(f"  {ts}  {host:<12} {harness:<7} {task:<12} {dur:.0f}s  exit:{rc}")
+    lines.append("")
+
+    # TOKENS (best-effort)
+    lines.append("--- TOKENS [best effort] ---")
+    t = snap["tokens"]
+    totals = t.get("totals", {})
+    cov = t.get("coverage_pct", 0)
+    lines.append(
+        f"  1h:{totals.get('1h',0):>8,}  24h:{totals.get('24h',0):>8,}  "
+        f"7d:{totals.get('7d',0):>8,}  30d:{totals.get('30d',0):>8,}"
+    )
+    lines.append(f"  coverage: {cov}% of receipts had token data")
+    lines.append("")
+
+    # ACTIVE WORK
+    lines.append("--- ACTIVE WORK ---")
+    a = snap["active"]
+    lines.append(f"  items: {a['count']}")
+    for name in a.get("items", []):
+        lines.append(f"    - {name}")
+    lines.append("")
+
+    # ALERTS FEED
+    lines.append("--- RECENT ALERTS ---")
+    for alert in snap["alerts_feed"]:
+        ts = alert.get("ts", "")[:16]
+        level = alert.get("level", "?")
+        title = alert.get("title", "")
+        outcome = alert.get("outcome", "")
+        lines.append(f"  {ts}  [{level:<8}]  {title}  ({outcome})")
+    if not snap["alerts_feed"]:
+        lines.append("  (none)")
+    lines.append("")
+
+    # HEALTH ALERTS
+    if snap["health_alerts"]:
+        lines.append("--- HEALTH THRESHOLDS TRIPPED ---")
+        for ha in snap["health_alerts"]:
+            lines.append(f"  [{ha['level'].upper()}] {ha['title']}: {ha['msg']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Curses renderer
+# ---------------------------------------------------------------------------
+def _level_color(level: str, curses_mod: Any) -> int:
+    mapping = {
+        "critical": 1,  # red
+        "warn": 2,       # yellow
+        "warning": 2,
+        "info": 3,       # cyan
+    }
+    pair = mapping.get(level.lower(), 0)
+    if pair:
+        return curses_mod.color_pair(pair)
+    return 0
+
+
+def _badge_color(badge: str, curses_mod: Any) -> int:
+    if badge == "HEALTHY":
+        return curses_mod.color_pair(4)  # green
+    if badge == "CRITICAL":
+        return curses_mod.color_pair(1)
+    return curses_mod.color_pair(2)
+
+
+def _safe_addstr(win: Any, y: int, x: int, s: str, attr: int = 0) -> None:
+    max_y, max_x = win.getmaxyx()
+    if y < 0 or y >= max_y or x < 0 or x >= max_x:
+        return
+    avail = max_x - x - 1
+    if avail <= 0:
+        return
+    try:
+        win.addstr(y, x, s[:avail], attr)
+    except Exception:
+        pass
+
+
+def run_curses(os_root: Path, thresholds: dict[str, Any]) -> None:
+    import curses
+
+    def draw(stdscr: Any) -> None:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_RED,     -1)  # critical
+        curses.init_pair(2, curses.COLOR_YELLOW,  -1)  # warn
+        curses.init_pair(3, curses.COLOR_CYAN,    -1)  # info
+        curses.init_pair(4, curses.COLOR_GREEN,   -1)  # healthy
+        curses.init_pair(5, curses.COLOR_WHITE,   -1)  # header
+        curses.init_pair(6, curses.COLOR_MAGENTA, -1)  # accent
+        curses.curs_set(0)
+        stdscr.nodelay(True)
+        stdscr.timeout(1000)
+
+        show_help = False
+        snap: dict[str, Any] = {}
+        last_full_refresh = 0.0
+
+        while True:
+            now = time.time()
+            if now - last_full_refresh >= REFRESH_SEC:
+                snap = collect_snapshot(os_root, thresholds)
+                last_full_refresh = now
+
+            key = stdscr.getch()
+            if key == ord('q'):
+                break
+            if key == ord('r'):
+                snap = collect_snapshot(os_root, thresholds)
+                last_full_refresh = now
+            if key == ord('h'):
+                show_help = not show_help
+
+            if not snap:
+                stdscr.clear()
+                stdscr.addstr(0, 0, "Loading...")
+                stdscr.refresh()
+                time.sleep(0.5)
+                continue
+
+            max_y, max_x = stdscr.getmaxyx()
+            stdscr.erase()
+
+            row = 0
+
+            # ---- Header bar ----
+            badge = snap["badge"]
+            badge_sym = {"HEALTHY": "●", "WARN": "▲", "CRITICAL": "✖"}.get(badge, badge)
+            title = f" Agentic OS Monitor   {snap['ts']}  {badge_sym} {badge} "
+            header_attr = curses.A_BOLD | _badge_color(badge, curses)
+            _safe_addstr(stdscr, row, 0, title.ljust(max_x - 1), header_attr)
+            row += 1
+
+            if show_help:
+                row += 1
+                _safe_addstr(stdscr, row, 2, "Keys: q=quit  r=force refresh  h=toggle help", curses.color_pair(3))
+                row += 1
+                _safe_addstr(stdscr, row, 2, "Refresh: 5s | Vitals cache: 10s | Queue cache: 30s", curses.color_pair(3))
+                row += 2
+            else:
+                row += 1
+
+            col_width = max(max_x // 2 - 2, 40)
+
+            # ---- HOSTS (left column) ----
+            host_start_row = row
+            _safe_addstr(stdscr, row, 0, "┌─ HOSTS ─────────────────────────────────────────", curses.A_BOLD | curses.color_pair(5))
+            row += 1
+
+            for host, hdata in snap["agents"].items():
+                v = snap["vitals"].get(host, {})
+                status = hdata.get("status", "?")
+                agents_list = hdata.get("agents", [])
+                n = len(agents_list)
+
+                if status != "ok":
+                    _safe_addstr(stdscr, row, 2, f"● {host:<12} UNREACHABLE ({status})", curses.color_pair(2))
+                    row += 1
+                    continue
+
+                load = v.get("load1")
+                mem = v.get("mem_pct")
+                disk = v.get("disk_pct")
+                load_str = f"{load:.2f}" if load is not None else "n/a"
+                mem_str = f"{mem:.0f}%" if mem is not None else "n/a"
+                disk_str = f"{disk}%" if disk is not None else "n/a"
+
+                host_line = f"  {host:<12} load:{load_str:<6} mem:{mem_str:<5} disk:{disk_str:<5} [{n} agents]"
+                _safe_addstr(stdscr, row, 0, host_line, curses.A_BOLD)
+                row += 1
+
+                # CPU/mem/disk bars
+                if load is not None:
+                    cpu_bar = _bar(min(load * 10, 100), 8)
+                    _safe_addstr(stdscr, row, 4, f"cpu [{cpu_bar}] {load:.2f}", curses.color_pair(3))
+                    row += 1
+                if mem is not None:
+                    mem_color = curses.color_pair(2 if mem > 80 else 3)
+                    mem_bar = _bar(mem, 8)
+                    _safe_addstr(stdscr, row, 4, f"mem [{mem_bar}] {mem:.0f}%", mem_color)
+                    row += 1
+                if disk is not None:
+                    disk_color = curses.color_pair(2 if disk > 80 else 3)
+                    disk_bar = _bar(float(disk), 8)
+                    _safe_addstr(stdscr, row, 4, f"dsk [{disk_bar}] {disk}%", disk_color)
+                    row += 1
+
+                for a in agents_list[:3]:
+                    harness_str = f"[{a['harness']}]"
+                    proj = a["project"][:14]
+                    elapsed = a["etime"]
+                    agent_line = f"    {harness_str:<7} {proj:<14} {elapsed}"
+                    _safe_addstr(stdscr, row, 0, agent_line, curses.color_pair(6))
+                    row += 1
+
+                if row >= max_y - 4:
+                    break
+
+            # ---- QUEUE (right side, row 2) ----
+            q_row = host_start_row
+            q_col = max_x // 2
+
+            _safe_addstr(stdscr, q_row, q_col, "┌─ QUEUE ──────────────────────────────────────", curses.A_BOLD | curses.color_pair(5))
+            q_row += 1
+
+            q = snap["queue"]
+            if q.get("error"):
+                _safe_addstr(stdscr, q_row, q_col + 2, f"ERROR: {q['error']}", curses.color_pair(1))
+                q_row += 1
+            else:
+                c = q.get("counts", {})
+                qd = c.get("queued", 0)
+                fail = c.get("failed", 0)
+                done = c.get("done", 0)
+                skip = c.get("skipped", 0)
+                total = q.get("total", 0)
+
+                fail_attr = curses.color_pair(1) if fail > 1000 else (curses.color_pair(2) if fail > 500 else 0)
+                _safe_addstr(stdscr, q_row, q_col + 2, f"queued: {qd:>5}   failed: ", 0)
+                _safe_addstr(stdscr, q_row, q_col + 25, f"{fail:<5}", fail_attr | curses.A_BOLD)
+                q_row += 1
+                _safe_addstr(stdscr, q_row, q_col + 2, f"done:   {done:>5}   skipped:{skip:>5}   total:{total}", 0)
+                q_row += 1
+
+            s = snap["schedules"]
+            _safe_addstr(stdscr, q_row, q_col + 2, f"schedules: {s['enabled']} enabled / {s['disabled']} disabled", curses.color_pair(3))
+            q_row += 1
+            for sched in s.get("upcoming", []):
+                due = sched.get("next_due_at", "?")[:16]
+                sid = sched["id"][:24]
+                _safe_addstr(stdscr, q_row, q_col + 4, f"→ {sid:<25} due {due}", 0)
+                q_row += 1
+
+            # ---- RECENT RUNS ----
+            q_row += 1
+            _safe_addstr(stdscr, q_row, q_col, "┌─ RECENT RUNS ────────────────────────────────", curses.A_BOLD | curses.color_pair(5))
+            q_row += 1
+            for r in snap["runs"]:
+                host = r.get("host", "local")[:8]
+                harness = r.get("harness", "?")[:6]
+                task = r.get("task_type", "?")[:10]
+                dur = r.get("duration_sec", 0)
+                rc = r.get("exit_code", "?")
+                ts = r.get("ts", "")[:16]
+                rc_attr = curses.color_pair(1) if rc != 0 else 0
+                line = f"  {ts}  {host:<9}{harness:<7}{task:<11}{dur:.0f}s"
+                _safe_addstr(stdscr, q_row, q_col, line, 0)
+                _safe_addstr(stdscr, q_row, q_col + len(line), f" ✓" if rc == 0 else f" {rc}", rc_attr)
+                q_row += 1
+                if q_row >= max_y - 4:
+                    break
+
+            # ---- TOKENS + ACTIVE + ALERTS (bottom strip) ----
+            bottom = max_y - 8
+            if bottom > row and bottom > q_row:
+                b = bottom
+                _safe_addstr(stdscr, b, 0, "┌─ TOKENS [best effort] ─────────────────────────────────────────────────────────────────────────────", curses.A_BOLD | curses.color_pair(5))
+                b += 1
+                t = snap["tokens"]
+                totals = t.get("totals", {})
+                cov = t.get("coverage_pct", 0)
+                tok_line = (
+                    f"  1h:{totals.get('1h',0):>7,}  "
+                    f"24h:{totals.get('24h',0):>7,}  "
+                    f"7d:{totals.get('7d',0):>7,}  "
+                    f"30d:{totals.get('30d',0):>7,}  "
+                    f"[coverage:{cov}%]"
+                )
+                _safe_addstr(stdscr, b, 0, tok_line, curses.color_pair(3))
+                b += 1
+
+                # Active work
+                a = snap["active"]
+                act_str = f"  active-work: {a['count']}  "
+                for name in a.get("items", [])[:3]:
+                    act_str += f"{name[:20]}  "
+                _safe_addstr(stdscr, b, 0, act_str[:max_x - 1], 0)
+                b += 1
+
+                # Alerts feed
+                _safe_addstr(stdscr, b, 0, "┌─ ALERTS ───────────────────────────────────────────────────────────────────────────────────────────", curses.A_BOLD | curses.color_pair(5))
+                b += 1
+                if snap["alerts_feed"]:
+                    for alert in snap["alerts_feed"][:2]:
+                        ts = alert.get("ts", "")[:16]
+                        level = alert.get("level", "?")
+                        title = alert.get("title", "")[:40]
+                        outcome = alert.get("outcome", "")
+                        alert_attr = _level_color(level, curses)
+                        _safe_addstr(stdscr, b, 2, f"{ts}  [{level:<8}]  {title}  ({outcome})", alert_attr)
+                        b += 1
+                        if b >= max_y - 1:
+                            break
+                else:
+                    _safe_addstr(stdscr, b, 2, "(no recent alerts)", curses.color_pair(3))
+                    b += 1
+
+            # Status bar
+            _safe_addstr(stdscr, max_y - 1, 0,
+                " q:quit  r:refresh  h:help  │ cache: vitals=10s queue=30s  │ 5s auto-refresh ".ljust(max_x - 1),
+                curses.A_REVERSE)
+
+            stdscr.refresh()
+            time.sleep(0.1)
+
+    import curses as _curses
+    _curses.wrapper(draw)
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=SCRIPT_NAME,
+        description="Real-time in-shell health monitor for the Agentic OS.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+PANELS
+  HOSTS        Per-host CPU/mem/disk bars, agent count, per-agent harness+project+elapsed.
+  QUEUE        Status tallies, schedule counts, next 3 scheduled runs.
+  RECENT RUNS  Last 5 harness receipts: host/harness/task/duration/exit code.
+  TOKENS       Aggregate token usage 1h/24h/7d/30d — best-effort from output files.
+  ALERTS       Last 5 alert log entries + health threshold crossings.
+
+KEYS (curses mode)
+  q   Quit
+  r   Force immediate refresh of all panels
+  h   Toggle help overlay
+
+HEALTH THRESHOLDS
+  Configured in harness/registries/health-monitor.yml.
+  When a threshold trips, fires agentic-os-notify (debounced 30 min/metric).
+
+EXAMPLES
+  agentic-os-monitor                              # live curses UI
+  agentic-os-monitor --once --plain               # snapshot (cron/pipe safe)
+  agentic-os-monitor --once --plain --json        # JSON output
+  AGENTIC_OS_ROOT=~/agentic_os agentic-os-monitor # explicit root
+
+ENVIRONMENT
+  AGENTIC_OS_ROOT   Override root (default: ~/agentic_os).
+
+FILES (read-only)
+  harness/registries/hosts-routing.yml
+  harness/registries/health-monitor.yml
+  harness/shared_factory/00-control-plane/run-queue.yml
+  harness/shared_factory/00-control-plane/runtime-registry.yml
+  harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
+  harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl
+
+  State file (written by monitor for notify debounce):
+  harness/shared_factory/06-runs-and-logs/health-monitor-state.json
+""",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Capture a single snapshot and exit (no live UI).",
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Plain-text output (implies --once). Safe for pipes and cron.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="JSON output for the snapshot (use with --once).",
+    )
+    parser.add_argument(
+        "--root",
+        default=None,
+        help="Override AGENTIC_OS_ROOT path.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{SCRIPT_NAME} {VERSION}",
+    )
+    return parser
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.root:
+        os_root = Path(args.root).expanduser()
+    else:
+        os_root = get_os_root()
+
+    thresholds = load_thresholds(os_root)
+
+    if args.plain or args.once or args.json:
+        snap = collect_snapshot(os_root, thresholds)
+        if args.json:
+            print(json.dumps(snap, indent=2, default=str))
+        else:
+            print(render_plain(snap))
+        return 0
+
+    # Curses live mode
+    try:
+        run_curses(os_root, thresholds)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

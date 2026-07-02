@@ -1487,8 +1487,18 @@ def _rt(value: str) -> list[dict[str, Any]]:
     return [{"type": "text", "text": {"content": value[:2000]}}] if value else []
 
 
+def _rt_bold(value: str) -> list[dict[str, Any]]:
+    """Rich text with bold annotation — used for 'What to do:' opener."""
+    return [{"type": "text", "text": {"content": value[:2000]}, "annotations": {"bold": True}}] if value else []
+
+
 def _paragraph(text: str) -> dict[str, Any]:
     return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rt(text)}}
+
+
+def _bold_paragraph(text: str) -> dict[str, Any]:
+    """Notion paragraph block whose entire text is bold."""
+    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rt_bold(text)}}
 
 
 def _heading(level: int, text: str) -> dict[str, Any]:
@@ -1498,6 +1508,102 @@ def _heading(level: int, text: str) -> dict[str, Any]:
 
 def _bullet(text: str) -> dict[str, Any]:
     return {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rt(text)}}
+
+
+# ---------------------------------------------------------------------------
+# SI sequence counter — monotonic per-root, zero-padded 3-digit row number
+# ---------------------------------------------------------------------------
+
+_SI_SEQ_FILENAME = "si-seq.json"
+_SI_SEQ_SEED = 3  # SI-001 and SI-002 pre-assigned to existing rows
+
+
+def _si_seq_path(root: Path) -> Path:
+    """Absolute path to the si-seq counter file inside *root*."""
+    seq_dir = _resolve_root_relative(root, OUTPUT_ROOT)
+    return _safe_child(root, seq_dir, _SI_SEQ_FILENAME)
+
+
+def _next_si_seq(root: Path) -> int:
+    """Read, increment, and atomically persist the SI sequence counter.
+
+    If the counter file is absent it is created seeded at ``_SI_SEQ_SEED`` so
+    SI-001/002/003 (already assigned externally) are never re-issued.
+    Returns the *consumed* sequence number (the one to use for this row).
+    """
+    path = _si_seq_path(root)
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            current = int(raw.get("next_seq") or _SI_SEQ_SEED)
+        except Exception:  # noqa: BLE001
+            current = _SI_SEQ_SEED
+    else:
+        current = _SI_SEQ_SEED
+    next_val = current + 1
+    _atomic_write_text(root, path, json.dumps({"next_seq": next_val}, indent=2) + "\n")
+    return current
+
+
+def _imperative_slug(text: str) -> str:
+    """Convert *text* to an imperative phrase slug suitable for an SI row title.
+
+    - Lowercases, strips punctuation, collapses whitespace
+    - Replaces spaces with hyphens
+    - Truncates to ≤60 characters at a word boundary
+    """
+    import re
+    cleaned = re.sub(r"[^\w\s-]", " ", text.lower())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    slug = cleaned.replace(" ", "-")
+    if len(slug) <= 60:
+        return slug
+    # Truncate to 60 chars at the last hyphen boundary
+    truncated = slug[:60]
+    last_hyphen = truncated.rfind("-")
+    if last_hyphen > 20:
+        truncated = truncated[:last_hyphen]
+    return truncated
+
+
+# ---------------------------------------------------------------------------
+# Notion-side dedup guard
+# ---------------------------------------------------------------------------
+
+def _query_existing_intake_row(
+    proposal_id: str,
+    fetcher: Any,
+    token_env: str = "NOTION_TOKEN",
+) -> str | None:
+    """Search the Work Intake DB for an existing non-dropped row for *proposal_id*.
+
+    Returns the page_id of the first matching non-dropped row, or ``None`` if no
+    such row exists. Uses a title ``contains`` filter via ``notion_api.query_database``.
+    Never raises — caller treats any exception as "no duplicate found" so the run
+    can proceed.
+    """
+    try:
+        filter_body: dict[str, Any] = {
+            "property": "Name",
+            "title": {"contains": proposal_id},
+        }
+        pages = notion_api.query_database(
+            WORK_INTAKE_DB_ID,
+            filter_body,
+            token_env,
+            fetcher=fetcher,
+        )
+        for page in pages:
+            props = page.get("properties") or {}
+            status_prop = props.get("Status") or {}
+            status_val = (
+                (status_prop.get("select") or {}).get("name") or ""
+            ).lower()
+            if status_val != "dropped":
+                return str(page.get("id") or "").replace("-", "")
+    except Exception:  # noqa: BLE001 - guard must never break the run
+        pass
+    return None
 
 
 def _todo(text: str, *, checked: bool = False) -> dict[str, Any]:
@@ -2808,16 +2914,33 @@ def _proposal_age_days(proposal: dict[str, Any], now: datetime) -> float | None:
     return (now - created).total_seconds() / 86400.0
 
 
-def _nightly_intake_properties(available: dict[str, str], proposal: dict[str, Any]) -> dict[str, Any]:
+def _nightly_intake_properties(
+    available: dict[str, str],
+    proposal: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
     """Build 🧭 OS Work Intake row properties, sending only columns that exist.
 
     Auto Mode is intentionally left UNCHECKED: an operator (or the Notion watcher)
     flips it to actually dispatch the queued work.
+
+    Title format: ``SI-NNN — imperative-slug`` where NNN is a monotonic 3-digit
+    counter (from ``root/harness/…/si-seq.json``) and the slug is derived from
+    the proposal summary. When *root* is None the seq defaults to 0 (test/dry-run
+    path that never persists a counter).
     """
     proposal_id = str(proposal.get("proposal_id"))
     summary = str(proposal.get("title") or proposal.get("summary") or proposal_id)
+    if root is not None:
+        seq = _next_si_seq(root)
+        slug = _imperative_slug(summary)
+        title_str = f"SI-{seq:03d} — {slug}"
+    else:
+        slug = _imperative_slug(summary)
+        title_str = f"SI-000 — {slug}"
     desired: dict[str, tuple[str, Any]] = {
-        "Name": ("title", f"SI: {summary} ({proposal_id})"),
+        "Name": ("title", title_str),
         "Type": ("select", "improvement"),
         "Project": ("select", "Agentic OS"),
         "Status": ("select", "queued"),
@@ -2840,10 +2963,24 @@ def _nightly_intake_properties(available: dict[str, str], proposal: dict[str, An
 
 
 def _nightly_intake_body(proposal: dict[str, Any], draft_paths: list[str]) -> list[dict[str, Any]]:
-    """Compose the Notion page body: proposal content + draft path + provenance."""
+    """Compose the Notion page body: 'What to do' opener + provenance + drafts.
+
+    The first block is always a bold "What to do:" paragraph so the row is
+    immediately actionable when opened. The text is derived from the proposal
+    summary/evidence fields; downstream operators should not need to open the
+    draft artifact just to know what action is expected.
+    """
+    summary_text = str(proposal.get("summary") or proposal.get("title") or "")
+    evidence_text = str(proposal.get("evidence") or "")
+    # Build a 1-2 sentence imperative description from the proposal content.
+    what_to_do_parts = [summary_text] if summary_text else []
+    if evidence_text and evidence_text != summary_text:
+        what_to_do_parts.append(evidence_text)
+    what_to_do = " ".join(what_to_do_parts)[:400] or "Review and act on this self-improvement proposal."
     blocks: list[dict[str, Any]] = [
+        _bold_paragraph(f"What to do: {what_to_do}"),
         _heading(2, "Self-improvement proposal"),
-        _paragraph(str(proposal.get("summary") or proposal.get("title") or "")),
+        _paragraph(summary_text),
         _heading(3, "Provenance"),
         _bullet(f"proposal_id: {proposal.get('proposal_id')}"),
         _bullet(f"recommended_artifact: {proposal.get('recommended_artifact')}"),
@@ -2865,6 +3002,7 @@ def _project_nightly_row_to_intake(
     proposal: dict[str, Any],
     draft_paths: list[str],
     *,
+    root: Path | None = None,
     fetcher: Any | None = None,
 ) -> dict[str, Any]:
     """Best-effort projection of one queued item into the OS Work Intake DB.
@@ -2872,13 +3010,30 @@ def _project_nightly_row_to_intake(
     Never raises: Notion failures are returned as a degraded record so the caller
     can log them in the run receipt and continue (projection is best-effort per
     OS rules).
+
+    Defense layers (in order):
+    1. Token check — short-circuit if Notion token is absent.
+    2. Notion-side dedup guard — query the Work Intake DB for an existing
+       non-dropped row whose title contains the proposal_id before creating.
+    3. SI sequence counter — the title uses SI-NNN format via ``_next_si_seq``.
     """
     transport = fetcher or notion_api._default_fetcher
     if not notion_api.resolve_token(NOTION_TOKEN_ENV):
         return {"projected": False, "reason": "notion_token_missing"}
+    # --- Notion-side dedup guard -------------------------------------------
+    proposal_id = str(proposal.get("proposal_id") or "")
+    if proposal_id:
+        existing_id = _query_existing_intake_row(proposal_id, transport, NOTION_TOKEN_ENV)
+        if existing_id:
+            return {
+                "projected": False,
+                "reason": "duplicate_page_exists",
+                "existing_page_id": existing_id,
+            }
+    # -----------------------------------------------------------------------
     try:
         available = notion_api.get_database_property_types(WORK_INTAKE_DB_ID, NOTION_TOKEN_ENV, fetcher=transport)
-        properties = _nightly_intake_properties(available, proposal)
+        properties = _nightly_intake_properties(available, proposal, root=root)
         if "Name" not in properties:
             return {"projected": False, "reason": "intake_missing_name_property"}
         page_id = notion_api.create_database_page(
@@ -3079,7 +3234,7 @@ def nightly_apply_self_improvement(
         result["approved"].append({"proposal_id": proposal_id, "approval_id": approval.get("approval_id")})
         draft_paths = [str(path) for path in promotion.get("draft_paths") or []]
         refreshed = _load_proposal(os_root, config, proposal_id)
-        projection = _project_nightly_row_to_intake(refreshed, draft_paths, fetcher=fetcher)
+        projection = _project_nightly_row_to_intake(refreshed, draft_paths, root=os_root, fetcher=fetcher)
         queued_row = {
             "proposal_id": proposal_id,
             "target": target,
