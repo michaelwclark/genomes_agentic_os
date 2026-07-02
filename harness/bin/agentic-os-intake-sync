@@ -1,0 +1,896 @@
+#!/usr/bin/env python3
+"""agentic-os-intake-sync — Sync OS Work Intake Notion database → Linear (LED team).
+
+Reads the "🧭 OS Work Intake" Notion database and creates/updates Linear issues
+for rows in synced statuses. Also back-syncs Linear completed/canceled state
+to Notion when the Notion row hasn't been updated.
+
+ENVIRONMENT
+  LINEAR_TOKEN       Linear personal API token (no "Bearer " prefix).
+  GENOMES_NOTION_PAT Notion integration token for Genome's Notion.
+
+FILES
+  /Users/genome/agentic_os/harness/registries/intake-sync.yml
+      Team ID, project map, status map, label map, sync config.
+
+EXAMPLES
+  # Dry run — prints plan, no changes
+  agentic-os-intake-sync --dry-run
+
+  # Real run, limit to first 3 candidates (by Created asc)
+  agentic-os-intake-sync --limit 3
+
+  # Push-only, verbose
+  agentic-os-intake-sync --direction push --verbose
+
+  # Pull-only (back-sync Linear→Notion)
+  agentic-os-intake-sync --direction pull
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+DEFAULT_CONFIG_PATH = Path("/Users/genome/agentic_os/harness/registries/intake-sync.yml")
+RUNS_LOG_DIR = Path(
+    "/Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/intake-sync"
+)
+NOTION_DB_ID = "c442dd56a24340f0880acfd195f34225"
+NOTION_API = "https://api.notion.com/v1"
+NOTION_VERSION = "2022-06-28"
+LINEAR_API = "https://api.linear.app/graphql"
+
+# Priority map: Notion P-value → Linear priority int (1=urgent, 4=low)
+PRIORITY_MAP = {"P0": 1, "P1": 2, "P2": 3, "P3": 4}
+
+# Linear state type → back-sync condition
+LINEAR_DONE_TYPES = {"completed", "canceled"}
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+
+def _request(url: str, method: str = "GET", headers: dict = None, body=None, retries: int = 3) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    for attempt in range(retries):
+        req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode(errors="replace")
+            if e.code == 429 and attempt < retries - 1:
+                # Respect rate limit: wait 65 seconds (Linear's window is 60s)
+                wait = 65
+                print(f"  [rate-limit] 429 on {url}, waiting {wait}s before retry {attempt + 2}/{retries}...")
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"HTTP {e.code} {url}: {raw[:500]}") from e
+    raise RuntimeError(f"All {retries} retries failed for {url}")
+
+
+def notion_get(path: str, token: str) -> dict:
+    return _request(
+        f"{NOTION_API}{path}",
+        headers={"Authorization": f"Bearer {token}", "Notion-Version": NOTION_VERSION},
+    )
+
+
+def notion_post(path: str, token: str, body: dict) -> dict:
+    return _request(
+        f"{NOTION_API}{path}",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": NOTION_VERSION,
+            "Content-Type": "application/json",
+        },
+        body=body,
+    )
+
+
+def notion_patch(path: str, token: str, body: dict) -> dict:
+    return _request(
+        f"{NOTION_API}{path}",
+        method="PATCH",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": NOTION_VERSION,
+            "Content-Type": "application/json",
+        },
+        body=body,
+    )
+
+
+def linear_query(query: str, variables: dict, token: str) -> dict:
+    result = _request(
+        LINEAR_API,
+        method="POST",
+        headers={"Authorization": token, "Content-Type": "application/json"},
+        body={"query": query, "variables": variables},
+    )
+    if result.get("errors"):
+        raise RuntimeError(f"Linear GraphQL error: {result['errors']}")
+    return result["data"]
+
+
+# ---------------------------------------------------------------------------
+# Notion helpers
+# ---------------------------------------------------------------------------
+
+
+def notion_query_all(db_id: str, token: str, verbose: bool = False) -> list:
+    """Fetch all rows from a Notion database (handles pagination)."""
+    rows = []
+    cursor = None
+    while True:
+        body: dict = {"page_size": 100}
+        if cursor:
+            body["start_cursor"] = cursor
+        resp = notion_post(f"/databases/{db_id}/query", token, body)
+        rows.extend(resp.get("results", []))
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    if verbose:
+        print(f"  [notion] fetched {len(rows)} rows from DB {db_id}")
+    return rows
+
+
+def get_text(prop: dict) -> str:
+    """Extract plain text from a Notion title or rich_text property."""
+    items = prop.get("title") or prop.get("rich_text") or []
+    return "".join(i.get("plain_text", "") for i in items)
+
+
+def get_select(prop: dict) -> str | None:
+    sel = prop.get("select")
+    return sel.get("name") if sel else None
+
+
+def get_url(prop: dict) -> str | None:
+    return prop.get("url")
+
+
+def get_page_body_excerpt(page_id: str, token: str, max_chars: int = 800) -> str:
+    """Fetch top-level blocks and return a plain-text excerpt."""
+    try:
+        resp = notion_get(f"/blocks/{page_id}/children?page_size=20", token)
+    except Exception:
+        return ""
+    parts = []
+    for block in resp.get("results", []):
+        btype = block.get("type", "")
+        content = block.get(btype, {})
+        rich = content.get("rich_text", [])
+        text = "".join(r.get("plain_text", "") for r in rich).strip()
+        if text:
+            parts.append(text)
+        if sum(len(p) for p in parts) > max_chars:
+            break
+    excerpt = "\n".join(parts)
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars] + "…"
+    return excerpt
+
+
+def notion_set_linear_url(page_id: str, url: str, token: str) -> None:
+    notion_patch(f"/pages/{page_id}", token, {"properties": {"Linear": {"url": url}}})
+
+
+def notion_set_status(page_id: str, status_name: str, token: str) -> None:
+    notion_patch(
+        f"/pages/{page_id}",
+        token,
+        {"properties": {"Status": {"select": {"name": status_name}}}},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Linear helpers
+# ---------------------------------------------------------------------------
+
+_STATES_CACHE: dict | None = None
+
+
+def linear_get_states(team_id: str, token: str) -> list:
+    global _STATES_CACHE
+    if _STATES_CACHE is not None:
+        return _STATES_CACHE
+    data = linear_query(
+        "query States($teamId: String!) { team(id: $teamId) { states { nodes { id name type } } } }",
+        {"teamId": team_id},
+        token,
+    )
+    _STATES_CACHE = data["team"]["states"]["nodes"]
+    return _STATES_CACHE
+
+
+def resolve_state_id(name: str, states: list) -> str:
+    """Find Linear state id by name (case-insensitive)."""
+    for s in states:
+        if s["name"].lower() == name.lower():
+            return s["id"]
+    raise RuntimeError(f"Linear state not found: {name!r}. Available: {[s['name'] for s in states]}")
+
+
+def linear_get_labels(token: str) -> list:
+    data = linear_query(
+        "{ issueLabels(first: 100) { nodes { id name } } }",
+        {},
+        token,
+    )
+    return data["issueLabels"]["nodes"]
+
+
+def linear_create_label(name: str, team_id: str, token: str) -> str:
+    """Create a label and return its id. If it already exists, fetch and return the existing id."""
+    try:
+        data = linear_query(
+            """mutation CreateLabel($name: String!, $teamId: String!) {
+              issueLabelCreate(input: {name: $name, teamId: $teamId}) {
+                issueLabel { id name }
+                success
+              }
+            }""",
+            {"name": name, "teamId": team_id},
+            token,
+        )
+        return data["issueLabelCreate"]["issueLabel"]["id"]
+    except RuntimeError as e:
+        if "duplicate label name" in str(e) or "already exists" in str(e):
+            # Label already exists — fetch all labels and find it
+            labels = linear_get_labels(token)
+            for lbl in labels:
+                if lbl["name"].lower() == name.lower():
+                    return lbl["id"]
+            raise RuntimeError(f"Label {name!r} reported as duplicate but not found in label list") from e
+        raise
+
+
+def ensure_labels(names: list[str], existing: list, team_id: str, token: str, dry_run: bool) -> list[str]:
+    """Return label ids, creating missing ones if not dry_run.
+
+    Mutates `existing` in-place so the caller's list stays current across rows.
+    """
+    ids = []
+    label_map = {l["name"]: l["id"] for l in existing}
+    for name in names:
+        if name in label_map:
+            ids.append(label_map[name])
+        else:
+            if dry_run:
+                print(f"  [dry-run] would create label {name!r}")
+                ids.append(f"new-label:{name}")
+            else:
+                label_id = linear_create_label(name, team_id, token)
+                label_map[name] = label_id
+                # Keep the shared list in sync so future rows in this run find it
+                existing.append({"id": label_id, "name": name})
+                ids.append(label_id)
+    return ids
+
+
+def linear_search_by_marker(page_id: str, token: str) -> dict | None:
+    """Search Linear for an issue whose description contains notion:<page_id>."""
+    marker = f"notion:{page_id}"
+    data = linear_query(
+        """query Search($term: String!) {
+          searchIssues(term: $term, first: 5) {
+            nodes { id identifier url title state { name type } priority }
+          }
+        }""",
+        {"term": marker},
+        token,
+    )
+    # Belt-and-suspenders: verify the marker is actually in the description
+    candidates = data.get("searchIssues", {}).get("nodes", [])
+    # searchIssues returns partial matches; use filter to confirm
+    if candidates:
+        # Verify with description filter
+        data2 = linear_query(
+            """query CheckDesc($term: String!) {
+              issues(filter: {description: {contains: $term}}, first: 5) {
+                nodes { id identifier url title state { name type } priority }
+              }
+            }""",
+            {"term": marker},
+            token,
+        )
+        nodes = data2.get("issues", {}).get("nodes", [])
+        if nodes:
+            return nodes[0]
+    return None
+
+
+def linear_create_issue(
+    title: str,
+    description: str,
+    state_id: str,
+    priority: int,
+    label_ids: list[str],
+    team_id: str,
+    project_id: str | None,
+    token: str,
+) -> dict:
+    variables: dict = {
+        "title": title,
+        "description": description,
+        "stateId": state_id,
+        "priority": priority,
+        "labelIds": [lid for lid in label_ids if not lid.startswith("new-label:")],
+        "teamId": team_id,
+    }
+    if project_id:
+        variables["projectId"] = project_id
+
+    data = linear_query(
+        """mutation CreateIssue(
+          $title: String!, $description: String, $stateId: String,
+          $priority: Int, $labelIds: [String!], $teamId: String!, $projectId: String
+        ) {
+          issueCreate(input: {
+            title: $title, description: $description, stateId: $stateId,
+            priority: $priority, labelIds: $labelIds, teamId: $teamId, projectId: $projectId
+          }) {
+            issue { id identifier url }
+            success
+          }
+        }""",
+        variables,
+        token,
+    )
+    return data["issueCreate"]["issue"]
+
+
+def linear_update_issue(issue_id: str, state_id: str | None, priority: int | None, token: str) -> None:
+    updates: dict = {}
+    if state_id:
+        updates["stateId"] = state_id
+    if priority is not None:
+        updates["priority"] = priority
+    if not updates:
+        return
+    linear_query(
+        """mutation UpdateIssue($id: String!, $stateId: String, $priority: Int) {
+          issueUpdate(id: $id, input: {stateId: $stateId, priority: $priority}) {
+            success
+          }
+        }""",
+        {"id": issue_id, **updates},
+        token,
+    )
+
+
+def linear_get_issue(issue_url: str, token: str) -> dict | None:
+    """Fetch a Linear issue by URL. Extracts the human identifier (e.g. LED-185) via searchIssues."""
+    # URL shape: https://linear.app/<team-slug>/issue/LED-185/some-slug
+    parts = issue_url.rstrip("/").split("/")
+    identifier = None
+    for part in parts:
+        # The identifier segment is TEAM-NUMBER (e.g. LED-185)
+        segments = part.split("-")
+        if len(segments) >= 2 and segments[0].isalpha() and segments[1].isdigit():
+            identifier = f"{segments[0]}-{segments[1]}"
+            break
+    if not identifier:
+        return None
+    # searchIssues by the exact identifier string is the reliable path
+    data = linear_query(
+        """query GetIssueByIdentifier($term: String!) {
+          searchIssues(term: $term, first: 5) {
+            nodes { id identifier url state { name type } priority }
+          }
+        }""",
+        {"term": identifier},
+        token,
+    )
+    nodes = data.get("searchIssues", {}).get("nodes", [])
+    # Confirm exact match (search may return partial results)
+    for node in nodes:
+        if node.get("identifier") == identifier:
+            return node
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+
+
+def load_config(path: Path) -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+# ---------------------------------------------------------------------------
+# Row → issue plan
+# ---------------------------------------------------------------------------
+
+
+def row_to_plan(
+    row: dict,
+    cfg: dict,
+    states: list,
+    labels: list,
+    team_id: str,
+    token: str,
+    verbose: bool,
+    dry_run: bool,
+) -> dict:
+    """Build a plan dict for one Notion row."""
+    props = row["properties"]
+    page_id = row["id"]
+    name = get_text(props.get("Name", {}))
+    status = get_select(props.get("Status", {})) or "inbox"
+    project_notion = get_select(props.get("Project", {}))
+    priority_str = get_select(props.get("Priority", {}))
+    type_str = get_select(props.get("Type", {}))
+    linear_url = get_url(props.get("Linear", {}))
+
+    synced_statuses = set(cfg.get("synced_statuses", []))
+    sync_inbox = cfg.get("sync_inbox", False)
+
+    # Decide action
+    if status == "inbox" and not sync_inbox:
+        return {"action": "skip", "reason": "inbox excluded", "page_id": page_id, "name": name}
+    if status not in synced_statuses and status != "inbox":
+        return {"action": "skip", "reason": f"status {status!r} not in synced_statuses", "page_id": page_id, "name": name}
+
+    # Map status → Linear state name
+    status_map = cfg.get("status_map", {})
+    linear_state_name = status_map.get(status, {}).get("state") if isinstance(status_map.get(status), dict) else status_map.get(status)
+    if not linear_state_name:
+        return {"action": "skip", "reason": f"no status_map entry for {status!r}", "page_id": page_id, "name": name}
+
+    state_id = resolve_state_id(linear_state_name, states)
+    priority = PRIORITY_MAP.get(priority_str or "", 3)
+
+    # Labels
+    label_cfg = cfg.get("label_map", {})
+    label_names = list(label_cfg.get("always", []))
+    if type_str and type_str in label_cfg.get("type_map", {}):
+        label_names.append(label_cfg["type_map"][type_str])
+    if status == "blocked":
+        blocked_label = label_cfg.get("blocked_label", "blocked")
+        label_names.append(blocked_label)
+
+    # Project id
+    project_map = cfg.get("project_map", {})
+    project_id = project_map.get(project_notion) if project_notion else None
+
+    plan = {
+        "action": "update" if linear_url else "create",
+        "page_id": page_id,
+        "name": name,
+        "status": status,
+        "linear_state_name": linear_state_name,
+        "state_id": state_id,
+        "priority": priority,
+        "label_names": label_names,
+        "project_id": project_id,
+        "linear_url": linear_url,
+        "type_str": type_str,
+        "project_notion": project_notion,
+    }
+    return plan
+
+
+# ---------------------------------------------------------------------------
+# Execute
+# ---------------------------------------------------------------------------
+
+
+def execute_push(
+    rows: list,
+    cfg: dict,
+    states: list,
+    labels: list,
+    team_id: str,
+    token_linear: str,
+    token_notion: str,
+    dry_run: bool,
+    verbose: bool,
+    limit: int | None,
+) -> dict:
+    """Forward sync: Notion → Linear."""
+    # Sort by Created ascending for deterministic candidate set
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: r["properties"].get("Created", {}).get("created_time", ""),
+    )
+
+    # Apply limit to CANDIDATE SET (not creation count) to ensure idempotency
+    candidates = rows_sorted[:limit] if limit is not None else rows_sorted
+
+    counts = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
+
+    for row in candidates:
+        try:
+            plan = row_to_plan(row, cfg, states, labels, team_id, token_linear, verbose, dry_run)
+        except Exception as e:
+            print(f"  ERROR planning row {row.get('id','?')}: {e}", file=sys.stderr)
+            counts["errors"] += 1
+            continue
+
+        if plan["action"] == "skip":
+            if verbose:
+                print(f"  skip  {plan['name']!r}: {plan['reason']}")
+            counts["skipped"] += 1
+            continue
+
+        page_id = plan["page_id"]
+        name = plan["name"]
+
+        if plan["action"] == "create":
+            # Belt-and-suspenders: search Linear for existing issue by marker.
+            # Skip in dry-run: nothing has been created yet so no dupes possible,
+            # and 61 searches would exhaust the 30/min rate limit.
+            existing = None if dry_run else linear_search_by_marker(page_id, token_linear)
+            if existing:
+                if verbose:
+                    print(f"  skip  {name!r}: already in Linear as {existing['identifier']} (marker found)")
+                # Write URL back if missing in Notion
+                if not plan["linear_url"]:
+                    if not dry_run:
+                        notion_set_linear_url(page_id, existing["url"], token_notion)
+                    if verbose:
+                        print(f"         wrote URL back to Notion: {existing['url']}")
+                counts["skipped"] += 1
+                continue
+
+            # Build description
+            body_excerpt = get_page_body_excerpt(page_id, token_notion)
+            notion_page_url = f"https://www.notion.so/{page_id.replace('-', '')}"
+            description = ""
+            if body_excerpt:
+                description += body_excerpt + "\n\n"
+            description += f"---\n**Source:** [Notion]({notion_page_url})\n`notion:{page_id}`"
+
+            label_ids = ensure_labels(plan["label_names"], labels, team_id, token_linear, dry_run)
+
+            if dry_run:
+                print(
+                    f"  CREATE {name!r} | status={plan['status']} → {plan['linear_state_name']}"
+                    f" | priority={plan['priority']} | project={plan['project_notion']!r}"
+                    f" | labels={plan['label_names']}"
+                )
+                counts["created"] += 1
+                continue
+
+            issue = linear_create_issue(
+                title=name,
+                description=description,
+                state_id=plan["state_id"],
+                priority=plan["priority"],
+                label_ids=label_ids,
+                team_id=team_id,
+                project_id=plan["project_id"],
+                token=token_linear,
+            )
+            # Write URL back immediately
+            notion_set_linear_url(page_id, issue["url"], token_notion)
+            print(f"  CREATED {issue['identifier']} ← {name!r} → {issue['url']}")
+            counts["created"] += 1
+
+        elif plan["action"] == "update":
+            # Row already has Linear URL — check for drift in state/priority
+            linear_url = plan["linear_url"]
+            try:
+                linear_issue = linear_get_issue(linear_url, token_linear)
+            except Exception as e:
+                if verbose:
+                    print(f"  WARN  could not fetch Linear issue for {name!r}: {e}")
+                counts["errors"] += 1
+                continue
+
+            if not linear_issue:
+                if verbose:
+                    print(f"  WARN  Linear issue not found for {name!r} at {linear_url}")
+                counts["errors"] += 1
+                continue
+
+            current_state = linear_issue["state"]["name"]
+            current_priority = linear_issue.get("priority", 0)
+            desired_state = plan["linear_state_name"]
+            desired_priority = plan["priority"]
+
+            drifted_state = current_state.lower() != desired_state.lower()
+            drifted_priority = current_priority != desired_priority
+
+            if drifted_state or drifted_priority:
+                if dry_run:
+                    print(
+                        f"  UPDATE {name!r} | state: {current_state!r}→{desired_state!r}"
+                        f" | priority: {current_priority}→{desired_priority}"
+                    )
+                    counts["updated"] += 1
+                else:
+                    linear_update_issue(
+                        linear_issue["id"],
+                        plan["state_id"] if drifted_state else None,
+                        desired_priority if drifted_priority else None,
+                        token_linear,
+                    )
+                    print(f"  UPDATED {linear_issue['identifier']} {name!r}")
+                    counts["updated"] += 1
+            else:
+                if verbose:
+                    print(f"  ok    {name!r}: in sync")
+                counts["skipped"] += 1
+
+    return counts
+
+
+def execute_pull(
+    rows: list,
+    cfg: dict,
+    team_id: str,
+    token_linear: str,
+    token_notion: str,
+    dry_run: bool,
+    verbose: bool,
+) -> dict:
+    """Back sync: if Linear issue is completed/canceled and Notion isn't done/dropped → update Notion."""
+    counts = {"backsynced": 0, "skipped": 0, "errors": 0}
+
+    # Only rows that have a Linear URL
+    linked = [r for r in rows if get_url(r["properties"].get("Linear", {}))]
+    if verbose:
+        print(f"  [pull] {len(linked)} rows with Linear URLs")
+
+    for row in linked:
+        props = row["properties"]
+        page_id = row["id"]
+        name = get_text(props.get("Name", {}))
+        notion_status = get_select(props.get("Status", {})) or "inbox"
+        linear_url = get_url(props.get("Linear", {}))
+
+        if notion_status in ("done", "dropped"):
+            counts["skipped"] += 1
+            continue
+
+        try:
+            linear_issue = linear_get_issue(linear_url, token_linear)
+        except Exception as e:
+            if verbose:
+                print(f"  WARN  pull: could not fetch {name!r}: {e}")
+            counts["errors"] += 1
+            continue
+
+        if not linear_issue:
+            counts["skipped"] += 1
+            continue
+
+        state_type = linear_issue["state"]["type"]
+        state_name = linear_issue["state"]["name"]
+
+        if state_type in LINEAR_DONE_TYPES:
+            # Map to Notion status
+            if state_type == "completed":
+                new_status = "done"
+            else:  # canceled or duplicate
+                new_status = "dropped"
+
+            if dry_run:
+                print(f"  BACK-SYNC {name!r}: Notion {notion_status!r} → {new_status!r} (Linear: {state_name})")
+                counts["backsynced"] += 1
+            else:
+                notion_set_status(page_id, new_status, token_notion)
+                print(f"  BACK-SYNCED {name!r}: Notion → {new_status!r}")
+                counts["backsynced"] += 1
+        else:
+            counts["skipped"] += 1
+
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-intake-sync",
+        description=(
+            "Sync the OS Work Intake Notion database to Linear (LED team). "
+            "Creates/updates Linear issues for rows in synced statuses, writes "
+            "issue URLs back to Notion, and back-syncs completed/canceled states."
+        ),
+        epilog="""
+ENVIRONMENT:
+  LINEAR_TOKEN        Linear personal API token (value used directly as Authorization header).
+  GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace.
+
+FILES:
+  /Users/genome/agentic_os/harness/registries/intake-sync.yml
+      Config: team_id, project_map, status_map, label_map, synced_statuses, sync_inbox.
+
+EXAMPLES:
+  # Dry run — see the full plan, no changes written
+  agentic-os-intake-sync --dry-run
+
+  # Real run, limit candidate set to first 3 rows (by Created asc)
+  agentic-os-intake-sync --limit 3
+
+  # Push-only sync with verbose output
+  agentic-os-intake-sync --direction push --verbose
+
+  # Back-sync only (Linear → Notion status updates)
+  agentic-os-intake-sync --direction pull
+
+  # Filter to specific Notion status
+  agentic-os-intake-sync --status-filter triaged --dry-run
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print the plan without making any changes.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Examine only the first N candidate rows (sorted by Created ascending). "
+            "Applying the same --limit on re-run proves idempotency: 0 new issues created."
+        ),
+    )
+    parser.add_argument(
+        "--direction",
+        choices=["push", "pull", "both"],
+        default="both",
+        help=(
+            "push = Notion→Linear only; pull = Linear→Notion back-sync only; "
+            "both = run both directions (default)."
+        ),
+    )
+    parser.add_argument(
+        "--status-filter",
+        default=None,
+        metavar="STATUS",
+        help="Only process rows with this Notion status (e.g. triaged, queued).",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="Print details for every row including skipped ones.",
+    )
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        metavar="PATH",
+        help=f"Path to intake-sync.yml (default: {DEFAULT_CONFIG_PATH}).",
+    )
+
+    args = parser.parse_args()
+
+    # Tokens from environment
+    token_linear = os.environ.get("LINEAR_TOKEN", "")
+    token_notion = os.environ.get("GENOMES_NOTION_PAT", "")
+    if not token_linear:
+        print("ERROR: LINEAR_TOKEN env var is not set.", file=sys.stderr)
+        sys.exit(1)
+    if not token_notion:
+        print("ERROR: GENOMES_NOTION_PAT env var is not set.", file=sys.stderr)
+        sys.exit(1)
+
+    # Load config
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"ERROR: Config not found at {config_path}", file=sys.stderr)
+        sys.exit(1)
+    cfg = load_config(config_path)
+
+    team_id = cfg["team_id"]
+    if args.dry_run:
+        print("=== DRY RUN — no changes will be written ===\n")
+
+    # Fetch Notion rows
+    print("Fetching Notion rows...")
+    rows = notion_query_all(NOTION_DB_ID, token_notion, verbose=args.verbose)
+    print(f"Fetched {len(rows)} rows from Notion DB.")
+
+    # Apply status filter if requested
+    if args.status_filter:
+        rows = [
+            r for r in rows
+            if get_select(r["properties"].get("Status", {})) == args.status_filter
+        ]
+        print(f"Filtered to {len(rows)} rows with status={args.status_filter!r}.")
+
+    # Fetch Linear states and labels (runtime, not hardcoded IDs)
+    print("Fetching Linear states and labels...")
+    states = linear_get_states(team_id, token_linear)
+    labels = linear_get_labels(token_linear)
+
+    # Run sync
+    run_counts: dict = {"created": 0, "updated": 0, "backsynced": 0, "skipped": 0, "errors": 0}
+
+    if args.direction in ("push", "both"):
+        print("\n--- PUSH: Notion → Linear ---")
+        push_counts = execute_push(
+            rows=rows,
+            cfg=cfg,
+            states=states,
+            labels=labels,
+            team_id=team_id,
+            token_linear=token_linear,
+            token_notion=token_notion,
+            dry_run=args.dry_run,
+            verbose=args.verbose,
+            limit=args.limit,
+        )
+        run_counts["created"] += push_counts["created"]
+        run_counts["updated"] += push_counts["updated"]
+        run_counts["skipped"] += push_counts["skipped"]
+        run_counts["errors"] += push_counts["errors"]
+
+    if args.direction in ("pull", "both"):
+        print("\n--- PULL: Linear → Notion back-sync ---")
+        pull_counts = execute_pull(
+            rows=rows,
+            cfg=cfg,
+            team_id=team_id,
+            token_linear=token_linear,
+            token_notion=token_notion,
+            dry_run=args.dry_run,
+            verbose=args.verbose,
+        )
+        run_counts["backsynced"] += pull_counts["backsynced"]
+        run_counts["skipped"] += pull_counts.get("skipped", 0)
+        run_counts["errors"] += pull_counts["errors"]
+
+    # Summary
+    print(
+        f"\nRun complete — created={run_counts['created']} updated={run_counts['updated']}"
+        f" backsynced={run_counts['backsynced']} skipped={run_counts['skipped']}"
+        f" errors={run_counts['errors']}"
+    )
+
+    # Write run receipt
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    receipt = {
+        "timestamp": ts,
+        "dry_run": args.dry_run,
+        "direction": args.direction,
+        "limit": args.limit,
+        "status_filter": args.status_filter,
+        "notion_db_id": NOTION_DB_ID,
+        "rows_fetched": len(rows),
+        "counts": run_counts,
+    }
+    RUNS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    receipt_path = RUNS_LOG_DIR / f"{ts}.json"
+    with open(receipt_path, "w") as f:
+        json.dump(receipt, f, indent=2)
+    print(f"Receipt: {receipt_path}")
+
+
+if __name__ == "__main__":
+    main()
