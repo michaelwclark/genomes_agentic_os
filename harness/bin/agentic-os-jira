@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""Agentic OS Jira helper for the VenturesGo Atlassian site.
+
+This wrapper gives agents a deterministic Jira path when MCP/Composio routes are
+unhealthy. It prefers the LOSMON-style Atlassian OAuth client-credentials route
+and falls back to Jira basic auth only when a VenturesGo token is configured.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+
+DEFAULT_BROWSE_BASE = "https://venturesgo.atlassian.net"
+DEFAULT_JIRA_PROJECT = "FLYWL"
+DEFAULT_JIRA_EMAIL = "svc_jiraapi@thesummitgrp.com"
+
+JIRA_OAUTH_CLIENT_ID_NAMES = ("ATLASSIAN_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID")
+JIRA_OAUTH_CLIENT_SECRET_NAMES = ("ATLASSIAN_CLIENT_SECRET", "JIRA_OAUTH_CLIENT_SECRET")
+JIRA_OAUTH_BASE_NAMES = ("ATLASSIAN_BASE_URL", "JIRA_OAUTH_BASE_URL")
+JIRA_OAUTH_CLOUD_ID_NAMES = (
+    "ATLASSIAN_JIRA_CLOUDID",
+    "JIRA_CLOUD_ID",
+    "ATLASSIAN_VENTURESGO_CLOUDID",
+    "ATLASSIAN_CLOUD_ID",
+)
+JIRA_OAUTH_AUDIENCE_NAMES = ("ATLASSIAN_OAUTH_AUDIENCE",)
+JIRA_BASIC_TOKEN_NAMES = ("JIRA_VENTURESGO_API_TOKEN", "JIRA_API_TOKEN")
+JIRA_BASIC_EMAIL_NAMES = ("JIRA_VENTURESGO_EMAIL", "JIRA_EMAIL")
+JIRA_BASIC_BASE_NAMES = ("JIRA_VENTURESGO_BASE_URL",)
+
+
+class JiraCliError(RuntimeError):
+    pass
+
+
+def truncate(value: Any, limit: int = 1200) -> str:
+    text = "" if value is None else str(value)
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "..."
+
+
+def env_from_login_shell(names: tuple[str, ...]) -> dict[str, str]:
+    """Return env values for names, sourcing ~/.zshenv when needed."""
+    missing = [name for name in names if not os.environ.get(name)]
+    if not missing:
+        return {name: os.environ[name] for name in names if os.environ.get(name)}
+    script = (
+        "set -a; "
+        '[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv" >/dev/null 2>&1 || true; '
+        "python3 - <<'PY'\n"
+        "import json, os\n"
+        f"names = {list(names)!r}\n"
+        "print(json.dumps({name: os.environ.get(name, '') for name in names}))\n"
+        "PY"
+    )
+    try:
+        loaded = json.loads(subprocess.check_output(["zsh", "-lc", script], text=True))
+    except Exception:
+        loaded = {}
+    for name, value in loaded.items():
+        if value and not os.environ.get(name):
+            os.environ[name] = value
+    return {name: os.environ[name] for name in names if os.environ.get(name)}
+
+
+def first_env(env: dict[str, str], names: tuple[str, ...]) -> str:
+    return next((env[name] for name in names if env.get(name)), "")
+
+
+def jira_gateway_base_url(env: dict[str, str]) -> str:
+    base = first_env(env, JIRA_OAUTH_BASE_NAMES)
+    if base:
+        return base.rstrip("/")
+    cloud_id = first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES)
+    if cloud_id:
+        return f"https://api.atlassian.com/ex/jira/{cloud_id}".rstrip("/")
+    return ""
+
+
+def resolve_auth() -> dict[str, str]:
+    names = (
+        JIRA_OAUTH_CLIENT_ID_NAMES
+        + JIRA_OAUTH_CLIENT_SECRET_NAMES
+        + JIRA_OAUTH_BASE_NAMES
+        + JIRA_OAUTH_CLOUD_ID_NAMES
+        + JIRA_OAUTH_AUDIENCE_NAMES
+        + JIRA_BASIC_TOKEN_NAMES
+        + JIRA_BASIC_EMAIL_NAMES
+        + JIRA_BASIC_BASE_NAMES
+    )
+    env = env_from_login_shell(names)
+    oauth_client_id = first_env(env, JIRA_OAUTH_CLIENT_ID_NAMES)
+    oauth_client_secret = first_env(env, JIRA_OAUTH_CLIENT_SECRET_NAMES)
+    oauth_base = jira_gateway_base_url(env)
+    if oauth_client_id and oauth_client_secret and oauth_base:
+        return {
+            "mode": "oauth",
+            "base": oauth_base,
+            "browse_base": DEFAULT_BROWSE_BASE,
+            "client_id": oauth_client_id,
+            "client_secret": oauth_client_secret,
+            "audience": first_env(env, JIRA_OAUTH_AUDIENCE_NAMES) or "api.atlassian.com",
+        }
+
+    token = first_env(env, JIRA_BASIC_TOKEN_NAMES)
+    if token:
+        base = (first_env(env, JIRA_BASIC_BASE_NAMES) or DEFAULT_BROWSE_BASE).rstrip("/")
+        return {
+            "mode": "basic",
+            "base": base,
+            "browse_base": base,
+            "email": first_env(env, JIRA_BASIC_EMAIL_NAMES) or DEFAULT_JIRA_EMAIL,
+            "token": token,
+        }
+
+    raise JiraCliError(
+        "No Jira auth found. Set ATLASSIAN_CLIENT_ID + ATLASSIAN_CLIENT_SECRET "
+        "+ ATLASSIAN_VENTURESGO_CLOUDID, or set JIRA_VENTURESGO_API_TOKEN."
+    )
+
+
+class JiraClient:
+    def __init__(self, auth: dict[str, str]) -> None:
+        self.auth = auth
+        self.base_url = auth["base"].rstrip("/")
+        self.browse_base = auth["browse_base"].rstrip("/")
+        self.mode = auth["mode"]
+        self.email = auth.get("email", "oauth-client")
+        self._oauth_token: dict[str, Any] | None = None
+        self._basic_auth = ""
+        if self.mode == "basic":
+            creds = base64.b64encode(f"{self.email}:{auth['token']}".encode()).decode()
+            self._basic_auth = f"Basic {creds}"
+
+    def _oauth_bearer(self) -> str:
+        cached = self._oauth_token
+        if cached and time.time() < float(cached["expires_at"]):
+            return str(cached["value"])
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.auth["client_id"],
+            "client_secret": self.auth["client_secret"],
+            "audience": self.auth.get("audience", "api.atlassian.com"),
+        }
+        request = urllib.request.Request(
+            "https://auth.atlassian.com/oauth/token",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            text = exc.read().decode("utf-8", errors="replace")
+            raise JiraCliError(f"Atlassian OAuth mint failed ({exc.code}): {truncate(text, 600)}") from exc
+        except urllib.error.URLError as exc:
+            raise JiraCliError(f"Atlassian OAuth mint failed: {exc}") from exc
+        token = body.get("access_token")
+        if not token:
+            raise JiraCliError(f"Atlassian OAuth mint returned no access_token: {truncate(body, 600)}")
+        expires_in = int(body.get("expires_in") or 3600)
+        self._oauth_token = {"value": token, "expires_at": time.time() + max(60, expires_in - 300)}
+        return str(token)
+
+    def _headers(self, *, json_body: bool = False) -> dict[str, str]:
+        auth_header = f"Bearer {self._oauth_bearer()}" if self.mode == "oauth" else self._basic_auth
+        headers = {"Authorization": auth_header, "Accept": "application/json"}
+        if json_body:
+            headers["Content-Type"] = "application/json"
+        return headers
+
+    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        request = urllib.request.Request(url, data=data, headers=self._headers(json_body=body is not None), method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                payload = response.read().decode("utf-8")
+                return json.loads(payload) if payload else {}
+        except urllib.error.HTTPError as exc:
+            payload = exc.read().decode("utf-8", errors="replace")
+            raise JiraCliError(f"Jira {method} {path} failed ({exc.code}): {truncate(payload, 600)}") from exc
+        except urllib.error.URLError as exc:
+            raise JiraCliError(f"Jira {method} {path} failed: {exc}") from exc
+
+    def search(self, jql: str, fields: list[str], *, limit: int) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        token: str | None = None
+        while len(issues) < limit:
+            body: dict[str, Any] = {
+                "jql": jql,
+                "fields": fields,
+                "maxResults": min(100, limit - len(issues)),
+            }
+            if token:
+                body["nextPageToken"] = token
+            data = self.request("POST", "/rest/api/3/search/jql", body)
+            issues.extend(data.get("issues", []))
+            token = data.get("nextPageToken")
+            if data.get("isLast", True) or not token:
+                break
+        return issues
+
+    def get_issue(self, issue_key: str, fields: list[str]) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"fields": ",".join(fields)})
+        return self.request("GET", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}?{query}")
+
+    def comments(self, issue_key: str, *, limit: int) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"maxResults": limit, "orderBy": "-created"})
+        return self.request("GET", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}/comment?{query}")
+
+    def add_comment(self, issue_key: str, body_text: str) -> dict[str, Any]:
+        body = {
+            "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": body_text}],
+                    }
+                ],
+            }
+        }
+        return self.request("POST", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}/comment", body)
+
+    def transition(self, issue_key: str, transition_id: str) -> dict[str, Any]:
+        body = {"transition": {"id": transition_id}}
+        return self.request("POST", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}/transitions", body)
+
+
+def as_json(data: Any) -> None:
+    json.dump(data, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+def field_summary(issue: dict[str, Any]) -> dict[str, str]:
+    fields = issue.get("fields") or {}
+    status = fields.get("status") or {}
+    assignee = fields.get("assignee") or {}
+    issue_type = fields.get("issuetype") or {}
+    return {
+        "key": str(issue.get("key") or ""),
+        "type": str(issue_type.get("name") or ""),
+        "status": str(status.get("name") or ""),
+        "assignee": str(assignee.get("displayName") or "Unassigned"),
+        "summary": str(fields.get("summary") or ""),
+    }
+
+
+def print_issue_table(issues: list[dict[str, Any]]) -> None:
+    for issue in issues:
+        row = field_summary(issue)
+        print(f"{row['key']}\t{row['status']}\t{row['assignee']}\t{row['summary']}")
+
+
+def check_acli() -> dict[str, str]:
+    path = shutil.which("acli") or ""
+    if not path:
+        return {"present": "no"}
+    result = {"present": "yes", "path": path}
+    try:
+        version = subprocess.check_output(["acli", "--version"], text=True, stderr=subprocess.STDOUT, timeout=10).strip()
+        result["version"] = version
+    except Exception as exc:
+        result["version_error"] = truncate(exc, 200)
+    try:
+        status = subprocess.check_output(
+            ["acli", "jira", "auth", "status"],
+            text=True,
+            stderr=subprocess.STDOUT,
+            timeout=15,
+        ).strip()
+        result["jira_auth"] = "ok" if "Error:" not in status else "error"
+    except subprocess.CalledProcessError as exc:
+        result["jira_auth"] = "error"
+        result["jira_auth_error"] = truncate(exc.output, 200)
+    except Exception as exc:
+        result["jira_auth"] = "error"
+        result["jira_auth_error"] = truncate(exc, 200)
+    return result
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    auth = resolve_auth()
+    client = JiraClient(auth)
+    issues = client.search(f"project = {args.project} ORDER BY updated DESC", ["summary"], limit=1)
+    report = {
+        "ok": bool(issues),
+        "route": "agentic-os-jira",
+        "auth_mode": auth["mode"],
+        "api_base": auth["base"],
+        "browse_base": auth["browse_base"],
+        "project_probe": args.project,
+        "visible_issue_count": len(issues),
+        "acli": check_acli(),
+    }
+    as_json(report)
+    return 0 if issues else 1
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    client = JiraClient(resolve_auth())
+    fields = [item.strip() for item in args.fields.split(",") if item.strip()]
+    issues = client.search(args.jql, fields, limit=args.limit)
+    if args.json:
+        as_json({"issues": issues, "count": len(issues)})
+    else:
+        print_issue_table(issues)
+    return 0
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    client = JiraClient(resolve_auth())
+    fields = [item.strip() for item in args.fields.split(",") if item.strip()]
+    issue = client.get_issue(args.issue_key, fields)
+    if args.json:
+        as_json(issue)
+    else:
+        print_issue_table([issue])
+    return 0
+
+
+def cmd_comments(args: argparse.Namespace) -> int:
+    client = JiraClient(resolve_auth())
+    data = client.comments(args.issue_key, limit=args.limit)
+    as_json(data)
+    return 0
+
+
+def cmd_comment(args: argparse.Namespace) -> int:
+    if not args.execute:
+        print(f"dry-run: would add comment to {args.issue_key}; pass --execute after approval")
+        return 0
+    data = JiraClient(resolve_auth()).add_comment(args.issue_key, args.body)
+    as_json({"ok": True, "id": data.get("id"), "self": data.get("self")})
+    return 0
+
+
+def cmd_transition(args: argparse.Namespace) -> int:
+    if not args.execute:
+        print(f"dry-run: would transition {args.issue_key} via transition id {args.transition_id}; pass --execute after approval")
+        return 0
+    JiraClient(resolve_auth()).transition(args.issue_key, args.transition_id)
+    as_json({"ok": True, "issue": args.issue_key, "transition_id": args.transition_id})
+    return 0
+
+
+_JIRA_EPILOG = """\
+AUTHENTICATION
+  Auth is resolved from environment variables in priority order.
+
+  OAuth2 client-credentials (preferred):
+    ATLASSIAN_CLIENT_ID / JIRA_OAUTH_CLIENT_ID       OAuth client id.
+    ATLASSIAN_CLIENT_SECRET / JIRA_OAUTH_CLIENT_SECRET   OAuth client secret.
+    ATLASSIAN_VENTURESGO_CLOUDID / ATLASSIAN_JIRA_CLOUDID /
+      JIRA_CLOUD_ID / ATLASSIAN_CLOUD_ID              Atlassian cloud id.
+    ATLASSIAN_BASE_URL / JIRA_OAUTH_BASE_URL          API gateway base URL
+                                                       (derived from cloud id when absent).
+    ATLASSIAN_OAUTH_AUDIENCE                          Atlassian OAuth audience
+                                                       (default: api.atlassian.com).
+
+  Basic auth (fallback):
+    JIRA_VENTURESGO_API_TOKEN / JIRA_API_TOKEN        Atlassian API token.
+    JIRA_VENTURESGO_EMAIL / JIRA_EMAIL                Account email for basic auth.
+    JIRA_VENTURESGO_BASE_URL                          Base URL override for basic auth.
+
+  All variables are sourced from ~/.zshenv when missing from the environment.
+
+EXAMPLES
+  agentic-os-jira doctor
+      Check auth and ACLI install state.
+
+  agentic-os-jira search --jql "project = FLYWL AND status = 'In Progress'" --limit 20
+      List open in-progress FLYWL issues.
+
+  agentic-os-jira get FLYWL-1234
+      Read one issue with default fields.
+
+  agentic-os-jira get FLYWL-1234 --json
+      Read one issue and emit full JSON.
+
+  agentic-os-jira comment FLYWL-1234 --body "Fixed in PR #99." --execute
+      Add a comment (omit --execute for a dry-run preview).
+
+  agentic-os-jira transition FLYWL-1234 --transition-id 31 --execute
+      Move issue to a new status (get transition ids via the Jira API or ACLI).
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Jira helper for the VenturesGo Atlassian site. "
+            "Prefers Atlassian OAuth client-credentials; falls back to Jira API token basic auth. "
+            "All mutating commands (comment, transition) are dry-run by default; pass --execute to write."
+        ),
+        epilog=_JIRA_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    doctor = sub.add_parser(
+        "doctor",
+        help="Verify ACLI install state and Agentic OS Jira auth.",
+        description="Probe Jira auth and ACLI setup. Exits 0 when a visible issue can be listed; exits 1 otherwise.",
+    )
+    doctor.add_argument(
+        "--project",
+        default=DEFAULT_JIRA_PROJECT,
+        help=f"Jira project key to probe (default: {DEFAULT_JIRA_PROJECT}).",
+    )
+    doctor.set_defaults(func=cmd_doctor)
+
+    search = sub.add_parser(
+        "search",
+        help="Run a read-only Jira JQL search.",
+        description="Run a JQL query and print a table or JSON of matching issues.",
+    )
+    search.add_argument("--jql", required=True, help="JQL query string. Required.")
+    search.add_argument(
+        "--fields",
+        default="summary,status,assignee,issuetype,priority",
+        help="Comma-separated field list to return (default: summary,status,assignee,issuetype,priority).",
+    )
+    search.add_argument("--limit", type=int, default=10, help="Max issues to return (default: 10).")
+    search.add_argument("--json", action="store_true", help="Emit results as JSON instead of a table.")
+    search.set_defaults(func=cmd_search)
+
+    get = sub.add_parser(
+        "get",
+        help="Read one Jira issue.",
+        description="Fetch a single issue by key and print its fields as a table or JSON.",
+    )
+    get.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    get.add_argument(
+        "--fields",
+        default="summary,status,assignee,issuetype,priority,fixVersions,labels",
+        help="Comma-separated field list to return.",
+    )
+    get.add_argument("--json", action="store_true", help="Emit result as JSON instead of a table.")
+    get.set_defaults(func=cmd_get)
+
+    comments = sub.add_parser(
+        "comments",
+        help="Read recent Jira comments for an issue.",
+        description="Fetch the most recent comments for an issue and emit as JSON.",
+    )
+    comments.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    comments.add_argument("--limit", type=int, default=10, help="Max comments to return (default: 10).")
+    comments.set_defaults(func=cmd_comments)
+
+    comment = sub.add_parser(
+        "comment",
+        help="Add a Jira comment. Dry-run unless --execute is passed.",
+        description=(
+            "Add a comment to a Jira issue. "
+            "Prints a dry-run message by default; pass --execute to write the comment."
+        ),
+    )
+    comment.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    comment.add_argument("--body", required=True, help="Comment body text. Required.")
+    comment.add_argument(
+        "--execute",
+        action="store_true",
+        help="Write the comment. Without this flag the command prints a dry-run message and exits.",
+    )
+    comment.set_defaults(func=cmd_comment)
+
+    transition = sub.add_parser(
+        "transition",
+        help="Transition an issue. Dry-run unless --execute is passed.",
+        description=(
+            "Move a Jira issue to a new workflow status. "
+            "Prints a dry-run message by default; pass --execute to apply the transition."
+        ),
+    )
+    transition.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    transition.add_argument(
+        "--transition-id",
+        required=True,
+        help="Numeric transition id from the Jira workflow. Required.",
+    )
+    transition.add_argument(
+        "--execute",
+        action="store_true",
+        help="Apply the transition. Without this flag the command prints a dry-run message and exits.",
+    )
+    transition.set_defaults(func=cmd_transition)
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        return int(args.func(args))
+    except JiraCliError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

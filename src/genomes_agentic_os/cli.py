@@ -6,6 +6,8 @@ import argparse
 from pathlib import Path
 import sys
 
+from .cli_help import AosHelpFormatter, env_epilog
+
 from .automation_ops import (
     AUTOMATION_MATURITY_LEVELS,
     attach_automation,
@@ -207,7 +209,33 @@ def handle_capability_inventory(args: argparse.Namespace) -> int:
 
 
 def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="Scaffold and validate an Agentic OS root.")
+    parser = argparse.ArgumentParser(
+        prog=prog,
+        description=(
+            "Scaffold, validate, and operate an Agentic OS root.\n\n"
+            "Run 'agentic-os <command> --help' for per-command options."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (used as --root default when set). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("~/agentic_os/harness/registries/", "Central registries (automations, skills, commands, etc.)."),
+                ("~/agentic_os/harness/shared_factory/", "Shared factory outputs (metrics, run logs, etc.)."),
+                ("~/agentic_os/config/hosts.yml", "SSH host registry read by project remote commands."),
+            ],
+            examples=[
+                ("agentic-os init", "Create the base OS tree at ~/agentic_os."),
+                ("agentic-os doctor", "Run OS health checks."),
+                ("agentic-os validate", "Validate OS root structure."),
+                ("agentic-os ps --active", "Show active work dashboard."),
+                ("agentic-os self-improvement run --apply", "Run and persist a self-improvement review."),
+                ("agentic-os runtime supervise --apply", "Run one full supervisor tick."),
+                ("agentic-os config install-tree --apply", "Install config.toml across the OS tree."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_thread_closeout_args(closeout_parser: argparse.ArgumentParser, mode: str) -> None:
@@ -302,7 +330,30 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     room_update.add_argument("--from-profile", required=True)
     room_update.set_defaults(handler=handle_room_update)
 
-    project_parser = subparsers.add_parser("project", help="Manage projects.")
+    project_parser = subparsers.add_parser(
+        "project",
+        help="Manage projects.",
+        description=(
+            "Create and manage OS projects, worktrees, remote sources, and lifecycle work items. "
+            "Projects live under <domain>/<project>/ inside the OS root."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("<domain>/<project>/project.yml", "Project metadata and remote source declarations."),
+                ("<domain>/<project>/worktrees/", "Registered worktree links."),
+            ],
+            examples=[
+                ("agentic-os project create acme myproj --repo ~/repos/myproj", "Create a project scaffold."),
+                ("agentic-os project work-item create acme myproj --title 'Fix bug' --summary 'Fix the thing'", "Create a work item."),
+                ("agentic-os project sync-remote acme myproj", "Sync remote SSH sources."),
+                ("agentic-os project worktree cleanup-closed --apply", "Close terminal worktree entries."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
     project_create = project_subparsers.add_parser("create", help="Create a project scaffold.")
     project_create.add_argument("domain")
@@ -627,8 +678,31 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     ps_parser = subparsers.add_parser(
         "ps",
         help="Show Agentic OS work running right now; use --active for the broader dashboard.",
+        description=(
+            "Show the current Agentic OS work snapshot. "
+            "Default (no flags): in-flight async runs and recently started items. "
+            "--active: adds queued work, enabled automations/schedules/watchers, and stale thread candidates. "
+            "--all: includes disabled and terminal registry/queue rows."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("harness/registries/run-queue.yml", "Run-queue state read for active items."),
+                ("harness/registries/runtime-registry.yml", "Runtime registry (schedules, heartbeats, integrations)."),
+                ("harness/registries/automation-run-tracking.yml", "Automation run tracking state."),
+            ],
+            examples=[
+                ("agentic-os ps", "Show in-flight runs only."),
+                ("agentic-os ps --active", "Show full active work dashboard."),
+                ("agentic-os ps --all --json", "Emit all rows as JSON."),
+                ("agentic-os ps --limit 0", "Show all rows with no row cap."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
     )
-    ps_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    ps_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path (default: %(default)s).")
     ps_parser.add_argument("--json", action="store_true", help="Emit the snapshot as JSON.")
     ps_mode = ps_parser.add_mutually_exclusive_group()
     ps_mode.add_argument(
@@ -851,7 +925,31 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     metrics_refresh_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     metrics_refresh_parser.set_defaults(handler=handle_metrics_refresh)
 
-    config_parser = subparsers.add_parser("config", help="Install or update Codex config.toml conventions.")
+    config_parser = subparsers.add_parser(
+        "config",
+        help="Install or update Codex config.toml conventions.",
+        description=(
+            "Install, merge, or validate Codex config.toml files at each OS layer. "
+            "Layers: root, domain, project, workflow, automation. "
+            "All write operations default to --dry-run; pass --apply to write. "
+            "Use 'install-tree' to apply all layers at once across the routed OS root."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("config.toml", "Codex config file at each OS layer directory."),
+            ],
+            examples=[
+                ("agentic-os config install --layer root --apply", "Install root-layer config.toml."),
+                ("agentic-os config install-tree --apply", "Install config.toml across the full OS tree."),
+                ("agentic-os config install-tree --dry-run", "Preview install-tree changes without writing."),
+                ("agentic-os config doctor --layer root", "Validate root-layer config.toml contracts."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
     config_install = config_subparsers.add_parser("install", help="Install or merge config.toml for an OS directory.")
     config_install.add_argument("--root", default=DEFAULT_ROOT, help="Directory that should receive config.toml.")
@@ -886,7 +984,30 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     config_doctor.add_argument("--layer", required=True, choices=sorted(CONFIG_LAYERS), help="Agentic OS config layer.")
     config_doctor.set_defaults(handler=handle_config_doctor)
 
-    doc_config_parser = subparsers.add_parser("doc-config", help="Plan and validate document-routing config.")
+    doc_config_parser = subparsers.add_parser(
+        "doc-config",
+        help="Plan and validate document-routing config.",
+        description=(
+            "Install, validate, and query doc-config.yml — the file that controls where documents, "
+            "specs, and notes are written across the OS and Notion. "
+            "Use 'plan' to get a deterministic routing decision for a given request before writing anything."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("<domain>/<project>/doc-config.yml", "Per-project document routing config."),
+                ("harness/shared_factory/doc-config.yml", "Shared-factory fallback routing config."),
+            ],
+            examples=[
+                ("agentic-os doc-config init --domain acme --project myproj", "Install doc-config.yml for a project."),
+                ("agentic-os doc-config doctor", "Check doc-config.yml contracts."),
+                ('agentic-os doc-config plan --request "write a spec for X"', "Get a routing plan for a document request."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     doc_config_subparsers = doc_config_parser.add_subparsers(dest="doc_config_command", required=True)
     doc_config_init = doc_config_subparsers.add_parser("init", help="Install doc-config.yml if missing.")
     doc_config_init.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -905,7 +1026,32 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     doc_config_plan.add_argument("--questions-present", action="store_true", help="Include QUESTIONS bucket in the plan.")
     doc_config_plan.set_defaults(handler=handle_doc_config_plan)
 
-    hook_parser = subparsers.add_parser("hook", help="Sync active Claude/Codex hooks to installed OS hook sources.")
+    hook_parser = subparsers.add_parser(
+        "hook",
+        help="Sync active Claude/Codex hooks to installed OS hook sources.",
+        description=(
+            "Point active Claude and Codex hook settings at installed OS hook scripts. "
+            "Use 'sync' to apply (default: dry-run). Use 'doctor' to validate the current hook wiring. "
+            "Targets: 'all' (default), 'claude' only, or 'codex' only."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("~/.claude/settings.json", "Claude hook settings (read and written by 'sync --target claude')."),
+                ("~/.codex/hooks.json", "Codex hook settings (read and written by 'sync --target codex')."),
+                ("harness/hooks/", "Installed OS hook scripts (the sync target)."),
+            ],
+            examples=[
+                ("agentic-os hook sync --apply", "Point both Claude and Codex hooks at OS hook scripts."),
+                ("agentic-os hook sync --target claude --apply", "Sync Claude hooks only."),
+                ("agentic-os hook sync --dry-run", "Preview hook sync without writing."),
+                ("agentic-os hook doctor", "Validate current hook wiring."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     hook_subparsers = hook_parser.add_subparsers(dest="hook_command", required=True)
     hook_sync_parser = hook_subparsers.add_parser("sync", help="Point active harness hook settings at installed OS hooks.")
     hook_sync_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -967,14 +1113,62 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     notion_active_work.add_argument("--token-env", default="GENOMES_NOTION_PAT", help="Environment variable containing the Notion token.")
     notion_active_work.set_defaults(handler=handle_notion_active_work_sync)
 
-    notion_org_parser = subparsers.add_parser("notion-org", help="Check Notion IA organization before page moves.")
+    notion_org_parser = subparsers.add_parser(
+        "notion-org",
+        help="Check Notion IA organization before page moves.",
+        description=(
+            "Validate Notion information-architecture organization and backup readiness "
+            "before performing page moves or structural changes. "
+            "Currently supports 'doctor' to check config and verify a local backup exists."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+                ("GENOMES_NOTION_PAT", "Notion API token for read access."),
+                ("GENOMES_NOTION_CONNECTOR", "Alternative Notion token (checked second)."),
+            ],
+            config_files=[
+                ("harness/registries/notion-surfaces.yml", "Notion page/database ID registry."),
+            ],
+            examples=[
+                ("agentic-os notion-org doctor", "Check Notion org config and backup readiness."),
+                ("agentic-os notion-org doctor --backup-dir ~/notion-backup", "Also verify a local backup directory."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     notion_org_subparsers = notion_org_parser.add_subparsers(dest="notion_org_command", required=True)
     notion_org_doctor_parser = notion_org_subparsers.add_parser("doctor", help="Check Notion organization config and backup readiness.")
     notion_org_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     notion_org_doctor_parser.add_argument("--backup-dir", help="Local Notion backup directory to verify before moves.")
     notion_org_doctor_parser.set_defaults(handler=handle_notion_org_doctor)
 
-    runtime_parser = subparsers.add_parser("runtime", help="Manage file-backed runtime state.")
+    runtime_parser = subparsers.add_parser(
+        "runtime",
+        help="Manage file-backed runtime state.",
+        description=(
+            "Manage the file-backed runtime surface: registries, run queue, heartbeats, schedules, integrations, and sources. "
+            "All mutating subcommands default to --dry-run; pass --apply to write changes. "
+            "'runtime supervise' runs a full supervisor tick across all subsystems at once."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("harness/registries/runtime-registry.yml", "Runtime registry: schedules, heartbeats, integrations."),
+                ("harness/registries/run-queue.yml", "Run queue: pending and in-progress items."),
+                ("harness/registries/automation-run-tracking.yml", "Automation run tracking."),
+            ],
+            examples=[
+                ("agentic-os runtime init", "Create runtime registries and log folders."),
+                ("agentic-os runtime doctor", "Check runtime registry health."),
+                ("agentic-os runtime supervise --apply", "Run a full supervisor tick across all subsystems."),
+                ("agentic-os runtime run-next --apply", "Dispatch the next safe queued item."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     runtime_subparsers = runtime_parser.add_subparsers(dest="runtime_command", required=True)
     runtime_init_parser = runtime_subparsers.add_parser("init", help="Create runtime registries and log folders.")
     runtime_init_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
@@ -1048,8 +1242,33 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     integration_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     integration_doctor_parser.set_defaults(handler=handle_integration_doctor)
 
-    doctor_parser = subparsers.add_parser("doctor", help="Run installed OS health checks.")
-    doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Run installed OS health checks.",
+        description=(
+            "Run OS health checks against the installed root. Checks required files, registry contracts, "
+            "config.toml conventions, and optional remote host reachability. "
+            "Use --all to aggregate all subsystem doctors (runtime, event-graph, config) in one pass. "
+            "Use --fix-missing to create only missing managed files without overwriting local edits."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("harness/registries/", "Registry files checked for contract compliance."),
+                ("config/hosts.yml", "SSH host registry probed when --check-remotes is set."),
+            ],
+            examples=[
+                ("agentic-os doctor", "Run structural health checks on the default OS root."),
+                ("agentic-os doctor --all", "Run all subsystem doctors in one report."),
+                ("agentic-os doctor --fix-missing", "Create missing managed files only."),
+                ("agentic-os doctor --check-remotes", "Also probe registered SSH hosts."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
+    doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path (default: %(default)s).")
     doctor_parser.add_argument("--fix-missing", action="store_true", help="Create missing managed files only.")
     doctor_parser.add_argument(
         "--all",
@@ -1095,6 +1314,30 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     self_improvement_parser = subparsers.add_parser(
         "self-improvement",
         help="Review local evidence for proposal-only OS improvements.",
+        description=(
+            "Analyse run logs, doctor findings, and automation maturity to generate proposal-only OS improvement suggestions. "
+            "Proposals are never auto-applied; they require explicit approve + promote steps. "
+            "Use 'run --dry-run' (default) to preview without writing, or 'run --apply' to persist proposals and generate a daily report."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+                ("GENOMES_NOTION_PAT", "Notion API token for writing the daily report projection (--apply mode)."),
+                ("GENOMES_NOTION_CONNECTOR", "Alternative Notion token (checked second after GENOMES_NOTION_PAT)."),
+            ],
+            config_files=[
+                ("harness/shared_factory/06-self-improvement/", "Self-improvement proposals, run records, and reports."),
+                ("harness/registries/self-improvement.yml", "Self-improvement config (review cadence, enabled checks)."),
+            ],
+            examples=[
+                ("agentic-os self-improvement run", "Preview a review without writing anything (dry-run)."),
+                ("agentic-os self-improvement run --apply", "Run review and persist proposals + report."),
+                ("agentic-os self-improvement list", "List open proposals."),
+                ("agentic-os self-improvement approve P042 --target harness/RULES.md", "Approve proposal P042 for a target file."),
+                ("agentic-os self-improvement promote P042 --target harness/RULES.md", "Promote approved proposal into a draft."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
     )
     self_improvement_subparsers = self_improvement_parser.add_subparsers(
         dest="self_improvement_command",
@@ -1258,8 +1501,30 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     chain_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     chain_doctor_parser.set_defaults(handler=handle_chain_doctor)
 
-    validate_parser = subparsers.add_parser("validate", help="Validate an installed OS root.")
-    validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate an installed OS root.",
+        description=(
+            "Validate the installed OS root directory structure, required files, and YAML contracts. "
+            "Exits 0 when valid; prints errors to stderr and exits 1 on failure. "
+            "Use --strict to also check structured YAML/JSON files against JSON schemas."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("schemas/", "JSON schemas used by --strict validation (inside the repo package)."),
+            ],
+            examples=[
+                ("agentic-os validate", "Validate the default OS root."),
+                ("agentic-os validate --root ~/my-os", "Validate a non-default OS root."),
+                ("agentic-os validate --strict", "Also validate YAML files against JSON schemas."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
+    validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path (default: %(default)s).")
     validate_parser.add_argument(
         "--strict",
         action="store_true",
@@ -1267,7 +1532,31 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     )
     validate_parser.set_defaults(handler=handle_validate)
 
-    docs_parser = subparsers.add_parser("docs", help="Install or update runtime OS documentation.")
+    docs_parser = subparsers.add_parser(
+        "docs",
+        help="Install or update runtime OS documentation.",
+        description=(
+            "Install, update, or run upkeep on runtime OS documentation assets: "
+            "templates, manuals, commands, skills, and plans. "
+            "'install' is a one-shot full install; 'update' adds only missing assets without overwriting local edits; "
+            "'upkeep' runs the observe-mode drift planner against the upkeep registry."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("harness/docs/", "Installed runtime documentation assets."),
+                ("harness/registries/documentation-upkeep.yml", "Documentation upkeep registry (used by 'upkeep')."),
+            ],
+            examples=[
+                ("agentic-os docs install", "Install all runtime documentation assets."),
+                ("agentic-os docs update", "Add missing assets without overwriting existing ones."),
+                ("agentic-os docs upkeep --write-receipt", "Run upkeep drift planner and write receipt artifacts."),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
     docs_subparsers = docs_parser.add_subparsers(dest="docs_command", required=True)
     docs_install = docs_subparsers.add_parser(
         "install",

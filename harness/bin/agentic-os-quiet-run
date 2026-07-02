@@ -11,11 +11,13 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
 ROOT = Path("/Users/genome/agentic_os")
 DEFAULT_ASYNC_ROOT = ROOT / "harness/shared_factory/06-runs-and-logs/async-runs"
+TERMINAL_STATUSES = {"success", "failure", "timeout", "error"}
 
 
 def now() -> str:
@@ -36,6 +38,22 @@ def write_json(path: Path, data: dict) -> None:
 
 def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def process_alive(pid: object) -> bool:
+    try:
+        parsed = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if parsed <= 0:
+        return False
+    try:
+        os.kill(parsed, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def append_event(run_dir: Path, event: str, **fields: object) -> None:
@@ -241,26 +259,203 @@ def status(args: argparse.Namespace) -> int:
     return 0
 
 
+def recovery_report(run_dir: Path) -> dict:
+    state_path = run_dir / "state.json"
+    if not state_path.exists():
+        return {
+            "run_dir": str(run_dir),
+            "classification": "unknown",
+            "safe_to_restart": False,
+            "reason": "state.json missing",
+        }
+
+    state = read_json(state_path)
+    status_value = str(state.get("status") or "unknown")
+    pid = state.get("pid")
+    monitor_pid = state.get("monitor_pid")
+    pid_alive = process_alive(pid)
+    monitor_alive = process_alive(monitor_pid)
+
+    classification = "unknown"
+    safe_to_restart = False
+    reason = f"unrecognized status: {status_value}"
+    if status_value == "running":
+        if pid_alive:
+            classification = "active"
+            reason = "worker pid is alive"
+        else:
+            classification = "stale"
+            safe_to_restart = True
+            reason = "state is running but worker pid is not alive"
+    elif status_value == "queued":
+        if monitor_alive:
+            classification = "active"
+            reason = "monitor pid is alive"
+        else:
+            classification = "stale"
+            safe_to_restart = True
+            reason = "state is queued but monitor pid is not alive"
+    elif status_value in TERMINAL_STATUSES:
+        classification = "terminal"
+        safe_to_restart = True
+        reason = f"prior run is terminal: {status_value}"
+    elif status_value == "stale":
+        classification = "stale"
+        safe_to_restart = True
+        reason = str(state.get("recovery_reason") or "prior run already marked stale")
+
+    return {
+        "run_dir": str(run_dir),
+        "classification": classification,
+        "safe_to_restart": safe_to_restart,
+        "reason": reason,
+        "state": state,
+        "pid_alive": pid_alive,
+        "monitor_pid_alive": monitor_alive,
+    }
+
+
+def recover(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir).expanduser()
+    report = recovery_report(run_dir)
+    if args.mark_stale and report["classification"] == "stale":
+        state_path = run_dir / "state.json"
+        state = report["state"]
+        prior_status = state.get("status")
+        checked_at = now()
+        state.update(
+            {
+                "status": "stale",
+                "prior_status": prior_status,
+                "recovery_checked_at": checked_at,
+                "recovery_reason": report["reason"],
+                "updated_at": checked_at,
+            }
+        )
+        write_json(state_path, state)
+        append_event(run_dir, "recovery_marked_stale", prior_status=prior_status, reason=report["reason"])
+        command_path = run_dir / "command.json"
+        if command_path.exists():
+            write_summary(run_dir, read_json(command_path), state)
+        report = recovery_report(run_dir)
+        report["marked_stale"] = True
+
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(f"{report['classification']} safe_to_restart={report['safe_to_restart']} {report['reason']}")
+    return 0
+
+
+_QUIET_RUN_EPILOG = """\
+ENVIRONMENT
+  AGENTIC_OS_ACTIVE_WORK_ITEM   When --artifact-dir is omitted, async-runs are placed
+                                  under $AGENTIC_OS_ACTIVE_WORK_ITEM/artifacts/async-runs/.
+                                  Falls back to harness/shared_factory/06-runs-and-logs/async-runs/.
+
+FILES
+  <run-dir>/state.json          Structured run state (status, pid, timestamps, exit_code).
+  <run-dir>/stdout.log          Captured stdout from the detached command.
+  <run-dir>/stderr.log          Captured stderr from the detached command.
+  <run-dir>/events.jsonl        Append-only event log for the run lifecycle.
+  <run-dir>/summary.md          Human-readable run summary written on completion.
+
+EXAMPLES
+  agentic-os-quiet-run start -- agentic-os self-improvement run --apply
+      Detach a self-improvement run; writes state to the default async-runs folder.
+
+  agentic-os-quiet-run start --artifact-dir ~/my-work/artifacts --label "build" -- make all
+      Run 'make all' and store artifacts in ~/my-work/artifacts/async-runs/<run-id>/.
+
+  agentic-os-quiet-run start --timeout-minutes 30 -- pnpm test
+      Detach pnpm test with a 30-minute timeout.
+
+  agentic-os-quiet-run status --run-dir <run-dir>
+      Print human-readable status for a run directory.
+
+  agentic-os-quiet-run status --run-dir <run-dir> --json
+      Emit the full state.json as JSON.
+
+  agentic-os-quiet-run recover --run-dir <run-dir>
+      Classify whether a run is safe to restart.
+
+  agentic-os-quiet-run recover --run-dir <run-dir> --mark-stale
+      Mark a stale run in state.json and print the updated classification.
+"""
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="agentic-os-quiet-run")
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-quiet-run",
+        description=(
+            "Start long-running commands detached from the terminal with artifact-backed state. "
+            "The command runs as a background subprocess; state and logs are written to a run directory "
+            "so you can check status and recover without chat polling."
+        ),
+        epilog=_QUIET_RUN_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="cmd", required=True)
 
-    start_parser = subparsers.add_parser("start", help="start a detached quiet run")
-    start_parser.add_argument("--artifact-dir")
-    start_parser.add_argument("--label")
-    start_parser.add_argument("--run-id")
-    start_parser.add_argument("--work-dir")
-    start_parser.add_argument("--timeout-minutes", type=int)
-    start_parser.add_argument("--shell", action="store_true")
-    start_parser.add_argument("command", nargs=argparse.REMAINDER)
+    start_parser = subparsers.add_parser(
+        "start",
+        help="Start a detached quiet run.",
+        description=(
+            "Launch COMMAND detached from the terminal. "
+            "Writes a run directory with stdout/stderr logs, a structured state.json, and an events.jsonl. "
+            "Separate the command from flags with --: agentic-os-quiet-run start [flags] -- COMMAND [args]"
+        ),
+    )
+    start_parser.add_argument(
+        "--artifact-dir",
+        help=(
+            "Directory under which the async-runs folder is created. "
+            "Default: $AGENTIC_OS_ACTIVE_WORK_ITEM/artifacts, or harness/shared_factory/06-runs-and-logs/async-runs/."
+        ),
+    )
+    start_parser.add_argument("--label", help="Human-readable label for the run (used in the run directory name).")
+    start_parser.add_argument("--run-id", help="Override the auto-generated run id (timestamp-label slug).")
+    start_parser.add_argument("--work-dir", help="Working directory for the command (default: current directory).")
+    start_parser.add_argument(
+        "--timeout-minutes",
+        type=int,
+        help="Kill the process after this many minutes and set status to 'timeout'.",
+    )
+    start_parser.add_argument(
+        "--shell",
+        action="store_true",
+        help="Treat the command as a shell command string rather than an argv list.",
+    )
+    start_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run (after --).")
     start_parser.set_defaults(func=start)
 
-    status_parser = subparsers.add_parser("status", help="print quiet run status")
-    status_parser.add_argument("--run-dir", required=True)
-    status_parser.add_argument("--json", action="store_true")
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Print quiet run status.",
+        description="Read and print the state.json for a run directory. Exits 0 always.",
+    )
+    status_parser.add_argument("--run-dir", required=True, help="Run directory path. Required.")
+    status_parser.add_argument("--json", action="store_true", help="Emit the full state.json as JSON.")
     status_parser.set_defaults(func=status)
 
-    monitor_parser = subparsers.add_parser("_monitor")
+    recover_parser = subparsers.add_parser(
+        "recover",
+        help="Classify whether a quiet run can be safely resumed.",
+        description=(
+            "Inspect run state and classify as: running, done, stale, or unknown. "
+            "Use --mark-stale to update state.json when the run is classified as stale."
+        ),
+    )
+    recover_parser.add_argument("--run-dir", required=True, help="Run directory path. Required.")
+    recover_parser.add_argument("--json", action="store_true", help="Emit the full recovery report as JSON.")
+    recover_parser.add_argument(
+        "--mark-stale",
+        action="store_true",
+        help="Write status=stale to state.json when classification is 'stale'.",
+    )
+    recover_parser.set_defaults(func=recover)
+
+    monitor_parser = subparsers.add_parser("_monitor", help=argparse.SUPPRESS)
     monitor_parser.add_argument("run_dir")
     monitor_parser.set_defaults(func=monitor)
 

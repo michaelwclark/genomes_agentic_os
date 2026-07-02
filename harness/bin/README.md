@@ -1,13 +1,27 @@
 # Harness Bin
 
-Reserved for executable wrappers owned by the installed Agentic OS harness.
+Executable wrappers owned by the installed Agentic OS harness.
 
-Current required executables live outside this folder:
+## Package entrypoints
 
-- `agentic-os` is the Python package console entrypoint.
-- `aos` is the short Python package console entrypoint for the same CLI.
-- `context-mode` is expected at `/Users/genome/.local/bin/context-mode`.
-- `agentic-os-context-mode` is the local context-mode status and kill-switch wrapper.
+- `agentic-os` — Python package console entrypoint for the full CLI.
+- `aos` — Short alias for the same CLI.
+- `context-mode` — Expected at `/Users/genome/.local/bin/context-mode`.
+- `agentic-os-context-mode` — Local context-mode status and kill-switch wrapper.
+
+## Scripts in this directory
+
+| Script | Description |
+|---|---|
+| `agentic-os-automation-run-summary` | Replace an automation's Notion last-run summary page after each run. |
+| `agentic-os-intake-sync` | Sync intake data from connected sources. |
+| `agentic-os-jira` | Jira helper for the VenturesGo Atlassian site; prefers OAuth, falls back to API token. |
+| `agentic-os-memory-analytics` | Read-only memory-analytics viewer; runs report on genomesbox via SSH. |
+| `agentic-os-notify` | Send OS notifications. |
+| `agentic-os-quiet-run` | Start and monitor long-running commands detached from the terminal. |
+| `agentic-os-status-report` | Generate durable OS status report artifacts (markdown, Notion draft, gap analysis). |
+| `register-codex-skills` | Sync Agentic OS skill adapters to Codex launcher metadata. |
+| `register-harness-skills` | Register harness skills into the OS skill registry. |
 
 Add scripts here only when the OS package owns the wrapper and the script is safe
 to mirror into installed roots.

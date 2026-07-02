@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Agentic OS memory-analytics viewer wrapper.
+
+Runs the read-only retrieval analytics report on genomesbox (the host that can
+reach Atlas) and, for `export`, copies the markdown + JSON artifacts back under
+the active work item's artifacts folder. Read-only and redacted: this wrapper
+never prints or transmits the connection string.
+
+Usage:
+    agentic-os-memory-analytics <summary|recent|methods|compare|health|export> \
+        [--project losmon] [--since 7d] [--limit 25] \
+        [--format markdown|json] [--out <dir>] [--host genomesbox]
+"""
+
+from __future__ import annotations
+
+import argparse
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+REMOTE_REPO = "/home/genome/projects/losmon"
+REMOTE_SCRIPT = "scripts/memory/retrieval-analytics-report.ts"
+REMOTE_EXPORT_DIR = "/tmp/agentic-os-memory-analytics"
+DEFAULT_OUT = (
+    ROOT
+    / "los/02-projects/losmon/work-items/02-active/001_grep_memory_system_addition"
+    / "artifacts/retrieval-analytics"
+)
+COMMANDS = ["summary", "recent", "methods", "compare", "health", "export"]
+
+
+def build_remote_cmd(args: argparse.Namespace, out_dir: str | None) -> str:
+    flags: list[str] = [args.command]
+    if args.project:
+        flags += ["--project", args.project]
+    if args.since:
+        flags += ["--since", args.since]
+    if args.limit is not None:
+        flags += ["--limit", str(args.limit)]
+    if args.format and args.command in {"summary", "methods", "compare"}:
+        flags += ["--format", args.format]
+    if out_dir and args.command == "export":
+        flags += ["--out", out_dir]
+    flag_str = " ".join(shlex.quote(f) for f in flags)
+    inner = f"cd {REMOTE_REPO} && pnpm -s tsx {REMOTE_SCRIPT} {flag_str}"
+    return f"bash -lc {shlex.quote(inner)}"
+
+
+def run_ssh(host: str, remote_cmd: str) -> int:
+    proc = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", host, remote_cmd],
+        check=False,
+    )
+    return proc.returncode
+
+
+def copy_back(host: str, local_out: Path) -> None:
+    local_out.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "rsync",
+            "-a",
+            "-e",
+            "ssh -o BatchMode=yes",
+            f"{host}:{REMOTE_EXPORT_DIR}/",
+            f"{local_out}/",
+        ],
+        check=False,
+    )
+
+
+_ANALYTICS_EPILOG = f"""\
+COMMANDS
+  summary   Print a retrieval-analytics summary table for the project.
+  recent    Show recent memory retrieval events.
+  methods   Break down retrieval hit rates by method (grep, cocoindex, chroma, etc.).
+  compare   Side-by-side comparison of current vs. grep-sidecar retrieval.
+  health    Health check on the memory service and Atlas connection.
+  export    Copy markdown + JSON artifacts back to the local --out directory.
+
+SERVICE
+  The analytics report runs on the remote host (default: genomesbox) via SSH.
+  The remote host must be reachable with BatchMode=yes (no password prompt).
+  Backend: losmon memory MCP service at genomesbox:3155.
+
+FILES
+  Remote script:  {REMOTE_REPO}/{REMOTE_SCRIPT}
+  Remote export:  {REMOTE_EXPORT_DIR}/ (used by 'export' command)
+  Local out:      (see --out; default: {DEFAULT_OUT})
+
+EXAMPLES
+  agentic-os-memory-analytics summary
+      Print a retrieval summary for the last 7 days (default window).
+
+  agentic-os-memory-analytics summary --since 30d --project losmon
+      Summary for the losmon project over the last 30 days.
+
+  agentic-os-memory-analytics methods --format markdown
+      Method breakdown as a markdown table.
+
+  agentic-os-memory-analytics compare
+      Side-by-side current vs. grep-sidecar comparison.
+
+  agentic-os-memory-analytics export --out ~/my-work/artifacts/retrieval-analytics
+      Export and copy artifacts to a local directory.
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Read-only memory-analytics viewer for the Genome's Brain unified memory system. "
+            "Runs the retrieval-analytics report on the remote host (genomesbox) via SSH "
+            "and prints the result locally. Never prints credentials or connection strings."
+        ),
+        epilog=_ANALYTICS_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "command",
+        choices=COMMANDS,
+        help=f"Analytics command to run: {', '.join(COMMANDS)}.",
+    )
+    parser.add_argument(
+        "--project",
+        help="Project slug to filter analytics (e.g. losmon). Default: all projects.",
+    )
+    parser.add_argument(
+        "--since",
+        default="7d",
+        help="Lookback window (e.g. 7d, 30d, 2026-01-01). Default: 7d.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Max rows to return. Default: determined by the remote script.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        help="Output format for commands that support it (summary, methods, compare).",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT,
+        help=f"Local directory for 'export' artifacts (default: {DEFAULT_OUT}).",
+    )
+    parser.add_argument(
+        "--host",
+        default="genomesbox",
+        help="SSH host alias that can reach the memory service (default: genomesbox).",
+    )
+    args = parser.parse_args()
+
+    remote_out = REMOTE_EXPORT_DIR if args.command == "export" else None
+    remote_cmd = build_remote_cmd(args, remote_out)
+    code = run_ssh(args.host, remote_cmd)
+    if code != 0:
+        print(f"memory-analytics: remote command exited {code}", file=sys.stderr)
+        return code
+
+    if args.command == "export":
+        copy_back(args.host, args.out)
+        print(f"\nExport artifacts copied to: {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

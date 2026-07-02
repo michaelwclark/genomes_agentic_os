@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""Create durable Agentic OS status report artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_COLLECTOR = Path.home() / ".codex/skills/agentic-status-report/scripts/agentic_status.py"
+DEFAULT_RUNS_ROOT = ROOT / "harness/shared_factory/03-workflows/engineering/status_report/runs"
+NOTION_TRACKING = ROOT / "harness/shared_factory/00-control-plane/notion-tracking.yml"
+
+
+def slug(value: str) -> str:
+    value = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
+    return value[:60] or "status-report"
+
+
+def read_simple_yaml_value(path: Path, key: str) -> str:
+    if not path.exists():
+        return ""
+    prefix = f"{key}:"
+    for line in path.read_text(errors="replace").splitlines():
+        if line.startswith(prefix):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def collector_command(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(args.collector),
+        "--format",
+        "json",
+        "--hosts",
+        args.hosts,
+        "--max-projects",
+        str(args.max_projects),
+        "--remote-timeout",
+        str(args.remote_timeout),
+    ]
+    if args.hours is not None:
+        cmd.extend(["--hours", str(args.hours)])
+    elif args.days is not None:
+        cmd.extend(["--hours", str(args.days * 24)])
+    elif args.since:
+        cmd.extend(["--since", args.since])
+    return cmd
+
+
+def run_collector(args: argparse.Namespace) -> tuple[dict[str, Any], list[str], list[str]]:
+    if not args.collector.exists():
+        raise SystemExit(f"collector not found: {args.collector}")
+
+    cmd = collector_command(args)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=args.timeout)
+    warnings: list[str] = []
+    if proc.stderr.strip():
+        warnings.append(proc.stderr.strip())
+    if proc.returncode != 0:
+        raise SystemExit(f"collector failed with exit {proc.returncode}: {proc.stderr.strip()}")
+    return json.loads(proc.stdout), warnings, cmd
+
+
+def iter_sessions(data: dict[str, Any]) -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    for project in data.get("projects", []):
+        for session in project.get("sessions", []):
+            session = dict(session)
+            session.setdefault("project", project.get("project", "unknown"))
+            sessions.append(session)
+    return sessions
+
+
+def git_root(path: str) -> str:
+    if not path:
+        return ""
+    cwd = Path(path).expanduser()
+    if not cwd.exists():
+        return ""
+    if cwd.is_file():
+        cwd = cwd.parent
+    proc = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=5,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def dirty_repos(data: dict[str, Any]) -> list[dict[str, Any]]:
+    roots: set[str] = set()
+    for session in iter_sessions(data):
+        root = git_root(str(session.get("cwd") or ""))
+        if root:
+            roots.add(root)
+    root = git_root(str(ROOT))
+    if root:
+        roots.add(root)
+
+    dirty: list[dict[str, Any]] = []
+    for root in sorted(roots):
+        proc = subprocess.run(
+            ["git", "-C", root, "status", "--short"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            dirty.append({"repo": root, "error": proc.stderr.strip()[:500]})
+            continue
+        lines = [line for line in proc.stdout.splitlines() if line.strip()]
+        if lines:
+            dirty.append({"repo": root, "count": len(lines), "sample": lines[:40]})
+    return dirty
+
+
+def line(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("\n", " ").strip()
+
+
+def collect_attention(data: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    for project in data.get("projects", []):
+        project_name = line(project.get("project") or "unknown")
+        for attention in project.get("attention", [])[:8]:
+            items.append(f"{project_name}: {line(attention)}")
+    return dedupe(items)
+
+
+def dedupe(items: list[str], limit: int | None = None) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        item = item.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+        if limit and len(out) >= limit:
+            break
+    return out
+
+
+def session_text(session: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("user_prompts", "assistant_notes", "event_notes", "function_calls", "tool_errors"):
+        value = session.get(key)
+        if isinstance(value, list):
+            parts.extend(str(v) for v in value)
+        elif value:
+            parts.append(str(value))
+    return " ".join(parts)
+
+
+def gap_analysis(data: dict[str, Any], dirty: list[dict[str, Any]], collector_warnings: list[str]) -> list[str]:
+    gaps: list[str] = []
+    for item in collect_attention(data):
+        gaps.append(f"Resolve or verify attention item: {item}")
+
+    surface_words = re.compile(r"\b(workflow|automation|command|slash|skill|registry|TOOLS\\.md|Notion|doc-config)\b", re.I)
+    for session in iter_sessions(data):
+        text = session_text(session)
+        if not text:
+            continue
+        project = line(session.get("project") or "unknown")
+        cwd = line(session.get("cwd") or "")
+        label = f"{project}" + (f" ({cwd})" if cwd else "")
+        if not session.get("final_seen"):
+            gaps.append(f"Check unfinished session for {label}: no final response recorded.")
+        if surface_words.search(text):
+            gaps.append(f"Audit invocation/docs exposure for {label}: recent work mentioned workflow, command, skill, registry, Notion, or doc-config surfaces.")
+        errors = session.get("tool_errors")
+        if errors:
+            count = len(errors) if isinstance(errors, list) else int(errors)
+            gaps.append(f"Review tool errors for {label}: {count} recorded.")
+
+    for repo in dirty:
+        if repo.get("count"):
+            gaps.append(f"Reconcile uncommitted changes in {repo['repo']}: {repo['count']} changed paths.")
+        elif repo.get("error"):
+            gaps.append(f"Investigate git status failure in {repo['repo']}: {repo['error']}")
+
+    for warning in collector_warnings + list(data.get("warnings", [])):
+        gaps.append(f"Collector warning needs review: {line(warning)[:240]}")
+
+    gaps.append("Publish the Notion projection only after verifying the target workspace is Genome's Notion.")
+    return dedupe(gaps, 20)
+
+
+def fmt_items(items: list[str], empty: str = "None flagged.") -> str:
+    if not items:
+        return f"- {empty}\n"
+    return "".join(f"- {item}\n" for item in items)
+
+
+def render_project(project: dict[str, Any]) -> str:
+    name = line(project.get("project") or "unknown")
+    hosts = ", ".join(project.get("hosts") or [])
+    sessions = project.get("sessions") or []
+    attention = project.get("attention") or []
+    parts = [
+        f"### {name}\n\n",
+        f"- Last activity: `{line(project.get('last')) or 'unknown'}`\n",
+        f"- Hosts: `{hosts or 'unknown'}`\n",
+        f"- Sessions: `{len(sessions)}`\n",
+    ]
+    if attention:
+        parts.append("- Attention:\n")
+        for item in attention[:6]:
+            parts.append(f"  - {line(item)}\n")
+    if sessions:
+        parts.append("- Recent session receipts:\n")
+        for session in sessions[:5]:
+            path = line(session.get("path"))
+            final = "yes" if session.get("final_seen") else "no"
+            last = line(session.get("last") or session.get("start") or "unknown")
+            parts.append(f"  - `{session.get('host', 'unknown')}` final=`{final}` last=`{last}` path=`{path}`\n")
+    parts.append("\n")
+    return "".join(parts)
+
+
+def render_report(
+    data: dict[str, Any],
+    dirty: list[dict[str, Any]],
+    gaps: list[str],
+    run_dir: Path,
+    collector_cmd: list[str],
+) -> str:
+    generated = datetime.now().astimezone().isoformat(timespec="seconds")
+    attention = collect_attention(data)
+    parts = [
+        "# Agentic OS Status Report\n\n",
+        "| Field | Value |\n",
+        "| --- | --- |\n",
+        f"| Generated | `{generated}` |\n",
+        f"| Window Start | `{line(data.get('since')) or 'collector default'}` |\n",
+        f"| Run Directory | `{run_dir}` |\n",
+        f"| Collector | `{collector_cmd[1] if len(collector_cmd) > 1 else ''}` |\n",
+        "\n",
+        "## Needs Attention First\n\n",
+        fmt_items(attention[:12]),
+        "\n",
+        "## Gap Analysis / What Next\n\n",
+        fmt_items(gaps),
+        "\n",
+        "## Recent Work By Project\n\n",
+    ]
+    projects = data.get("projects") or []
+    if not projects:
+        parts.append("- No recent project activity was found in the selected window.\n\n")
+    for project in projects:
+        parts.append(render_project(project))
+
+    parts.extend([
+        "## Dirty Workspace Scan\n\n",
+    ])
+    if not dirty:
+        parts.append("- No dirty git repositories were found from recent session working directories.\n\n")
+    else:
+        for repo in dirty:
+            parts.append(f"### {repo.get('repo')}\n\n")
+            if repo.get("error"):
+                parts.append(f"- Error: {repo['error']}\n\n")
+            else:
+                parts.append(f"- Changed paths: `{repo.get('count', 0)}`\n")
+                for item in repo.get("sample", [])[:20]:
+                    parts.append(f"  - `{item}`\n")
+                parts.append("\n")
+
+    parts.extend([
+        "## Source Coverage\n\n",
+        f"- Collector JSON: `{run_dir / 'collector.json'}`\n",
+        f"- Notion projection draft: `{run_dir / 'notion-projection.md'}`\n",
+        f"- Notion sync receipt: `{run_dir / 'notion-sync.md'}`\n",
+    ])
+    warnings = list(data.get("warnings", []))
+    if warnings:
+        parts.append("- Collector warnings:\n")
+        for warning in warnings:
+            parts.append(f"  - {line(warning)}\n")
+    return "".join(parts)
+
+
+def render_notion_projection(data: dict[str, Any], gaps: list[str], run_dir: Path) -> str:
+    generated = datetime.now().astimezone().isoformat(timespec="seconds")
+    parts = [
+        "# Agentic OS Status Report\n\n",
+        f"Generated: `{generated}`\n\n",
+        f"Window start: `{line(data.get('since')) or 'collector default'}`\n\n",
+        "## Needs Attention First\n\n",
+        fmt_items(collect_attention(data)[:8]),
+        "\n",
+        "## What Next / Gap Analysis\n\n",
+        fmt_items(gaps[:12]),
+        "\n",
+        "## Project Summaries\n\n",
+    ]
+    for project in (data.get("projects") or [])[:8]:
+        parts.append(f"### {line(project.get('project') or 'unknown')}\n\n")
+        parts.append(f"- Last activity: `{line(project.get('last')) or 'unknown'}`\n")
+        parts.append(f"- Sessions: `{len(project.get('sessions') or [])}`\n")
+        for item in (project.get("attention") or [])[:3]:
+            parts.append(f"- Attention: {line(item)}\n")
+        parts.append("\n")
+    parts.extend([
+        "## Filesystem Receipt\n\n",
+        f"- OS report bundle: `{run_dir}`\n",
+        f"- Full markdown report: `{run_dir / 'status-report.md'}`\n",
+    ])
+    return "".join(parts)
+
+
+def render_notion_receipt(run_dir: Path) -> str:
+    workspace = read_simple_yaml_value(NOTION_TRACKING, "workspace") or "Genome's Notion"
+    parent = read_simple_yaml_value(NOTION_TRACKING, "parent_page_id")
+    cockpit = read_simple_yaml_value(NOTION_TRACKING, "cockpit_page_title") or "Runtime Control Plane"
+    return "\n".join([
+        "# Notion Projection Receipt",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        "| Status | `pending` |",
+        f"| Target Workspace | `{workspace}` |",
+        f"| Target Parent | `{cockpit}` |",
+        f"| Parent Page ID | `{parent or 'not configured'}` |",
+        "| Destination | `Status Reports` page or database under the target parent |",
+        f"| Projection Draft | `{run_dir / 'notion-projection.md'}` |",
+        "",
+        "## Write Rule",
+        "",
+        "Before writing, verify the active Notion workspace is Genome's Notion. Do not write",
+        "if the connector is authenticated to Michael Clark's personal Notion or any",
+        "unverified workspace. After publishing, update this file with the Notion URL,",
+        "writer, timestamp, and verification method.",
+        "",
+    ])
+
+
+_STATUS_REPORT_EPILOG = f"""\
+FILES
+  <output-root>/<run-id>/collector.json       Raw collector output.
+  <output-root>/<run-id>/status-report.md     Full markdown status report.
+  <output-root>/<run-id>/notion-projection.md Condensed draft for Notion projection.
+  <output-root>/<run-id>/notion-sync.md       Notion write receipt (pending until published).
+  <output-root>/<run-id>/gap-analysis.json    Gap and dirty-repo analysis as JSON.
+
+  Collector script (default): {DEFAULT_COLLECTOR}
+  Default output root:        {DEFAULT_RUNS_ROOT}
+  Notion tracking config:     {NOTION_TRACKING}
+
+ENVIRONMENT
+  No env vars are read directly by this script. The collector script may read
+  AGENTIC_OS_ROOT and similar variables from ~/.zshenv.
+
+EXAMPLES
+  agentic-os-status-report
+      Generate a status report using the last 24 hours of data (collector default).
+
+  agentic-os-status-report --hours 48
+      Use a 48-hour lookback window.
+
+  agentic-os-status-report --days 7 --hosts local
+      7-day report, local host only (skips remote genomesbox).
+
+  agentic-os-status-report --label weekly-review
+      Generate a report with a labelled run directory for easy identification.
+
+  agentic-os-status-report --collector ~/my-collector.py
+      Use a custom collector script.
+"""
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate durable Agentic OS status report artifacts: "
+            "a markdown report, a Notion projection draft, and a gap analysis. "
+            "Runs the agentic_status.py collector, then writes artifacts to a timestamped run directory."
+        ),
+        epilog=_STATUS_REPORT_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    window = parser.add_mutually_exclusive_group()
+    window.add_argument("--hours", type=float, help="Look back N hours (mutually exclusive with --days and --since).")
+    window.add_argument("--days", type=float, help="Look back N days (mutually exclusive with --hours and --since).")
+    window.add_argument("--since", help="ISO timestamp to use as the report window start.")
+    parser.add_argument(
+        "--hosts",
+        choices=["all", "local", "genomesbox"],
+        default="all",
+        help="Which hosts to collect from: all (default), local only, or genomesbox only.",
+    )
+    parser.add_argument(
+        "--max-projects",
+        type=int,
+        default=10,
+        help="Maximum number of projects to include in the report (default: 10).",
+    )
+    parser.add_argument(
+        "--remote-timeout",
+        type=int,
+        default=20,
+        help="SSH remote collector timeout in seconds (default: 20).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=90,
+        help="Total collector subprocess timeout in seconds (default: 90).",
+    )
+    parser.add_argument(
+        "--collector",
+        type=Path,
+        default=DEFAULT_COLLECTOR,
+        help=f"Path to the collector script (default: {DEFAULT_COLLECTOR}).",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_RUNS_ROOT,
+        help=f"Root directory for run output directories (default: {DEFAULT_RUNS_ROOT}).",
+    )
+    parser.add_argument(
+        "--label",
+        default="",
+        help="Optional label appended to the timestamped run directory name.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    data, collector_warnings, cmd = run_collector(args)
+
+    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S")
+    run_id = stamp if not args.label else f"{stamp}-{slug(args.label)}"
+    run_dir = args.output_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+
+    dirty = dirty_repos(data)
+    gaps = gap_analysis(data, dirty, collector_warnings)
+
+    (run_dir / "collector.json").write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    (run_dir / "status-report.md").write_text(render_report(data, dirty, gaps, run_dir, cmd))
+    (run_dir / "notion-projection.md").write_text(render_notion_projection(data, gaps, run_dir))
+    (run_dir / "notion-sync.md").write_text(render_notion_receipt(run_dir))
+    (run_dir / "gap-analysis.json").write_text(json.dumps({"gaps": gaps, "dirty_repos": dirty}, indent=2) + "\n")
+
+    print(f"run_dir={run_dir}")
+    print(f"report={run_dir / 'status-report.md'}")
+    print(f"notion_projection={run_dir / 'notion-projection.md'}")
+    print(f"notion_receipt={run_dir / 'notion-sync.md'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
