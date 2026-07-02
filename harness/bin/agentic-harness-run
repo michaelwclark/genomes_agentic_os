@@ -7,6 +7,13 @@ Dispatches to:
   auto   → resolve harness from harness-routing.yml by --task-type; env var
            AGENTIC_HARNESS_FORCE=claude|gpt overrides everything.
 
+Cross-host dispatch (feat/024):
+  --host local      → unchanged local subprocess behaviour (default)
+  --host <alias>    → SSH-wrap the inner harness exec on the named remote host;
+                      receipt + artifact still written on bigmac (thin-remote).
+  --host auto       → probe eligible hosts (ssh_pgrep), pick least-active;
+                      requires --project (or --cwd from which project is reverse-looked up).
+
 Writes a receipt JSONL line to the runs log and captures all output to
 an artifact file under the configured artifact directory.
 """
@@ -17,7 +24,7 @@ import argparse
 import datetime as dt
 import json
 import os
-import signal
+import shlex
 import subprocess
 import sys
 import textwrap
@@ -46,6 +53,14 @@ ARTIFACT_DIR = INSTANCE_ROOT / "harness/shared_factory/06-runs-and-logs/harness-
 _BIN_DIR = Path(__file__).resolve().parent
 ROUTING_CONFIG = _BIN_DIR.parent / "registries" / "harness-routing.yml"
 
+# Cross-host routing config (feat/024).
+HOST_ROUTING_CONFIG = _BIN_DIR.parent / "registries" / "hosts-routing.yml"
+
+# SSH identity config (feat/024) — resolves ssh_alias, ssh_options, home.
+# Loaded from the repo next to this script; instance version is identical.
+_REPO_ROOT = _BIN_DIR.parent.parent
+HOSTS_CONFIG = _REPO_ROOT / "config" / "hosts.yml"
+
 # Default subprocess timeout in seconds.
 DEFAULT_TIMEOUT_SEC = 900
 
@@ -68,6 +83,31 @@ def load_routing() -> dict:
         return {}
     except Exception as exc:  # noqa: BLE001
         print(f"warning: could not load routing config: {exc}", file=sys.stderr)
+        return {}
+
+
+def load_host_routing() -> dict:
+    """Load hosts-routing.yml; return empty dict on failure."""
+    try:
+        with HOST_ROUTING_CONFIG.open(encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        print(f"warning: could not load host routing config: {exc}", file=sys.stderr)
+        return {}
+
+
+def load_hosts() -> dict:
+    """Load config/hosts.yml; return empty dict on failure."""
+    try:
+        with HOSTS_CONFIG.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+            return data.get("hosts") or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        print(f"warning: could not load hosts config: {exc}", file=sys.stderr)
         return {}
 
 
@@ -164,6 +204,225 @@ def build_cmd_gpt(prompt: str, model: str | None, cwd: Path) -> tuple[list[str],
     return cmd, dict(os.environ)
 
 
+# ── Cross-host helpers (feat/024) ─────────────────────────────────────────────
+
+
+def resolve_remote_cwd(local_cwd: str, host: str, routing: dict) -> str:
+    """Translate a bigmac-local cwd to the remote path on *host*.
+
+    Two-layer resolution (SPEC §7.3):
+      1. project_paths keyed lookup: routing.hosts.<host>.project_paths[<project>]
+         Matches when local_cwd equals a bigmac project_paths value exactly.
+      2. path_rewrite fallback: apply the first matching prefix substitution.
+
+    Returns the translated remote path, or the original path unchanged if no
+    translation rule applies (caller should warn).
+    """
+    host_cfg = (routing.get("hosts") or {}).get(host) or {}
+    project_paths = host_cfg.get("project_paths") or {}
+    path_rewrite = host_cfg.get("path_rewrite") or []
+
+    # Layer 1: reverse-lookup bigmac project_paths to find the project name,
+    # then look up the same project name in the remote host's project_paths.
+    bigmac_cfg = (routing.get("hosts") or {}).get("bigmac") or {}
+    bigmac_project_paths = bigmac_cfg.get("project_paths") or {}
+
+    local_cwd_str = str(local_cwd)
+    for project_name, bigmac_path in bigmac_project_paths.items():
+        if str(bigmac_path) == local_cwd_str:
+            remote_path = project_paths.get(project_name)
+            if remote_path:
+                return str(remote_path)
+
+    # Layer 2: prefix-rewrite fallback.
+    for rule in path_rewrite:
+        from_prefix = rule.get("from", "")
+        to_prefix = rule.get("to", "")
+        if from_prefix and local_cwd_str.startswith(from_prefix):
+            return to_prefix + local_cwd_str[len(from_prefix):]
+
+    # No translation found — return unchanged (may fail on remote; caller warns).
+    return local_cwd_str
+
+
+def reverse_lookup_project(local_cwd: str, routing: dict) -> str | None:
+    """Return the project name whose bigmac path equals *local_cwd*, or None."""
+    bigmac_cfg = (routing.get("hosts") or {}).get("bigmac") or {}
+    bigmac_project_paths = bigmac_cfg.get("project_paths") or {}
+    local_cwd_str = str(local_cwd)
+    for project_name, path in bigmac_project_paths.items():
+        if str(path) == local_cwd_str:
+            return project_name
+    return None
+
+
+def eligible_hosts(project: str | None, harness: str, routing: dict) -> list[str]:
+    """Return list of host aliases eligible for this project + harness combo.
+
+    A host is eligible iff:
+      (a) it exists in hosts-routing.yml
+      (b) the required harness is in host.harnesses
+      (c) when project is given: project appears in host.project_paths
+          (absence means the project isn't checked out there → ineligible)
+    """
+    result: list[str] = []
+    for alias, host_cfg in (routing.get("hosts") or {}).items():
+        if harness not in (host_cfg.get("harnesses") or []):
+            continue
+        if project is not None:
+            if project not in (host_cfg.get("project_paths") or {}):
+                continue
+        result.append(alias)
+    return result
+
+
+def probe_active_count(
+    host: str,
+    routing: dict,
+    hosts: dict,
+    *,
+    runner: object = None,
+) -> int:
+    """Return the number of in-flight harness runs on *host*.
+
+    Local (bigmac): uses local pgrep.
+    Remote: SSH with pgrep. Uses probe_pattern from auto_route config.
+
+    On timeout or any error: returns max_concurrent (treat as at-capacity).
+
+    The injectable *runner* accepts (argv: list[str], timeout: int) and returns
+    an object with .returncode, .stdout, .stderr — same as subprocess.CompletedProcess.
+    Defaults to subprocess.run if not provided (tests pass a fake).
+    """
+    auto_cfg = routing.get("auto_route") or {}
+    probe_pattern = auto_cfg.get("probe_pattern") or "claude -p|codex exec"
+    probe_timeout = int(auto_cfg.get("probe_timeout_sec") or 6)
+
+    host_cfg = (routing.get("hosts") or {}).get(host) or {}
+    max_concurrent = int(host_cfg.get("max_concurrent") or 1)
+
+    if runner is None:
+        def runner(argv: list[str], timeout: int = 20) -> object:
+            return subprocess.run(  # noqa: S603
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
+    # Local probe: no SSH needed.
+    if host == "bigmac":
+        argv = ["pgrep", "-f", probe_pattern]
+        try:
+            result = runner(argv, timeout=probe_timeout)
+            if result.returncode == 0:
+                count = len(result.stdout.strip().splitlines())
+            elif result.returncode == 1:
+                count = 0  # pgrep returns 1 when no match
+            else:
+                return max_concurrent  # error → at-capacity
+            return count
+        except Exception:
+            return max_concurrent
+
+    # Remote probe via SSH.
+    host_entry = hosts.get(host) or {}
+    ssh_alias = host_entry.get("ssh_alias") or host
+    ssh_options: list[str] = list(host_entry.get("ssh_options") or [])
+
+    remote_cmd = f"pgrep -f {shlex.quote(probe_pattern)} | wc -l"
+    argv = ["ssh", "-o", "BatchMode=yes"] + ssh_options + [ssh_alias, remote_cmd]
+
+    try:
+        result = runner(argv, timeout=probe_timeout)
+        if result.returncode != 0:
+            return max_concurrent  # SSH failed → at-capacity
+        count_str = result.stdout.strip()
+        count = int(count_str)
+        return count
+    except Exception:
+        return max_concurrent
+
+
+def least_active_host(
+    candidates: list[str],
+    project: str | None,
+    harness: str,
+    routing: dict,
+    hosts: dict,
+    *,
+    runner: object = None,
+) -> str:
+    """Pick the eligible least-active host among *candidates*.
+
+    Returns the fallback_host if all candidates are at-capacity or ineligible.
+    Candidate order from routing.auto_route.candidate_order is used for tie-breaking.
+    """
+    auto_cfg = routing.get("auto_route") or {}
+    fallback = auto_cfg.get("fallback_host") or "bigmac"
+    candidate_order: list[str] = list(auto_cfg.get("candidate_order") or candidates)
+
+    eligible = eligible_hosts(project, harness, routing)
+    # Intersect with provided candidates (in candidate_order order for tie-breaking).
+    ordered = [h for h in candidate_order if h in candidates and h in eligible]
+
+    best_host: str | None = None
+    best_count = None
+
+    for host in ordered:
+        host_cfg = (routing.get("hosts") or {}).get(host) or {}
+        max_concurrent = int(host_cfg.get("max_concurrent") or 1)
+        count = probe_active_count(host, routing, hosts, runner=runner)
+        if count < max_concurrent:
+            if best_count is None or count < best_count:
+                best_count = count
+                best_host = host
+
+    return best_host if best_host is not None else fallback
+
+
+def wrap_remote(
+    argv: list[str],
+    harness: str,
+    alias: str,
+    remote_cwd: str,
+    ssh_options: list[str],
+) -> list[str]:
+    """Build the SSH argv that wraps *argv* for remote execution.
+
+    For claude, prepends ``env -u ANTHROPIC_API_KEY`` inside the remote command
+    string (not via Python's env= dict, which is local-only and doesn't cross SSH).
+
+    The resulting remote command string is:
+      cd <remote_cwd> && [env -u ANTHROPIC_API_KEY] <argv...>
+
+    Returns the full ssh argv list — never uses shell=True locally.
+    """
+    # Build the inner command string executed on the remote shell.
+    inner_argv = list(argv)
+    if harness == "claude":
+        inner_argv = ["env", "-u", "ANTHROPIC_API_KEY"] + inner_argv
+
+    remote_cmd = (
+        f"cd {shlex.quote(remote_cwd)} && "
+        + " ".join(shlex.quote(a) for a in inner_argv)
+    )
+    ssh_base = ["ssh", "-o", "BatchMode=yes"] + list(ssh_options) + [alias]
+    return ssh_base + [remote_cmd]
+
+
+def local_view_path(remote_cwd: str, routing: dict) -> str | None:
+    """Return the SSHFS-mounted local path for *remote_cwd*, or None if no mount maps it."""
+    artifact_cfg = routing.get("artifact_return") or {}
+    sshfs_mounts = artifact_cfg.get("sshfs_mounts") or {}
+    for _host, mount in sshfs_mounts.items():
+        remote_root = (mount.get("remote_root") or "").rstrip("/")
+        local_root = (mount.get("local_root") or "").rstrip("/")
+        if remote_root and local_root and remote_cwd.startswith(remote_root):
+            return local_root + remote_cwd[len(remote_root):]
+    return None
+
+
 def run_harness(
     harness: str,
     prompt: str,
@@ -171,28 +430,120 @@ def run_harness(
     cwd: Path,
     timeout_sec: int,
     output_file: Path,
-) -> tuple[int, str, str]:
-    """Run the harness subprocess; return (exit_code, stdout, stderr).
+    *,
+    host: str = "local",
+    project: str | None = None,
+) -> tuple[int, str, str, str, str | None]:
+    """Run the harness subprocess; return (exit_code, stdout, stderr, resolved_host, remote_cwd).
 
     stdout and stderr are also written to output_file.
-    Kills the process group after timeout_sec.
+
+    When host == 'local': behaviour is byte-for-byte identical to the pre-feat/024 version.
+    When host == 'auto':  probe eligible hosts, pick least-active, then remote-wrap.
+    When host == <alias>: translate cwd, remote-wrap, run via SSH.
+
+    remote_cwd is None for local runs; the remote path string for remote runs.
     """
     if harness == "claude":
         cmd, env = build_cmd_claude(prompt, model)
     else:
         cmd, env = build_cmd_gpt(prompt, model, cwd)
 
+    resolved_host = host
+    remote_cwd_val: str | None = None
+
+    if host == "local":
+        # ── Local path (unchanged) ───────────────────────────────────────────
+        final_cmd = cmd
+        final_env: dict[str, str] | None = env
+        final_cwd: str = str(cwd)
+
+    else:
+        # ── Remote path ───────────────────────────────────────────────────────
+        routing = load_host_routing()
+        hosts_cfg = load_hosts()
+
+        if host == "auto":
+            # Derive project name for eligibility check.
+            proj = project or reverse_lookup_project(str(cwd), routing)
+            all_candidate_hosts = list((routing.get("hosts") or {}).keys())
+            resolved_host = least_active_host(
+                all_candidate_hosts,
+                proj,
+                harness,
+                routing,
+                hosts_cfg,
+            )
+            if resolved_host == "bigmac":
+                # Fell back to local — run locally.
+                print(
+                    f"[host-routing] auto → bigmac (local fallback); running locally",
+                    file=sys.stderr,
+                )
+                output_file.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        cwd=str(cwd),
+                        env=env,
+                        timeout=timeout_sec,
+                        start_new_session=True,
+                    )
+                    stdout = result.stdout
+                    stderr = result.stderr
+                    exit_code = result.returncode
+                except subprocess.TimeoutExpired as exc:
+                    stdout = (exc.stdout or b"").decode("utf-8", errors="replace")
+                    stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+                    stderr += f"\n[agentic-harness-run] timeout after {timeout_sec}s\n"
+                    exit_code = 124
+                except FileNotFoundError:
+                    stdout = ""
+                    stderr = f"[agentic-harness-run] harness binary not found: {cmd[0]}\n"
+                    exit_code = 127
+                combined = f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}"
+                output_file.write_text(combined, encoding="utf-8")
+                return exit_code, stdout, stderr, "bigmac", None
+
+        # Resolved to a specific remote host (including after auto-resolution).
+        if resolved_host != "bigmac":
+            remote_cwd_str = resolve_remote_cwd(str(cwd), resolved_host, routing)
+            remote_cwd_val = remote_cwd_str
+
+            host_entry = hosts_cfg.get(resolved_host) or {}
+            ssh_alias = host_entry.get("ssh_alias") or resolved_host
+            ssh_options: list[str] = list(host_entry.get("ssh_options") or [])
+
+            print(
+                f"[host-routing] host={resolved_host} ssh_alias={ssh_alias} "
+                f"remote_cwd={remote_cwd_str}",
+                file=sys.stderr,
+            )
+
+            final_cmd = wrap_remote(cmd, harness, ssh_alias, remote_cwd_str, ssh_options)
+            final_env = None  # use inherited process env; remote command string is self-contained
+            final_cwd = str(cwd)  # local cwd for the SSH subprocess (irrelevant for SSH)
+        else:
+            # auto resolved to bigmac — treat as local.
+            final_cmd = cmd
+            final_env = env
+            final_cwd = str(cwd)
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         result = subprocess.run(
-            cmd,
+            final_cmd,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            cwd=str(cwd),
-            env=env,
+            cwd=final_cwd,
+            env=final_env,
             timeout=timeout_sec,
             start_new_session=True,  # New process group so we can kill it cleanly on timeout.
         )
@@ -206,12 +557,12 @@ def run_harness(
         exit_code = 124  # GNU timeout convention
     except FileNotFoundError:
         stdout = ""
-        stderr = f"[agentic-harness-run] harness binary not found: {cmd[0]}\n"
+        stderr = f"[agentic-harness-run] harness binary not found: {final_cmd[0]}\n"
         exit_code = 127
 
     combined = f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}"
     output_file.write_text(combined, encoding="utf-8")
-    return exit_code, stdout, stderr
+    return exit_code, stdout, stderr, resolved_host, remote_cwd_val
 
 
 def append_receipt(receipt: dict) -> None:
@@ -228,26 +579,37 @@ _EPILOG = textwrap.dedent("""\
       AGENTIC_HARNESS_FORCE   Override --harness and auto-routing. Values: claude | gpt.
       ANTHROPIC_API_KEY       Stripped automatically when running the claude harness so
                               subscription OAuth billing is used instead of API billing.
+                              For remote runs, stripped inside the SSH command string.
 
     CONFIG FILES (read at runtime)
       harness/registries/harness-routing.yml
           Routing table for --harness auto. Resolved relative to this script's parent
           directory (../registries/harness-routing.yml).
+      harness/registries/hosts-routing.yml
+          Cross-host routing policy: host roles, project paths, auto_route probe settings.
+      config/hosts.yml
+          SSH identity registry: ssh_alias, ssh_options, home per host.
 
     RECEIPT FILE (written after every run)
       /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
           One JSONL line per invocation: harness, model, exit_code, duration_sec,
-          output_file, task_type, timestamp.
+          output_file, task_type, timestamp, host (feat/024), remote_cwd (feat/024).
 
     EXAMPLES
       agentic-harness-run --harness claude --prompt 'Summarize the diff' --output /tmp/out.txt
-          Run Claude Code on a prompt and save output to a file.
+          Run Claude Code locally on a prompt and save output to a file.
 
       agentic-harness-run --harness gpt --prompt-file ~/prompts/impl.txt --model o3 --cwd ~/projects/myapp
           Run Codex with a prompt file and model override in a specific directory.
 
       agentic-harness-run --harness auto --task-type review --prompt 'Review this PR' --json
           Auto-route by task type (resolves to claude per defaults) and emit JSON receipt.
+
+      agentic-harness-run --host genomesbox --harness gpt --cwd /Users/genome/projects/ledgerline --prompt 'pwd'
+          Run GPT/Codex on genomesbox; cwd is translated to /home/genome/projects/ledgerline.
+
+      agentic-harness-run --host auto --harness claude --project 'Agentic OS' --prompt 'pwd'
+          Auto-probe eligible hosts for 'Agentic OS', pick least-active, run claude there.
 
       AGENTIC_HARNESS_FORCE=claude agentic-harness-run --harness auto --task-type mechanical --prompt 'Sort imports'
           Force claude regardless of routing config.
@@ -269,6 +631,25 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=["claude", "gpt", "auto"],
         help="Harness to use: 'claude' (Claude Code), 'gpt' (Codex), or 'auto' (resolve from routing config). Required.",
+    )
+    parser.add_argument(
+        "--host",
+        default="local",
+        metavar="HOST",
+        help=(
+            "Target host for the inner harness exec. "
+            "'local' (default) = unchanged local behaviour; "
+            "'<alias>' = SSH-wrap to that host (must be in hosts-routing.yml); "
+            "'auto' = probe eligible hosts, pick least-active (feat/024)."
+        ),
+    )
+    parser.add_argument(
+        "--project",
+        metavar="NAME",
+        help=(
+            "Project name (as in hosts-routing.yml project_paths) for --host auto eligibility. "
+            "If omitted, derived by reverse-lookup of --cwd against bigmac project_paths."
+        ),
     )
     parser.add_argument(
         "--prompt-file",
@@ -324,7 +705,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="json_out",
         help=(
             "Emit a JSON object to stdout after the run: "
-            "{harness, model, exit_code, duration_sec, output_file, task_type}. "
+            "{harness, model, exit_code, duration_sec, output_file, task_type, host, remote_cwd}. "
             "The harness output itself goes only to --output."
         ),
     )
@@ -351,18 +732,20 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     start_ts = now_iso()
 
-    exit_code, stdout, _stderr = run_harness(
+    exit_code, stdout, _stderr, resolved_host, remote_cwd = run_harness(
         harness=harness,
         prompt=prompt,
         model=args.model,
         cwd=cwd,
         timeout_sec=args.timeout_sec,
         output_file=output_file,
+        host=args.host,
+        project=args.project,
     )
 
     duration = round(time.monotonic() - started, 2)
 
-    receipt = {
+    receipt: dict = {
         "ts": start_ts,
         "harness": harness,
         "model": args.model or "(default)",
@@ -371,22 +754,31 @@ def main(argv: list[str] | None = None) -> int:
         "duration_sec": duration,
         "output_file": str(output_file),
         "cwd": str(cwd),
+        "host": resolved_host,
     }
+    if remote_cwd is not None:
+        receipt["remote_cwd"] = remote_cwd
+        # Add SSHFS local-view path if a mount maps it.
+        routing = load_host_routing()
+        view = local_view_path(remote_cwd, routing)
+        if view:
+            receipt["local_view_path"] = view
+
     append_receipt(receipt)
 
     if args.json_out:
-        json.dump(
-            {
-                "harness": harness,
-                "model": args.model or None,
-                "exit_code": exit_code,
-                "duration_sec": duration,
-                "output_file": str(output_file),
-                "task_type": args.task_type or None,
-            },
-            sys.stdout,
-            indent=2,
-        )
+        json_payload: dict = {
+            "harness": harness,
+            "model": args.model or None,
+            "exit_code": exit_code,
+            "duration_sec": duration,
+            "output_file": str(output_file),
+            "task_type": args.task_type or None,
+            "host": resolved_host,
+        }
+        if remote_cwd is not None:
+            json_payload["remote_cwd"] = remote_cwd
+        json.dump(json_payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:
         # Normal mode: echo harness output to stdout.

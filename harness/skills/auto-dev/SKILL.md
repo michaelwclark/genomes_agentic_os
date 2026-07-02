@@ -325,6 +325,37 @@ python3 harness/skills/auto-dev/scripts/copilot_loop.py --input harness/skills/a
 receipt; actionable findings return to implementation, and false positives get
 a reply-and-resolve receipt.
 
+## `auto-dev <project> <NNN>` Resolver
+
+When the user says `auto-dev <project> <NNN>` (e.g. `auto-dev losmon 002`),
+**run the resolver first** and follow its output before starting any auto-dev
+session.
+
+```bash
+agentic-os-auto-dev-resolve <project> <NNN> [--allow-specified] [--root DIR]
+```
+
+The resolver:
+
+1. Finds the project directory across all domains (`los`, `clarks_consulting`,
+   `personal`, `harness/shared_factory`).
+2. Locates the packet at `work-items/*/<NNN>_*/` and reads its SPEC.md `state:`.
+3. Applies the **stage gate** from `harness/rules/work-lifecycle-standard.md`:
+   - `captured` / `triaged` → exit 2, prints grooming route
+     (`spec-intake` / `aos-product-orchestrator`).
+   - `specified` without `--allow-specified` → exit 2, prints:
+     "Add `--allow-specified` or promote to `ready`."
+   - `ready` / `building` / `validating` / `blocked` → proceeds.
+   - `finished` / `documented` / `archived` → exit 2, item is closed.
+4. Runs preflight checks: `dev_factory` present, tracker id found, repo path
+   exists. Prints PASS/FAIL + remedy for each.
+5. On all-pass: writes `artifacts/auto-dev/run-prompt.md` and prints the
+   ready-to-paste run prompt.
+
+**Follow the resolver output:** if it blocks (exit 2), do not start auto-dev —
+route the item as directed. If it passes, use the printed prompt to invoke the
+harness session.
+
 ## Closeout
 
 Every phase must leave a local receipt under the work item: files changed,

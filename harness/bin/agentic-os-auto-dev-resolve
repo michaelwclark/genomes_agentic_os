@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""agentic-os-auto-dev-resolve — Resolve a work-item packet and emit the auto-dev run prompt.
+
+Finds a project by name across all domain directories, locates the numbered
+packet, checks the lifecycle stage gate, runs preflight checks, and (with
+--run) invokes agentic-harness-run.
+
+USAGE
+  agentic-os-auto-dev-resolve <project> <NNN> [--allow-specified] [--run] [--root DIR]
+
+ARGUMENTS
+  project       Project id (matches the directory name under */02-projects/<project>/).
+  NNN           Three-digit zero-padded work-item number (e.g. 002, 023).
+
+OPTIONS
+  --allow-specified   Allow start when state is 'specified' (groom-phase complete
+                      but not yet promoted to ready).
+  --run               After all-pass preflight, invoke agentic-harness-run with the
+                      generated prompt. DO NOT use during validation runs.
+  --root DIR          Agentic OS instance root (default: parent of this script's
+                      harness/ directory, falling back to /Users/genome/agentic_os).
+
+EXIT CODES
+  0   All-pass (with --run: harness invoked).
+  1   Error (missing project, missing packet, internal failure).
+  2   Stage gate blocked or preflight failed.
+
+ENVIRONMENT
+  (none required for resolve; agentic-harness-run picks up its own env vars)
+
+EXAMPLES
+  agentic-os-auto-dev-resolve losmon 002
+      Stage gate check; reports state=specified, blocks without --allow-specified.
+
+  agentic-os-auto-dev-resolve losmon 002 --allow-specified
+      Proceeds past gate; runs dev_factory preflight checks.
+
+  agentic-os-auto-dev-resolve genomes_agentic_os 023
+      Resolves packet in clarks_consulting domain; reports state from SPEC.md.
+"""
+
+import argparse
+import json
+import os
+import sys
+import textwrap
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML is required.  pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Primary domain subdirectories searched first (relative to instance root).
+# harness/shared_factory is a factory/template layer, not a project domain;
+# it is only checked when no primary domain has the project (fallback).
+PRIMARY_DOMAIN_DIRS = [
+    "los",
+    "clarks_consulting",
+    "personal",
+]
+FALLBACK_DOMAIN_DIRS = [
+    "harness/shared_factory",
+]
+DOMAIN_DIRS = PRIMARY_DOMAIN_DIRS + FALLBACK_DOMAIN_DIRS
+
+# Canonical state ordinal — only build-phase states have a rank >= 0.
+# Non-ordinal / terminal states are handled by name, not rank.
+_ORDINAL = {
+    "ready": 0,
+    "building": 1,
+    "validating": 2,
+    "blocked": 3,  # reachable from any build state; treated as resume
+}
+
+_CLOSE_STATES = {"finished", "documented", "archived"}
+_GROOM_STATES = {"captured", "triaged"}
+_SPECIFIED_STATE = "specified"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_root(explicit: str | None) -> Path:
+    """Resolve the agentic OS instance root."""
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    # Walk up from this script's location: harness/bin/<this> → harness/ → root
+    here = Path(__file__).resolve().parent
+    candidate = here.parent.parent  # harness/bin → harness → root
+    if (candidate / "harness").is_dir():
+        return candidate
+    # Fallback
+    return Path("/Users/genome/agentic_os")
+
+
+def _find_project(root: Path, project_id: str) -> Path | None:
+    """Search <root>/<domain>/02-projects/<project_id>/ across known domains.
+
+    Primary domains are checked first. harness/shared_factory is only checked
+    when no primary domain match is found, since it is a factory/template layer
+    rather than a project domain and should not shadow canonical project homes.
+    """
+    # First pass: primary domains only
+    primary_hits = []
+    for domain in PRIMARY_DOMAIN_DIRS:
+        candidate = root / domain / "02-projects" / project_id
+        if candidate.is_dir():
+            primary_hits.append(candidate)
+
+    if len(primary_hits) == 1:
+        return primary_hits[0]
+
+    if len(primary_hits) > 1:
+        print(f"ERROR: Ambiguous project '{project_id}' found in multiple primary domains:", file=sys.stderr)
+        for h in primary_hits:
+            print(f"  {h}", file=sys.stderr)
+        print("Re-run with --root pointing to a narrower root, or rename the project dirs.", file=sys.stderr)
+        sys.exit(1)
+
+    # Second pass: fallback domains (harness/shared_factory)
+    fallback_hits = []
+    for domain in FALLBACK_DOMAIN_DIRS:
+        candidate = root / domain / "02-projects" / project_id
+        if candidate.is_dir():
+            fallback_hits.append(candidate)
+
+    if len(fallback_hits) == 1:
+        return fallback_hits[0]
+
+    if len(fallback_hits) > 1:
+        print(f"ERROR: Ambiguous project '{project_id}' found in multiple fallback domains:", file=sys.stderr)
+        for h in fallback_hits:
+            print(f"  {h}", file=sys.stderr)
+        sys.exit(1)
+
+    # Not found — suggest similar names
+    suggestions = []
+    for domain in DOMAIN_DIRS:
+        projects_dir = root / domain / "02-projects"
+        if projects_dir.is_dir():
+            for name in sorted(projects_dir.iterdir()):
+                if name.is_dir() and project_id.lower() in name.name.lower():
+                    suggestions.append(str(name))
+    print(f"ERROR: Project '{project_id}' not found under any domain's 02-projects/.", file=sys.stderr)
+    if suggestions:
+        print("Did you mean one of:", file=sys.stderr)
+        for s in suggestions:
+            print(f"  {s}", file=sys.stderr)
+    return None
+
+
+def _find_packet(project_dir: Path, number: str) -> Path | None:
+    """Find work-items/*/<NNN>_*/ matching the zero-padded prefix."""
+    padded = number.zfill(3)
+    work_items = project_dir / "work-items"
+    if not work_items.is_dir():
+        return None
+    matches = []
+    for lane_dir in sorted(work_items.iterdir()):
+        if not lane_dir.is_dir():
+            continue
+        for item in sorted(lane_dir.iterdir()):
+            if item.is_dir() and item.name.split("_")[0] == padded:
+                matches.append(item)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        print(f"ERROR: Multiple packets match prefix {padded}:", file=sys.stderr)
+        for m in matches:
+            print(f"  {m}", file=sys.stderr)
+        sys.exit(1)
+    return None
+
+
+def _read_spec_frontmatter(packet: Path) -> dict:
+    """Read YAML frontmatter from SPEC.md (--- delimited). Returns {} if absent."""
+    spec = packet / "SPEC.md"
+    if not spec.exists():
+        return {}
+    text = spec.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        return {}
+    try:
+        end = text.index("---", 3)
+        block = text[3:end].strip()
+        return yaml.safe_load(block) or {}
+    except (ValueError, yaml.YAMLError):
+        return {}
+
+
+def _load_project_yml(project_dir: Path) -> dict:
+    """Load project.yml; return {} if missing."""
+    p = project_dir / "project.yml"
+    if not p.exists():
+        return {}
+    try:
+        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        print(f"WARNING: Could not parse project.yml: {exc}", file=sys.stderr)
+        return {}
+
+
+def _lane_of_packet(packet: Path) -> str:
+    """Return the lane directory name (e.g. '02-active')."""
+    return packet.parent.name
+
+
+def _tracker_id(packet: Path, spec: dict) -> str | None:
+    """Look for tracker id in SPEC.md frontmatter or source-snapshot.json."""
+    if spec.get("tracker"):
+        return str(spec["tracker"])
+    snap = packet / "artifacts" / "auto-dev" / "tracker" / "source-snapshot.json"
+    if snap.exists():
+        try:
+            data = json.loads(snap.read_text())
+            for key in ("id", "linearId", "jiraKey", "tracker_id"):
+                if data.get(key):
+                    return str(data[key])
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Stage gate
+# ---------------------------------------------------------------------------
+
+def _stage_gate(state: str | None, allow_specified: bool) -> tuple[bool, str]:
+    """
+    Returns (ok, message).
+    ok=True means proceed; ok=False means block (exit 2).
+    """
+    if state is None:
+        return (
+            False,
+            "BLOCK: SPEC.md has no 'state:' frontmatter (cannot determine lifecycle position).\n"
+            "Add a YAML frontmatter block to SPEC.md:\n"
+            "  ---\n"
+            "  state: ready\n"
+            "  ---",
+        )
+    if state in _GROOM_STATES:
+        verb = "captured" if state == "captured" else "triaged"
+        return (
+            False,
+            f"BLOCK: state='{state}' is in the Capture phase — item needs grooming before auto-dev.\n\n"
+            f"Route to grooming:\n"
+            f"  Single item  →  /spec-intake  (aos-product-orchestrator or spec-intake skill)\n"
+            f"  Batch/program →  /aos-product-orchestrator\n\n"
+            f"Once groomed and SPEC.md has state: specified, re-run with --allow-specified\n"
+            f"or promote to state: ready for unconditional start.",
+        )
+    if state == _SPECIFIED_STATE and not allow_specified:
+        return (
+            False,
+            "BLOCK: state='specified' (groom-phase complete, not yet promoted to ready).\n\n"
+            "Options:\n"
+            "  1. Add --allow-specified to start from specified.\n"
+            "  2. Promote the packet: update state: ready in SPEC.md and move to 02-active lane,\n"
+            "     then re-run without the flag.",
+        )
+    if state in _CLOSE_STATES:
+        return (
+            False,
+            f"BLOCK: state='{state}' — item is in the Close phase (already done or archived).\n"
+            "Open a new work item or re-open this one explicitly.",
+        )
+    return True, f"GATE PASS: state='{state}'"
+
+
+# ---------------------------------------------------------------------------
+# Preflight checks
+# ---------------------------------------------------------------------------
+
+def _preflight(project_dir: Path, project_yml: dict, packet: Path, spec: dict) -> list[dict]:
+    """Run preflight checks. Returns list of {name, ok, detail} dicts."""
+    results = []
+
+    # (a) dev_factory block present in project.yml
+    dev_factory = project_yml.get("dev_factory")
+    if dev_factory and dev_factory.get("enabled", False):
+        results.append({"name": "dev_factory", "ok": True, "detail": "dev_factory block present and enabled."})
+        repo_root = dev_factory.get("repo", {}).get("root")
+    else:
+        results.append({
+            "name": "dev_factory",
+            "ok": False,
+            "detail": (
+                "dev_factory block missing or not enabled in project.yml.\n"
+                "  Remedy: add a dev_factory block following harness/shared_factory/04-workflows/auto-dev-project-profile.md.\n"
+                "  Minimal required fields:\n"
+                "    dev_factory:\n"
+                "      enabled: true\n"
+                "      tracker:\n"
+                "        mode: linear_primary  # or jira_primary / hybrid_jira_linear\n"
+                "      repo:\n"
+                "        root: /absolute/path/to/repo\n"
+                "        default_base_branch: main\n"
+                "  After adding dev_factory, mint a tracker item:\n"
+                "    1. Run: agentic-os-intake-row --title '<title>' --type spec --project '<project>'\n"
+                "    2. Run: agentic-os-intake-sync  (to mirror to Linear/Jira)\n"
+                "    3. Copy the tracker id into SPEC.md frontmatter: tracker: <id>"
+            ),
+        })
+        repo_root = None
+
+    # (b) Tracker link
+    tracker_id = _tracker_id(packet, spec)
+    if tracker_id:
+        results.append({"name": "tracker_link", "ok": True, "detail": f"Tracker id: {tracker_id}"})
+    else:
+        results.append({
+            "name": "tracker_link",
+            "ok": False,
+            "detail": (
+                "No tracker id found in SPEC.md frontmatter ('tracker:' key) or\n"
+                "  artifacts/auto-dev/tracker/source-snapshot.json.\n"
+                "  Remedy — mint a tracker item and link it:\n"
+                "    1. agentic-os-intake-row --title '<work item title>' --type spec --project '<project>'\n"
+                "       (prints the Notion row URL; note the Linear id from the sync)\n"
+                "    2. agentic-os-intake-sync  (syncs to Linear; note the Linear issue id)\n"
+                "    3. Add to SPEC.md frontmatter:\n"
+                "         ---\n"
+                "         tracker: LED-<NNN>\n"
+                "         ---"
+            ),
+        })
+
+    # (c) Repo path from dev_factory exists
+    if repo_root:
+        repo_path = Path(repo_root)
+        if repo_path.is_dir():
+            results.append({"name": "repo_path", "ok": True, "detail": f"Repo exists: {repo_root}"})
+        else:
+            results.append({
+                "name": "repo_path",
+                "ok": False,
+                "detail": (
+                    f"dev_factory.repo.root '{repo_root}' does not exist on this host.\n"
+                    "  Remedy: update project.yml dev_factory.repo.root to the correct local path,\n"
+                    "  or clone the repo at that path."
+                ),
+            })
+    else:
+        # Already failed dev_factory — skip repo check to avoid noise
+        pass
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Prompt builder
+# ---------------------------------------------------------------------------
+
+def _build_run_prompt(
+    project_id: str,
+    packet: Path,
+    project_dir: Path,
+    project_yml: dict,
+    spec: dict,
+    tracker_id: str | None,
+) -> str:
+    dev_factory = project_yml.get("dev_factory", {})
+    repo_root = dev_factory.get("repo", {}).get("repo_root") or dev_factory.get("repo", {}).get("root", "<repo_root>")
+    base_branch = dev_factory.get("repo", {}).get("default_base_branch", "main")
+    merge_policy = dev_factory.get("merge", {}).get("policy", "never_auto")
+    run_root = str(packet / "artifacts" / "auto-dev")
+    tracker_str = tracker_id or "<tracker_id — mint one first>"
+
+    return textwrap.dedent(f"""\
+        # auto-dev run prompt — {project_id} / {packet.name}
+        # Generated by agentic-os-auto-dev-resolve
+
+        Tracker id:     {tracker_str}
+        Project layer:  {project_dir}
+        Packet:         {packet}
+        Run root:       {run_root}
+        Repo:           {repo_root}
+        Base branch:    {base_branch}
+        Merge policy:   {merge_policy}
+
+        Scope guard: Implement ONLY the work described in this packet's SPEC.md.
+        Do not touch files outside the repo at {repo_root}.
+        Do not change project.yml, TOOLS.md, ROUTER.md, or runtime-registry.yml
+        unless the SPEC.md explicitly requires it.
+
+        To invoke:
+          /auto-dev  (in a harness session with cwd={repo_root})
+
+        Or via agentic-harness-run:
+          agentic-harness-run --harness auto --task-type implementation \\
+            --prompt-file {run_root}/run-prompt.md \\
+            --cwd {repo_root} --json
+    """)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-auto-dev-resolve",
+        description=(
+            "Resolve a work-item packet and emit the auto-dev run prompt.\n"
+            "Finds the project across all domains, checks the lifecycle stage gate,\n"
+            "runs preflight checks, and prints a ready-to-paste run prompt."
+        ),
+        epilog=textwrap.dedent("""\
+            EXAMPLES
+              agentic-os-auto-dev-resolve losmon 002
+                  Stage gate check; state=specified blocks without --allow-specified.
+
+              agentic-os-auto-dev-resolve losmon 002 --allow-specified
+                  Allows specified state; runs dev_factory preflight.
+
+              agentic-os-auto-dev-resolve genomes_agentic_os 023
+                  Resolves under clarks_consulting domain; reports state from SPEC.md.
+        """),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("project", help="Project id (directory name under */02-projects/<project>/).")
+    parser.add_argument("NNN", help="Work-item number, zero-padded to 3 digits (e.g. 002, 023).")
+    parser.add_argument(
+        "--allow-specified",
+        action="store_true",
+        help="Allow auto-dev start when state is 'specified' (groom-phase complete but not yet ready).",
+    )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help=(
+            "After all-pass preflight, invoke agentic-harness-run with the generated prompt. "
+            "Do NOT use this flag during validation runs."
+        ),
+    )
+    parser.add_argument(
+        "--root",
+        metavar="DIR",
+        default=None,
+        help="Agentic OS instance root (default: auto-detected from this script's location).",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    root = _find_root(args.root)
+    print(f"Instance root: {root}")
+
+    # 1. Find project
+    project_dir = _find_project(root, args.project)
+    if project_dir is None:
+        return 1
+    print(f"Project dir:   {project_dir}")
+
+    # 2. Find packet
+    packet = _find_packet(project_dir, args.NNN)
+    if packet is None:
+        print(
+            f"ERROR: No packet matching prefix '{args.NNN.zfill(3)}_*' found under "
+            f"{project_dir / 'work-items'}",
+            file=sys.stderr,
+        )
+        return 1
+    lane = _lane_of_packet(packet)
+    print(f"Packet:        {packet}")
+    print(f"Lane:          {lane}")
+
+    # 3. Read SPEC.md frontmatter
+    spec = _read_spec_frontmatter(packet)
+    state = spec.get("state") or None
+    print(f"State:         {state if state else '(none — no frontmatter or no state: key)'}")
+
+    # 4. Stage gate
+    ok, msg = _stage_gate(state, args.allow_specified)
+    if not ok:
+        print(f"\n{msg}")
+        return 2
+
+    print(f"\n{msg}")
+
+    # 5. Load project.yml
+    project_yml = _load_project_yml(project_dir)
+
+    # 6. Preflight
+    print("\n--- Preflight ---")
+    checks = _preflight(project_dir, project_yml, packet, spec)
+    all_pass = True
+    for c in checks:
+        label = "PASS" if c["ok"] else "FAIL"
+        print(f"  [{label}] {c['name']}")
+        for line in c["detail"].splitlines():
+            print(f"         {line}")
+        if not c["ok"]:
+            all_pass = False
+
+    if not all_pass:
+        print("\nPREFLIGHT FAILED — resolve the FAIL items above before running auto-dev.")
+        return 2
+
+    # 7. Emit run prompt
+    tracker_id = _tracker_id(packet, spec)
+    prompt_text = _build_run_prompt(
+        args.project, packet, project_dir, project_yml, spec, tracker_id
+    )
+    run_root = packet / "artifacts" / "auto-dev"
+    run_root.mkdir(parents=True, exist_ok=True)
+    prompt_file = run_root / "run-prompt.md"
+    prompt_file.write_text(prompt_text, encoding="utf-8")
+    print(f"\nRun prompt written to: {prompt_file}")
+    print("\n" + "─" * 60)
+    print(prompt_text)
+    print("─" * 60)
+
+    # 8. Optional --run
+    if args.run:
+        import subprocess
+        harness_run = Path(__file__).resolve().parent / "agentic-harness-run"
+        dev_factory = project_yml.get("dev_factory", {})
+        repo_root = dev_factory.get("repo", {}).get("root", ".")
+        cmd = [
+            str(harness_run),
+            "--harness", "auto",
+            "--task-type", "implementation",
+            "--prompt-file", str(prompt_file),
+            "--cwd", str(repo_root),
+            "--json",
+        ]
+        print(f"\nInvoking: {' '.join(cmd)}")
+        result = subprocess.run(cmd)
+        return result.returncode
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
