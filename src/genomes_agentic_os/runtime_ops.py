@@ -731,9 +731,7 @@ def _find_item(items: list[dict[str, Any]], item_id: str, kind: str) -> dict[str
     return item
 
 
-def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str, Any], bool]:
-    path = _runtime_path(root, RUN_QUEUE)
-    queue = _queue(root)
+def _append_queue_item_to_queue(queue: dict[str, Any], item: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     items = queue.setdefault("items", [])
     idempotency_key = item.get("idempotency_key")
     existing = None
@@ -751,6 +749,13 @@ def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str
         written = item
         created = True
     queue["run_queue"] = items
+    return written, created
+
+
+def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str, Any], bool]:
+    path = _runtime_path(root, RUN_QUEUE)
+    queue = _queue(root)
+    written, created = _append_queue_item_to_queue(queue, item)
     _write_queue(path, queue)
     return path, written, created
 
@@ -891,10 +896,13 @@ def schedule_create(
 def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
     registry = _registry(os_root)
+    queue_path = _runtime_path(os_root, RUN_QUEUE)
+    queue = _queue(os_root)
     queued = []
     skipped = []
     now = datetime.now(timezone.utc)
     registry_changed = False
+    queue_changed = False
     for schedule in registry.get("schedules") or []:
         schedule_id = schedule.get("id")
         if not schedule.get("enabled", False):
@@ -948,7 +956,8 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
             "evidence": [{"type": "run_log", "path": str(log_path.relative_to(os_root))}],
             "blocked_reason": gate.get("blocked_reason"),
         }
-        _, written_item, created = _append_queue_item(os_root, item)
+        written_item, created = _append_queue_item_to_queue(queue, item)
+        queue_changed = True
         queued.append({**written_item, "created": created})
         if not dry_run:
             schedule["last_queued_at"] = _iso(now)
@@ -959,6 +968,8 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
                 now,
             )
             registry_changed = True
+    if queue_changed:
+        _write_queue(queue_path, queue)
     if registry_changed:
         _write_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), registry)
     return {

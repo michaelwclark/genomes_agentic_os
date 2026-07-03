@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.config_ops import LAYER_POLICIES, PROFILE_MANAGED_MARKER, sidecar_path
 from genomes_agentic_os.routing import context_from_here
@@ -943,6 +944,31 @@ def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_
     dispatched_item = next(item for item in queue_after_apply["items"] if item["id"] == item_id)
     assert dispatched_item["status"] == "done"
     assert dispatched_item["dispatch_log"]
+
+
+def test_schedule_run_due_batches_queue_load_for_multiple_due_schedules(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+
+    queue_load_count = 0
+    original_queue = runtime_ops._queue
+
+    def counted_queue(path: Path) -> dict[str, object]:
+        nonlocal queue_load_count
+        queue_load_count += 1
+        return original_queue(path)
+
+    monkeypatch.setattr(runtime_ops, "_queue", counted_queue)
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+
+    assert len(result["queued"]) > 1
+    assert queue_load_count == 1
 
 
 def test_schedule_run_due_catches_up_stale_interval_next_due(tmp_path: Path, capsys) -> None:
