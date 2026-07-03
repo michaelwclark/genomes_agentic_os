@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -942,6 +943,44 @@ def test_schedule_run_due_is_idempotent_and_run_next_dispatches_script_work(tmp_
     dispatched_item = next(item for item in queue_after_apply["items"] if item["id"] == item_id)
     assert dispatched_item["status"] == "done"
     assert dispatched_item["dispatch_log"]
+
+
+def test_schedule_run_due_catches_up_stale_interval_next_due(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    assert main(
+        [
+            "schedule",
+            "create",
+            "stale_interval_schedule",
+            "--root",
+            str(root),
+            "--cadence",
+            "every_10_minutes",
+            "--command",
+            "agentic-os validate --root <root>",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    registry_path = shared_factory(root) / "00-control-plane" / "runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    for schedule in registry["schedules"]:
+        schedule["enabled"] = schedule["id"] == "stale_interval_schedule"
+        if schedule["id"] == "stale_interval_schedule":
+            schedule["next_due_at"] = "2000-01-01T00:00:00Z"
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+    assert [item["ref"] for item in result["queued"]] == ["stale_interval_schedule"]
+
+    registry_after = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    schedule_after = next(schedule for schedule in registry_after["schedules"] if schedule["id"] == "stale_interval_schedule")
+    next_due = datetime.fromisoformat(schedule_after["next_due_at"].replace("Z", "+00:00"))
+    assert next_due > datetime.now(timezone.utc)
 
 
 def test_runtime_gates_approval_needed_and_provider_targets(tmp_path: Path, capsys) -> None:
@@ -1949,10 +1988,10 @@ lane: 02-active
         encoding="utf-8",
     )
 
-    broken = validate_root(root)
-    assert not broken.ok
-    assert any("logs/conversations" in error for error in broken.errors)
-    assert any("SPEC.md" in error for error in broken.errors)
+    drift = validate_root(root)
+    assert drift.ok
+    assert any("logs/conversations" in warning for warning in drift.warnings)
+    assert any("SPEC.md" in warning for warning in drift.warnings)
 
     assert (
         main(

@@ -7,10 +7,10 @@ import yaml
 
 from genomes_agentic_os import supervisor
 from genomes_agentic_os.cli import main
-from genomes_agentic_os.runtime_ops import runtime_doctor
+from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref
 from genomes_agentic_os.supervisor import supervise_tick
 
-STEP_NAMES = {"heartbeats", "schedules", "watch_sources", "events", "run_queue", "health"}
+STEP_NAMES = {"heartbeats", "schedules", "watch_sources", "events", "priority_run_queue", "run_queue", "health"}
 
 
 def _fresh_root(tmp_path: Path) -> Path:
@@ -140,6 +140,50 @@ def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> N
     dispatched = yaml.safe_load(capsys.readouterr().out)
     assert dispatched["status"] == "done"
     assert dispatched["queue_item"]["status"] == "done"
+
+
+def test_runtime_dispatches_latest_priority_ref_and_skips_older_duplicates(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    queue["items"] = [
+        {
+            "id": "queue_old_pr_health",
+            "kind": "schedule",
+            "ref": "los_agentic_pr_health",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-30T10:00:00Z",
+            "due_at": "2026-06-30T10:00:00Z",
+            "idempotency_key": "test:pr-health:old",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+        {
+            "id": "queue_new_pr_health",
+            "kind": "schedule",
+            "ref": "los_agentic_pr_health",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-30T10:10:00Z",
+            "due_at": "2026-06-30T10:10:00Z",
+            "idempotency_key": "test:pr-health:new",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+    ]
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+    result = runtime_run_latest_by_ref(root, "los_agentic_pr_health", dry_run=False)
+
+    assert result["status"] == "done"
+    assert result["queue_item"]["id"] == "queue_new_pr_health"
+    assert result["superseded_count"] == 1
+    queue_after = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    by_id = {item["id"]: item for item in queue_after["items"]}
+    assert by_id["queue_old_pr_health"]["status"] == "skipped"
+    assert by_id["queue_new_pr_health"]["status"] == "done"
 
 
 def test_runtime_doctor_reports_run_queue_health(tmp_path: Path) -> None:

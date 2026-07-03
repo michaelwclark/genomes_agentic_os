@@ -414,6 +414,116 @@ def test_validate_root_includes_lifecycle_staleness_as_warnings(tmp_path: Path) 
     # (ok == True here because the root is structurally valid)
 
 
+def test_lifecycle_staleness_ignores_nested_source_work_items(tmp_path: Path) -> None:
+    """Project source checkouts can contain unrelated work-items folders."""
+    nested = (
+        tmp_path
+        / "los"
+        / "02-projects"
+        / "los_app"
+        / "worktrees"
+        / "feature_x"
+        / "fixtures"
+        / "work-items"
+        / "stale_item"
+    )
+    nested.mkdir(parents=True)
+    (nested / "work.yml").write_text(
+        yaml.safe_dump({"state": "building", "title": "Nested", "slug": "stale_item"}),
+        encoding="utf-8",
+    )
+    old_ts = (
+        datetime.datetime.now(tz=datetime.timezone.utc)
+        - datetime.timedelta(days=BUILDING_STALE_DAYS + 2)
+    ).timestamp()
+    os.utime(nested / "work.yml", (old_ts, old_ts))
+    os.utime(nested, (old_ts, old_ts))
+
+    assert lifecycle_staleness_findings(tmp_path) == []
+
+
+def test_validate_root_skips_generated_json_artifacts(tmp_path: Path) -> None:
+    """Historical run/log artifacts are not installed-root control files."""
+    root = tmp_path / "agentic_os"
+    _init_root(root)
+    generated_paths = [
+        root / "personal" / "04-automations" / "personal_admin" / "example" / "runs" / "bad.json",
+        root / "harness" / "shared_factory" / "06-runs-and-logs" / "runs" / "bad.json",
+        root / "los" / "02-projects" / "los_app" / "work-items" / "03-complete" / "done" / "artifacts" / "bad.json",
+    ]
+    for path in generated_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert result.ok, result.errors
+    assert not any("bad.json" in error for error in result.errors)
+
+
+def test_validate_root_still_reports_invalid_control_json(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    _init_root(root)
+    bad_control = root / "harness" / "registries" / "bad-control.json"
+    bad_control.write_text("{not json", encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert not result.ok
+    assert any("bad-control.json" in error for error in result.errors)
+
+
+def test_validate_root_missing_worktree_link_is_warning(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "stale_worktree_project", "--root", str(root)]) == 0
+    project_root = root / "los" / "02-projects" / "stale_worktree_project"
+    index_path = project_root / "worktrees" / "index.yml"
+    index = yaml.safe_load(index_path.read_text(encoding="utf-8"))
+    index["worktrees"] = [
+        {
+            "id": "gone",
+            "path": str(project_root / "worktrees" / "gone"),
+            "link": "worktrees/gone",
+            "status": "active",
+        }
+    ]
+    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert result.ok, result.errors
+    assert any("project worktree link is missing" in warning for warning in result.warnings)
+
+
+def test_validate_root_terminal_packet_gaps_are_warnings(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "packet_history_project", "--root", str(root)]) == 0
+    packet = root / "los" / "02-projects" / "packet_history_project" / "work-items" / "03-complete" / "001_done"
+    (packet / "artifacts").mkdir(parents=True)
+    (packet / "logs" / "conversations").mkdir(parents=True)
+    (packet / "work.yml").write_text(
+        yaml.safe_dump({"state": "finished", "title": "Done", "slug": "001_done"}),
+        encoding="utf-8",
+    )
+
+    result = validate_root(root)
+
+    assert result.ok, result.errors
+    assert any("001_done" in warning and "missing required file" in warning for warning in result.warnings)
+
+
+def test_validate_root_accepts_registered_command_alias_doc(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    _init_root(root)
+    alias_doc = root / "harness" / "commands" / "route.md"
+    alias_doc.write_text("# /route\n\nAlias documentation for the registered route command.\n", encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert result.ok, result.errors
+    assert not any("route.md" in error for error in result.errors)
+
+
 def test_doctor_includes_lifecycle_findings(tmp_path: Path) -> None:
     """doctor() returns lifecycle staleness findings in its findings list."""
     from genomes_agentic_os.doctor import doctor

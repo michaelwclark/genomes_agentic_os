@@ -32,6 +32,8 @@ from .runtime_ops import (
     heartbeat_list,
     heartbeat_run,
     runtime_doctor,
+    runtime_priority_dispatch_refs,
+    runtime_run_latest_by_ref,
     runtime_run_next,
     schedule_run_due,
 )
@@ -84,10 +86,18 @@ def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
             ran.append({"id": heartbeat_id, "result": _summarize(heartbeat_run(root, heartbeat_id, dry_run=dry_run))})
         return {"ok": True, "ran": ran}
 
+    def _priority_run_queue() -> dict[str, Any]:
+        dispatched: list[dict[str, Any]] = []
+        for ref in runtime_priority_dispatch_refs(root):
+            result = runtime_run_latest_by_ref(root, ref, dry_run=dry_run)
+            dispatched.append({"ref": ref, "result": _summarize(result)})
+        return {"ok": True, "dispatched": dispatched}
+
     _run("heartbeats", _heartbeats)
     _run("schedules", lambda: schedule_run_due(root, dry_run=dry_run))
     _run("watch_sources", lambda: run_due_watch_sources(root, dry_run=dry_run))
     _run("events", lambda: process_due(root, dry_run=dry_run))
+    _run("priority_run_queue", _priority_run_queue)
     _run("run_queue", lambda: runtime_run_next(root, dry_run=dry_run))
 
     # Health is read-only — collected every tick, never gates mutation.

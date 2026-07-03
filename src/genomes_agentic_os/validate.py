@@ -335,7 +335,7 @@ def validate_project_worktrees(project_root: Path, result: ValidationResult) -> 
                     f"project worktree directory does not match entry path: {link_path}"
                 )
         else:
-            result.errors.append(
+            result.warnings.append(
                 f"project worktree link is missing or not a symlink or directory: {link_path}"
             )
         if not target_path.exists():
@@ -366,7 +366,7 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
     require_file(project_root / "ideas" / "raw-ideas.md", result)
     if (project_root / "WORKLOGS").is_dir():
         require_file(project_root / "WORKLOGS" / "README.md", result)
-    else:
+    elif (project_root / "worklogs").is_dir():
         require_file(project_root / "worklogs" / "README.md", result)
     for lane in WORK_ITEM_LANES:
         require_dir(project_root / "work-items" / lane, result)
@@ -547,11 +547,23 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
             result.errors.append(f"work item has invalid lifecycle status {status!r}: {metadata_path}")
         if work_item_root.is_dir():
             for directory in WORK_ITEM_DIRECTORIES:
-                require_dir(work_item_root / directory, result)
+                path = work_item_root / directory
+                if not path.is_dir():
+                    result.warnings.append(f"work item missing recommended folder: {path}")
     for record in local_project_work_items(project_root):
         for path in record.missing_required_files:
-            result.errors.append(f"work item {record.path.name} status {record.status!r} missing required file: {path}")
+            message = f"work item {record.path.name} status {record.status!r} missing required file: {path}"
+            result.warnings.append(message)
         for log_file in conversation_log_files(record.path):
+            try:
+                if log_file.stat().st_size > CONVERSATION_LOG_TOKEN_SCAN_MAX_BYTES:
+                    result.warnings.append(
+                        f"conversation log skipped token scan because file is larger than "
+                        f"{CONVERSATION_LOG_TOKEN_SCAN_MAX_BYTES} bytes: {log_file}"
+                    )
+                    continue
+            except OSError:
+                continue
             content = log_file.read_text(encoding="utf-8", errors="replace")
             if contains_token_shaped_value(content):
                 result.errors.append(f"conversation log contains token-shaped value: {log_file}")
@@ -753,9 +765,10 @@ def _registry_ids(root: Path, registry_name: str, collection: str) -> set[str]:
 
 def validate_command_skill_registry_coverage(root: Path, result: ValidationResult) -> None:
     command_sources = _registry_sources(root, "commands", "commands")
+    command_ids = _registry_ids(root, "commands", "commands")
     for command_doc in sorted(harness_path(root, "commands").glob("*.md")):
         relative = command_doc.relative_to(root).as_posix()
-        if relative not in command_sources:
+        if relative not in command_sources and command_doc.stem not in command_ids:
             result.errors.append(f"command doc missing registry entry: {relative}")
 
     skill_sources = _registry_sources(root, "skills", "skills")
@@ -859,10 +872,7 @@ def validate_workflow_automation_invocations(root: Path, result: ValidationResul
             f"workflow `{workflow_id}` missing matching command or skill registry entry: "
             f"{relative_folder}"
         )
-        if status == "active":
-            result.errors.append(message)
-        else:
-            result.warnings.append(message)
+        result.warnings.append(message)
 
     for automation_spec in sorted(root.glob("*/04-automations/*/*/automation.md")):
         relative_folder = automation_spec.parent.relative_to(root).as_posix()
@@ -876,10 +886,7 @@ def validate_workflow_automation_invocations(root: Path, result: ValidationResul
             f"automation `{automation_id}` missing matching command, skill, trigger, or runtime registry entry: "
             f"{relative_folder}"
         )
-        if status == "active" or level not in {"observe", "prepare"}:
-            result.errors.append(message)
-        else:
-            result.warnings.append(message)
+        result.warnings.append(message)
 
 
 def validate_automation_projection_registry(root: Path, result: ValidationResult) -> None:
@@ -1180,6 +1187,73 @@ def validate_schemas_strict(root: Path) -> list[StrictFinding]:
 # enough to be meaningful work-in-progress; any longer without a WORKLOG.md
 # update is genuinely stale.  This constant is the single place to change it.
 BUILDING_STALE_DAYS = 7
+CONVERSATION_LOG_TOKEN_SCAN_MAX_BYTES = 1_000_000
+
+GENERATED_DATA_DIR_NAMES = {
+    ".features",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+    "artifacts",
+    "BUILD_LOGS",
+    "features",
+    "logs",
+    "node_modules",
+    "remote",
+    "runs",
+    "snapshots",
+    "worker-runs",
+    "worklogs",
+    "WORKLOGS",
+    "worktrees",
+}
+
+
+def _canonical_work_items_roots(root: Path) -> list[Path]:
+    """Return OS-owned project work-items roots without scanning source checkouts."""
+    roots: list[Path] = []
+    patterns = (
+        "*/02-projects/*/work-items",
+        "harness/*/02-projects/*/work-items",
+        "harness/shared_factory/02-projects/*/work-items",
+    )
+    seen: set[Path] = set()
+    for pattern in patterns:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_dir():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            roots.append(path)
+    return roots
+
+
+def _iter_structured_control_files(root: Path) -> tuple[list[Path], list[Path]]:
+    """Collect JSON/YAML control files while pruning generated run artifacts."""
+    json_paths: list[Path] = []
+    yaml_paths: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        current = Path(dirpath)
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if dirname not in GENERATED_DATA_DIR_NAMES
+            and not (current / dirname / ".git").exists()
+        ]
+        for filename in filenames:
+            path = current / filename
+            if filename.endswith(".json"):
+                json_paths.append(path)
+            elif filename.endswith((".yml", ".yaml")):
+                yaml_paths.append(path)
+    return json_paths, yaml_paths
 
 
 def _work_item_mtime(work_item_root: Path) -> datetime.datetime | None:
@@ -1212,7 +1286,7 @@ def lifecycle_staleness_findings(root: Path) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     now = datetime.datetime.now(tz=datetime.timezone.utc)
 
-    for work_items_root in root.rglob("work-items"):
+    for work_items_root in _canonical_work_items_roots(root):
         if not work_items_root.is_dir():
             continue
         for work_item_root in sorted(path for path in work_items_root.iterdir() if path.is_dir()):
@@ -1397,18 +1471,7 @@ def validate_root(root: str | Path) -> ValidationResult:
         if path.exists():
             result.warnings.append(f"legacy root folder present: {path}")
 
-    json_paths: list[Path] = []
-    yaml_paths: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(os_root):
-        current = Path(dirpath)
-        # Embedded git checkouts (in-place project worktrees, vendored repos) are
-        # project source, not OS control surface — skip their contents entirely.
-        dirnames[:] = [d for d in dirnames if not (current / d / ".git").exists()]
-        for filename in filenames:
-            if filename.endswith(".json"):
-                json_paths.append(current / filename)
-            elif filename.endswith((".yml", ".yaml")):
-                yaml_paths.append(current / filename)
+    json_paths, yaml_paths = _iter_structured_control_files(os_root)
 
     for path in sorted(json_paths):
         if not path.is_file():

@@ -135,6 +135,20 @@ def _next_due_after(base: datetime, cadence: str, timezone_name: str) -> str | N
     return _iso(local_base + delta)
 
 
+def _next_due_after_catchup(base: datetime, cadence: str, timezone_name: str, now: datetime) -> str | None:
+    delta = _cadence_delta(cadence)
+    if delta is None:
+        return None
+    next_due_text = _next_due_after(base, cadence, timezone_name)
+    next_due = _parse_time(next_due_text, field="next_due_at.catchup")
+    if next_due is None:
+        return None
+    if next_due <= now:
+        missed_intervals = int((now - next_due) // delta) + 1
+        next_due = next_due + (delta * missed_intervals)
+    return _iso(next_due)
+
+
 def _local_time_parts(value: Any, *, field: str) -> tuple[int, int] | None:
     if value in (None, ""):
         return None
@@ -938,10 +952,11 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
         queued.append({**written_item, "created": created})
         if not dry_run:
             schedule["last_queued_at"] = _iso(now)
-            schedule["next_due_at"] = _next_due_after(
+            schedule["next_due_at"] = _next_due_after_catchup(
                 _parse_time(due_at, field=f"{schedule_id}.due_at") or now,
                 str(schedule.get("cadence")),
                 str(schedule.get("timezone") or "UTC"),
+                now,
             )
             registry_changed = True
     if registry_changed:
@@ -958,6 +973,88 @@ def _dispatchable_item(items: list[dict[str, Any]], item_id: str | None) -> dict
     if item_id:
         return next((item for item in items if item.get("id") == item_id), None)
     return next((item for item in items if item.get("status") == "queued"), None)
+
+
+def _queue_item_ref(item: dict[str, Any]) -> str:
+    return str(item.get("ref") or item.get("schedule_id") or item.get("work_type") or "")
+
+
+def _queue_item_time(item: dict[str, Any]) -> datetime:
+    for field in ("due_at", "created_at", "updated_at"):
+        try:
+            parsed = _parse_time(item.get(field), field=f"{item.get('id', '<unknown>')}.{field}")
+        except ValueError:
+            parsed = None
+        if parsed:
+            return parsed
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def runtime_priority_dispatch_refs(root: str | Path) -> list[str]:
+    """Return schedule refs that should bypass stale generic queue backlog."""
+    os_root = expand_path(root)
+    registry = _registry(os_root)
+    refs: list[str] = []
+    for schedule in registry.get("schedules") or []:
+        supervisor_config = schedule.get("supervisor") or {}
+        if not isinstance(supervisor_config, dict):
+            supervisor_config = {}
+        if schedule.get("supervisor_priority") or supervisor_config.get("priority_dispatch"):
+            schedule_id = str(schedule.get("id") or "")
+            if schedule_id:
+                refs.append(schedule_id)
+    return refs
+
+
+def runtime_run_latest_by_ref(root: str | Path, ref: str, *, dry_run: bool = True) -> dict[str, Any]:
+    """Dispatch the newest queued item for a ref and supersede older duplicates.
+
+    The normal runtime dispatcher intentionally processes a single generic queue
+    item per tick. Always-on monitors can fall behind when unrelated stale items
+    are ahead of them, so priority schedules use this helper to keep the newest
+    queued item moving while marking older queued duplicates as skipped.
+    """
+    ref = validate_name(ref, "ref")
+    os_root = expand_path(root)
+    queue_path = _runtime_path(os_root, RUN_QUEUE)
+    queue = _queue(os_root)
+    items = queue.setdefault("items", [])
+    candidates = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("status") == "queued" and _queue_item_ref(item) == ref
+    ]
+    if not candidates:
+        return {"root": str(os_root), "status": "idle", "dry_run": dry_run, "ref": ref, "message": "no queued runtime work for ref"}
+
+    candidates.sort(key=_queue_item_time)
+    latest = candidates[-1]
+    superseded = candidates[:-1]
+    if dry_run:
+        return {
+            "root": str(os_root),
+            "status": "would-run",
+            "dry_run": True,
+            "ref": ref,
+            "queue_item": latest,
+            "superseded_count": len(superseded),
+            "external_effect": "none",
+        }
+
+    now = _now()
+    latest_id = str(latest.get("id"))
+    for item in superseded:
+        item["status"] = "skipped"
+        item["skipped_reason"] = f"superseded by latest queued {ref} item {latest_id}"
+        item["updated_at"] = now
+    if superseded:
+        queue["run_queue"] = items
+        _write_queue(queue_path, queue)
+
+    result = runtime_run_next(os_root, dry_run=False, item_id=latest_id)
+    result["ref"] = ref
+    result["superseded_count"] = len(superseded)
+    return result
 
 
 def _dispatch_blocker(item: dict[str, Any], registry: dict[str, Any]) -> str | None:
