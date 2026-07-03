@@ -3,7 +3,8 @@
 ## Scope
 
 This QA plan covers the overnight Agentic OS runtime stabilization work shipped
-to `genomes_agentic_os` through `2637ec7`.
+to `genomes_agentic_os` through implementation commit `2637ec7`, plus the QA
+documentation commit `f01dcb3`.
 
 Included implementation items:
 
@@ -107,7 +108,7 @@ Included implementation items:
 ## Evidence
 
 - Source commits: `39adb08`, `afd531a`, `2637ec7`.
-- Current pushed head during QA: `2637ec7`.
+- Current pushed head during QA publication: `f01dcb3`.
 - Test receipt: `157 passed in 62.41s`.
 - Docs-upkeep receipt:
   `/Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/documentation-upkeep/runs/20260703-second-pass/`.
