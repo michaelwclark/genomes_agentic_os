@@ -117,6 +117,27 @@ Schedules represent due work without executing external effects directly.
 `schedule run-due` should add local run queue items. The queue is the handoff
 surface for later execution, review, or automation qualification.
 
+For high-frequency schedules where older queued work is safely superseded by
+the newest item, add:
+
+```yaml
+supervisor:
+  priority_dispatch: true
+  dispatch_policy: latest_queued
+  supersede_older_queued: true
+```
+
+The supervisor uses that block to bypass stale generic backlog for the schedule:
+it dispatches the newest queued item and marks older queued duplicates skipped.
+This is appropriate for control-plane watchers such as automation control ticks
+and status projections; it is not appropriate for schedules where every missed
+interval must execute.
+
+The queue writer batches `schedule run-due` changes into one load and one write
+per tick. Keep runtime queue files out of source control; committed
+`RUN_STATE.json` or generated run queues are stale local state, not repo
+artifacts.
+
 ## Integrations
 
 Integration setup records expected credentials, approval gates, health checks,

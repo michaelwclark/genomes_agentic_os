@@ -76,3 +76,20 @@ def test_documentation_upkeep_writes_receipt_files(tmp_path: Path, capsys) -> No
     assert result["receipt_dir"] == str(receipt_dir)
     assert (receipt_dir / "documentation-upkeep-report.yml").is_file()
     assert (receipt_dir / "documentation-upkeep-report.md").is_file()
+
+
+def test_documentation_upkeep_falls_back_to_installed_template(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    _seed_documentation_sources(root)
+    config_path = root / "harness/shared_factory/00-control-plane/documentation-upkeep.yml"
+    config_path.unlink()
+
+    capsys.readouterr()
+    assert main(["docs", "upkeep", "--root", str(root)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+
+    assert result["ok"] is True
+    assert result["config_path"].endswith("harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml")
+    assert result["entry_count"] == 2

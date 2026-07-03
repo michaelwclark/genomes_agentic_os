@@ -14,6 +14,7 @@ from .scaffold import expand_path
 
 CONFIG_RELATIVE_PATH = Path("harness/shared_factory/00-control-plane/documentation-upkeep.yml")
 TEMPLATE_RELATIVE_PATH = Path("templates/runtime/documentation-upkeep.yml")
+INSTALLED_TEMPLATE_RELATIVE_PATH = Path("harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml")
 DEFAULT_RECEIPT_ROOT = Path("harness/shared_factory/06-runs-and-logs/documentation-upkeep/runs")
 
 
@@ -36,11 +37,19 @@ def documentation_upkeep_template_path() -> Path:
     return _repo_root() / TEMPLATE_RELATIVE_PATH
 
 
+def installed_documentation_upkeep_template_path(root: str | Path) -> Path:
+    return expand_path(root) / INSTALLED_TEMPLATE_RELATIVE_PATH
+
+
 def load_documentation_upkeep_config(root: str | Path) -> tuple[Path, dict[str, Any]]:
     path = documentation_upkeep_path(root)
     config = _load_yaml(path)
     if config:
         return path, config
+    installed_template = installed_documentation_upkeep_template_path(root)
+    config = _load_yaml(installed_template)
+    if config:
+        return installed_template, config
     return path, _load_yaml(documentation_upkeep_template_path())
 
 

@@ -123,6 +123,13 @@ Located at `~/agentic_os/harness/shared_factory/00-control-plane/`. These files 
 | `approval-rules.md` | Manual | Approval gate rules for gated automation steps. |
 | `managed-templates.yml` | `agentic-os docs` | Managed documentation template registry. |
 
+`agentic-os docs upkeep` reads the live control-plane
+`documentation-upkeep.yml` first. If that file is missing, it falls back to the
+installed template at
+`harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml`
+inside the OS root. The source-repo template is only a development fallback for
+editable/source checkouts.
+
 ---
 
 ## 6. Per-Tool Environment Variables

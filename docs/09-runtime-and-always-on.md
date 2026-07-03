@@ -527,11 +527,29 @@ enabled: true
 cadence: every_10_minutes
 execution_target: script
 command: agentic-os automation-control run --root <root> --apply
+supervisor:
+  priority_dispatch: true
+  dispatch_policy: latest_queued
+  supersede_older_queued: true
 ```
 
 The target command is idempotent by
 `automation_control:{automation_id}:{source_id}:{source_digest}`, so repeated
 controller ticks do not duplicate the same work.
+
+High-frequency controller schedules should use supervisor priority dispatch
+when they are safe to supersede. The supervisor dispatches the newest queued
+item for that schedule and marks older queued duplicates as skipped, which keeps
+current control-plane work moving even when the generic run queue contains stale
+backlog.
+
+`schedule run-due` batches run-queue updates: it loads the queue once, appends or
+updates all due schedule items in memory, and writes the queue once at the end of
+the tick. This keeps large runtime queues from turning one supervisor pass into
+many repeated full-file reads and writes.
+
+`RUN_STATE.json` is runtime state, not source. Keep it in the installed OS or a
+run artifact, never committed to this repository.
 
 ---
 
