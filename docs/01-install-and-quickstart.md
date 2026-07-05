@@ -135,11 +135,12 @@ created: .../agentic_os/rules
 created: .../agentic_os/registries
 ...
 created: .../agentic_os/README.md
-created: .../agentic_os/config.toml
 created: .../agentic_os/ROUTER.md
 created: .../agentic_os/AGENTS.md
 created: .../agentic_os/CLAUDE.md
 created: .../agentic_os/MEMORY.md
+created: .../agentic_os/harness/config.toml
+created: .../agentic_os/personal/config.toml
 ...
 ```
 
@@ -148,9 +149,32 @@ adds what is missing.
 
 ---
 
-## 4 · Smoke test: validate + doctor
+## 4 · Install root harness config
 
-Run these immediately after `init`. They are read-only and always safe to re-run.
+`init` creates the domain and harness-layer configs. Install the OS-root Codex
+config before running the root-layer config doctor:
+
+```bash
+agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply
+```
+
+This command is additive/merge-based. Use the dry-run form first on an existing
+root if you need to review the diff:
+
+```bash
+agentic-os config install --root ~/agentic_os --layer agentic_os_root --dry-run
+```
+
+For an established tree, `agentic-os config install-tree --root ~/agentic_os
+--dry-run` previews repairs across all layers; rerun with `--apply` after
+reviewing the diff.
+
+---
+
+## 5 · Smoke test: validate + doctor
+
+Run these immediately after config install. They are read-only and always safe to
+re-run.
 
 ### `validate`
 
@@ -218,7 +242,7 @@ findings:
 
 ---
 
-## 5 · First work: domain → project → route
+## 6 · First work: domain → project → route
 
 ### Create a domain
 
@@ -375,10 +399,12 @@ follow the packet.
   Route requests with `/os-route "<request>"` or the **`os-navigator`** skill.
 - **Codex:** after `init`, run
   `agentic-os config install --layer global_harness --root ~/.codex --dry-run`
-  for user-level harness defaults if needed. The installed OS root and routed
-  layers already receive `config.toml` during scaffold; use
-  `agentic-os config install-tree --root ~/agentic_os --dry-run` to preview a
-  tree repair and rerun with `--apply` after reviewing the diff.
+  for user-level harness defaults if needed. The domain and routed layers
+  receive `config.toml` during scaffold; run
+  `agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply`
+  for the OS-root config, or use `agentic-os config install-tree --root
+  ~/agentic_os --dry-run` to preview a full-tree repair and rerun with `--apply`
+  after reviewing the diff.
 
 Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 

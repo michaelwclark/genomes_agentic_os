@@ -72,7 +72,6 @@ LEGACY_ROOT_FOLDERS = (
     "context",
     "memory",
     "notion",
-    "config",
     "templates",
     "lenders",
     "shared_factory",

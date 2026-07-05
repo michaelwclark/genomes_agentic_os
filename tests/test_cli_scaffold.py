@@ -1126,6 +1126,18 @@ def test_config_doctor_accepts_installed_otel_and_mcp_contract(tmp_path: Path) -
     assert main(["config", "doctor", "--root", str(root), "--layer", "agentic_os_root"]) == 0
 
 
+def test_validate_allows_root_config_sidecar_after_config_install(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["config", "install", "--root", str(root), "--layer", "agentic_os_root", "--apply"]) == 0
+
+    result = validate_root(root)
+
+    assert result.ok
+    assert f"legacy root folder present: {root / 'config'}" not in result.warnings
+
+
 def test_config_install_places_mcp_servers_by_layer(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 

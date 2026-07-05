@@ -239,6 +239,7 @@ Run this against a temporary directory before using a real OS root:
 ```bash
 tmpdir=$(mktemp -d)
 agentic-os init --target "$tmpdir/os"
+agentic-os config install --root "$tmpdir/os" --layer agentic_os_root --apply
 agentic-os workflow create los engineering feature_dev --root "$tmpdir/os"
 agentic-os automation create los support production_thread_intake --root "$tmpdir/os"
 agentic-os run-log create los feature_dev --root "$tmpdir/os"
@@ -276,7 +277,8 @@ agentic-os init --target ~/agentic_os
 - Creates `.agentic_root` so harness config can discover the installed OS boundary.
 - Creates the default domain roots: `personal`, `clarks_consulting`, `los`, `shared_factory`, and `archive`.
 - Creates root and domain `AGENTS.md`, `CLAUDE.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md` files.
-- Creates layer-aware Codex `config.toml` files at the root and domain layers; projects, workflows, and automations receive their own config when created.
+- Creates layer-aware Codex `config.toml` files for harness, domain, shared-factory, project, workflow, and automation layers.
+- Creates the OS-root Codex `config.toml` when you run `agentic-os config install --root ~/agentic_os --layer agentic_os_root --apply` or `agentic-os config install-tree --root ~/agentic_os --apply`.
 - Creates domain `REFERENCES.md` files for source maps.
 - Creates each domain's numbered operating lanes from `00-control-plane` through `08-archive`.
 - Creates project-scoped `src` symlinks under `domain/02-projects/<project>/` when a local `--repo` path is supplied.
