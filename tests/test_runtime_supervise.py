@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 
 import pytest
 import yaml
@@ -146,23 +147,37 @@ def test_runtime_dispatches_registered_watcher_script(tmp_path: Path, capsys) ->
     assert dispatch_log["evidence"]["stdout"] == "watcher-ran"
 
 
-def test_runtime_rejects_unregistered_python_script(tmp_path: Path, capsys) -> None:
+def test_runtime_dispatches_general_python_script(tmp_path: Path, capsys) -> None:
     root = _fresh_root(tmp_path)
-    script = root / "scripts" / "unsafe.py"
+    script = root / "scripts" / "write_runtime_marker.py"
+    output = root / "harness" / "shared_factory" / "06-runs-and-logs" / "runs" / "runtime-marker.txt"
     script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_text("print('nope')\n", encoding="utf-8")
+    script.write_text(
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                f"path = Path({str(output)!r})",
+                "path.parent.mkdir(parents=True, exist_ok=True)",
+                "path.write_text(os.environ['AGENTIC_OS_ROOT'], encoding='utf-8')",
+                "print('marker-written')",
+            ]
+        ),
+        encoding="utf-8",
+    )
     queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
     item = {
-        "id": "queue_unregistered_python",
+        "id": "queue_general_python",
         "kind": "schedule",
-        "ref": "unsafe_python",
+        "ref": "general_python",
         "status": "queued",
         "approval_state": "not_required",
         "created_at": "2026-06-19T00:00:00Z",
-        "idempotency_key": "test:unsafe-python",
+        "idempotency_key": "test:general-python",
         "execution_target": "script",
-        "command": f"python3 {script} --once",
+        "command": f"{sys.executable} {script}",
+        "runtime_policy": {"timeout_seconds": 30},
     }
     queue.setdefault("items", []).append(item)
     queue["run_queue"] = queue["items"]
@@ -177,17 +192,21 @@ def test_runtime_rejects_unregistered_python_script(tmp_path: Path, capsys) -> N
                 "--root",
                 str(root),
                 "--item-id",
-                "queue_unregistered_python",
+                "queue_general_python",
                 "--apply",
             ]
         )
-        == 1
+        == 0
     )
     dispatched = yaml.safe_load(capsys.readouterr().out)
-    assert dispatched["status"] == "failed"
-    assert dispatched["queue_item"]["status"] == "failed"
+    assert dispatched["status"] == "done"
+    assert dispatched["queue_item"]["status"] == "done"
+    assert dispatched["queue_item"]["external_effect"] == "local script executed"
+    assert output.read_text(encoding="utf-8") == str(root)
     dispatch_log = yaml.safe_load((root / dispatched["queue_item"]["dispatch_log"]).read_text(encoding="utf-8"))
-    assert dispatch_log["evidence"]["errors"] == ["unsupported local script command"]
+    assert dispatch_log["evidence"]["returncode"] == 0
+    assert dispatch_log["evidence"]["stdout"] == "marker-written\n"
+    assert dispatch_log["external_effect"] == "local script executed"
 
 
 def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> None:
@@ -374,8 +393,6 @@ def test_runtime_doctor_reports_run_queue_health(tmp_path: Path) -> None:
     assert "multiple active schedule queue items: daily_agentic_os_doctor" in messages
     assert "run queue items failed: unsupported local script command" in messages
     assert "sample=queue_failed_dispatch" in messages
-    assert "script commands are unsupported by runtime dispatch: daily_agentic_os_doctor" in messages
-    assert "sample=queue_unsupported_command" in messages
     assert "schedule queue items reference unknown schedule: missing_schedule" in messages
 
 

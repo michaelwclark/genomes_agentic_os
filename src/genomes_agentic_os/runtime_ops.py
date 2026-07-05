@@ -53,6 +53,8 @@ TERMINAL_RUN_QUEUE_STATES = {"dry-run", "blocked", "done", "failed", "skipped"}
 ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script"}
+SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
+SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
 DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS = 2
 DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS = 7
@@ -1122,7 +1124,125 @@ def _dispatch_blocker(item: dict[str, Any], registry: dict[str, Any]) -> str | N
     return None
 
 
-def _run_local_script(root: Path, command: str) -> dict[str, Any]:
+def _dispatch_timeout_seconds(item: dict[str, Any]) -> int:
+    runtime_policy = item.get("runtime_policy") or {}
+    values = [
+        item.get("timeout_seconds"),
+        runtime_policy.get("timeout_seconds") if isinstance(runtime_policy, dict) else None,
+    ]
+    for value in values:
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            timeout = int(value)
+        except (TypeError, ValueError):
+            continue
+        if timeout > 0:
+            return timeout
+    return SCRIPT_DISPATCH_TIMEOUT_SECONDS
+
+
+def _trim_dispatch_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    text = value.decode(errors="replace") if isinstance(value, bytes) else value
+    if len(text) <= SCRIPT_DISPATCH_OUTPUT_LIMIT:
+        return text
+    omitted = len(text) - SCRIPT_DISPATCH_OUTPUT_LIMIT
+    return f"{text[:SCRIPT_DISPATCH_OUTPUT_LIMIT]}\n... <truncated {omitted} chars>"
+
+
+def _run_subprocess_script(root: Path, command: str, *, timeout_seconds: int) -> dict[str, Any]:
+    try:
+        args = shlex.split(command)
+    except ValueError as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [f"invalid local script command: {exc}"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+    if not args:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": ["local script command is empty"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+
+    env = os.environ.copy()
+    env.setdefault("AGENTIC_OS_ROOT", str(root))
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=root,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "args": args,
+            "cwd": str(root),
+            "errors": [f"local script executable not found: {args[0]}"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "args": args,
+            "cwd": str(root),
+            "returncode": None,
+            "timeout_seconds": timeout_seconds,
+            "timed_out": True,
+            "stdout": _trim_dispatch_output(exc.stdout),
+            "stderr": _trim_dispatch_output(exc.stderr),
+            "errors": [f"local script timed out after {timeout_seconds}s"],
+            "warnings": [],
+            "external_effect": "local script timed out",
+        }
+    except OSError as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "args": args,
+            "cwd": str(root),
+            "errors": [f"local script failed to start: {exc}"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+
+    ok = completed.returncode == 0
+    return {
+        "supported": True,
+        "ok": ok,
+        "command": command,
+        "args": args,
+        "cwd": str(root),
+        "returncode": completed.returncode,
+        "timeout_seconds": timeout_seconds,
+        "stdout": _trim_dispatch_output(completed.stdout),
+        "stderr": _trim_dispatch_output(completed.stderr),
+        "errors": [] if ok else [f"local script exited {completed.returncode}"],
+        "warnings": [],
+        "external_effect": "local script executed" if ok else "local script failed",
+    }
+
+
+def _run_local_script(root: Path, command: str, *, timeout_seconds: int) -> dict[str, Any]:
     normalized = command.replace("<root>", str(root)).strip()
     if normalized in {f"agentic-os validate --root {root}", f"agentic-os validate --root {str(root)}"}:
         validation = validate_root(root)
@@ -1132,6 +1252,7 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
             "command": normalized,
             "errors": validation.errors,
             "warnings": validation.warnings,
+            "external_effect": "local validation completed",
         }
     watch_source_result = _run_watch_source_script(root, normalized)
     if watch_source_result is not None:
@@ -1304,13 +1425,7 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
                 "events_count": len(result.get("events") or []),
                 "trigger_actions_count": len(result.get("trigger_actions") or []),
             }
-    return {
-        "supported": False,
-        "ok": False,
-        "command": normalized,
-        "errors": ["unsupported local script command"],
-        "warnings": [],
-    }
+    return _run_subprocess_script(root, normalized, timeout_seconds=timeout_seconds)
 
 
 def _local_script_dispatch_preflight(root: Path, command: str) -> str | None:
@@ -1358,7 +1473,9 @@ def _local_script_dispatch_preflight(root: Path, command: str) -> str | None:
     quiet_run = root / "harness" / "bin" / "agentic-os-quiet-run"
     if len(parts) >= 2 and parts[0] in {str(quiet_run), "harness/bin/agentic-os-quiet-run"} and parts[1] == "start":
         return None
-    return "unsupported local script command"
+    if not parts:
+        return "local script command is empty"
+    return None
 
 
 def _run_watch_source_script(root: Path, command: str) -> dict[str, Any] | None:
@@ -1637,9 +1754,19 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
         }
 
     started_at = _now()
-    execution = _run_local_script(os_root, str(item.get("command")))
+    relative_log_path = str(log_path.relative_to(os_root))
+    timeout_seconds = _dispatch_timeout_seconds(item)
+    item["status"] = "running"
+    item["started_at"] = started_at
+    item["dispatch_log"] = relative_log_path
+    item["updated_at"] = started_at
+    queue["run_queue"] = items
+    _write_queue(queue_path, queue)
+
+    execution = _run_local_script(os_root, str(item.get("command")), timeout_seconds=timeout_seconds)
     finished_at = _now()
     status = "done" if execution["supported"] and execution["ok"] else "failed"
+    external_effect = execution.get("external_effect") or ("local script executed" if execution.get("ok") else "local script failed")
     log = {
         "run_id": run_id,
         "kind": "runtime_dispatch",
@@ -1652,17 +1779,20 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
         "execution_target": item.get("execution_target"),
         "command": execution["command"],
         "evidence": execution,
-        "external_effect": "local script validation only",
+        "external_effect": external_effect,
     }
     _write_yaml(log_path, log)
     item["status"] = status
     item["started_at"] = started_at
     item["finished_at"] = finished_at
-    item["dispatch_log"] = str(log_path.relative_to(os_root))
+    item["dispatch_log"] = relative_log_path
     item["updated_at"] = finished_at
-    item.setdefault("evidence", []).append({"type": "dispatch_log", "path": str(log_path.relative_to(os_root))})
+    item["external_effect"] = external_effect
+    item.setdefault("evidence", []).append({"type": "dispatch_log", "path": relative_log_path})
     if status == "failed":
         item["error"] = "; ".join(execution["errors"]) or "runtime dispatch failed"
+    else:
+        item.pop("error", None)
     queue["run_queue"] = items
     _write_queue(queue_path, queue)
     return {
@@ -1671,7 +1801,7 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
         "dry_run": False,
         "queue_item": item,
         "log": str(log_path),
-        "external_effect": "local script validation only",
+        "external_effect": external_effect,
     }
 
 
