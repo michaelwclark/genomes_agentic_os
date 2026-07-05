@@ -23,6 +23,21 @@ project_cwd_map:
 # --- Harness execution (if running a harness) ---
 harness_run_cmd: /Users/genome/agentic_os/harness/bin/agentic-harness-run
 harness_run_timeout_sec: 1800
+harness_run_outer_grace_sec: 30
+
+# agentic-harness-run requires a task type when auto-routing the harness.
+# Tune this map for the watcher source so scheduled rows do not fail before
+# writing useful result artifacts.
+default_task_type: implementation
+task_type_map:
+  idea: research
+  spec: implementation
+  feature: implementation
+  plan: research
+  gap: implementation
+  bug: implementation
+  improvement: implementation
+  investigation: research
 
 # --- Artifacts ---
 runs_dir: /Users/genome/agentic_os/watchers/<name>/runs

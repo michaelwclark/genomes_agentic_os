@@ -34,6 +34,10 @@ watchers/
 1. Copy `templates/watcher/` from the repo (`/Users/genome/projects/genomes_agentic_os/templates/watcher/`).
 2. Fill in `watcher.yml` — source, filters, project_cwd_map, harness_run_cmd.
 3. Write `scripts/watch.py` following the pattern in `notion_work_intake/scripts/watch.py`.
+   If the watcher can execute `agentic-harness-run --harness auto`, it must pass
+   a resolved `--task-type`, forward `harness_run_timeout_sec` as `--timeout-sec`,
+   honor `harness_run_outer_grace_sec`, and preserve stderr/stdout tails in its
+   result artifact when execution fails.
 4. Write `runbook.md` (what it does, expected cadence, failure playbook).
 5. Add a `schedule.snippet.yml` matching the runtime-registry entry format.
 6. Test with `python3 scripts/watch.py --once --dry-run`.
@@ -53,6 +57,15 @@ cd watchers/<name>
 python3 scripts/watch.py --once
 python3 scripts/watch.py --once --dry-run
 ```
+
+After registering a watcher command in the runtime registry, run:
+```
+agentic-os runtime doctor --root /Users/genome/agentic_os
+```
+
+The doctor should report the watcher command as supported. Registered watcher
+commands are limited to `python3 <root>/watchers/<id>/scripts/<script>.py --once`
+with a sibling `watcher.yml`.
 
 To run continuously in the foreground (useful before enabling the supervisor):
 ```
