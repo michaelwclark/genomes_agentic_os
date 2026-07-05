@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -32,6 +33,7 @@ INTEGRATION_REGISTRY = "harness/shared_factory/00-control-plane/integration-regi
 RUN_QUEUE = "harness/shared_factory/00-control-plane/run-queue.yml"
 HEARTBEAT_LOG_DIR = "harness/shared_factory/06-runs-and-logs/heartbeats"
 RUNTIME_SETUP_RUN_DIR = "harness/shared_factory/06-runs-and-logs/runs"
+RUN_QUEUE_PRUNE_LOG_DIR = "harness/shared_factory/06-runs-and-logs/run-queue-prune"
 NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 
 RUNTIME_REQUIRED_TARGETS = {
@@ -51,6 +53,12 @@ TERMINAL_RUN_QUEUE_STATES = {"dry-run", "blocked", "done", "failed", "skipped"}
 ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script"}
+DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
+DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS = 2
+DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS = 7
+DEFAULT_RUN_QUEUE_SKIPPED_MAX_AGE_DAYS = 1
+DEFAULT_RUN_QUEUE_BACKUP_MAX_AGE_DAYS = 7
+RUNTIME_TRACKING_RUN_QUEUE_LIMIT = 50
 
 
 def _now() -> str:
@@ -469,6 +477,34 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os validate --root <root>",
             "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Heartbeats", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "run_queue_prune_daily",
+            "display_name": "Run queue prune daily",
+            "enabled": True,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "local_time": "00:20",
+            "execution_target": "script",
+            "command": "agentic-os run-queue prune --root <root> --apply",
+            "outputs": [RUN_QUEUE_PRUNE_LOG_DIR],
+            "notion_update": {"object": "Runtime Queue", "status_field": "Last Pruned"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "notion_runtime_tracking",
+            "display_name": "Notion runtime tracking sync",
+            "enabled": True,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "local_time": "00:40",
+            "execution_target": "script",
+            "command": 'agentic-os notion track-runtime --root <root> --apply --verified-workspace "Genome\'s Notion"',
+            "outputs": [NOTION_RUNTIME_MANIFEST],
+            "notion_update": {"object": "Runtime Control Plane", "status_field": "Last Runtime Sync"},
             "next_due_at": None,
             "last_queued_at": None,
         },
@@ -1100,6 +1136,9 @@ def _run_local_script(root: Path, command: str) -> dict[str, Any]:
     watch_source_result = _run_watch_source_script(root, normalized)
     if watch_source_result is not None:
         return watch_source_result
+    watcher_script_result = _run_registered_watcher_script(root, normalized)
+    if watcher_script_result is not None:
+        return watcher_script_result
     quiet_run_result = _run_quiet_run_script(root, normalized)
     if quiet_run_result is not None:
         return quiet_run_result
@@ -1313,6 +1352,9 @@ def _local_script_dispatch_preflight(root: Path, command: str) -> str | None:
         return f"invalid local script command: {exc}"
     if len(parts) >= 3 and parts[:2] == ["agentic-os", "watch-source"] and parts[2] in {"poll", "run-due"}:
         return None
+    watcher_script = _parse_registered_watcher_script(root, normalized)
+    if watcher_script is not None:
+        return watcher_script if isinstance(watcher_script, str) else None
     quiet_run = root / "harness" / "bin" / "agentic-os-quiet-run"
     if len(parts) >= 2 and parts[0] in {str(quiet_run), "harness/bin/agentic-os-quiet-run"} and parts[1] == "start":
         return None
@@ -1417,6 +1459,76 @@ def _run_watch_source_script(root: Path, command: str) -> dict[str, Any] | None:
         "errors": [] if ok else [str(result.get("findings") or result)],
         "warnings": warnings,
         "watch_source": result,
+    }
+
+
+def _parse_registered_watcher_script(root: Path, command: str) -> list[str] | str | None:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        return f"invalid watcher script command: {exc}"
+    if not parts or parts[0] not in {"python", "python3"}:
+        return None
+    if len(parts) < 2:
+        return None
+
+    script = expand_path(parts[1])
+    watchers_root = (root / "watchers").resolve()
+    try:
+        script.resolve().relative_to(watchers_root)
+    except ValueError:
+        return None
+
+    if len(parts) != 3 or parts[2] != "--once":
+        return "watcher script dispatch only supports: python3 <root>/watchers/<id>/scripts/<script>.py --once"
+    if script.parent.name != "scripts" or script.suffix != ".py":
+        return "watcher script must be a Python file under <root>/watchers/<id>/scripts/"
+    watcher_dir = script.parent.parent
+    if not (watcher_dir / "watcher.yml").is_file():
+        return f"watcher config not found: {watcher_dir / 'watcher.yml'}"
+    if not script.is_file():
+        return f"watcher script not found: {script}"
+    return [parts[0], str(script), "--once"]
+
+
+def _run_registered_watcher_script(root: Path, command: str) -> dict[str, Any] | None:
+    parsed = _parse_registered_watcher_script(root, command)
+    if parsed is None:
+        return None
+    if isinstance(parsed, str):
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [parsed],
+            "warnings": [],
+        }
+    try:
+        completed = subprocess.run(
+            parsed,
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as exc:  # pragma: no cover - defensive CLI boundary
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [repr(exc)],
+            "warnings": [],
+        }
+    return {
+        "supported": True,
+        "ok": completed.returncode == 0,
+        "command": command,
+        "errors": [] if completed.returncode == 0 else [completed.stderr.strip() or completed.stdout.strip()],
+        "warnings": [],
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+        "exit_code": completed.returncode,
     }
 
 
@@ -1603,6 +1715,10 @@ def integration_setup(root: str | Path, integration_id: str, *, dry_run: bool = 
     return result
 
 
+def _queue_status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(Counter(str(item.get("status") or "<missing>") for item in items))
+
+
 def _raw_queue_items(queue: dict[str, Any]) -> list[dict[str, Any]]:
     items = queue.get("items")
     if not isinstance(items, list):
@@ -1628,6 +1744,182 @@ def _run_queue_stale_reason(item: dict[str, Any], now: datetime) -> str | None:
     if created_at and now - created_at > RUN_QUEUE_STALE_GRACE:
         return "created_past_24h_grace"
     return None
+
+
+def _run_queue_prune_time(item: dict[str, Any], status: str) -> datetime | None:
+    fields_by_status = {
+        "queued": ("due_at", "updated_at", "created_at"),
+        "approval-needed": ("due_at", "updated_at", "created_at"),
+        "running": ("updated_at", "started_at", "created_at"),
+        "done": ("finished_at", "updated_at", "created_at"),
+        "failed": ("finished_at", "updated_at", "created_at"),
+        "blocked": ("updated_at", "created_at"),
+        "skipped": ("updated_at", "created_at"),
+        "dry-run": ("updated_at", "created_at"),
+    }
+    for field in fields_by_status.get(status, ("updated_at", "created_at")):
+        parsed = _queue_time(item, field)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _run_queue_prune_reason(
+    item: dict[str, Any],
+    now: datetime,
+    *,
+    active_max_age_hours: int,
+    terminal_max_age_days: int,
+    failed_max_age_days: int,
+    skipped_max_age_days: int,
+) -> str | None:
+    status = str(item.get("status") or "")
+    reference_time = _run_queue_prune_time(item, status)
+    if reference_time is None:
+        return None
+    age = now - reference_time
+    if status in {"queued", "approval-needed", "running"} and age > timedelta(hours=active_max_age_hours):
+        return f"{status}_older_than_{active_max_age_hours}h"
+    if status in {"failed", "blocked"} and age > timedelta(days=failed_max_age_days):
+        return f"{status}_older_than_{failed_max_age_days}d"
+    if status in {"skipped", "dry-run"} and age > timedelta(days=skipped_max_age_days):
+        return f"{status}_older_than_{skipped_max_age_days}d"
+    if status == "done" and age > timedelta(days=terminal_max_age_days):
+        return f"{status}_older_than_{terminal_max_age_days}d"
+    return None
+
+
+def _stale_run_queue_backups(queue_path: Path, now: datetime, max_age_days: int) -> list[dict[str, Any]]:
+    stale: list[dict[str, Any]] = []
+    for path in sorted(queue_path.parent.glob("run-queue.yml.backup*")):
+        try:
+            age_days = (now.timestamp() - path.stat().st_mtime) / 86400.0
+        except OSError:
+            continue
+        if age_days > max_age_days:
+            stale.append(
+                {
+                    "path": str(path),
+                    "name": path.name,
+                    "size_bytes": path.stat().st_size,
+                    "age_days": round(age_days, 1),
+                }
+            )
+    return stale
+
+
+def run_queue_prune(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    active_max_age_hours: int = DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS,
+    terminal_max_age_days: int = DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS,
+    failed_max_age_days: int = DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS,
+    skipped_max_age_days: int = DEFAULT_RUN_QUEUE_SKIPPED_MAX_AGE_DAYS,
+    backup_max_age_days: int = DEFAULT_RUN_QUEUE_BACKUP_MAX_AGE_DAYS,
+    archive: bool = True,
+) -> dict[str, Any]:
+    for name, value in {
+        "active_max_age_hours": active_max_age_hours,
+        "terminal_max_age_days": terminal_max_age_days,
+        "failed_max_age_days": failed_max_age_days,
+        "skipped_max_age_days": skipped_max_age_days,
+        "backup_max_age_days": backup_max_age_days,
+    }.items():
+        if value < 0:
+            raise ValueError(f"{name} must be non-negative")
+
+    os_root = expand_path(root)
+    queue_path = _runtime_path(os_root, RUN_QUEUE)
+    raw_queue = _load_yaml(queue_path, DEFAULT_RUN_QUEUE)
+    queue = _normalized_queue(raw_queue)
+    items = queue.get("items") or []
+    now = datetime.now(timezone.utc)
+    kept: list[dict[str, Any]] = []
+    pruned: list[dict[str, Any]] = []
+    prune_reasons: Counter[str] = Counter()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        reason = _run_queue_prune_reason(
+            item,
+            now,
+            active_max_age_hours=active_max_age_hours,
+            terminal_max_age_days=terminal_max_age_days,
+            failed_max_age_days=failed_max_age_days,
+            skipped_max_age_days=skipped_max_age_days,
+        )
+        if reason:
+            pruned_item = deepcopy(item)
+            pruned_item["prune_reason"] = reason
+            pruned.append(pruned_item)
+            prune_reasons[reason] += 1
+        else:
+            kept.append(item)
+
+    stale_backups = _stale_run_queue_backups(queue_path, now, backup_max_age_days)
+    run_id = f"{_stamp()}-{_digest(str(queue_path), 8)}-run-queue-prune"
+    log_path = _runtime_path(os_root, RUN_QUEUE_PRUNE_LOG_DIR) / f"{run_id}.yml"
+    result: dict[str, Any] = {
+        "root": str(os_root),
+        "status": "would-prune" if dry_run and (pruned or stale_backups) else ("pruned" if pruned or stale_backups else "idle"),
+        "dry_run": dry_run,
+        "run_queue": str(queue_path),
+        "retention": {
+            "active_max_age_hours": active_max_age_hours,
+            "terminal_max_age_days": terminal_max_age_days,
+            "failed_max_age_days": failed_max_age_days,
+            "skipped_max_age_days": skipped_max_age_days,
+            "backup_max_age_days": backup_max_age_days,
+            "archive": archive,
+        },
+        "counts": {"before": len(items), "after": len(kept), "pruned": len(pruned)},
+        "status_counts_before": _queue_status_counts(items),
+        "status_counts_after": _queue_status_counts(kept),
+        "pruned_counts_by_status": _queue_status_counts(pruned),
+        "pruned_counts_by_reason": dict(prune_reasons),
+        "sample_pruned_ids": [str(item.get("id") or "<unknown>") for item in pruned[:10]],
+        "stale_backup_files": {
+            "count": len(stale_backups),
+            "sample": stale_backups[:10],
+            "removed": [] if dry_run else [entry["path"] for entry in stale_backups],
+        },
+        "archive_log": str(log_path) if archive and (not dry_run or pruned) else None,
+        "external_effect": "none" if dry_run else "local run queue rewritten; stale run-queue backups removed",
+    }
+    if dry_run:
+        return result
+
+    if archive and pruned:
+        _write_yaml(
+            log_path,
+            {
+                "run_id": run_id,
+                "kind": "run_queue_prune",
+                "status": "pruned",
+                "created_at": _now(),
+                "retention": result["retention"],
+                "counts": result["counts"],
+                "status_counts_before": result["status_counts_before"],
+                "status_counts_after": result["status_counts_after"],
+                "pruned_counts_by_status": result["pruned_counts_by_status"],
+                "pruned_counts_by_reason": result["pruned_counts_by_reason"],
+                "pruned_items": pruned,
+            },
+        )
+    queue["items"] = kept
+    queue["run_queue"] = kept
+    _write_queue(queue_path, queue)
+    removed_backups = []
+    for entry in stale_backups:
+        path = Path(str(entry["path"]))
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        removed_backups.append(str(path))
+    result["stale_backup_files"]["removed"] = removed_backups
+    return result
 
 
 def _queue_label(item: dict[str, Any]) -> str:
@@ -2012,11 +2304,32 @@ def integration_doctor(root: str | Path, integration_id: str | None = None) -> d
     return {"root": str(os_root), "ok": not any(finding["severity"] == "blocker" for finding in findings), "findings": findings}
 
 
+def _runtime_tracking_queue_items(queue: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the bounded queue slice worth projecting to Notion.
+
+    Runtime tracking is an operator cockpit, not a historical queue archive. Keep
+    active work visible first, then fill the remaining space with the newest
+    terminal records so live Notion syncs stay bounded.
+    """
+    items = [item for item in queue.get("items") or [] if isinstance(item, dict)]
+    active = [item for item in items if item.get("status") in ACTIVE_RUN_QUEUE_STATES]
+    terminal = [item for item in items if item.get("status") not in ACTIVE_RUN_QUEUE_STATES]
+
+    active.sort(key=_queue_item_time, reverse=True)
+    terminal.sort(key=_queue_item_time, reverse=True)
+
+    selected = active[:RUNTIME_TRACKING_RUN_QUEUE_LIMIT]
+    if len(selected) < RUNTIME_TRACKING_RUN_QUEUE_LIMIT:
+        selected.extend(terminal[: RUNTIME_TRACKING_RUN_QUEUE_LIMIT - len(selected)])
+    return selected
+
+
 def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
     runtime_registry = _load_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), DEFAULT_RUNTIME_REGISTRY)
     integration_registry = _load_yaml(_runtime_path(os_root, INTEGRATION_REGISTRY), DEFAULT_INTEGRATION_REGISTRY)
     queue = _queue(os_root)
+    queue_items = _runtime_tracking_queue_items(queue)
     records = []
     for target in runtime_registry.get("execution_targets") or []:
         records.append({"kind": "execution_target", "key": target["id"], "title": target["display_name"], "action": "create-or-update"})
@@ -2026,7 +2339,7 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
         records.append({"kind": "schedule", "key": schedule["id"], "title": schedule["display_name"], "action": "create-or-update"})
     for integration in integration_registry.get("integrations") or []:
         records.append({"kind": "integration", "key": integration["id"], "title": integration["display_name"], "action": "create-or-update"})
-    for item in queue.get("items") or []:
+    for item in queue_items:
         records.append(
             {
                 "kind": "run_queue_item",
@@ -2042,6 +2355,12 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
         "workspace": target_workspace(os_root),
         "manifest_path": str(_runtime_path(os_root, NOTION_RUNTIME_MANIFEST)),
         "databases": ["Integrations", "Execution Targets", "Heartbeats", "Schedules", "Run Queue", "Approvals", "Runs"],
+        "record_scope": {
+            "run_queue_item_limit": RUNTIME_TRACKING_RUN_QUEUE_LIMIT,
+            "run_queue_total_items": len(queue.get("items") or []),
+            "run_queue_projected_items": len(queue_items),
+            "run_queue_omitted_items": max(0, len(queue.get("items") or []) - len(queue_items)),
+        },
         "records": records,
     }
 
@@ -2191,6 +2510,7 @@ def _apply_runtime_tracking_live(
         "updated_at": now,
         "databases": plan["databases"],
         "database_ids": database_ids,
+        "record_scope": plan.get("record_scope", {}),
         "records": records,
     }
     _write_yaml(manifest_path, manifest)
@@ -2267,6 +2587,7 @@ def apply_runtime_tracking(
         "updated_at": _now(),
         "databases": plan["databases"],
         "database_ids": database_ids,
+        "record_scope": plan.get("record_scope", {}),
         "records": records,
     }
     _write_yaml(manifest_path, manifest)

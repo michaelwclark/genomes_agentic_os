@@ -177,6 +177,7 @@ def test_no_config_stays_local(tmp_path: Path) -> None:
     # all database IDs are local synthetic
     for db_name, db_id in manifest["database_ids"].items():
         assert db_id.startswith("local-"), f"Expected local id for {db_name}, got {db_id!r}"
+    assert manifest["record_scope"]["run_queue_item_limit"] > 0
 
 
 def test_no_config_local_path_token_env_unset(tmp_path: Path) -> None:
@@ -194,6 +195,58 @@ def test_no_config_local_path_token_env_unset(tmp_path: Path) -> None:
 
     transport.assert_no_requests()
     assert result.get("live") is False
+
+
+def test_runtime_tracking_plan_bounds_run_queue_projection(tmp_path: Path) -> None:
+    """Notion runtime tracking should not upsert unbounded historical queue rows."""
+    from genomes_agentic_os.runtime_ops import (
+        RUNTIME_TRACKING_RUN_QUEUE_LIMIT,
+        build_runtime_tracking_plan,
+    )
+    from genomes_agentic_os.scaffold import shared_factory_path
+
+    root = _installed_root(tmp_path)
+    queue_path = shared_factory_path(root, "00-control-plane", "run-queue.yml")
+    items = [
+        {
+            "id": f"done_{idx:03d}",
+            "status": "done",
+            "approval_state": "not_required",
+            "created_at": f"2026-01-{(idx % 28) + 1:02d}T00:00:00+00:00",
+            "ref": f"done-{idx:03d}",
+        }
+        for idx in range(RUNTIME_TRACKING_RUN_QUEUE_LIMIT + 30)
+    ]
+    items.extend(
+        [
+            {
+                "id": "queued_current",
+                "status": "queued",
+                "approval_state": "not_required",
+                "created_at": "2026-07-04T20:30:00+00:00",
+                "ref": "queued-current",
+            },
+            {
+                "id": "running_current",
+                "status": "running",
+                "approval_state": "not_required",
+                "created_at": "2026-07-04T20:35:00+00:00",
+                "ref": "running-current",
+            },
+        ]
+    )
+    queue_path.write_text(yaml.safe_dump({"items": items}, sort_keys=False), encoding="utf-8")
+
+    plan = build_runtime_tracking_plan(str(root))
+    queue_records = [record for record in plan["records"] if record["kind"] == "run_queue_item"]
+    queue_keys = {record["key"] for record in queue_records}
+
+    assert len(queue_records) == RUNTIME_TRACKING_RUN_QUEUE_LIMIT
+    assert {"queued_current", "running_current"} <= queue_keys
+    assert "done_000" not in queue_keys
+    assert plan["record_scope"]["run_queue_total_items"] == len(items)
+    assert plan["record_scope"]["run_queue_projected_items"] == RUNTIME_TRACKING_RUN_QUEUE_LIMIT
+    assert plan["record_scope"]["run_queue_omitted_items"] == len(items) - RUNTIME_TRACKING_RUN_QUEUE_LIMIT
 
 
 # ---------------------------------------------------------------------------

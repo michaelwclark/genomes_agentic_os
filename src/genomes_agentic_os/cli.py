@@ -67,6 +67,7 @@ from .runtime_ops import (
     integration_doctor,
     integration_list,
     integration_setup,
+    run_queue_prune,
     runtime_doctor,
     runtime_init,
     runtime_run_next,
@@ -104,7 +105,7 @@ from .scaffold import (
     onboard_project,
     register_project_worktree,
 )
-from .hosts import upsert_host, list_hosts
+from .hosts import format_host_routing_status, host_routing_status, list_hosts, upsert_host
 from .remote_ops import sync_project_remote
 from .remote_mounts import exec_remote, mount_remote, unmount_remote
 from .source_watch import (
@@ -207,6 +208,29 @@ def handle_capability_inventory(args: argparse.Namespace) -> int:
         else:
             print(content)
     return 0
+
+
+def _add_run_queue_prune_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    parser.add_argument(
+        "--active-max-age-hours",
+        type=int,
+        default=24,
+        help="Prune queued/running/approval-needed items older than this many hours.",
+    )
+    parser.add_argument("--terminal-max-age-days", type=int, default=2, help="Prune done items older than this many days.")
+    parser.add_argument("--failed-max-age-days", type=int, default=7, help="Prune failed/blocked items older than this many days.")
+    parser.add_argument("--skipped-max-age-days", type=int, default=1, help="Prune skipped/dry-run items older than this many days.")
+    parser.add_argument("--backup-max-age-days", type=int, default=7, help="Remove run-queue backup files older than this many days.")
+    parser.add_argument(
+        "--archive",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Archive pruned queue items under run-queue-prune logs.",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", default=True)
+    mode.add_argument("--apply", action="store_true")
 
 
 def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
@@ -610,12 +634,21 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     host_add.add_argument("alias", help="Host alias (identifier used in project remotes).")
     host_add.add_argument("--ssh-alias", help="SSH alias that resolves via ~/.ssh/config.")
     host_add.add_argument("--user", help="Remote username (informational).")
+    host_add.add_argument("--home", help="Absolute home/path-domain root on this host.")
     host_add.add_argument("--description", help="Human-readable description of this host.")
     host_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     host_add.set_defaults(handler=handle_host_add)
     host_list = host_subparsers.add_parser("list", help="List registered hosts.")
     host_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     host_list.set_defaults(handler=handle_host_list)
+    host_routing = host_subparsers.add_parser(
+        "routing",
+        help="Show cross-host routing policy and recent harness host receipts.",
+    )
+    host_routing.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_routing.add_argument("--recent-runs", type=int, default=8, help="Recent harness receipts to show.")
+    host_routing.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    host_routing.set_defaults(handler=handle_host_routing)
 
     automation_parser = subparsers.add_parser("automation", help="Manage automations.")
     automation_subparsers = automation_parser.add_subparsers(dest="automation_command", required=True)
@@ -1184,6 +1217,9 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     runtime_run_next_mode.add_argument("--dry-run", action="store_true", default=True)
     runtime_run_next_mode.add_argument("--apply", action="store_true")
     runtime_run_next_parser.set_defaults(handler=handle_runtime_run_next)
+    runtime_prune_parser = runtime_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
+    _add_run_queue_prune_args(runtime_prune_parser)
+    runtime_prune_parser.set_defaults(handler=handle_run_queue_prune)
     runtime_supervise_parser = runtime_subparsers.add_parser(
         "supervise",
         help="Run one supervisor tick across the runtime surface (heartbeats, schedules, sources, events, run queue) plus a health check.",
@@ -1225,6 +1261,12 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     schedule_run_due_mode.add_argument("--dry-run", action="store_true", default=True)
     schedule_run_due_mode.add_argument("--apply", action="store_true")
     schedule_run_due_parser.set_defaults(handler=handle_schedule_run_due)
+
+    run_queue_parser = subparsers.add_parser("run-queue", help="Manage the runtime run queue.")
+    run_queue_subparsers = run_queue_parser.add_subparsers(dest="run_queue_command", required=True)
+    run_queue_prune_parser = run_queue_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
+    _add_run_queue_prune_args(run_queue_prune_parser)
+    run_queue_prune_parser.set_defaults(handler=handle_run_queue_prune)
 
     integration_parser = subparsers.add_parser("integration", help="Manage runtime integrations.")
     integration_subparsers = integration_parser.add_subparsers(dest="integration_command", required=True)
@@ -1722,6 +1764,7 @@ def handle_host_add(args: argparse.Namespace) -> int:
         args.alias,
         ssh_alias=getattr(args, "ssh_alias", None),
         user=getattr(args, "user", None),
+        home=getattr(args, "home", None),
         description=getattr(args, "description", None),
     )
     print(f"{result['action']}: {result['alias']} → {result['path']}")
@@ -1736,8 +1779,21 @@ def handle_host_list(args: argparse.Namespace) -> int:
     for entry in hosts:
         alias = entry.get("alias", "")
         ssh_alias = entry.get("ssh_alias", alias)
+        home = entry.get("home", "")
         desc = entry.get("description", "")
-        print(f"  {alias}  (ssh_alias: {ssh_alias})  {desc}")
+        home_part = f"  home: {home}" if home else ""
+        print(f"  {alias}  (ssh_alias: {ssh_alias}){home_part}  {desc}")
+    return 0
+
+
+def handle_host_routing(args: argparse.Namespace) -> int:
+    result = host_routing_status(args.root, recent_runs=getattr(args, "recent_runs", 8))
+    if getattr(args, "json", False):
+        import json
+
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(format_host_routing_status(result))
     return 0
 
 
@@ -2362,6 +2418,21 @@ def handle_runtime_run_next(args: argparse.Namespace) -> int:
     result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
     print(format_runtime_result(result))
     return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
+
+
+def handle_run_queue_prune(args: argparse.Namespace) -> int:
+    result = run_queue_prune(
+        args.root,
+        dry_run=not args.apply,
+        active_max_age_hours=args.active_max_age_hours,
+        terminal_max_age_days=args.terminal_max_age_days,
+        failed_max_age_days=args.failed_max_age_days,
+        skipped_max_age_days=args.skipped_max_age_days,
+        backup_max_age_days=args.backup_max_age_days,
+        archive=args.archive,
+    )
+    print(format_runtime_result(result))
+    return 0
 
 
 def handle_runtime_supervise(args: argparse.Namespace) -> int:

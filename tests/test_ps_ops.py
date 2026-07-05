@@ -142,6 +142,24 @@ def test_ps_snapshot_rolls_up_active_runtime_surfaces(tmp_path: Path) -> None:
     assert any(row["status"] == "due" and row["id"] == "daily_agentic_os_doctor" for row in snapshot["rows"])
 
 
+def test_ps_active_includes_remote_harness_receipts(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    runs_log = root / "harness" / "shared_factory" / "06-runs-and-logs" / "harness-runs" / "runs.jsonl"
+    runs_log.parent.mkdir(parents=True, exist_ok=True)
+    runs_log.write_text(
+        '{"ts":"2026-07-04T21:00:00Z","host":"local","harness":"gpt","exit_code":0}\n'
+        '{"ts":"2026-07-04T21:01:00Z","host":"genomesbox","harness":"gpt","task_type":"implementation","exit_code":0,"remote_cwd":"/home/genome/projects/genomes_agentic_os","local_view_path":"/Users/genome/agentic_os/SSH_genomesbox/projects/genomes_agentic_os"}\n',
+        encoding="utf-8",
+    )
+
+    snapshot = ps_snapshot(root, mode="active", stale_days=999)
+    harness_rows = [row for row in snapshot["rows"] if row["kind"] == "harness"]
+
+    assert len(harness_rows) == 1
+    assert harness_rows[0]["ref"] == "genomesbox"
+    assert harness_rows[0]["local_view_path"] == "/Users/genome/agentic_os/SSH_genomesbox/projects/genomes_agentic_os"
+
+
 def test_ps_cli_json_includes_thread_candidates(tmp_path: Path, capsys) -> None:
     root = _fresh_root(tmp_path)
     work_item = _active_work_item(root)

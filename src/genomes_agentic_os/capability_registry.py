@@ -351,6 +351,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-runtime-init.md",
         },
         {
+            "id": "run-queue",
+            "command": "agentic-os run-queue",
+            "description": "Prune stale runtime run-queue rows and old queue backup files.",
+            "source": "harness/commands/os-run-queue.md",
+        },
+        {
             "id": "sync-notion",
             "command": "agentic-os notion sync",
             "description": "Prepare filesystem-to-Notion control-plane sync plans.",
@@ -464,6 +470,30 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/quiet-async-runner/SKILL.md",
         },
         {
+            "id": "add-env",
+            "name": "Add Env",
+            "description": "Append environment variables to ~/.zshenv on bigmac, genomesbox, and the Mac laptop in one step.",
+            "source": "harness/skills/add-env/SKILL.md",
+        },
+        {
+            "id": "commitall",
+            "name": "Commit All",
+            "description": "Commit all local changes in logical groups until the repository is clean.",
+            "source": "harness/skills/commitall/SKILL.md",
+        },
+        {
+            "id": "los-fast-workon",
+            "name": "LOS Fast Workon",
+            "description": "Work a LOS Jira ticket or non-trivial LOS task in a dedicated fast worktree.",
+            "source": "harness/skills/los-fast-workon/SKILL.md",
+        },
+        {
+            "id": "los-quiet-workon",
+            "name": "LOS Quiet Workon",
+            "description": "Work or resume LOS implementation in a fast worktree with minimal chat output.",
+            "source": "harness/skills/los-quiet-workon/SKILL.md",
+        },
+        {
             "id": "thread-finalizer",
             "name": "Thread Finalizer",
             "description": "Finalize substantive Agentic OS threads with worklog, next-action, memory, evidence, and Notion projection receipts.",
@@ -480,6 +510,30 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Orchestrate",
             "description": "Coordinate subagents, verification, and integration.",
             "source": "harness/skills/orchestrate/SKILL.md",
+        },
+        {
+            "id": "quiet-workon-orchestrate",
+            "name": "Quiet Workon Orchestrate",
+            "description": "Preferred LOS coding/testing orchestration entrypoint with quiet chat and receipt-backed artifacts.",
+            "source": "harness/skills/quiet-workon-orchestrate/SKILL.md",
+        },
+        {
+            "id": "pull-request",
+            "name": "Pull Request",
+            "description": "Run a senior, blocker-focused GitHub PR review with multi-lane evidence.",
+            "source": "harness/skills/pull-request/SKILL.md",
+        },
+        {
+            "id": "watch-pr-quiet",
+            "name": "Watch PR Quiet",
+            "description": "Monitor GitHub pull request checks through file-based watcher artifacts instead of repeated chat polling.",
+            "source": "harness/skills/watch-pr-quiet/SKILL.md",
+        },
+        {
+            "id": "composio-cli",
+            "name": "Composio CLI",
+            "description": "Operate the published Composio CLI for tool discovery, account links, schema inspection, execution, and troubleshooting.",
+            "source": "harness/skills/composio-cli/SKILL.md",
         },
         {
             "id": "toolsmith-reviewer",

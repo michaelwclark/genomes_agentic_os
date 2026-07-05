@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -485,6 +486,42 @@ def test_local_view_path_empty_routing():
     """No artifact_return config → returns None gracefully."""
     view = hr.local_view_path("/home/genome/projects/foo", {})
     assert view is None
+
+
+def test_json_output_includes_local_view_path(monkeypatch, tmp_path: Path, capsys):
+    """The watcher consumes --json, so local_view_path must be emitted there too."""
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("pwd", encoding="utf-8")
+    output = tmp_path / "out.txt"
+    receipts: list[dict[str, Any]] = []
+
+    def fake_run_harness(**_kwargs):
+        return 0, "ok", "", "genomesbox", "/home/genome/projects/genomes_agentic_os"
+
+    monkeypatch.setattr(hr, "run_harness", fake_run_harness)
+    monkeypatch.setattr(hr, "append_receipt", lambda receipt: receipts.append(receipt))
+    monkeypatch.setattr(hr, "load_host_routing", lambda: ROUTING)
+
+    rc = hr.main(
+        [
+            "--harness",
+            "gpt",
+            "--prompt-file",
+            str(prompt),
+            "--cwd",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload["host"] == "genomesbox"
+    assert payload["remote_cwd"] == "/home/genome/projects/genomes_agentic_os"
+    assert payload["local_view_path"] == "/Users/genome/agentic_os/SSH_genomesbox/projects/genomes_agentic_os"
+    assert receipts[0]["local_view_path"] == payload["local_view_path"]
 
 
 # ---------------------------------------------------------------------------

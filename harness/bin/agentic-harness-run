@@ -67,6 +67,18 @@ DEFAULT_TIMEOUT_SEC = 900
 # Valid harness names (excluding "auto").
 HARNESS_NAMES = ("claude", "gpt")
 
+# Runtime schedulers often run with a minimal PATH that omits the user-local
+# locations where Codex and Claude are installed.
+HARNESS_PATH_PREFIXES = (
+    "$HOME/.local/bin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+)
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -109,6 +121,28 @@ def load_hosts() -> dict:
     except Exception as exc:  # noqa: BLE001
         print(f"warning: could not load hosts config: {exc}", file=sys.stderr)
         return {}
+
+
+def harness_env(*, strip_anthropic: bool = False) -> dict[str, str]:
+    """Return an environment that can find user-installed harness binaries."""
+    env = dict(os.environ)
+    expanded_prefixes = [os.path.expandvars(p) for p in HARNESS_PATH_PREFIXES]
+    path_entries = expanded_prefixes + [p for p in env.get("PATH", "").split(os.pathsep) if p]
+
+    deduped: list[str] = []
+    for entry in path_entries:
+        if entry and entry not in deduped:
+            deduped.append(entry)
+    env["PATH"] = os.pathsep.join(deduped)
+    if strip_anthropic:
+        env.pop("ANTHROPIC_API_KEY", None)
+    return env
+
+
+def remote_path_prefix() -> str:
+    """Return a shell fragment that makes remote harness binaries discoverable."""
+    joined = ":".join(HARNESS_PATH_PREFIXES)
+    return f'export PATH="{joined}:$PATH"; '
 
 
 def resolve_harness(harness: str, task_type: str | None, cwd: Path) -> str:
@@ -191,7 +225,7 @@ def build_cmd_claude(prompt: str, model: str | None) -> tuple[list[str], dict[st
     if model:
         cmd += ["--model", model]
     # Strip API key so Claude uses subscription OAuth billing.
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env = harness_env(strip_anthropic=True)
     return cmd, env
 
 
@@ -201,7 +235,7 @@ def build_cmd_gpt(prompt: str, model: str | None, cwd: Path) -> tuple[list[str],
     if model:
         cmd += ["--model", model]
     cmd.append(prompt)
-    return cmd, dict(os.environ)
+    return cmd, harness_env()
 
 
 # ── Cross-host helpers (feat/024) ─────────────────────────────────────────────
@@ -404,7 +438,8 @@ def wrap_remote(
         inner_argv = ["env", "-u", "ANTHROPIC_API_KEY"] + inner_argv
 
     remote_cmd = (
-        f"cd {shlex.quote(remote_cwd)} && "
+        remote_path_prefix()
+        + f"cd {shlex.quote(remote_cwd)} && "
         + " ".join(shlex.quote(a) for a in inner_argv)
     )
     ssh_base = ["ssh", "-o", "BatchMode=yes"] + list(ssh_options) + [alias]
@@ -592,8 +627,9 @@ _EPILOG = textwrap.dedent("""\
 
     RECEIPT FILE (written after every run)
       /Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
-          One JSONL line per invocation: harness, model, exit_code, duration_sec,
-          output_file, task_type, timestamp, host (feat/024), remote_cwd (feat/024).
+      One JSONL line per invocation: harness, model, exit_code, duration_sec,
+      output_file, task_type, timestamp, host, remote_cwd, and local_view_path
+      when an SSHFS artifact mount maps the remote cwd.
 
     EXAMPLES
       agentic-harness-run --harness claude --prompt 'Summarize the diff' --output /tmp/out.txt
@@ -705,7 +741,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="json_out",
         help=(
             "Emit a JSON object to stdout after the run: "
-            "{harness, model, exit_code, duration_sec, output_file, task_type, host, remote_cwd}. "
+            "{harness, model, exit_code, duration_sec, output_file, task_type, host, remote_cwd, local_view_path}. "
             "The harness output itself goes only to --output."
         ),
     )
@@ -778,6 +814,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         if remote_cwd is not None:
             json_payload["remote_cwd"] = remote_cwd
+            if "local_view_path" in receipt:
+                json_payload["local_view_path"] = receipt["local_view_path"]
         json.dump(json_payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:

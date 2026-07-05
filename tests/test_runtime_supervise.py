@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,95 @@ def test_runtime_dispatches_watch_source_poll_command(tmp_path: Path, capsys) ->
         (root / "harness" / "shared_factory" / "06-runs-and-logs" / "source-events").glob("*.yml")
     )
     assert source_events
+
+
+def test_runtime_dispatches_registered_watcher_script(tmp_path: Path, capsys) -> None:
+    root = _fresh_root(tmp_path)
+    script = root / "watchers" / "notion_work_intake" / "scripts" / "watch.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("print('watcher-ran')\n", encoding="utf-8")
+    (script.parent.parent / "watcher.yml").write_text("id: notion_work_intake\n", encoding="utf-8")
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    item = {
+        "id": "queue_notion_watcher",
+        "kind": "schedule",
+        "ref": "notion_work_intake_watcher",
+        "status": "queued",
+        "approval_state": "not_required",
+        "created_at": "2026-06-19T00:00:00Z",
+        "idempotency_key": "test:notion-work-intake",
+        "execution_target": "script",
+        "command": f"python3 {script} --once",
+    }
+    queue.setdefault("items", []).append(item)
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "runtime",
+                "run-next",
+                "--root",
+                str(root),
+                "--item-id",
+                "queue_notion_watcher",
+                "--apply",
+            ]
+        )
+        == 0
+    )
+    dispatched = yaml.safe_load(capsys.readouterr().out)
+    assert dispatched["status"] == "done"
+    assert dispatched["queue_item"]["status"] == "done"
+    dispatch_log = yaml.safe_load((root / dispatched["queue_item"]["dispatch_log"]).read_text(encoding="utf-8"))
+    assert dispatch_log["evidence"]["stdout"] == "watcher-ran"
+
+
+def test_runtime_rejects_unregistered_python_script(tmp_path: Path, capsys) -> None:
+    root = _fresh_root(tmp_path)
+    script = root / "scripts" / "unsafe.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("print('nope')\n", encoding="utf-8")
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    item = {
+        "id": "queue_unregistered_python",
+        "kind": "schedule",
+        "ref": "unsafe_python",
+        "status": "queued",
+        "approval_state": "not_required",
+        "created_at": "2026-06-19T00:00:00Z",
+        "idempotency_key": "test:unsafe-python",
+        "execution_target": "script",
+        "command": f"python3 {script} --once",
+    }
+    queue.setdefault("items", []).append(item)
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "runtime",
+                "run-next",
+                "--root",
+                str(root),
+                "--item-id",
+                "queue_unregistered_python",
+                "--apply",
+            ]
+        )
+        == 1
+    )
+    dispatched = yaml.safe_load(capsys.readouterr().out)
+    assert dispatched["status"] == "failed"
+    assert dispatched["queue_item"]["status"] == "failed"
+    dispatch_log = yaml.safe_load((root / dispatched["queue_item"]["dispatch_log"]).read_text(encoding="utf-8"))
+    assert dispatch_log["evidence"]["errors"] == ["unsupported local script command"]
 
 
 def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> None:
@@ -287,6 +377,88 @@ def test_runtime_doctor_reports_run_queue_health(tmp_path: Path) -> None:
     assert "script commands are unsupported by runtime dispatch: daily_agentic_os_doctor" in messages
     assert "sample=queue_unsupported_command" in messages
     assert "schedule queue items reference unknown schedule: missing_schedule" in messages
+
+
+def test_run_queue_prune_archives_stale_items_and_removes_old_backups(tmp_path: Path, capsys) -> None:
+    root = _fresh_root(tmp_path)
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    backup_path = queue_path.parent / "run-queue.yml.backup-old"
+    backup_path.write_text("old backup\n", encoding="utf-8")
+    os.utime(backup_path, (0, 0))
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    queue["items"] = [
+        {
+            "id": "stale_queued",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2000-01-01T00:00:00Z",
+            "due_at": "2000-01-01T00:00:00Z",
+            "idempotency_key": "test:stale-queued",
+        },
+        {
+            "id": "old_done",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "done",
+            "approval_state": "not_required",
+            "created_at": "2000-01-01T00:00:00Z",
+            "finished_at": "2000-01-01T00:00:00Z",
+            "idempotency_key": "test:old-done",
+        },
+        {
+            "id": "old_failed",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "failed",
+            "approval_state": "not_required",
+            "created_at": "2000-01-01T00:00:00Z",
+            "finished_at": "2000-01-01T00:00:00Z",
+            "idempotency_key": "test:old-failed",
+        },
+        {
+            "id": "old_skipped",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "skipped",
+            "approval_state": "not_required",
+            "created_at": "2000-01-01T00:00:00Z",
+            "updated_at": "2000-01-01T00:00:00Z",
+            "idempotency_key": "test:old-skipped",
+        },
+        {
+            "id": "fresh_queued",
+            "kind": "schedule",
+            "ref": "daily_agentic_os_doctor",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2999-01-01T00:00:00Z",
+            "due_at": "2999-01-01T00:00:00Z",
+            "idempotency_key": "test:fresh-queued",
+        },
+    ]
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    capsys.readouterr()
+
+    assert main(["runtime", "prune", "--root", str(root)]) == 0
+    dry_run = yaml.safe_load(capsys.readouterr().out)
+    assert dry_run["status"] == "would-prune"
+    assert dry_run["counts"] == {"before": 5, "after": 1, "pruned": 4}
+    assert dry_run["stale_backup_files"]["count"] == 1
+    assert backup_path.exists()
+    assert len(yaml.safe_load(queue_path.read_text(encoding="utf-8"))["items"]) == 5
+
+    assert main(["run-queue", "prune", "--root", str(root), "--apply"]) == 0
+    applied = yaml.safe_load(capsys.readouterr().out)
+    assert applied["status"] == "pruned"
+    assert applied["counts"] == {"before": 5, "after": 1, "pruned": 4}
+    assert not backup_path.exists()
+    queue_after = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    assert [item["id"] for item in queue_after["items"]] == ["fresh_queued"]
+    archive = yaml.safe_load(Path(applied["archive_log"]).read_text(encoding="utf-8"))
+    assert [item["id"] for item in archive["pruned_items"]] == ["stale_queued", "old_done", "old_failed", "old_skipped"]
 
 
 def test_supervise_isolates_a_failing_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,13 +17,21 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
-from genomes_agentic_os.hosts import list_hosts, load_hosts, save_hosts, upsert_host
+from genomes_agentic_os.hosts import (
+    format_host_routing_status,
+    host_routing_status,
+    list_hosts,
+    load_hosts,
+    save_hosts,
+    upsert_host,
+)
 from genomes_agentic_os.scaffold import (
     _remotes_from_config,
     append_project_remote_refs,
@@ -86,11 +94,19 @@ class TestHostsModule:
             load_hosts(tmp_path)
 
     def test_upsert_host_creates_new(self, tmp_path: Path) -> None:
-        result = upsert_host(tmp_path, "myhost", ssh_alias="myhost", user="me", description="test")
+        result = upsert_host(
+            tmp_path,
+            "myhost",
+            ssh_alias="myhost",
+            user="me",
+            home="/home/me",
+            description="test",
+        )
         assert result["action"] == "created"
         hosts = load_hosts(tmp_path)
         assert "myhost" in hosts
         assert hosts["myhost"]["user"] == "me"
+        assert hosts["myhost"]["home"] == "/home/me"
 
     def test_upsert_host_updates_existing(self, tmp_path: Path) -> None:
         upsert_host(tmp_path, "myhost", description="old")
@@ -107,11 +123,12 @@ class TestHostsModule:
         assert list_hosts(tmp_path) == []
 
     def test_list_hosts_returns_entries_with_alias(self, tmp_path: Path) -> None:
-        upsert_host(tmp_path, "box1", description="Box 1")
+        upsert_host(tmp_path, "box1", home="/home/box1", description="Box 1")
         upsert_host(tmp_path, "box2", description="Box 2")
         entries = list_hosts(tmp_path)
         aliases = {e["alias"] for e in entries}
         assert aliases == {"box1", "box2"}
+        assert any(e["alias"] == "box1" and e["home"] == "/home/box1" for e in entries)
 
     def test_upsert_host_rejects_bad_alias(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Host alias must be"):
@@ -128,6 +145,57 @@ class TestHostsModule:
         save_hosts(tmp_path, data)
         loaded = load_hosts(tmp_path)
         assert loaded["myhost"]["paths"][0]["path"] == "/home/user/projects/myproject"
+
+    def test_host_routing_status_includes_policy_and_recent_receipts(self, tmp_path: Path) -> None:
+        save_hosts(
+            tmp_path,
+            {
+                "bigmac": {"ssh_alias": "bigmac", "home": "/Users/genome"},
+                "genomesbox": {"ssh_alias": "genomesbox", "home": "/home/genome"},
+            },
+        )
+        routing = tmp_path / "harness" / "registries" / "hosts-routing.yml"
+        routing.parent.mkdir(parents=True)
+        routing.write_text(
+            """
+hosts:
+  bigmac:
+    role: primary
+    max_concurrent: 5
+    harnesses: [claude, gpt]
+    project_paths:
+      Agentic OS: /Users/genome/projects/genomes_agentic_os
+  genomesbox:
+    role: worker
+    max_concurrent: 3
+    harnesses: [claude, gpt]
+    project_paths:
+      Agentic OS: /home/genome/projects/genomes_agentic_os
+auto_route:
+  enabled: true
+  strategy: least_active
+  probe: ssh_pgrep
+  fallback_host: bigmac
+memory_plane:
+  shared: true
+  endpoint_local: 127.0.0.1:3155
+""",
+            encoding="utf-8",
+        )
+        runs_log = tmp_path / "harness" / "shared_factory" / "06-runs-and-logs" / "harness-runs" / "runs.jsonl"
+        runs_log.parent.mkdir(parents=True)
+        runs_log.write_text(
+            '{"ts":"2026-07-04T21:00:00Z","host":"local","harness":"gpt","exit_code":0}\n'
+            '{"ts":"2026-07-04T21:01:00Z","host":"genomesbox","harness":"gpt","task_type":"implementation","exit_code":0,"local_view_path":"/Users/genome/agentic_os/SSH_genomesbox/projects/genomes_agentic_os"}\n',
+            encoding="utf-8",
+        )
+
+        status = host_routing_status(tmp_path)
+        text = format_host_routing_status(status)
+
+        assert {host["alias"] for host in status["hosts"]} == {"bigmac", "genomesbox"}
+        assert status["recent_harness_runs"][0]["host"] == "genomesbox"
+        assert "local_view=/Users/genome/agentic_os/SSH_genomesbox/projects/genomes_agentic_os" in text
 
 
 # ---------------------------------------------------------------------------
@@ -489,19 +557,53 @@ class TestCLI:
         remotes = data["sources"]["remotes"]
         assert remotes[-1]["host"] == "otherhost"
 
-    def test_host_add_and_list_cli(self, tmp_path: Path) -> None:
+    def test_host_add_and_list_cli(self, tmp_path: Path, capsys) -> None:
         _init_root(tmp_path)
         assert main([
             "host", "add", "genomesbox",
             "--ssh-alias", "genomesbox",
             "--user", "genome",
+            "--home", "/home/genome",
             "--description", "Always-on Linux box",
             "--root", str(tmp_path),
         ]) == 0
+        capsys.readouterr()
         assert main(["host", "list", "--root", str(tmp_path)]) == 0
+        listed = capsys.readouterr().out
         hosts = load_hosts(tmp_path)
         assert "genomesbox" in hosts
         assert hosts["genomesbox"]["user"] == "genome"
+        assert hosts["genomesbox"]["home"] == "/home/genome"
+        assert "home: /home/genome" in listed
+
+    def test_host_routing_cli_json(self, tmp_path: Path, capsys) -> None:
+        _init_root(tmp_path)
+        capsys.readouterr()
+        save_hosts(tmp_path, {"genomesbox": {"ssh_alias": "genomesbox", "home": "/home/genome"}})
+        routing = tmp_path / "harness" / "registries" / "hosts-routing.yml"
+        routing.parent.mkdir(parents=True, exist_ok=True)
+        routing.write_text(
+            """
+hosts:
+  genomesbox:
+    role: worker
+    max_concurrent: 3
+    harnesses: [gpt]
+    project_paths:
+      Agentic OS: /home/genome/projects/genomes_agentic_os
+auto_route:
+  enabled: true
+  strategy: least_active
+  fallback_host: bigmac
+""",
+            encoding="utf-8",
+        )
+
+        assert main(["host", "routing", "--root", str(tmp_path), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+
+        assert payload["hosts"][0]["alias"] == "genomesbox"
+        assert payload["auto_route"]["strategy"] == "least_active"
 
     def test_project_onboard_with_existing_remotes_materialises(self, tmp_path: Path) -> None:
         """onboard_project re-runs ensure_project_operating_surface with remotes from project.yml."""

@@ -204,6 +204,7 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-capture-plan.md",
     "commands/os-discover-rooms.md",
     "commands/os-runtime-init.md",
+    "commands/os-run-queue.md",
     "commands/os-ps.md",
     "commands/os-heartbeat.md",
     "commands/os-integration-setup.md",

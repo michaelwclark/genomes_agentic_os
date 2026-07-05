@@ -31,6 +31,10 @@ hosts:
     path_rewrite:                 # prefix-substitution fallback when project not in project_paths
       - { from: /Users/genome, to: /home/genome }
 
+  # mac: Phase 4 placeholder only. Current SSH alias resolves to /Users/mclark,
+  # lacks codex, lacks /Users/genome project checkouts, and has no bigmac-visible
+  # SSHFS artifact mount. Add it here only after those prerequisites are true.
+
 auto_route:
   enabled: true                   # default ON (hard requirement)
   strategy: least_active          # fewest in-flight harness runs among eligible hosts
@@ -56,7 +60,9 @@ artifact_return:
     genomesbox:
       remote_root: /home/genome/projects
       local_root:  /Users/genome/agentic_os/SSH_genomesbox/projects
-  # rsync_back: { enabled: false }  # Phase 4 option for hosts without an SSHFS mount
+  rsync_back:
+    enabled: false                # Phase 4 option for hosts without an SSHFS mount
+    dest: null                    # e.g. /Users/genome/agentic_os/watchers/.../runs/<run-id>
 
 memory_plane:
   shared: true                    # verified: losmon-memory-mcp @ genomesbox:3155, tunneled to bigmac

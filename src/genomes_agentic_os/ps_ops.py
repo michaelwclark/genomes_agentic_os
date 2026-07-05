@@ -25,6 +25,7 @@ from .thread_closeout import DEFAULT_STALE_DAYS, stale_candidates
 CONTROL_PLANE = Path("harness/shared_factory/00-control-plane")
 CONTROL_CONFIG = "harness/shared_factory/00-control-plane/automation-control.yml"
 WATCH_SOURCES_FILE = CONTROL_PLANE / "watch-sources.yml"
+HARNESS_RUNS_LOG = Path("harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl")
 ACTIVE_QUEUE_STATUSES = {"queued", "running", "approval-needed"}
 NOW_QUEUE_STATUSES = {"running"}
 PS_MODES = ("now", "active", "all")
@@ -37,6 +38,7 @@ KIND_ORDER = {
     "watch": 4,
     "thread": 5,
     "workflow": 6,
+    "harness": 7,
 }
 STATUS_ORDER = {
     "running": 0,
@@ -63,7 +65,8 @@ GROUP_ORDER = {
     "heartbeats": 4,
     "watchers": 5,
     "thread_closeouts": 6,
-    "workflows": 7,
+    "harness_runs": 7,
+    "workflows": 8,
 }
 GROUP_TITLES = {
     "running_now": "RUNNING NOW",
@@ -73,6 +76,7 @@ GROUP_TITLES = {
     "heartbeats": "HEARTBEATS",
     "watchers": "WATCHERS",
     "thread_closeouts": "THREAD CLOSEOUTS",
+    "harness_runs": "HARNESS RUNS",
     "workflows": "WORKFLOWS",
 }
 STATUS_COLORS = {
@@ -101,6 +105,7 @@ KIND_COLORS = {
     "watch": "34",
     "thread": "33",
     "workflow": "32",
+    "harness": "36",
 }
 
 
@@ -400,6 +405,55 @@ def _thread_rows(root: Path, mode: str, stale_days: int) -> list[dict[str, Any]]
     return rows
 
 
+def _harness_run_rows(root: Path, mode: str) -> list[dict[str, Any]]:
+    if mode == "now":
+        return []
+    path = root / HARNESS_RUNS_LOG
+    if not path.exists():
+        return []
+    parsed: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        host = str(row.get("host") or "")
+        if host in ("", "local", "bigmac"):
+            continue
+        parsed.append(row)
+
+    rows: list[dict[str, Any]] = []
+    for row in parsed[-10:]:
+        exit_code = row.get("exit_code")
+        status = "done" if exit_code == 0 else "failed"
+        detail = str(row.get("local_view_path") or row.get("remote_cwd") or row.get("output_file") or "")
+        row_id = str(row.get("ts") or "harness-run")
+        rows.append(
+            _row(
+                "harness",
+                status,
+                row_id,
+                ref=str(row.get("host") or ""),
+                detail=detail,
+                path=row.get("output_file"),
+                root=root,
+                attrs={
+                    "group": "harness_runs",
+                    "harness": row.get("harness"),
+                    "task_type": row.get("task_type"),
+                    "remote_cwd": row.get("remote_cwd"),
+                    "local_view_path": row.get("local_view_path"),
+                    "exit_code": exit_code,
+                },
+            )
+        )
+    return rows
+
+
 def _process_alive(pid: Any) -> bool:
     try:
         parsed = int(pid)
@@ -511,6 +565,7 @@ def ps_snapshot(
     rows.extend(_running_process_rows(os_root))
     rows.extend(_queue_rows(os_root, mode))
     rows.extend(_thread_rows(os_root, mode, stale_days))
+    rows.extend(_harness_run_rows(os_root, mode))
     rows.extend(_workflow_rows(os_root, mode))
     rows.extend(_schedule_rows(os_root, mode, now))
     rows.extend(_heartbeat_rows(os_root, mode))

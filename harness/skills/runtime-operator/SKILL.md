@@ -15,6 +15,7 @@ Use this skill when a task asks to initialize, inspect, dry-run, or diagnose the
 4. Prefer dry-run commands:
    - `agentic-os heartbeat run <heartbeat_id> --root <root> --dry-run`
    - `agentic-os schedule run-due --root <root> --dry-run`
+   - `agentic-os run-queue prune --root <root> --dry-run`
 5. Run `agentic-os runtime doctor --root <root>` or `agentic-os heartbeat doctor --root <root>` before treating the runtime as healthy.
 6. Use `agentic-os notion track-runtime --root <root> --dry-run` before any apply.
 
@@ -24,3 +25,4 @@ Use this skill when a task asks to initialize, inspect, dry-run, or diagnose the
 - Do not write to Notion until the workspace has been verified as Genome's Notion.
 - Do not store credential values in runtime registries, run logs, or Notion tracking records.
 - Keep heartbeat logs in `shared_factory/06-runs-and-logs/heartbeats/`.
+- Keep run-queue prune archives in `shared_factory/06-runs-and-logs/run-queue-prune/`.

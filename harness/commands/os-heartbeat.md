@@ -10,6 +10,7 @@ agentic-os heartbeat run granola_recent_notes_sync --root ~/agentic_os --dry-run
 agentic-os heartbeat doctor --root ~/agentic_os
 agentic-os schedule create daily_agentic_os_doctor --root ~/agentic_os --cadence daily
 agentic-os schedule run-due --root ~/agentic_os --dry-run
+agentic-os run-queue prune --root ~/agentic_os --dry-run
 ```
 
 ## Operating Rules
@@ -17,6 +18,7 @@ agentic-os schedule run-due --root ~/agentic_os --dry-run
 - Dry-run before any scheduled or provider-backed execution.
 - Treat heartbeat logs as source-of-truth evidence for what ran.
 - Use `schedule run-due` to queue due work only; schedules use `next_due_at`, `last_queued_at`, and `idempotency_key` to avoid duplicate queue rows.
+- Use `run-queue prune` to keep stale queued rows, terminal history, and temporary queue backups bounded.
 - Queue rows use `status` values `queued`, `approval-needed`, `running`, `blocked`, `done`, and `failed`; dry-run is represented by `dry_run: true`, not by an unsafe provider action.
 - Do not directly execute external effects from chat.
 - Link successful or blocked runs into Notion only through the guarded runtime tracking command.
@@ -26,3 +28,4 @@ agentic-os schedule run-due --root ~/agentic_os --dry-run
 - Runtime registry: `shared_factory/00-control-plane/runtime-registry.yml`
 - Run queue: `shared_factory/00-control-plane/run-queue.yml`
 - Heartbeat logs: `shared_factory/06-runs-and-logs/heartbeats/`
+- Run queue prune logs: `shared_factory/06-runs-and-logs/run-queue-prune/`
