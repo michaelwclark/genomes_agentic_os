@@ -43,6 +43,7 @@ Located at `~/agentic_os/harness/registries/`. Each file is a YAML registry for 
 | `composio-tools.yml` | Composio tool bindings and connection audit state. |
 | `customer-identity.json` | Customer identity and license metadata. |
 | `hooks.yml` | Claude and Codex hook configuration sources. |
+| `hosts-routing.yml` | Cross-host harness routing policy: eligible hosts, per-host project paths, least-active probe settings, Host-column overrides, artifact visibility, and shared memory-plane notes. |
 | `intake-sync.yml` | Intake sync source bindings. |
 | `libraries.yml` | Installed library references. |
 | `mcp-servers.yml` | MCP server registry: names, commands, env requirements. |
@@ -67,7 +68,28 @@ agentic-os update apply [--apply]         Apply safe additive update changes.
 
 ---
 
-## 3. agentic-os.lock.json — Install Lock
+## 3. config/hosts.yml — SSH Host Identity
+
+Located at `~/agentic_os/config/hosts.yml`.
+
+Stores SSH identity only: host alias, SSH alias, user, home/path-domain root, description, SSH options, and optional path metadata. Routing policy is deliberately separate in `harness/registries/hosts-routing.yml`, so credentials and dispatch decisions do not drift together.
+
+Cross-host work distribution reads both files:
+
+- `config/hosts.yml` resolves the SSH identity used by `agentic-harness-run --host <alias>`.
+- `harness/registries/hosts-routing.yml` decides whether that host is eligible for a project and how paths/artifacts are mapped.
+
+### CLI
+
+```
+agentic-os host add <alias> --ssh-alias <ssh-name> --home <path> [--description "..."]
+agentic-os host list
+agentic-os host routing [--recent-runs N] [--json]
+```
+
+---
+
+## 4. agentic-os.lock.json — Install Lock
 
 Located at `~/agentic_os/agentic-os.lock.json`.
 
@@ -75,7 +97,7 @@ Records the installed package version, install timestamp, and hash of the instal
 
 ---
 
-## 4. doc-config.yml — Document Routing Config
+## 5. doc-config.yml — Document Routing Config
 
 Located at:
 - `~/agentic_os/<domain>/<project>/doc-config.yml` — per-project routing
@@ -93,14 +115,14 @@ agentic-os doc-config plan --request "..."               Get a routing decision.
 
 ---
 
-## 5. Control-Plane YAMLs — Runtime State
+## 6. Control-Plane YAMLs — Runtime State
 
 Located at `~/agentic_os/harness/shared_factory/00-control-plane/`. These files are the live runtime state of the OS. Most are managed by CLI commands; do not edit manually while the OS is running.
 
 | File | Managed by | Contents |
 |---|---|---|
 | `runtime-registry.yml` | `agentic-os runtime`, `agentic-os heartbeat`, `agentic-os schedule`, `agentic-os integration` | Schedules, heartbeats, and integrations. |
-| `run-queue.yml` | `agentic-os runtime run-next` | Pending and dispatched run-queue items. |
+| `run-queue.yml` | `agentic-os runtime run-next`, `agentic-os run-queue prune` | Pending and dispatched run-queue items plus bounded pruning. |
 | `automation-run-tracking.yml` | `agentic-os-automation-run-summary` | Per-automation Notion page IDs and tracking config. |
 | `self-improvement.yml` | `agentic-os self-improvement` | Self-improvement proposal queue, run records, and review config. |
 | `chain-rules.yml` | `agentic-os chain` | Event chain rules linking event types to follow-up actions. |
@@ -132,7 +154,7 @@ editable/source checkouts.
 
 ---
 
-## 6. Per-Tool Environment Variables
+## 7. Per-Tool Environment Variables
 
 Each tool reads env vars from the process environment, with automatic fallback to `~/.zshenv` when running in a non-login shell.
 
@@ -178,7 +200,7 @@ No env vars are read directly. Authentication to the remote memory service is vi
 
 ---
 
-## 7. Summary — What Reads What
+## 8. Summary — What Reads What
 
 | Config surface | Primary reader | CLI to inspect |
 |---|---|---|
@@ -187,8 +209,10 @@ No env vars are read directly. Authentication to the remote memory service is vi
 | `harness/registries/commands.yml` | Agent harnesses | `agentic-os capability list --type commands` |
 | `harness/registries/mcp-servers.yml` | Codex harness | `agentic-os capability list --type mcp_servers` |
 | `harness/registries/hooks.yml` | `agentic-os hook` | `agentic-os hook doctor` |
+| `config/hosts.yml` | `agentic-os host`, `agentic-harness-run --host` | `agentic-os host list` |
+| `harness/registries/hosts-routing.yml` | `agentic-harness-run --host auto`, Notion work-intake watcher | `agentic-os host routing` |
 | `00-control-plane/runtime-registry.yml` | `agentic-os runtime` | `agentic-os runtime doctor` |
-| `00-control-plane/run-queue.yml` | `agentic-os runtime run-next` | `agentic-os ps --active` |
+| `00-control-plane/run-queue.yml` | `agentic-os runtime run-next`, `agentic-os run-queue prune` | `agentic-os ps --active` |
 | `00-control-plane/self-improvement.yml` | `agentic-os self-improvement` | `agentic-os self-improvement status` |
 | `00-control-plane/automation-run-tracking.yml` | `agentic-os-automation-run-summary` | Read directly (YAML) |
 | `doc-config.yml` | `agentic-os doc-config` | `agentic-os doc-config doctor` |

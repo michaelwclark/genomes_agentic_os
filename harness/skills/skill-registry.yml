@@ -58,6 +58,114 @@ skills:
     purpose: >
       Run long commands, tests, Docker setup, PR checks, and watchers through
       artifact-backed async state instead of chat polling.
+  - id: add-env
+    title: Add Env
+    source_path: harness/skills/add-env
+    installed_path: shared_factory/05-knowledge/skills/add-env
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Append environment variables to zshenv across configured hosts.
+  - id: commitall
+    title: Commit All
+    source_path: harness/skills/commitall
+    installed_path: shared_factory/05-knowledge/skills/commitall
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Commit all local changes in logical groups until a repository is clean.
+  - id: los-fast-workon
+    title: LOS Fast Workon
+    source_path: harness/skills/los-fast-workon
+    installed_path: shared_factory/05-knowledge/skills/los-fast-workon
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Prepare and work LOS Jira tasks in dedicated fast worktrees.
+  - id: los-quiet-workon
+    title: LOS Quiet Workon
+    source_path: harness/skills/los-quiet-workon
+    installed_path: shared_factory/05-knowledge/skills/los-quiet-workon
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Work or resume LOS implementation in a fast worktree with minimal chat.
+  - id: orchestrate
+    title: Orchestrate
+    source_path: harness/skills/orchestrate
+    installed_path: shared_factory/05-knowledge/skills/orchestrate
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Coordinate subagents, verification, and integration.
+  - id: quiet-workon-orchestrate
+    title: Quiet Workon Orchestrate
+    source_path: harness/skills/quiet-workon-orchestrate
+    installed_path: shared_factory/05-knowledge/skills/quiet-workon-orchestrate
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Orchestrate complex LOS implementation with quiet, receipt-backed chat.
+  - id: pull-request
+    title: Pull Request
+    source_path: harness/skills/pull-request
+    installed_path: shared_factory/05-knowledge/skills/pull-request
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Review GitHub pull requests with blocker-focused, multi-lane evidence.
+  - id: watch-pr-quiet
+    title: Watch PR Quiet
+    source_path: harness/skills/watch-pr-quiet
+    installed_path: shared_factory/05-knowledge/skills/watch-pr-quiet
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Monitor pull request checks through file-backed watcher artifacts.
+  - id: composio-cli
+    title: Composio CLI
+    source_path: harness/skills/composio-cli
+    installed_path: shared_factory/05-knowledge/skills/composio-cli
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Operate the published Composio CLI for discovery, auth, schemas, and execution.
   - id: context-pack-builder
     title: Context Pack Builder
     source_path: harness/skills/context-pack-builder

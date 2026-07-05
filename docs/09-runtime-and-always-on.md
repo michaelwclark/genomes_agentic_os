@@ -6,6 +6,7 @@
 > auditable tick command (`runtime supervise`), installed by a small script.
 >
 > **You'll use:** `agentic-os runtime {init,doctor,run-next,supervise}`,
+> `agentic-os run-queue prune`,
 > `agentic-os heartbeat {list,run,doctor}`,
 > `agentic-os schedule {create,run-due}`,
 > `agentic-os automation-control {list,doctor,run}`,
@@ -141,6 +142,30 @@ selected item is blocked or failed.
 | `--item-id` | — | Inspect or dispatch a specific queue item ID. |
 | `--dry-run` | — | Preview only (default). |
 | `--apply` | — | Actually dispatch the next item. |
+
+### `agentic-os run-queue prune`
+
+Prune stale run queue history from `run-queue.yml` and archive the removed items
+under `shared_factory/06-runs-and-logs/run-queue-prune/`. **Dry-run by default**
+— pass `--apply` to rewrite the queue and remove old `run-queue.yml.backup*`
+files.
+
+Defaults keep active queue items for 24 hours, `done` items for 2 days,
+`failed`/`blocked` items for 7 days, and `skipped`/`dry-run` items for 1 day.
+Use `agentic-os runtime prune` as an alias when operating inside the runtime
+namespace.
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
+| `--active-max-age-hours` | — | Prune queued/running/approval-needed items older than this many hours. |
+| `--terminal-max-age-days` | — | Prune done items older than this many days. |
+| `--failed-max-age-days` | — | Prune failed/blocked items older than this many days. |
+| `--skipped-max-age-days` | — | Prune skipped/dry-run items older than this many days. |
+| `--backup-max-age-days` | — | Remove run-queue backup files older than this many days. |
+| `--archive` / `--no-archive` | — | Archive full pruned items before queue rewrite. Defaults to archive. |
+| `--dry-run` | — | Preview only (default). |
+| `--apply` | — | Rewrite the queue and remove stale backup files. |
 
 ### `agentic-os heartbeat list`
 
@@ -548,6 +573,11 @@ updates all due schedule items in memory, and writes the queue once at the end o
 the tick. This keeps large runtime queues from turning one supervisor pass into
 many repeated full-file reads and writes.
 
+`run_queue_prune_daily` is the scheduled maintenance pass for bounded queue
+growth. It calls `agentic-os run-queue prune --root <root> --apply`, writes an
+archive receipt for removed queue rows, and deletes stale `run-queue.yml.backup*`
+files past the backup TTL.
+
 `RUN_STATE.json` is runtime state, not source. Keep it in the installed OS or a
 run artifact, never committed to this repository.
 
@@ -571,10 +601,11 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 
 ## Guardrails & gotchas
 
-- **Dry-run by default.** Every command that enqueues or dispatches work (`heartbeat
-  run`, `schedule run-due`, `automation-control run`, `runtime run-next`,
-  `integration setup`) is dry-run unless you pass `--apply`. Output printed to
-  stdout; nothing written to the queue or logs until you confirm.
+- **Dry-run by default.** Every command that enqueues, dispatches, or prunes work
+  (`heartbeat run`, `schedule run-due`, `automation-control run`,
+  `runtime run-next`, `run-queue prune`, `integration setup`) is dry-run unless
+  you pass `--apply`. Output printed to stdout; nothing written to the queue or
+  logs until you confirm.
 - **`--apply` exits 1 on blocked items.** If a queue item is blocked (approval
   needed, integration unhealthy), `runtime run-next --apply` exits 1 and reports
   the `blocked_reason`. Fix the blocker, then retry.

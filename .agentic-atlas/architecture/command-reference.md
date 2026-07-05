@@ -16,7 +16,7 @@
 | **Exit 0** | Success |
 | **Exit 1** | Health check "not ok" (doctor / validate) |
 | **Exit 2** | argparse usage error OR deliberate handled refusal (e.g. `here route` when routing confidence is low; `config install` when blocked by conflicts) |
-| **Dry-run default** | Several mutating commands default to `--dry-run`. Pass `--apply` to commit changes. Affected: `runtime run-next`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
+| **Dry-run default** | Several mutating commands default to `--dry-run`. Pass `--apply` to commit changes. Affected: `runtime run-next`, `run-queue prune`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
 | **`run-log close --status done`** | Requires `--validation` evidence; missing evidence is a guardrail, not a crash. |
 | **`config` subcommands** | `install`, `install-tree`, and `doctor`. No `config layers` subcommand exists. |
@@ -644,7 +644,7 @@ Status: not individually validated in RESULTS.md.
 
 ---
 
-## 6. Runtime / always-on: `runtime` / `heartbeat` / `schedule` / `integration`
+## 6. Runtime / always-on: `runtime` / `run-queue` / `heartbeat` / `schedule` / `integration`
 
 ### `runtime init`
 
@@ -698,6 +698,34 @@ Exits 1 on failed/blocked status when `--apply`. Reads/Writes: runtime queue.
 ```bash
 agentic-os runtime run-next --root /tmp/aos-ref --dry-run
 agentic-os runtime run-next --root /tmp/aos-ref --apply
+```
+
+Status: **OK** (rc 0, dry-run mode)
+
+---
+
+### `run-queue prune`
+
+Prune stale runtime queue rows and old `run-queue.yml.backup*` files. Dry-run by default. `runtime prune` is an alias for the same handler.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+| `--active-max-age-hours` | No | Prune queued/running/approval-needed rows older than this many hours; default 24 |
+| `--terminal-max-age-days` | No | Prune done rows older than this many days; default 2 |
+| `--failed-max-age-days` | No | Prune failed/blocked rows older than this many days; default 7 |
+| `--skipped-max-age-days` | No | Prune skipped/dry-run rows older than this many days; default 1 |
+| `--backup-max-age-days` | No | Remove run-queue backup files older than this many days; default 7 |
+| `--archive` / `--no-archive` | No | Archive full pruned items under `shared_factory/06-runs-and-logs/run-queue-prune/`; default archive |
+| `--dry-run` | No (default) | Preview only, no queue rewrite or backup removal |
+| `--apply` | No | Rewrite the queue and remove stale backup files |
+
+Reads/Writes: runtime queue, run-queue-prune archive logs, stale run-queue backup files.
+
+```bash
+agentic-os run-queue prune --root /tmp/aos-ref --dry-run
+agentic-os run-queue prune --root /tmp/aos-ref --apply
+agentic-os runtime prune --root /tmp/aos-ref --dry-run
 ```
 
 Status: **OK** (rc 0, dry-run mode)
@@ -1658,4 +1686,4 @@ Status: **OK** (rc 0)
 | **GUARDED** | 1 | `here route` (rc 2, low confidence) |
 | Total validated | 53 | See `.agentic-atlas/validation/RESULTS.md` for full matrix |
 
-Commands not in the 53-invocation matrix (`room`, `here context build`, `connected-system doctor`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap/track-runtime`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.
+Commands not in the 53-invocation matrix (`room`, `here context build`, `connected-system doctor`, `run-queue prune`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap/track-runtime`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.

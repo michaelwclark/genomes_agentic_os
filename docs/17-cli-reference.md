@@ -23,7 +23,7 @@ never change.
 | **Exit 0** | Success. |
 | **Exit 1** | Health check "not ok" — `doctor` / `validate` commands report a problem. Fix it and re-run. |
 | **Exit 2** | Argparse usage error **or** deliberate handled refusal — e.g. `here route` when routing confidence is low, `config install` when blocked by conflicts. Exit 2 is not a crash; it is the OS saying "I won't guess." |
-| **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `schedule run-due`, `automation-control run`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
+| **Dry-run by default** | Mutating commands preview their effect and do nothing unless you add `--apply`. Affected: `runtime run-next`, `run-queue prune`, `schedule run-due`, `automation-control run`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
 | **`config` subcommands** | Exactly `install`, `install-tree`, and `doctor` — no `config layers` subcommand exists. |
 
@@ -65,6 +65,9 @@ atlas command reference for the full flag table and real captured output.
 | `project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view from active work items, worktrees, and automations | [13 · Agent Surfaces](13-agent-surfaces.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `project worktree cleanup-closed` | Move cached terminal-status or merged-PR worktree registrations to `worktrees/closed.yml` and optionally remove merged in-project worktree directories unless `REOPEN.md` is present | [13 · Agent Surfaces](13-agent-surfaces.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `project worktree add <domain> <slug> <name> --path <path>` | Register a visible worktree symlink and routing index entry | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
+| `host add <alias>` | Add or update an SSH host identity, including the host path-domain root | [23 · Configuration Surfaces](23-configuration-surfaces.md) | pending |
+| `host list` | List registered SSH host identities | [23 · Configuration Surfaces](23-configuration-surfaces.md) | pending |
+| `host routing` | Show cross-host routing policy and recent remote harness receipts | [23 · Configuration Surfaces](23-configuration-surfaces.md) | pending |
 | `route <request>` | Deterministically route a free-text request to a domain/project | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `context build --domain <d>` | Build a `ContextPacket` without a request string | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
 | `here route <request>` | Route from the current working directory (exits 2 on low confidence) | [05 · Routing & Context](05-routing-and-context.md) | [§3](../.agentic-atlas/architecture/command-reference.md) |
@@ -106,6 +109,8 @@ atlas command reference for the full flag table and real captured output.
 | `runtime init` | Initialise the runtime queue registry | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `runtime doctor` | Health-check the runtime registry (exits 1 if not ok) | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `runtime run-next` | Preview or dispatch the next safe queued item (`--apply` to dispatch) | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
+| `run-queue prune` / `runtime prune` | Preview or prune stale run-queue rows and old queue backups (`--apply` to rewrite) | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
+| `ps --active` | Show active runtime work, including recent remote harness receipts from cross-host dispatch | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | pending |
 | `heartbeat list` | List all configured heartbeats | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `heartbeat run` | Trigger a heartbeat (dry-run by default) | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |
 | `heartbeat doctor` | Health-check heartbeat config | [09 · Runtime & Always-On](09-runtime-and-always-on.md) | [§6](../.agentic-atlas/architecture/command-reference.md) |

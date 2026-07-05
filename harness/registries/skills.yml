@@ -43,6 +43,26 @@ skills:
   description: Run long local commands, tests, watchers, or external waits with artifact-backed
     state instead of chat polling.
   source: harness/skills/quiet-async-runner/SKILL.md
+- id: add-env
+  name: Add Env
+  description: Append environment variables to ~/.zshenv on bigmac, genomesbox,
+    and the Mac laptop in one step.
+  source: harness/skills/add-env/SKILL.md
+- id: commitall
+  name: Commit All
+  description: Commit all local changes in logical groups until the repository is
+    clean.
+  source: harness/skills/commitall/SKILL.md
+- id: los-fast-workon
+  name: LOS Fast Workon
+  description: Use when the user wants to work a LOS Jira ticket or non-trivial
+    LOS task in a dedicated fast worktree.
+  source: harness/skills/los-fast-workon/SKILL.md
+- id: los-quiet-workon
+  name: LOS Quiet Workon
+  description: Use when working or resuming LOS Jira implementation in a fast worktree
+    with minimal chat output.
+  source: harness/skills/los-quiet-workon/SKILL.md
 - id: orchestrate
   name: Orchestrate
   description: Coordinate subagents, verification, and integration.
@@ -52,7 +72,21 @@ skills:
   description: Preferred LOS coding/testing orchestration entrypoint with quiet chat,
     subagents, receipt-backed artifacts, quality holdouts, PR lifecycle management,
     pre-commit blocked CI fallback, and mandatory Copilot comment resolution.
-  source: /Users/genome/.agents/skills/quiet-workon-orchestrate/SKILL.md
+  source: harness/skills/quiet-workon-orchestrate/SKILL.md
+- id: pull-request
+  name: Pull Request
+  description: Orchestrated GitHub PR review skill.
+  source: harness/skills/pull-request/SKILL.md
+- id: watch-pr-quiet
+  name: Watch PR Quiet
+  description: Monitor GitHub pull request checks through file-based watcher artifacts
+    instead of repeated chat polling.
+  source: harness/skills/watch-pr-quiet/SKILL.md
+- id: composio-cli
+  name: Composio CLI
+  description: Help users operate the published Composio CLI to discover tools,
+    connect accounts, inspect schemas, execute tools, and troubleshoot CLI flows.
+  source: harness/skills/composio-cli/SKILL.md
 - id: finishing-touches-review
   name: Finishing Touches Review
   description: Run a deterministic cross-model finishing review loop before PR readiness

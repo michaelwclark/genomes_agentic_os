@@ -13,6 +13,14 @@ mechanical work, and one agent reads the right files at the right moment.
 guardrail exits · 0 crashes · 97/97 tests pass. Re-validate with
 `bash .agentic-atlas/tools/validate-cli.sh` and `.venv/bin/python -m pytest -q`.
 
+**Canonical doc split:** Use this `docs/` handbook when you are evaluating,
+installing, or extending the source package and need architecture, command
+reference, or validated behavior. If you are already operating inside an
+installed OS at `~/agentic_os` and need runtime instructions for what to create,
+where to put it, which format to use, or what evidence to leave behind, use the
+[`operating-manual/`](../operating-manual/README.md); it is the operator/agent
+manual copied into the installed OS.
+
 ---
 
 ## Runs from either harness
