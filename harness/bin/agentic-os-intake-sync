@@ -25,6 +25,9 @@ EXAMPLES
 
   # Pull-only (back-sync Linear→Notion)
   agentic-os-intake-sync --direction pull
+
+  # Read-only preflight for Notion/Linear access and mapping drift
+  agentic-os-intake-sync doctor
 """
 
 import argparse
@@ -62,6 +65,15 @@ PRIORITY_MAP = {"P0": 1, "P1": 2, "P2": 3, "P3": 4}
 
 # Linear state type → back-sync condition
 LINEAR_DONE_TYPES = {"completed", "canceled"}
+
+
+class LinearGraphQLError(RuntimeError):
+    """Linear returned GraphQL errors; keep structured errors for callers."""
+
+    def __init__(self, errors: list[dict]):
+        self.errors = errors
+        super().__init__(f"Linear GraphQL error: {errors}")
+
 
 # ---------------------------------------------------------------------------
 # HTTP helpers
@@ -128,7 +140,7 @@ def linear_query(query: str, variables: dict, token: str) -> dict:
         body={"query": query, "variables": variables},
     )
     if result.get("errors"):
-        raise RuntimeError(f"Linear GraphQL error: {result['errors']}")
+        raise LinearGraphQLError(result["errors"])
     return result["data"]
 
 
@@ -411,6 +423,231 @@ def linear_get_issue(issue_url: str, token: str) -> dict | None:
     return None
 
 
+def linear_get_team_sync_profile(team_id: str, token: str) -> dict:
+    """Fetch read-only Linear metadata needed to validate intake sync config."""
+    data = linear_query(
+        """query IntakeSyncDoctor($teamId: String!) {
+          team(id: $teamId) {
+            id
+            name
+            key
+            states { nodes { id name type } }
+            projects(first: 100) { nodes { id name } }
+          }
+        }""",
+        {"teamId": team_id},
+        token,
+    )
+    team = data.get("team")
+    if not team:
+        raise RuntimeError(f"Linear team not found: {team_id}")
+    return {
+        "team": {
+            "id": team["id"],
+            "name": team.get("name"),
+            "key": team.get("key"),
+        },
+        "states": team.get("states", {}).get("nodes", []),
+        "projects": team.get("projects", {}).get("nodes", []),
+    }
+
+
+def _linear_error_codes(exc: Exception) -> set[str]:
+    errors = getattr(exc, "errors", None)
+    codes: set[str] = set()
+    if isinstance(errors, list):
+        for error in errors:
+            if not isinstance(error, dict):
+                continue
+            extensions = error.get("extensions")
+            if isinstance(extensions, dict) and extensions.get("code"):
+                codes.add(str(extensions["code"]))
+            if error.get("code"):
+                codes.add(str(error["code"]))
+    if "USAGE_LIMIT_EXCEEDED" in str(exc):
+        codes.add("USAGE_LIMIT_EXCEEDED")
+    return codes
+
+
+def _is_usage_limit_error(exc: Exception) -> bool:
+    return "USAGE_LIMIT_EXCEEDED" in _linear_error_codes(exc)
+
+
+def _linear_sync_error_message(action: str, exc: Exception) -> str:
+    if _is_usage_limit_error(exc):
+        return (
+            f"Linear {action} blocked: USAGE_LIMIT_EXCEEDED. "
+            "Stop intake sync; the workspace issue limit must be resolved or the "
+            "work must be routed to an approved tracker fallback."
+        )
+    return f"Linear {action} failed: {exc}"
+
+
+def _add_finding(findings: list[dict], severity: str, code: str, message: str, remediation: str) -> None:
+    findings.append(
+        {
+            "severity": severity,
+            "code": code,
+            "message": message,
+            "remediation": remediation,
+        }
+    )
+
+
+def run_doctor(
+    cfg: dict,
+    *,
+    config_path: Path,
+    token_linear: str,
+    token_notion: str,
+    check_notion: bool = True,
+) -> dict:
+    """Read-only preflight for intake sync configuration and provider access."""
+    checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    checks: list[dict] = []
+    findings: list[dict] = []
+
+    required_keys = ("team_id", "status_map", "project_map", "synced_statuses")
+    missing_keys = [key for key in required_keys if key not in cfg]
+    if missing_keys:
+        _add_finding(
+            findings,
+            "blocker",
+            "config_missing_keys",
+            f"intake-sync config is missing required keys: {', '.join(missing_keys)}",
+            "Add the missing keys to intake-sync.yml before running sync.",
+        )
+    checks.append(
+        {
+            "name": "config",
+            "ok": not missing_keys,
+            "path": str(config_path),
+            "required_keys": list(required_keys),
+        }
+    )
+
+    if not token_linear:
+        _add_finding(
+            findings,
+            "blocker",
+            "missing_linear_token",
+            "LINEAR_TOKEN env var is not set.",
+            "Set LINEAR_TOKEN for the approved Linear workspace and re-run doctor.",
+        )
+    if check_notion and not token_notion:
+        _add_finding(
+            findings,
+            "blocker",
+            "missing_notion_token",
+            "GENOMES_NOTION_PAT env var is not set.",
+            "Set GENOMES_NOTION_PAT for Genome's Notion and re-run doctor.",
+        )
+
+    team_id = cfg.get("team_id")
+    if token_linear and team_id:
+        try:
+            profile = linear_get_team_sync_profile(team_id, token_linear)
+            states = profile["states"]
+            projects = profile["projects"]
+            checks.append(
+                {
+                    "name": "linear_team",
+                    "ok": True,
+                    "team": profile["team"],
+                    "states": [state.get("name") for state in states],
+                    "projects": [
+                        {"id": project.get("id"), "name": project.get("name")}
+                        for project in projects
+                    ],
+                }
+            )
+
+            state_names = {str(state.get("name", "")).lower() for state in states}
+            for notion_status, mapping in (cfg.get("status_map") or {}).items():
+                state_name = mapping.get("state") if isinstance(mapping, dict) else mapping
+                if state_name and str(state_name).lower() not in state_names:
+                    _add_finding(
+                        findings,
+                        "blocker",
+                        "missing_linear_state",
+                        f"status_map[{notion_status!r}] points at missing Linear state {state_name!r}.",
+                        "Update intake-sync.yml status_map or create/rename the Linear workflow state.",
+                    )
+
+            project_ids = {str(project.get("id")) for project in projects if project.get("id")}
+            for notion_project, project_id in (cfg.get("project_map") or {}).items():
+                if project_id and str(project_id) not in project_ids:
+                    _add_finding(
+                        findings,
+                        "blocker",
+                        "missing_linear_project",
+                        f"project_map[{notion_project!r}] points at Linear project id {project_id!r}, which is not visible on the configured team.",
+                        "Update intake-sync.yml project_map to the verified Linear project id for this team.",
+                    )
+        except Exception as exc:
+            code = "linear_usage_limit_exceeded" if _is_usage_limit_error(exc) else "linear_doctor_failed"
+            remediation = (
+                "Resolve the Linear workspace issue limit or route this work to the approved tracker fallback before running sync."
+                if _is_usage_limit_error(exc)
+                else "Verify LINEAR_TOKEN, team_id, and Linear API access, then re-run doctor."
+            )
+            _add_finding(findings, "blocker", code, _linear_sync_error_message("doctor", exc), remediation)
+            checks.append(
+                {
+                    "name": "linear_team",
+                    "ok": False,
+                    "team_id": team_id,
+                    "error_codes": sorted(_linear_error_codes(exc)),
+                }
+            )
+
+    if check_notion and token_notion:
+        try:
+            db = notion_get(f"/databases/{NOTION_DB_ID}", token_notion)
+            title = "".join(
+                part.get("plain_text", "")
+                for part in db.get("title", [])
+                if isinstance(part, dict)
+            )
+            checks.append(
+                {
+                    "name": "notion_database",
+                    "ok": True,
+                    "database_id": NOTION_DB_ID,
+                    "title": title,
+                }
+            )
+        except Exception as exc:
+            _add_finding(
+                findings,
+                "blocker",
+                "notion_database_unavailable",
+                f"Cannot read OS Work Intake Notion database {NOTION_DB_ID}: {exc}",
+                "Verify the token is for Genome's Notion and has access to the OS Work Intake database.",
+            )
+            checks.append({"name": "notion_database", "ok": False, "database_id": NOTION_DB_ID})
+
+    checks.append(
+        {
+            "name": "issue_creation_quota",
+            "ok": True,
+            "mode": "read_only",
+            "note": "Linear issue creation quota cannot be proven without a mutation; any USAGE_LIMIT_EXCEEDED response is classified as a blocker.",
+        }
+    )
+
+    blocker_count = sum(1 for finding in findings if finding["severity"] == "blocker")
+    return {
+        "ok": blocker_count == 0,
+        "checked_at": checked_at,
+        "config": str(config_path),
+        "notion_db_id": NOTION_DB_ID,
+        "blocker_count": blocker_count,
+        "checks": checks,
+        "findings": findings,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -549,7 +786,14 @@ def execute_push(
             # Belt-and-suspenders: search Linear for existing issue by marker.
             # Skip in dry-run: nothing has been created yet so no dupes possible,
             # and 61 searches would exhaust the 30/min rate limit.
-            existing = None if dry_run else linear_search_by_marker(page_id, token_linear)
+            try:
+                existing = None if dry_run else linear_search_by_marker(page_id, token_linear)
+            except Exception as e:
+                print(f"  ERROR {name!r}: {_linear_sync_error_message('duplicate search', e)}", file=sys.stderr)
+                counts["errors"] += 1
+                if _is_usage_limit_error(e):
+                    break
+                continue
             if existing:
                 if verbose:
                     print(f"  skip  {name!r}: already in Linear as {existing['identifier']} (marker found)")
@@ -581,16 +825,23 @@ def execute_push(
                 counts["created"] += 1
                 continue
 
-            issue = linear_create_issue(
-                title=name,
-                description=description,
-                state_id=plan["state_id"],
-                priority=plan["priority"],
-                label_ids=label_ids,
-                team_id=team_id,
-                project_id=plan["project_id"],
-                token=token_linear,
-            )
+            try:
+                issue = linear_create_issue(
+                    title=name,
+                    description=description,
+                    state_id=plan["state_id"],
+                    priority=plan["priority"],
+                    label_ids=label_ids,
+                    team_id=team_id,
+                    project_id=plan["project_id"],
+                    token=token_linear,
+                )
+            except Exception as e:
+                print(f"  ERROR {name!r}: {_linear_sync_error_message('issue creation', e)}", file=sys.stderr)
+                counts["errors"] += 1
+                if _is_usage_limit_error(e):
+                    break
+                continue
             # Write URL back immediately
             notion_set_linear_url(page_id, issue["url"], token_notion)
             print(f"  CREATED {issue['identifier']} ← {name!r} → {issue['url']}")
@@ -743,10 +994,19 @@ EXAMPLES:
   # Back-sync only (Linear → Notion status updates)
   agentic-os-intake-sync --direction pull
 
+  # Read-only provider/config preflight
+  agentic-os-intake-sync doctor
+
   # Filter to specific Notion status
   agentic-os-intake-sync --status-filter triaged --dry-run
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["doctor"],
+        help="Run a read-only preflight instead of syncing.",
     )
     parser.add_argument(
         "--dry-run",
@@ -798,10 +1058,10 @@ EXAMPLES:
     # Tokens from environment
     token_linear = os.environ.get("LINEAR_TOKEN", "")
     token_notion = os.environ.get("GENOMES_NOTION_PAT", "")
-    if not token_linear:
+    if args.command != "doctor" and not token_linear:
         print("ERROR: LINEAR_TOKEN env var is not set.", file=sys.stderr)
         sys.exit(1)
-    if not token_notion:
+    if args.command != "doctor" and not token_notion:
         print("ERROR: GENOMES_NOTION_PAT env var is not set.", file=sys.stderr)
         sys.exit(1)
 
@@ -810,7 +1070,17 @@ EXAMPLES:
     if not config_path.exists():
         print(f"ERROR: Config not found at {config_path}", file=sys.stderr)
         sys.exit(1)
-    cfg = load_config(config_path)
+    cfg = load_config(config_path) or {}
+
+    if args.command == "doctor":
+        result = run_doctor(
+            cfg,
+            config_path=config_path,
+            token_linear=token_linear,
+            token_notion=token_notion,
+        )
+        print(yaml.safe_dump(result, sort_keys=False))
+        sys.exit(0 if result["ok"] else 1)
 
     team_id = cfg["team_id"]
     if args.dry_run:
@@ -895,6 +1165,8 @@ EXAMPLES:
     with open(receipt_path, "w") as f:
         json.dump(receipt, f, indent=2)
     print(f"Receipt: {receipt_path}")
+    if run_counts["errors"]:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

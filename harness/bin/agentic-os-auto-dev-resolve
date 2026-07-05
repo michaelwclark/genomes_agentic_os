@@ -44,6 +44,7 @@ import json
 import os
 import sys
 import textwrap
+import urllib.request
 from pathlib import Path
 
 try:
@@ -81,6 +82,15 @@ _ORDINAL = {
 _CLOSE_STATES = {"finished", "documented", "archived"}
 _GROOM_STATES = {"captured", "triaged"}
 _SPECIFIED_STATE = "specified"
+LINEAR_API = "https://api.linear.app/graphql"
+
+
+class LinearGraphQLError(RuntimeError):
+    """Linear returned GraphQL errors; preserve structured error payloads."""
+
+    def __init__(self, errors: list[dict]):
+        self.errors = errors
+        super().__init__(f"Linear GraphQL error: {errors}")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -227,6 +237,189 @@ def _tracker_id(packet: Path, spec: dict) -> str | None:
     return None
 
 
+def _linear_graphql(query: str, variables: dict, token: str) -> dict:
+    data = json.dumps({"query": query, "variables": variables}).encode()
+    req = urllib.request.Request(
+        LINEAR_API,
+        data=data,
+        headers={"Authorization": token, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.load(resp)
+    if result.get("errors"):
+        raise LinearGraphQLError(result["errors"])
+    return result["data"]
+
+
+def _linear_error_codes(exc: Exception) -> set[str]:
+    errors = getattr(exc, "errors", None)
+    codes: set[str] = set()
+    if isinstance(errors, list):
+        for error in errors:
+            if not isinstance(error, dict):
+                continue
+            extensions = error.get("extensions")
+            if isinstance(extensions, dict) and extensions.get("code"):
+                codes.add(str(extensions["code"]))
+            if error.get("code"):
+                codes.add(str(error["code"]))
+    if "USAGE_LIMIT_EXCEEDED" in str(exc):
+        codes.add("USAGE_LIMIT_EXCEEDED")
+    return codes
+
+
+def _is_linear_usage_limit(exc: Exception) -> bool:
+    return "USAGE_LIMIT_EXCEEDED" in _linear_error_codes(exc)
+
+
+def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict | None:
+    """Validate Linear tracker config against the live tracker issue before claim."""
+    tracker_cfg = dev_factory.get("tracker", {}) if isinstance(dev_factory, dict) else {}
+    linear_cfg = tracker_cfg.get("linear", {}) if isinstance(tracker_cfg, dict) else {}
+    primary = tracker_cfg.get("primary") or tracker_cfg.get("mode")
+    if not linear_cfg and "linear" not in str(primary):
+        return None
+
+    team_id = linear_cfg.get("team_id")
+    project_id = linear_cfg.get("project_id")
+    workflow = linear_cfg.get("workflow", {}) or {}
+    missing = [name for name, value in (("team_id", team_id), ("project_id", project_id)) if not value]
+    if missing:
+        return {
+            "name": "linear_tracker",
+            "ok": False,
+            "detail": (
+                f"dev_factory.tracker.linear is missing required field(s): {', '.join(missing)}.\n"
+                "  Remedy: update project.yml with verified Linear team_id/project_id before auto-dev claim."
+            ),
+        }
+    if not tracker_id:
+        return None
+
+    token = os.environ.get("LINEAR_TOKEN") or os.environ.get("LINEAR_API_KEY")
+    if not token:
+        return {
+            "name": "linear_tracker",
+            "ok": False,
+            "detail": (
+                "Linear tracker preflight requires LINEAR_TOKEN or LINEAR_API_KEY, but neither is set.\n"
+                "  Remedy: export the approved Linear token and re-run the resolver before auto-dev claim."
+            ),
+        }
+
+    try:
+        data = _linear_graphql(
+            """query AutoDevLinearPreflight($teamId: String!, $term: String!) {
+              team(id: $teamId) {
+                id
+                name
+                key
+                states { nodes { name type } }
+                projects(first: 100) { nodes { id name } }
+              }
+              searchIssues(term: $term, first: 10) {
+                nodes {
+                  id
+                  identifier
+                  title
+                  url
+                  team { id name key }
+                  project { id name }
+                  state { name type }
+                }
+              }
+            }""",
+            {"teamId": team_id, "term": tracker_id},
+            token,
+        )
+    except Exception as exc:
+        if _is_linear_usage_limit(exc):
+            detail = (
+                "Linear tracker preflight blocked: USAGE_LIMIT_EXCEEDED.\n"
+                "  Remedy: resolve the Linear workspace issue limit or route this work to the approved tracker fallback before auto-dev claim."
+            )
+        else:
+            codes = sorted(_linear_error_codes(exc))
+            suffix = f" Error codes: {codes}." if codes else ""
+            detail = (
+                f"Linear tracker preflight failed while reading team/project/issue metadata.{suffix}\n"
+                f"  Error: {exc}\n"
+                "  Remedy: verify LINEAR_TOKEN, team_id, project_id, and Linear API access before auto-dev claim."
+            )
+        return {"name": "linear_tracker", "ok": False, "detail": detail}
+
+    team = data.get("team")
+    if not team:
+        return {
+            "name": "linear_tracker",
+            "ok": False,
+            "detail": (
+                f"Configured Linear team_id {team_id!r} was not visible to the token.\n"
+                "  Remedy: update project.yml to the verified team id or use a token with access."
+            ),
+        }
+
+    state_names = {str(state.get("name", "")).lower() for state in team.get("states", {}).get("nodes", [])}
+    missing_states = [
+        state_name
+        for state_name in workflow.values()
+        if state_name and str(state_name).lower() not in state_names
+    ]
+    failures: list[str] = []
+    if missing_states:
+        failures.append(
+            f"dev_factory.tracker.linear.workflow references missing Linear state(s): {', '.join(sorted(set(missing_states)))}.\n"
+            f"  Configured team: {team.get('key')} / {team.get('name')} ({team_id}).\n"
+            "  Remedy: update workflow state names to match the verified Linear team before auto-dev claim."
+        )
+
+    project_ids = {str(project.get("id")) for project in team.get("projects", {}).get("nodes", []) if project.get("id")}
+    if project_id not in project_ids:
+        failures.append(
+            f"Configured Linear project_id {project_id!r} is not visible on team {team.get('key')} / {team.get('name')}.\n"
+            "  Remedy: update project.yml to the verified project id for the configured team."
+        )
+
+    issues = data.get("searchIssues", {}).get("nodes", [])
+    issue = next((node for node in issues if str(node.get("identifier", "")).lower() == tracker_id.lower()), None)
+    if not issue:
+        failures.append(
+            f"Tracker id {tracker_id!r} was not found in Linear search results visible to the token.\n"
+            "  Remedy: verify the tracker id in SPEC.md or sync/create the intake row before auto-dev claim."
+        )
+        issue_team = {}
+        issue_project = {}
+    else:
+        issue_team = issue.get("team") or {}
+        if issue_team.get("id") != team_id:
+            failures.append(
+                f"Tracker {tracker_id} belongs to Linear team {issue_team.get('key')} / {issue_team.get('name')} ({issue_team.get('id')}), "
+                f"but project.yml points at {team.get('key')} / {team.get('name')} ({team_id}).\n"
+                "  Remedy: update project.yml dev_factory.tracker.linear.team_id to the tracker issue's verified team before auto-dev claim."
+            )
+
+        issue_project = issue.get("project") or {}
+        if issue_project.get("id") != project_id:
+            failures.append(
+                f"Tracker {tracker_id} belongs to Linear project {issue_project.get('name')} ({issue_project.get('id')}), "
+                f"but project.yml points at project id {project_id}.\n"
+                "  Remedy: update project.yml dev_factory.tracker.linear.project_id to the tracker issue's verified project before auto-dev claim."
+            )
+
+    if failures:
+        return {"name": "linear_tracker", "ok": False, "detail": "\n".join(failures)}
+
+    return {
+        "name": "linear_tracker",
+        "ok": True,
+        "detail": (
+            f"Linear tracker verified: {tracker_id} on team {issue_team.get('key')} / {issue_team.get('name')} "
+            f"and project {issue_project.get('name')}."
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Stage gate
 # ---------------------------------------------------------------------------
@@ -331,6 +524,10 @@ def _preflight(project_dir: Path, project_yml: dict, packet: Path, spec: dict) -
                 "         ---"
             ),
         })
+
+    linear_check = _linear_tracker_preflight(dev_factory or {}, tracker_id)
+    if linear_check:
+        results.append(linear_check)
 
     # (c) Repo path from dev_factory exists
     if repo_root:
