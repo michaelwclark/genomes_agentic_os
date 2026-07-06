@@ -206,6 +206,9 @@ If the policy omits critical installed harness paths such as `harness/bin/`,
 returns `blocked`. Fix the backup policy and run a fresh backup dry-run before a
 larger installed-root overhaul.
 
+For tracker-claiming implementation work, pair this restore gate with
+[24 · Auto-Dev Readiness](24-auto-dev-readiness.md) before starting `$auto-dev`.
+
 ---
 
 ## License
