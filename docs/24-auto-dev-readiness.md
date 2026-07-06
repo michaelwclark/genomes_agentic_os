@@ -138,3 +138,6 @@ pre-existing drift; put it in the worklog as a separate blocker.
 The goal is not ceremony. The goal is that the next operator can see exactly why
 work was safe to start, what changed, what was tested, and what still blocks the
 next run.
+
+For tracker ownership, Notion projection, and external-write boundaries, see
+[25 · Source Of Truth Rules](25-source-of-truth.md).
