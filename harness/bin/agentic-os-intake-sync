@@ -512,6 +512,20 @@ def linear_get_token_visibility(token: str) -> dict:
     }
 
 
+def _linear_workspace_url_key(token: str) -> str | None:
+    """Workspace slug (linear.app/<urlKey>/...) this token belongs to; None if unavailable."""
+    try:
+        data = linear_query("query IntakeSyncWorkspace { organization { urlKey } }", {}, token)
+        return ((data.get("organization") or {}).get("urlKey")) or None
+    except Exception:
+        return None
+
+
+def _linear_url_workspace(url: str) -> str | None:
+    match = re.match(r"https?://linear\.app/([^/]+)/", str(url or ""))
+    return match.group(1) if match else None
+
+
 def _linear_error_codes(exc: Exception) -> set[str]:
     errors = getattr(exc, "errors", None)
     codes: set[str] = set()
@@ -911,6 +925,7 @@ def execute_push(
     candidates = rows_sorted[:limit] if limit is not None else rows_sorted
 
     counts = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
+    workspace_url_key = _linear_workspace_url_key(token_linear)
 
     for row in candidates:
         try:
@@ -999,6 +1014,14 @@ def execute_push(
         elif plan["action"] == "update":
             # Row already has Linear URL — check for drift in state/priority
             linear_url = plan["linear_url"]
+            url_workspace = _linear_url_workspace(linear_url)
+            if workspace_url_key and url_workspace and url_workspace != workspace_url_key:
+                print(
+                    f"  skip  {name!r}: linked issue lives in Linear workspace "
+                    f"'{url_workspace}' (this config syncs '{workspace_url_key}')"
+                )
+                counts["skipped"] += 1
+                continue
             try:
                 linear_issue = linear_get_issue(linear_url, token_linear)
             except Exception as e:
@@ -1056,6 +1079,7 @@ def execute_pull(
 ) -> dict:
     """Back sync: if Linear issue is completed/canceled and Notion isn't done/dropped → update Notion."""
     counts = {"backsynced": 0, "skipped": 0, "errors": 0}
+    workspace_url_key = _linear_workspace_url_key(token_linear)
 
     # Only rows that have a Linear URL
     linked = [r for r in rows if get_url(r["properties"].get("Linear", {}))]
@@ -1070,6 +1094,11 @@ def execute_pull(
         linear_url = get_url(props.get("Linear", {}))
 
         if notion_status in ("done", "dropped"):
+            counts["skipped"] += 1
+            continue
+
+        url_workspace = _linear_url_workspace(linear_url)
+        if workspace_url_key and url_workspace and url_workspace != workspace_url_key:
             counts["skipped"] += 1
             continue
 

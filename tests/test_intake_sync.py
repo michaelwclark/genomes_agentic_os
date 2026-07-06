@@ -276,3 +276,21 @@ def test_intake_sync_doctor_team_not_visible_names_configured_env(monkeypatch, t
     finding = next(f for f in result["findings"] if f["code"] == "linear_team_not_visible")
     assert finding["message"].startswith("LINEAR_CC_TOKEN authenticates as")
     assert "export it as LINEAR_CC_TOKEN" in finding["remediation"]
+
+
+def test_linear_url_workspace_parses_slug():
+    module = load_intake_sync_module()
+    assert module._linear_url_workspace("https://linear.app/ledgerline/issue/LED-207/x") == "ledgerline"
+    assert module._linear_url_workspace("https://linear.app/agenticoslinear/issue/CC-182") == "agenticoslinear"
+    assert module._linear_url_workspace("https://example.com/no-linear") is None
+    assert module._linear_url_workspace(None) is None
+
+
+def test_linear_workspace_url_key_swallows_errors(monkeypatch):
+    module = load_intake_sync_module()
+
+    def boom(query, variables, token):
+        raise module.LinearGraphQLError([{"message": "Authentication required"}])
+
+    monkeypatch.setattr(module, "linear_query", boom)
+    assert module._linear_workspace_url_key("token") is None
