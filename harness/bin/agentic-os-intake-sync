@@ -279,13 +279,22 @@ def resolve_state_id(name: str, states: list) -> str:
     raise RuntimeError(f"Linear state not found: {name!r}. Available: {[s['name'] for s in states]}")
 
 
-def linear_get_labels(token: str) -> list:
+def linear_get_labels(token: str, team_id: str | None = None) -> list:
+    """Labels usable by the configured team: workspace-level labels plus the
+    team's own. Labels owned by another team cannot be attached to this
+    team's issues (Linear rejects with 'labelIds for incorrect team')."""
     data = linear_query(
-        "{ issueLabels(first: 100) { nodes { id name } } }",
+        "{ issueLabels(first: 250) { nodes { id name team { id } } } }",
         {},
         token,
     )
-    return data["issueLabels"]["nodes"]
+    nodes = data["issueLabels"]["nodes"]
+    if team_id is None:
+        return nodes
+    return [
+        label for label in nodes
+        if not label.get("team") or (label.get("team") or {}).get("id") == team_id
+    ]
 
 
 def linear_create_label(name: str, team_id: str, token: str) -> str:
@@ -304,8 +313,8 @@ def linear_create_label(name: str, team_id: str, token: str) -> str:
         return data["issueLabelCreate"]["issueLabel"]["id"]
     except RuntimeError as e:
         if "duplicate label name" in str(e) or "already exists" in str(e):
-            # Label already exists — fetch all labels and find it
-            labels = linear_get_labels(token)
+            # Label already exists — fetch team-usable labels and find it
+            labels = linear_get_labels(token, team_id)
             for lbl in labels:
                 if lbl["name"].lower() == name.lower():
                     return lbl["id"]
@@ -1297,7 +1306,7 @@ EXAMPLES:
     # Fetch Linear states and labels (runtime, not hardcoded IDs)
     print("Fetching Linear states and labels...")
     states = linear_get_states(team_id, token_linear)
-    labels = linear_get_labels(token_linear)
+    labels = linear_get_labels(token_linear, team_id)
 
     # Run sync
     run_counts: dict = {"created": 0, "updated": 0, "backsynced": 0, "skipped": 0, "errors": 0}

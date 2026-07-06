@@ -294,3 +294,23 @@ def test_linear_workspace_url_key_swallows_errors(monkeypatch):
 
     monkeypatch.setattr(module, "linear_query", boom)
     assert module._linear_workspace_url_key("token") is None
+
+
+def test_linear_get_labels_filters_foreign_team_labels(monkeypatch):
+    module = load_intake_sync_module()
+
+    def fake_query(query, variables, token):
+        return {
+            "issueLabels": {
+                "nodes": [
+                    {"id": "l-ws", "name": "Improvement", "team": None},
+                    {"id": "l-cc", "name": "aos-intake", "team": {"id": "team-1"}},
+                    {"id": "l-other", "name": "kind:spec", "team": {"id": "team-other"}},
+                ]
+            }
+        }
+
+    monkeypatch.setattr(module, "linear_query", fake_query)
+    usable = module.linear_get_labels("token", "team-1")
+    assert {l["id"] for l in usable} == {"l-ws", "l-cc"}
+    assert len(module.linear_get_labels("token")) == 3
