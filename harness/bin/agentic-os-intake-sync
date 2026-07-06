@@ -36,6 +36,7 @@ EXAMPLES
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -68,6 +69,11 @@ PRIORITY_MAP = {"P0": 1, "P1": 2, "P2": 3, "P3": 4}
 
 # Linear state type → back-sync condition
 LINEAR_DONE_TYPES = {"completed", "canceled"}
+EXTERNAL_WRITE_BLOCK_PATTERNS = [
+    ("local_path", re.compile(r"(?<![\w.-])/(?:Users|private|Volumes|tmp|var/folders)/[^\s)>\]]+")),
+    ("notion_url", re.compile(r"https?://(?:www\.notion\.so|app\.notion\.com|[^/\s]+\.notion\.site)/[^\s)>\]]+")),
+    ("token_value", re.compile(r"(?i)\b(?:lin_api|ntn|sk|secret|pat)_[A-Za-z0-9_-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b")),
+]
 
 
 class LinearGraphQLError(RuntimeError):
@@ -205,6 +211,29 @@ def get_page_body_excerpt(page_id: str, token: str, max_chars: int = 800) -> str
     if len(excerpt) > max_chars:
         excerpt = excerpt[:max_chars] + "…"
     return excerpt
+
+
+def external_write_findings(text: str) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for code, pattern in EXTERNAL_WRITE_BLOCK_PATTERNS:
+        if pattern.search(text or "") and code not in seen:
+            findings.append(
+                {
+                    "code": code,
+                    "message": f"blocked external write because content contains {code.replace('_', ' ')}",
+                }
+            )
+            seen.add(code)
+    return findings
+
+
+def build_linear_description(page_id: str, body_excerpt: str) -> str:
+    description = ""
+    if body_excerpt:
+        description += body_excerpt + "\n\n"
+    description += f"---\n**Source:** OS Work Intake\n`notion:{page_id}`"
+    return description
 
 
 def notion_set_linear_url(page_id: str, url: str, token: str) -> None:
@@ -811,11 +840,13 @@ def execute_push(
 
             # Build description
             body_excerpt = get_page_body_excerpt(page_id, token_notion)
-            notion_page_url = f"https://www.notion.so/{page_id.replace('-', '')}"
-            description = ""
-            if body_excerpt:
-                description += body_excerpt + "\n\n"
-            description += f"---\n**Source:** [Notion]({notion_page_url})\n`notion:{page_id}`"
+            description = build_linear_description(page_id, body_excerpt)
+            external_findings = external_write_findings(f"{name}\n{description}")
+            if external_findings:
+                codes = ", ".join(finding["code"] for finding in external_findings)
+                print(f"  ERROR {name!r}: external-write scrubber blocked Linear create ({codes})", file=sys.stderr)
+                counts["errors"] += 1
+                continue
 
             label_ids = ensure_labels(plan["label_names"], labels, team_id, token_linear, dry_run)
 
