@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agentic-os-intake-sync — Sync OS Work Intake Notion database → Linear (LED team).
+"""agentic-os-intake-sync - Sync OS Work Intake Notion database to Linear (Clarks Consulting team).
 
 Reads the "🧭 OS Work Intake" Notion database and creates/updates Linear issues
 for rows in synced statuses. Also back-syncs Linear completed/canceled state
@@ -16,6 +16,9 @@ FILES
 EXAMPLES
   # Dry run — prints plan, no changes
   agentic-os-intake-sync --dry-run
+
+  # Dry run one exact row by Notion title
+  agentic-os-intake-sync --dry-run --title-filter "Conversation Report OS Hardening Portfolio"
 
   # Real run, limit to first 3 candidates (by Created asc)
   agentic-os-intake-sync --limit 3
@@ -393,12 +396,12 @@ def linear_update_issue(issue_id: str, state_id: str | None, priority: int | Non
 
 
 def linear_get_issue(issue_url: str, token: str) -> dict | None:
-    """Fetch a Linear issue by URL. Extracts the human identifier (e.g. LED-185) via searchIssues."""
-    # URL shape: https://linear.app/<team-slug>/issue/LED-185/some-slug
+    """Fetch a Linear issue by URL. Extracts the human identifier (e.g. CC-182) via searchIssues."""
+    # URL shape: https://linear.app/<team-slug>/issue/CC-182/some-slug
     parts = issue_url.rstrip("/").split("/")
     identifier = None
     for part in parts:
-        # The identifier segment is TEAM-NUMBER (e.g. LED-185)
+        # The identifier segment is TEAM-NUMBER (e.g. CC-182)
         segments = part.split("-")
         if len(segments) >= 2 and segments[0].isalpha() and segments[1].isdigit():
             identifier = f"{segments[0]}-{segments[1]}"
@@ -968,7 +971,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="agentic-os-intake-sync",
         description=(
-            "Sync the OS Work Intake Notion database to Linear (LED team). "
+            "Sync the OS Work Intake Notion database to Linear (Clarks Consulting team). "
             "Creates/updates Linear issues for rows in synced statuses, writes "
             "issue URLs back to Notion, and back-syncs completed/canceled states."
         ),
@@ -999,6 +1002,9 @@ EXAMPLES:
 
   # Filter to specific Notion status
   agentic-os-intake-sync --status-filter triaged --dry-run
+
+  # Filter to one exact Notion title
+  agentic-os-intake-sync --title-filter 'Big spec' --dry-run
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1038,6 +1044,12 @@ EXAMPLES:
         default=None,
         metavar="STATUS",
         help="Only process rows with this Notion status (e.g. triaged, queued).",
+    )
+    parser.add_argument(
+        "--title-filter",
+        default=None,
+        metavar="TITLE",
+        help="Only process rows whose Notion Name title exactly matches TITLE.",
     )
     parser.add_argument(
         "--verbose",
@@ -1098,6 +1110,12 @@ EXAMPLES:
             if get_select(r["properties"].get("Status", {})) == args.status_filter
         ]
         print(f"Filtered to {len(rows)} rows with status={args.status_filter!r}.")
+    if args.title_filter:
+        rows = [
+            r for r in rows
+            if get_text(r["properties"].get("Name", {})) == args.title_filter
+        ]
+        print(f"Filtered to {len(rows)} rows with title={args.title_filter!r}.")
 
     # Fetch Linear states and labels (runtime, not hardcoded IDs)
     print("Fetching Linear states and labels...")
@@ -1156,6 +1174,7 @@ EXAMPLES:
         "direction": args.direction,
         "limit": args.limit,
         "status_filter": args.status_filter,
+        "title_filter": args.title_filter,
         "notion_db_id": NOTION_DB_ID,
         "rows_fetched": len(rows),
         "counts": run_counts,

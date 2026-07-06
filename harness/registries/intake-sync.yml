@@ -1,28 +1,23 @@
-# intake-sync.yml — Config for agentic-os-intake-sync
-# Sync: 🧭 OS Work Intake Notion DB → Linear (LED team)
+# intake-sync.yml - Config for agentic-os-intake-sync
+# Sync: OS Work Intake Notion DB -> Linear (Clarks Consulting team)
 # See: harness/bin/agentic-os-intake-sync --help
 
 # Linear team
-team_id: "10dbb934-f4eb-4fb6-a6b0-e170b0ca8bb8"
+team_id: "2225b211-a962-4392-98ef-b2e78a26669f"
 
-# Notion Project select value → Linear project id
-# (Personal project → omit from map so no projectId is set)
+# Notion Project select value -> Linear project id
+# (Projects not verified in Clarks Consulting are omitted so no stale projectId is set)
 project_map:
-  "Agentic OS": "17e7b72e-ba2c-498b-9e0b-2b303e497aea"
-  "Genome's Brain": "6e2316d8-a507-421c-97ac-ebf91be7a927"
-  "LOS Django": "57cf84cd-93db-4040-bf4c-16f503c78150"
-  "Rules Engine": "b1c1d8ff-6178-41e6-a1d9-11455c2f5187"
-  "Grep Memory Battle": "d7f2fe89-3b07-4a38-b09b-67ebb41bdf77"
-  "Kanga": "7b7363ee-117d-454b-8194-b299edf58088"
-  "LOSMON": "a60391d9-391b-4366-9090-3c6224ba31b8"
-  "Forge": "2d4fb2d8-3c4a-42a9-a531-93c9e42ab065"
-  "LedgerLine": "71c13763-0bdc-4f84-8006-319ac3ed943e"
-  # "Personal" → no entry → issues created with no project
+  "Agentic OS": "5812f46f-f7a5-4518-8a59-593aaa45f418"
+  "Genome's Brain": "1e569341-c390-47e3-a98a-14be82b892e7"
+  "Grep Memory Battle": "2be56c7d-77c0-4f60-819d-483d2c171a3b"
+  "Kanga": "21bd0219-e5f3-43e7-896c-d5977fbade8b"
+  # "Personal" -> no entry -> issues created with no project
 
-# Notion Status → Linear workflow state NAME
+# Notion Status -> Linear workflow state NAME
 # State IDs are resolved at runtime via team.states GraphQL query.
 # 50/50 decision: blocked maps to Todo + a "blocked" label (not a separate state).
-# duplicate Linear state type → Notion "dropped" (see back-sync below).
+# duplicate Linear state type -> Notion "dropped" (see back-sync below).
 status_map:
   triaged: "Backlog"
   spec-ready: "Backlog"
@@ -32,7 +27,7 @@ status_map:
   done: "Done"
   dropped: "Canceled"
 
-# Which Notion statuses to sync forward (Notion → Linear)
+# Which Notion statuses to sync forward (Notion -> Linear)
 # inbox is excluded by default (sync_inbox: false)
 synced_statuses:
   - triaged
@@ -46,14 +41,14 @@ sync_inbox: false
 
 # Label configuration
 label_map:
-  # Always applied to every created issue — marks it as from this intake sync
+  # Always applied to every created issue - marks it as from this intake sync
   always:
     - "aos-intake"
 
-  # Notion Type select value → Linear label name
+  # Notion Type select value -> Linear label name
   # Reuses existing labels where names match; only "aos-intake" and "blocked" are new.
   # 50/50 decision: using existing "kind:*" prefix labels for idea/spec/plan;
-  #   Feature/Bug/Improvement labels exist capitalized — mapping type→Feature etc.
+  #   Feature/Bug/Improvement labels exist capitalized - mapping type->Feature etc.
   type_map:
     idea: "kind:idea"
     spec: "kind:spec"
@@ -67,10 +62,10 @@ label_map:
   # Label applied when Notion status is "blocked"
   blocked_label: "blocked"
 
-# Back-sync (Linear → Notion): when a linked Linear issue reaches completed/canceled
+# Back-sync (Linear -> Notion): when a linked Linear issue reaches completed/canceled
 # type, update Notion status:
-#   completed → done
-#   canceled / duplicate → dropped
+#   completed -> done
+#   canceled / duplicate -> dropped
 # (This is handled in the script; config entry here for documentation.)
 back_sync:
   completed_to: "done"
@@ -78,5 +73,5 @@ back_sync:
   duplicate_to: "dropped"
 
 # Rows with the "Jira Tracked" checkbox set are execution items owned by the
-# Jira/PR dashboards — never mirror them to Linear (prevents double-tracking).
+# Jira/PR dashboards - never mirror them to Linear (prevents double-tracking).
 skip_jira_tracked: true

@@ -520,7 +520,7 @@ def _preflight(project_dir: Path, project_yml: dict, packet: Path, spec: dict) -
                 "    2. agentic-os-intake-sync  (syncs to Linear; note the Linear issue id)\n"
                 "    3. Add to SPEC.md frontmatter:\n"
                 "         ---\n"
-                "         tracker: LED-<NNN>\n"
+                "         tracker: <TEAM>-<NNN>\n"
                 "         ---"
             ),
         })
