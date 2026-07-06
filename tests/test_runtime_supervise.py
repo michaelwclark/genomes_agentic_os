@@ -9,7 +9,7 @@ import yaml
 
 from genomes_agentic_os import supervisor
 from genomes_agentic_os.cli import main
-from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref
+from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref, runtime_run_next
 from genomes_agentic_os.supervisor import supervise_tick
 
 STEP_NAMES = {"heartbeats", "schedules", "watch_sources", "events", "priority_run_queue", "run_queue", "health"}
@@ -496,3 +496,37 @@ def test_supervise_isolates_a_failing_step(tmp_path: Path, monkeypatch: pytest.M
     assert report["ok"] is False
     # The CLI command surfaces the failure as exit 1.
     assert main(["runtime", "supervise", "--root", str(root)]) == 1
+
+
+def test_registered_watcher_script_honors_item_timeout(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    script = root / "watchers" / "notion_work_intake" / "scripts" / "watch.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("import time\ntime.sleep(5)\n", encoding="utf-8")
+    (script.parent.parent / "watcher.yml").write_text("id: notion_work_intake\n", encoding="utf-8")
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    item = {
+        "id": "queue_notion_watcher_timeout",
+        "kind": "schedule",
+        "ref": "notion_work_intake_watcher",
+        "status": "queued",
+        "approval_state": "not_required",
+        "created_at": "2026-06-19T00:00:00Z",
+        "idempotency_key": "test:notion-work-intake-timeout",
+        "execution_target": "script",
+        "command": f"python3 {script} --once",
+        "timeout_seconds": 1,
+    }
+    queue.setdefault("items", []).append(item)
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+
+    dispatched = runtime_run_next(root, dry_run=False, item_id="queue_notion_watcher_timeout")
+
+    assert dispatched["status"] == "failed"
+    assert dispatched["queue_item"]["status"] == "failed"
+    dispatch_log = yaml.safe_load((root / dispatched["queue_item"]["dispatch_log"]).read_text(encoding="utf-8"))
+    assert dispatch_log["evidence"]["timed_out"] is True
+    assert dispatch_log["evidence"]["timeout_seconds"] == 1
+    assert "timed out after 1s" in dispatch_log["evidence"]["errors"][0]

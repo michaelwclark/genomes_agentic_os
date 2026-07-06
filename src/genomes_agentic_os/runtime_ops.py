@@ -1262,7 +1262,7 @@ def _run_local_script(
     watch_source_result = _run_watch_source_script(root, normalized)
     if watch_source_result is not None:
         return watch_source_result
-    watcher_script_result = _run_registered_watcher_script(root, normalized)
+    watcher_script_result = _run_registered_watcher_script(root, normalized, timeout_seconds=timeout_seconds)
     if watcher_script_result is not None:
         return watcher_script_result
     quiet_run_result = _run_quiet_run_script(root, normalized)
@@ -1613,7 +1613,12 @@ def _parse_registered_watcher_script(root: Path, command: str) -> list[str] | st
     return [parts[0], str(script), "--once"]
 
 
-def _run_registered_watcher_script(root: Path, command: str) -> dict[str, Any] | None:
+def _run_registered_watcher_script(
+    root: Path,
+    command: str,
+    *,
+    timeout_seconds: int = SCRIPT_DISPATCH_TIMEOUT_SECONDS,
+) -> dict[str, Any] | None:
     parsed = _parse_registered_watcher_script(root, command)
     if parsed is None:
         return None
@@ -1632,8 +1637,20 @@ def _run_registered_watcher_script(root: Path, command: str) -> dict[str, Any] |
             check=False,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "timeout_seconds": timeout_seconds,
+            "timed_out": True,
+            "stdout": _trim_dispatch_output(exc.stdout),
+            "stderr": _trim_dispatch_output(exc.stderr),
+            "errors": [f"watcher script timed out after {timeout_seconds}s"],
+            "warnings": [],
+        }
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         return {
             "supported": True,
@@ -1648,6 +1665,7 @@ def _run_registered_watcher_script(root: Path, command: str) -> dict[str, Any] |
         "command": command,
         "errors": [] if completed.returncode == 0 else [completed.stderr.strip() or completed.stdout.strip()],
         "warnings": [],
+        "timeout_seconds": timeout_seconds,
         "stdout": completed.stdout.strip(),
         "stderr": completed.stderr.strip(),
         "exit_code": completed.returncode,
