@@ -223,3 +223,56 @@ def test_external_write_scrubber_blocks_token_shaped_values():
     findings = module.external_write_findings("token lin_api_abcdefghijklmnop1234567890 should not leave")
 
     assert [finding["code"] for finding in findings] == ["token_value"]
+
+
+def test_linear_token_env_default_and_override():
+    module = load_intake_sync_module()
+    assert module._linear_token_env({}) == "LINEAR_TOKEN"
+    assert module._linear_token_env({"token_env": "  "}) == "LINEAR_TOKEN"
+    assert module._linear_token_env({"token_env": "LINEAR_CC_TOKEN"}) == "LINEAR_CC_TOKEN"
+
+
+def test_intake_sync_doctor_missing_token_names_configured_env(monkeypatch, tmp_path):
+    module = load_intake_sync_module()
+    cfg = base_config()
+    cfg["token_env"] = "LINEAR_CC_TOKEN"
+
+    result = module.run_doctor(
+        cfg,
+        config_path=tmp_path / "intake-sync.yml",
+        token_linear="",
+        token_notion="",
+        check_notion=False,
+    )
+
+    assert result["ok"] is False
+    finding = next(f for f in result["findings"] if f["code"] == "missing_linear_token")
+    assert "LINEAR_CC_TOKEN env var is not set." in finding["message"]
+    assert "LINEAR_CC_TOKEN" in finding["remediation"]
+
+
+def test_intake_sync_doctor_team_not_visible_names_configured_env(monkeypatch, tmp_path):
+    module = load_intake_sync_module()
+    cfg = base_config()
+    cfg["token_env"] = "LINEAR_CC_TOKEN"
+
+    def fake_visibility_other_workspace(token):
+        return {
+            "viewer": {"id": "user-1", "name": "Genome", "email": "genome@example.com"},
+            "teams": [{"id": "team-other", "key": "LED", "name": "Ledgerline"}],
+        }
+
+    monkeypatch.setattr(module, "linear_get_token_visibility", fake_visibility_other_workspace)
+
+    result = module.run_doctor(
+        cfg,
+        config_path=tmp_path / "intake-sync.yml",
+        token_linear="linear-token",
+        token_notion="",
+        check_notion=False,
+    )
+
+    assert result["ok"] is False
+    finding = next(f for f in result["findings"] if f["code"] == "linear_team_not_visible")
+    assert finding["message"].startswith("LINEAR_CC_TOKEN authenticates as")
+    assert "export it as LINEAR_CC_TOKEN" in finding["remediation"]

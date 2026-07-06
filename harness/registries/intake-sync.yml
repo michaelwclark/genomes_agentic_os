@@ -7,6 +7,11 @@ team_id: "2225b211-a962-4392-98ef-b2e78a26669f"
 team_key: "CC"
 team_name: "Clarks Consulting"
 
+# Linear token env var for this tracker (default LINEAR_TOKEN when omitted).
+# CC lives in the Clarks Consulting workspace; the default LINEAR_TOKEN is a
+# personal-workspace key (CASH/LED), so CC uses a dedicated key.
+token_env: "LINEAR_CC_TOKEN"
+
 # Notion Project select value -> Linear project id
 # (Projects not verified in Clarks Consulting are omitted so no stale projectId is set)
 project_map:

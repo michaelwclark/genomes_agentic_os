@@ -7,6 +7,9 @@ to Notion when the Notion row hasn't been updated.
 
 ENVIRONMENT
   LINEAR_TOKEN       Linear personal API token (no "Bearer " prefix).
+                     Config key `token_env` in intake-sync.yml overrides the
+                     env var name (e.g. LINEAR_CC_TOKEN) so multi-workspace
+                     setups keep one token per tracker config.
   GENOMES_NOTION_PAT Notion integration token for Genome's Notion.
 
 FILES
@@ -559,10 +562,17 @@ def _viewer_label(viewer: dict) -> str:
     return str(name or "unknown user")
 
 
-def _linear_token_remediation(team_label: str) -> str:
+def _linear_token_env(cfg: dict) -> str:
+    value = cfg.get("token_env")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "LINEAR_TOKEN"
+
+
+def _linear_token_remediation(team_label: str, token_env: str) -> str:
     return (
         f"Create a personal API key in the Linear workspace that owns team {team_label} "
-        "and export it as LINEAR_TOKEN, or use the project-approved connector-backed Linear "
+        f"and export it as {token_env}, or use the project-approved connector-backed Linear "
         "path (Linear MCP / a composio user-key login session). Direct-token sync stays "
         "fail-closed until doctor passes; re-run doctor after the change."
     )
@@ -611,13 +621,14 @@ def run_doctor(
         }
     )
 
+    token_env = _linear_token_env(cfg)
     if not token_linear:
         _add_finding(
             findings,
             "blocker",
             "missing_linear_token",
-            "LINEAR_TOKEN env var is not set.",
-            "Set LINEAR_TOKEN for the approved Linear workspace and re-run doctor.",
+            f"{token_env} env var is not set.",
+            f"Set {token_env} for the approved Linear workspace and re-run doctor.",
         )
     if check_notion and not token_notion:
         _add_finding(
@@ -658,11 +669,11 @@ def run_doctor(
                     "blocker",
                     "linear_team_not_visible",
                     (
-                        f"LINEAR_TOKEN authenticates as {_viewer_label(visibility['viewer'])} "
+                        f"{token_env} authenticates as {_viewer_label(visibility['viewer'])} "
                         f"but cannot see configured Linear team {team_label} "
                         f"(team_id {team_id}); visible teams: {visible_label}."
                     ),
-                    _linear_token_remediation(team_label),
+                    _linear_token_remediation(team_label, token_env),
                 )
         except Exception as exc:
             checks.append(
@@ -677,7 +688,7 @@ def run_doctor(
                 "blocker",
                 "linear_token_invalid",
                 _linear_sync_error_message("token visibility check", exc),
-                _linear_token_remediation(team_label),
+                _linear_token_remediation(team_label, token_env),
             )
 
     if token_linear and team_id and token_check_ok:
@@ -725,7 +736,7 @@ def run_doctor(
             remediation = (
                 "Resolve the Linear workspace issue limit or route this work to the approved tracker fallback before running sync."
                 if _is_usage_limit_error(exc)
-                else "Verify LINEAR_TOKEN, team_id, and Linear API access, then re-run doctor."
+                else f"Verify {token_env}, team_id, and Linear API access, then re-run doctor."
             )
             _add_finding(findings, "blocker", code, _linear_sync_error_message("doctor", exc), remediation)
             checks.append(
@@ -1113,6 +1124,7 @@ def main() -> None:
         epilog="""
 ENVIRONMENT:
   LINEAR_TOKEN        Linear personal API token (value used directly as Authorization header).
+                      Override the env var name via `token_env` in intake-sync.yml.
   GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace.
 
 FILES:
@@ -1202,22 +1214,23 @@ EXAMPLES:
 
     args = parser.parse_args()
 
-    # Tokens from environment
-    token_linear = os.environ.get("LINEAR_TOKEN", "")
-    token_notion = os.environ.get("GENOMES_NOTION_PAT", "")
-    if args.command != "doctor" and not token_linear:
-        print("ERROR: LINEAR_TOKEN env var is not set.", file=sys.stderr)
-        sys.exit(1)
-    if args.command != "doctor" and not token_notion:
-        print("ERROR: GENOMES_NOTION_PAT env var is not set.", file=sys.stderr)
-        sys.exit(1)
-
-    # Load config
+    # Load config (before tokens: config may override the Linear token env var name)
     config_path = Path(args.config)
     if not config_path.exists():
         print(f"ERROR: Config not found at {config_path}", file=sys.stderr)
         sys.exit(1)
     cfg = load_config(config_path) or {}
+
+    # Tokens from environment
+    linear_token_env = _linear_token_env(cfg)
+    token_linear = os.environ.get(linear_token_env, "")
+    token_notion = os.environ.get("GENOMES_NOTION_PAT", "")
+    if args.command != "doctor" and not token_linear:
+        print(f"ERROR: {linear_token_env} env var is not set.", file=sys.stderr)
+        sys.exit(1)
+    if args.command != "doctor" and not token_notion:
+        print("ERROR: GENOMES_NOTION_PAT env var is not set.", file=sys.stderr)
+        sys.exit(1)
 
     if args.command == "doctor":
         result = run_doctor(
