@@ -1242,7 +1242,12 @@ def _run_subprocess_script(root: Path, command: str, *, timeout_seconds: int) ->
     }
 
 
-def _run_local_script(root: Path, command: str, *, timeout_seconds: int) -> dict[str, Any]:
+def _run_local_script(
+    root: Path,
+    command: str,
+    *,
+    timeout_seconds: int = SCRIPT_DISPATCH_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     normalized = command.replace("<root>", str(root)).strip()
     if normalized in {f"agentic-os validate --root {root}", f"agentic-os validate --root {str(root)}"}:
         validation = validate_root(root)

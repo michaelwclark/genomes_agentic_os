@@ -23,6 +23,7 @@ from .automation_control import (
 )
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
+from .conversation_reports import format_conversation_report_receipt, scan_conversation_reports
 from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
 from .doc_config import build_doc_config_plan, doc_config_doctor, format_doc_config_result, init_doc_config
 from .documentation_upkeep import build_documentation_upkeep_plan, format_documentation_upkeep_result
@@ -130,6 +131,7 @@ from .metrics_ops import format_metrics_result, metrics_refresh
 from .update_ops import (
     activate_license,
     backup_push,
+    backup_restore_plan,
     backup_run,
     fleet_push,
     format_update_result,
@@ -207,6 +209,22 @@ def handle_capability_inventory(args: argparse.Namespace) -> int:
             print(inventory_path.read_text(encoding="utf-8"))
         else:
             print(content)
+    return 0
+
+
+def handle_conversation_reports_scan(args: argparse.Namespace) -> int:
+    """Scan redacted conversation-report JSONL sidecars for repeated OS signals."""
+    result = scan_conversation_reports(
+        args.root,
+        project=args.project,
+        output_dir=args.output_dir,
+        max_findings=args.max_findings,
+        max_files=args.max_files,
+    )
+    if args.json:
+        print(yaml_dump(result))
+    else:
+        print(format_conversation_report_receipt(result))
     return 0
 
 
@@ -838,6 +856,50 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     here_context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     here_context_build.set_defaults(handler=handle_here_context_build)
 
+    conversation_reports_parser = subparsers.add_parser(
+        "conversation-reports",
+        help="Mine local conversation-report JSONL sidecars for repeated OS hardening signals.",
+        description=(
+            "Read redacted Agentic OS conversation-report JSONL sidecars and produce "
+            "a local signal report. The scanner is read-only unless --output-dir is passed."
+        ),
+        epilog=env_epilog(
+            env_vars=[
+                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+            ],
+            config_files=[
+                ("<project>/work-items/*/*/logs/conversations/*.jsonl", "Redacted conversation transcripts."),
+                ("<project>/work-items/", "Existing packet index used for duplicate matching."),
+            ],
+            examples=[
+                (
+                    "agentic-os conversation-reports scan --root ~/agentic_os --project genomes_agentic_os",
+                    "Scan one project and print a compact report.",
+                ),
+                (
+                    "agentic-os conversation-reports scan --root ~/agentic_os --project genomes_agentic_os --output-dir /tmp/aos-report",
+                    "Write JSON, Markdown, and backlog-candidate artifacts.",
+                ),
+            ],
+        ),
+        formatter_class=AosHelpFormatter,
+    )
+    conversation_reports_subparsers = conversation_reports_parser.add_subparsers(
+        dest="conversation_reports_command",
+        required=True,
+    )
+    conversation_reports_scan = conversation_reports_subparsers.add_parser(
+        "scan",
+        help="Scan conversation-report sidecars and optionally write report artifacts.",
+    )
+    conversation_reports_scan.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    conversation_reports_scan.add_argument("--project", help="Limit scan and work-item matching to one project slug.")
+    conversation_reports_scan.add_argument("--output-dir", help="Directory for JSON, Markdown, and backlog report artifacts.")
+    conversation_reports_scan.add_argument("--max-findings", type=int, default=200, help="Maximum findings to emit.")
+    conversation_reports_scan.add_argument("--max-files", type=int, help="Maximum transcript files to scan, for smoke tests.")
+    conversation_reports_scan.add_argument("--json", action="store_true", help="Print YAML-shaped machine-readable result.")
+    conversation_reports_scan.set_defaults(handler=handle_conversation_reports_scan)
+
     customer_parser = subparsers.add_parser("customer", help="Manage customer Agentic OS installs.")
     customer_subparsers = customer_parser.add_subparsers(dest="customer_command", required=True)
     customer_init_parser = customer_subparsers.add_parser("init", help="Create a customer OS from a profile.")
@@ -929,6 +991,13 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     )
     backup_push_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     backup_push_parser.set_defaults(handler=handle_backup_push)
+    backup_restore_plan_parser = backup_subparsers.add_parser(
+        "restore-plan",
+        help="Build a read-only operator restore plan from the latest backup log and policy.",
+    )
+    backup_restore_plan_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    backup_restore_plan_parser.add_argument("--backup-log", help="Specific backup log YAML to plan from.")
+    backup_restore_plan_parser.set_defaults(handler=handle_backup_restore_plan)
 
     fleet_parser = subparsers.add_parser("fleet", help="Operator fleet management commands.")
     fleet_subparsers = fleet_parser.add_subparsers(dest="fleet_command", required=True)
@@ -2250,6 +2319,11 @@ def handle_backup_run(args: argparse.Namespace) -> int:
 
 def handle_backup_push(args: argparse.Namespace) -> int:
     print(format_update_result(backup_push(args.root)))
+    return 0
+
+
+def handle_backup_restore_plan(args: argparse.Namespace) -> int:
+    print(format_update_result(backup_restore_plan(args.root, backup_log=args.backup_log)))
     return 0
 
 

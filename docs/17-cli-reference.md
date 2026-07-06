@@ -92,6 +92,7 @@ atlas command reference for the full flag table and real captured output.
 | `automation set-maturity <domain> <lane> <name> <level>` | Advance maturity: `observe` → `prepare` → `propose` → `execute_approved` → `execute_guarded` | [07 · Automations](07-automations.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 | `run-log create <domain> <workflow_or_automation>` | **Required first step** — open a timestamped run log; returns the `run_id` needed by `run-log close` | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 | `run-log close <domain> <run_id> --status <s>` | Close a run log; `--status done` requires `--validation` evidence; `run_id` comes from `run-log create` | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
+| `conversation-reports scan` | Mine redacted conversation JSONL sidecars into local JSON, Markdown, and backlog-candidate reports | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | pending |
 
 ### Profiles & rooms
 
@@ -183,6 +184,7 @@ Valid `--layer` values: `agentic_os_root`, `automation`, `customer_os_root`,
 | `update phone-home` | Report telemetry | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `backup run` | Plan or execute a GitHub-backed state backup (dry-run by default; needs `update register` first) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `backup push` | Record a local backup push run log; skips remote push when no update grant is present, always logs locally | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
+| `backup restore-plan` | Build a read-only restore readiness plan from the latest backup log and backup policy | [14 · Config, Update & Backup](14-config-update-backup.md) | pending |
 | `fleet push <customer_slug>` | Record a simulated operator-push event for a customer installation (V1 local-only, no real network calls) | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `license activate` | Activate a license key | [14 · Config, Update & Backup](14-config-update-backup.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |
 | `metrics refresh` | Compute a scorecard from run logs, doctor findings, and automation maturity; writes to `07-metrics/scorecard.yml` | [07 · Automations](07-automations.md) | [§11](../.agentic-atlas/architecture/command-reference.md) |

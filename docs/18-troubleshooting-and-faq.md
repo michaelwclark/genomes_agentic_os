@@ -180,6 +180,23 @@ current license state.
 
 ---
 
+### Q: How do I know whether backup restore is safe before a big OS change?
+
+Run a fresh dry-run backup receipt, then generate a restore plan:
+
+```bash
+agentic-os backup run --root ~/agentic_os --dry-run
+agentic-os backup restore-plan --root ~/agentic_os
+```
+
+`backup restore-plan` is read-only. It reports the latest backup log, backup
+remote metadata, include/exclude scope, and any blocker such as a missing update
+grant. It does not clone, copy, overwrite, delete, or restore files. Treat the
+printed restore steps as an operator checklist, then run `agentic-os validate`
+after any approved restore.
+
+---
+
 ### Q: `config doctor` exits 1 with "config.toml is missing"
 
 **Example missing-config output:**

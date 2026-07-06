@@ -353,6 +353,10 @@ def write_run_log(root: Path, folder: str, prefix: str, payload: dict[str, Any])
     return destination
 
 
+def backup_logs_dir(root: Path) -> Path:
+    return harness_path(root, "logs", "backups")
+
+
 def update_pull(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
     grant = load_update_grant(os_root)
@@ -419,6 +423,62 @@ def backup_push(root: str | Path) -> dict[str, Any]:
         payload["remote"] = remote
     log_path = write_run_log(os_root, "backups", "backup-push", payload)
     return {"root": str(os_root), "log_path": str(log_path), **payload}
+
+
+def latest_backup_log(root: Path) -> Path | None:
+    candidates = sorted(backup_logs_dir(root).glob("backup*.yml"))
+    return candidates[-1] if candidates else None
+
+
+def backup_restore_plan(root: str | Path, *, backup_log: str | Path | None = None) -> dict[str, Any]:
+    """Build a read-only restore readiness plan from backup policy and logs."""
+
+    os_root = expand_path(root)
+    policy = read_structured(harness_path(os_root, "registries", "backup-policy.yml")).get("backup_policy") or {}
+    selected_log = expand_path(backup_log) if backup_log else latest_backup_log(os_root)
+    backup_payload = read_structured(selected_log) if selected_log else {}
+    remote: dict[str, Any] = {}
+    grant_present = True
+    grant_error = ""
+    try:
+        grant = load_update_grant(os_root)
+        remote = grant.get("remotes", {}).get("backup") or {}
+    except ValueError as exc:
+        grant_present = False
+        grant_error = str(exc)
+        configured_remote = policy.get("remote") if isinstance(policy.get("remote"), dict) else {}
+        remote = configured_remote if isinstance(configured_remote, dict) else {}
+
+    latest_status = backup_payload.get("status") or "missing"
+    ready = bool(selected_log and grant_present and (remote.get("url") or backup_payload.get("remote", {}).get("url")))
+    blockers: list[str] = []
+    if not selected_log:
+        blockers.append("no local backup log found; run `agentic-os backup run --dry-run` first")
+    if not grant_present:
+        blockers.append(grant_error)
+    if not (remote.get("url") or backup_payload.get("remote", {}).get("url")):
+        blockers.append("backup remote URL is missing")
+
+    return {
+        "root": str(os_root),
+        "status": "ready" if ready else "blocked",
+        "mutated": False,
+        "restore_mode": "operator_reviewed_plan_only",
+        "latest_backup_log": str(selected_log) if selected_log else "",
+        "latest_backup_status": latest_status,
+        "remote": remote,
+        "include": policy.get("include") or backup_payload.get("include") or [],
+        "exclude": policy.get("exclude") or backup_payload.get("exclude") or [],
+        "blockers": blockers,
+        "steps": [
+            "Verify the backup remote is private and accessible with the registered backup key.",
+            "Clone or fetch the backup remote into a temporary review directory.",
+            "Compare only the included paths against the installed OS root.",
+            "Do not restore excluded paths such as logs, security/ssh, .env files, secrets, or token-shaped files.",
+            "Copy reviewed files back selectively; do not overwrite local memories, logs, or active work without explicit approval.",
+            "Run `agentic-os validate --root <restored-root>` and a fresh `agentic-os backup run --dry-run` after restore.",
+        ],
+    }
 
 
 def fleet_push(customer_slug: str, *, source: str = "latest") -> dict[str, Any]:

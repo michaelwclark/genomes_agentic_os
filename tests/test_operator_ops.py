@@ -18,6 +18,8 @@ import yaml
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.customer import customer_validate, format_customer_result
 from genomes_agentic_os.update_ops import (
+    backup_restore_plan,
+    backup_run,
     backup_push,
     fleet_push,
     update_register,
@@ -83,6 +85,39 @@ class TestBackupPush:
     def test_backup_push_cli_exits_zero_with_grant(self, tmp_path: Path) -> None:
         root = _make_registered_root(tmp_path)
         exit_code = main(["backup", "push", "--root", str(root)])
+        assert exit_code == 0
+
+
+class TestBackupRestorePlan:
+    def test_restore_plan_ready_after_registered_backup_run(self, tmp_path: Path) -> None:
+        root = _make_registered_root(tmp_path)
+        backup = backup_run(root, dry_run=True)
+
+        result = backup_restore_plan(root)
+
+        assert result["status"] == "ready"
+        assert result["mutated"] is False
+        assert result["latest_backup_log"] == backup["log_path"]
+        assert ".agentic_root" in result["include"]
+        assert "harness/security/ssh/*" in result["exclude"]
+        assert result["steps"]
+
+    def test_restore_plan_blocks_without_grant_or_backup_log(self, tmp_path: Path) -> None:
+        root = _make_bare_root(tmp_path)
+
+        result = backup_restore_plan(root)
+
+        assert result["status"] == "blocked"
+        assert result["mutated"] is False
+        assert result["latest_backup_log"] == ""
+        assert result["blockers"]
+
+    def test_restore_plan_cli_exits_zero(self, tmp_path: Path) -> None:
+        root = _make_registered_root(tmp_path)
+        backup_run(root, dry_run=True)
+
+        exit_code = main(["backup", "restore-plan", "--root", str(root)])
+
         assert exit_code == 0
 
 

@@ -116,6 +116,37 @@ require validation, because they are not claiming success.
 
 ---
 
+## Conversation report mining
+
+`agentic-os conversation-reports scan` turns redacted conversation JSONL sidecars
+into local report artifacts. Use it when repeated failures, manual loops, or
+confusing operator prompts need to become a backlog instead of staying buried in
+chat history.
+
+```bash
+agentic-os conversation-reports scan \
+  --root ~/agentic_os \
+  --project genomes_agentic_os \
+  --output-dir ~/agentic_os/<project-work-item>/artifacts/conversation-report-scan/<run-id>
+```
+
+The command is read-only unless `--output-dir` is passed. With an output
+directory it writes the detail files and prints only a compact receipt to stdout:
+
+| File | Purpose |
+| --- | --- |
+| `conversation-report-scan.json` | Machine-readable summary, finding classes, and work-item matches. |
+| `conversation-report-scan.md` | Human-readable report for operator review. |
+| `conversation-report-backlog.md` | Backlog-candidate table that can be reviewed before intake or tracker writes. |
+
+The scanner skips tool-call sidecars, metadata rows, encrypted reasoning,
+encoded image payloads, injected harness context, tool-discovery output, and
+reference readbacks from router docs or memory search. It still treats output as
+a review artifact: use the generated backlog to decide what to promote, not as
+an unattended ticket creator.
+
+---
+
 ## Real examples (verbatim output)
 
 ### Create a run

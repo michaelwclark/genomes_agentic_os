@@ -6,7 +6,7 @@
 >
 > **You'll use:** `agentic-os config install-tree`,
 > `agentic-os update {check,register,pull,plan,apply,rollback,status,phone-home}`,
-> `agentic-os backup run`, `agentic-os license activate`, `agentic-os migrate {plan,apply}`.
+> `agentic-os backup {run,push,restore-plan}`, `agentic-os license activate`, `agentic-os migrate {plan,apply}`.
 >
 > **Prereqs:** a working OS root ([01 · Install & Quickstart](01-install-and-quickstart.md)).
 > Config (Codex `config.toml` layers, `config install`, `config install-tree`, `config doctor`) is documented
@@ -157,6 +157,45 @@ Exclude: `logs/`, `security/ssh/*`, `**/.env`, `**/*secret*`, `**/*token*`
 
 The backup policy schema (`schemas/backup-policy.schema.json`) requires `enabled`,
 `include`, `exclude`, and `remote` (name + url).
+
+### `backup push`
+
+Records a local backup-push run log. If the update grant is missing, the command
+does not fail the operator loop; it writes `status: skipped_no_grant` with the
+reason so the missing registration is visible. It does not print private keys or
+secret-bearing file contents.
+
+| Arg / Flag | Default | Description |
+| --- | --- | --- |
+| `--root` | `~/agentic_os` | Installed OS root. |
+
+### `backup restore-plan`
+
+Builds a read-only restore readiness plan from the latest backup log and
+`registries/backup-policy.yml`. This command does **not** clone, copy, overwrite,
+delete, or restore files. It reports:
+
+- the latest backup log,
+- registered backup remote metadata,
+- include/exclude scope,
+- blockers such as missing update grant or missing backup log,
+- the operator-reviewed steps required to restore safely.
+
+| Arg / Flag | Default | Description |
+| --- | --- | --- |
+| `--backup-log` | latest `logs/backups/backup*.yml` | Plan from a specific backup log. |
+| `--root` | `~/agentic_os` | Installed OS root. |
+
+Use it before any restore-sensitive overhaul:
+
+```bash
+agentic-os backup run --root ~/agentic_os --dry-run
+agentic-os backup restore-plan --root ~/agentic_os
+```
+
+The restore path remains operator-driven because the protected state includes
+memories, active work, logs, and secret-adjacent configuration. The plan tells you
+what is restorable and what must not be overwritten without explicit approval.
 
 ---
 
@@ -341,6 +380,8 @@ Full mechanics and harness config: [13 · Agent Surfaces](13-agent-surfaces.md).
   `license activate` before that) to create the grant.
 - **Both `update pull` and `backup run` are dry-run by default.** Pass `--apply`
   to commit the action; omitting it is always safe.
+- **`backup restore-plan` is always read-only.** It reports restore readiness and
+  guarded steps; it does not restore files.
 - **`update apply` blocks on risky changes.** Change types `executable`, `hook`,
   `mcp`, `rule`, and `permission` require explicit `--approve-risky`; safe additive
   paths (templates, registries, commands, skills, operating-manual) never require it.
