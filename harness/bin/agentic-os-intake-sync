@@ -29,7 +29,7 @@ EXAMPLES
   # Pull-only (back-sync Linear→Notion)
   agentic-os-intake-sync --direction pull
 
-  # Read-only preflight for Notion/Linear access and mapping drift
+  # Read-only preflight: token workspace visibility, Notion/Linear access, mapping drift
   agentic-os-intake-sync doctor
 """
 
@@ -484,6 +484,31 @@ def linear_get_team_sync_profile(team_id: str, token: str) -> dict:
     }
 
 
+def linear_get_token_visibility(token: str) -> dict:
+    """Fetch read-only viewer identity and visible teams for the configured Linear token."""
+    data = linear_query(
+        """query IntakeSyncTokenVisibility {
+          viewer { id name email }
+          teams(first: 100) { nodes { id key name } }
+        }""",
+        {},
+        token,
+    )
+    viewer = data.get("viewer") or {}
+    teams = (data.get("teams") or {}).get("nodes") or []
+    return {
+        "viewer": {
+            "id": viewer.get("id"),
+            "name": viewer.get("name"),
+            "email": viewer.get("email"),
+        },
+        "teams": [
+            {"id": team.get("id"), "key": team.get("key"), "name": team.get("name")}
+            for team in teams
+        ],
+    }
+
+
 def _linear_error_codes(exc: Exception) -> set[str]:
     errors = getattr(exc, "errors", None)
     codes: set[str] = set()
@@ -513,6 +538,34 @@ def _linear_sync_error_message(action: str, exc: Exception) -> str:
             "work must be routed to an approved tracker fallback."
         )
     return f"Linear {action} failed: {exc}"
+
+
+def _team_label(cfg: dict) -> str:
+    """Human-readable label for the configured Linear team (name / key, else id)."""
+    team_name = cfg.get("team_name")
+    team_key = cfg.get("team_key")
+    if team_name and team_key:
+        return f"{team_name} / {team_key}"
+    if team_name or team_key:
+        return str(team_name or team_key)
+    return str(cfg.get("team_id") or "the configured Linear team")
+
+
+def _viewer_label(viewer: dict) -> str:
+    name = viewer.get("name") or viewer.get("email") or viewer.get("id")
+    email = viewer.get("email")
+    if email and name != email:
+        return f"{name} ({email})"
+    return str(name or "unknown user")
+
+
+def _linear_token_remediation(team_label: str) -> str:
+    return (
+        f"Create a personal API key in the Linear workspace that owns team {team_label} "
+        "and export it as LINEAR_TOKEN, or use the project-approved connector-backed Linear "
+        "path (Linear MCP / a composio user-key login session). Direct-token sync stays "
+        "fail-closed until doctor passes; re-run doctor after the change."
+    )
 
 
 def _add_finding(findings: list[dict], severity: str, code: str, message: str, remediation: str) -> None:
@@ -576,7 +629,58 @@ def run_doctor(
         )
 
     team_id = cfg.get("team_id")
-    if token_linear and team_id:
+    team_label = _team_label(cfg)
+    token_check_ok = False
+    if token_linear:
+        try:
+            visibility = linear_get_token_visibility(token_linear)
+            visible_teams = visibility["teams"]
+            team_visible = bool(team_id) and any(
+                str(team.get("id")) == str(team_id) for team in visible_teams
+            )
+            token_check_ok = team_visible or not team_id
+            checks.append(
+                {
+                    "name": "linear_token",
+                    "ok": bool(token_check_ok),
+                    "viewer": visibility["viewer"],
+                    "visible_teams": visible_teams,
+                    "configured_team_id": team_id,
+                    "configured_team_visible": team_visible,
+                }
+            )
+            if team_id and not team_visible:
+                visible_label = ", ".join(
+                    f"{team.get('name')} ({team.get('key')})" for team in visible_teams
+                ) or "no teams"
+                _add_finding(
+                    findings,
+                    "blocker",
+                    "linear_team_not_visible",
+                    (
+                        f"LINEAR_TOKEN authenticates as {_viewer_label(visibility['viewer'])} "
+                        f"but cannot see configured Linear team {team_label} "
+                        f"(team_id {team_id}); visible teams: {visible_label}."
+                    ),
+                    _linear_token_remediation(team_label),
+                )
+        except Exception as exc:
+            checks.append(
+                {
+                    "name": "linear_token",
+                    "ok": False,
+                    "error_codes": sorted(_linear_error_codes(exc)),
+                }
+            )
+            _add_finding(
+                findings,
+                "blocker",
+                "linear_token_invalid",
+                _linear_sync_error_message("token visibility check", exc),
+                _linear_token_remediation(team_label),
+            )
+
+    if token_linear and team_id and token_check_ok:
         try:
             profile = linear_get_team_sync_profile(team_id, token_linear)
             states = profile["states"]

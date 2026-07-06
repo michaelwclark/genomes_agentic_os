@@ -15,6 +15,8 @@ def load_intake_sync_module():
 def base_config() -> dict:
     return {
         "team_id": "team-1",
+        "team_key": "CC",
+        "team_name": "Clarks Consulting",
         "status_map": {
             "triaged": "Backlog",
             "queued": {"state": "Todo"},
@@ -24,6 +26,17 @@ def base_config() -> dict:
         },
         "synced_statuses": ["triaged", "queued"],
     }
+
+
+def fake_visibility_with_configured_team(token):
+    return {
+        "viewer": {"id": "user-1", "name": "Genome", "email": "genome@example.com"},
+        "teams": [{"id": "team-1", "key": "CC", "name": "Clarks Consulting"}],
+    }
+
+
+def _check_named(result: dict, name: str) -> dict:
+    return next(check for check in result["checks"] if check["name"] == name)
 
 
 def test_intake_sync_doctor_reports_linear_usage_limit(monkeypatch, tmp_path):
@@ -39,6 +52,7 @@ def test_intake_sync_doctor_reports_linear_usage_limit(monkeypatch, tmp_path):
             ]
         )
 
+    monkeypatch.setattr(module, "linear_get_token_visibility", fake_visibility_with_configured_team)
     monkeypatch.setattr(module, "linear_get_team_sync_profile", raise_usage_limit)
 
     result = module.run_doctor(
@@ -53,7 +67,7 @@ def test_intake_sync_doctor_reports_linear_usage_limit(monkeypatch, tmp_path):
     assert result["blocker_count"] == 1
     assert result["findings"][0]["code"] == "linear_usage_limit_exceeded"
     assert "USAGE_LIMIT_EXCEEDED" in result["findings"][0]["message"]
-    assert result["checks"][1]["error_codes"] == ["USAGE_LIMIT_EXCEEDED"]
+    assert _check_named(result, "linear_team")["error_codes"] == ["USAGE_LIMIT_EXCEEDED"]
 
 
 def test_intake_sync_doctor_validates_state_and_project_mapping(monkeypatch, tmp_path):
@@ -66,6 +80,7 @@ def test_intake_sync_doctor_validates_state_and_project_mapping(monkeypatch, tmp
             "projects": [{"id": "project-visible", "name": "Genomes Agentic OS"}],
         }
 
+    monkeypatch.setattr(module, "linear_get_token_visibility", fake_visibility_with_configured_team)
     monkeypatch.setattr(module, "linear_get_team_sync_profile", fake_profile)
 
     result = module.run_doctor(
@@ -94,6 +109,7 @@ def test_intake_sync_doctor_passes_for_valid_mapping(monkeypatch, tmp_path):
             "projects": [{"id": "project-1", "name": "Genomes Agentic OS"}],
         }
 
+    monkeypatch.setattr(module, "linear_get_token_visibility", fake_visibility_with_configured_team)
     monkeypatch.setattr(module, "linear_get_team_sync_profile", fake_profile)
 
     result = module.run_doctor(
@@ -107,6 +123,77 @@ def test_intake_sync_doctor_passes_for_valid_mapping(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["blocker_count"] == 0
     assert result["findings"] == []
+    token_check = _check_named(result, "linear_token")
+    assert token_check["ok"] is True
+    assert token_check["configured_team_visible"] is True
+
+
+def test_intake_sync_doctor_flags_configured_team_not_visible(monkeypatch, tmp_path):
+    module = load_intake_sync_module()
+
+    def fake_visibility_other_workspace(token):
+        return {
+            "viewer": {"id": "user-1", "name": "Genome", "email": "genome@example.com"},
+            "teams": [{"id": "team-other", "key": "LED", "name": "Ledgerline"}],
+        }
+
+    def fail_profile(team_id, token):
+        raise AssertionError("team profile must not be queried when the configured team is not visible")
+
+    monkeypatch.setattr(module, "linear_get_token_visibility", fake_visibility_other_workspace)
+    monkeypatch.setattr(module, "linear_get_team_sync_profile", fail_profile)
+
+    result = module.run_doctor(
+        base_config(),
+        config_path=tmp_path / "intake-sync.yml",
+        token_linear="linear-token",
+        token_notion="",
+        check_notion=False,
+    )
+
+    assert result["ok"] is False
+    finding = next(f for f in result["findings"] if f["code"] == "linear_team_not_visible")
+    assert "Clarks Consulting / CC" in finding["message"]
+    assert "Ledgerline (LED)" in finding["message"]
+    assert "personal API key" in finding["remediation"]
+    assert "connector-backed" in finding["remediation"]
+    token_check = _check_named(result, "linear_token")
+    assert token_check["ok"] is False
+    assert token_check["configured_team_visible"] is False
+    assert all(check["name"] != "linear_team" for check in result["checks"])
+
+
+def test_intake_sync_doctor_flags_invalid_linear_token(monkeypatch, tmp_path):
+    module = load_intake_sync_module()
+
+    def raise_auth_error(token):
+        raise module.LinearGraphQLError(
+            [
+                {
+                    "message": "Authentication required",
+                    "extensions": {"code": "AUTHENTICATION_ERROR"},
+                }
+            ]
+        )
+
+    monkeypatch.setattr(module, "linear_get_token_visibility", raise_auth_error)
+
+    result = module.run_doctor(
+        base_config(),
+        config_path=tmp_path / "intake-sync.yml",
+        token_linear="linear-token",
+        token_notion="",
+        check_notion=False,
+    )
+
+    assert result["ok"] is False
+    finding = next(f for f in result["findings"] if f["code"] == "linear_token_invalid")
+    assert "token visibility check" in finding["message"]
+    assert "connector-backed" in finding["remediation"]
+    token_check = _check_named(result, "linear_token")
+    assert token_check["ok"] is False
+    assert token_check["error_codes"] == ["AUTHENTICATION_ERROR"]
+    assert all(check["name"] != "linear_team" for check in result["checks"])
 
 
 def test_linear_description_uses_marker_without_private_notion_url():

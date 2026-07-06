@@ -2,8 +2,10 @@
 # Sync: OS Work Intake Notion DB -> Linear (Clarks Consulting team)
 # See: harness/bin/agentic-os-intake-sync --help
 
-# Linear team
+# Linear team (key/name are used by doctor token-visibility remediation labels)
 team_id: "2225b211-a962-4392-98ef-b2e78a26669f"
+team_key: "CC"
+team_name: "Clarks Consulting"
 
 # Notion Project select value -> Linear project id
 # (Projects not verified in Clarks Consulting are omitted so no stale projectId is set)

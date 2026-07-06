@@ -101,7 +101,24 @@ The resolver may show `INPUT_ERROR` or "Entity not found: Team". That usually
 means the configured Linear ids are correct for one workspace, but the direct API
 token belongs to another workspace or lacks access.
 
-Fix the token or use the approved connector-backed provider. Do not bypass the
+Diagnose it with the read-only intake-sync doctor, which checks the token before
+any team query:
+
+```bash
+agentic-os-intake-sync doctor
+```
+
+- `missing_linear_token`: `LINEAR_TOKEN` is not set in the shell.
+- `linear_token_invalid`: the token failed the read-only viewer/teams visibility
+  query (bad or revoked token).
+- `linear_team_not_visible`: the token authenticates, but its workspace does not
+  contain the configured team; the finding lists which teams the token can see
+  and which team the config expects.
+
+Each finding carries a remediation: create a personal API key in the Linear
+workspace that owns the configured team (for example `Clarks Consulting / CC`)
+and export it as `LINEAR_TOKEN`, or use the project-approved connector-backed
+Linear path (Linear MCP / a composio user-key login session). Do not bypass the
 preflight by treating the tracker as manually claimed.
 
 ### Backup Coverage Incomplete
