@@ -2,16 +2,21 @@ backup_policy:
   enabled: true
   include:
     - .agentic_root
-    - AGENTS.md
-    - ROUTER.md
-    - CONTEXT.md
-    - RULES.md
-    - TOOLS.md
-    - registries/
-    - shared_factory/00-control-plane/
+    - harness/AGENTS.md
+    - harness/ROUTER.md
+    - harness/CONTEXT.md
+    - harness/RULES.md
+    - harness/TOOLS.md
+    - harness/bin/
+    - harness/commands/
+    - harness/registries/
+    - harness/rules/
+    - harness/skills/
+    - harness/shared_factory/00-control-plane/
   exclude:
-    - logs/
-    - security/ssh/*
+    - projects/
+    - harness/logs/
+    - harness/security/ssh/*
     - "**/.env"
     - "**/*secret*"
     - "**/*token*"

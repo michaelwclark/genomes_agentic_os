@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import fnmatch
 import hashlib
 import json
 import os
@@ -62,6 +63,25 @@ LEGACY_ROOT_CAPABILITY_DIRS = (
     "schemas",
     "security",
     "skills",
+)
+CRITICAL_BACKUP_PATHS = (
+    ".agentic_root",
+    "harness/AGENTS.md",
+    "harness/ROUTER.md",
+    "harness/CONTEXT.md",
+    "harness/RULES.md",
+    "harness/TOOLS.md",
+    "harness/bin/",
+    "harness/commands/",
+    "harness/registries/",
+    "harness/rules/",
+    "harness/skills/",
+    "harness/shared_factory/00-control-plane/",
+)
+PROTECTED_RESTORE_PATHS = (
+    "projects/",
+    "harness/logs/",
+    "harness/security/ssh/",
 )
 
 
@@ -357,6 +377,63 @@ def backup_logs_dir(root: Path) -> Path:
     return harness_path(root, "logs", "backups")
 
 
+def _normalize_policy_path(path: str) -> str:
+    value = str(path or "").strip()
+    if value.startswith("./"):
+        value = value[2:]
+    return value.rstrip("/")
+
+
+def _policy_entry_covers(path: str, include_entry: str) -> bool:
+    rel = _normalize_policy_path(path)
+    include = _normalize_policy_path(include_entry)
+    if not include:
+        return False
+    if any(char in include for char in "*?["):
+        return fnmatch.fnmatch(rel, include) or fnmatch.fnmatch(f"{rel}/", include)
+    return rel == include or rel.startswith(f"{include}/")
+
+
+def _policy_covers(path: str, include: list[str]) -> bool:
+    return any(_policy_entry_covers(path, entry) for entry in include)
+
+
+def backup_policy_coverage(root: Path, policy: dict[str, Any]) -> dict[str, Any]:
+    include = [str(entry) for entry in (policy.get("include") or [])]
+    exclude = [str(entry) for entry in (policy.get("exclude") or [])]
+    existing_critical = [
+        path
+        for path in CRITICAL_BACKUP_PATHS
+        if (root / _normalize_policy_path(path)).exists()
+    ]
+    missing_critical = [
+        path
+        for path in existing_critical
+        if not _policy_covers(path, include)
+    ]
+    missing_include_paths = [
+        path
+        for path in include
+        if not any(char in path for char in "*?[")
+        and not (root / _normalize_policy_path(path)).exists()
+    ]
+    protected_excluded = [
+        path
+        for path in PROTECTED_RESTORE_PATHS
+        if any(_policy_entry_covers(path, entry) for entry in exclude)
+    ]
+    return {
+        "status": "covered" if not missing_critical else "incomplete",
+        "critical_paths": list(CRITICAL_BACKUP_PATHS),
+        "covered_critical_paths": [
+            path for path in existing_critical if path not in missing_critical
+        ],
+        "missing_critical_paths": missing_critical,
+        "missing_include_paths": missing_include_paths,
+        "protected_excluded_paths": protected_excluded,
+    }
+
+
 def update_pull(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
     grant = load_update_grant(os_root)
@@ -378,6 +455,7 @@ def backup_run(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
     grant = load_update_grant(os_root)
     policy = read_structured(harness_path(os_root, "registries", "backup-policy.yml")).get("backup_policy") or {}
+    coverage = backup_policy_coverage(os_root, policy)
     payload = {
         "status": "planned" if dry_run else "completed",
         "dry_run": dry_run,
@@ -385,6 +463,7 @@ def backup_run(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
         "remote": grant["remotes"]["backup"],
         "include": policy.get("include") or [],
         "exclude": policy.get("exclude") or [],
+        "coverage": coverage,
         "manifest": [] if dry_run else sorted(policy.get("include") or []),
     }
     log_path = write_run_log(os_root, "backups", "backup", payload)
@@ -449,8 +528,8 @@ def backup_restore_plan(root: str | Path, *, backup_log: str | Path | None = Non
         configured_remote = policy.get("remote") if isinstance(policy.get("remote"), dict) else {}
         remote = configured_remote if isinstance(configured_remote, dict) else {}
 
+    coverage = backup_policy_coverage(os_root, policy)
     latest_status = backup_payload.get("status") or "missing"
-    ready = bool(selected_log and grant_present and (remote.get("url") or backup_payload.get("remote", {}).get("url")))
     blockers: list[str] = []
     if not selected_log:
         blockers.append("no local backup log found; run `agentic-os backup run --dry-run` first")
@@ -458,6 +537,17 @@ def backup_restore_plan(root: str | Path, *, backup_log: str | Path | None = Non
         blockers.append(grant_error)
     if not (remote.get("url") or backup_payload.get("remote", {}).get("url")):
         blockers.append("backup remote URL is missing")
+    if coverage["missing_critical_paths"]:
+        blockers.append(
+            "backup policy missing critical installed harness path(s): "
+            + ", ".join(coverage["missing_critical_paths"])
+        )
+    ready = bool(
+        selected_log
+        and grant_present
+        and (remote.get("url") or backup_payload.get("remote", {}).get("url"))
+        and not coverage["missing_critical_paths"]
+    )
 
     return {
         "root": str(os_root),
@@ -469,6 +559,7 @@ def backup_restore_plan(root: str | Path, *, backup_log: str | Path | None = Non
         "remote": remote,
         "include": policy.get("include") or backup_payload.get("include") or [],
         "exclude": policy.get("exclude") or backup_payload.get("exclude") or [],
+        "coverage": coverage,
         "blockers": blockers,
         "steps": [
             "Verify the backup remote is private and accessible with the registered backup key.",

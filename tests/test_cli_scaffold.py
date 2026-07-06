@@ -848,7 +848,12 @@ def test_backup_policy_excludes_projects_keys_and_secrets(tmp_path: Path) -> Non
     assert main(["init", "--target", str(root)]) == 0
 
     policy = yaml.safe_load((harness(root) / "registries" / "backup-policy.yml").read_text(encoding="utf-8"))
+    includes = policy["backup_policy"]["include"]
     excludes = policy["backup_policy"]["exclude"]
+    assert "harness/bin/" in includes
+    assert "harness/commands/" in includes
+    assert "harness/rules/" in includes
+    assert "harness/skills/" in includes
     # AC: backup excludes private keys, env files, secrets, raw customer data, and projects/ by default.
     assert "projects/" in excludes
     assert "harness/security/ssh/*" in excludes

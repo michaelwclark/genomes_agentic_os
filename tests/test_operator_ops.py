@@ -100,6 +100,9 @@ class TestBackupRestorePlan:
         assert result["latest_backup_log"] == backup["log_path"]
         assert ".agentic_root" in result["include"]
         assert "harness/security/ssh/*" in result["exclude"]
+        assert result["coverage"]["status"] == "covered"
+        assert "harness/bin/" in result["coverage"]["covered_critical_paths"]
+        assert not result["coverage"]["missing_critical_paths"]
         assert result["steps"]
 
     def test_restore_plan_blocks_without_grant_or_backup_log(self, tmp_path: Path) -> None:
@@ -111,6 +114,25 @@ class TestBackupRestorePlan:
         assert result["mutated"] is False
         assert result["latest_backup_log"] == ""
         assert result["blockers"]
+
+    def test_restore_plan_blocks_when_policy_misses_harness_commands(self, tmp_path: Path) -> None:
+        root = _make_registered_root(tmp_path)
+        policy_path = root / "harness" / "registries" / "backup-policy.yml"
+        policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+        policy["backup_policy"]["include"] = [
+            ".agentic_root",
+            "harness/AGENTS.md",
+            "harness/registries/",
+        ]
+        policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+        backup_run(root, dry_run=True)
+
+        result = backup_restore_plan(root)
+
+        assert result["status"] == "blocked"
+        assert result["coverage"]["status"] == "incomplete"
+        assert "harness/bin/" in result["coverage"]["missing_critical_paths"]
+        assert any("backup policy missing critical" in blocker for blocker in result["blockers"])
 
     def test_restore_plan_cli_exits_zero(self, tmp_path: Path) -> None:
         root = _make_registered_root(tmp_path)

@@ -190,10 +190,14 @@ agentic-os backup restore-plan --root ~/agentic_os
 ```
 
 `backup restore-plan` is read-only. It reports the latest backup log, backup
-remote metadata, include/exclude scope, and any blocker such as a missing update
-grant. It does not clone, copy, overwrite, delete, or restore files. Treat the
-printed restore steps as an operator checklist, then run `agentic-os validate`
-after any approved restore.
+remote metadata, include/exclude scope, critical-path coverage, and any blocker
+such as a missing update grant or missing harness coverage. It does not clone,
+copy, overwrite, delete, or restore files. Treat the printed restore steps as an
+operator checklist, then run `agentic-os validate` after any approved restore.
+
+If `coverage.status` is `incomplete`, update `harness/registries/backup-policy.yml`
+to include the missing critical paths, then run a fresh backup dry-run and restore
+plan before continuing.
 
 ---
 

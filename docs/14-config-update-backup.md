@@ -150,10 +150,13 @@ remote URL.
 
 **Default backup scope (from `templates/runtime/backup-policy.yml`):**
 
-Include: `.agentic_root`, `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`,
-`TOOLS.md`, `registries/`, `shared_factory/00-control-plane/`
+Include: `.agentic_root`, `harness/AGENTS.md`, `harness/ROUTER.md`,
+`harness/CONTEXT.md`, `harness/RULES.md`, `harness/TOOLS.md`, `harness/bin/`,
+`harness/commands/`, `harness/registries/`, `harness/rules/`,
+`harness/skills/`, `harness/shared_factory/00-control-plane/`
 
-Exclude: `logs/`, `security/ssh/*`, `**/.env`, `**/*secret*`, `**/*token*`
+Exclude: `projects/`, `harness/logs/`, `harness/security/ssh/*`, `**/.env`,
+`**/*secret*`, `**/*token*`
 
 The backup policy schema (`schemas/backup-policy.schema.json`) requires `enabled`,
 `include`, `exclude`, and `remote` (name + url).
@@ -178,6 +181,7 @@ delete, or restore files. It reports:
 - the latest backup log,
 - registered backup remote metadata,
 - include/exclude scope,
+- coverage for critical installed harness paths,
 - blockers such as missing update grant or missing backup log,
 - the operator-reviewed steps required to restore safely.
 
@@ -196,6 +200,11 @@ agentic-os backup restore-plan --root ~/agentic_os
 The restore path remains operator-driven because the protected state includes
 memories, active work, logs, and secret-adjacent configuration. The plan tells you
 what is restorable and what must not be overwritten without explicit approval.
+
+If the policy omits critical installed harness paths such as `harness/bin/`,
+`harness/commands/`, `harness/skills/`, or `harness/rules/`, restore planning
+returns `blocked`. Fix the backup policy and run a fresh backup dry-run before a
+larger installed-root overhaul.
 
 ---
 

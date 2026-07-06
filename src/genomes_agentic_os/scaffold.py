@@ -464,7 +464,11 @@ def backup_policy_payload() -> dict[str, object]:
                 "harness/CONTEXT.md",
                 "harness/RULES.md",
                 "harness/TOOLS.md",
+                "harness/bin/",
+                "harness/commands/",
                 "harness/registries/",
+                "harness/rules/",
+                "harness/skills/",
                 "harness/shared_factory/00-control-plane/",
             ],
             "exclude": [
