@@ -355,6 +355,20 @@ skills:
     purpose: >
       Capture new spec and future-work intake through doc-config routing, project
       work items, and optional Notion projection.
+  - id: spec-groomer
+    title: Spec Groomer
+    source_path: harness/skills/spec-groomer
+    installed_path: shared_factory/05-knowledge/skills/spec-groomer
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Groom rough software ideas into source-backed implementation specs with
+      original intent, capability discovery, tracker hierarchy, QA, Gherkin,
+      and Notion documentation projection.
   - id: feature-intake-router
     title: Feature Intake Router
     source_path: harness/skills/feature-intake-router

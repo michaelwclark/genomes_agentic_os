@@ -207,6 +207,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-add-spec.md",
         },
         {
+            "id": "groom-spec",
+            "command": "/groom-spec",
+            "description": "Groom rough ideas into source-backed implementation specs with intent preservation, discovery, QA, and projection receipts.",
+            "source": "harness/commands/os-groom-spec.md",
+        },
+        {
             "id": "new-feature",
             "command": "/new-feature",
             "description": "Deprecated compatibility alias for /add-spec.",
@@ -420,6 +426,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Spec Intake Router",
             "description": "Create spec and future-work intake items using doc-config before filesystem or Notion writes.",
             "source": "harness/skills/spec-intake-router/SKILL.md",
+        },
+        {
+            "id": "spec-groomer",
+            "name": "Spec Groomer",
+            "description": "Groom rough software ideas into source-backed implementation specs with original intent, discovery, tracker hierarchy, QA, Gherkin, and Notion projection.",
+            "source": "harness/skills/spec-groomer/SKILL.md",
         },
         {
             "id": "feature-intake-router",

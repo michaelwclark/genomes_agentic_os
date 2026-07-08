@@ -151,11 +151,13 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "/make-domain",
         "/make-automation",
         "/make-workflow",
+        "/groom-spec",
         "/orchestrate",
         "agentic-os project worktree cleanup-closed",
     }
     skills = yaml.safe_load((harness(root) / "registries" / "skills.yml").read_text(encoding="utf-8"))
     assert "os-cleaner" in {entry["id"] for entry in skills["skills"]}
+    assert "spec-groomer" in {entry["id"] for entry in skills["skills"]}
     mcp_servers = yaml.safe_load((harness(root) / "registries" / "mcp-servers.yml").read_text(encoding="utf-8"))
     assert {"context_mode", "genomes_brain"} <= {entry["id"] for entry in mcp_servers["mcp_servers"]}
     composio_tools = yaml.safe_load((harness(root) / "registries" / "composio-tools.yml").read_text(encoding="utf-8"))
@@ -178,7 +180,19 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert hook_path.is_file()
         assert hook_path.stat().st_mode & 0o111
     assert (harness(root) / "commands" / "os-route.md").is_file()
+    assert (harness(root) / "commands" / "os-groom-spec.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "commands" / "os-groom-spec.md").is_file()
     assert (harness(root) / "skills" / "os-navigator" / "SKILL.md").is_file()
+    assert (harness(root) / "skills" / "spec-groomer" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "05-knowledge" / "skills" / "spec-groomer" / "SKILL.md").is_file()
+    assert (shared_factory(root) / "00-programs" / "spec_grooming" / "program.md").is_file()
+    assert (
+        shared_factory(root)
+        / "00-programs"
+        / "spec_grooming"
+        / "templates"
+        / "ORIGINAL_INTENT_TEMPLATE.md"
+    ).is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "workflow" / "workflow.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "workflow" / "outcome-brief.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "workflow" / "prd.md").is_file()
@@ -306,6 +320,27 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert not (root / "domains").exists()
     assert not (root / "lenders").exists()
     assert not validate_root(root).errors
+
+
+def test_spec_grooming_program_installs_contract(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    program_root = shared_factory(root) / "00-programs" / "spec_grooming"
+    skill = (harness(root) / "skills" / "spec-groomer" / "SKILL.md").read_text(encoding="utf-8")
+    command = (harness(root) / "commands" / "os-groom-spec.md").read_text(encoding="utf-8")
+    root_tools = (harness(root) / "TOOLS.md").read_text(encoding="utf-8")
+
+    assert (program_root / "components.yml").is_file()
+    assert (program_root / "templates" / "A_PLUS_SPEC_TEMPLATE.md").is_file()
+    assert (program_root / "examples" / "01_universal_spec_grooming_os" / "SPEC.md").is_file()
+    assert (program_root / "examples" / "02_capability_discovery_gate" / "SPEC.md").is_file()
+    assert (program_root / "examples" / "03_pr_reviewer_dashboard_route" / "SPEC.md").is_file()
+    assert "ORIGINAL_INTENT.md" in skill
+    assert "$jira-product-orchestrator" in skill
+    assert "/groom-spec" in command
+    assert "spec_grooming" in root_tools
 
 
 def test_validate_requires_self_improvement_surface(tmp_path: Path) -> None:

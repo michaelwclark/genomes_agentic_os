@@ -57,7 +57,7 @@ update control plane → report
 ```
 
 **Skills and commands** are also shared: the same `capability_registry` renders
-the same 19 `os-*` slash-commands and 18 skills into `TOOLS.md` for both harnesses.
+the registered slash-commands and skills into `TOOLS.md` for both harnesses.
 
 ---
 
@@ -107,10 +107,10 @@ Use Markdown for narrative context, rules, decisions, and idea capture. Use YAML
 for values that the CLI or agents should parse. When a file needs both, use
 Markdown with YAML front matter.
 
-### Skills (18 total)
+### Skills
 
 Skills are installed into the harness skill directory and surfaced in `TOOLS.md`
-by `capability_registry`. All 18 are shared — Codex can invoke them too.
+by `capability_registry`. Shared skills can be invoked from Claude or Codex.
 
 | Skill | When to use |
 |---|---|
@@ -132,12 +132,13 @@ by `capability_registry`. All 18 are shared — Codex can invoke them too.
 | `learning-promoter` | Promote ephemeral learning to durable memory |
 | `automation-qualifier` | Qualify an automation for the maturity ladder |
 | `client-automation-brief` | Generate a customer automation brief |
+| `spec-groomer` | Groom rough ideas into implementation-ready specs with intent preservation, discovery, QA, Gherkin, and projection receipts |
 
-### Slash-commands (21 command files; 19 are `os-*`)
+### Slash-commands
 
 Commands are installed to `harness/commands/` and exposed as slash-commands in
-Claude. Two files are helpers (`composio-debug-bundle.md`,
-`system-tool-registry.md`); the 19 `os-*` commands cover every OS operation:
+Claude. Helper files such as `composio-debug-bundle.md` and
+`system-tool-registry.md` live beside OS command contracts:
 
 | Command | Operation |
 |---|---|
@@ -160,6 +161,7 @@ Claude. Two files are helpers (`composio-debug-bundle.md`,
 | `/os-context-audit` | Audit context files at a layer |
 | `/os-capture-plan` | Capture a plan into the OS |
 | `/os-run-build-runner` | Execute a build-runner run |
+| `/groom-spec` | Groom rough ideas into complete implementation specs with discovery and projection receipts |
 
 ### MCP (Claude)
 

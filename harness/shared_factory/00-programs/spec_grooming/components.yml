@@ -1,0 +1,41 @@
+id: spec_grooming
+status: active
+owner: shared_factory
+description: Universal filesystem-first spec grooming capability.
+commands:
+  - id: groom-spec
+    path: harness/commands/os-groom-spec.md
+skills:
+  - id: spec-groomer
+    path: harness/skills/spec-groomer/SKILL.md
+  - id: spec-intake-router
+    path: harness/skills/spec-intake-router/SKILL.md
+  - id: auto-spec-intake
+    path: harness/skills/auto-spec-intake/SKILL.md
+  - id: aos-product-orchestrator
+    path: harness/skills/aos-product-orchestrator/SKILL.md
+  - id: program-builder
+    path: harness/skills/program-builder/SKILL.md
+registries:
+  - harness/registries/skills.yml
+  - harness/skills/skill-registry.yml
+  - src/genomes_agentic_os/capability_registry.py
+templates:
+  - harness/shared_factory/00-programs/spec_grooming/templates/ORIGINAL_INTENT_TEMPLATE.md
+  - harness/shared_factory/00-programs/spec_grooming/templates/A_PLUS_SPEC_TEMPLATE.md
+examples:
+  - harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os
+  - harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate
+  - harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route
+docs:
+  - docs/21-os-programs.md
+validation:
+  - tests/test_cli_scaffold.py
+projection:
+  notion:
+    destination: "Genome's Notion after workspace verification"
+    role: Product-level report or durable feature documentation.
+  tracker:
+    linear: Parent issue with child issues when Linear is requested and verified.
+    jira: Delegate Jira-primary work to jira-product-orchestrator.
+

@@ -44,6 +44,8 @@ created: /private/tmp/aos-validate/root/harness/schemas/backup-policy.schema.jso
 created: /private/tmp/aos-validate/root/harness/schemas/capability-registry.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/command-registry.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/composio-tool-routing.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/doc-config.schema.json
+created: /private/tmp/aos-validate/root/harness/schemas/documentation-upkeep.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/domain.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/hook-registry.schema.json
 created: /private/tmp/aos-validate/root/harness/schemas/hosts.schema.json
@@ -99,6 +101,7 @@ created: /private/tmp/aos-validate/root/personal/config.toml
 created: /private/tmp/aos-validate/root/personal/MEMORY.md
 created: /private/tmp/aos-validate/root/personal/PROFILE.md
 created: /private/tmp/aos-validate/root/personal/config/codex-profile.yml
+created: /private/tmp/aos-validate/root/personal/00-programs
 created: /private/tmp/aos-validate/root/personal/00-control-plane
 created: /private/tmp/aos-validate/root/personal/01-inbox
 created: /private/tmp/aos-validate/root/personal/02-projects
@@ -110,6 +113,7 @@ created: /private/tmp/aos-validate/root/personal/06-runs-and-logs/runs
 created: /private/tmp/aos-validate/root/personal/06-runs-and-logs/failures
 created: /private/tmp/aos-validate/root/personal/07-metrics
 created: /private/tmp/aos-validate/root/personal/08-archive
+created: /private/tmp/aos-validate/root/personal/00-programs/README.md
 created: /private/tmp/aos-validate/root/personal/00-control-plane/README.md
 created: /private/tmp/aos-validate/root/personal/00-control-plane/active-work.md
 created: /private/tmp/aos-validate/root/personal/00-control-plane/state-index.md
@@ -176,6 +180,7 @@ created: /private/tmp/aos-validate/root/clarks_consulting/config.toml
 created: /private/tmp/aos-validate/root/clarks_consulting/MEMORY.md
 created: /private/tmp/aos-validate/root/clarks_consulting/PROFILE.md
 created: /private/tmp/aos-validate/root/clarks_consulting/config/codex-profile.yml
+created: /private/tmp/aos-validate/root/clarks_consulting/00-programs
 created: /private/tmp/aos-validate/root/clarks_consulting/00-control-plane
 created: /private/tmp/aos-validate/root/clarks_consulting/01-inbox
 created: /private/tmp/aos-validate/root/clarks_consulting/02-projects
@@ -187,6 +192,7 @@ created: /private/tmp/aos-validate/root/clarks_consulting/06-runs-and-logs/runs
 created: /private/tmp/aos-validate/root/clarks_consulting/06-runs-and-logs/failures
 created: /private/tmp/aos-validate/root/clarks_consulting/07-metrics
 created: /private/tmp/aos-validate/root/clarks_consulting/08-archive
+created: /private/tmp/aos-validate/root/clarks_consulting/00-programs/README.md
 created: /private/tmp/aos-validate/root/clarks_consulting/00-control-plane/README.md
 created: /private/tmp/aos-validate/root/clarks_consulting/00-control-plane/active-work.md
 created: /private/tmp/aos-validate/root/clarks_consulting/00-control-plane/state-index.md
@@ -253,6 +259,7 @@ created: /private/tmp/aos-validate/root/los/config.toml
 created: /private/tmp/aos-validate/root/los/MEMORY.md
 created: /private/tmp/aos-validate/root/los/PROFILE.md
 created: /private/tmp/aos-validate/root/los/config/codex-profile.yml
+created: /private/tmp/aos-validate/root/los/00-programs
 created: /private/tmp/aos-validate/root/los/00-control-plane
 created: /private/tmp/aos-validate/root/los/01-inbox
 created: /private/tmp/aos-validate/root/los/02-projects
@@ -264,6 +271,7 @@ created: /private/tmp/aos-validate/root/los/06-runs-and-logs/runs
 created: /private/tmp/aos-validate/root/los/06-runs-and-logs/failures
 created: /private/tmp/aos-validate/root/los/07-metrics
 created: /private/tmp/aos-validate/root/los/08-archive
+created: /private/tmp/aos-validate/root/los/00-programs/README.md
 created: /private/tmp/aos-validate/root/los/00-control-plane/README.md
 created: /private/tmp/aos-validate/root/los/00-control-plane/active-work.md
 created: /private/tmp/aos-validate/root/los/00-control-plane/state-index.md
@@ -330,6 +338,7 @@ created: /private/tmp/aos-validate/root/archive/config.toml
 created: /private/tmp/aos-validate/root/archive/MEMORY.md
 created: /private/tmp/aos-validate/root/archive/PROFILE.md
 created: /private/tmp/aos-validate/root/archive/config/codex-profile.yml
+created: /private/tmp/aos-validate/root/archive/00-programs
 created: /private/tmp/aos-validate/root/archive/00-control-plane
 created: /private/tmp/aos-validate/root/archive/01-inbox
 created: /private/tmp/aos-validate/root/archive/02-projects
@@ -341,6 +350,7 @@ created: /private/tmp/aos-validate/root/archive/06-runs-and-logs/runs
 created: /private/tmp/aos-validate/root/archive/06-runs-and-logs/failures
 created: /private/tmp/aos-validate/root/archive/07-metrics
 created: /private/tmp/aos-validate/root/archive/08-archive
+created: /private/tmp/aos-validate/root/archive/00-programs/README.md
 created: /private/tmp/aos-validate/root/archive/00-control-plane/README.md
 created: /private/tmp/aos-validate/root/archive/00-control-plane/active-work.md
 created: /private/tmp/aos-validate/root/archive/00-control-plane/state-index.md
@@ -407,6 +417,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/config.toml
 created: /private/tmp/aos-validate/root/harness/shared_factory/MEMORY.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/PROFILE.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/config/codex-profile.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 created: /private/tmp/aos-validate/root/harness/shared_factory/01-inbox
 created: /private/tmp/aos-validate/root/harness/shared_factory/02-projects
@@ -418,6 +429,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/
 created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/failures
 created: /private/tmp/aos-validate/root/harness/shared_factory/07-metrics
 created: /private/tmp/aos-validate/root/harness/shared_factory/08-archive
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/README.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/README.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/active-work.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/state-index.md
@@ -504,6 +516,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/notion/domain-control-plane.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/notion/runtime-tracking-database-spec.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/bug-report.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/feature-spec.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/future-idea.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/planning/os-capture-plan.md
@@ -512,6 +525,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference/decision-log.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference/naming-conventions.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference/os-conventions.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference/source-priority.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference/style-and-output-rules.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/reference/tool-index.md
@@ -520,12 +534,16 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/room/router.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/room/routing-table.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/automation-control.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/backup-policy.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/bug-intake-workflow.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/chain-rule.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/composio-debug-bundle.env.example
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/composio-debug-bundle.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/connected-system.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/dead-letter-event.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/doc-config.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/event-envelope.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/event-ledger-index.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/event-processing-result.yml
@@ -558,9 +576,11 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/notion-database.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/examples/watch-sources/slack-channel.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/execution-target.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/feature-intake-workflow.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/heartbeat.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/integration.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/managed-templates.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/notion-organization.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/notion-tracking.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/run-queue-item.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/schedule.yml
@@ -571,6 +591,7 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/self-improvement.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/source-event.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/source-provider.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/spec-intake-workflow.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/supervisor.launchd.plist.template
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/trigger-rule.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/runtime/update-grant.json
@@ -590,6 +611,12 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/notion-sync.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/thread-closeout.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/thread/thread.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/watcher
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/watcher/README-watchers.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/watcher/runbook.md.template
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/watcher/schedule.snippet.yml.template
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/watcher/watch.py.skeleton
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/watcher/watcher.yml.template
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/work-item
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/work-item/HOLDOUT_QA.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/work-item/HOLDOUT_QA_RESULTS.md
@@ -616,7 +643,37 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/temp
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/workflow/run-log.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/templates/workflow/workflow.md
 created: /private/tmp/aos-validate/root/harness/bin/README.md
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-harness-runcpython-311.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-harness-runcpython-314.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-os-auto-dev-resolvecpython-311.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-os-auto-dev-resolvecpython-314.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-os-intake-synccpython-311.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-os-intake-synccpython-314.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-os-notion-migratecpython-311.pyc
+created: /private/tmp/aos-validate/root/harness/bin/__pycache__/agentic-os-pr-crossreviewcpython-314.pyc
+created: /private/tmp/aos-validate/root/harness/bin/agentic-harness-run
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-auto-dev-resolve
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-automation-run-summary
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-intake-row
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-intake-sync
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-interim-executor
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-jira
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-memory-analytics
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-monitor
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-notify
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-notion-migrate
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-pr-crossreview
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-quiet-run
+created: /private/tmp/aos-validate/root/harness/bin/agentic-os-status-report
+created: /private/tmp/aos-validate/root/harness/bin/register-codex-skills
+created: /private/tmp/aos-validate/root/harness/bin/register-harness-skills
 created: /private/tmp/aos-validate/root/harness/commands/composio-debug-bundle.md
+created: /private/tmp/aos-validate/root/harness/commands/os-add-bug.md
+created: /private/tmp/aos-validate/root/harness/commands/os-add-spec.md
+created: /private/tmp/aos-validate/root/harness/commands/os-auto-add-feature.md
+created: /private/tmp/aos-validate/root/harness/commands/os-auto-add-spec.md
+created: /private/tmp/aos-validate/root/harness/commands/os-automation-control.md
 created: /private/tmp/aos-validate/root/harness/commands/os-capture-plan.md
 created: /private/tmp/aos-validate/root/harness/commands/os-chain.md
 created: /private/tmp/aos-validate/root/harness/commands/os-clean-worktrees.md
@@ -624,16 +681,26 @@ created: /private/tmp/aos-validate/root/harness/commands/os-client-automation-br
 created: /private/tmp/aos-validate/root/harness/commands/os-context-audit.md
 created: /private/tmp/aos-validate/root/harness/commands/os-control-plane-bootstrap.md
 created: /private/tmp/aos-validate/root/harness/commands/os-create-automation.md
+created: /private/tmp/aos-validate/root/harness/commands/os-create-instance-program.md
+created: /private/tmp/aos-validate/root/harness/commands/os-create-program.md
 created: /private/tmp/aos-validate/root/harness/commands/os-create-workflow.md
 created: /private/tmp/aos-validate/root/harness/commands/os-discover-rooms.md
+created: /private/tmp/aos-validate/root/harness/commands/os-doc-config.md
+created: /private/tmp/aos-validate/root/harness/commands/os-docs-upkeep.md
 created: /private/tmp/aos-validate/root/harness/commands/os-doctor.md
 created: /private/tmp/aos-validate/root/harness/commands/os-end-chat.md
 created: /private/tmp/aos-validate/root/harness/commands/os-event.md
+created: /private/tmp/aos-validate/root/harness/commands/os-groom-spec.md
 created: /private/tmp/aos-validate/root/harness/commands/os-heartbeat.md
 created: /private/tmp/aos-validate/root/harness/commands/os-integration-setup.md
+created: /private/tmp/aos-validate/root/harness/commands/os-new-feature.md
+created: /private/tmp/aos-validate/root/harness/commands/os-notion-org.md
+created: /private/tmp/aos-validate/root/harness/commands/os-ps.md
+created: /private/tmp/aos-validate/root/harness/commands/os-quiet-run.md
 created: /private/tmp/aos-validate/root/harness/commands/os-route.md
 created: /private/tmp/aos-validate/root/harness/commands/os-run-build-runner.md
 created: /private/tmp/aos-validate/root/harness/commands/os-run-log.md
+created: /private/tmp/aos-validate/root/harness/commands/os-run-queue.md
 created: /private/tmp/aos-validate/root/harness/commands/os-runtime-init.md
 created: /private/tmp/aos-validate/root/harness/commands/os-self-improvement.md
 created: /private/tmp/aos-validate/root/harness/commands/os-status-report.md
@@ -641,32 +708,149 @@ created: /private/tmp/aos-validate/root/harness/commands/os-sync-notion.md
 created: /private/tmp/aos-validate/root/harness/commands/os-update.md
 created: /private/tmp/aos-validate/root/harness/commands/os-watch-source.md
 created: /private/tmp/aos-validate/root/harness/commands/system-tool-registry.md
+created: /private/tmp/aos-validate/root/harness/skills/add-env
+created: /private/tmp/aos-validate/root/harness/skills/add-env/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/aos-product-orchestrator
+created: /private/tmp/aos-validate/root/harness/skills/aos-product-orchestrator/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/cases.yml
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/copilot
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/copilot/threads.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/README.md
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/ci
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/ci/ci-watch-state.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/context
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/context/context-load.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/context/project-profile-snapshot.yml
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/copilot
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/merge
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/plan
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/plan/implementation-plan.md
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/plan/task-checklist.yml
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/pr
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/pr/pr-state.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/projection
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/quality
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/quality/quality-gate-ledger.jsonl
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/state-decision.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/state.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/state.legacy.yml
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/step-ledger.jsonl
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/tracker
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/tracker/source-snapshot.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/happy_path_ci_watch/fixture-manifest.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/project-configs
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/project-configs/hybrid.yml
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/project-configs/linear-primary.yml
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/tracker
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/tracker/jira-work-item.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/fixtures/tracker/linear-work-item.json
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/auto_dev_state.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/copilot_loop.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/notion_projector.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker/__init__.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker/base.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker/hybrid.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker/jira.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker/linear.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/scripts/tracker/scrub.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/tests
+created: /private/tmp/aos-validate/root/harness/skills/auto-dev/tests/test_auto_dev_v2.py
+created: /private/tmp/aos-validate/root/harness/skills/auto-feature-intake
+created: /private/tmp/aos-validate/root/harness/skills/auto-feature-intake/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/auto-spec-intake
+created: /private/tmp/aos-validate/root/harness/skills/auto-spec-intake/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/automation-qualifier
 created: /private/tmp/aos-validate/root/harness/skills/automation-qualifier/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/bug-intake-router
+created: /private/tmp/aos-validate/root/harness/skills/bug-intake-router/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/build-runner
 created: /private/tmp/aos-validate/root/harness/skills/build-runner/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/client-automation-brief
 created: /private/tmp/aos-validate/root/harness/skills/client-automation-brief/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/commitall
+created: /private/tmp/aos-validate/root/harness/skills/commitall/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/agents
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/agents/openai.yaml
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/references
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/references/composio-dev.md
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/references/power-user-examples.md
+created: /private/tmp/aos-validate/root/harness/skills/composio-cli/references/troubleshooting.md
 created: /private/tmp/aos-validate/root/harness/skills/context-audit
 created: /private/tmp/aos-validate/root/harness/skills/context-audit/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/context-pack-builder
 created: /private/tmp/aos-validate/root/harness/skills/context-pack-builder/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/control-plane-bootstrap
 created: /private/tmp/aos-validate/root/harness/skills/control-plane-bootstrap/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/doc-config-router
+created: /private/tmp/aos-validate/root/harness/skills/doc-config-router/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/domain-setup
 created: /private/tmp/aos-validate/root/harness/skills/domain-setup/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/event-graph-operator
 created: /private/tmp/aos-validate/root/harness/skills/event-graph-operator/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/feature-intake-router
+created: /private/tmp/aos-validate/root/harness/skills/feature-intake-router/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/finishing-touches-review
+created: /private/tmp/aos-validate/root/harness/skills/finishing-touches-review/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/finishing-touches-review/fixtures
+created: /private/tmp/aos-validate/root/harness/skills/finishing-touches-review/fixtures/README.md
+created: /private/tmp/aos-validate/root/harness/skills/finishing-touches-review/scripts
+created: /private/tmp/aos-validate/root/harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/agents
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/agents/openai.yaml
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/references
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/references/context-contract.md
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/scripts
+created: /private/tmp/aos-validate/root/harness/skills/initiative-context-resume/scripts/update_initiative_context.py
 created: /private/tmp/aos-validate/root/harness/skills/integration-setup
 created: /private/tmp/aos-validate/root/harness/skills/integration-setup/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/learning-promoter
 created: /private/tmp/aos-validate/root/harness/skills/learning-promoter/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/los-fast-workon
+created: /private/tmp/aos-validate/root/harness/skills/los-fast-workon/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/los-quiet-workon
+created: /private/tmp/aos-validate/root/harness/skills/los-quiet-workon/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/memory-analytics-viewer
+created: /private/tmp/aos-validate/root/harness/skills/memory-analytics-viewer/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/orchestrate
+created: /private/tmp/aos-validate/root/harness/skills/orchestrate/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/os-authoring-guard
+created: /private/tmp/aos-validate/root/harness/skills/os-authoring-guard/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/os-cleaner
 created: /private/tmp/aos-validate/root/harness/skills/os-cleaner/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/os-doctor
 created: /private/tmp/aos-validate/root/harness/skills/os-doctor/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/os-health
+created: /private/tmp/aos-validate/root/harness/skills/os-health/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/os-navigator
 created: /private/tmp/aos-validate/root/harness/skills/os-navigator/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/program-builder
+created: /private/tmp/aos-validate/root/harness/skills/program-builder/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/agents
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/agents/openai.yaml
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references/comment-markdown.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references/finding-schema.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references/memory-integration.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references/review-lanes.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references/subagents.md
+created: /private/tmp/aos-validate/root/harness/skills/pull-request/references/team-health-hook.md
+created: /private/tmp/aos-validate/root/harness/skills/quiet-async-runner
+created: /private/tmp/aos-validate/root/harness/skills/quiet-async-runner/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/quiet-workon-orchestrate
+created: /private/tmp/aos-validate/root/harness/skills/quiet-workon-orchestrate/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/room-builder
 created: /private/tmp/aos-validate/root/harness/skills/room-builder/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/run-logger
@@ -676,18 +860,71 @@ created: /private/tmp/aos-validate/root/harness/skills/runtime-operator/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/skill-registry.yml
 created: /private/tmp/aos-validate/root/harness/skills/source-watcher
 created: /private/tmp/aos-validate/root/harness/skills/source-watcher/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/spec-groomer
+created: /private/tmp/aos-validate/root/harness/skills/spec-groomer/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/spec-intake-router
+created: /private/tmp/aos-validate/root/harness/skills/spec-intake-router/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/status-report
 created: /private/tmp/aos-validate/root/harness/skills/status-report/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/thread-finalizer
 created: /private/tmp/aos-validate/root/harness/skills/thread-finalizer/SKILL.md
 created: /private/tmp/aos-validate/root/harness/skills/toolsmith-reviewer
 created: /private/tmp/aos-validate/root/harness/skills/toolsmith-reviewer/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/watch-pr-quiet
+created: /private/tmp/aos-validate/root/harness/skills/watch-pr-quiet/SKILL.md
+created: /private/tmp/aos-validate/root/harness/skills/watch-pr-quiet/scripts
+created: /private/tmp/aos-validate/root/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py
 created: /private/tmp/aos-validate/root/harness/skills/workflow-builder
 created: /private/tmp/aos-validate/root/harness/skills/workflow-builder/SKILL.md
 created: /private/tmp/aos-validate/root/harness/mcp/README.md
 created: /private/tmp/aos-validate/root/harness/plugins/README.md
 created: /private/tmp/aos-validate/root/harness/libraries/README.md
 created: /private/tmp/aos-validate/root/harness/rules/README.md
+created: /private/tmp/aos-validate/root/harness/rules/notion-format-standard.md
+created: /private/tmp/aos-validate/root/harness/rules/os-authoring-rules.md
+created: /private/tmp/aos-validate/root/harness/rules/work-lifecycle-standard.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/AGENTS.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/CONTEXT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/ROUTER.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/RULES.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/TOOLS.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/components.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/config.toml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/context-pack.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/crud.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/documentation.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os/HOLDOUT_QA.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os/JUDGMENT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os/LINEAR.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os/NOTION.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os/ORIGINAL_INTENT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/01_universal_spec_grooming_os/SPEC.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate/HOLDOUT_QA.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate/JUDGMENT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate/LINEAR.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate/NOTION.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate/ORIGINAL_INTENT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/02_capability_discovery_gate/SPEC.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route/HOLDOUT_QA.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route/JUDGMENT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route/LINEAR.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route/NOTION.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route/ORIGINAL_INTENT.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route/SPEC.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/program.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/runbook.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/templates
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/templates/A_PLUS_SPEC_TEMPLATE.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/templates/ORIGINAL_INTENT_TEMPLATE.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/tests.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-programs/spec_grooming/worklog.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/doc-config.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/notion-organization.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/operating-manual/00-start-here
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/operating-manual/00-start-here/README.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/operating-manual/00-start-here/update-contract.md
@@ -714,6 +951,11 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/oper
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/operating-manual/index.html
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/operating-manual/manual-manifest.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/composio-debug-bundle.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-add-bug.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-add-spec.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-auto-add-feature.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-auto-add-spec.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-automation-control.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-capture-plan.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-chain.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-clean-worktrees.md
@@ -721,16 +963,26 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/comm
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-context-audit.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-control-plane-bootstrap.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-create-automation.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-create-instance-program.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-create-program.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-create-workflow.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-discover-rooms.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-doc-config.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-docs-upkeep.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-doctor.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-end-chat.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-event.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-groom-spec.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-heartbeat.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-integration-setup.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-new-feature.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-notion-org.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-ps.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-quiet-run.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-route.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-run-build-runner.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-run-log.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-run-queue.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-runtime-init.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-self-improvement.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-status-report.md
@@ -738,32 +990,149 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/comm
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-update.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/os-watch-source.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/commands/system-tool-registry.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/add-env
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/add-env/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/aos-product-orchestrator
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/aos-product-orchestrator/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/cases.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/copilot
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/copilot/threads.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/README.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/ci
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/ci/ci-watch-state.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/context
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/context/context-load.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/context/project-profile-snapshot.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/copilot
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/merge
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/plan
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/plan/implementation-plan.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/plan/task-checklist.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/pr
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/pr/pr-state.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/projection
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/quality
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/quality/quality-gate-ledger.jsonl
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/state-decision.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/state.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/state.legacy.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/step-ledger.jsonl
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/tracker
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/auto-dev/tracker/source-snapshot.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/happy_path_ci_watch/fixture-manifest.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/project-configs
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/project-configs/hybrid.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/project-configs/linear-primary.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/tracker
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/tracker/jira-work-item.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/fixtures/tracker/linear-work-item.json
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/auto_dev_state.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/copilot_loop.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/notion_projector.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker/__init__.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker/base.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker/hybrid.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker/jira.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker/linear.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/scripts/tracker/scrub.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/tests
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-dev/tests/test_auto_dev_v2.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-feature-intake
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-feature-intake/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-spec-intake
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/auto-spec-intake/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/automation-qualifier
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/automation-qualifier/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/bug-intake-router
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/bug-intake-router/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/build-runner
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/build-runner/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/client-automation-brief
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/client-automation-brief/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/commitall
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/commitall/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/agents
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/agents/openai.yaml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/references
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/references/composio-dev.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/references/power-user-examples.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/composio-cli/references/troubleshooting.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/context-audit
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/context-audit/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/context-pack-builder
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/context-pack-builder/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/control-plane-bootstrap
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/control-plane-bootstrap/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/doc-config-router
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/doc-config-router/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/domain-setup
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/domain-setup/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/event-graph-operator
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/event-graph-operator/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/feature-intake-router
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/feature-intake-router/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/finishing-touches-review
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/finishing-touches-review/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/finishing-touches-review/fixtures
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/finishing-touches-review/fixtures/README.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/finishing-touches-review/scripts
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/agents
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/agents/openai.yaml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/references
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/references/context-contract.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/scripts
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/initiative-context-resume/scripts/update_initiative_context.py
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/integration-setup
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/integration-setup/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/learning-promoter
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/learning-promoter/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/los-fast-workon
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/los-fast-workon/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/los-quiet-workon
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/los-quiet-workon/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/memory-analytics-viewer
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/memory-analytics-viewer/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/orchestrate
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/orchestrate/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-authoring-guard
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-authoring-guard/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-cleaner
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-cleaner/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-doctor
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-doctor/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-health
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-health/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-navigator
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/os-navigator/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/program-builder
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/program-builder/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/agents
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/agents/openai.yaml
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references/comment-markdown.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references/finding-schema.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references/memory-integration.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references/review-lanes.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references/subagents.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/pull-request/references/team-health-hook.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/quiet-async-runner
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/quiet-async-runner/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/quiet-workon-orchestrate
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/quiet-workon-orchestrate/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/room-builder
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/room-builder/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/run-logger
@@ -773,14 +1142,26 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skil
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/skill-registry.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/source-watcher
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/source-watcher/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/spec-groomer
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/spec-groomer/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/spec-intake-router
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/spec-intake-router/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/status-report
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/status-report/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/thread-finalizer
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/thread-finalizer/SKILL.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/toolsmith-reviewer
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/toolsmith-reviewer/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/watch-pr-quiet
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/watch-pr-quiet/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/watch-pr-quiet/scripts
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/watch-pr-quiet/scripts/watch_pr_quiet.py
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/workflow-builder
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/skills/workflow-builder/SKILL.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/rules/README.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/rules/notion-format-standard.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/rules/os-authoring-rules.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/rules/work-lifecycle-standard.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/README.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/context-mode-cache-heal.mjs
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/conversation-auto-log.py
@@ -788,8 +1169,11 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hook
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/memory-session-start.sh
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/memory-stop.sh
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/hooks/session-prayer-start.sh
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/23-doc-config-system.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/plans/README.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/decision-log.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/naming-conventions.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/os-conventions.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/source-priority.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/style-and-output-rules.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/05-knowledge/references/tool-index.md
@@ -797,10 +1181,15 @@ created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/
 created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/self-improvement/proposals
 created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/self-improvement/approvals
 created: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/self-improvement/drafts
+created: /private/tmp/aos-validate/root/harness/shared_factory/04-workflows/spec-intake.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/04-workflows/feature-intake.md
+created: /private/tmp/aos-validate/root/harness/shared_factory/04-workflows/bug-intake.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/self-improvement.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/04-workflows/self-improvement-review.md
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/managed-templates.yml
 created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/notion-tracking.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/documentation-upkeep.yml
+created: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane/automation-control.yml
 updated: /private/tmp/aos-validate/root/harness/AGENTS.md
 updated: /private/tmp/aos-validate/root/personal/AGENTS.md
 updated: /private/tmp/aos-validate/root/clarks_consulting/AGENTS.md
@@ -869,6 +1258,7 @@ created: /private/tmp/aos-validate/root/acme/config.toml
 created: /private/tmp/aos-validate/root/acme/MEMORY.md
 created: /private/tmp/aos-validate/root/acme/PROFILE.md
 created: /private/tmp/aos-validate/root/acme/config/codex-profile.yml
+created: /private/tmp/aos-validate/root/acme/00-programs
 created: /private/tmp/aos-validate/root/acme/00-control-plane
 created: /private/tmp/aos-validate/root/acme/01-inbox
 created: /private/tmp/aos-validate/root/acme/02-projects
@@ -880,6 +1270,7 @@ created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs
 created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/failures
 created: /private/tmp/aos-validate/root/acme/07-metrics
 created: /private/tmp/aos-validate/root/acme/08-archive
+created: /private/tmp/aos-validate/root/acme/00-programs/README.md
 created: /private/tmp/aos-validate/root/acme/00-control-plane/README.md
 created: /private/tmp/aos-validate/root/acme/00-control-plane/active-work.md
 created: /private/tmp/aos-validate/root/acme/00-control-plane/state-index.md
@@ -948,6 +1339,8 @@ created: /private/tmp/aos-validate/root/acme/02-projects/launch/decisions.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/artifacts
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/config
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/SPECS
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worklogs
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/ideas
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake
@@ -963,6 +1356,8 @@ created: /private/tmp/aos-validate/root/acme/02-projects/launch/TOOLS.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/MEMORY.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/README.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/worktrees/index.yml
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/SPECS/README.md
+created: /private/tmp/aos-validate/root/acme/02-projects/launch/worklogs/README.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/ideas/README.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/ideas/raw-ideas.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/config/project-profile.yml
@@ -1029,7 +1424,6 @@ created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-in
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/logs
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/logs/conversations
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/work.yml
-created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/IDEA.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/SPEC.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/PLAN.md
 created: /private/tmp/aos-validate/root/acme/02-projects/launch/work-items/01-intake/002_validation_packet_idea/INVESTIGATION.md
@@ -1259,17 +1653,17 @@ decision_log: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log create acme launch_blog --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/artifacts
-created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/run-log.md
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260707T163511Z-acme-launch_blog
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260707T163511Z-acme-launch_blog/artifacts
+created: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260707T163511Z-acme-launch_blog/run-log.md
 ```
 
-## 19-run-log_close_20260617T154127Z-acme-launch_blog
+## 19-run-log_close_20260707T163511Z-acme-launch_blog
 ```text
-# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260617T154127Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
+# CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os run-log close acme 20260707T163511Z-acme-launch_blog --status done --summary shipped --validation manual QA passed --next-action monitor --root /tmp/aos-validate/root
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/run-log.md
+run_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260707T163511Z-acme-launch_blog/run-log.md
 status: done
 workflow_or_automation: launch_blog
 activity_log: /private/tmp/aos-validate/root/acme/06-runs-and-logs/activity-log.md
@@ -1310,7 +1704,7 @@ skipped:
 - /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 - /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/runs
 docs_created: 0
-docs_skipped: 370
+docs_skipped: 766
 ```
 
 ## 23-runtime_doctor
@@ -1345,7 +1739,7 @@ message: no queued runtime work
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --dry-run
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-17T15:41:28Z'
+tick: '2026-07-07T16:35:12Z'
 root: /tmp/aos-validate/root
 dry_run: true
 ok: true
@@ -1360,8 +1754,8 @@ steps:
   ok: true
   summary:
     status: dry-run
-    queued_count: 3
-    skipped_count: 2
+    queued_count: 5
+    skipped_count: 3
 - step: watch_sources
   ok: true
   summary:
@@ -1372,6 +1766,11 @@ steps:
   summary:
     dry_run: true
     actions_count: 0
+- step: priority_run_queue
+  ok: true
+  summary:
+    ok: true
+    dispatched_count: 0
 - step: run_queue
   ok: true
   summary:
@@ -1389,7 +1788,7 @@ steps:
 # CMD: /Users/genome/projects/genomes_agentic_os/.venv/bin/agentic-os runtime supervise --root /tmp/aos-validate/root --apply
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
-tick: '2026-06-17T15:41:28Z'
+tick: '2026-07-07T16:35:12Z'
 root: /tmp/aos-validate/root
 dry_run: false
 ok: true
@@ -1404,8 +1803,8 @@ steps:
   ok: true
   summary:
     status: queued
-    queued_count: 3
-    skipped_count: 2
+    queued_count: 5
+    skipped_count: 3
 - step: watch_sources
   ok: true
   summary:
@@ -1416,6 +1815,11 @@ steps:
   summary:
     dry_run: false
     actions_count: 0
+- step: priority_run_queue
+  ok: true
+  summary:
+    ok: true
+    dispatched_count: 0
 - step: run_queue
   ok: true
   summary:
@@ -1527,38 +1931,46 @@ registry: /private/tmp/aos-validate/root/harness/shared_factory/00-control-plane
 root: /private/tmp/aos-validate/root
 status: dry-run
 queued:
-- id: queue_bcb88a98d507
+- id: queue_e36c92dad5ed
   kind: schedule
   ref: demo
   status: dry-run
   approval_state: not_required
-  created_at: '2026-06-17T15:41:29.135584+00:00'
+  created_at: '2026-07-07T16:35:13.330628+00:00'
   dry_run: true
-  due_at: '2026-06-17T05:00:00Z'
-  idempotency_key: schedule:demo:2026-06-17T05:00:00Z
+  due_at: '2026-07-07T05:00:00Z'
+  idempotency_key: schedule:demo:2026-07-07T05:00:00Z
   execution_target: script
   command: agentic-os validate --root <root>
-  log: harness/shared_factory/06-runs-and-logs/runs/20260617T154129Z-bcb88a98-demo/run-log.yml
+  log: harness/shared_factory/06-runs-and-logs/runs/20260707T163513Z-e36c92da-demo/run-log.yml
   evidence:
   - type: run_log
-    path: harness/shared_factory/06-runs-and-logs/runs/20260617T154129Z-bcb88a98-demo/run-log.yml
+    path: harness/shared_factory/06-runs-and-logs/runs/20260707T163513Z-e36c92da-demo/run-log.yml
   blocked_reason: null
-  updated_at: '2026-06-17T15:41:29.135584+00:00'
+  updated_at: '2026-07-07T16:35:13.330628+00:00'
   created: true
 skipped:
 - schedule: daily_agentic_os_doctor
   reason: not due
-  next_due_at: '2026-06-18T05:00:00Z'
+  next_due_at: '2026-07-08T05:00:00Z'
+- schedule: run_queue_prune_daily
+  reason: not due
+  next_due_at: '2026-07-08T05:20:00Z'
+- schedule: notion_runtime_tracking
+  reason: not due
+  next_due_at: '2026-07-08T05:40:00Z'
 - schedule: stale_thread_finalizer
   reason: not due
-  next_due_at: '2026-06-18T05:00:00Z'
+  next_due_at: '2026-07-08T05:00:00Z'
 - schedule: closed_worktree_cleanup_0500
   reason: not due
-  next_due_at: '2026-06-18T10:00:00Z'
+  next_due_at: '2026-07-08T10:00:00Z'
 - schedule: closed_worktree_cleanup_2200
   reason: not due
   next_due_at: null
 - schedule: self_improvement_review
+  reason: disabled
+- schedule: self_improvement_action_watch
   reason: disabled
 ```
 
@@ -1747,40 +2159,75 @@ ledger: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/e
 # ---
 last_events: []
 pending_follow_up:
-- id: queue_080f31346994
+- id: queue_9de136995bd3
+  kind: schedule
+  ref: run_queue_prune_daily
+  status: queued
+  approval_state: not_required
+  created_at: '2026-07-07T16:35:12.513396+00:00'
+  dry_run: false
+  due_at: '2026-07-07T05:20:00Z'
+  idempotency_key: schedule:run_queue_prune_daily:2026-07-07T05:20:00Z
+  execution_target: script
+  command: agentic-os run-queue prune --root <root> --apply
+  log: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-9de13699-run_queue_prune_daily/run-log.yml
+  evidence:
+  - type: run_log
+    path: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-9de13699-run_queue_prune_daily/run-log.yml
+  blocked_reason: null
+  updated_at: '2026-07-07T16:35:12.649899+00:00'
+- id: queue_1b68e04825f8
+  kind: schedule
+  ref: notion_runtime_tracking
+  status: queued
+  approval_state: not_required
+  created_at: '2026-07-07T16:35:12.513734+00:00'
+  dry_run: false
+  due_at: '2026-07-07T05:40:00Z'
+  idempotency_key: schedule:notion_runtime_tracking:2026-07-07T05:40:00Z
+  execution_target: script
+  command: agentic-os notion track-runtime --root <root> --apply --verified-workspace
+    "Genome's Notion"
+  log: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-1b68e048-notion_runtime_tracking/run-log.yml
+  evidence:
+  - type: run_log
+    path: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-1b68e048-notion_runtime_tracking/run-log.yml
+  blocked_reason: null
+  updated_at: '2026-07-07T16:35:12.650294+00:00'
+- id: queue_d91f8caf7b86
   kind: schedule
   ref: stale_thread_finalizer
   status: queued
   approval_state: not_required
-  created_at: '2026-06-17T15:41:28.425356+00:00'
+  created_at: '2026-07-07T16:35:12.514069+00:00'
   dry_run: false
-  due_at: '2026-06-17T05:00:00Z'
-  idempotency_key: schedule:stale_thread_finalizer:2026-06-17T05:00:00Z
+  due_at: '2026-07-07T05:00:00Z'
+  idempotency_key: schedule:stale_thread_finalizer:2026-07-07T05:00:00Z
   execution_target: script
   command: agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply
-  log: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-080f3134-stale_thread_finalizer/run-log.yml
+  log: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-d91f8caf-stale_thread_finalizer/run-log.yml
   evidence:
   - type: run_log
-    path: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-080f3134-stale_thread_finalizer/run-log.yml
+    path: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-d91f8caf-stale_thread_finalizer/run-log.yml
   blocked_reason: null
-  updated_at: '2026-06-17T15:41:28.552735+00:00'
-- id: queue_af6f1a90f4c9
+  updated_at: '2026-07-07T16:35:12.650584+00:00'
+- id: queue_ea9937b12233
   kind: schedule
   ref: closed_worktree_cleanup_0500
   status: queued
   approval_state: not_required
-  created_at: '2026-06-17T15:41:28.427049+00:00'
+  created_at: '2026-07-07T16:35:12.514397+00:00'
   dry_run: false
-  due_at: '2026-06-17T10:00:00Z'
-  idempotency_key: schedule:closed_worktree_cleanup_0500:2026-06-17T10:00:00Z
+  due_at: '2026-07-07T10:00:00Z'
+  idempotency_key: schedule:closed_worktree_cleanup_0500:2026-07-07T10:00:00Z
   execution_target: script
   command: agentic-os project worktree cleanup-closed --root <root> --apply
-  log: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-af6f1a90-closed_worktree_cleanup_0500/run-log.yml
+  log: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-ea9937b1-closed_worktree_cleanup_0500/run-log.yml
   evidence:
   - type: run_log
-    path: harness/shared_factory/06-runs-and-logs/runs/20260617T154128Z-af6f1a90-closed_worktree_cleanup_0500/run-log.yml
+    path: harness/shared_factory/06-runs-and-logs/runs/20260707T163512Z-ea9937b1-closed_worktree_cleanup_0500/run-log.yml
   blocked_reason: null
-  updated_at: '2026-06-17T15:41:28.555465+00:00'
+  updated_at: '2026-07-07T16:35:12.650863+00:00'
 dead_letters: []
 processing_results: []
 ledger: /private/tmp/aos-validate/root/harness/shared_factory/06-runs-and-logs/events/event-ledger-index.md
@@ -2245,7 +2692,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/domain.yml
   record_key: domain:acme
   notion_id: null
-  fingerprint: f8019fd16a730137fcefa2c3ee1fc810b2cd1f31af54c5ed497eab81eddadced
+  fingerprint: 97b3c35d76c55440d3956083d6538304b8619fc7cc327a2a4e6505be85fa09e5
 - action: create
   kind: active_work
   key: acme
@@ -2269,7 +2716,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/decisions.md
   record_key: decisions:acme
   notion_id: null
-  fingerprint: 18d336f3af90790877631af6083162c1ce76fe07fd1cfe38805157a184166e2a
+  fingerprint: 109c6b78c4191fd6245edbcdc205746cd411980eff17c041977c2879a2943077
 - action: create
   kind: state_index
   key: acme
@@ -2277,7 +2724,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/00-control-plane/state-index.md
   record_key: state_index:acme
   notion_id: null
-  fingerprint: ccb8c70093d71fc0d77e94f5f65ac17e25f3dad1f81b94329c5c6c8bacfbce14
+  fingerprint: 18f32a1b193bde5d40e94f7afbc988d6590065585c773f74f6de6d4a8add1634
 - action: create
   kind: metrics
   key: acme
@@ -2301,7 +2748,7 @@ actions:
   path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/workflow.md
   record_key: workflow:acme/engineering/launch_blog
   notion_id: null
-  fingerprint: 96f225ed14369075296e777079849ca6608259df8870ef92a87413d07c47c649
+  fingerprint: 9d691140e73627fb73e7e9ca6c9fc77372c2906a31157e5139375adf2997335c
 - action: create
   kind: automation
   key: acme/marketing/weekly_report
@@ -2309,15 +2756,15 @@ actions:
   path: /private/tmp/aos-validate/root/acme/04-automations/marketing/weekly_report/automation.md
   record_key: automation:acme/marketing/weekly_report
   notion_id: null
-  fingerprint: 2467a03437db66b972d87026ae73645a3b653003aea3a2c2dfbc7ca0ce8850a3
+  fingerprint: 3f57bd251e03594a7319bce1b37ed13df0dfb3e405304aed8ad3a033bac95e48
 - action: create
   kind: run
-  key: acme/20260617T154127Z-acme-launch_blog
-  title: 20260617T154127Z-acme-launch_blog
-  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260617T154127Z-acme-launch_blog/run-log.md
-  record_key: run:acme/20260617T154127Z-acme-launch_blog
+  key: acme/20260707T163511Z-acme-launch_blog
+  title: 20260707T163511Z-acme-launch_blog
+  path: /private/tmp/aos-validate/root/acme/06-runs-and-logs/runs/20260707T163511Z-acme-launch_blog/run-log.md
+  record_key: run:acme/20260707T163511Z-acme-launch_blog
   notion_id: null
-  fingerprint: 9581e40528828edeac8003d4b170830a30533dfc80b92e2b42c759ca1ed41cad
+  fingerprint: 75b2b3e2fcbd7560f9b0d773391cd38e58794ed3ebe8eca856c10d9f2df392fd
 - action: create
   kind: domain
   key: archive
@@ -2325,7 +2772,7 @@ actions:
   path: /private/tmp/aos-validate/root/archive/domain.yml
   record_key: domain:archive
   notion_id: null
-  fingerprint: 492f6aec21f702df00bc1a643e4e6e15b6c3fc4818e68629434dc884f9755182
+  fingerprint: 1a5149431841de47e69c2defa44b3f41840fbb3f6b9ed53eb2363023956d11e7
 - action: create
   kind: active_work
   key: archive
@@ -2373,7 +2820,7 @@ actions:
   path: /private/tmp/aos-validate/root/clarks_consulting/domain.yml
   record_key: domain:clarks_consulting
   notion_id: null
-  fingerprint: 6547bf46e8bf5f3b7b59cc0d07b55a8957d8759dec7c0edb9208bcd1090324ac
+  fingerprint: bcb0858007105d930f83dc0776c2506935cf3515bbd3e73dfaff50782e54c4a7
 - action: create
   kind: active_work
   key: clarks_consulting
@@ -2421,7 +2868,7 @@ actions:
   path: /private/tmp/aos-validate/root/harness/shared_factory/domain.yml
   record_key: domain:shared_factory
   notion_id: null
-  fingerprint: a847affda91ff508412e6c75442ffcc8032784b82a4d55b79aab1cf2f2061702
+  fingerprint: 1794bf703efe1c4f4b6aa72d87b63e3783886abf9fc7a7d7111890b931859f73
 - action: create
   kind: active_work
   key: shared_factory
@@ -2469,7 +2916,7 @@ actions:
   path: /private/tmp/aos-validate/root/los/domain.yml
   record_key: domain:los
   notion_id: null
-  fingerprint: bc3ac1e8adb2c31f72282f59b1e1633861b26e6734b7e54cc4e0ba33cb68f804
+  fingerprint: ae3f39ea877ce4ecb55c8c17ecb7f77c1dcf1d021bc42efcd2c86f979d11c07b
 - action: create
   kind: active_work
   key: los
@@ -2517,7 +2964,7 @@ actions:
   path: /private/tmp/aos-validate/root/personal/domain.yml
   record_key: domain:personal
   notion_id: null
-  fingerprint: 642278d2a3b957c9d02d6c417b03c4ac9f49d662765fc734a1386905ade1a93b
+  fingerprint: 62fa1cf35f685d38282c9593141c5ce64e55c0cf258ff524d9973a8758688fa9
 - action: create
   kind: active_work
   key: personal
@@ -2565,7 +3012,7 @@ actions:
   path: /private/tmp/aos-validate/root/rmtest/domain.yml
   record_key: domain:rmtest
   notion_id: null
-  fingerprint: fc0598138ffa922be32c5b365e4f728cc466007c41efeeee12f2ec9d67ce174d
+  fingerprint: f0a994e3ba910a71e2a891bfc16887c59fcc3321d24a1073322cdc8b24951304
 - action: create
   kind: active_work
   key: rmtest
@@ -2597,7 +3044,7 @@ actions:
   path: /private/tmp/aos-validate/root/rmtest/00-control-plane/state-index.md
   record_key: state_index:rmtest
   notion_id: null
-  fingerprint: 405b4676778357eac494e913a44da7884b40b68acd05b8149683d678beab1d98
+  fingerprint: d85e58d709c5ea9810be103745633521b77e9f1a276a67e6ca294c8d4eea7d4a
 - action: create
   kind: metrics
   key: rmtest
@@ -3783,7 +4230,7 @@ installations:
 root: /private/tmp/aos-validate/root
 license:
   status: active
-  activated_at: '2026-06-17T15:41:30Z'
+  activated_at: '2026-07-07T16:35:15Z'
   key_hash: 98f9006c28109fe76a6960274702c0b357b598b264e22716aa50ba6e18296bab
 ```
 
@@ -3805,9 +4252,9 @@ remotes:
     url: git@github.com:genome/local-agentic-os-backups.git
     access: write
 public_keys:
-  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINDRoC7sUOZfpcCC7LxHGPcnkpB9/ZtxGpfAHdFMmKBD
+  update: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB/1HJZUdFQUdqVYtokhhcwQZOeSbxXzu7eCM9nWiCRs
     agentic-os-update_ed25519
-  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIjOUiz7KcK1tKndcccQXZZ3N2UObCe+jPifsJx4gsNO
+  backup: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMbG+EOLLPy1HkN6xE1Fn8M9Ai19Jzn2UISGKP5DRqH7
     agentic-os-backup_ed25519
 private_keys: stored locally under harness/security/ssh with mode 0600
 ```
@@ -3849,10 +4296,10 @@ plan_path: ''
 # CWD: /Users/genome/projects/genomes_agentic_os
 # ---
 root: /private/tmp/aos-validate/root
-log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260617154131.yml
+log_path: /private/tmp/aos-validate/root/harness/logs/backups/backup-20260707163515.yml
 status: planned
 dry_run: true
-created_at: '2026-06-17T15:41:31Z'
+created_at: '2026-07-07T16:35:15Z'
 remote:
   name: agentic-os-backup
   url: git@github.com:genome/local-agentic-os-backups.git
@@ -3864,7 +4311,11 @@ include:
 - harness/CONTEXT.md
 - harness/RULES.md
 - harness/TOOLS.md
+- harness/bin/
+- harness/commands/
 - harness/registries/
+- harness/rules/
+- harness/skills/
 - harness/shared_factory/00-control-plane/
 exclude:
 - projects/
@@ -3873,6 +4324,40 @@ exclude:
 - '**/.env'
 - '**/*secret*'
 - '**/*token*'
+coverage:
+  status: covered
+  critical_paths:
+  - .agentic_root
+  - harness/AGENTS.md
+  - harness/ROUTER.md
+  - harness/CONTEXT.md
+  - harness/RULES.md
+  - harness/TOOLS.md
+  - harness/bin/
+  - harness/commands/
+  - harness/registries/
+  - harness/rules/
+  - harness/skills/
+  - harness/shared_factory/00-control-plane/
+  covered_critical_paths:
+  - .agentic_root
+  - harness/AGENTS.md
+  - harness/ROUTER.md
+  - harness/CONTEXT.md
+  - harness/RULES.md
+  - harness/TOOLS.md
+  - harness/bin/
+  - harness/commands/
+  - harness/registries/
+  - harness/rules/
+  - harness/skills/
+  - harness/shared_factory/00-control-plane/
+  missing_critical_paths: []
+  missing_include_paths: []
+  protected_excluded_paths:
+  - projects/
+  - harness/logs/
+  - harness/security/ssh/
 manifest: []
 ```
 
@@ -3930,9 +4415,9 @@ created_or_verified:
 - /private/tmp/aos-validate/root/los/03-workflows/operations/deploy_planning
 - /private/tmp/aos-validate/root/los/04-automations/support/thread_intake
 run_logs:
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260617T154131Z-los-pr_review/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260617T154131Z-los-failing_ci_triage/run-log.md
-- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260617T154131Z-los-deploy_planning/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260707T163516Z-los-pr_review/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260707T163516Z-los-failing_ci_triage/run-log.md
+- /private/tmp/aos-validate/root/los/06-runs-and-logs/runs/20260707T163516Z-los-deploy_planning/run-log.md
 comparison: /private/tmp/aos-validate/root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
 ```
 
@@ -3989,6 +4474,8 @@ created:
 - /private/tmp/aos-validate/customer/harness/schemas/capability-registry.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/command-registry.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/composio-tool-routing.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/doc-config.schema.json
+- /private/tmp/aos-validate/customer/harness/schemas/documentation-upkeep.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/domain.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/hook-registry.schema.json
 - /private/tmp/aos-validate/customer/harness/schemas/hosts.schema.json
@@ -4054,6 +4541,7 @@ created:
 - /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support/PROFILE.md
 - /private/tmp/aos-validate/customer/support/config/codex-profile.yml
+- /private/tmp/aos-validate/customer/support/00-programs
 - /private/tmp/aos-validate/customer/support/00-control-plane
 - /private/tmp/aos-validate/customer/support/01-inbox
 - /private/tmp/aos-validate/customer/support/02-projects
@@ -4065,6 +4553,7 @@ created:
 - /private/tmp/aos-validate/customer/support/06-runs-and-logs/failures
 - /private/tmp/aos-validate/customer/support/07-metrics
 - /private/tmp/aos-validate/customer/support/08-archive
+- /private/tmp/aos-validate/customer/support/00-programs/README.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/README.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/active-work.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/state-index.md
@@ -4212,6 +4701,7 @@ skipped:
 - /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support/PROFILE.md
 - /private/tmp/aos-validate/customer/support/config/codex-profile.yml
+- /private/tmp/aos-validate/customer/support/00-programs
 - /private/tmp/aos-validate/customer/support/00-control-plane
 - /private/tmp/aos-validate/customer/support/01-inbox
 - /private/tmp/aos-validate/customer/support/02-projects
@@ -4223,6 +4713,7 @@ skipped:
 - /private/tmp/aos-validate/customer/support/06-runs-and-logs/failures
 - /private/tmp/aos-validate/customer/support/07-metrics
 - /private/tmp/aos-validate/customer/support/08-archive
+- /private/tmp/aos-validate/customer/support/00-programs/README.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/README.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/active-work.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/state-index.md
@@ -4303,6 +4794,7 @@ skipped:
 - /private/tmp/aos-validate/customer/support/MEMORY.md
 - /private/tmp/aos-validate/customer/support/PROFILE.md
 - /private/tmp/aos-validate/customer/support/config/codex-profile.yml
+- /private/tmp/aos-validate/customer/support/00-programs
 - /private/tmp/aos-validate/customer/support/00-control-plane
 - /private/tmp/aos-validate/customer/support/01-inbox
 - /private/tmp/aos-validate/customer/support/02-projects
@@ -4314,6 +4806,7 @@ skipped:
 - /private/tmp/aos-validate/customer/support/06-runs-and-logs/failures
 - /private/tmp/aos-validate/customer/support/07-metrics
 - /private/tmp/aos-validate/customer/support/08-archive
+- /private/tmp/aos-validate/customer/support/00-programs/README.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/README.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/active-work.md
 - /private/tmp/aos-validate/customer/support/00-control-plane/state-index.md

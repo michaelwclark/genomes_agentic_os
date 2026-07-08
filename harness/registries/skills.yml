@@ -203,6 +203,12 @@ skills:
   description: Create spec and future-work intake items using doc-config before filesystem
     or Notion writes.
   source: harness/skills/spec-intake-router/SKILL.md
+- id: spec-groomer
+  name: Spec Groomer
+  description: Groom rough software ideas into source-backed implementation specs
+    with original intent, capability discovery, tracker hierarchy, QA, Gherkin,
+    and Notion documentation projection.
+  source: harness/skills/spec-groomer/SKILL.md
 - id: auto-spec-intake
   name: Auto Spec Intake
   description: Create or update local spec packets for long OS-shaping requests.

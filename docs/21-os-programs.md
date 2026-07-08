@@ -96,6 +96,27 @@ Both commands are additive. They create the program folder, program context file
 
 ---
 
+## Built-in shared programs
+
+### `spec_grooming`
+
+`spec_grooming` is the shared program for turning rough ideas into
+implementation-ready specs. It owns the universal grooming contract:
+
+- preserve raw intent in `ORIGINAL_INTENT.md`;
+- discover existing programs, workflows, automations, skills, docs, trackers,
+  and Notion pages before creating new work;
+- record one route decision: `extend_existing`, `create_under_existing`, or
+  `create_new`;
+- produce product, technical, flow, state, Gherkin, QA, rollout, assumption,
+  and projection sections;
+- keep LOS Django and Jira-primary work routed through
+  `$jira-product-orchestrator`.
+
+The linked command is `/groom-spec`; the linked skill is `spec-groomer`.
+
+---
+
 ## CRUD routing
 
 When a prompt names a program or one of its aliases, agents should load the
