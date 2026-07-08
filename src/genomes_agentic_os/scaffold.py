@@ -109,6 +109,11 @@ MANAGED_RUNTIME_FILES = (
         "replace_if_managed_unchanged",
     ),
     (
+        "harness/commands/os-groom-spec.md",
+        "harness/shared_factory/05-knowledge/commands/os-groom-spec.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "templates/runtime/notion-organization.yml",
         "harness/shared_factory/00-control-plane/notion-organization.yml",
         "replace_if_managed_unchanged",
@@ -126,6 +131,11 @@ MANAGED_RUNTIME_FILES = (
     (
         "harness/skills/quiet-async-runner/SKILL.md",
         "harness/shared_factory/05-knowledge/skills/quiet-async-runner/SKILL.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/skills/spec-groomer/SKILL.md",
+        "harness/shared_factory/05-knowledge/skills/spec-groomer/SKILL.md",
         "replace_if_managed_unchanged",
     ),
 )
@@ -760,7 +770,17 @@ def ensure_visible_capability_surface(root: Path, result: ScaffoldResult) -> Non
 def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     result = ScaffoldResult()
     harness_root = harness_source_dir()
-    for directory in ("bin", "commands", "skills", "mcp", "plugins", "libraries", "hooks", "rules"):
+    for directory in (
+        "bin",
+        "commands",
+        "skills",
+        "mcp",
+        "plugins",
+        "libraries",
+        "hooks",
+        "rules",
+        "shared_factory",
+    ):
         source = harness_root / directory
         if source.is_dir():
             result.extend(copy_tree_missing(source, harness_path(root, directory)))
@@ -992,6 +1012,7 @@ the source of truth by themselves.
 | `workflow-builder` | Create or improve reusable workflows. | `shared_factory/05-knowledge/skills/workflow-builder/` |
 | `doc-config-router` | Decide where docs belong before filesystem or Notion projection work. | `shared_factory/05-knowledge/skills/doc-config-router/` |
 | `spec-intake-router` | Capture new specs and future work through doc-config and work-item intake. | `shared_factory/05-knowledge/skills/spec-intake-router/` |
+| `spec-groomer` | Groom rough ideas into implementation-ready specs with intent preservation, discovery, QA, and projection receipts. | `shared_factory/05-knowledge/skills/spec-groomer/` |
 | `feature-intake-router` | Deprecated alias for spec intake. | `shared_factory/05-knowledge/skills/feature-intake-router/` |
 | `bug-intake-router` | Capture bugs and missed enforcement through doc-config and work-item intake. | `shared_factory/05-knowledge/skills/bug-intake-router/` |
 | `auto-spec-intake` | Create/update spec packets for long OS-shaping requests. | `shared_factory/05-knowledge/skills/auto-spec-intake/` |
@@ -1010,6 +1031,7 @@ the source of truth by themselves.
 | `/make-automation` | Create a guarded automation spec. | Declared in `registries/commands.yml`. |
 | `/make-workflow` | Create a reusable workflow contract. | Declared in `registries/commands.yml`. |
 | `/add-spec` | Capture future work through the configured spec intake workflow. | Declared in `registries/commands.yml`. |
+| `/groom-spec` | Groom rough ideas into complete implementation specs with discovery and projection receipts. | Declared in `registries/commands.yml`. |
 | `/new-feature` | Deprecated alias for `/add-spec`. | Declared in `registries/commands.yml`. |
 | `/add-bug` | Capture a bug or missed OS enforcement into a routed work item. | Declared in `registries/commands.yml`. |
 | `/auto-add-spec` | Create/update a spec packet for long OS-shaping requests. | Declared in `registries/commands.yml`. |
@@ -1028,6 +1050,12 @@ the source of truth by themselves.
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
 | `agentic-os doc-config plan` | Resolve filesystem and Notion projection destinations for documents. | Dry-run planner; external writes still require verification. |
 | `agentic-os config install-tree` | Install Codex config across routed OS layers. | Dry-run by default. |
+
+## Programs
+
+| Program | Use When | Source |
+| --- | --- | --- |
+| `spec_grooming` | Turn rough ideas into implementation-ready specs while preserving original intent, discovering existing capability, and projecting to filesystem, tracker, and Notion surfaces. | `harness/shared_factory/00-programs/spec_grooming/` |
 
 ## MCP Servers
 

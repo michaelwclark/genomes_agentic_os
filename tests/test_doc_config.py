@@ -135,6 +135,7 @@ def test_docs_update_merges_doc_config_registry_entries(tmp_path: Path) -> None:
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "doc-config"]
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "notion-org"]
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "add-spec"]
+    commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "groom-spec"]
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "new-feature"]
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "add-feature"]
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "add-bug"]
@@ -143,6 +144,7 @@ def test_docs_update_merges_doc_config_registry_entries(tmp_path: Path) -> None:
     commands["commands"] = [entry for entry in commands["commands"] if entry.get("id") != "quiet-run"]
     skills["skills"] = [entry for entry in skills["skills"] if entry.get("id") != "doc-config-router"]
     skills["skills"] = [entry for entry in skills["skills"] if entry.get("id") != "spec-intake-router"]
+    skills["skills"] = [entry for entry in skills["skills"] if entry.get("id") != "spec-groomer"]
     skills["skills"] = [entry for entry in skills["skills"] if entry.get("id") != "feature-intake-router"]
     skills["skills"] = [entry for entry in skills["skills"] if entry.get("id") != "bug-intake-router"]
     skills["skills"] = [entry for entry in skills["skills"] if entry.get("id") != "auto-spec-intake"]
@@ -171,6 +173,7 @@ def test_docs_update_merges_doc_config_registry_entries(tmp_path: Path) -> None:
     assert any(entry.get("id") == "doc-config" for entry in updated_commands["commands"])
     assert any(entry.get("id") == "notion-org" for entry in updated_commands["commands"])
     assert any(entry.get("id") == "add-spec" for entry in updated_commands["commands"])
+    assert any(entry.get("id") == "groom-spec" for entry in updated_commands["commands"])
     assert any(entry.get("id") == "new-feature" for entry in updated_commands["commands"])
     assert any(entry.get("id") == "add-feature" for entry in updated_commands["commands"])
     assert any(entry.get("id") == "add-bug" for entry in updated_commands["commands"])
@@ -179,6 +182,7 @@ def test_docs_update_merges_doc_config_registry_entries(tmp_path: Path) -> None:
     assert any(entry.get("id") == "quiet-run" for entry in updated_commands["commands"])
     assert any(entry.get("id") == "doc-config-router" for entry in updated_skills["skills"])
     assert any(entry.get("id") == "spec-intake-router" for entry in updated_skills["skills"])
+    assert any(entry.get("id") == "spec-groomer" for entry in updated_skills["skills"])
     assert any(entry.get("id") == "feature-intake-router" for entry in updated_skills["skills"])
     assert any(entry.get("id") == "bug-intake-router" for entry in updated_skills["skills"])
     assert any(entry.get("id") == "auto-spec-intake" for entry in updated_skills["skills"])
