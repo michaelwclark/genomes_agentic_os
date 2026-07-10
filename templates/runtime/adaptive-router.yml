@@ -1,0 +1,78 @@
+# CC-209 Wave 1: complete, versioned adaptive model policy contract.
+# Off mode keeps Feature 62's installed static layer configuration unchanged.
+schema_version: 1
+policy_version: 1
+
+# Precedence is host < project < workflow < customer < request. Request is a
+# runtime-only layer; assessment minimum tier and effort remain safety floors.
+layers:
+  host:
+    mode: "off" # Quote: YAML 1.1 otherwise coerces off to false.
+    default_tier: balanced
+    customer_safe: true
+    allow_model_overrides: false
+    allowed_model_overrides: []
+  project: {}
+  workflow: {}
+  customer:
+    customer_safe: true
+
+catalog:
+  version: 1
+  models:
+    - model_id: gpt-5.6-luna
+      aliases: [economy]
+      capability_tier: economy
+      supported_reasoning_efforts: [low, medium, high, xhigh, max]
+      coding: true
+      tool_use: true
+      context_tokens: 128000
+      subagent_suitable: true
+      cost_class: economy
+      customer_safe: true
+      available: true
+    - model_id: gpt-5.6-terra
+      aliases: [balanced]
+      capability_tier: balanced
+      supported_reasoning_efforts: [low, medium, high, xhigh, max, ultra]
+      coding: true
+      tool_use: true
+      context_tokens: 128000
+      subagent_suitable: true
+      cost_class: standard
+      customer_safe: true
+      available: true
+    - model_id: gpt-5.6-sol
+      aliases: [frontier]
+      capability_tier: frontier
+      supported_reasoning_efforts: [low, medium, high, xhigh, max, ultra]
+      coding: true
+      tool_use: true
+      context_tokens: 128000
+      subagent_suitable: true
+      cost_class: premium
+      customer_safe: true
+      available: true
+
+static_fallback:
+  feature: 62-role-aware-codex-config-layers
+  behavior: preserve_existing_layer_model_and_reasoning_configuration
+
+# Each route is ordered primary then fallbacks. Capability and effort floors are
+# enforced at load time and again at resolution time.
+tiers:
+  economy:
+    primary: {model: economy, reasoning_effort: medium}
+    fallbacks:
+      - {model: balanced, reasoning_effort: medium}
+  balanced:
+    primary: {model: balanced, reasoning_effort: medium}
+    fallbacks:
+      - {model: frontier, reasoning_effort: medium}
+  frontier:
+    primary: {model: frontier, reasoning_effort: high}
+  frontier_max:
+    primary: {model: frontier, reasoning_effort: ultra}
+  human_gate:
+    primary: {model: frontier, reasoning_effort: ultra}
+    requires_human_approval: true

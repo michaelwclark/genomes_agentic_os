@@ -7,6 +7,15 @@ from pathlib import Path
 import sys
 
 from .cli_help import AosHelpFormatter, env_epilog
+from .adaptive_operations import (
+    build_plan as build_adaptive_plan,
+    canonical_json as adaptive_canonical_json,
+    evaluate as evaluate_adaptive_holdout,
+    load_explicit_policy,
+    load_holdout_report,
+    rollback_plan as build_adaptive_rollback_plan,
+    status as adaptive_routing_status,
+)
 
 from .automation_ops import (
     AUTOMATION_MATURITY_LEVELS,
@@ -1712,6 +1721,56 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     capability_inventory_parser.add_argument("--regenerate", action="store_true", help="Rewrite INVENTORY.md from current registry state.")
     capability_inventory_parser.set_defaults(handler=handle_capability_inventory)
 
+    adaptive_routing_parser = subparsers.add_parser(
+        "adaptive-routing",
+        help="Read-only operator controls for adaptive routing.",
+    )
+    adaptive_routing_subparsers = adaptive_routing_parser.add_subparsers(
+        dest="adaptive_routing_command",
+        required=True,
+    )
+    adaptive_plan = adaptive_routing_subparsers.add_parser(
+        "plan",
+        help="Build a canonical, non-executing adaptive routing plan.",
+    )
+    adaptive_plan.add_argument("task", help="Explicit task text; it is assessed locally and never emitted.")
+    adaptive_plan.add_argument("--policy-file", required=True, help="Explicit reviewed adaptive policy YAML.")
+    adaptive_plan.add_argument("--holdout-report", help="Explicit approved holdout JSON required by enforce mode.")
+    adaptive_plan.add_argument("--tier", choices=("economy", "balanced", "frontier", "frontier_max", "human_gate"), help="Strengthen the requested minimum model tier.")
+    adaptive_plan.add_argument("--model", dest="model_override", help="Policy-allowed model override only.")
+    adaptive_plan.add_argument("--reasoning-effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"), help="Strengthen requested reasoning effort.")
+    adaptive_plan.add_argument("--owner-id", help="Explicit selected owner identifier.")
+    adaptive_plan.add_argument("--owner-kind", choices=("workflow", "skill"), help="Kind for an explicit owner override.")
+    adaptive_plan.add_argument("--owner-minimum-tier", choices=("economy", "balanced", "frontier", "frontier_max", "human_gate"), help="Owner-derived tier floor.")
+    adaptive_plan.add_argument("--owner-verification", action="append", default=[], help="Required verification added by the owner; repeatable.")
+    adaptive_plan.add_argument("--no-sub-agents", action="store_true", help="Request operator-only topology when it preserves all required verification.")
+    adaptive_plan.set_defaults(handler=handle_adaptive_routing_plan)
+
+    adaptive_evaluate = adaptive_routing_subparsers.add_parser(
+        "evaluate",
+        help="Run the supplied holdout against the built-in catalog and explicit baseline.",
+    )
+    adaptive_evaluate.add_argument("--holdout-file", required=True, help="Explicit reviewed holdout YAML.")
+    adaptive_evaluate.add_argument("--policy-file", required=True, help="Exact reviewed runtime policy to bind to the holdout evidence.")
+    adaptive_evaluate.add_argument("--approve", action="store_true", required=True, help="Record explicit operator approval for the guarded-mode decision.")
+    adaptive_evaluate.set_defaults(handler=handle_adaptive_routing_evaluate)
+
+    adaptive_status = adaptive_routing_subparsers.add_parser(
+        "status",
+        help="Show policy lifecycle, version, and enforce eligibility without changes.",
+    )
+    adaptive_status.add_argument("--policy-file", required=True, help="Explicit reviewed adaptive policy YAML.")
+    adaptive_status.add_argument("--holdout-report", help="Explicit holdout JSON used only for enforce eligibility.")
+    adaptive_status.set_defaults(handler=handle_adaptive_routing_status)
+
+    adaptive_rollback = adaptive_routing_subparsers.add_parser(
+        "rollback-plan",
+        help="Build non-mutating Feature 62 static rollback instructions.",
+    )
+    adaptive_rollback.add_argument("--policy-file", required=True, help="Explicit current adaptive policy YAML.")
+    adaptive_rollback.add_argument("--last-known-good-policy-file", help="Explicit prior reviewed policy YAML; metadata only.")
+    adaptive_rollback.set_defaults(handler=handle_adaptive_routing_rollback_plan)
+
     return parser
 
 
@@ -2832,6 +2891,63 @@ def handle_docs_upkeep(args: argparse.Namespace) -> int:
     )
     print(format_documentation_upkeep_result(result))
     return 0 if result.get("ok") else 1
+
+
+def handle_adaptive_routing_plan(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    report = load_holdout_report(args.holdout_report)
+    result, exit_code = build_adaptive_plan(
+        task=args.task,
+        document=document,
+        tier=args.tier,
+        model_override=args.model_override,
+        reasoning_effort=args.reasoning_effort,
+        owner_identifier=args.owner_id,
+        owner_kind=args.owner_kind,
+        owner_minimum_tier=args.owner_minimum_tier,
+        owner_verification=tuple(args.owner_verification),
+        no_sub_agents=args.no_sub_agents,
+        holdout_report=report,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def handle_adaptive_routing_evaluate(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    result, exit_code = evaluate_adaptive_holdout(
+        holdout_file=args.holdout_file,
+        document=document,
+        approval_granted=args.approve,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def handle_adaptive_routing_status(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    report = load_holdout_report(args.holdout_report)
+    result, exit_code = adaptive_routing_status(
+        document=document,
+        holdout_report=report,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def handle_adaptive_routing_rollback_plan(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    last_known_good = (
+        load_explicit_policy(args.last_known_good_policy_file)
+        if args.last_known_good_policy_file
+        else None
+    )
+    result, exit_code = build_adaptive_rollback_plan(
+        document=document,
+        last_known_good=last_known_good,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:

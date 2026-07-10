@@ -80,6 +80,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [21 · OS Programs](21-os-programs.md) | OSProgram and InstanceOSProgram conventions for named capability CRUD across skills, commands, workflows, automations, docs, and state. |
 | [24 · Auto-Dev Readiness](24-auto-dev-readiness.md) | The resolver-first gate for `$auto-dev`: lifecycle states, tracker preflight, backup/restore receipts, and closeout evidence. |
 | [25 · Source Of Truth Rules](25-source-of-truth.md) | Where filesystem, Notion, Linear, Jira, and GitHub each own state, plus conflict and external-output rules. |
+| [26 · Adaptive Routing Operator Guide](26-adaptive-routing.md) | Offline adaptive routing policy, lifecycle gates, redacted receipts, evaluation, rollback, and integration limits. |
 
 ### Reference
 | Page | What it covers |
