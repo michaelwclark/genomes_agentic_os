@@ -645,6 +645,82 @@ def test_self_improvement_runtime_schedule_is_disabled_but_dispatchable_when_ena
     assert (self_improvement_root / "latest-report.md").is_file()
 
 
+def test_adaptive_routing_observation_report_schedule_is_idempotent_and_dispatchable(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    assert main(["runtime", "init", "--root", str(root)]) == 0
+    capsys.readouterr()
+
+    registry_path = shared_factory(root) / "00-control-plane" / "runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    schedules = {schedule["id"]: schedule for schedule in registry["schedules"]}
+    report_schedule = schedules["adaptive_routing_observation_report"]
+
+    assert report_schedule["enabled"] is False
+    assert report_schedule["cadence"] == "every_12_hours"
+    assert report_schedule["command"] == (
+        "agentic-os adaptive-routing report --root <root> --hours 12 --apply-notion"
+    )
+    assert report_schedule["outputs"] == [
+        "harness/shared_factory/06-runs-and-logs/adaptive-routing/observation-reports/"
+    ]
+    assert report_schedule["external_effect"] == "append-only projection to verified Genome's Notion"
+    assert report_schedule["notion_update"] == {
+        "workspace": "Genome's Notion",
+        "mode": "append_only",
+        "requires_verified_workspace": True,
+    }
+
+    for schedule in registry["schedules"]:
+        schedule["enabled"] = schedule["id"] == "adaptive_routing_observation_report"
+        schedule["next_due_at"] = None
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    first = yaml.safe_load(capsys.readouterr().out)
+    assert [item["ref"] for item in first["queued"]] == ["adaptive_routing_observation_report"]
+    queued_item = first["queued"][0]
+    assert queued_item["command"] == report_schedule["command"]
+
+    assert main(["schedule", "run-due", "--root", str(root), "--apply"]) == 0
+    second = yaml.safe_load(capsys.readouterr().out)
+    assert second["queued"] == []
+    assert next(
+        item for item in second["skipped"] if item["schedule"] == "adaptive_routing_observation_report"
+    )["reason"] == "not due"
+
+    dispatched_commands: list[str] = []
+
+    def fake_subprocess_script(
+        dispatch_root: Path, command: str, *, timeout_seconds: int
+    ) -> dict[str, object]:
+        assert dispatch_root == root
+        assert timeout_seconds == runtime_ops.SCRIPT_DISPATCH_TIMEOUT_SECONDS
+        dispatched_commands.append(command)
+        return {
+            "supported": True,
+            "ok": True,
+            "command": command,
+            "errors": [],
+            "warnings": [],
+            "external_effect": "stubbed; no external call",
+        }
+
+    monkeypatch.setattr(runtime_ops, "_run_subprocess_script", fake_subprocess_script)
+    assert main(
+        ["runtime", "run-next", "--root", str(root), "--item-id", queued_item["id"], "--apply"]
+    ) == 0
+    dispatched = yaml.safe_load(capsys.readouterr().out)
+    assert dispatched["status"] == "done"
+    assert dispatched["external_effect"] == "stubbed; no external call"
+    assert dispatched_commands == [
+        f"agentic-os adaptive-routing report --root {root} --hours 12 --apply-notion"
+    ]
+
+
 def test_validate_fails_when_declared_capability_is_missing_from_registry(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 

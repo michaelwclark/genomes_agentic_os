@@ -693,6 +693,18 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     ensure_runtime_control_config(root, "doc-config.yml", "doc-config.yml", result)
     ensure_runtime_control_config(root, "notion-organization.yml", "notion-organization.yml", result)
     ensure_runtime_control_config(root, "automation-control.yml", "automation-control.yml", result)
+    ensure_runtime_control_config(
+        root,
+        "adaptive-routing-observation-report.yml",
+        "adaptive-routing-observation-report.yml",
+        result,
+    )
+    ensure_runtime_control_config(
+        root,
+        "adaptive-routing-pricing.yml",
+        "adaptive-routing-pricing.yml",
+        result,
+    )
 
 
 def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
@@ -910,6 +922,14 @@ This is the harness-neutral entry point for {scope}.
 4. Repeat the local read and routing loop until no narrower route applies.
 5. Act only after loading the final layer's context, rules, and tool registry.
 6. Record unclear routes, missing tools, and durable follow-up in the run log or closeout artifact.
+
+## Adaptive Observe Receipt
+
+When the installed adaptive observation config is enabled and `CODEX_THREAD_ID`
+is available, run `agentic-os adaptive-routing observe --root <root> "<original
+user request>"` once per substantive user task before its first action. The command analyzes
+locally, never executes the route, never persists task text, and treats a
+duplicate turn correlation as an idempotent no-op.
 
 ## Context Precedence
 

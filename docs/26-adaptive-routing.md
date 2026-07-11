@@ -1,9 +1,11 @@
 # 26 · Adaptive Routing Operator Guide
 
-> **Status:** offline planning and evaluation contract. Adaptive routing does not
-> execute work, call providers, create sub-agents, poll CI, or change a harness
-> configuration by itself. Treat its output as a reviewable plan and receipt
-> input, not proof that work ran.
+> **Status:** planning and evaluation are offline contracts. The observation
+> report aggregates existing redacted evidence into a canonical filesystem
+> artifact and can append a projection to verified Genome's Notion; it still
+> does not execute work, call model providers, create sub-agents, poll CI, or
+> change harness configuration. Treat routing output as evidence, not proof that
+> work ran.
 
 Adaptive routing selects a capability-safe model tier, reasoning effort, and a
 bounded execution topology from a task assessment and an explicit policy. It is
@@ -218,6 +220,95 @@ breach, unresolved review status, or instability blocks promotion. Evaluation
 is offline and compares redacted reviewed bounds/outcomes with a static baseline;
 it is not live telemetry or a deployment test.
 
+## Observe reports
+
+At the start of a substantive Codex task, the generated Agentic OS guidance
+records one non-executing, text-free decision receipt using the active Codex
+thread and current turn as the correlation boundary:
+
+```bash
+agentic-os adaptive-routing observe \
+  --root <root> \
+  "<original user request>"
+```
+
+The task text is assessed in memory and is not written to the ledger. The
+reporter later finds the exact Codex turn containing the observation timestamp,
+uses per-turn token events rather than session-lifetime counters, and attributes
+child rollout usage to the parent turn. A missing or ambiguous turn remains
+unknown rather than inheriting the last model or cumulative session usage.
+
+`agentic-os adaptive-routing report` turns the last observation window into an
+operator-readable report without making a promotion decision. The scheduled
+window is 12 hours. A useful review answers these questions explicitly:
+
+- How many eligible receipts were found, and how many were excluded or invalid?
+- Which policy versions, modes, model tiers, reasoning levels, topology kinds,
+  route statuses, projects, and workflows were represented?
+- Did any capability, safety, approval, verification, quality, cost, latency,
+  stability, or policy-drift signal breach its reviewed bound?
+- Were routes assessed as too cheap, too expensive, or appropriate, and what is
+  the denominator behind each rate?
+- Which facts remain unknown because no authoritative provider or reviewer
+  evidence exists?
+- What changed from the previous comparable window, and is the comparison valid
+  across the same policy, schema, catalog, and pricing versions?
+
+A report with no eligible receipts is an explicit `insufficient_evidence`
+observation, not a zero-breach success. Missing usage, reviewed outcomes,
+latency, quality, or pricing stays `unknown`; it must never be filled with zero,
+an inferred provider value, or a claim that the route was free. Report known and
+unknown counts together so operators can see denominator quality.
+
+### Canonical artifact and Notion projection
+
+The filesystem is canonical. Reports live under
+`harness/shared_factory/06-runs-and-logs/adaptive-routing/observation-reports/`
+and must contain the complete redacted evidence, version identifiers, window,
+unknowns, and projection status. Notion is a readable projection only. With
+`--apply-notion`, the command may append to **verified Genome's Notion** after
+workspace verification; it must not overwrite prior observations or write to a
+fallback workspace. If verification or access fails, preserve the filesystem
+report and record the projection as blocked with the exact reason.
+
+Repeated execution for the same report identity must reuse the canonical result
+and must not append a duplicate Notion projection. The runtime schedule also
+uses one idempotency key per due window. Neither mechanism authorizes editing or
+deleting an earlier report.
+
+Pricing evidence is versioned input, not ambient knowledge. Every known price
+must carry a pricing-catalog version (and effective date or source fingerprint)
+that can be compared with the receipt's model and usage units. If the applicable
+version is absent, incompatible, or does not cover the selected model, cost is
+`unknown`. Do not silently reprice historical windows with a current catalog;
+publish a separately identified recomputation if reviewed historical analysis
+is required.
+
+### Operator runbook
+
+1. Confirm the effective adaptive policy mode and inspect the filesystem receipt
+   window. In `off`, expect static-fallback observations; do not interpret them
+   as adaptive selections.
+2. Preview locally with
+   `agentic-os adaptive-routing report --root <root> --hours 12`. Review the
+   window, versions, denominators, exclusions, unknowns, and all breaches.
+3. If a Notion projection is required, verify the destination is Genome's
+   Notion, then run the scheduled contract exactly:
+   `agentic-os adaptive-routing report --root <root> --hours 12 --apply-notion`.
+4. Check the canonical report first, then confirm its projection status. A
+   Notion failure does not invalidate a complete local report, but it is an
+   operational blocker to projection and must remain visible.
+5. Investigate breaches or drift before changing policy. Observation reports do
+   not authorize `guarded` or `enforce`; use the reviewed lifecycle gate.
+
+To stop automated reporting, set the
+`adaptive_routing_observation_report` runtime schedule to `enabled: false`.
+To stop adaptive selection, set the applicable adaptive policy layer to `off`.
+These are separate controls. Keep canonical reports and append-only projections
+in both cases. Roll back routing through the last-known-good policy/static
+profile process; do not delete evidence, rewrite pricing versions, or use a
+reporting disablement as a substitute for policy rollback.
+
 ## Failures, receipts, privacy, and customer delivery
 
 Fail closed when the policy is invalid, a selected model is unavailable, a
@@ -245,9 +336,11 @@ old receipts to match a new schema or model catalog.
 
 ## CLI and integration boundary
 
-The registered command group is `agentic-os adaptive-routing`. Every command
-is offline and non-executing: it prints a canonical plan, evaluation, status,
-or rollback plan and does not run agents or mutate policy files.
+The registered command group is `agentic-os adaptive-routing`. Planning,
+evaluation, status, and rollback commands are offline and non-executing. The
+report command is also non-executing with respect to routed work, but it writes
+the canonical report and, only with `--apply-notion`, can append its projection
+to verified Genome's Notion. No command mutates policy files.
 
 ```bash
 # Redacted dry-run plan. Task text is assessed locally and omitted from output.
@@ -276,6 +369,12 @@ agentic-os adaptive-routing status \
 agentic-os adaptive-routing rollback-plan \
   --policy-file templates/runtime/adaptive-router.yml \
   --last-known-good-policy-file <reviewed-policy.yml>
+
+# Build a 12-hour canonical observation report and append its Notion projection.
+agentic-os adaptive-routing report \
+  --root <root> \
+  --hours 12 \
+  --apply-notion
 ```
 
 `plan` supports strengthening tier, model, reasoning, owner, and verification
