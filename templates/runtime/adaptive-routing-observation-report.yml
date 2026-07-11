@@ -1,0 +1,25 @@
+version: 1
+enabled: false
+mode: observe
+window_hours: 12
+timezone: America/Chicago
+completed_windows_only: true
+session_roots:
+  - ~/.codex/sessions
+  - ~/.codex/archived_sessions
+observation_ledger: harness/shared_factory/06-runs-and-logs/adaptive-routing/observations.jsonl
+report_root: harness/shared_factory/06-runs-and-logs/adaptive-routing/observation-reports
+pricing_catalog: harness/shared_factory/00-control-plane/adaptive-routing-pricing.yml
+privacy:
+  persist_task_text: false
+  persist_conversation_text: false
+  persist_tool_arguments: false
+  receipt_retention_days: 30
+notion:
+  apply: false
+  workspace_expected: Genome's Notion
+  parent_page_id: null
+  database_id: null
+  data_source_id: null
+  append_only: true
+  idempotency_property: Run ID

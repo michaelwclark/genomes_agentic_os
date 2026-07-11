@@ -99,6 +99,7 @@ Key fields in a schedule entry:
 | `timezone` | IANA timezone, defaults to `America/Chicago` |
 | `local_time` | Optional `HH:MM` local wall-clock time for `daily` schedules |
 | `command` | Shell command to invoke when due |
+| `outputs` | Canonical filesystem outputs produced by the command |
 | `next_due_at` | Set by `schedule run-due`; blank until first tick |
 
 ---
@@ -220,6 +221,46 @@ items but does **not** execute them — dispatch happens via `runtime run-next
 | `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
 | `--dry-run` | — | Preview which schedules are due (default). |
 | `--apply` | — | Actually enqueue due schedules. |
+
+### Adaptive routing observation report schedule
+
+`runtime init` seeds a disabled, idempotent interval schedule named
+`adaptive_routing_observation_report`:
+
+```yaml
+id: adaptive_routing_observation_report
+enabled: false
+cadence: every_12_hours
+timezone: America/Chicago
+execution_target: script
+command: agentic-os adaptive-routing report --root <root> --hours 12 --apply-notion
+outputs:
+  - harness/shared_factory/06-runs-and-logs/adaptive-routing/observation-reports/
+external_effect: append-only projection to verified Genome's Notion
+```
+
+After the operator verifies the destination and enables the local schedule,
+`schedule run-due --apply` enqueues the command once for each 12-hour due
+window; `runtime run-next --apply` dispatches it. The report directory is the
+canonical record. Notion is an append-only operator projection and the report
+command must verify Genome's Notion before writing. A missing, unauthorized, or
+different workspace leaves the local report intact and records a blocked
+projection; it must never trigger a fallback write.
+
+Inspect without dispatching external work:
+
+```bash
+agentic-os schedule run-due --root <root> --dry-run
+agentic-os runtime run-next --root <root> --item-id <queue-item-id> --dry-run
+```
+
+To stop this cadence, set the schedule's `enabled` field to `false`; do not
+delete its prior queue records or reports. This disables report generation only.
+Adaptive routing itself is rolled back independently by setting the applicable
+adaptive policy layer to `off` and following the last-known-good policy/static
+profile process in [26 · Adaptive Routing](26-adaptive-routing.md). Reports must
+retain explicit unknown fields and the pricing-catalog version used for any cost
+calculation; historical reports are never silently repriced.
 
 ### `agentic-os automation-control list`
 

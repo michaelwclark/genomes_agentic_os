@@ -74,6 +74,44 @@ def test_plan_emits_canonical_redacted_snapshot_with_topology(
     assert str(policy) not in serialized
 
 
+def test_observe_persists_one_text_free_idempotent_receipt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "agentic_os"
+    control = root / "harness/shared_factory/00-control-plane"
+    control.mkdir(parents=True)
+    config = yaml.safe_load(
+        (ROOT / "templates/runtime/adaptive-routing-observation-report.yml").read_text()
+    )
+    config["enabled"] = True
+    (control / "adaptive-routing-observation-report.yml").write_text(
+        yaml.safe_dump(config, sort_keys=False), encoding="utf-8"
+    )
+    policy = _policy(tmp_path, mode="observe")
+    monkeypatch.setenv("CODEX_THREAD_ID", "019f49a2-e800-7253-966e-2164d765584f")
+    task = "Update Jira CC-216 status and add a triage label."
+
+    assert main([
+        "adaptive-routing", "observe", task, "--root", str(root),
+        "--policy-file", str(policy),
+    ]) == 0
+    first = _output(capsys)
+    assert first["observation"]["status"] == "observed"  # type: ignore[index]
+    assert main([
+        "adaptive-routing", "observe", task, "--root", str(root),
+        "--policy-file", str(policy),
+    ]) == 0
+    second = _output(capsys)
+    assert second["observation"] == {"status": "already_observed", "written": False}
+
+    ledger = root / config["observation_ledger"]
+    content = ledger.read_text(encoding="utf-8")
+    assert len(content.splitlines()) == 1
+    assert task not in content
+
+
 def test_plan_no_sub_agents_replans_complex_work_without_removing_verification(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

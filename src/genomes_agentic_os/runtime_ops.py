@@ -34,6 +34,9 @@ RUN_QUEUE = "harness/shared_factory/00-control-plane/run-queue.yml"
 HEARTBEAT_LOG_DIR = "harness/shared_factory/06-runs-and-logs/heartbeats"
 RUNTIME_SETUP_RUN_DIR = "harness/shared_factory/06-runs-and-logs/runs"
 RUN_QUEUE_PRUNE_LOG_DIR = "harness/shared_factory/06-runs-and-logs/run-queue-prune"
+ADAPTIVE_ROUTING_OBSERVATION_REPORT_DIR = (
+    "harness/shared_factory/06-runs-and-logs/adaptive-routing/observation-reports/"
+)
 NOTION_RUNTIME_MANIFEST = ".notion-runtime-tracking/manifest.yml"
 
 RUNTIME_REQUIRED_TARGETS = {
@@ -520,6 +523,24 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "command": "agentic-os thread stale-finalize --root <root> --older-than-days 3 --apply",
             "outputs": ["harness/shared_factory/06-runs-and-logs/runs/"],
             "notion_update": {"object": "Thread Closeouts", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
+            "id": "adaptive_routing_observation_report",
+            "display_name": "Adaptive routing observation report",
+            "enabled": False,
+            "cadence": "every_12_hours",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "command": "agentic-os adaptive-routing report --root <root> --hours 12 --apply-notion",
+            "outputs": [ADAPTIVE_ROUTING_OBSERVATION_REPORT_DIR],
+            "external_effect": "append-only projection to verified Genome's Notion",
+            "notion_update": {
+                "workspace": "Genome's Notion",
+                "mode": "append_only",
+                "requires_verified_workspace": True,
+            },
             "next_due_at": None,
             "last_queued_at": None,
         },

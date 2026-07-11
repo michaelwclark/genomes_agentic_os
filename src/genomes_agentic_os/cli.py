@@ -14,8 +14,18 @@ from .adaptive_operations import (
     load_explicit_policy,
     load_holdout_report,
     rollback_plan as build_adaptive_rollback_plan,
+    runtime_policy_fingerprint,
     status as adaptive_routing_status,
 )
+from .adaptive_observation_reports import DuplicateCorrelationError
+from .adaptive_observation_runner import (
+    ObservationRunnerError,
+    load_observation_config,
+    observation_paths,
+    record_plan_observation,
+    run_observation_report,
+)
+from .adaptive_observation_projection import ObservationProjectionError
 
 from .automation_ops import (
     AUTOMATION_MATURITY_LEVELS,
@@ -1746,6 +1756,31 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     adaptive_plan.add_argument("--no-sub-agents", action="store_true", help="Request operator-only topology when it preserves all required verification.")
     adaptive_plan.set_defaults(handler=handle_adaptive_routing_plan)
 
+    adaptive_observe = adaptive_routing_subparsers.add_parser(
+        "observe",
+        help="Build and durably record one non-executing route for the active Codex task.",
+    )
+    adaptive_observe.add_argument("task", help="Explicit task text; assessed locally and never persisted.")
+    adaptive_observe.add_argument("--root", default=DEFAULT_ROOT, help="Installed Agentic OS root path.")
+    adaptive_observe.add_argument("--config-file", help="Explicit observation-report config YAML.")
+    adaptive_observe.add_argument("--policy-file", help="Explicit reviewed adaptive policy YAML; defaults to the installed control plane.")
+    adaptive_observe.add_argument("--correlation-id", help="Opaque task/session correlation; defaults to CODEX_THREAD_ID.")
+    adaptive_observe.add_argument("--tier", choices=("economy", "balanced", "frontier", "frontier_max", "human_gate"))
+    adaptive_observe.add_argument("--model", dest="model_override")
+    adaptive_observe.add_argument("--reasoning-effort", choices=("low", "medium", "high", "xhigh", "max", "ultra"))
+    adaptive_observe.add_argument("--no-sub-agents", action="store_true")
+    adaptive_observe.set_defaults(handler=handle_adaptive_routing_observe)
+
+    adaptive_report = adaptive_routing_subparsers.add_parser(
+        "report",
+        help="Analyze observed routes against actual Codex session telemetry.",
+    )
+    adaptive_report.add_argument("--root", default=DEFAULT_ROOT, help="Installed Agentic OS root path.")
+    adaptive_report.add_argument("--hours", type=int, default=12, help="Rolling report window in hours.")
+    adaptive_report.add_argument("--config-file", help="Explicit observation-report config YAML.")
+    adaptive_report.add_argument("--apply-notion", action="store_true", help="Append one idempotent entry to the verified Genome's Notion report database.")
+    adaptive_report.set_defaults(handler=handle_adaptive_routing_report)
+
     adaptive_evaluate = adaptive_routing_subparsers.add_parser(
         "evaluate",
         help="Run the supplied holdout against the built-in catalog and explicit baseline.",
@@ -2911,6 +2946,49 @@ def handle_adaptive_routing_plan(args: argparse.Namespace) -> int:
     )
     print(adaptive_canonical_json(result))
     return exit_code
+
+
+def handle_adaptive_routing_observe(args: argparse.Namespace) -> int:
+    try:
+        config = load_observation_config(args.root, args.config_file)
+        paths = observation_paths(args.root, config)
+        document = load_explicit_policy(args.policy_file or paths["policy"])
+        result, exit_code = build_adaptive_plan(
+            task=args.task,
+            document=document,
+            tier=args.tier,
+            model_override=args.model_override,
+            reasoning_effort=args.reasoning_effort,
+            no_sub_agents=args.no_sub_agents,
+        )
+        try:
+            observation = record_plan_observation(
+                args.root,
+                result,
+                policy_fingerprint=runtime_policy_fingerprint(document),
+                correlation_id=args.correlation_id,
+                config_file=args.config_file,
+            )
+        except DuplicateCorrelationError:
+            observation = {"status": "already_observed", "written": False}
+        print(adaptive_canonical_json({**result, "observation": observation}))
+        return exit_code
+    except (ObservationRunnerError, OSError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def handle_adaptive_routing_report(args: argparse.Namespace) -> int:
+    try:
+        result = run_observation_report(
+            args.root,
+            hours=args.hours,
+            apply_notion=args.apply_notion,
+            config_file=args.config_file,
+        )
+    except (ObservationRunnerError, ObservationProjectionError, OSError) as exc:
+        raise ValueError(str(exc)) from exc
+    print(adaptive_canonical_json(result))
+    return 1 if result.get("status") == "complete_with_projection_blocked" else 0
 
 
 def handle_adaptive_routing_evaluate(args: argparse.Namespace) -> int:

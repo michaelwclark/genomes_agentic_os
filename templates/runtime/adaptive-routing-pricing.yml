@@ -1,0 +1,23 @@
+version: 1
+catalog_version: gpt-5.6-operator-rates-v1
+currency: USD
+status: operator_rates_required
+effective_at: null
+source: operator_reviewed_local_config
+assumption: Projected routed cost applies the actual measured token mix to the recommended model. Dollar estimates remain unknown until trusted rates are configured.
+models:
+  gpt-5.6-luna:
+    relative_cost_index: 1.0
+    input_per_million: null
+    cached_input_per_million: null
+    output_per_million: null
+  gpt-5.6-terra:
+    relative_cost_index: 2.0
+    input_per_million: null
+    cached_input_per_million: null
+    output_per_million: null
+  gpt-5.6-sol:
+    relative_cost_index: 4.0
+    input_per_million: null
+    cached_input_per_million: null
+    output_per_million: null
