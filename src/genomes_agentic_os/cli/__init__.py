@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 
 from ..cli_help import AosHelpFormatter, env_epilog
-from . import _legacy
 from . import scaffold
 from . import project
 from . import workflow
@@ -29,6 +28,12 @@ from . import runtime
 from . import doctor
 from . import plans
 from . import self_improvement
+from . import source_watch
+from . import event_graph
+from . import validate
+from . import docs
+from . import capability
+from . import adaptive
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -50,6 +55,12 @@ COMMAND_MODULES = [
     doctor,
     plans,
     self_improvement,
+    source_watch,
+    event_graph,
+    validate,
+    docs,
+    capability,
+    adaptive,
 ]
 
 
@@ -85,7 +96,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
 
     for command_module in COMMAND_MODULES:
         command_module.register(subparsers)
-    _legacy.register_remaining(subparsers)
 
     return parser
 
