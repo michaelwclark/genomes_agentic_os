@@ -201,3 +201,8 @@ skills:
   description: Inspect host speed risks and Agentic OS generated-artifact hygiene
     with observe-only reports and approval-gated cleanup classes.
   source: harness/skills/os-health/SKILL.md
+- id: cockpit
+  name: Agentic OS Cockpit
+  description: Build or open the local engineering cockpit for conversations, work,
+    reviews, reports, sources, hosts, automations, and hygiene.
+  source: harness/skills/cockpit/SKILL.md

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/cockpit-snapshot.schema.json",
+  "title": "Agentic OS Cockpit Snapshot",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "root",
+    "summary",
+    "work_items",
+    "conversations",
+    "reviews",
+    "reports",
+    "automations",
+    "sources",
+    "hosts",
+    "hygiene",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {"const": "agentic-os-cockpit/v1"},
+    "generated_at": {"type": "string"},
+    "root": {"type": "string"},
+    "summary": {"type": "object"},
+    "work_items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "conversations": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "reviews": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "reports": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "automations": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "sources": {
+      "type": "object",
+      "required": ["configured", "observed", "suggestions"],
+      "properties": {
+        "configured": {"type": "array"},
+        "observed": {"type": "array"},
+        "suggestions": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "hosts": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "hygiene": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "diagnostics": {"type": "array"}
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["id", "title", "summary", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "detail": {"type": "string"},
+        "status": {"type": "string"},
+        "domain": {"type": "string"},
+        "project": {"type": "string"},
+        "work_item": {"type": "string"},
+        "updated_at": {"type": "string"},
+        "source": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
