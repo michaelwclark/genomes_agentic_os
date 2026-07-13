@@ -6,8 +6,8 @@ import argparse
 from pathlib import Path
 import sys
 
-from .cli_help import AosHelpFormatter, env_epilog
-from .adaptive_operations import (
+from ..cli_help import AosHelpFormatter, env_epilog
+from ..adaptive_operations import (
     build_plan as build_adaptive_plan,
     canonical_json as adaptive_canonical_json,
     evaluate as evaluate_adaptive_holdout,
@@ -17,44 +17,44 @@ from .adaptive_operations import (
     runtime_policy_fingerprint,
     status as adaptive_routing_status,
 )
-from .adaptive_observation_reports import DuplicateCorrelationError
-from .adaptive_observation_runner import (
+from ..adaptive_observation_reports import DuplicateCorrelationError
+from ..adaptive_observation_runner import (
     ObservationRunnerError,
     load_observation_config,
     observation_paths,
     record_plan_observation,
     run_observation_report,
 )
-from .adaptive_observation_projection import ObservationProjectionError
+from ..adaptive_observation_projection import ObservationProjectionError
 
-from .automation_ops import (
+from ..automation_ops import (
     AUTOMATION_MATURITY_LEVELS,
     attach_automation,
     check_automation,
     format_automation_check,
     set_automation_maturity,
 )
-from .automation_control import (
+from ..automation_control import (
     automation_control_doctor,
     format_automation_control_result,
     list_automation_control,
     run_automation_control,
 )
-from .cockpit import (
+from ..cockpit import (
     DEFAULT_OUTPUT as COCKPIT_DEFAULT_OUTPUT,
     build_cockpit_bundle,
     build_cockpit_snapshot,
     open_cockpit,
     write_cockpit_snapshot,
 )
-from .config_ops import LAYERS as CONFIG_LAYERS
-from .config_ops import doctor_config, install_config, install_config_tree
-from .conversation_reports import format_conversation_report_receipt, scan_conversation_reports
-from .customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
-from .doc_config import build_doc_config_plan, doc_config_doctor, format_doc_config_result, init_doc_config
-from .documentation_upkeep import build_documentation_upkeep_plan, format_documentation_upkeep_result
-from .doctor import doctor, doctor_all, format_doctor_result
-from .event_graph import (
+from ..config_ops import LAYERS as CONFIG_LAYERS
+from ..config_ops import doctor_config, install_config, install_config_tree
+from ..conversation_reports import format_conversation_report_receipt, scan_conversation_reports
+from ..customer import customer_init, customer_update, customer_validate, format_customer_result, scaffold_customer_brief
+from ..doc_config import build_doc_config_plan, doc_config_doctor, format_doc_config_result, init_doc_config
+from ..documentation_upkeep import build_documentation_upkeep_plan, format_documentation_upkeep_result
+from ..doctor import doctor, doctor_all, format_doctor_result
+from ..event_graph import (
     append_event,
     chain_doctor,
     chain_list,
@@ -66,11 +66,11 @@ from .event_graph import (
     summarize_events,
     test_chain_rule,
 )
-from .hook_ops import hook_doctor, hook_sync
-from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, infer_complete_work_items, repair_project_work_item
-from .lifecycle import finalize_lingering_work_items, sync_active_container
-from .migrations import format_migration_result, migrate_apply, migrate_plan
-from .notion_sync import (
+from ..hook_ops import hook_doctor, hook_sync
+from ..lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, infer_complete_work_items, repair_project_work_item
+from ..lifecycle import finalize_lingering_work_items, sync_active_container
+from ..migrations import format_migration_result, migrate_apply, migrate_plan
+from ..notion_sync import (
     apply_active_work_sync,
     apply_bootstrap_plan,
     apply_sync_plan,
@@ -79,12 +79,12 @@ from .notion_sync import (
     build_sync_plan,
     format_sync_result,
 )
-from .notion_org import doctor_notion_org, format_notion_org_result
-from .plans import capture_plan, format_plan_result
-from .ps_ops import format_ps_result, ps_snapshot
-from .room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
-from .routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
-from .runtime_ops import (
+from ..notion_org import doctor_notion_org, format_notion_org_result
+from ..plans import capture_plan, format_plan_result
+from ..ps_ops import format_ps_result, ps_snapshot
+from ..room_profile import format_profile_result, install_profile_os, load_os_profile, write_profile_template
+from ..routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
+from ..runtime_ops import (
     apply_runtime_tracking,
     build_runtime_tracking_plan,
     format_runtime_result,
@@ -100,7 +100,7 @@ from .runtime_ops import (
     schedule_create,
     schedule_run_due,
 )
-from .self_improvement import (
+from ..self_improvement import (
     approve_self_improvement_proposal,
     format_self_improvement_result,
     list_self_improvement_proposals,
@@ -113,8 +113,8 @@ from .self_improvement import (
     self_improvement_status,
     show_self_improvement_proposal,
 )
-from .supervisor import format_supervise_result, supervise_tick
-from .scaffold import (
+from ..supervisor import format_supervise_result, supervise_tick
+from ..scaffold import (
     DEFAULT_PROJECTS_SOURCE,
     create_automation,
     create_domain,
@@ -131,10 +131,10 @@ from .scaffold import (
     onboard_project,
     register_project_worktree,
 )
-from .hosts import format_host_routing_status, host_routing_status, list_hosts, upsert_host
-from .remote_ops import sync_project_remote
-from .remote_mounts import exec_remote, mount_remote, unmount_remote
-from .source_watch import (
+from ..hosts import format_host_routing_status, host_routing_status, list_hosts, upsert_host
+from ..remote_ops import sync_project_remote
+from ..remote_mounts import exec_remote, mount_remote, unmount_remote
+from ..source_watch import (
     create_watch_source,
     doctor_connected_system,
     doctor_watch_source,
@@ -145,15 +145,15 @@ from .source_watch import (
     poll_watch_source,
     run_due_watch_sources,
 )
-from .thread_closeout import (
+from ..thread_closeout import (
     DEFAULT_STALE_DAYS,
     WORK_LEVELS,
     close_thread,
     format_thread_closeout_result,
     stale_finalize_threads,
 )
-from .metrics_ops import format_metrics_result, metrics_refresh
-from .update_ops import (
+from ..metrics_ops import format_metrics_result, metrics_refresh
+from ..update_ops import (
     activate_license,
     backup_push,
     backup_restore_plan,
@@ -169,14 +169,14 @@ from .update_ops import (
     update_rollback,
     update_status,
 )
-from .capability_registry import (
+from ..capability_registry import (
     REGISTRY_FILES,
     inventory_markdown,
     load_registry,
     registry_payloads,
 )
-from .validate import StrictFinding, validate_root, validate_schemas_strict
-from .workflow_ops import check_workflow, close_run_log, format_findings
+from ..validate import StrictFinding, validate_root, validate_schemas_strict
+from ..workflow_ops import check_workflow, close_run_log, format_findings
 
 
 DEFAULT_ROOT = "~/agentic_os"
@@ -219,8 +219,8 @@ def handle_capability_inventory(args: argparse.Namespace) -> int:
     root = Path(args.root).expanduser()
     content = inventory_markdown()
     if getattr(args, "regenerate", False):
-        from .scaffold import harness_path, write_file_once
-        from .scaffold import ScaffoldResult
+        from ..scaffold import harness_path, write_file_once
+        from ..scaffold import ScaffoldResult
 
         result = ScaffoldResult()
         write_file_once(harness_path(root) / "INVENTORY.md", content, result)
@@ -2765,8 +2765,8 @@ def handle_doctor(args: argparse.Namespace) -> int:
     else:
         result = doctor(args.root, fix_missing=args.fix_missing)
     if getattr(args, "check_remotes", False):
-        from .hosts import load_hosts  # noqa: PLC0415
-        from .validate import validate_project_remotes_connectivity  # noqa: PLC0415
+        from ..hosts import load_hosts  # noqa: PLC0415
+        from ..validate import validate_project_remotes_connectivity  # noqa: PLC0415
 
         root_path = Path(args.root).expanduser()
         try:
