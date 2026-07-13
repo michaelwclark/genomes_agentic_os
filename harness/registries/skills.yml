@@ -92,8 +92,8 @@ skills:
   source: harness/skills/orchestrate/SKILL.md
 - id: quiet-workon-orchestrate
   name: Quiet Workon Orchestrate
-  description: Preferred LOS coding/testing orchestration entrypoint with quiet chat
-    and receipt-backed artifacts.
+  description: Preferred coding/testing orchestration entrypoint with quiet chat and
+    receipt-backed artifacts.
   source: harness/skills/quiet-workon-orchestrate/SKILL.md
 - id: pull-request
   name: Pull Request

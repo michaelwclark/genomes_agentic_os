@@ -514,7 +514,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "quiet-workon-orchestrate",
             "name": "Quiet Workon Orchestrate",
-            "description": "Preferred LOS coding/testing orchestration entrypoint with quiet chat and receipt-backed artifacts.",
+            "description": "Preferred coding/testing orchestration entrypoint with quiet chat and receipt-backed artifacts.",
             "source": "harness/skills/quiet-workon-orchestrate/SKILL.md",
         },
         {
