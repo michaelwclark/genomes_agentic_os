@@ -1,0 +1,29 @@
+import { describe, expect, it } from "vitest";
+import { compactAge, filterConversations, modelColor } from "../src/shared/presentation";
+import { fixtureSnapshot } from "../src/shared/fixtures";
+
+describe("conversation presentation", () => {
+  const now = Date.parse("2026-07-13T18:00:00Z");
+
+  it.each([
+    ["2026-07-13T17:59:45Z", "now"],
+    ["2026-07-13T17:15:00Z", "45m"],
+    ["2026-07-13T13:00:00Z", "5h"],
+    ["2026-07-12T18:00:00Z", "1d"],
+    ["2026-07-06T18:00:00Z", "1w"],
+  ])("formats %s as %s", (timestamp, expected) => {
+    expect(compactAge(timestamp, now)).toBe(expected);
+  });
+
+  it("filters by first-class domain/project and searches linked Jira keys", () => {
+    expect(filterConversations(fixtureSnapshot.conversations, { domain: "los" })).toHaveLength(1);
+    expect(filterConversations(fixtureSnapshot.conversations, { project: "kanga" })[0]?.title).toContain("Kanga");
+    expect(filterConversations(fixtureSnapshot.conversations, { query: "FLYWL-2044" })[0]?.harness).toBe("claude");
+  });
+
+  it("sorts pinned conversations first and makes higher complexity brighter", () => {
+    expect(filterConversations(fixtureSnapshot.conversations, {})[0]?.pinned).toBe(true);
+    expect(modelColor("openai", "economy", "low")).not.toBe(modelColor("openai", "frontier_max", "ultra"));
+    expect(modelColor("openai", "frontier", "high")).not.toBe(modelColor("anthropic", "frontier", "high"));
+  });
+});
