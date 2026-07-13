@@ -3894,39 +3894,6 @@ def test_migration_plan_and_apply_require_stable_preview(tmp_path: Path, capsys)
     assert "Filesystem state remains the source of truth" in target.read_text(encoding="utf-8")
 
 
-def test_losmon_validate_creates_required_validation_objects(tmp_path: Path, capsys) -> None:
-    root = tmp_path / "agentic_os"
-    repo = tmp_path / "los_repo"
-    repo.mkdir()
-
-    assert main(["losmon", "validate", "--root", str(root), "--repo", str(repo)]) == 0
-    result = yaml.safe_load(capsys.readouterr().out)
-    assert result["project"].endswith("los/02-projects/losmon_replacement")
-
-    required_paths = [
-        root / "los" / "02-projects" / "losmon_replacement" / "project.yml",
-        root / "los" / "03-workflows" / "engineering" / "pr_review" / "workflow.md",
-        root / "los" / "03-workflows" / "engineering" / "failing_ci_triage" / "workflow.md",
-        root / "los" / "03-workflows" / "operations" / "deploy_planning" / "workflow.md",
-        root / "los" / "04-automations" / "support" / "thread_intake" / "automation.md",
-        root / "los" / "02-projects" / "losmon_replacement" / "artifacts" / "losmon-comparison.md",
-    ]
-    for path in required_paths:
-        assert path.is_file(), path
-
-    comparison = (root / "los" / "02-projects" / "losmon_replacement" / "artifacts" / "losmon-comparison.md").read_text(
-        encoding="utf-8"
-    )
-    assert "LOSMon Still Better / Required" in comparison
-    assert "Need live connected-source watcher" in comparison
-    assert len(result["run_logs"]) == 3
-    for run_log in result["run_logs"]:
-        content = Path(run_log).read_text(encoding="utf-8")
-        assert "## Closeout" in content
-        assert "Run this workflow against a real read-only LOS task" in content
-    assert main(["validate", "--root", str(root)]) == 0
-
-
 def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
 
@@ -3943,7 +3910,7 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
                 "--title",
                 "Telemetry Adapter",
                 "--summary",
-                "Capture losmon telemetry into run logs.",
+                "Capture runtime telemetry into run logs.",
             ]
         )
         == 0
@@ -3951,7 +3918,7 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
     result = yaml.safe_load(capsys.readouterr().out)
     os_plan = Path(result["target"])
     assert os_plan.is_file()
-    assert "Capture losmon telemetry into run logs." in os_plan.read_text(encoding="utf-8")
+    assert "Capture runtime telemetry into run logs." in os_plan.read_text(encoding="utf-8")
     assert "future-ideas/telemetry-adapter.md" in (
         shared_factory(root) / "05-knowledge" / "plans" / "README.md"
     ).read_text(encoding="utf-8")

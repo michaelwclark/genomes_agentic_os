@@ -60,7 +60,6 @@ from .event_graph import (
     test_chain_rule,
 )
 from .hook_ops import hook_doctor, hook_sync
-from .losmon import format_losmon_result, losmon_validate
 from .lifecycle import WORK_LIFECYCLE_STATES, cleanup_terminal_worktrees, create_project_work_item, infer_complete_work_items, repair_project_work_item
 from .lifecycle import finalize_lingering_work_items, sync_active_container
 from .migrations import format_migration_result, migrate_apply, migrate_plan
@@ -1424,13 +1423,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     migrate_apply_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     migrate_apply_parser.set_defaults(handler=handle_migrate_apply)
 
-    losmon_parser = subparsers.add_parser("losmon", help="Validate Agentic OS against LOSMon replacement needs.")
-    losmon_subparsers = losmon_parser.add_subparsers(dest="losmon_command", required=True)
-    losmon_validate_parser = losmon_subparsers.add_parser("validate", help="Create LOSMon replacement validation objects.")
-    losmon_validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    losmon_validate_parser.add_argument("--repo", help="LOS or losmon repository path.")
-    losmon_validate_parser.set_defaults(handler=handle_losmon_validate)
-
     plan_parser = subparsers.add_parser("plan", help="Capture future OS ideas and plans.")
     plan_subparsers = plan_parser.add_subparsers(dest="plan_command", required=True)
     plan_capture = plan_subparsers.add_parser("capture", help="Capture a future idea in the right OS location.")
@@ -2686,11 +2678,6 @@ def handle_migrate_plan(args: argparse.Namespace) -> int:
 
 def handle_migrate_apply(args: argparse.Namespace) -> int:
     print(format_migration_result(migrate_apply(args.root, args.migration_id)))
-    return 0
-
-
-def handle_losmon_validate(args: argparse.Namespace) -> int:
-    print(format_losmon_result(losmon_validate(args.root, repo=args.repo)))
     return 0
 
 
