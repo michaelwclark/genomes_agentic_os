@@ -30,6 +30,7 @@ from . import plans
 from . import self_improvement
 from . import source_watch
 from . import event_graph
+from . import state
 from . import validate
 from . import docs
 from . import capability
@@ -57,6 +58,7 @@ COMMAND_MODULES = [
     self_improvement,
     source_watch,
     event_graph,
+    state,
     validate,
     docs,
     capability,
