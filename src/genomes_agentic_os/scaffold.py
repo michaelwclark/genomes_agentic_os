@@ -361,10 +361,13 @@ def harness_source_dir() -> Path:
 
 
 def plans_source_dir() -> Path:
-    candidate = repo_root() / "PLANS"
+    # Plans were consolidated into SPECS/ (AGE-35). The installed destination
+    # stays shared_factory/05-knowledge/plans/ so existing installs update
+    # additively; only the copy source moved.
+    candidate = repo_root() / "SPECS"
     if candidate.is_dir():
         return candidate
-    raise FileNotFoundError("Could not find repository PLANS directory")
+    raise FileNotFoundError("Could not find repository SPECS directory")
 
 
 def ensure_dir(path: Path, result: ScaffoldResult) -> None:
