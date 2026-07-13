@@ -84,6 +84,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [25 · Source Of Truth Rules](25-source-of-truth.md) | Where filesystem, Notion, Linear, Jira, and GitHub each own state, plus conflict and external-output rules. |
 | [26 · Adaptive Routing Operator Guide](26-adaptive-routing.md) | Offline adaptive routing policy, lifecycle gates, redacted receipts, evaluation, rollback, and integration limits. |
 | [27 · Engineering Cockpit](27-engineering-cockpit.md) | Local-first progressive view of conversations, work, reviews, reports, dynamic sources, hosts, automations, and hygiene. |
+| [29 · AgenticOSGui](29-agentic-os-gui.md) | Native local desktop driver for domain/project-focused Claude and Codex conversations, metadata, pinning, continuation, and model presentation. |
 
 ### Reference
 | Page | What it covers |

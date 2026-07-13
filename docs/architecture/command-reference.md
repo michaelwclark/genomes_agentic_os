@@ -1881,6 +1881,57 @@ Status: **OK** (rc 0)
 
 ---
 
+## 14. AgenticOSGui desktop: `gui`
+
+### `gui snapshot`
+
+Emit the versioned desktop composition snapshot with domain/project navigation,
+provider-backed active Claude/Codex conversations, native titles and recency,
+model presentation, resume capabilities, and locally derived work metadata.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+| `--json` | No | Emit machine-readable JSON |
+
+Reads provider registries and transcripts in read-only mode. Writes nothing.
+
+```bash
+agentic-os gui snapshot --root ~/agentic_os --json
+```
+
+### `gui transcript`
+
+Read visible user and assistant messages for one selected native conversation.
+Reasoning, developer instructions, tool payloads, and subagent traces are not
+returned.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--provider` | Yes | `codex` or `claude` |
+| `--conversation-id` | Yes | Provider-native conversation identifier |
+| `--root` | No | Installed OS root path |
+| `--json` | No | Emit machine-readable JSON |
+
+```bash
+agentic-os gui transcript --provider codex --conversation-id <uuid> --json
+```
+
+### `gui open`
+
+Open the packaged local AgenticOSGui application. If no packaged application is
+installed, report the exact source development/build path instead of silently
+starting a web server.
+
+```bash
+agentic-os gui open --root ~/agentic_os
+```
+
+Provider stores remain read-only. Pins, focus, leases, and GUI-owned session
+mappings live in AgenticOSGui application support state.
+
+---
+
 ## Validation Summary
 
 | Status | Count | Notes |

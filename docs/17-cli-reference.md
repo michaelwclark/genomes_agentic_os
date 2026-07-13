@@ -199,6 +199,15 @@ The fixed forms are `operator-resource query <program|automation>` and
 | `conversation-reports` | Mine local conversation-report JSONL sidecars for repeated OS hardening signals. |
 | `conversation-reports scan` | Scan conversation-report sidecars and optionally write report artifacts. |
 
+### AgenticOSGui — `cli/gui.py`
+
+| Command | What it does |
+| --- | --- |
+| `gui` | Inspect or open the native local desktop conversation driver. |
+| `gui snapshot` | Emit the versioned domain/project and active Claude/Codex conversation index. |
+| `gui transcript` | Read the selected visible user/assistant transcript through a provider adapter. |
+| `gui open` | Open the packaged AgenticOSGui application or report the development build command. |
+
 ### Customer OS Factory — `cli/customer.py`
 
 | Command | What it does |

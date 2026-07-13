@@ -36,6 +36,7 @@ subcommand, see [`docs/17-cli-reference.md`](docs/17-cli-reference.md).
 | Intake / tracker sync | Plans where a capture request should land across the filesystem and Notion, polls connected external systems (Jira, Linear, GitHub, Slack, and others) into local events, and syncs OS state into a Notion control plane. | `agentic-os doc-config plan --request "..."` |
 | Self-improvement | Reviews local evidence — conversation reports, doctor findings — and proposes OS improvements for review; nothing lands without an explicit approve/promote step. | `agentic-os self-improvement run` |
 | Cockpit | Builds a local, read-only, self-contained HTML dashboard over conversations, work, reviews, reports, connected sources, hosts, automations, and hygiene, and opens it. | `agentic-os cockpit open` |
+| AgenticOSGui | Opens a local desktop conversation driver with first-class domain/project focus, native Claude/Codex titles and active state, pins, linked work metadata, and guarded continuation. | `agentic-os gui open` |
 | State plane | A local SQLite state plane at `<os-root>/00-control-plane/state.db` holds the events ledger, run queue, and watch cursors as queryable rows alongside the markdown files, with commands to initialize it, check its status, import existing files into it, query it, and prune old rows. | `agentic-os state status` |
 | Customer OS factory | Scaffolds an isolated client OS from a profile, blocks Genome's private operator-identity terms from leaking into it, and keeps it current. | `agentic-os customer init <slug>` |
 

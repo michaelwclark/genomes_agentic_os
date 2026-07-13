@@ -19,6 +19,19 @@ harness_targets:
     runtime_dir: ~/.claude/skills
     install_mode: copy
 skills:
+  - id: agentic-os-gui
+    title: AgenticOSGui
+    source_path: harness/skills/agentic-os-gui
+    installed_path: shared_factory/05-knowledge/skills/agentic-os-gui
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Drive native Claude and Codex conversations through a domain/project-focused
+      local desktop surface with safe pinning, metadata, and continuation.
   - id: build-runner
     title: Build Runner
     source_path: harness/skills/build-runner
