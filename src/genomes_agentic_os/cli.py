@@ -40,6 +40,13 @@ from .automation_control import (
     list_automation_control,
     run_automation_control,
 )
+from .cockpit import (
+    DEFAULT_OUTPUT as COCKPIT_DEFAULT_OUTPUT,
+    build_cockpit_bundle,
+    build_cockpit_snapshot,
+    open_cockpit,
+    write_cockpit_snapshot,
+)
 from .config_ops import LAYERS as CONFIG_LAYERS
 from .config_ops import doctor_config, install_config, install_config_tree
 from .conversation_reports import format_conversation_report_receipt, scan_conversation_reports
@@ -244,6 +251,49 @@ def handle_conversation_reports_scan(args: argparse.Namespace) -> int:
         print(yaml_dump(result))
     else:
         print(format_conversation_report_receipt(result))
+    return 0
+
+
+def handle_cockpit_snapshot(args: argparse.Namespace) -> int:
+    """Create the versioned read-only cockpit snapshot."""
+    root = Path(args.root).expanduser().resolve()
+    snapshot = build_cockpit_snapshot(
+        root,
+        max_files=args.max_files,
+        include_harness_sessions=args.harness_sessions,
+    )
+    output = Path(args.output).expanduser() if args.output else root / COCKPIT_DEFAULT_OUTPUT / "snapshot.json"
+    snapshot_path = write_cockpit_snapshot(snapshot, output)
+    if args.json:
+        print(yaml_dump(snapshot))
+    else:
+        print(f"snapshot: {snapshot_path}")
+    return 0
+
+
+def handle_cockpit_build(args: argparse.Namespace) -> int:
+    """Build the self-contained local cockpit projection."""
+    result = build_cockpit_bundle(
+        args.root,
+        output_dir=args.output_dir,
+        max_files=args.max_files,
+        include_harness_sessions=args.harness_sessions,
+    )
+    print(f"snapshot: {result['snapshot_path']}")
+    print(f"cockpit: {result['html_path']}")
+    return 0
+
+
+def handle_cockpit_open(args: argparse.Namespace) -> int:
+    """Build and open the local cockpit in the default browser."""
+    result = open_cockpit(
+        args.root,
+        output_dir=args.output_dir,
+        max_files=args.max_files,
+        include_harness_sessions=args.harness_sessions,
+    )
+    print(f"cockpit: {result['html_path']}")
+    print(f"opened: {str(result['opened']).lower()}")
     return 0
 
 
@@ -918,6 +968,53 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     conversation_reports_scan.add_argument("--max-files", type=int, help="Maximum transcript files to scan, for smoke tests.")
     conversation_reports_scan.add_argument("--json", action="store_true", help="Print YAML-shaped machine-readable result.")
     conversation_reports_scan.set_defaults(handler=handle_conversation_reports_scan)
+
+    cockpit_parser = subparsers.add_parser(
+        "cockpit",
+        help="Build or open the local engineering-lead OS cockpit.",
+        description=(
+            "Create a read-only, offline cockpit from canonical Agentic OS files and "
+            "bounded Claude/Codex metadata. No external systems or cleanup actions are mutated."
+        ),
+        formatter_class=AosHelpFormatter,
+    )
+    cockpit_subparsers = cockpit_parser.add_subparsers(dest="cockpit_command", required=True)
+    cockpit_snapshot = cockpit_subparsers.add_parser("snapshot", help="Write the versioned cockpit JSON snapshot.")
+    cockpit_snapshot.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    cockpit_snapshot.add_argument("--output", help="Snapshot JSON path; defaults under the installed OS report root.")
+    cockpit_snapshot.add_argument("--max-files", type=int, default=500, help="Maximum recent conversation/source files to inspect.")
+    cockpit_snapshot.add_argument(
+        "--harness-sessions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include bounded metadata from local Claude/Codex session stores.",
+    )
+    cockpit_snapshot.add_argument("--json", action="store_true", help="Also print the snapshot as YAML-shaped output.")
+    cockpit_snapshot.set_defaults(handler=handle_cockpit_snapshot)
+
+    cockpit_build = cockpit_subparsers.add_parser("build", help="Build snapshot.json and a self-contained index.html.")
+    cockpit_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    cockpit_build.add_argument("--output-dir", help="Output directory; defaults under the installed OS report root.")
+    cockpit_build.add_argument("--max-files", type=int, default=500, help="Maximum recent conversation/source files to inspect.")
+    cockpit_build.add_argument(
+        "--harness-sessions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include bounded metadata from local Claude/Codex session stores.",
+    )
+    cockpit_build.set_defaults(handler=handle_cockpit_build)
+
+    cockpit_open = cockpit_subparsers.add_parser("open", help="Build and open the cockpit in the default browser.")
+    cockpit_open.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    cockpit_open.add_argument("--output-dir", help="Output directory; defaults under the installed OS report root.")
+    cockpit_open.add_argument("--max-files", type=int, default=500, help="Maximum recent conversation/source files to inspect.")
+    cockpit_open.add_argument(
+        "--harness-sessions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include bounded metadata from local Claude/Codex session stores.",
+    )
+    cockpit_open.set_defaults(handler=handle_cockpit_open)
 
     customer_parser = subparsers.add_parser("customer", help="Manage customer Agentic OS installs.")
     customer_subparsers = customer_parser.add_subparsers(dest="customer_command", required=True)

@@ -28,6 +28,11 @@ skills:
   description: Generate recent-work Agentic OS status reports with filesystem markdown,
     Notion projection, dirty-state scan, and next-action gap analysis.
   source: harness/skills/status-report/SKILL.md
+- id: cockpit
+  name: Agentic OS Cockpit
+  description: Build or open the local engineering cockpit for conversations, work,
+    reviews, reports, sources, hosts, automations, and hygiene.
+  source: harness/skills/cockpit/SKILL.md
 - id: memory-analytics-viewer
   name: Memory Analytics Viewer
   description: "Inspect unified-memory retrieval analytics \u2014 summary, recent\

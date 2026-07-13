@@ -266,6 +266,7 @@ agentic-os init --target ~/agentic_os
 | `agentic-os workflow create <domain> <lane> <name> --root ~/agentic_os` | Workflow folder with outcome brief, alignment questions, PRD, implementation plan, handoff, progress, spec, context pack, approvals, output contract, runbook, examples, and runs folder. |
 | `agentic-os automation create <domain> <lane> <name> --root ~/agentic_os` | Automation folder with trigger spec, inputs, outputs, permissions, failure modes, runbook, tests, and logs. |
 | `agentic-os run-log create <domain> <workflow-or-automation> --root ~/agentic_os` | Timestamped run folder under the domain's `06-runs-and-logs/runs/`. |
+| `agentic-os cockpit snapshot/build/open --root ~/agentic_os` | Read-only local engineering cockpit over conversations, work, reviews, reports, sources, hosts, automations, and hygiene. |
 | `agentic-os config install-tree --root ~/agentic_os --dry-run` | Previews missing Codex `config.toml` and prompt-file repairs across the installed root, domains, projects, workflows, and automations. Add `--apply` after review. |
 | `agentic-os docs install --root ~/agentic_os` | Runtime templates, operating manual, command prompts, harness skills, and plans under `shared_factory/05-knowledge/`. |
 | `agentic-os docs update --root ~/agentic_os` | Adds missing runtime template, manual, command prompt, harness skill, and plan assets without overwriting local edits. |

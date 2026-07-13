@@ -183,6 +183,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-status-report.md",
         },
         {
+            "id": "cockpit",
+            "command": "agentic-os cockpit",
+            "description": "Build or open the read-only local engineering cockpit over Agentic OS state.",
+            "source": "harness/commands/os-cockpit.md",
+        },
+        {
             "id": "config-doctor",
             "command": "agentic-os config doctor",
             "description": "Validate Codex config and MCP registration contracts.",
@@ -522,6 +528,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Orchestrate",
             "description": "Coordinate subagents, verification, and integration.",
             "source": "harness/skills/orchestrate/SKILL.md",
+        },
+        {
+            "id": "cockpit",
+            "name": "Agentic OS Cockpit",
+            "description": "Build or open the local engineering cockpit for conversations, work, reviews, reports, sources, hosts, automations, and hygiene.",
+            "source": "harness/skills/cockpit/SKILL.md",
         },
         {
             "id": "quiet-workon-orchestrate",

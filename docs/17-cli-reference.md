@@ -93,6 +93,9 @@ atlas command reference for the full flag table and real captured output.
 | `run-log create <domain> <workflow_or_automation>` | **Required first step** — open a timestamped run log; returns the `run_id` needed by `run-log close` | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 | `run-log close <domain> <run_id> --status <s>` | Close a run log; `--status done` requires `--validation` evidence; `run_id` comes from `run-log create` | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | [§4](../.agentic-atlas/architecture/command-reference.md) |
 | `conversation-reports scan` | Mine redacted conversation JSONL sidecars into local JSON, Markdown, and backlog-candidate reports | [08 · Runs & Run Logs](08-runs-and-run-logs.md) | pending |
+| `cockpit snapshot` | Build the versioned read-only cockpit JSON snapshot | [27 · Engineering Cockpit](27-engineering-cockpit.md) | local-only |
+| `cockpit build` | Render the self-contained offline cockpit bundle | [27 · Engineering Cockpit](27-engineering-cockpit.md) | local-only |
+| `cockpit open` | Build and open the local cockpit in the default browser | [27 · Engineering Cockpit](27-engineering-cockpit.md) | local-only |
 
 ### Profiles & rooms
 
