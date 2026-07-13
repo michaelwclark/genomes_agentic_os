@@ -25,6 +25,10 @@ from . import customer
 from . import operator
 from . import config
 from . import notion
+from . import runtime
+from . import doctor
+from . import plans
+from . import self_improvement
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -42,6 +46,10 @@ COMMAND_MODULES = [
     operator,
     config,
     notion,
+    runtime,
+    doctor,
+    plans,
+    self_improvement,
 ]
 
 
