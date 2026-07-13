@@ -246,12 +246,15 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`track-runtime --apply` exits 2 if the workspace is unverified.**
   Confirmed in the test suite; runtime tracking cannot proceed without the
   workspace guard.
-- **V1 does not call the live Notion API (Gap B).** `--apply` today writes a
-  local `mapping.yml` under `.notion-sync/` and (for bootstrap) a manifest
-  under `.notion-control-plane/manifest.yml`.  Notion IDs in the mapping are
-  deterministic local placeholders (`local-notion-<sha256[:16]>`).  Wiring a
-  real Notion adapter behind the existing guard rails is the planned V2 step;
-  the guards are already in place.
+- **Know which paths write to live Notion (Gap B closed).** The Notion client
+  is real — `notion_api.py` calls `https://api.notion.com/v1` with stdlib
+  `urllib`, token resolved from the `GENOMES_NOTION_PAT` env var.
+  `notion track-runtime --apply` (F-010, below) and
+  `notion active-work-sync --apply` write to the live workspace behind the
+  guard rails.  Plain `notion sync --apply` and `notion bootstrap --apply`
+  remain local projections: they write `mapping.yml` under `.notion-sync/` and
+  a manifest under `.notion-control-plane/`, with deterministic local
+  placeholder IDs (`local-notion-<sha256[:16]>`, `local-bootstrap-<sha256[:16]>`).
 - **Names are snake\_case.** Domains, lanes, workflows, and automations use
   lowercase letters, digits, and underscores only.
 - **`--root` defaults to `~/agentic_os`.** Always pass `--root` in scripts or
@@ -273,8 +276,8 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   `notion` sub-commands.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — exit-code
   meanings and workspace-verification errors.
-- Atlas: `gap-register.md` §B ·
-  [`command-reference.md` §9](architecture/command-reference.md)
+- Atlas: [`command-reference.md` §9](architecture/command-reference.md) ·
+  Gap B status (closed): [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)
 
 ---
 

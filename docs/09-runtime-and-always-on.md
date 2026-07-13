@@ -677,5 +677,5 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — the
   `doctor` commands this page's registries feed into.
 - [17 · CLI Reference](17-cli-reference.md) — full flag listings for every command.
-- Atlas: gap-register.md §A ·
-  [command-reference.md §6](architecture/command-reference.md)
+- Atlas: [command-reference.md §6](architecture/command-reference.md) ·
+  Gap A status (closed — supervisor shipped): [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)

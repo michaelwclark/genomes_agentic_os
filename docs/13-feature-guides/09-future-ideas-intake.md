@@ -30,7 +30,7 @@ Capture a domain idea:
 ```bash
 agentic-os plan capture --root ~/agentic_os \
   --kind domain \
-  --domain los \
+  --domain acme \
   --title "Improve deploy triage" \
   --summary "Collect deploy risk patterns before release branches."
 ```
@@ -40,8 +40,8 @@ Capture a project or customer idea:
 ```bash
 agentic-os plan capture --root ~/agentic_os \
   --kind customer \
-  --domain los \
-  --project losmon_replacement \
+  --domain acme \
+  --project launch \
   --title "Customer validation script" \
   --summary "Create a repeatable read-only validation script."
 ```
@@ -49,8 +49,8 @@ agentic-os plan capture --root ~/agentic_os \
 ## Routing Rules
 
 - `--kind os` writes a markdown file under
-  `shared_factory/05-knowledge/plans/future-ideas/` and appends it to the shared
-  plans index.
+  `harness/shared_factory/05-knowledge/plans/future-ideas/` and appends it to
+  the shared plans index.
 - `--kind domain` appends to `<domain>/01-inbox/raw-ideas.md`.
 - `--kind customer` with `--project` creates a captured project work item under
   `<domain>/02-projects/<project>/work-items/01-intake/NNN_slug.md` and appends

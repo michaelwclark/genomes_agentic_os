@@ -29,15 +29,15 @@ commands against a runtime root such as `~/agentic_os`.
 Create and check a workflow:
 
 ```bash
-agentic-os workflow create los engineering feature_dev --root ~/agentic_os
-agentic-os workflow check los engineering feature_dev --root ~/agentic_os
+agentic-os workflow create acme engineering feature_dev --root ~/agentic_os
+agentic-os workflow check acme engineering feature_dev --root ~/agentic_os
 ```
 
 Create and close a run log:
 
 ```bash
-agentic-os run-log create los feature_dev --root ~/agentic_os
-agentic-os run-log close los <run-id> --status done --summary "Completed work" --validation "tests passed" --artifact run-log.md --approval "No approval gate" --next-action "Promote" --project losmon_replacement --root ~/agentic_os
+agentic-os run-log create acme feature_dev --root ~/agentic_os
+agentic-os run-log close acme <run-id> --status done --summary "Completed work" --validation "tests passed" --artifact run-log.md --approval "No approval gate" --next-action "Promote" --project launch --root ~/agentic_os
 ```
 
 ## Readiness Checks
@@ -58,12 +58,12 @@ linkage, and durable learning.
 ```bash
 TMP_ROOT="$(mktemp -d)/agentic_os"
 uv run agentic-os init --target "$TMP_ROOT"
-uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT"
-uv run agentic-os workflow create los engineering feature_dev --root "$TMP_ROOT"
-uv run agentic-os workflow check los engineering feature_dev --root "$TMP_ROOT"
-uv run agentic-os run-log create los feature_dev --root "$TMP_ROOT"
-RUN_ID="$(basename "$(find "$TMP_ROOT/los/06-runs-and-logs/runs" -maxdepth 1 -type d -name '*-los-feature_dev' | head -1)")"
-uv run agentic-os run-log close los "$RUN_ID" --status done --summary "Verified" --validation "tests passed" --root "$TMP_ROOT"
+uv run agentic-os project create acme launch --root "$TMP_ROOT"
+uv run agentic-os workflow create acme engineering feature_dev --root "$TMP_ROOT"
+uv run agentic-os workflow check acme engineering feature_dev --root "$TMP_ROOT"
+uv run agentic-os run-log create acme feature_dev --root "$TMP_ROOT"
+RUN_ID="$(basename "$(find "$TMP_ROOT/acme/06-runs-and-logs/runs" -maxdepth 1 -type d -name '*-acme-feature_dev' | head -1)")"
+uv run agentic-os run-log close acme "$RUN_ID" --status done --summary "Verified" --validation "tests passed" --root "$TMP_ROOT"
 uv run agentic-os validate --root "$TMP_ROOT"
 ```
 

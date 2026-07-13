@@ -26,10 +26,10 @@ evidence.
 ## Commands
 
 ```bash
-agentic-os automation create los support production_thread_intake --root ~/agentic_os
-agentic-os automation check los support production_thread_intake --root ~/agentic_os
-agentic-os automation set-maturity los support production_thread_intake prepare --root ~/agentic_os
-agentic-os automation attach los support production_thread_intake --project losmon_replacement --root ~/agentic_os
+agentic-os automation create acme support production_thread_intake --root ~/agentic_os
+agentic-os automation check acme support production_thread_intake --root ~/agentic_os
+agentic-os automation set-maturity acme support production_thread_intake prepare --root ~/agentic_os
+agentic-os automation attach acme support production_thread_intake --project launch --root ~/agentic_os
 ```
 
 ## Maturity Levels
@@ -56,11 +56,11 @@ and where to inspect it.
 ```bash
 TMP_ROOT="$(mktemp -d)/agentic_os"
 uv run agentic-os init --target "$TMP_ROOT"
-uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT"
-uv run agentic-os automation create los support production_thread_intake --root "$TMP_ROOT"
-uv run agentic-os automation check los support production_thread_intake --root "$TMP_ROOT"
-uv run agentic-os automation set-maturity los support production_thread_intake prepare --root "$TMP_ROOT"
-uv run agentic-os automation attach los support production_thread_intake --project losmon_replacement --root "$TMP_ROOT"
+uv run agentic-os project create acme launch --root "$TMP_ROOT"
+uv run agentic-os automation create acme support production_thread_intake --root "$TMP_ROOT"
+uv run agentic-os automation check acme support production_thread_intake --root "$TMP_ROOT"
+uv run agentic-os automation set-maturity acme support production_thread_intake prepare --root "$TMP_ROOT"
+uv run agentic-os automation attach acme support production_thread_intake --project launch --root "$TMP_ROOT"
 uv run agentic-os validate --root "$TMP_ROOT"
 ```
 

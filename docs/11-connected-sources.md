@@ -398,7 +398,9 @@ connected_systems:
 ```
 
 Note `status: planned` and `selected_provider` resolved at list time from the
-`source-providers.yml` registry — no live connection is made.
+`source-providers.yml` registry — `list` makes no live connection. Live polling
+happens in `watch-source poll`, which has real GitHub and Slack providers
+(Gap F status: [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)).
 
 ### `watch-source list` (fresh install — no sources yet)
 
@@ -464,7 +466,7 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 ## Related
 
 - [09 · Runtime & Always-On](09-runtime-and-always-on.md) — the supervisor that
-  would drive `run-due` on a cadence (Gap A).
+  drives `run-due` on a cadence once installed per host (Gap A closed).
 - [10 · Events & Chains](10-events-and-chains.md) — the event ledger that source
   events feed; chain rules that react to them.
 - [07 · Automations](07-automations.md) — maturity and approval rules that gate
@@ -472,5 +474,5 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [17 · CLI Reference](17-cli-reference.md) — full flag listing for all commands.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — doctor failures,
   cursor resets, disabled-source skips.
-- Atlas: `gap-register.md §F` ·
-  [`command-reference.md §8`](architecture/command-reference.md)
+- Atlas: [`command-reference.md §8`](architecture/command-reference.md) ·
+  Gap F status (GitHub + Slack live): [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)
