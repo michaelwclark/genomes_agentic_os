@@ -8,7 +8,7 @@ Canonical lifecycle state for this project lives in the installed Agentic OS
 project:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/
+<os-root>/<work-domain>/02-projects/genomes_agentic_os/
 ```
 
 Use these installed OS buckets:
@@ -23,7 +23,7 @@ Use these installed OS buckets:
 Canonical vocabulary:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/VOCABULARY.md
+<os-root>/<work-domain>/02-projects/genomes_agentic_os/VOCABULARY.md
 ```
 
 The previous source-repo lifecycle surfaces were consolidated on 2026-06-15:
@@ -36,5 +36,5 @@ The previous source-repo lifecycle surfaces were consolidated on 2026-06-15:
 Migration receipt:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/artifacts/source-lifecycle-consolidation-2026-06-15/MANIFEST.md
+<os-root>/<work-domain>/02-projects/genomes_agentic_os/artifacts/source-lifecycle-consolidation-2026-06-15/MANIFEST.md
 ```

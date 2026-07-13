@@ -181,9 +181,9 @@ Notes:
 ## Core Paths
 
 ```env
-BUILD_RUNNER_FEATURE_DIR=/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-features/
-BUILD_RUNNER_PLAN_DIR=/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/SPECS/
-BUILD_RUNNER_LOG_DIR=/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-build-logs/
+BUILD_RUNNER_FEATURE_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-features/
+BUILD_RUNNER_PLAN_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/SPECS/
+BUILD_RUNNER_LOG_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/
 BUILD_RUNNER_TARGET_BRANCH=auto
@@ -200,7 +200,7 @@ package cards.
 Valid options:
 
 - Installed OS project path, such as
-  `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-features/`.
+  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-features/`.
 - Relative path inside the repository only for legacy compatibility.
 - Relative hidden path, such as `./.features/`.
 - Absolute path, only when the user explicitly wants artifacts outside the
@@ -226,7 +226,7 @@ Controls where specs and generated prerequisite task files live.
 Valid options:
 
 - Installed OS project path, such as
-  `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/SPECS/`.
+  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/SPECS/`.
 - Relative repository path only for legacy compatibility.
 - Absolute path only when explicitly requested.
 
@@ -255,7 +255,7 @@ Controls where completed source-package work summaries are appended.
 Valid options:
 
 - Installed OS project path, such as
-  `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/source-build-logs/`.
+  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-build-logs/`.
 - Relative repository path only for legacy compatibility.
 - Absolute path only when explicitly requested.
 

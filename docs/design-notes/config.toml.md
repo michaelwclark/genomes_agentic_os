@@ -268,7 +268,7 @@ Example:
 include_instructions = true
 config = [
   { name = "imagegen", enabled = false },
-  { path = "/Users/genome/.codex/skills/composio-cli/SKILL.md", enabled = true },
+  { path = "~/.codex/skills/composio-cli/SKILL.md", enabled = true },
 ]
 
 [skills.bundled]
