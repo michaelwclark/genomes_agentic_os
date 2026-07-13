@@ -226,7 +226,6 @@ It starts at `~/agentic_os`.
 | `FLYWL-*` Jira key | `los/` |
 | LOS application feature | `los/02-projects/` |
 | OS template or installer work | `shared_factory/` |
-| Consulting deliverable | `clarks_consulting/` |
 
 ## Rule
 
