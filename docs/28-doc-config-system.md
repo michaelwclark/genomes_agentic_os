@@ -1,4 +1,4 @@
-# 20 · Doc Config System
+# 28 · Doc Config System
 
 > **Purpose:** make document placement predictable across Agentic OS filesystem
 > state and the Notion control plane.
@@ -57,8 +57,8 @@ without guessing.
 
 ```bash
 agentic-os doc-config doctor --root ~/agentic_os
-agentic-os doc-config plan --root ~/agentic_os --request "Add this to Notion" --domain clarks_consulting --project genomes_agentic_os --questions-present
-agentic-os doc-config init --root ~/agentic_os --domain clarks_consulting --project genomes_agentic_os
+agentic-os doc-config plan --root ~/agentic_os --request "Add this to Notion" --domain work --project genomes_agentic_os --questions-present
+agentic-os doc-config init --root ~/agentic_os --domain work --project genomes_agentic_os
 ```
 
 Use `/add-spec` for new spec, proposed feature, or future-work intake. That command is the adoption

@@ -56,7 +56,7 @@ stops scaling — it is not required for V1.
 ## 3. The object hierarchy
 
 ```text
-Domain                      (personal, los, clarks_consulting, shared_factory, …)
+Domain                      (personal, work, archive, … plus harness/shared_factory)
   └─ Lane / workstream      (engineering, marketing, sales, support, operations,
                              finance, personal_admin, learning)
       └─ Workflow           (a reusable, human-reviewed procedure spec)
