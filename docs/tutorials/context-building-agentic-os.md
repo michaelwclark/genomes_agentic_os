@@ -15,89 +15,101 @@ The better pattern is an Agentic OS: a small folder-based operating layer that l
 This tutorial uses a concrete example:
 
 ```text
-Need to workon Jira FLYWL-0000
+Need to workon Jira LEND-0000
 ```
 
-The fake feature is:
+The setting is fictional but the shape is real: a lending-platform product
+tracked in Jira under the `LEND` project key, built in a Django application
+repo with a separate Playwright QA repo. The fake feature is:
 
 ```text
-FLYWL-0000-some-cool-feature
+LEND-0000-some-cool-feature
 ```
 
 The real workflow shape is:
 
-1. Build the feature in `los-app-los-django`.
-2. Preserve the development context in `.features/FLYWL-0000-some-cool-feature/`.
+1. Build the feature in `lending-app-django`.
+2. Preserve the development context in `.features/LEND-0000-some-cool-feature/`.
 3. Open and monitor the Django pull request.
-4. After merge, start the matching QA automation work in `los-qa-automation`.
+4. After merge, start the matching QA automation work in `lending-qa-automation`.
 5. Let the QA agent find and reuse the original feature context instead of reverse-engineering the work from scratch.
 
 ## The core idea
 
 Do not make every agent session start with a giant prompt.
 
-Instead, make the filesystem carry the operating context:
+Instead, make the filesystem carry the operating context. A default
+`agentic-os init` root ships three domains (`personal/`, `work/`, `archive/`)
+plus a `harness/` directory that holds the root context files and managed OS
+capabilities. This example adds one custom domain for the product work, created
+with `agentic-os domain create lending`:
 
 ```text
 ~/agentic_os/
   .agentic_root
-  AGENTS.md
-  CLAUDE.md
-  ROUTER.md
-  TOOLS.md
-  RULES.md
-
-  los/
+  harness/
     AGENTS.md
     CLAUDE.md
     ROUTER.md
+    CONTEXT.md
+    TOOLS.md
+    RULES.md
+    shared_factory/
+
+  personal/
+  work/
+  archive/
+
+  lending/
+    AGENTS.md
+    CLAUDE.md
+    ROUTER.md
+    CONTEXT.md
     TOOLS.md
     RULES.md
 
-    workflows/
-      django-feature-to-qa-automation/
-        WORKFLOW.md
-        OUTPUTS.md
-        RUNBOOK.md
-
-    automations/
-      qa-after-merge/
-        AUTOMATION.md
-        RUNBOOK.md
-
-    projects/
-      AGENTS.md
-      ROUTER.md
-      TOOLS.md
-      RULES.md
-
-      los-app-los-django/
+    02-projects/
+      lending-app-django/
         AGENTS.md
         ROUTER.md
         TOOLS.md
         RULES.md
-        src/        -> ~/projects/los/app/los-app-los-django
+        src/        -> ~/projects/lending-app-django
         worktrees/
 
-      los-qa-automation/
+      lending-qa-automation/
         AGENTS.md
         ROUTER.md
         TOOLS.md
         RULES.md
-        src/        -> ~/projects/los/qa/los-qa-automation
+        src/        -> ~/projects/lending-qa-automation
         worktrees/
+
+    03-workflows/
+      engineering/
+        django-feature-to-qa-automation/
+          WORKFLOW.md
+          OUTPUTS.md
+          RUNBOOK.md
+
+    04-automations/
+      engineering/
+        qa-after-merge/
+          AUTOMATION.md
+          RUNBOOK.md
 ```
 
 The point is not the exact names. The point is that every layer answers a different question:
 
 - `AGENTS.md` tells the harness how to behave in this scope.
 - `ROUTER.md` tells it where to go next.
+- `CONTEXT.md` describes what this layer is and what lives around it.
 - `TOOLS.md` tells it which tools, MCP servers, skills, scripts, and commands are available here.
 - `RULES.md` captures local operating constraints.
-- `workflows/` describes multi-step work that crosses repos or phases.
-- `automations/` describes repeatable or event-driven work.
-- `projects/*/src` points to the real source repo.
-- `projects/*/worktrees` gives agents a place to create isolated branches without polluting the main checkout.
+- `03-workflows/` describes multi-step work that crosses repos or phases.
+- `04-automations/` describes repeatable or event-driven work.
+- `02-projects/*/src` points to the real source repo.
+- `02-projects/*/worktrees` gives agents a place to create isolated branches without polluting the main checkout.
 
 You are turning your working environment into a context map.
 
@@ -111,7 +123,7 @@ The paper describes five useful context layers:
 
 | ICM layer | What it means | Agentic OS example |
 | --- | --- | --- |
-| Layer 0 | Workspace identity: where am I? | root `AGENTS.md` or `CLAUDE.md` |
+| Layer 0 | Workspace identity: where am I? | root `harness/AGENTS.md` or its `CLAUDE.md` adapter |
 | Layer 1 | Routing: where should this work go? | root/domain `ROUTER.md` |
 | Layer 2 | Stage contract: what do I do here? | workflow runbooks, project `AGENTS.md`, QA skill instructions |
 | Layer 3 | Reference material: stable rules | `TOOLS.md`, `RULES.md`, repo conventions, branch rules, Playwright standards |
@@ -157,7 +169,7 @@ project_doc_max_bytes = 65536
 Use project-local Codex config only for trusted project behavior:
 
 ```toml
-# ~/agentic_os/los/02-projects/los-qa-automation/config.toml
+# ~/agentic_os/lending/02-projects/lending-qa-automation/config.toml
 
 log_dir = "./logs"
 
@@ -168,29 +180,28 @@ args = ["@playwright/mcp@latest"]
 
 Keep behavioral rules in `AGENTS.md`, not in `config.toml`. Keep secrets out of shared repo config. Use environment variables and provider fields such as `env_key` or `env_http_headers` for credentials.
 
-For Claude, use `CLAUDE.md` as a composition file:
+For Claude, each layer's `CLAUDE.md` is a thin adapter that imports the shared
+entry point, so both harnesses read the same instructions:
 
 ```markdown
 # CLAUDE.md
 
-@include ./AGENTS.md
-@include ./ROUTER.md
-@include ./TOOLS.md
-@include ./RULES.md
+@AGENTS.md
 ```
 
 For Codex, put the read order in `AGENTS.md`:
 
 ```markdown
-# AGENTS.md
+# ~/agentic_os/harness/AGENTS.md
 
 ## Scope
 
-This is the Agentic OS root. It is not a product repo.
+This is the root harness of the Agentic OS. The OS root is not a product repo.
 
 ## Read first
 
 - Read `ROUTER.md` before deciding where work belongs.
+- Read `CONTEXT.md` to understand what this layer holds.
 - Read `TOOLS.md` before using MCP servers, scripts, skills, or shell tools.
 - Read `RULES.md` before writing files, opening PRs, or updating external systems.
 
@@ -205,7 +216,7 @@ router has selected the domain, project, workflow, and expected output.
 The human types:
 
 ```text
-Need to workon Jira FLYWL-0000
+Need to workon Jira LEND-0000
 ```
 
 The agent should not ask, "Which repo is this?" That information belongs in the OS.
@@ -214,18 +225,21 @@ It starts at `~/agentic_os`.
 
 ### 1. Root context routes the request
 
-`~/agentic_os/AGENTS.md` tells the agent to read the router and tools files before acting.
+`~/agentic_os/harness/AGENTS.md` tells the agent to read the router and tools
+files before acting. The `.agentic_root` marker declares it as the harness
+entrypoint, which is why the root context files live under `harness/` instead
+of cluttering the bare OS root.
 
 ```markdown
-# ~/agentic_os/ROUTER.md
+# ~/agentic_os/harness/ROUTER.md
 
 ## Routing table
 
 | Signal | Route |
 | --- | --- |
-| `FLYWL-*` Jira key | `los/` |
-| LOS application feature | `los/02-projects/` |
-| OS template or installer work | `shared_factory/` |
+| `LEND-*` Jira key | `lending/` |
+| Lending application feature | `lending/02-projects/` |
+| OS template or installer work | `harness/shared_factory/` |
 
 ## Rule
 
@@ -233,10 +247,10 @@ If the prompt contains a Jira key, route by Jira project key first. Use the
 domain router to decide the project and workflow.
 ```
 
-`~/agentic_os/TOOLS.md` tells the agent what is available globally:
+`~/agentic_os/harness/TOOLS.md` tells the agent what is available globally:
 
 ```markdown
-# ~/agentic_os/TOOLS.md
+# ~/agentic_os/harness/TOOLS.md
 
 ## Global tools
 
@@ -244,7 +258,7 @@ domain router to decide the project and workflow.
 - GitHub CLI: pull request creation, review inspection, and check status.
 - Atlassian MCP: Jira and Confluence source-of-truth lookup.
 - Notion: control-plane documentation, only in the approved workspace.
-- losmon-memory MCP: durable cross-session memory for project rules and findings.
+- Memory MCP: durable cross-session memory for project rules and findings.
 
 ## Tool rule
 
@@ -252,38 +266,38 @@ Prefer the highest-fidelity source. For Jira state, use Atlassian before copied
 text. For pull request state, use GitHub before stale local notes.
 ```
 
-Now the agent knows `FLYWL-0000` belongs to `los/`.
+Now the agent knows `LEND-0000` belongs to `lending/`.
 
-### 2. LOS context chooses the workflow
+### 2. Domain context chooses the workflow
 
-Inside `~/agentic_os/los/`, the router narrows the route:
+Inside `~/agentic_os/lending/`, the router narrows the route:
 
 ```markdown
-# ~/agentic_os/los/ROUTER.md
+# ~/agentic_os/lending/ROUTER.md
 
 ## Jira routing
 
 | Jira state or label | Route |
 | --- | --- |
-| Ready for development, backend/app behavior | `projects/los-app-los-django/` |
-| Merged app feature requiring browser regression coverage | `projects/los-qa-automation/` |
-| Release, deploy, or Helm work | `projects/los-deploy-helm-charts/` |
+| Ready for development, backend/app behavior | `02-projects/lending-app-django/` |
+| Merged app feature requiring browser regression coverage | `02-projects/lending-qa-automation/` |
+| Release, deploy, or Helm work | `02-projects/lending-deploy-helm-charts/` |
 
 ## Workflow routing
 
-- For a new `FLYWL-*` app feature, use `workflows/django-feature-to-qa-automation/`.
+- For a new `LEND-*` app feature, use `03-workflows/engineering/django-feature-to-qa-automation/`.
 - The workflow is not complete when the Django PR merges if QA automation is applicable.
 - The Django feature context pack is the handoff source for the QA automation phase.
 ```
 
-`los/TOOLS.md` captures domain-specific source systems:
+`lending/TOOLS.md` captures domain-specific source systems:
 
 ````markdown
-# ~/agentic_os/los/TOOLS.md
+# ~/agentic_os/lending/TOOLS.md
 
 ## Source systems
 
-- Jira: use Atlassian MCP for `FLYWL-*` issue details, status, acceptance criteria, and comments.
+- Jira: use Atlassian MCP for `LEND-*` issue details, status, acceptance criteria, and comments.
 - GitHub: use the repo that matches the routed project.
 - Pull request checks: use quiet PR watching for long-running checks.
 
@@ -311,7 +325,7 @@ At this point the agent has not touched application code. It has only resolved t
 The project router points into the source checkout:
 
 ```markdown
-# ~/agentic_os/los/02-projects/los-app-los-django/ROUTER.md
+# ~/agentic_os/lending/02-projects/lending-app-django/ROUTER.md
 
 ## Source
 
@@ -329,14 +343,14 @@ and `PLAN.md` exist.
 `AGENTS.md` sets project behavior:
 
 ```markdown
-# ~/agentic_os/los/02-projects/los-app-los-django/AGENTS.md
+# ~/agentic_os/lending/02-projects/lending-app-django/AGENTS.md
 
 ## Working expectations
 
 - Use `/workon` for Jira-driven feature work.
 - Create the branch from the repo's configured base branch.
 - Use the ticket key in the branch name, for example:
-  `codex/FLYWL-0000-some-cool-feature`.
+  `codex/LEND-0000-some-cool-feature`.
 - Keep `.features/<ticket-slug>/WORKLOG.md` current as implementation decisions change.
 - Before opening a PR, update `.features/<ticket-slug>/PR.md` with summary,
   validation, risk, and follow-up QA notes.
@@ -350,7 +364,7 @@ whether automated QA is required.
 The `/workon` skill localizes the Jira. It uses Atlassian MCP to pull the ticket title, description, acceptance criteria, status, comments, and links, then writes a local context pack:
 
 ```text
-los-app-los-django/src/.features/FLYWL-0000-some-cool-feature/
+lending-app-django/src/.features/LEND-0000-some-cool-feature/
   JIRA.md          # localized Jira source
   SPEC.md          # behavior the code must implement
   PLAN.md          # technical plan
@@ -372,11 +386,11 @@ After the Django PR opens, the workflow is still active.
 If tests fail or review automation complains, the agent uses the configured repair skill:
 
 ```markdown
-# ~/agentic_os/los/workflows/django-feature-to-qa-automation/RUNBOOK.md
+# ~/agentic_os/lending/03-workflows/engineering/django-feature-to-qa-automation/RUNBOOK.md
 
 ## Pull request repair
 
-- Use `/copilot-hell` when GitHub Copilot review comments or CI failures need iterative repair.
+- Use `/pr-repair` when GitHub Copilot review comments or CI failures need iterative repair.
 - Record each failure and fix in the feature `WORKLOG.md`.
 - Keep `PR.md` current with the PR URL, latest check state, and remaining risks.
 - For long-running check monitoring, use quiet PR watching rather than repeated chat polling.
@@ -395,13 +409,13 @@ Does this feature need automated browser or API QA coverage?
 If yes, the agent routes to:
 
 ```text
-~/agentic_os/los/02-projects/los-qa-automation/
+~/agentic_os/lending/02-projects/lending-qa-automation/
 ```
 
 That folder has its own context. It should not inherit Django implementation habits as if it were the same repo. It should inherit the ticket context, then switch operating modes.
 
 ````markdown
-# ~/agentic_os/los/02-projects/los-qa-automation/ROUTER.md
+# ~/agentic_os/lending/02-projects/lending-qa-automation/ROUTER.md
 
 ## Source
 
@@ -411,16 +425,16 @@ That folder has its own context. It should not inherit Django implementation hab
 
 ## Cross-repo context lookup
 
-For `FLYWL-*` QA work, first read the Django feature context:
+For `LEND-*` QA work, first read the Django feature context:
 
 ```text
-~/agentic_os/los/02-projects/los-app-los-django/src/.features/<ticket-slug>/
+~/agentic_os/lending/02-projects/lending-app-django/src/.features/<ticket-slug>/
 ```
 
 Then create the QA context folder:
 
 ```text
-~/agentic_os/los/02-projects/los-qa-automation/src/.features/<ticket-slug>/
+~/agentic_os/lending/02-projects/lending-qa-automation/src/.features/<ticket-slug>/
 ```
 
 The QA context folder should link back to the Django context, Jira, and merged PR.
@@ -429,7 +443,7 @@ The QA context folder should link back to the Django context, Jira, and merged P
 Now the QA agent knows where the old context lives before it starts writing tests.
 
 ```markdown
-# ~/agentic_os/los/02-projects/los-qa-automation/AGENTS.md
+# ~/agentic_os/lending/02-projects/lending-qa-automation/AGENTS.md
 
 ## Working expectations
 
@@ -450,7 +464,7 @@ be updated automatically in the future.
 `TOOLS.md` makes the context shift explicit:
 
 ````markdown
-# ~/agentic_os/los/02-projects/los-qa-automation/TOOLS.md
+# ~/agentic_os/lending/02-projects/lending-qa-automation/TOOLS.md
 
 ## Test tools
 
@@ -488,9 +502,9 @@ For cross-repo work, make the handoff file explicit:
 
 ## Ticket
 
-- Jira: FLYWL-0000
-- Slug: FLYWL-0000-some-cool-feature
-- Django context: `los-app-los-django/src/.features/FLYWL-0000-some-cool-feature/`
+- Jira: LEND-0000
+- Slug: LEND-0000-some-cool-feature
+- Django context: `lending-app-django/src/.features/LEND-0000-some-cool-feature/`
 - Django PR: `<github-pr-url>`
 
 ## Behavior to verify
@@ -503,7 +517,7 @@ For cross-repo work, make the handoff file explicit:
 ## Automation recommendation
 
 - Required: yes
-- Repo: `los-qa-automation`
+- Repo: `lending-qa-automation`
 - Suggested test area:
 - Data setup:
 - Assertions:
@@ -519,7 +533,7 @@ For cross-repo work, make the handoff file explicit:
 Then the QA repo creates its own local context:
 
 ```text
-los-qa-automation/src/.features/FLYWL-0000-some-cool-feature/
+lending-qa-automation/src/.features/LEND-0000-some-cool-feature/
   SOURCE_CONTEXT.md   # links to Django context, Jira, and PR
   QA_PLAN.md          # automation plan
   TEST_SCRIPT.md      # test implementation notes
@@ -549,23 +563,23 @@ Run context should answer, "What happened this time?"
 When those layers exist, a prompt like this is enough:
 
 ```text
-Need to workon Jira FLYWL-0000
+Need to workon Jira LEND-0000
 ```
 
 The agent can then:
 
-1. Read `AGENTS.md` and `ROUTER.md` at the OS root.
-2. Route `FLYWL-*` to `los/`.
-3. Read LOS domain rules and tools.
+1. Read `harness/AGENTS.md` and `harness/ROUTER.md` at the OS root.
+2. Route `LEND-*` to `lending/`.
+3. Read the lending domain rules and tools.
 4. Use Atlassian MCP to fetch the Jira.
-5. See that ready-for-development app work belongs in `los-app-los-django`.
-6. Run `/workon` and create `.features/FLYWL-0000-some-cool-feature/`.
+5. See that ready-for-development app work belongs in `lending-app-django`.
+6. Run `/workon` and create `.features/LEND-0000-some-cool-feature/`.
 7. Build the feature while keeping `WORKLOG.md`, `DECISIONS.md`, and `PR.md` current.
 8. Open the Django PR.
-9. Use `/copilot-hell` or the configured repair loop for check/review failures.
+9. Use `/pr-repair` or the configured repair loop for check/review failures.
 10. Watch PR checks quietly.
 11. On merge, read `QA_HANDOFF.md`.
-12. Route to `los-qa-automation`.
+12. Route to `lending-qa-automation`.
 13. Load the QA repo's Playwright-specific expectations.
 14. Find the original Django `.features/` context.
 15. Build the QA automation PR with assets and run evidence.
