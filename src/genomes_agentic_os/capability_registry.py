@@ -210,6 +210,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-cockpit.md",
         },
         {
+            "id": "agentic-os-gui",
+            "command": "agentic-os gui",
+            "description": "Open or inspect the domain/project-focused local desktop conversation driver.",
+            "source": "harness/commands/os-gui.md",
+        },
+        {
             "id": "config-doctor",
             "command": "agentic-os config doctor",
             "description": "Validate Codex config and MCP registration contracts.",
@@ -579,6 +585,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Agentic OS Cockpit",
             "description": "Build or open the local engineering cockpit for conversations, work, reviews, reports, sources, hosts, automations, and hygiene.",
             "source": "harness/skills/cockpit/SKILL.md",
+        },
+        {
+            "id": "agentic-os-gui",
+            "name": "AgenticOSGui",
+            "description": "Operate the domain/project-focused desktop conversation driver over native Claude and Codex task state.",
+            "source": "harness/skills/agentic-os-gui/SKILL.md",
         },
         {
             "id": "quiet-workon-orchestrate",
