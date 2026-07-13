@@ -26,11 +26,11 @@ describe("IPC input validation", () => {
   });
 
   it("allows only expected HTTPS work links", () => {
-    expect(isAllowedExternalUrl("https://github.com/genome/repo/pull/1")).toBe(true);
-    expect(isAllowedExternalUrl("https://flywheel.atlassian.net/browse/FLYWL-1")).toBe(true);
-    expect(isAllowedExternalUrl("https://flywheel.slack.com/archives/C1/p1")).toBe(true);
+    expect(isAllowedExternalUrl("https://github.com/example/repo/pull/1")).toBe(true);
+    expect(isAllowedExternalUrl("https://acme.atlassian.net/browse/ACME-1")).toBe(true);
+    expect(isAllowedExternalUrl("https://acme.slack.com/archives/C1/p1")).toBe(true);
     expect(isAllowedExternalUrl("file:///etc/passwd")).toBe(false);
-    expect(isAllowedExternalUrl("https://user:secret@github.com/genome/repo")).toBe(false);
+    expect(isAllowedExternalUrl("https://user:secret@github.com/example/repo")).toBe(false);
     expect(isAllowedExternalUrl("https://github.com.evil.example/phish")).toBe(false);
   });
 });

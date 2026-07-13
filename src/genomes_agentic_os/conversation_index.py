@@ -390,7 +390,7 @@ def route_conversation(
             str(route["project"]).lower().replace("_", " "),
             str(route["project_title"]).lower(),
         }
-        broad_aliases = {"los", "os", "app", "agentic", "django"}
+        broad_aliases = {"os", "app", "application", "agentic", "django", "project", "service"}
         if any(
             alias not in broad_aliases
             and len(alias) >= 4

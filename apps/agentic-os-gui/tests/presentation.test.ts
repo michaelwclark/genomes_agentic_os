@@ -16,9 +16,9 @@ describe("conversation presentation", () => {
   });
 
   it("filters by first-class domain/project and searches linked Jira keys", () => {
-    expect(filterConversations(fixtureSnapshot.conversations, { domain: "los" })).toHaveLength(1);
-    expect(filterConversations(fixtureSnapshot.conversations, { project: "kanga" })[0]?.title).toContain("Kanga");
-    expect(filterConversations(fixtureSnapshot.conversations, { query: "FLYWL-2044" })[0]?.harness).toBe("claude");
+    expect(filterConversations(fixtureSnapshot.conversations, { domain: "engineering" })).toHaveLength(1);
+    expect(filterConversations(fixtureSnapshot.conversations, { project: "client_portal" })[0]?.title).toContain("Client portal");
+    expect(filterConversations(fixtureSnapshot.conversations, { query: "ACME-2044" })[0]?.harness).toBe("claude");
   });
 
   it("sorts pinned conversations first and makes higher complexity brighter", () => {

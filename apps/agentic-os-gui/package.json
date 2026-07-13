@@ -29,7 +29,7 @@
     "vitest": "4.1.10"
   },
   "build": {
-    "appId": "com.genome.agenticos.gui",
+    "appId": "io.agenticos.desktop",
     "productName": "AgenticOSGui",
     "directories": {
       "output": "release"
