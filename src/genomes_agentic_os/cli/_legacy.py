@@ -1,4 +1,4 @@
-"""Command-line interface for Genome's Agentic OS."""
+"""Legacy CLI remainder pending the AGE-36 split into cli/ group modules."""
 
 from __future__ import annotations
 
@@ -178,8 +178,7 @@ from ..capability_registry import (
 from ..validate import StrictFinding, validate_root, validate_schemas_strict
 from ..workflow_ops import check_workflow, close_run_log, format_findings
 
-
-DEFAULT_ROOT = "~/agentic_os"
+from ._shared import DEFAULT_ROOT, print_result, yaml_dump
 
 
 def handle_capability_list(args: argparse.Namespace) -> int:
@@ -319,36 +318,857 @@ def _add_run_queue_prune_args(parser: argparse.ArgumentParser) -> None:
     mode.add_argument("--apply", action="store_true")
 
 
-def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=prog,
-        description=(
-            "Scaffold, validate, and operate an Agentic OS root.\n\n"
-            "Run 'agentic-os <command> --help' for per-command options."
-        ),
-        epilog=env_epilog(
-            env_vars=[
-                ("AGENTIC_OS_ROOT", "Installed OS root (used as --root default when set). Default: ~/agentic_os."),
-            ],
-            config_files=[
-                ("~/agentic_os/harness/registries/", "Central registries (automations, skills, commands, etc.)."),
-                ("~/agentic_os/harness/shared_factory/", "Shared factory outputs (metrics, run logs, etc.)."),
-                ("~/agentic_os/config/hosts.yml", "SSH host registry read by project remote commands."),
-            ],
-            examples=[
-                ("agentic-os init", "Create the base OS tree at ~/agentic_os."),
-                ("agentic-os doctor", "Run OS health checks."),
-                ("agentic-os validate", "Validate OS root structure."),
-                ("agentic-os ps --active", "Show active work dashboard."),
-                ("agentic-os self-improvement run --apply", "Run and persist a self-improvement review."),
-                ("agentic-os runtime supervise --apply", "Run one full supervisor tick."),
-                ("agentic-os config install-tree --apply", "Install config.toml across the OS tree."),
-            ],
-        ),
-        formatter_class=AosHelpFormatter,
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+def handle_automation_create(args: argparse.Namespace) -> int:
+    print_result(create_automation(args.root, args.domain, args.lane, args.name))
+    return 0
 
+
+def handle_automation_check(args: argparse.Namespace) -> int:
+    print(format_automation_check(check_automation(args.root, args.domain, args.lane, args.automation)))
+    return 0
+
+
+def handle_automation_attach(args: argparse.Namespace) -> int:
+    result = attach_automation(args.root, args.domain, args.lane, args.automation, args.project)
+    print(yaml_dump(result))
+    return 0
+
+
+def handle_automation_set_maturity(args: argparse.Namespace) -> int:
+    result = set_automation_maturity(args.root, args.domain, args.lane, args.automation, args.level)
+    print(yaml_dump(result))
+    return 0
+
+
+def handle_automation_control_list(args: argparse.Namespace) -> int:
+    print(format_automation_control_result(list_automation_control(args.root)))
+    return 0
+
+
+def handle_automation_control_doctor(args: argparse.Namespace) -> int:
+    result = automation_control_doctor(args.root)
+    print(format_automation_control_result(result))
+    return 0 if result.get("ok") else 1
+
+
+def handle_automation_control_run(args: argparse.Namespace) -> int:
+    print(format_automation_control_result(run_automation_control(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_run_log_create(args: argparse.Namespace) -> int:
+    print_result(create_run_log(args.root, args.domain, args.workflow_or_automation))
+    return 0
+
+
+def handle_run_log_close(args: argparse.Namespace) -> int:
+    result = close_run_log(
+        args.root,
+        args.domain,
+        args.run_id,
+        status=args.status,
+        summary=args.summary,
+        validation=args.validation,
+        artifacts=args.artifact,
+        approvals=args.approval,
+        next_action=args.next_action,
+        owner=args.owner,
+        learning=args.learning,
+        project=args.project,
+    )
+    if args.emit_events:
+        result["emitted_event"] = emit_run_close_event(args.root, result)
+    print(yaml_dump(result))
+    return 0
+
+
+def handle_thread_closeout(args: argparse.Namespace) -> int:
+    result = close_thread(
+        args.root,
+        mode=args.closeout_mode,
+        thread_id=args.thread_id,
+        domain=args.domain,
+        project=args.project,
+        work_item=args.work_item,
+        work_level=args.work_level,
+        summary=args.summary,
+        next_action=args.next_action,
+        validations=args.validation,
+        artifacts=args.artifact,
+        receipts=args.receipt,
+        memory_receipts=args.memory_receipt,
+        notion_url=args.notion_url,
+        notion_warning=args.notion_warning,
+        verified_notion_workspace=args.verified_notion_workspace,
+        skip_notion=args.skip_notion,
+        allow_blocked_archive=args.allow_blocked_archive,
+        request=args.request,
+        cwd=args.cwd,
+    )
+    print(format_thread_closeout_result(result))
+    return 0
+
+
+def handle_thread_stale_finalize(args: argparse.Namespace) -> int:
+    result = stale_finalize_threads(
+        args.root,
+        older_than_days=args.older_than_days,
+        domain=args.domain,
+        project=args.project,
+        apply=args.apply,
+    )
+    print(format_thread_closeout_result(result))
+    return 0
+
+
+def handle_route(args: argparse.Namespace) -> int:
+    print(format_packet(route_request(args.root, args.request)))
+    return 0
+
+
+def handle_context_build(args: argparse.Namespace) -> int:
+    domain = args.domain
+    project = args.project
+    workflow = args.workflow
+    lane = args.lane
+    cwd = Path.cwd()
+
+    if not domain:
+        inferred = detect_from_cwd(Path(args.root).expanduser().resolve(), cwd)
+        domain = inferred.get("domain")
+        if not project:
+            project = inferred.get("project")
+        if not workflow:
+            workflow = inferred.get("workflow")
+        if not lane:
+            lane = inferred.get("lane")
+
+    if not domain and project:
+        matches = [record for record in project_records(Path(args.root).expanduser().resolve()) if record["project"] == project]
+        if len(matches) == 1:
+            domain = matches[0]["domain"]
+            lane = lane or matches[0].get("lane") or None
+        elif len(matches) > 1:
+            raise ValueError(f"project is ambiguous; specify --domain: {project}")
+
+    if not domain:
+        raise ValueError("domain is required unless current directory or unique --project identifies a domain")
+
+    print(
+        format_packet(
+            build_context(
+                args.root,
+                domain=domain,
+                project=project,
+                work_item=args.work_item,
+                workflow=workflow,
+                lane=lane,
+                cwd=cwd,
+            )
+        )
+    )
+    return 0
+
+
+def handle_here_route(args: argparse.Namespace) -> int:
+    print(format_packet(route_request(args.root, args.request, cwd=Path.cwd())))
+    return 0
+
+
+def handle_here_context_build(args: argparse.Namespace) -> int:
+    print(format_packet(context_from_here(args.root, cwd=Path.cwd())))
+    return 0
+
+
+def handle_customer_init(args: argparse.Namespace) -> int:
+    print(format_customer_result(customer_init(args.customer_slug, args.profile, args.target)))
+    return 0
+
+
+def handle_customer_update(args: argparse.Namespace) -> int:
+    print(format_customer_result(customer_update(args.customer_slug, args.root)))
+    return 0
+
+
+def handle_customer_validate(args: argparse.Namespace) -> int:
+    result = customer_validate(args.root)
+    print(format_customer_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_customer_brief(args: argparse.Namespace) -> int:
+    import json
+
+    result = scaffold_customer_brief(args.root, args.domain, args.name)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def handle_update_check(args: argparse.Namespace) -> int:
+    print(format_update_result(update_check(args.root, manifest=args.manifest)))
+    return 0
+
+
+def handle_update_register(args: argparse.Namespace) -> int:
+    print(format_update_result(update_register(args.root)))
+    return 0
+
+
+def handle_update_pull(args: argparse.Namespace) -> int:
+    print(format_update_result(update_pull(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_update_plan(args: argparse.Namespace) -> int:
+    print(format_update_result(update_plan(args.root, manifest=args.manifest)))
+    return 0
+
+
+def handle_update_apply(args: argparse.Namespace) -> int:
+    result = update_apply(args.root, plan=args.plan, approve_risky=args.approve_risky)
+    print(format_update_result(result))
+    return 2 if result.get("blocked") else 0
+
+
+def handle_update_rollback(args: argparse.Namespace) -> int:
+    print(format_update_result(update_rollback(args.root, snapshot=args.snapshot)))
+    return 0
+
+
+def handle_update_status(args: argparse.Namespace) -> int:
+    print(format_update_result(update_status(args.root)))
+    return 0
+
+
+def handle_update_phone_home(args: argparse.Namespace) -> int:
+    print(format_update_result(phone_home_payload(args.root)))
+    return 0
+
+
+def handle_license_activate(args: argparse.Namespace) -> int:
+    print(format_update_result(activate_license(args.root, key=args.key)))
+    return 0
+
+
+def handle_backup_run(args: argparse.Namespace) -> int:
+    print(format_update_result(backup_run(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_backup_push(args: argparse.Namespace) -> int:
+    print(format_update_result(backup_push(args.root)))
+    return 0
+
+
+def handle_backup_restore_plan(args: argparse.Namespace) -> int:
+    print(format_update_result(backup_restore_plan(args.root, backup_log=args.backup_log)))
+    return 0
+
+
+def handle_fleet_push(args: argparse.Namespace) -> int:
+    print(format_update_result(fleet_push(args.customer_slug, source=args.source)))
+    return 0
+
+
+def handle_metrics_refresh(args: argparse.Namespace) -> int:
+    print(format_metrics_result(metrics_refresh(args.root)))
+    return 0
+
+
+def handle_config_install(args: argparse.Namespace) -> int:
+    result = install_config(
+        args.root,
+        layer=args.layer,
+        dry_run=not args.apply,
+        backup=args.backup,
+        confirm_conflicts=args.confirm_conflicts,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 2 if result.blocked else 0
+
+
+def handle_config_install_tree(args: argparse.Namespace) -> int:
+    result = install_config_tree(
+        args.root,
+        dry_run=not args.apply,
+        backup=args.backup,
+        confirm_conflicts=args.confirm_conflicts,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 2 if result.blocked else 0
+
+
+def handle_config_doctor(args: argparse.Namespace) -> int:
+    result = doctor_config(args.root, layer=args.layer)
+    print(yaml_dump(result))
+    return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
+
+
+def handle_doc_config_init(args: argparse.Namespace) -> int:
+    print(format_doc_config_result(init_doc_config(args.root, domain=args.domain, project=args.project)))
+    return 0
+
+
+def handle_doc_config_doctor(args: argparse.Namespace) -> int:
+    result = doc_config_doctor(args.root)
+    print(format_doc_config_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_doc_config_plan(args: argparse.Namespace) -> int:
+    print(
+        format_doc_config_result(
+            build_doc_config_plan(
+                args.root,
+                request=args.request,
+                domain=args.domain,
+                project=args.project,
+                work_item=args.work_item,
+                questions_present=args.questions_present,
+            )
+        )
+    )
+    return 0
+
+
+def handle_hook_sync(args: argparse.Namespace) -> int:
+    result = hook_sync(
+        args.root,
+        target=args.target,
+        dry_run=not args.apply,
+        backup=args.backup,
+        codex_hooks_path=args.codex_hooks_path,
+        claude_settings_path=args.claude_settings_path,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 1 if result.findings else 0
+
+
+def handle_hook_doctor(args: argparse.Namespace) -> int:
+    result = hook_doctor(
+        args.root,
+        target=args.target,
+        codex_hooks_path=args.codex_hooks_path,
+        claude_settings_path=args.claude_settings_path,
+    )
+    print(yaml_dump(result.as_dict()))
+    return 0 if result.ok else 1
+
+
+def handle_notion_plan_sync(args: argparse.Namespace) -> int:
+    print(format_sync_result(build_sync_plan(args.root)))
+    return 0
+
+
+def handle_notion_sync(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_sync_result(build_sync_plan(args.root)))
+    else:
+        print(format_sync_result(apply_sync_plan(args.root, verified_workspace=args.verified_workspace)))
+    return 0
+
+
+def handle_notion_bootstrap(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_sync_result(build_bootstrap_plan(args.root, parent_page_id=args.parent_page_id)))
+    else:
+        print(
+            format_sync_result(
+                apply_bootstrap_plan(
+                    args.root,
+                    verified_workspace=args.verified_workspace,
+                    parent_page_id=args.parent_page_id,
+                )
+            )
+        )
+    return 0
+
+
+def handle_notion_track_runtime(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_runtime_result(build_runtime_tracking_plan(args.root)))
+    else:
+        print(format_runtime_result(apply_runtime_tracking(args.root, verified_workspace=args.verified_workspace)))
+    return 0
+
+
+def handle_notion_active_work_sync(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(format_sync_result(build_active_work_sync_plan(args.root, database_id=args.database_id)))
+    else:
+        print(
+            format_sync_result(
+                apply_active_work_sync(
+                    args.root,
+                    database_id=args.database_id,
+                    verified_workspace=args.verified_workspace,
+                    token_env=args.token_env,
+                )
+            )
+        )
+    return 0
+
+
+def handle_notion_org_doctor(args: argparse.Namespace) -> int:
+    result = doctor_notion_org(args.root, backup_dir=args.backup_dir)
+    print(format_notion_org_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_runtime_init(args: argparse.Namespace) -> int:
+    print(format_runtime_result(runtime_init(args.root)))
+    return 0
+
+
+def handle_runtime_doctor(args: argparse.Namespace) -> int:
+    result = runtime_doctor(args.root)
+    print(format_runtime_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_runtime_run_next(args: argparse.Namespace) -> int:
+    result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
+    print(format_runtime_result(result))
+    return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
+
+
+def handle_run_queue_prune(args: argparse.Namespace) -> int:
+    result = run_queue_prune(
+        args.root,
+        dry_run=not args.apply,
+        active_max_age_hours=args.active_max_age_hours,
+        terminal_max_age_days=args.terminal_max_age_days,
+        failed_max_age_days=args.failed_max_age_days,
+        skipped_max_age_days=args.skipped_max_age_days,
+        backup_max_age_days=args.backup_max_age_days,
+        archive=args.archive,
+    )
+    print(format_runtime_result(result))
+    return 0
+
+
+def handle_runtime_supervise(args: argparse.Namespace) -> int:
+    result = supervise_tick(args.root, dry_run=not args.apply)
+    print(format_supervise_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_heartbeat_list(args: argparse.Namespace) -> int:
+    print(format_runtime_result(heartbeat_list(args.root)))
+    return 0
+
+
+def handle_heartbeat_run(args: argparse.Namespace) -> int:
+    print(format_runtime_result(heartbeat_run(args.root, args.heartbeat_id, dry_run=not args.apply)))
+    return 0
+
+
+def handle_schedule_create(args: argparse.Namespace) -> int:
+    print(
+        format_runtime_result(
+            schedule_create(
+                args.root,
+                args.schedule_id,
+                cadence=args.cadence,
+                timezone_name=args.timezone,
+                command=args.command,
+            )
+        )
+    )
+    return 0
+
+
+def handle_schedule_run_due(args: argparse.Namespace) -> int:
+    print(format_runtime_result(schedule_run_due(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_integration_list(args: argparse.Namespace) -> int:
+    print(format_runtime_result(integration_list(args.root)))
+    return 0
+
+
+def handle_integration_setup(args: argparse.Namespace) -> int:
+    print(format_runtime_result(integration_setup(args.root, args.integration_id, dry_run=not args.apply)))
+    return 0
+
+
+def handle_integration_doctor(args: argparse.Namespace) -> int:
+    result = integration_doctor(args.root, args.integration_id)
+    print(format_runtime_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_doctor(args: argparse.Namespace) -> int:
+    if getattr(args, "all_systems", False):
+        result = doctor_all(args.root)
+    else:
+        result = doctor(args.root, fix_missing=args.fix_missing)
+    if getattr(args, "check_remotes", False):
+        from ..hosts import load_hosts  # noqa: PLC0415
+        from ..validate import validate_project_remotes_connectivity  # noqa: PLC0415
+
+        root_path = Path(args.root).expanduser()
+        try:
+            hosts = load_hosts(root_path)
+        except ValueError:
+            hosts = {}
+        # Unreachable hosts are a warning state by spec — never flip doctor ok.
+        connectivity_warnings = validate_project_remotes_connectivity(root_path, hosts)
+        if isinstance(result.get("warnings"), list):
+            result["warnings"].extend(connectivity_warnings)
+        else:
+            result["warnings"] = connectivity_warnings
+    print(format_doctor_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_migrate_plan(args: argparse.Namespace) -> int:
+    print(format_migration_result(migrate_plan(args.root)))
+    return 0
+
+
+def handle_migrate_apply(args: argparse.Namespace) -> int:
+    print(format_migration_result(migrate_apply(args.root, args.migration_id)))
+    return 0
+
+
+def handle_plan_capture(args: argparse.Namespace) -> int:
+    print(
+        format_plan_result(
+            capture_plan(
+                args.root,
+                title=args.title,
+                summary=args.summary,
+                kind=args.kind,
+                domain=args.domain,
+                project=args.project,
+            )
+        )
+    )
+    return 0
+
+
+def handle_self_improvement_run(args: argparse.Namespace) -> int:
+    # Bare invocation and --dry-run both produce dry_run=True (read-only, SPEC 15 first-run safety).
+    # Only --apply flips to persist mode.
+    print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_status(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(self_improvement_status(args.root)))
+    return 0
+
+
+def handle_self_improvement_list(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(list_self_improvement_proposals(args.root)))
+    return 0
+
+
+def handle_self_improvement_show(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(show_self_improvement_proposal(args.root, args.proposal_id)))
+    return 0
+
+
+def handle_self_improvement_approve(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            approve_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
+        )
+    )
+    return 0
+
+
+def handle_self_improvement_reject(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(reject_self_improvement_proposal(args.root, args.proposal_id)))
+    return 0
+
+
+def handle_self_improvement_promote(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            promote_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
+        )
+    )
+    return 0
+
+
+def handle_self_improvement_actions(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(process_self_improvement_actions(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_reconcile_queue(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(reconcile_self_improvement_queue(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_nightly_apply(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            nightly_apply_self_improvement(args.root, dry_run=not args.apply, limit=args.limit)
+        )
+    )
+    return 0
+
+
+def handle_connected_system_list(args: argparse.Namespace) -> int:
+    print(format_source_watch_result(list_connected_systems(args.root)))
+    return 0
+
+
+def handle_connected_system_doctor(args: argparse.Namespace) -> int:
+    result = doctor_connected_system(args.root, args.system_id)
+    print(format_source_watch_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_watch_source_list(args: argparse.Namespace) -> int:
+    print(format_source_watch_result(list_watch_sources(args.root)))
+    return 0
+
+
+def handle_watch_source_create(args: argparse.Namespace) -> int:
+    result = create_watch_source(
+        args.root,
+        args.source_id,
+        connected_system=args.connected_system,
+        source_type=args.source_type,
+        display_name=args.display_name,
+        cadence=args.cadence,
+        external_ref=parse_external_refs(args.external_ref),
+        route_to=args.route_to,
+        enabled=args.enabled,
+    )
+    print(format_source_watch_result(result))
+    return 0
+
+
+def handle_watch_source_doctor(args: argparse.Namespace) -> int:
+    result = doctor_watch_source(args.root, args.source_id)
+    print(format_source_watch_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_watch_source_poll(args: argparse.Namespace) -> int:
+    result = poll_watch_source(args.root, args.source_id, dry_run=args.dry_run)
+    print(format_source_watch_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_watch_source_run_due(args: argparse.Namespace) -> int:
+    print(format_source_watch_result(run_due_watch_sources(args.root, dry_run=args.dry_run)))
+    return 0
+
+
+def handle_ps(args: argparse.Namespace) -> int:
+    mode = "all" if args.all else "active" if args.active else "now"
+    color = args.color == "always" or (args.color == "auto" and sys.stdout.isatty())
+    result = ps_snapshot(
+        args.root,
+        mode=mode,
+        limit=args.limit,
+        stale_days=args.stale_days,
+    )
+    result["prog"] = Path(sys.argv[0]).name if Path(sys.argv[0]).name in {"agentic-os", "aos"} else "agentic-os"
+    print(format_ps_result(result, as_json=args.json, color=color))
+    return 0
+
+
+def handle_event_append(args: argparse.Namespace) -> int:
+    print(
+        format_event_graph_result(
+            append_event(
+                args.root,
+                event_type=args.event_type,
+                source_ref=args.source_ref,
+                summary=args.summary,
+                correlation_id=args.correlation_id,
+            )
+        )
+    )
+    return 0
+
+
+def handle_event_list(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(list_events(args.root, limit=args.limit)))
+    return 0
+
+
+def handle_event_summary(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(summarize_events(args.root, limit=args.limit)))
+    return 0
+
+
+def handle_event_process_due(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(process_due(args.root, dry_run=args.dry_run)))
+    return 0
+
+
+def handle_event_replay(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(replay_event(args.root, args.event_id, dry_run=args.dry_run)))
+    return 0
+
+
+def handle_chain_list(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(chain_list(args.root)))
+    return 0
+
+
+def handle_chain_test(args: argparse.Namespace) -> int:
+    print(format_event_graph_result(test_chain_rule(args.root, args.chain_rule_id, args.event)))
+    return 0
+
+
+def handle_chain_doctor(args: argparse.Namespace) -> int:
+    result = chain_doctor(args.root)
+    print(format_event_graph_result(result))
+    return 0 if result["ok"] else 1
+
+
+def handle_validate(args: argparse.Namespace) -> int:
+    result = validate_root(args.root)
+    strict_findings: list[StrictFinding] = []
+    if getattr(args, "strict", False):
+        from pathlib import Path as _Path  # noqa: PLC0415
+        strict_findings = validate_schemas_strict(_Path(args.root).expanduser())
+    if result.ok and not strict_findings:
+        print(f"valid: {Path(args.root).expanduser()}")
+        for warning in result.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        return 0
+    for error in result.errors:
+        print(f"error: {error}", file=sys.stderr)
+    for warning in result.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    for finding in strict_findings:
+        print(f"strict: [{finding.schema}] {finding.path}: {finding.message}", file=sys.stderr)
+    return 1 if (result.errors or strict_findings) else 0
+
+
+def handle_docs_install(args: argparse.Namespace) -> int:
+    print_result(install_docs(args.root))
+    return 0
+
+
+def handle_docs_update(args: argparse.Namespace) -> int:
+    print_result(install_docs(args.root))
+    return 0
+
+
+def handle_docs_upkeep(args: argparse.Namespace) -> int:
+    result = build_documentation_upkeep_plan(
+        args.root,
+        write_receipt=bool(args.write_receipt),
+        output_dir=args.output_dir,
+    )
+    print(format_documentation_upkeep_result(result))
+    return 0 if result.get("ok") else 1
+
+
+def handle_adaptive_routing_plan(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    report = load_holdout_report(args.holdout_report)
+    result, exit_code = build_adaptive_plan(
+        task=args.task,
+        document=document,
+        tier=args.tier,
+        model_override=args.model_override,
+        reasoning_effort=args.reasoning_effort,
+        owner_identifier=args.owner_id,
+        owner_kind=args.owner_kind,
+        owner_minimum_tier=args.owner_minimum_tier,
+        owner_verification=tuple(args.owner_verification),
+        no_sub_agents=args.no_sub_agents,
+        holdout_report=report,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def handle_adaptive_routing_observe(args: argparse.Namespace) -> int:
+    try:
+        config = load_observation_config(args.root, args.config_file)
+        paths = observation_paths(args.root, config)
+        document = load_explicit_policy(args.policy_file or paths["policy"])
+        result, exit_code = build_adaptive_plan(
+            task=args.task,
+            document=document,
+            tier=args.tier,
+            model_override=args.model_override,
+            reasoning_effort=args.reasoning_effort,
+            no_sub_agents=args.no_sub_agents,
+        )
+        try:
+            observation = record_plan_observation(
+                args.root,
+                result,
+                policy_fingerprint=runtime_policy_fingerprint(document),
+                correlation_id=args.correlation_id,
+                config_file=args.config_file,
+            )
+        except DuplicateCorrelationError:
+            observation = {"status": "already_observed", "written": False}
+        print(adaptive_canonical_json({**result, "observation": observation}))
+        return exit_code
+    except (ObservationRunnerError, OSError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def handle_adaptive_routing_report(args: argparse.Namespace) -> int:
+    try:
+        result = run_observation_report(
+            args.root,
+            hours=args.hours,
+            apply_notion=args.apply_notion,
+            config_file=args.config_file,
+        )
+    except (ObservationRunnerError, ObservationProjectionError, OSError) as exc:
+        raise ValueError(str(exc)) from exc
+    print(adaptive_canonical_json(result))
+    return 1 if result.get("status") == "complete_with_projection_blocked" else 0
+
+
+def handle_adaptive_routing_evaluate(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    result, exit_code = evaluate_adaptive_holdout(
+        holdout_file=args.holdout_file,
+        document=document,
+        approval_granted=args.approve,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def handle_adaptive_routing_status(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    report = load_holdout_report(args.holdout_report)
+    result, exit_code = adaptive_routing_status(
+        document=document,
+        holdout_report=report,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def handle_adaptive_routing_rollback_plan(args: argparse.Namespace) -> int:
+    document = load_explicit_policy(args.policy_file)
+    last_known_good = (
+        load_explicit_policy(args.last_known_good_policy_file)
+        if args.last_known_good_policy_file
+        else None
+    )
+    result, exit_code = build_adaptive_rollback_plan(
+        document=document,
+        last_known_good=last_known_good,
+    )
+    print(adaptive_canonical_json(result))
+    return exit_code
+
+
+def register_remaining(subparsers) -> None:
+    """Register command groups not yet moved to cli/ modules."""
     def add_thread_closeout_args(closeout_parser: argparse.ArgumentParser, mode: str) -> None:
         closeout_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
         closeout_parser.add_argument("--domain", help="Domain that owns the work item.")
@@ -392,353 +1212,6 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
         stale_mode.add_argument("--dry-run", action="store_true", default=True, help="List candidates without writing.")
         stale_mode.add_argument("--apply", action="store_true", help="Write conservative status-only closeouts.")
         stale_parser.set_defaults(handler=handle_thread_stale_finalize)
-
-    init_parser = subparsers.add_parser("init", help="Create the base installed OS tree.")
-    init_parser.add_argument("--target", default=DEFAULT_ROOT, help="Installed OS target path.")
-    init_parser.add_argument("--profile", help="Room-first OS profile YAML.")
-    init_parser.add_argument(
-        "--domains",
-        help="Comma-separated domain slugs to create instead of the built-in defaults (e.g. personal,work,archive).",
-    )
-    init_parser.add_argument(
-        "--projects-source",
-        default=DEFAULT_PROJECTS_SOURCE,
-        help="Deprecated compatibility flag; project repo links now live under domain 02-projects entries.",
-    )
-    init_parser.add_argument(
-        "--include-legacy-agent",
-        action="store_true",
-        help="Also create AGENT.md compatibility adapters for harnesses that require that exact filename.",
-    )
-    init_parser.set_defaults(handler=handle_init)
-
-    domain_parser = subparsers.add_parser("domain", help="Manage domains.")
-    domain_subparsers = domain_parser.add_subparsers(dest="domain_command", required=True)
-    domain_create = domain_subparsers.add_parser("create", help="Create a domain scaffold.")
-    domain_create.add_argument("name")
-    domain_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    domain_create.add_argument(
-        "--include-legacy-agent",
-        action="store_true",
-        help="Also create AGENT.md compatibility adapters for harnesses that require that exact filename.",
-    )
-    domain_create.set_defaults(handler=handle_domain_create)
-
-    profile_parser = subparsers.add_parser("profile", help="Manage room-first OS profiles.")
-    profile_subparsers = profile_parser.add_subparsers(dest="profile_command", required=True)
-    profile_create = profile_subparsers.add_parser("create", help="Create an editable profile template.")
-    profile_create.add_argument("--target", required=True)
-    profile_create.set_defaults(handler=handle_profile_create)
-    profile_validate = profile_subparsers.add_parser("validate", help="Validate a room-first profile.")
-    profile_validate.add_argument("profile")
-    profile_validate.set_defaults(handler=handle_profile_validate)
-
-    room_parser = subparsers.add_parser("room", help="Manage rooms.")
-    room_subparsers = room_parser.add_subparsers(dest="room_command", required=True)
-    room_create = room_subparsers.add_parser("create", help="Create a room scaffold.")
-    room_create.add_argument("room_slug")
-    room_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    room_create.set_defaults(handler=handle_room_create)
-    room_update = room_subparsers.add_parser("update", help="Update a room from a profile.")
-    room_update.add_argument("room_slug")
-    room_update.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    room_update.add_argument("--from-profile", required=True)
-    room_update.set_defaults(handler=handle_room_update)
-
-    project_parser = subparsers.add_parser(
-        "project",
-        help="Manage projects.",
-        description=(
-            "Create and manage OS projects, worktrees, remote sources, and lifecycle work items. "
-            "Projects live under <domain>/<project>/ inside the OS root."
-        ),
-        epilog=env_epilog(
-            env_vars=[
-                ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
-            ],
-            config_files=[
-                ("<domain>/<project>/project.yml", "Project metadata and remote source declarations."),
-                ("<domain>/<project>/worktrees/", "Registered worktree links."),
-            ],
-            examples=[
-                ("agentic-os project create acme myproj --repo ~/repos/myproj", "Create a project scaffold."),
-                ("agentic-os project work-item create acme myproj --title 'Fix bug' --summary 'Fix the thing'", "Create a work item."),
-                ("agentic-os project sync-remote acme myproj", "Sync remote SSH sources."),
-                ("agentic-os project worktree cleanup-closed --apply", "Close terminal worktree entries."),
-            ],
-        ),
-        formatter_class=AosHelpFormatter,
-    )
-    project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
-    project_create = project_subparsers.add_parser("create", help="Create a project scaffold.")
-    project_create.add_argument("domain")
-    project_create.add_argument("project")
-    project_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_create.add_argument("--repo", help="Repository path or URL.")
-    project_create.add_argument("--notion", help="Notion page, database, or URL.")
-    project_create.add_argument("--jira", help="Jira project, issue, or URL.")
-    project_create.add_argument("--status", default="active", choices=("active", "waiting", "blocked", "done"))
-    project_create.add_argument("--lane", help="Primary operating lane for this project.")
-    project_create.add_argument("--remote-host", help="Remote SSH host alias for the primary remote source.")
-    project_create.add_argument("--remote-path", help="Absolute path on the remote host.")
-    project_create.add_argument("--remote-name", help="Name for the remote (defaults to project name).")
-    project_create.add_argument("--remote-kind", default="git", choices=("git", "folder"), help="Remote source kind (default: git).")
-    project_create.add_argument("--authority", default="remote", choices=("remote", "local"), help="Which side owns truth (default: remote).")
-    project_create.set_defaults(handler=handle_project_create)
-    project_link_source = project_subparsers.add_parser(
-        "link-source",
-        aliases=["src"],
-        help="Create or repair a project-local src symlink to a local repository.",
-    )
-    project_link_source.add_argument("domain")
-    project_link_source.add_argument("project")
-    project_link_source.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_link_source.add_argument("--repo", help="Local repository path. Defaults to project.yml sources.repo.")
-    project_link_source.add_argument("--force", action="store_true", help="Replace an existing src symlink that points elsewhere.")
-    project_link_source.set_defaults(handler=handle_project_link_source)
-    project_onboard = project_subparsers.add_parser("onboard", help="Create or repair the project-local agent/config surface.")
-    project_onboard.add_argument("domain")
-    project_onboard.add_argument("project")
-    project_onboard.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_onboard.set_defaults(handler=handle_project_onboard)
-    project_link_remote = project_subparsers.add_parser(
-        "link-remote",
-        help="Attach a remote SSH source to an existing project.",
-    )
-    project_link_remote.add_argument("domain")
-    project_link_remote.add_argument("project")
-    project_link_remote.add_argument("--host", required=True, help="Remote SSH host alias (key in config/hosts.yml).")
-    project_link_remote.add_argument("--path", required=True, help="Absolute path on the remote host.")
-    project_link_remote.add_argument("--name", help="Name for the remote (defaults to project name).")
-    project_link_remote.add_argument("--kind", default="git", choices=("git", "folder"), help="Remote source kind (default: git).")
-    project_link_remote.add_argument("--authority", default="remote", choices=("remote", "local"), help="Which side owns truth (default: remote).")
-    project_link_remote.add_argument("--force", action="store_true", help="Replace an existing remote of the same name.")
-    project_link_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_link_remote.set_defaults(handler=handle_project_link_remote)
-    project_worktree = project_subparsers.add_parser("worktree", help="Manage visible project worktree links.")
-    project_worktree_subparsers = project_worktree.add_subparsers(dest="project_worktree_command", required=True)
-    project_worktree_add = project_worktree_subparsers.add_parser("add", help="Register a project-visible worktree.")
-    project_worktree_add.add_argument("domain")
-    project_worktree_add.add_argument("project")
-    project_worktree_add.add_argument("name")
-    project_worktree_add.add_argument(
-        "--path",
-        required=True,
-        help="Existing worktree directory; paths inside the project worktrees directory register in place, others get a symlink.",
-    )
-    project_worktree_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_worktree_add.add_argument("--force", action="store_true", help="Replace an existing worktree symlink that points elsewhere.")
-    project_worktree_add.set_defaults(handler=handle_project_worktree_add)
-    project_worktree_create = project_worktree_subparsers.add_parser(
-        "create", help="Create an in-place git worktree under the project worktrees directory and register it."
-    )
-    project_worktree_create.add_argument("domain")
-    project_worktree_create.add_argument("project")
-    project_worktree_create.add_argument(
-        "name",
-        nargs="?",
-        default=None,
-        help="Worktree directory name; defaults to the branch name with slashes replaced by hyphens.",
-    )
-    project_worktree_create.add_argument("--repo", required=True, help="Existing local git repository to create the worktree from.")
-    project_worktree_create.add_argument("--branch", required=True, help="Branch to check out; created from HEAD when it does not exist.")
-    project_worktree_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_worktree_create.set_defaults(handler=handle_project_worktree_create)
-    project_worktree_cleanup_closed = project_worktree_subparsers.add_parser(
-        "cleanup-closed",
-        help="Close registered worktrees whose cached Jira status or PR state is terminal.",
-    )
-    project_worktree_cleanup_closed.add_argument("--domain", help="Limit cleanup to a domain.")
-    project_worktree_cleanup_closed.add_argument("--project", help="Limit cleanup to a project.")
-    cleanup_mode = project_worktree_cleanup_closed.add_mutually_exclusive_group()
-    cleanup_mode.add_argument("--dry-run", action="store_true", default=True, help="Show cleanup candidates without writing.")
-    cleanup_mode.add_argument("--apply", action="store_true", help="Move matching registry entries to worktrees/closed.yml.")
-    project_worktree_cleanup_closed.add_argument(
-        "--remove-files",
-        action="store_true",
-        help="Also remove in-project worktree directories after closing their registry entries; merged PR dirt is ignored unless REOPEN.md is present.",
-    )
-    project_worktree_cleanup_closed.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_worktree_cleanup_closed.set_defaults(handler=handle_project_worktree_cleanup_closed)
-    project_work_item = project_subparsers.add_parser("work-item", help="Manage project lifecycle work items.")
-    project_work_item_subparsers = project_work_item.add_subparsers(dest="project_work_item_command", required=True)
-    project_work_item_create = project_work_item_subparsers.add_parser("create", help="Create a project lifecycle work item.")
-    project_work_item_create.add_argument("domain")
-    project_work_item_create.add_argument("project")
-    project_work_item_create.add_argument("--title", required=True)
-    project_work_item_create.add_argument("--summary", required=True)
-    project_work_item_create.add_argument("--work-id", help="Optional work item slug. Defaults to a slug from the title.")
-    project_work_item_create.add_argument("--status", default="captured", choices=WORK_LIFECYCLE_STATES)
-    project_work_item_create.add_argument(
-        "--format",
-        choices=("markdown", "packet"),
-        help="Override the default shape. Captured/triaged ideas default to markdown; active and complete states use packet folders.",
-    )
-    project_work_item_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_create.set_defaults(handler=handle_project_work_item_create)
-    project_work_item_repair = project_work_item_subparsers.add_parser(
-        "repair", help="Backfill missing lifecycle packet files and folders without overwriting local edits."
-    )
-    project_work_item_repair.add_argument("domain")
-    project_work_item_repair.add_argument("project")
-    project_work_item_repair.add_argument("--work-item", help="Specific work item id, slug, title, or ticket to repair.")
-    project_work_item_repair.add_argument("--all", action="store_true", help="Repair every folder-format project work item.")
-    project_work_item_repair.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_repair.set_defaults(handler=handle_project_work_item_repair)
-    project_work_item_sync_active = project_work_item_subparsers.add_parser(
-        "sync-active",
-        help="Rebuild the root global active-work symlink container from work items, worktrees, and automations.",
-    )
-    project_work_item_sync_active.add_argument("--domain", help="Limit active work-item/worktree links to a domain.")
-    project_work_item_sync_active.add_argument("--project", help="Limit active work-item/worktree links to a project.")
-    project_work_item_sync_active.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_sync_active.set_defaults(handler=handle_project_work_item_sync_active)
-    project_work_item_finalize_lingering = project_work_item_subparsers.add_parser(
-        "finalize-lingering",
-        help="Move terminal-status packets out of active lanes, update indexes, and refresh the global active container.",
-    )
-    project_work_item_finalize_lingering.add_argument("--domain", help="Limit cleanup to a domain.")
-    project_work_item_finalize_lingering.add_argument("--project", help="Limit cleanup to a project.")
-    lingering_mode = project_work_item_finalize_lingering.add_mutually_exclusive_group()
-    lingering_mode.add_argument("--dry-run", action="store_true", default=True, help="Show stale terminal packets without writing.")
-    lingering_mode.add_argument("--apply", action="store_true", help="Move stale terminal packets and refresh active links.")
-    project_work_item_finalize_lingering.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_finalize_lingering.set_defaults(handler=handle_project_work_item_finalize_lingering)
-    project_work_item_infer_complete = project_work_item_subparsers.add_parser(
-        "infer-complete",
-        help="Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity.",
-    )
-    project_work_item_infer_complete.add_argument("--domain", help="Limit inference to a domain.")
-    project_work_item_infer_complete.add_argument("--project", help="Limit inference to a project.")
-    infer_mode = project_work_item_infer_complete.add_mutually_exclusive_group()
-    infer_mode.add_argument("--dry-run", action="store_true", default=True, help="Report completion decisions without writing.")
-    infer_mode.add_argument("--apply", action="store_true", help="Finalize high-confidence completed packets and refresh active links.")
-    project_work_item_infer_complete.add_argument(
-        "--older-than-days",
-        type=int,
-        default=3,
-        help="Conversation quiet-window threshold before automatic completion.",
-    )
-    project_work_item_infer_complete.add_argument(
-        "--min-confidence",
-        choices=("high", "medium", "low"),
-        default="high",
-        help="Minimum confidence accepted in apply mode.",
-    )
-    project_work_item_infer_complete.add_argument(
-        "--include-blocked",
-        action="store_true",
-        help="Allow blocked items to be completed when all other high-confidence gates pass.",
-    )
-    project_work_item_infer_complete.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_work_item_infer_complete.set_defaults(handler=handle_project_work_item_infer_complete)
-
-    project_sync_remote = project_subparsers.add_parser(
-        "sync-remote",
-        help="Refresh manifest.yml for declared remote SSH sources.",
-    )
-    project_sync_remote.add_argument("domain")
-    project_sync_remote.add_argument("project")
-    project_sync_remote.add_argument("--name", help="Sync only the remote with this name (default: all).")
-    project_sync_remote.add_argument("--timeout", type=int, default=20, help="SSH command timeout in seconds (default: 20).")
-    project_sync_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_sync_remote.set_defaults(handler=handle_project_sync_remote)
-
-    project_mount_remote = project_subparsers.add_parser(
-        "mount-remote",
-        help="Plan or execute an SSHFS mount for a declared remote source (dry-run by default).",
-    )
-    project_mount_remote.add_argument("domain")
-    project_mount_remote.add_argument("project")
-    project_mount_remote.add_argument("--name", help="Name of the remote to mount (default: first with a mount block).")
-    project_mount_remote.add_argument("--namespace", help="Override the local mount namespace path.")
-    project_mount_remote.add_argument("--timeout", type=int, default=20, help="SSHFS command timeout in seconds (default: 20).")
-    project_mount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    _mount_mode = project_mount_remote.add_mutually_exclusive_group()
-    _mount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned SSHFS command without mounting (default).")
-    _mount_mode.add_argument("--apply", action="store_true", help="Execute the SSHFS mount if sshfs is available and path is in an approved namespace.")
-    project_mount_remote.set_defaults(handler=handle_project_mount_remote)
-
-    project_unmount_remote = project_subparsers.add_parser(
-        "unmount-remote",
-        help="Plan or execute an SSHFS unmount for a declared remote source (dry-run by default).",
-    )
-    project_unmount_remote.add_argument("domain")
-    project_unmount_remote.add_argument("project")
-    project_unmount_remote.add_argument("--name", help="Name of the remote to unmount (default: all with a mount block).")
-    project_unmount_remote.add_argument("--timeout", type=int, default=20, help="Unmount command timeout in seconds (default: 20).")
-    project_unmount_remote.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    _unmount_mode = project_unmount_remote.add_mutually_exclusive_group()
-    _unmount_mode.add_argument("--dry-run", action="store_true", default=True, help="Print the planned unmount command without unmounting (default).")
-    _unmount_mode.add_argument("--apply", action="store_true", help="Execute the platform-appropriate unmount command.")
-    project_unmount_remote.set_defaults(handler=handle_project_unmount_remote)
-
-    project_exec = project_subparsers.add_parser(
-        "exec",
-        help="Run a command on the remote host for a remote-authoritative project.",
-    )
-    project_exec.add_argument("domain")
-    project_exec.add_argument("project")
-    project_exec.add_argument("--name", help="Name of the remote to use (default: first remote-authoritative).")
-    project_exec.add_argument("--timeout", type=int, default=60, help="SSH command timeout in seconds (default: 60).")
-    project_exec.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    project_exec.add_argument("cmd", nargs="*", metavar="command", help="Command to run remotely. Use -- to separate from options: exec acme proj -- git status")
-    project_exec.set_defaults(handler=handle_project_exec)
-
-    workflow_parser = subparsers.add_parser("workflow", help="Manage workflows.")
-    workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command", required=True)
-    workflow_create = workflow_subparsers.add_parser("create", help="Create a workflow scaffold.")
-    workflow_create.add_argument("domain")
-    workflow_create.add_argument("lane")
-    workflow_create.add_argument("name")
-    workflow_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    workflow_create.set_defaults(handler=handle_workflow_create)
-    workflow_check = workflow_subparsers.add_parser("check", help="Check workflow readiness.")
-    workflow_check.add_argument("domain")
-    workflow_check.add_argument("lane")
-    workflow_check.add_argument("workflow")
-    workflow_check.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    workflow_check.set_defaults(handler=handle_workflow_check)
-
-    program_parser = subparsers.add_parser("program", help="Manage shared OS programs.")
-    program_subparsers = program_parser.add_subparsers(dest="program_command", required=True)
-    program_create = program_subparsers.add_parser("create", help="Create a shared OSProgram scaffold.")
-    program_create.add_argument("name")
-    program_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    program_create.set_defaults(handler=handle_program_create)
-
-    instance_program_parser = subparsers.add_parser("instance-program", help="Manage domain-local OS programs.")
-    instance_program_subparsers = instance_program_parser.add_subparsers(dest="instance_program_command", required=True)
-    instance_program_create = instance_program_subparsers.add_parser(
-        "create",
-        help="Create a domain-local InstanceOSProgram scaffold.",
-    )
-    instance_program_create.add_argument("domain")
-    instance_program_create.add_argument("name")
-    instance_program_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    instance_program_create.set_defaults(handler=handle_instance_program_create)
-
-    host_parser = subparsers.add_parser("host", help="Manage the SSH host registry (config/hosts.yml).")
-    host_subparsers = host_parser.add_subparsers(dest="host_command", required=True)
-    host_add = host_subparsers.add_parser("add", help="Add or update a host alias in the registry.")
-    host_add.add_argument("alias", help="Host alias (identifier used in project remotes).")
-    host_add.add_argument("--ssh-alias", help="SSH alias that resolves via ~/.ssh/config.")
-    host_add.add_argument("--user", help="Remote username (informational).")
-    host_add.add_argument("--home", help="Absolute home/path-domain root on this host.")
-    host_add.add_argument("--description", help="Human-readable description of this host.")
-    host_add.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    host_add.set_defaults(handler=handle_host_add)
-    host_list = host_subparsers.add_parser("list", help="List registered hosts.")
-    host_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    host_list.set_defaults(handler=handle_host_list)
-    host_routing = host_subparsers.add_parser(
-        "routing",
-        help="Show cross-host routing policy and recent harness host receipts.",
-    )
-    host_routing.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    host_routing.add_argument("--recent-runs", type=int, default=8, help="Recent harness receipts to show.")
-    host_routing.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
-    host_routing.set_defaults(handler=handle_host_routing)
 
     automation_parser = subparsers.add_parser("automation", help="Manage automations.")
     automation_subparsers = automation_parser.add_subparsers(dest="automation_command", required=True)
@@ -1898,1255 +2371,3 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     adaptive_rollback.add_argument("--policy-file", required=True, help="Explicit current adaptive policy YAML.")
     adaptive_rollback.add_argument("--last-known-good-policy-file", help="Explicit prior reviewed policy YAML; metadata only.")
     adaptive_rollback.set_defaults(handler=handle_adaptive_routing_rollback_plan)
-
-    return parser
-
-
-def print_result(result) -> None:
-    messages = result.messages()
-    if not messages:
-        print("no changes")
-        return
-    for message in messages:
-        print(message)
-
-
-def handle_init(args: argparse.Namespace) -> int:
-    if args.profile:
-        print(
-            format_profile_result(
-                install_profile_os(
-                    args.target,
-                    args.profile,
-                    projects_source=args.projects_source,
-                    include_legacy_agent=args.include_legacy_agent,
-                )
-            )
-        )
-        return 0
-    domains = None
-    if getattr(args, "domains", None):
-        domains = tuple(part.strip() for part in str(args.domains).split(",") if part.strip())
-        if not domains:
-            print("--domains requires at least one domain slug", file=sys.stderr)
-            return 2
-    print_result(
-        init_os(
-            args.target,
-            projects_source=args.projects_source,
-            include_legacy_agent=args.include_legacy_agent,
-            domains=domains,
-        )
-    )
-    return 0
-
-
-def handle_domain_create(args: argparse.Namespace) -> int:
-    print_result(create_domain(args.root, args.name, include_legacy_agent=args.include_legacy_agent))
-    return 0
-
-
-def handle_profile_create(args: argparse.Namespace) -> int:
-    print(format_profile_result(write_profile_template(args.target)))
-    return 0
-
-
-def handle_profile_validate(args: argparse.Namespace) -> int:
-    profile = load_os_profile(args.profile)
-    print(format_profile_result({"profile": args.profile, "rooms": [room["slug"] for room in profile["rooms"]], "ok": True}))
-    return 0
-
-
-def handle_room_create(args: argparse.Namespace) -> int:
-    print_result(create_domain(args.root, args.room_slug))
-    return 0
-
-
-def handle_room_update(args: argparse.Namespace) -> int:
-    profile = load_os_profile(args.from_profile)
-    room = next((room for room in profile["rooms"] if room["slug"] == args.room_slug), None)
-    if room is None:
-        raise ValueError(f"room not found in profile: {args.room_slug}")
-    result = install_profile_os(args.root, args.from_profile)
-    print(format_profile_result(result))
-    return 0
-
-
-def handle_project_create(args: argparse.Namespace) -> int:
-    remotes = None
-    if getattr(args, "remote_host", None) and getattr(args, "remote_path", None):
-        remotes = [{
-            "name": args.remote_name or args.project,
-            "host": args.remote_host,
-            "path": args.remote_path,
-            "kind": args.remote_kind,
-            "authority": args.authority,
-        }]
-    print_result(
-        create_project(
-            args.root,
-            args.domain,
-            args.project,
-            repo=args.repo,
-            notion=args.notion,
-            jira=args.jira,
-            status=args.status,
-            lane=args.lane,
-            remotes=remotes,
-        )
-    )
-    return 0
-
-
-def handle_project_link_source(args: argparse.Namespace) -> int:
-    print_result(link_project_source(args.root, args.domain, args.project, repo=args.repo, force=args.force))
-    return 0
-
-
-def handle_project_link_remote(args: argparse.Namespace) -> int:
-    print_result(
-        link_project_remote(
-            args.root,
-            args.domain,
-            args.project,
-            host=args.host,
-            path=args.path,
-            name=getattr(args, "name", None),
-            kind=args.kind,
-            authority=args.authority,
-            force=args.force,
-        )
-    )
-    return 0
-
-
-def handle_project_onboard(args: argparse.Namespace) -> int:
-    print_result(onboard_project(args.root, args.domain, args.project))
-    return 0
-
-
-def handle_host_add(args: argparse.Namespace) -> int:
-    result = upsert_host(
-        args.root,
-        args.alias,
-        ssh_alias=getattr(args, "ssh_alias", None),
-        user=getattr(args, "user", None),
-        home=getattr(args, "home", None),
-        description=getattr(args, "description", None),
-    )
-    print(f"{result['action']}: {result['alias']} → {result['path']}")
-    return 0
-
-
-def handle_host_list(args: argparse.Namespace) -> int:
-    hosts = list_hosts(args.root)
-    if not hosts:
-        print("No hosts registered. Use: agentic-os host add <alias>")
-        return 0
-    for entry in hosts:
-        alias = entry.get("alias", "")
-        ssh_alias = entry.get("ssh_alias", alias)
-        home = entry.get("home", "")
-        desc = entry.get("description", "")
-        home_part = f"  home: {home}" if home else ""
-        print(f"  {alias}  (ssh_alias: {ssh_alias}){home_part}  {desc}")
-    return 0
-
-
-def handle_host_routing(args: argparse.Namespace) -> int:
-    result = host_routing_status(args.root, recent_runs=getattr(args, "recent_runs", 8))
-    if getattr(args, "json", False):
-        import json
-
-        print(json.dumps(result, indent=2, sort_keys=True))
-    else:
-        print(format_host_routing_status(result))
-    return 0
-
-
-def handle_project_sync_remote(args: argparse.Namespace) -> int:
-    result = sync_project_remote(
-        args.root,
-        args.domain,
-        args.project,
-        name=getattr(args, "name", None),
-        timeout=getattr(args, "timeout", 20),
-    )
-    for w in result.get("warnings", []):
-        print(f"warning: {w}")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    synced = result.get("synced", [])
-    if synced:
-        print(f"synced: {', '.join(synced)}")
-    else:
-        print("no remotes synced")
-    return 1 if result.get("errors") else 0
-
-
-def handle_project_mount_remote(args: argparse.Namespace) -> int:
-    apply = getattr(args, "apply", False)
-    result = mount_remote(
-        args.root,
-        args.domain,
-        args.project,
-        name=getattr(args, "name", None),
-        namespace=getattr(args, "namespace", None),
-        apply=apply,
-        timeout=getattr(args, "timeout", 20),
-    )
-    for line in result.get("plan", []):
-        print(line)
-    for w in result.get("warnings", []):
-        print(f"warning: {w}")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    if not apply:
-        print("(dry-run; use --apply to mount)")
-    elif result.get("applied"):
-        print("mount applied")
-    return 1 if result.get("errors") else 0
-
-
-def handle_project_unmount_remote(args: argparse.Namespace) -> int:
-    apply = getattr(args, "apply", False)
-    result = unmount_remote(
-        args.root,
-        args.domain,
-        args.project,
-        name=getattr(args, "name", None),
-        apply=apply,
-        timeout=getattr(args, "timeout", 20),
-    )
-    for line in result.get("plan", []):
-        print(line)
-    for w in result.get("warnings", []):
-        print(f"warning: {w}")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    if not apply:
-        print("(dry-run; use --apply to unmount)")
-    elif result.get("applied"):
-        print("unmount applied")
-    return 1 if result.get("errors") else 0
-
-
-def handle_project_exec(args: argparse.Namespace) -> int:
-    cmd_parts: list[str] = [c for c in (args.cmd or []) if c != "--"]
-    if not cmd_parts:
-        print("error: no command specified; use: agentic-os project exec <domain> <project> -- <command...>")
-        return 1
-    result = exec_remote(
-        args.root,
-        args.domain,
-        args.project,
-        cmd_parts,
-        name=getattr(args, "name", None),
-        timeout=getattr(args, "timeout", 60),
-    )
-    if result.get("stdout"):
-        print(result["stdout"], end="")
-    if result.get("stderr"):
-        print(result["stderr"], end="")
-    for e in result.get("errors", []):
-        print(f"error: {e}")
-    return 0 if result.get("ok") else 1
-
-
-def handle_project_worktree_add(args: argparse.Namespace) -> int:
-    print_result(
-        register_project_worktree(
-            args.root,
-            args.domain,
-            args.project,
-            args.name,
-            path=args.path,
-            force=args.force,
-        )
-    )
-    return 0
-
-
-def handle_project_worktree_create(args: argparse.Namespace) -> int:
-    print_result(
-        create_project_worktree(
-            args.root,
-            args.domain,
-            args.project,
-            args.name,
-            repo=args.repo,
-            branch=args.branch,
-        )
-    )
-    return 0
-
-
-def handle_project_worktree_cleanup_closed(args: argparse.Namespace) -> int:
-    print(
-        yaml_dump(
-            cleanup_terminal_worktrees(
-                args.root,
-                domain=args.domain,
-                project=args.project,
-                apply=args.apply,
-                remove_files=args.remove_files,
-            )
-        )
-    )
-    return 0
-
-
-def handle_project_work_item_create(args: argparse.Namespace) -> int:
-    print_result(
-        create_project_work_item(
-            args.root,
-            args.domain,
-            args.project,
-            title=args.title,
-            summary=args.summary,
-            status=args.status,
-            work_id=args.work_id,
-            item_format=args.format,
-        )
-    )
-    return 0
-
-
-def handle_project_work_item_repair(args: argparse.Namespace) -> int:
-    print_result(
-        repair_project_work_item(
-            args.root,
-            args.domain,
-            args.project,
-            work_item=args.work_item,
-            all_items=args.all,
-        )
-    )
-    return 0
-
-
-def handle_project_work_item_sync_active(args: argparse.Namespace) -> int:
-    print(yaml_dump(sync_active_container(args.root, domain=args.domain, project=args.project)))
-    return 0
-
-
-def handle_project_work_item_finalize_lingering(args: argparse.Namespace) -> int:
-    print(yaml_dump(finalize_lingering_work_items(args.root, domain=args.domain, project=args.project, apply=args.apply)))
-    return 0
-
-
-def handle_project_work_item_infer_complete(args: argparse.Namespace) -> int:
-    print(
-        yaml_dump(
-            infer_complete_work_items(
-                args.root,
-                domain=args.domain,
-                project=args.project,
-                older_than_days=args.older_than_days,
-                min_confidence=args.min_confidence,
-                include_blocked=args.include_blocked,
-                apply=args.apply,
-            )
-        )
-    )
-    return 0
-
-
-def handle_workflow_create(args: argparse.Namespace) -> int:
-    print_result(create_workflow(args.root, args.domain, args.lane, args.name))
-    return 0
-
-
-def handle_workflow_check(args: argparse.Namespace) -> int:
-    print(format_findings(check_workflow(args.root, args.domain, args.lane, args.workflow)))
-    return 0
-
-
-def handle_program_create(args: argparse.Namespace) -> int:
-    print_result(create_program(args.root, args.name))
-    return 0
-
-
-def handle_instance_program_create(args: argparse.Namespace) -> int:
-    print_result(create_instance_program(args.root, args.domain, args.name))
-    return 0
-
-
-def handle_automation_create(args: argparse.Namespace) -> int:
-    print_result(create_automation(args.root, args.domain, args.lane, args.name))
-    return 0
-
-
-def handle_automation_check(args: argparse.Namespace) -> int:
-    print(format_automation_check(check_automation(args.root, args.domain, args.lane, args.automation)))
-    return 0
-
-
-def handle_automation_attach(args: argparse.Namespace) -> int:
-    result = attach_automation(args.root, args.domain, args.lane, args.automation, args.project)
-    print(yaml_dump(result))
-    return 0
-
-
-def handle_automation_set_maturity(args: argparse.Namespace) -> int:
-    result = set_automation_maturity(args.root, args.domain, args.lane, args.automation, args.level)
-    print(yaml_dump(result))
-    return 0
-
-
-def handle_automation_control_list(args: argparse.Namespace) -> int:
-    print(format_automation_control_result(list_automation_control(args.root)))
-    return 0
-
-
-def handle_automation_control_doctor(args: argparse.Namespace) -> int:
-    result = automation_control_doctor(args.root)
-    print(format_automation_control_result(result))
-    return 0 if result.get("ok") else 1
-
-
-def handle_automation_control_run(args: argparse.Namespace) -> int:
-    print(format_automation_control_result(run_automation_control(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_run_log_create(args: argparse.Namespace) -> int:
-    print_result(create_run_log(args.root, args.domain, args.workflow_or_automation))
-    return 0
-
-
-def handle_run_log_close(args: argparse.Namespace) -> int:
-    result = close_run_log(
-        args.root,
-        args.domain,
-        args.run_id,
-        status=args.status,
-        summary=args.summary,
-        validation=args.validation,
-        artifacts=args.artifact,
-        approvals=args.approval,
-        next_action=args.next_action,
-        owner=args.owner,
-        learning=args.learning,
-        project=args.project,
-    )
-    if args.emit_events:
-        result["emitted_event"] = emit_run_close_event(args.root, result)
-    print(yaml_dump(result))
-    return 0
-
-
-def handle_thread_closeout(args: argparse.Namespace) -> int:
-    result = close_thread(
-        args.root,
-        mode=args.closeout_mode,
-        thread_id=args.thread_id,
-        domain=args.domain,
-        project=args.project,
-        work_item=args.work_item,
-        work_level=args.work_level,
-        summary=args.summary,
-        next_action=args.next_action,
-        validations=args.validation,
-        artifacts=args.artifact,
-        receipts=args.receipt,
-        memory_receipts=args.memory_receipt,
-        notion_url=args.notion_url,
-        notion_warning=args.notion_warning,
-        verified_notion_workspace=args.verified_notion_workspace,
-        skip_notion=args.skip_notion,
-        allow_blocked_archive=args.allow_blocked_archive,
-        request=args.request,
-        cwd=args.cwd,
-    )
-    print(format_thread_closeout_result(result))
-    return 0
-
-
-def handle_thread_stale_finalize(args: argparse.Namespace) -> int:
-    result = stale_finalize_threads(
-        args.root,
-        older_than_days=args.older_than_days,
-        domain=args.domain,
-        project=args.project,
-        apply=args.apply,
-    )
-    print(format_thread_closeout_result(result))
-    return 0
-
-
-def yaml_dump(value) -> str:
-    import yaml
-
-    return yaml.safe_dump(value, sort_keys=False).strip()
-
-
-def handle_route(args: argparse.Namespace) -> int:
-    print(format_packet(route_request(args.root, args.request)))
-    return 0
-
-
-def handle_context_build(args: argparse.Namespace) -> int:
-    domain = args.domain
-    project = args.project
-    workflow = args.workflow
-    lane = args.lane
-    cwd = Path.cwd()
-
-    if not domain:
-        inferred = detect_from_cwd(Path(args.root).expanduser().resolve(), cwd)
-        domain = inferred.get("domain")
-        if not project:
-            project = inferred.get("project")
-        if not workflow:
-            workflow = inferred.get("workflow")
-        if not lane:
-            lane = inferred.get("lane")
-
-    if not domain and project:
-        matches = [record for record in project_records(Path(args.root).expanduser().resolve()) if record["project"] == project]
-        if len(matches) == 1:
-            domain = matches[0]["domain"]
-            lane = lane or matches[0].get("lane") or None
-        elif len(matches) > 1:
-            raise ValueError(f"project is ambiguous; specify --domain: {project}")
-
-    if not domain:
-        raise ValueError("domain is required unless current directory or unique --project identifies a domain")
-
-    print(
-        format_packet(
-            build_context(
-                args.root,
-                domain=domain,
-                project=project,
-                work_item=args.work_item,
-                workflow=workflow,
-                lane=lane,
-                cwd=cwd,
-            )
-        )
-    )
-    return 0
-
-
-def handle_here_route(args: argparse.Namespace) -> int:
-    print(format_packet(route_request(args.root, args.request, cwd=Path.cwd())))
-    return 0
-
-
-def handle_here_context_build(args: argparse.Namespace) -> int:
-    print(format_packet(context_from_here(args.root, cwd=Path.cwd())))
-    return 0
-
-
-def handle_customer_init(args: argparse.Namespace) -> int:
-    print(format_customer_result(customer_init(args.customer_slug, args.profile, args.target)))
-    return 0
-
-
-def handle_customer_update(args: argparse.Namespace) -> int:
-    print(format_customer_result(customer_update(args.customer_slug, args.root)))
-    return 0
-
-
-def handle_customer_validate(args: argparse.Namespace) -> int:
-    result = customer_validate(args.root)
-    print(format_customer_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_customer_brief(args: argparse.Namespace) -> int:
-    import json
-
-    result = scaffold_customer_brief(args.root, args.domain, args.name)
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def handle_update_check(args: argparse.Namespace) -> int:
-    print(format_update_result(update_check(args.root, manifest=args.manifest)))
-    return 0
-
-
-def handle_update_register(args: argparse.Namespace) -> int:
-    print(format_update_result(update_register(args.root)))
-    return 0
-
-
-def handle_update_pull(args: argparse.Namespace) -> int:
-    print(format_update_result(update_pull(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_update_plan(args: argparse.Namespace) -> int:
-    print(format_update_result(update_plan(args.root, manifest=args.manifest)))
-    return 0
-
-
-def handle_update_apply(args: argparse.Namespace) -> int:
-    result = update_apply(args.root, plan=args.plan, approve_risky=args.approve_risky)
-    print(format_update_result(result))
-    return 2 if result.get("blocked") else 0
-
-
-def handle_update_rollback(args: argparse.Namespace) -> int:
-    print(format_update_result(update_rollback(args.root, snapshot=args.snapshot)))
-    return 0
-
-
-def handle_update_status(args: argparse.Namespace) -> int:
-    print(format_update_result(update_status(args.root)))
-    return 0
-
-
-def handle_update_phone_home(args: argparse.Namespace) -> int:
-    print(format_update_result(phone_home_payload(args.root)))
-    return 0
-
-
-def handle_license_activate(args: argparse.Namespace) -> int:
-    print(format_update_result(activate_license(args.root, key=args.key)))
-    return 0
-
-
-def handle_backup_run(args: argparse.Namespace) -> int:
-    print(format_update_result(backup_run(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_backup_push(args: argparse.Namespace) -> int:
-    print(format_update_result(backup_push(args.root)))
-    return 0
-
-
-def handle_backup_restore_plan(args: argparse.Namespace) -> int:
-    print(format_update_result(backup_restore_plan(args.root, backup_log=args.backup_log)))
-    return 0
-
-
-def handle_fleet_push(args: argparse.Namespace) -> int:
-    print(format_update_result(fleet_push(args.customer_slug, source=args.source)))
-    return 0
-
-
-def handle_metrics_refresh(args: argparse.Namespace) -> int:
-    print(format_metrics_result(metrics_refresh(args.root)))
-    return 0
-
-
-def handle_config_install(args: argparse.Namespace) -> int:
-    result = install_config(
-        args.root,
-        layer=args.layer,
-        dry_run=not args.apply,
-        backup=args.backup,
-        confirm_conflicts=args.confirm_conflicts,
-    )
-    print(yaml_dump(result.as_dict()))
-    return 2 if result.blocked else 0
-
-
-def handle_config_install_tree(args: argparse.Namespace) -> int:
-    result = install_config_tree(
-        args.root,
-        dry_run=not args.apply,
-        backup=args.backup,
-        confirm_conflicts=args.confirm_conflicts,
-    )
-    print(yaml_dump(result.as_dict()))
-    return 2 if result.blocked else 0
-
-
-def handle_config_doctor(args: argparse.Namespace) -> int:
-    result = doctor_config(args.root, layer=args.layer)
-    print(yaml_dump(result))
-    return 0 if (result["ok"] if isinstance(result, dict) else True) else 1
-
-
-def handle_doc_config_init(args: argparse.Namespace) -> int:
-    print(format_doc_config_result(init_doc_config(args.root, domain=args.domain, project=args.project)))
-    return 0
-
-
-def handle_doc_config_doctor(args: argparse.Namespace) -> int:
-    result = doc_config_doctor(args.root)
-    print(format_doc_config_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_doc_config_plan(args: argparse.Namespace) -> int:
-    print(
-        format_doc_config_result(
-            build_doc_config_plan(
-                args.root,
-                request=args.request,
-                domain=args.domain,
-                project=args.project,
-                work_item=args.work_item,
-                questions_present=args.questions_present,
-            )
-        )
-    )
-    return 0
-
-
-def handle_hook_sync(args: argparse.Namespace) -> int:
-    result = hook_sync(
-        args.root,
-        target=args.target,
-        dry_run=not args.apply,
-        backup=args.backup,
-        codex_hooks_path=args.codex_hooks_path,
-        claude_settings_path=args.claude_settings_path,
-    )
-    print(yaml_dump(result.as_dict()))
-    return 1 if result.findings else 0
-
-
-def handle_hook_doctor(args: argparse.Namespace) -> int:
-    result = hook_doctor(
-        args.root,
-        target=args.target,
-        codex_hooks_path=args.codex_hooks_path,
-        claude_settings_path=args.claude_settings_path,
-    )
-    print(yaml_dump(result.as_dict()))
-    return 0 if result.ok else 1
-
-
-def handle_notion_plan_sync(args: argparse.Namespace) -> int:
-    print(format_sync_result(build_sync_plan(args.root)))
-    return 0
-
-
-def handle_notion_sync(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        print(format_sync_result(build_sync_plan(args.root)))
-    else:
-        print(format_sync_result(apply_sync_plan(args.root, verified_workspace=args.verified_workspace)))
-    return 0
-
-
-def handle_notion_bootstrap(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        print(format_sync_result(build_bootstrap_plan(args.root, parent_page_id=args.parent_page_id)))
-    else:
-        print(
-            format_sync_result(
-                apply_bootstrap_plan(
-                    args.root,
-                    verified_workspace=args.verified_workspace,
-                    parent_page_id=args.parent_page_id,
-                )
-            )
-        )
-    return 0
-
-
-def handle_notion_track_runtime(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        print(format_runtime_result(build_runtime_tracking_plan(args.root)))
-    else:
-        print(format_runtime_result(apply_runtime_tracking(args.root, verified_workspace=args.verified_workspace)))
-    return 0
-
-
-def handle_notion_active_work_sync(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        print(format_sync_result(build_active_work_sync_plan(args.root, database_id=args.database_id)))
-    else:
-        print(
-            format_sync_result(
-                apply_active_work_sync(
-                    args.root,
-                    database_id=args.database_id,
-                    verified_workspace=args.verified_workspace,
-                    token_env=args.token_env,
-                )
-            )
-        )
-    return 0
-
-
-def handle_notion_org_doctor(args: argparse.Namespace) -> int:
-    result = doctor_notion_org(args.root, backup_dir=args.backup_dir)
-    print(format_notion_org_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_runtime_init(args: argparse.Namespace) -> int:
-    print(format_runtime_result(runtime_init(args.root)))
-    return 0
-
-
-def handle_runtime_doctor(args: argparse.Namespace) -> int:
-    result = runtime_doctor(args.root)
-    print(format_runtime_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_runtime_run_next(args: argparse.Namespace) -> int:
-    result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
-    print(format_runtime_result(result))
-    return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
-
-
-def handle_run_queue_prune(args: argparse.Namespace) -> int:
-    result = run_queue_prune(
-        args.root,
-        dry_run=not args.apply,
-        active_max_age_hours=args.active_max_age_hours,
-        terminal_max_age_days=args.terminal_max_age_days,
-        failed_max_age_days=args.failed_max_age_days,
-        skipped_max_age_days=args.skipped_max_age_days,
-        backup_max_age_days=args.backup_max_age_days,
-        archive=args.archive,
-    )
-    print(format_runtime_result(result))
-    return 0
-
-
-def handle_runtime_supervise(args: argparse.Namespace) -> int:
-    result = supervise_tick(args.root, dry_run=not args.apply)
-    print(format_supervise_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_heartbeat_list(args: argparse.Namespace) -> int:
-    print(format_runtime_result(heartbeat_list(args.root)))
-    return 0
-
-
-def handle_heartbeat_run(args: argparse.Namespace) -> int:
-    print(format_runtime_result(heartbeat_run(args.root, args.heartbeat_id, dry_run=not args.apply)))
-    return 0
-
-
-def handle_schedule_create(args: argparse.Namespace) -> int:
-    print(
-        format_runtime_result(
-            schedule_create(
-                args.root,
-                args.schedule_id,
-                cadence=args.cadence,
-                timezone_name=args.timezone,
-                command=args.command,
-            )
-        )
-    )
-    return 0
-
-
-def handle_schedule_run_due(args: argparse.Namespace) -> int:
-    print(format_runtime_result(schedule_run_due(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_integration_list(args: argparse.Namespace) -> int:
-    print(format_runtime_result(integration_list(args.root)))
-    return 0
-
-
-def handle_integration_setup(args: argparse.Namespace) -> int:
-    print(format_runtime_result(integration_setup(args.root, args.integration_id, dry_run=not args.apply)))
-    return 0
-
-
-def handle_integration_doctor(args: argparse.Namespace) -> int:
-    result = integration_doctor(args.root, args.integration_id)
-    print(format_runtime_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_doctor(args: argparse.Namespace) -> int:
-    if getattr(args, "all_systems", False):
-        result = doctor_all(args.root)
-    else:
-        result = doctor(args.root, fix_missing=args.fix_missing)
-    if getattr(args, "check_remotes", False):
-        from ..hosts import load_hosts  # noqa: PLC0415
-        from ..validate import validate_project_remotes_connectivity  # noqa: PLC0415
-
-        root_path = Path(args.root).expanduser()
-        try:
-            hosts = load_hosts(root_path)
-        except ValueError:
-            hosts = {}
-        # Unreachable hosts are a warning state by spec — never flip doctor ok.
-        connectivity_warnings = validate_project_remotes_connectivity(root_path, hosts)
-        if isinstance(result.get("warnings"), list):
-            result["warnings"].extend(connectivity_warnings)
-        else:
-            result["warnings"] = connectivity_warnings
-    print(format_doctor_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_migrate_plan(args: argparse.Namespace) -> int:
-    print(format_migration_result(migrate_plan(args.root)))
-    return 0
-
-
-def handle_migrate_apply(args: argparse.Namespace) -> int:
-    print(format_migration_result(migrate_apply(args.root, args.migration_id)))
-    return 0
-
-
-def handle_plan_capture(args: argparse.Namespace) -> int:
-    print(
-        format_plan_result(
-            capture_plan(
-                args.root,
-                title=args.title,
-                summary=args.summary,
-                kind=args.kind,
-                domain=args.domain,
-                project=args.project,
-            )
-        )
-    )
-    return 0
-
-
-def handle_self_improvement_run(args: argparse.Namespace) -> int:
-    # Bare invocation and --dry-run both produce dry_run=True (read-only, SPEC 15 first-run safety).
-    # Only --apply flips to persist mode.
-    print(format_self_improvement_result(run_self_improvement(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_self_improvement_status(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(self_improvement_status(args.root)))
-    return 0
-
-
-def handle_self_improvement_list(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(list_self_improvement_proposals(args.root)))
-    return 0
-
-
-def handle_self_improvement_show(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(show_self_improvement_proposal(args.root, args.proposal_id)))
-    return 0
-
-
-def handle_self_improvement_approve(args: argparse.Namespace) -> int:
-    print(
-        format_self_improvement_result(
-            approve_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
-        )
-    )
-    return 0
-
-
-def handle_self_improvement_reject(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(reject_self_improvement_proposal(args.root, args.proposal_id)))
-    return 0
-
-
-def handle_self_improvement_promote(args: argparse.Namespace) -> int:
-    print(
-        format_self_improvement_result(
-            promote_self_improvement_proposal(args.root, args.proposal_id, target=args.target)
-        )
-    )
-    return 0
-
-
-def handle_self_improvement_actions(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(process_self_improvement_actions(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_self_improvement_reconcile_queue(args: argparse.Namespace) -> int:
-    print(format_self_improvement_result(reconcile_self_improvement_queue(args.root, dry_run=not args.apply)))
-    return 0
-
-
-def handle_self_improvement_nightly_apply(args: argparse.Namespace) -> int:
-    print(
-        format_self_improvement_result(
-            nightly_apply_self_improvement(args.root, dry_run=not args.apply, limit=args.limit)
-        )
-    )
-    return 0
-
-
-def handle_connected_system_list(args: argparse.Namespace) -> int:
-    print(format_source_watch_result(list_connected_systems(args.root)))
-    return 0
-
-
-def handle_connected_system_doctor(args: argparse.Namespace) -> int:
-    result = doctor_connected_system(args.root, args.system_id)
-    print(format_source_watch_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_watch_source_list(args: argparse.Namespace) -> int:
-    print(format_source_watch_result(list_watch_sources(args.root)))
-    return 0
-
-
-def handle_watch_source_create(args: argparse.Namespace) -> int:
-    result = create_watch_source(
-        args.root,
-        args.source_id,
-        connected_system=args.connected_system,
-        source_type=args.source_type,
-        display_name=args.display_name,
-        cadence=args.cadence,
-        external_ref=parse_external_refs(args.external_ref),
-        route_to=args.route_to,
-        enabled=args.enabled,
-    )
-    print(format_source_watch_result(result))
-    return 0
-
-
-def handle_watch_source_doctor(args: argparse.Namespace) -> int:
-    result = doctor_watch_source(args.root, args.source_id)
-    print(format_source_watch_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_watch_source_poll(args: argparse.Namespace) -> int:
-    result = poll_watch_source(args.root, args.source_id, dry_run=args.dry_run)
-    print(format_source_watch_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_watch_source_run_due(args: argparse.Namespace) -> int:
-    print(format_source_watch_result(run_due_watch_sources(args.root, dry_run=args.dry_run)))
-    return 0
-
-
-def handle_ps(args: argparse.Namespace) -> int:
-    mode = "all" if args.all else "active" if args.active else "now"
-    color = args.color == "always" or (args.color == "auto" and sys.stdout.isatty())
-    result = ps_snapshot(
-        args.root,
-        mode=mode,
-        limit=args.limit,
-        stale_days=args.stale_days,
-    )
-    result["prog"] = Path(sys.argv[0]).name if Path(sys.argv[0]).name in {"agentic-os", "aos"} else "agentic-os"
-    print(format_ps_result(result, as_json=args.json, color=color))
-    return 0
-
-
-def handle_event_append(args: argparse.Namespace) -> int:
-    print(
-        format_event_graph_result(
-            append_event(
-                args.root,
-                event_type=args.event_type,
-                source_ref=args.source_ref,
-                summary=args.summary,
-                correlation_id=args.correlation_id,
-            )
-        )
-    )
-    return 0
-
-
-def handle_event_list(args: argparse.Namespace) -> int:
-    print(format_event_graph_result(list_events(args.root, limit=args.limit)))
-    return 0
-
-
-def handle_event_summary(args: argparse.Namespace) -> int:
-    print(format_event_graph_result(summarize_events(args.root, limit=args.limit)))
-    return 0
-
-
-def handle_event_process_due(args: argparse.Namespace) -> int:
-    print(format_event_graph_result(process_due(args.root, dry_run=args.dry_run)))
-    return 0
-
-
-def handle_event_replay(args: argparse.Namespace) -> int:
-    print(format_event_graph_result(replay_event(args.root, args.event_id, dry_run=args.dry_run)))
-    return 0
-
-
-def handle_chain_list(args: argparse.Namespace) -> int:
-    print(format_event_graph_result(chain_list(args.root)))
-    return 0
-
-
-def handle_chain_test(args: argparse.Namespace) -> int:
-    print(format_event_graph_result(test_chain_rule(args.root, args.chain_rule_id, args.event)))
-    return 0
-
-
-def handle_chain_doctor(args: argparse.Namespace) -> int:
-    result = chain_doctor(args.root)
-    print(format_event_graph_result(result))
-    return 0 if result["ok"] else 1
-
-
-def handle_validate(args: argparse.Namespace) -> int:
-    result = validate_root(args.root)
-    strict_findings: list[StrictFinding] = []
-    if getattr(args, "strict", False):
-        from pathlib import Path as _Path  # noqa: PLC0415
-        strict_findings = validate_schemas_strict(_Path(args.root).expanduser())
-    if result.ok and not strict_findings:
-        print(f"valid: {Path(args.root).expanduser()}")
-        for warning in result.warnings:
-            print(f"warning: {warning}", file=sys.stderr)
-        return 0
-    for error in result.errors:
-        print(f"error: {error}", file=sys.stderr)
-    for warning in result.warnings:
-        print(f"warning: {warning}", file=sys.stderr)
-    for finding in strict_findings:
-        print(f"strict: [{finding.schema}] {finding.path}: {finding.message}", file=sys.stderr)
-    return 1 if (result.errors or strict_findings) else 0
-
-
-def handle_docs_install(args: argparse.Namespace) -> int:
-    print_result(install_docs(args.root))
-    return 0
-
-
-def handle_docs_update(args: argparse.Namespace) -> int:
-    print_result(install_docs(args.root))
-    return 0
-
-
-def handle_docs_upkeep(args: argparse.Namespace) -> int:
-    result = build_documentation_upkeep_plan(
-        args.root,
-        write_receipt=bool(args.write_receipt),
-        output_dir=args.output_dir,
-    )
-    print(format_documentation_upkeep_result(result))
-    return 0 if result.get("ok") else 1
-
-
-def handle_adaptive_routing_plan(args: argparse.Namespace) -> int:
-    document = load_explicit_policy(args.policy_file)
-    report = load_holdout_report(args.holdout_report)
-    result, exit_code = build_adaptive_plan(
-        task=args.task,
-        document=document,
-        tier=args.tier,
-        model_override=args.model_override,
-        reasoning_effort=args.reasoning_effort,
-        owner_identifier=args.owner_id,
-        owner_kind=args.owner_kind,
-        owner_minimum_tier=args.owner_minimum_tier,
-        owner_verification=tuple(args.owner_verification),
-        no_sub_agents=args.no_sub_agents,
-        holdout_report=report,
-    )
-    print(adaptive_canonical_json(result))
-    return exit_code
-
-
-def handle_adaptive_routing_observe(args: argparse.Namespace) -> int:
-    try:
-        config = load_observation_config(args.root, args.config_file)
-        paths = observation_paths(args.root, config)
-        document = load_explicit_policy(args.policy_file or paths["policy"])
-        result, exit_code = build_adaptive_plan(
-            task=args.task,
-            document=document,
-            tier=args.tier,
-            model_override=args.model_override,
-            reasoning_effort=args.reasoning_effort,
-            no_sub_agents=args.no_sub_agents,
-        )
-        try:
-            observation = record_plan_observation(
-                args.root,
-                result,
-                policy_fingerprint=runtime_policy_fingerprint(document),
-                correlation_id=args.correlation_id,
-                config_file=args.config_file,
-            )
-        except DuplicateCorrelationError:
-            observation = {"status": "already_observed", "written": False}
-        print(adaptive_canonical_json({**result, "observation": observation}))
-        return exit_code
-    except (ObservationRunnerError, OSError) as exc:
-        raise ValueError(str(exc)) from exc
-
-
-def handle_adaptive_routing_report(args: argparse.Namespace) -> int:
-    try:
-        result = run_observation_report(
-            args.root,
-            hours=args.hours,
-            apply_notion=args.apply_notion,
-            config_file=args.config_file,
-        )
-    except (ObservationRunnerError, ObservationProjectionError, OSError) as exc:
-        raise ValueError(str(exc)) from exc
-    print(adaptive_canonical_json(result))
-    return 1 if result.get("status") == "complete_with_projection_blocked" else 0
-
-
-def handle_adaptive_routing_evaluate(args: argparse.Namespace) -> int:
-    document = load_explicit_policy(args.policy_file)
-    result, exit_code = evaluate_adaptive_holdout(
-        holdout_file=args.holdout_file,
-        document=document,
-        approval_granted=args.approve,
-    )
-    print(adaptive_canonical_json(result))
-    return exit_code
-
-
-def handle_adaptive_routing_status(args: argparse.Namespace) -> int:
-    document = load_explicit_policy(args.policy_file)
-    report = load_holdout_report(args.holdout_report)
-    result, exit_code = adaptive_routing_status(
-        document=document,
-        holdout_report=report,
-    )
-    print(adaptive_canonical_json(result))
-    return exit_code
-
-
-def handle_adaptive_routing_rollback_plan(args: argparse.Namespace) -> int:
-    document = load_explicit_policy(args.policy_file)
-    last_known_good = (
-        load_explicit_policy(args.last_known_good_policy_file)
-        if args.last_known_good_policy_file
-        else None
-    )
-    result, exit_code = build_adaptive_rollback_plan(
-        document=document,
-        last_known_good=last_known_good,
-    )
-    print(adaptive_canonical_json(result))
-    return exit_code
-
-
-def main(argv: list[str] | None = None) -> int:
-    prog = Path(sys.argv[0]).name if argv is None else "agentic-os"
-    if prog not in {"agentic-os", "aos"}:
-        prog = "agentic-os"
-    parser = build_parser(prog=prog)
-    parse_argv = list(sys.argv[1:] if argv is None else argv)
-    project_exec_cmd: list[str] | None = None
-    if parse_argv[:2] == ["project", "exec"] and "--" in parse_argv:
-        separator = parse_argv.index("--")
-        project_exec_cmd = parse_argv[separator + 1 :]
-        parse_argv = parse_argv[:separator]
-    args = parser.parse_args(parse_argv)
-    if project_exec_cmd is not None and getattr(args, "handler", None) == handle_project_exec:
-        args.cmd = project_exec_cmd
-    try:
-        return args.handler(args)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
