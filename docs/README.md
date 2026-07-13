@@ -11,7 +11,7 @@ mechanical work, and one agent reads the right files at the right moment.
 
 **Validated baseline (2026-06-09):** 53 CLI commands functional · 2 deliberate
 guardrail exits · 0 crashes · 97/97 tests pass. Re-validate with
-`bash .agentic-atlas/tools/validate-cli.sh` and `.venv/bin/python -m pytest -q`.
+`bash docs/architecture/tools/validate-cli.sh` and `.venv/bin/python -m pytest -q`.
 
 **Canonical doc split:** Use this `docs/` handbook when you are evaluating,
 installing, or extending the source package and need architecture, command
@@ -37,8 +37,8 @@ vs Codex"** callout for its task; the full mechanics live on
 | --- | --- |
 | **New** | [00 · Overview](00-overview.md) → [01 · Install & Quickstart](01-install-and-quickstart.md) → [03 · Operating Model](03-operating-model.md) |
 | **An operator** (running daily work) | [03 · Operating Model](03-operating-model.md) → [05 · Routing](05-routing-and-context.md) → [06 · Workflows](06-workflows.md) → [08 · Runs](08-runs-and-run-logs.md) |
-| **A builder** (extending the OS) | [02 · Architecture](02-architecture.md) → [`.agentic-atlas/`](../.agentic-atlas/START-HERE.md) (the architecture map + "how to extend without making a mess") |
-| **An agent resuming work** | [`.agentic-atlas/START-HERE.md`](../.agentic-atlas/START-HERE.md) — the validated inventory, so you don't re-analyze the repo |
+| **A builder** (extending the OS) | [02 · Architecture](02-architecture.md) → [`architecture/`](architecture/system-architecture.md) (the architecture map + "how to extend without making a mess") |
+| **An agent resuming work** | [`architecture/system-architecture.md`](architecture/system-architecture.md) — the maintained architecture map, so you don't re-analyze the repo |
 
 ---
 
@@ -102,11 +102,11 @@ packet before implementation continues.
 
 - **[Feature guides](13-feature-guides/)** — deeper, feature-by-feature implementation guides and gap maps.
 - **[Tutorials](tutorials/)** — worked, scenario-based walkthroughs.
-- **[The Atlas](../.agentic-atlas/START-HERE.md)** — the agent-facing, validated inventory: architecture map, command reference, harness-modes, gap register, backlog, and the re-runnable validation + diagram tools.
+- **[Architecture](architecture/system-architecture.md)** — the agent-facing architecture map, command reference, harness-modes, and the re-runnable validation + diagram tools under `architecture/tools/`.
 - **[`_archive/`](_archive/)** — the previous conceptual docs (superseded by the pages above; kept for history).
 
 ## About the diagrams
 
 Diagrams are authored as Mermaid `.mmd` sources (gitignored, per repo policy) and
 committed as rendered **PNG** under [`diagrams/`](diagrams/). Regenerate after any
-edit with `bash .agentic-atlas/tools/render-diagrams.sh`.
+edit with `bash docs/architecture/tools/render-diagrams.sh`.

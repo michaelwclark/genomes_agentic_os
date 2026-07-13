@@ -5,9 +5,9 @@ Genome's Agentic OS is the source package for creating a local operating system 
 The goal is simple: stop rebuilding operating context from scratch in every chat.
 
 > **New here?** Read the handbook in [`docs/`](docs/README.md). Maintainers and
-> agents: start at [`.agentic-atlas/START-HERE.md`](.agentic-atlas/START-HERE.md) —
-> the validated inventory, architecture map, command reference, gap register, and
-> backlog, so you never re-analyze the repo from scratch.
+> agents: start at [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md) —
+> the maintained architecture map and command reference, so you never
+> re-analyze the repo from scratch.
 
 ## What This Creates
 
@@ -308,7 +308,6 @@ agentic-os init --target ~/agentic_os
 ```text
 docs/       Human-readable operating manual and diagrams.
 SPECS/     Preferred future-work specs and planning backlog.
-PLANS/     Legacy source-package plan backlog, still copied for compatibility.
 spec/       Product and implementation specs.
 templates/  Copyable source templates for installed OS objects.
 schemas/    JSON schemas for future stricter validation.

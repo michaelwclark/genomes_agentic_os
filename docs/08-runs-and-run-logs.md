@@ -226,4 +226,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [10 · Events & Chains](10-events-and-chains.md) — what `--emit-events` feeds into.
 - [17 · CLI Reference](17-cli-reference.md) — full flag reference for `run-log`.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — common errors.
-- Atlas: [`architecture/command-reference.md` §4](../.agentic-atlas/architecture/command-reference.md) · [`validation/command-output-examples.md` §13–14](../.agentic-atlas/validation/command-output-examples.md)
+- Atlas: [`architecture/command-reference.md` §4](architecture/command-reference.md) · `validation/command-output-examples.md` §13–14

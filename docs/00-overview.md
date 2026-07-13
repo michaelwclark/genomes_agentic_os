@@ -201,7 +201,7 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **Exit codes are consistent:** `0` = ok, `1` = health check failed,
   `2` = usage error or deliberate refusal (e.g., low-confidence routing).
 - **Notion and the always-on dispatcher are designed but not running.** Gap A and
-  Gap B from the [gap register](../.agentic-atlas/gap-register.md) are the two
+  Gap B from the gap register are the two
   places where the docs describe more than V1 currently runs. Read that file before
   building against those surfaces.
 
@@ -215,4 +215,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [04 · Information Architecture](04-information-architecture.md) — the numbered folder scheme in detail.
 - [05 · Routing & Context](05-routing-and-context.md) — how a request becomes a ContextPacket.
 - [17 · CLI Reference](17-cli-reference.md) — every command, every flag.
-- Atlas: [`architecture/system-architecture.md`](../.agentic-atlas/architecture/system-architecture.md) · [`gap-register.md`](../.agentic-atlas/gap-register.md)
+- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) · `gap-register.md`

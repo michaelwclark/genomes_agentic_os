@@ -1,9 +1,9 @@
 # Genome's Agentic OS — CLI Command Reference
 
-> Authoritative reference for `agentic-os`. Generated from `src/genomes_agentic_os/cli.py` (argparse),
-> `.agentic-atlas/validation/RESULTS.md` (statuses), and
-> `.agentic-atlas/validation/command-output-examples.md` (real output).
-> Do NOT edit manually — re-derive from those three sources.
+> Authoritative reference for `agentic-os`. Generated from
+> `src/genomes_agentic_os/cli.py` (argparse) plus the receipts written by
+> `docs/architecture/tools/validate-cli.sh` (statuses and real output).
+> Do NOT edit manually — re-derive from those sources.
 
 ---
 
@@ -1533,7 +1533,7 @@ Status: not individually validated in RESULTS.md.
 
 ---
 
-## 12. Migration & validation: `migrate` / `losmon` / `plan`
+## 12. Migration & validation: `migrate` / `plan`
 
 ### `migrate plan`
 
@@ -1567,26 +1567,6 @@ agentic-os migrate apply migration_001 --root /tmp/aos-ref
 ```
 
 Status: not individually validated in RESULTS.md.
-
----
-
-### `losmon validate`
-
-Validate the Agentic OS root against LOSMon replacement needs (creates validation objects).
-
-| Arg / Flag | Required | Description |
-|---|---|---|
-| `--root` | No | Installed OS root path |
-| `--repo` | No | LOS or losmon repository path |
-
-Writes: validation objects.
-
-```bash
-agentic-os losmon validate --root /tmp/aos-ref
-agentic-os losmon validate --root /tmp/aos-ref --repo /Users/genome/projects/losmon
-```
-
-Status: **OK** (rc 0)
 
 ---
 
@@ -1684,6 +1664,6 @@ Status: **OK** (rc 0)
 |---|---|---|
 | **OK** | 52 | Exits 0 as expected |
 | **GUARDED** | 1 | `here route` (rc 2, low confidence) |
-| Total validated | 53 | See `.agentic-atlas/validation/RESULTS.md` for full matrix |
+| Total validated | 53 | Re-run `docs/architecture/tools/validate-cli.sh` for the current matrix |
 
 Commands not in the 53-invocation matrix (`room`, `here context build`, `connected-system doctor`, `run-queue prune`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap/track-runtime`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.

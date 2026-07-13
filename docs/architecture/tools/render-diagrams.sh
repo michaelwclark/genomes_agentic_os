@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Render every Mermaid .mmd source under docs/diagrams/ (and .agentic-atlas/diagrams/)
+# Render every Mermaid .mmd source under docs/ (including docs/architecture/diagrams/)
 # to PNG, using the local Chrome via puppeteer (no Chromium download).
 #
 # Diagrams are authored as checked-in .mmd text (diffable) and rendered to .png.
-# Re-run after editing any .mmd:  bash .agentic-atlas/tools/render-diagrams.sh
+# Re-run after editing any .mmd:  bash docs/architecture/tools/render-diagrams.sh
 #
 # Requires: node + npx (uses npx @mermaid-js/mermaid-cli on demand).
 set -euo pipefail
 
-REPO="/Users/genome/projects/genomes_agentic_os"
-PCFG="$REPO/.agentic-atlas/tools/puppeteer.json"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+PCFG="$REPO/docs/architecture/tools/puppeteer.json"
 THEME="${MMD_THEME:-neutral}"
 BG="${MMD_BG:-white}"
 
 # Directories that may contain .mmd sources.
-SEARCH_DIRS=("$REPO/docs" "$REPO/.agentic-atlas/diagrams")
+SEARCH_DIRS=("$REPO/docs")
 
 count=0
 for dir in "${SEARCH_DIRS[@]}"; do

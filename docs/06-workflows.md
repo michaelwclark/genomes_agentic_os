@@ -222,7 +222,7 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   valid; `launch-blog` is rejected.
 - **`workflow check` is advisory, not a hard gate.** Exit code is always 0
   regardless of findings. The command never blocks dispatch — that is a human
-  responsibility. See [gap register D](../.agentic-atlas/gap-register.md) for the
+  responsibility. See gap register D for the
   tracking note on schema enforcement.
 - **Placeholders stop an agent mid-flight.** An agent that encounters
   `yes | no` or `<…>` in `alignment-questions.md` cannot make a dispatch

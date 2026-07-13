@@ -314,4 +314,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [08 · Runs & Run Logs](08-runs-and-run-logs.md) — how `06-runs-and-logs/` is used.
 - [15 · Customer OS Factory](15-customer-os-factory.md) — creating OS roots for other organizations.
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — validating a root's structural correctness.
-- Atlas: [`architecture/system-architecture.md` §3](../.agentic-atlas/architecture/system-architecture.md) · [`command-reference.md`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: [`architecture/system-architecture.md` §3](architecture/system-architecture.md) · [`command-reference.md`](architecture/command-reference.md)

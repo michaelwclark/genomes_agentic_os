@@ -468,4 +468,4 @@ The full skill and command definitions live in `harness/skills/` and
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — `config doctor` in the broader health picture.
 - [17 · CLI Reference](17-cli-reference.md) — complete flag reference for all subcommands.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — exit code errors, layer confusion, MCP registration failures.
-- Atlas: [`.agentic-atlas/architecture/harness-modes.md`](../.agentic-atlas/architecture/harness-modes.md) · [`.agentic-atlas/architecture/command-reference.md`](../.agentic-atlas/architecture/command-reference.md) · [`.agentic-atlas/gap-register.md`](../.agentic-atlas/gap-register.md)
+- Atlas: [`docs/architecture/harness-modes.md`](architecture/harness-modes.md) · [`docs/architecture/command-reference.md`](architecture/command-reference.md) · the retired atlas gap register (git history)

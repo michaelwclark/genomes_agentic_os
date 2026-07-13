@@ -19,8 +19,18 @@ RUN_STATE.json
 RUN_STATE.*.json
 
 # Mermaid diagram sources are build inputs only; we commit the rendered PNGs.
-# (Repo stays Mermaid-free per AGENTS.md; regenerate with .agentic-atlas/tools/render-diagrams.sh)
+# (Repo stays Mermaid-free per AGENTS.md; regenerate with docs/architecture/tools/render-diagrams.sh)
 *.mmd
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Local instance symlink (points into an installed OS; never shipped)
+MEMORY.md
+
+# Local session/scratch surfaces removed from tracking (AGE-35)
+.duels/
+.agentic-atlas/
+
+# Local receipts from docs/architecture/tools/validate-cli.sh
+.validation/

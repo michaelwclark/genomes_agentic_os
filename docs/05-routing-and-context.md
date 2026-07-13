@@ -164,4 +164,4 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [03 · Operating Model](03-operating-model.md) — where routing sits in the loop.
 - [04 · Information Architecture](04-information-architecture.md) — the domains/lanes routing matches against.
 - [06 · Workflows](06-workflows.md) — what you do once routed to a workflow.
-- Atlas: [`architecture/system-architecture.md` §7](../.agentic-atlas/architecture/system-architecture.md) · [`command-reference.md`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: [`architecture/system-architecture.md` §7](architecture/system-architecture.md) · [`command-reference.md`](architecture/command-reference.md)

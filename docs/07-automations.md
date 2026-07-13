@@ -263,5 +263,5 @@ source_map: /private/tmp/aos-validate/root/acme/02-projects/launch/source-map.md
   check` is one node in the broader validation graph.
 - [17 · CLI Reference](17-cli-reference.md) — full flag listing for all
   `automation` subcommands.
-- Atlas: [Architecture](../.agentic-atlas/architecture/system-architecture.md) ·
-  [Gap Register](../.agentic-atlas/gap-register.md)
+- Atlas: [Architecture](architecture/system-architecture.md) ·
+  Gap Register

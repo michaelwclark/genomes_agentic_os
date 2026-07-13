@@ -289,29 +289,6 @@ layer or `config install-tree` for a routed OS tree repair.
 
 ---
 
-### `agentic-os losmon validate`
-
-```text
-project: .../root/los/02-projects/losmon_replacement
-created_or_verified:
-- .../root/los/02-projects/losmon_replacement
-- .../root/los/03-workflows/engineering/pr_review
-- .../root/los/03-workflows/engineering/failing_ci_triage
-- .../root/los/03-workflows/operations/deploy_planning
-- .../root/los/04-automations/support/thread_intake
-run_logs:
-- .../root/los/06-runs-and-logs/runs/20260529T005119Z-los-pr_review/run-log.md
-- .../root/los/06-runs-and-logs/runs/20260529T005119Z-los-failing_ci_triage/run-log.md
-- .../root/los/06-runs-and-logs/runs/20260529T005119Z-los-deploy_planning/run-log.md
-comparison: .../root/los/02-projects/losmon_replacement/artifacts/losmon-comparison.md
-```
-
-`losmon validate` scaffolds the LOSMon replacement project and emits run logs for
-each workflow — it is not a structural health check but a migration readiness
-scaffold.
-
----
-
 ## The monitoring gap (Gap C) — what is missing and what to do about it
 
 > **Current state:** all doctors are one-shot CLI commands. There is no
@@ -375,4 +352,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   validates the Codex config layer installed by `config install`.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — what to do when
   a doctor reports blockers.
-- Atlas: [`gap-register.md` (Gaps C + D)](../.agentic-atlas/gap-register.md) · [`command-reference.md`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: `gap-register.md` (Gaps C + D) · [`command-reference.md`](architecture/command-reference.md)

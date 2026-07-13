@@ -328,4 +328,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [10 · Events & Chains](10-events-and-chains.md) — the event ledger and chain-rule system.
 - [13 · Agent Surfaces](13-agent-surfaces.md) — Claude vs Codex harness setup in detail.
 - [17 · CLI Reference](17-cli-reference.md) — every command, flag, and exit code.
-- Atlas deep version: [`architecture/system-architecture.md`](../.agentic-atlas/architecture/system-architecture.md) · [`harness-modes.md`](../.agentic-atlas/architecture/harness-modes.md)
+- Atlas deep version: [`architecture/system-architecture.md`](architecture/system-architecture.md) · [`harness-modes.md`](architecture/harness-modes.md)

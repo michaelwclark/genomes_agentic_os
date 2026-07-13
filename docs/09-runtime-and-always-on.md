@@ -57,7 +57,7 @@ is the **supervisor** plus an **external scheduler**:
 So "always-on" is opt-in per machine: install the scheduler and the OS ticks
 itself; skip it and the same commands stay on-demand levers. This closes the old
 Gap A (F-001 + F-002) in the
-[gap register](../.agentic-atlas/gap-register.md) — see
+gap register — see
 [the supervisor section](#the-supervisor-what-makes-it-always-on) below for setup.
 
 ![Runtime registries (runtime-registry.yml, integration-registry.yml, run-queue.yml, heartbeat logs) fed by manual CLI commands; the shipped supervisor loop — runtime supervise, installed via install-scheduler.sh — composes one tick of heartbeat run, schedule run-due, watch-source run-due, event process-due, runtime run-next, and a read-only health check on a cadence](diagrams/runtime-registries.png)
@@ -677,5 +677,5 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — the
   `doctor` commands this page's registries feed into.
 - [17 · CLI Reference](17-cli-reference.md) — full flag listings for every command.
-- Atlas: [gap-register.md §A](../.agentic-atlas/gap-register.md) ·
-  [command-reference.md §6](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: gap-register.md §A ·
+  [command-reference.md §6](architecture/command-reference.md)

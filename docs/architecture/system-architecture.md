@@ -35,9 +35,9 @@ deterministically — not to be a runtime that "owns" state in memory.
 Genome's Agentic OS deliberately separates concerns across five planes. Confusing
 these layers is the most common way to make a mess.
 
-![Five-layer runtime model: source package → installed OS → harnesses → Notion control plane → future runtime state, with integrations](../diagrams/atlas-five-layer.png)
+![Five-layer runtime model: source package → installed OS → harnesses → Notion control plane → future runtime state, with integrations](diagrams/atlas-five-layer.png)
 
-<!-- Diagram source: .agentic-atlas/diagrams/atlas-five-layer.mmd (gitignored). Regenerate: bash .agentic-atlas/tools/render-diagrams.sh -->
+<!-- Diagram source: docs/architecture/diagrams/atlas-five-layer.mmd (gitignored). Regenerate: bash docs/architecture/tools/render-diagrams.sh -->
 
 | Layer | Source of truth | Owns |
 | --- | --- | --- |
@@ -81,9 +81,9 @@ separation, dependencies passed in, no hidden globals); the mechanism is Pythoni
 
 ### 4.1 Layering
 
-![Python package layering: cli.py composition root dispatches to one-concern operation modules, which depend on scaffold.py primitives and the filesystem](../diagrams/atlas-package-layers.png)
+![Python package layering: cli.py composition root dispatches to one-concern operation modules, which depend on scaffold.py primitives and the filesystem](diagrams/atlas-package-layers.png)
 
-<!-- Diagram source: .agentic-atlas/diagrams/atlas-package-layers.mmd (gitignored). Regenerate: bash .agentic-atlas/tools/render-diagrams.sh -->
+<!-- Diagram source: docs/architecture/diagrams/atlas-package-layers.mmd (gitignored). Regenerate: bash docs/architecture/tools/render-diagrams.sh -->
 
 **Dependency rule:** `cli.py` depends on the ops modules; ops modules depend on
 `scaffold.py` for shared primitives (`expand_path`, `normalize_domain`,
@@ -146,9 +146,9 @@ an import-time side effect.
 This is the closest thing to an "event bus," but it is **file-backed and
 deterministic**, consistent with MWP (state lives in files, not memory).
 
-![Event flow: sources append to the event ledger, chain rules match against it, matches with valid idempotency keys queue runs, dispatched via runtime run-next; depth-limit and already-seen events are marked skipped, while malformed enabled rules route to dead-letter](../diagrams/atlas-event-flow.png)
+![Event flow: sources append to the event ledger, chain rules match against it, matches with valid idempotency keys queue runs, dispatched via runtime run-next; depth-limit and already-seen events are marked skipped, while malformed enabled rules route to dead-letter](diagrams/atlas-event-flow.png)
 
-<!-- Diagram source: .agentic-atlas/diagrams/atlas-event-flow.mmd (gitignored). Regenerate: bash .agentic-atlas/tools/render-diagrams.sh -->
+<!-- Diagram source: docs/architecture/diagrams/atlas-event-flow.mmd (gitignored). Regenerate: bash docs/architecture/tools/render-diagrams.sh -->
 
 Key files (all under `shared_factory/00-control-plane/` and
 `shared_factory/06-runs-and-logs/events/`): `event-graph.yml`, `chain-rules.yml`,
@@ -227,5 +227,5 @@ doesn't match `WORKFLOW_FILES`/`AUTOMATION_FILES`.
 - **Command reference (every flag + real example):** [`command-reference.md`](command-reference.md)
 - **What's validated vs designed-but-not-running:** [`../gap-register.md`](../gap-register.md)
 - **Real command output to quote:** [`../validation/command-output-examples.md`](../validation/command-output-examples.md)
-- **Re-run the validation harness:** `bash .agentic-atlas/tools/validate-cli.sh`
+- **Re-run the validation harness:** `bash docs/architecture/tools/validate-cli.sh`
 - **Upstream specs (intent):** `spec/architecture.md`, `spec/product-spec.md`, `spec/harness-context-contract.md`

@@ -373,5 +373,5 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — running
   `doctor` inside a customer OS to detect missing files and broken links.
 - [17 · CLI Reference](17-cli-reference.md) — full flag tables for every command.
-- Atlas: [`architecture/system-architecture.md`](../.agentic-atlas/architecture/system-architecture.md) ·
-  [`command-reference.md §13`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) ·
+  [`command-reference.md §13`](architecture/command-reference.md)

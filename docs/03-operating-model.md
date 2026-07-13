@@ -219,4 +219,4 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [07 · Automations](07-automations.md) — promoted workflows with trigger-based entry into the loop.
 - [08 · Runs & Run Logs](08-runs-and-run-logs.md) — the full run-log schema, close options, and activity log.
 - [12 · Control Plane (Notion)](12-control-plane-notion.md) — the plan-sync / sync commands and Notion projection.
-- Atlas: [`architecture/system-architecture.md`](../.agentic-atlas/architecture/system-architecture.md) · [`gap-register.md`](../.agentic-atlas/gap-register.md)
+- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) · `gap-register.md`
