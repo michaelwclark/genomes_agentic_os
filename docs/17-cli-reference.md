@@ -438,7 +438,7 @@ atlas document:
 `docs/architecture/tools/validate-cli.sh` exercises a real invocation matrix
 against a scratch root and reports OK / GUARDED / crash counts. Re-run it for
 current numbers — this page does not track a frozen count because the CLI
-surface (51 top-level commands, ~190 parser nodes as of this write-up) keeps
+surface (52 top-level commands, ~197 parser nodes as of this write-up) keeps
 growing:
 
 ```bash

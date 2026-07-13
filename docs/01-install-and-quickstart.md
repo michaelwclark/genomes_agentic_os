@@ -79,12 +79,12 @@ usage: agentic-os [-h]
                    hook,notion,notion-org,runtime,heartbeat,schedule,
                    run-queue,integration,doctor,migrate,plan,
                    self-improvement,connected-system,watch-source,event,
-                   chain,validate,docs,capability,adaptive-routing} ...
+                   chain,state,validate,docs,capability,adaptive-routing} ...
 
 Scaffold, validate, and operate an Agentic OS root.
 ```
 
-The full group list is 51 top-level commands across 22 `cli/` package
+The full group list is 52 top-level commands across 23 `cli/` package
 modules; see [17 · CLI Reference](17-cli-reference.md) for the current,
 regenerated breakdown grouped by module.
 

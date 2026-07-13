@@ -23,7 +23,7 @@ subcommand, see [`docs/17-cli-reference.md`](docs/17-cli-reference.md).
 
 | Capability | What it does | Primary command |
 | --- | --- | --- |
-| Install / scaffold + update | Creates a complete domain-first OS tree from templates in one pass, then applies additive updates later without overwriting local edits. | `agentic-os init --target ~/agentic_os` |
+| Install / scaffold + update | Creates a complete domain-first OS tree from templates in one pass (`init`), then applies additive updates later without overwriting local edits (`update apply`). | `agentic-os init --target ~/agentic_os` |
 | Domains | Scaffolds a new top-level domain with the same numbered lanes as the defaults: control plane, programs, inbox, projects, workflows, automations, knowledge, runs, metrics, archive. | `agentic-os domain create <name>` |
 | Workflows | Scaffolds a repeatable, human-reviewed process folder (outcome brief, PRD, implementation plan, context pack, runbook, approvals) and checks it against a readiness checklist. | `agentic-os workflow create <domain> <lane> <name>` |
 | Automations | Scaffolds a trigger-driven automation folder and advances it through a maturity ladder — `observe` → `prepare` → `propose` → `execute_approved` → `execute_guarded` — as evidence accumulates. | `agentic-os automation create <domain> <lane> <name>` |
@@ -81,7 +81,7 @@ agentic-os init --target ~/agentic_os
 ```text
 src/genomes_agentic_os/  Installable Python package.
   cli/                    The `agentic-os` CLI: one module per command group
-                          (22 today — scaffold, project, workflow, automation,
+                          (23 today — scaffold, project, workflow, automation,
                           runtime, notion, customer, and others), registered in
                           cli/__init__.py's COMMAND_MODULES list.
   state/                  Local SQLite state plane: events ledger, run queue,
