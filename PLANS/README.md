@@ -5,7 +5,7 @@ This directory is the build backlog for turning Genome's Agentic OS from a scaff
 These files are source-package plans. On install or `docs update`, they are copied into the installed runtime at:
 
 ```text
-~/agentic_os/shared_factory/05-knowledge/plans/
+~/agentic_os/harness/shared_factory/05-knowledge/plans/
 ```
 
 That installed copy gives future agents a durable place to find what should be built next without searching chat history.

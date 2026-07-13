@@ -195,11 +195,11 @@ nickname_candidates = ["mapper", "researcher"]
 [skills]
 include_instructions = true
 config = [
-  { path = "~/agentic_os/shared_factory/05-knowledge/skills/build-runner/SKILL.md", enabled = true },
-  { path = "~/agentic_os/shared_factory/05-knowledge/skills/os-doctor/SKILL.md", enabled = true },
-  { path = "~/agentic_os/shared_factory/05-knowledge/skills/context-pack-builder/SKILL.md", enabled = true },
-  { path = "~/agentic_os/shared_factory/05-knowledge/skills/run-logger/SKILL.md", enabled = true },
-  { path = "~/agentic_os/shared_factory/05-knowledge/skills/workflow-builder/SKILL.md", enabled = true },
+  { path = "~/agentic_os/harness/shared_factory/05-knowledge/skills/build-runner/SKILL.md", enabled = true },
+  { path = "~/agentic_os/harness/shared_factory/05-knowledge/skills/os-doctor/SKILL.md", enabled = true },
+  { path = "~/agentic_os/harness/shared_factory/05-knowledge/skills/context-pack-builder/SKILL.md", enabled = true },
+  { path = "~/agentic_os/harness/shared_factory/05-knowledge/skills/run-logger/SKILL.md", enabled = true },
+  { path = "~/agentic_os/harness/shared_factory/05-knowledge/skills/workflow-builder/SKILL.md", enabled = true },
 ]
 
 [skills.bundled]

@@ -44,7 +44,7 @@ for Agentic OS planning or work history; use `SPECS/`, `work-items/`,
 
 - Treat host-level shell setup as part of the OS product surface.
 - Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read the host tool registry when it exists.
-- Source templates live in `templates/system/`; installed host registries live at `~/agentic_os/shared_factory/05-knowledge/host-tool-registry.<host>.yml`.
+- Source templates live in `templates/system/`; installed host registries live at `~/agentic_os/harness/shared_factory/05-knowledge/host-tool-registry.<host>.yml`.
 - Keep interactive-only tools, such as iTerm2 utilities and fuzzy pickers, separate from automation-safe commands.
 
 ## Edit Style

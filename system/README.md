@@ -26,7 +26,7 @@ The system layer answers:
 | `templates/system/host-tool-registry.yml` | Machine-readable registry template for one host. |
 | `templates/system/shell-shape.yml` | Desired shell/terminal shape template. |
 | `harness/commands/system-tool-registry.md` | Agent-facing workflow for reading and maintaining host tools. |
-| `~/agentic_os/shared_factory/05-knowledge/host-tool-registry.<host>.yml` | Live host registry for a specific installed OS instance. |
+| `~/agentic_os/harness/shared_factory/05-knowledge/host-tool-registry.<host>.yml` | Live host registry for a specific installed OS instance. |
 
 ## Agent Rule
 

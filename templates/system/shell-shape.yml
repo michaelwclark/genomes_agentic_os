@@ -40,5 +40,5 @@ terminal:
       - iTerm2-only escape sequences in automation
 agent_registry:
   required: true
-  location_pattern: ~/agentic_os/shared_factory/05-knowledge/host-tool-registry.<host>.yml
+  location_pattern: ~/agentic_os/harness/shared_factory/05-knowledge/host-tool-registry.<host>.yml
 

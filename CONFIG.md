@@ -32,8 +32,8 @@ the choice in the relevant work artifact, usually `JUDGMENT.md`.
 ```env
 OS_SHARED_SKILLS_SOURCE_DIR=./harness/skills/
 OS_SHARED_SKILLS_REGISTRY=./harness/skills/skill-registry.yml
-OS_SHARED_SKILLS_INSTALLED_DIR=~/agentic_os/shared_factory/05-knowledge/skills/
-OS_SHARED_SKILLS_INSTALLED_REGISTRY=~/agentic_os/shared_factory/05-knowledge/skill-registry.yml
+OS_SHARED_SKILLS_INSTALLED_DIR=~/agentic_os/harness/shared_factory/05-knowledge/skills/
+OS_SHARED_SKILLS_INSTALLED_REGISTRY=~/agentic_os/harness/shared_factory/05-knowledge/skill-registry.yml
 OS_SKILL_INSTALL_MODE=copy
 OS_SKILL_UPDATE_POLICY=additive_non_destructive
 OS_SKILL_HARNESS_TARGETS=codex,claude
@@ -77,7 +77,7 @@ Notes:
 
 ### `OS_SHARED_SKILLS_INSTALLED_DIR`
 
-Default: `~/agentic_os/shared_factory/05-knowledge/skills/`
+Default: `~/agentic_os/harness/shared_factory/05-knowledge/skills/`
 
 Controls where shared skills are installed inside a live Agentic OS root.
 
@@ -93,7 +93,7 @@ Notes:
 
 ### `OS_SHARED_SKILLS_INSTALLED_REGISTRY`
 
-Default: `~/agentic_os/shared_factory/05-knowledge/skill-registry.yml`
+Default: `~/agentic_os/harness/shared_factory/05-knowledge/skill-registry.yml`
 
 Controls where the installed OS keeps its runtime copy of the shared skill
 registry.
@@ -687,8 +687,8 @@ BUILD_RUNNER_HOLDOUT_QA_REQUIRED=true
 BUILD_RUNNER_FAILED_CARD_POLICY=block-and-continue
 OS_SHARED_SKILLS_SOURCE_DIR=./harness/skills/
 OS_SHARED_SKILLS_REGISTRY=./harness/skills/skill-registry.yml
-OS_SHARED_SKILLS_INSTALLED_DIR=~/agentic_os/shared_factory/05-knowledge/skills/
-OS_SHARED_SKILLS_INSTALLED_REGISTRY=~/agentic_os/shared_factory/05-knowledge/skill-registry.yml
+OS_SHARED_SKILLS_INSTALLED_DIR=~/agentic_os/harness/shared_factory/05-knowledge/skills/
+OS_SHARED_SKILLS_INSTALLED_REGISTRY=~/agentic_os/harness/shared_factory/05-knowledge/skill-registry.yml
 OS_SKILL_INSTALL_MODE=copy
 OS_SKILL_UPDATE_POLICY=additive_non_destructive
 OS_SKILL_HARNESS_TARGETS=codex,claude

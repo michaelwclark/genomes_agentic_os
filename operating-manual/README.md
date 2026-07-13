@@ -1,6 +1,6 @@
 # Agentic OS Operating Manual
 
-This manual is installed into `~/agentic_os/shared_factory/05-knowledge/operating-manual/`.
+This manual is installed into `~/agentic_os/harness/shared_factory/05-knowledge/operating-manual/`.
 
 Use it when you are operating inside the installed OS and need to know what to create, where to put it, what format to use, and what evidence to leave behind.
 

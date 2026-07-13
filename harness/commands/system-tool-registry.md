@@ -5,8 +5,8 @@ host cleanup work.
 
 ## Read Order
 
-1. `~/agentic_os/shared_factory/05-knowledge/host-tool-registry.$(hostname -s).yml`
-2. `~/agentic_os/shared_factory/05-knowledge/host-tool-registry.yml`
+1. `~/agentic_os/harness/shared_factory/05-knowledge/host-tool-registry.$(hostname -s).yml`
+2. `~/agentic_os/harness/shared_factory/05-knowledge/host-tool-registry.yml`
 3. `templates/system/host-tool-registry.yml`
 
 ## Agent Workflow
