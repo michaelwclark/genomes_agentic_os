@@ -484,7 +484,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "add-env",
             "name": "Add Env",
-            "description": "Append environment variables to ~/.zshenv on bigmac, genomesbox, and the Mac laptop in one step.",
+            "description": "Append environment variables to ~/.zshenv on every registered host in one step.",
             "source": "harness/skills/add-env/SKILL.md",
         },
         {
@@ -492,18 +492,6 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Commit All",
             "description": "Commit all local changes in logical groups until the repository is clean.",
             "source": "harness/skills/commitall/SKILL.md",
-        },
-        {
-            "id": "los-fast-workon",
-            "name": "LOS Fast Workon",
-            "description": "Work a LOS Jira ticket or non-trivial LOS task in a dedicated fast worktree.",
-            "source": "harness/skills/los-fast-workon/SKILL.md",
-        },
-        {
-            "id": "los-quiet-workon",
-            "name": "LOS Quiet Workon",
-            "description": "Work or resume LOS implementation in a fast worktree with minimal chat output.",
-            "source": "harness/skills/los-quiet-workon/SKILL.md",
         },
         {
             "id": "thread-finalizer",
@@ -697,8 +685,8 @@ def library_entries() -> list[dict[str, str]]:
         {
             "id": "unified_memory",
             "name": "Unified Memory",
-            "description": "Durable cross-session memory plane backed by losmon-memory, CoCoIndex, and MemPalace.",
-            "source": "losmon-memory MCP",
+            "description": "Durable cross-session memory plane backed by the configured memory MCP service.",
+            "source": "memory MCP",
         },
         {
             "id": "pyyaml",
@@ -730,7 +718,7 @@ def hook_entries() -> list[dict[str, str]]:
         {
             "id": "memory-session-start",
             "name": "Memory Session Start",
-            "description": "Injects losmon-memory discipline at session start, resume, or clear.",
+            "description": "Injects memory discipline at session start, resume, or clear.",
             "status": "available",
             "source": "harness/hooks/memory-session-start.sh",
             "events": "SessionStart",

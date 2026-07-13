@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Agentic OS Jira helper for the VenturesGo Atlassian site.
+"""Agentic OS Jira helper for an Atlassian Jira site.
 
 This wrapper gives agents a deterministic Jira path when MCP/Composio routes are
-unhealthy. It prefers the LOSMON-style Atlassian OAuth client-credentials route
-and falls back to Jira basic auth only when a VenturesGo token is configured.
+unhealthy. It prefers the Atlassian OAuth client-credentials route and falls
+back to Jira basic auth only when a Jira API token is configured.
+
+Site, project, and account identity all come from environment variables; the
+defaults below are placeholders and must be overridden per install.
 """
 
 from __future__ import annotations
@@ -22,9 +25,9 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_BROWSE_BASE = "https://venturesgo.atlassian.net"
-DEFAULT_JIRA_PROJECT = "FLYWL"
-DEFAULT_JIRA_EMAIL = "svc_jiraapi@thesummitgrp.com"
+DEFAULT_BROWSE_BASE = os.environ.get("JIRA_BROWSE_BASE", "https://example.atlassian.net")
+DEFAULT_JIRA_PROJECT = os.environ.get("JIRA_DEFAULT_PROJECT", "PROJ")
+DEFAULT_JIRA_EMAIL = os.environ.get("JIRA_EMAIL", "")
 
 JIRA_OAUTH_CLIENT_ID_NAMES = ("ATLASSIAN_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID")
 JIRA_OAUTH_CLIENT_SECRET_NAMES = ("ATLASSIAN_CLIENT_SECRET", "JIRA_OAUTH_CLIENT_SECRET")
@@ -32,13 +35,12 @@ JIRA_OAUTH_BASE_NAMES = ("ATLASSIAN_BASE_URL", "JIRA_OAUTH_BASE_URL")
 JIRA_OAUTH_CLOUD_ID_NAMES = (
     "ATLASSIAN_JIRA_CLOUDID",
     "JIRA_CLOUD_ID",
-    "ATLASSIAN_VENTURESGO_CLOUDID",
     "ATLASSIAN_CLOUD_ID",
 )
 JIRA_OAUTH_AUDIENCE_NAMES = ("ATLASSIAN_OAUTH_AUDIENCE",)
-JIRA_BASIC_TOKEN_NAMES = ("JIRA_VENTURESGO_API_TOKEN", "JIRA_API_TOKEN")
-JIRA_BASIC_EMAIL_NAMES = ("JIRA_VENTURESGO_EMAIL", "JIRA_EMAIL")
-JIRA_BASIC_BASE_NAMES = ("JIRA_VENTURESGO_BASE_URL",)
+JIRA_BASIC_TOKEN_NAMES = ("JIRA_API_TOKEN",)
+JIRA_BASIC_EMAIL_NAMES = ("JIRA_EMAIL",)
+JIRA_BASIC_BASE_NAMES = ("JIRA_BASE_URL",)
 
 
 class JiraCliError(RuntimeError):
@@ -129,7 +131,7 @@ def resolve_auth() -> dict[str, str]:
 
     raise JiraCliError(
         "No Jira auth found. Set ATLASSIAN_CLIENT_ID + ATLASSIAN_CLIENT_SECRET "
-        "+ ATLASSIAN_VENTURESGO_CLOUDID, or set JIRA_VENTURESGO_API_TOKEN."
+        "+ ATLASSIAN_JIRA_CLOUDID (or JIRA_CLOUD_ID), or set JIRA_API_TOKEN."
     )
 
 
@@ -368,17 +370,17 @@ AUTHENTICATION
   OAuth2 client-credentials (preferred):
     ATLASSIAN_CLIENT_ID / JIRA_OAUTH_CLIENT_ID       OAuth client id.
     ATLASSIAN_CLIENT_SECRET / JIRA_OAUTH_CLIENT_SECRET   OAuth client secret.
-    ATLASSIAN_VENTURESGO_CLOUDID / ATLASSIAN_JIRA_CLOUDID /
-      JIRA_CLOUD_ID / ATLASSIAN_CLOUD_ID              Atlassian cloud id.
+    ATLASSIAN_JIRA_CLOUDID / JIRA_CLOUD_ID /
+      ATLASSIAN_CLOUD_ID                              Atlassian cloud id.
     ATLASSIAN_BASE_URL / JIRA_OAUTH_BASE_URL          API gateway base URL
                                                        (derived from cloud id when absent).
     ATLASSIAN_OAUTH_AUDIENCE                          Atlassian OAuth audience
                                                        (default: api.atlassian.com).
 
   Basic auth (fallback):
-    JIRA_VENTURESGO_API_TOKEN / JIRA_API_TOKEN        Atlassian API token.
-    JIRA_VENTURESGO_EMAIL / JIRA_EMAIL                Account email for basic auth.
-    JIRA_VENTURESGO_BASE_URL                          Base URL override for basic auth.
+    JIRA_API_TOKEN                                    Atlassian API token.
+    JIRA_EMAIL                                        Account email for basic auth.
+    JIRA_BASE_URL                                     Base URL override for basic auth.
 
   All variables are sourced from ~/.zshenv when missing from the environment.
 
@@ -386,19 +388,19 @@ EXAMPLES
   agentic-os-jira doctor
       Check auth and ACLI install state.
 
-  agentic-os-jira search --jql "project = FLYWL AND status = 'In Progress'" --limit 20
-      List open in-progress FLYWL issues.
+  agentic-os-jira search --jql "project = PROJ AND status = 'In Progress'" --limit 20
+      List open in-progress issues in one project.
 
-  agentic-os-jira get FLYWL-1234
+  agentic-os-jira get PROJ-1234
       Read one issue with default fields.
 
-  agentic-os-jira get FLYWL-1234 --json
+  agentic-os-jira get PROJ-1234 --json
       Read one issue and emit full JSON.
 
-  agentic-os-jira comment FLYWL-1234 --body "Fixed in PR #99." --execute
+  agentic-os-jira comment PROJ-1234 --body "Fixed in PR #99." --execute
       Add a comment (omit --execute for a dry-run preview).
 
-  agentic-os-jira transition FLYWL-1234 --transition-id 31 --execute
+  agentic-os-jira transition PROJ-1234 --transition-id 31 --execute
       Move issue to a new status (get transition ids via the Jira API or ACLI).
 """
 
@@ -406,7 +408,7 @@ EXAMPLES
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Jira helper for the VenturesGo Atlassian site. "
+            "Jira helper for an Atlassian Jira site. "
             "Prefers Atlassian OAuth client-credentials; falls back to Jira API token basic auth. "
             "All mutating commands (comment, transition) are dry-run by default; pass --execute to write."
         ),
@@ -447,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read one Jira issue.",
         description="Fetch a single issue by key and print its fields as a table or JSON.",
     )
-    get.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    get.add_argument("issue_key", help="Jira issue key (e.g. PROJ-1234).")
     get.add_argument(
         "--fields",
         default="summary,status,assignee,issuetype,priority,fixVersions,labels",
@@ -461,7 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read recent Jira comments for an issue.",
         description="Fetch the most recent comments for an issue and emit as JSON.",
     )
-    comments.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    comments.add_argument("issue_key", help="Jira issue key (e.g. PROJ-1234).")
     comments.add_argument("--limit", type=int, default=10, help="Max comments to return (default: 10).")
     comments.set_defaults(func=cmd_comments)
 
@@ -473,7 +475,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Prints a dry-run message by default; pass --execute to write the comment."
         ),
     )
-    comment.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    comment.add_argument("issue_key", help="Jira issue key (e.g. PROJ-1234).")
     comment.add_argument("--body", required=True, help="Comment body text. Required.")
     comment.add_argument(
         "--execute",
@@ -490,7 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Prints a dry-run message by default; pass --execute to apply the transition."
         ),
     )
-    transition.add_argument("issue_key", help="Jira issue key (e.g. FLYWL-1234).")
+    transition.add_argument("issue_key", help="Jira issue key (e.g. PROJ-1234).")
     transition.add_argument(
         "--transition-id",
         required=True,

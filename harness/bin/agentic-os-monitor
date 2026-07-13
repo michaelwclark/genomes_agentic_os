@@ -268,11 +268,12 @@ def get_vitals(os_root: Path) -> dict[str, dict[str, Any]]:
         return _vitals_cache
 
     hosts_cfg = load_hosts_routing(os_root)
+    local_alias = _local_host_alias(hosts_cfg)
     result: dict[str, dict[str, Any]] = {}
-    result["bigmac"] = _local_vitals()
+    result[local_alias] = _local_vitals()
 
     for alias, hcfg in hosts_cfg.items():
-        if alias == "bigmac":
+        if alias == local_alias:
             continue
         ssh_opts = hcfg.get("ssh_options", [])
         result[alias] = _remote_vitals(alias, ssh_opts)
@@ -298,8 +299,16 @@ def load_hosts_routing(os_root: Path) -> dict[str, Any]:
             data = yaml.safe_load(f) or {}
         _hosts_cache = data.get("hosts", {})
     except Exception:
-        _hosts_cache = {"bigmac": {"role": "primary", "max_concurrent": 5}}
+        _hosts_cache = {"localhost": {"role": "primary", "max_concurrent": 4}}
     return _hosts_cache
+
+
+def _local_host_alias(hosts_cfg: dict[str, Any]) -> str:
+    """Alias of the host this monitor runs on (role: primary, else localhost)."""
+    for alias, hcfg in hosts_cfg.items():
+        if isinstance(hcfg, dict) and hcfg.get("role") == "primary":
+            return str(alias)
+    return "localhost"
 
 
 # ---------------------------------------------------------------------------
@@ -364,14 +373,12 @@ def _guess_harness(cmd: str) -> str:
 
 def _guess_project_from_cmd(cmd: str) -> str:
     """Extract a short project name from command string."""
-    # Look for known project directory fragments
+    # Look for known project directory fragments. Extend this map with your
+    # own repo-name fragments; it only affects the display label.
     for fragment, name in [
         ("genomes_agentic_os", "agentic_os"),
         ("agentic_os", "agentic_os"),
-        ("ledgerline", "ledgerline"),
-        ("losmon", "losmon"),
-        ("los-app", "los-django"),
-        ("kanga", "kanga"),
+        ("example-product", "example-product"),
     ]:
         if fragment in cmd:
             return name
@@ -385,10 +392,11 @@ def _guess_project_from_cmd(cmd: str) -> str:
 
 def get_agents_per_host(os_root: Path) -> dict[str, Any]:
     hosts_cfg = load_hosts_routing(os_root)
+    local_alias = _local_host_alias(hosts_cfg)
     result: dict[str, Any] = {}
-    result["bigmac"] = {"agents": _local_agents(), "status": "ok"}
+    result[local_alias] = {"agents": _local_agents(), "status": "ok"}
     for alias, hcfg in hosts_cfg.items():
-        if alias == "bigmac":
+        if alias == local_alias:
             continue
         ssh_opts = hcfg.get("ssh_options", [])
         agents = _remote_agents(alias, ssh_opts)

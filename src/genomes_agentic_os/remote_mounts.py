@@ -16,14 +16,14 @@ A remote entry may include an optional ``mount`` block::
 
     sources:
       remotes:
-        - name: losmon
-          host: genomesbox
-          path: /home/genome/projects/losmon
+        - name: appserver
+          host: example-host
+          path: /home/operator/projects/appserver
           kind: git
           authority: remote
           mount:
-            namespace: SSH_genomesbox
-            local_path: /Users/genome/SSH_genomesbox/losmon
+            namespace: SSH_example-host
+            local_path: ~/os/SSH_example-host/appserver
             access: sshfs
             execution: remote
 
@@ -119,8 +119,8 @@ def detect_ssh_namespace(path: str | Path) -> tuple[str, str] | None:
 
     Examples
     --------
-    >>> detect_ssh_namespace("/Users/genome/SSH_genomesbox/losmon/src/app.ts")
-    ('genomesbox', 'losmon/src/app.ts')
+    >>> detect_ssh_namespace("/Users/operator/SSH_example-host/appserver/src/app.ts")
+    ('example-host', 'appserver/src/app.ts')
     >>> detect_ssh_namespace("/tmp/normal/path") is None
     True
     """
@@ -159,7 +159,7 @@ def translate_local_to_remote(
     Returns
     -------
     str
-        ``"<host>:<remote-path>"`` — e.g. ``"genomesbox:/home/genome/projects/losmon/src/app.ts"``
+        ``"<host>:<remote-path>"`` — e.g. ``"example-host:/home/operator/projects/appserver/src/app.ts"``
 
     Raises
     ------
@@ -211,8 +211,8 @@ def translate_local_to_remote(
 
     # Translate the relative suffix onto the remote base path.
     # The suffix from detect_ssh_namespace() is relative to the SSH_<host>
-    # component (e.g. "losmon/src/index.ts" for SSH_genomesbox/losmon/src/…).
-    # The mount label dir ("losmon" in that example) is just a local label;
+    # component (e.g. "appserver/src/index.ts" for SSH_example-host/appserver/src/…).
+    # The mount label dir ("appserver" in that example) is just a local label;
     # it must be stripped before appending to the remote base path.
     #
     # Anchoring strategy:

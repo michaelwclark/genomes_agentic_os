@@ -32,14 +32,14 @@ defaults:
 
 # ── overrides ─────────────────────────────────────────────────────────────────
 # Per-project or per-repo overrides. Keys are project or repository names
-# (matched against the basename of --cwd, e.g. "los-app-los-django").
+# (matched against the basename of --cwd, e.g. "example-product").
 # Each entry maps task_type → harness, same keys as defaults above.
 # Only keys present here override the default; absent task types fall through to defaults.
 overrides: {}
   # Example:
-  # los-app-los-django:
-  #   implementation: claude   # Prefer Claude for Django work in this repo
-  # losmon:
+  # example-product:
+  #   implementation: claude   # Prefer Claude for this repo
+  # example-service:
   #   research: gpt
 
 # ── pr_crossreview ────────────────────────────────────────────────────────────

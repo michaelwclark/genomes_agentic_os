@@ -374,7 +374,7 @@ EXAMPLES
       Use a 48-hour lookback window.
 
   agentic-os-status-report --days 7 --hosts local
-      7-day report, local host only (skips remote genomesbox).
+      7-day report, local host only (skips remote hosts).
 
   agentic-os-status-report --label weekly-review
       Generate a report with a labelled run directory for easy identification.
@@ -400,9 +400,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     window.add_argument("--since", help="ISO timestamp to use as the report window start.")
     parser.add_argument(
         "--hosts",
-        choices=["all", "local", "genomesbox"],
         default="all",
-        help="Which hosts to collect from: all (default), local only, or genomesbox only.",
+        help="Which hosts to collect from: 'all' (default), 'local', or a host alias from config/hosts.yml.",
     )
     parser.add_argument(
         "--max-projects",

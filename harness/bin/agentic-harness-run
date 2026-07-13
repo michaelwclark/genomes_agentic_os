@@ -10,7 +10,7 @@ Dispatches to:
 Cross-host dispatch (feat/024):
   --host local      → unchanged local subprocess behaviour (default)
   --host <alias>    → SSH-wrap the inner harness exec on the named remote host;
-                      receipt + artifact still written on bigmac (thin-remote).
+                      receipt + artifact still written on the primary host (thin-remote).
   --host auto       → probe eligible hosts (ssh_pgrep), pick least-active;
                       requires --project (or --cwd from which project is reverse-looked up).
 
@@ -241,12 +241,27 @@ def build_cmd_gpt(prompt: str, model: str | None, cwd: Path) -> tuple[list[str],
 # ── Cross-host helpers (feat/024) ─────────────────────────────────────────────
 
 
+def _local_host(routing: dict) -> str:
+    """Alias of the host this script runs on (the routing reference domain).
+
+    Resolution order: explicit ``local_host`` key in hosts-routing.yml, then
+    the first host entry with ``role: primary``, then ``localhost``.
+    """
+    configured = routing.get("local_host")
+    if configured:
+        return str(configured)
+    for alias, cfg in (routing.get("hosts") or {}).items():
+        if (cfg or {}).get("role") == "primary":
+            return str(alias)
+    return "localhost"
+
+
 def resolve_remote_cwd(local_cwd: str, host: str, routing: dict) -> str:
-    """Translate a bigmac-local cwd to the remote path on *host*.
+    """Translate a primary-host-local cwd to the remote path on *host*.
 
     Two-layer resolution (SPEC §7.3):
       1. project_paths keyed lookup: routing.hosts.<host>.project_paths[<project>]
-         Matches when local_cwd equals a bigmac project_paths value exactly.
+         Matches when local_cwd equals a primary-host project_paths value exactly.
       2. path_rewrite fallback: apply the first matching prefix substitution.
 
     Returns the translated remote path, or the original path unchanged if no
@@ -256,14 +271,14 @@ def resolve_remote_cwd(local_cwd: str, host: str, routing: dict) -> str:
     project_paths = host_cfg.get("project_paths") or {}
     path_rewrite = host_cfg.get("path_rewrite") or []
 
-    # Layer 1: reverse-lookup bigmac project_paths to find the project name,
-    # then look up the same project name in the remote host's project_paths.
-    bigmac_cfg = (routing.get("hosts") or {}).get("bigmac") or {}
-    bigmac_project_paths = bigmac_cfg.get("project_paths") or {}
+    # Layer 1: reverse-lookup the primary host's project_paths to find the
+    # project name, then look up the same name in the remote host's project_paths.
+    local_cfg = (routing.get("hosts") or {}).get(_local_host(routing)) or {}
+    local_project_paths = local_cfg.get("project_paths") or {}
 
     local_cwd_str = str(local_cwd)
-    for project_name, bigmac_path in bigmac_project_paths.items():
-        if str(bigmac_path) == local_cwd_str:
+    for project_name, local_path in local_project_paths.items():
+        if str(local_path) == local_cwd_str:
             remote_path = project_paths.get(project_name)
             if remote_path:
                 return str(remote_path)
@@ -280,11 +295,11 @@ def resolve_remote_cwd(local_cwd: str, host: str, routing: dict) -> str:
 
 
 def reverse_lookup_project(local_cwd: str, routing: dict) -> str | None:
-    """Return the project name whose bigmac path equals *local_cwd*, or None."""
-    bigmac_cfg = (routing.get("hosts") or {}).get("bigmac") or {}
-    bigmac_project_paths = bigmac_cfg.get("project_paths") or {}
+    """Return the project name whose primary-host path equals *local_cwd*, or None."""
+    local_cfg = (routing.get("hosts") or {}).get(_local_host(routing)) or {}
+    local_project_paths = local_cfg.get("project_paths") or {}
     local_cwd_str = str(local_cwd)
-    for project_name, path in bigmac_project_paths.items():
+    for project_name, path in local_project_paths.items():
         if str(path) == local_cwd_str:
             return project_name
     return None
@@ -319,7 +334,7 @@ def probe_active_count(
 ) -> int:
     """Return the number of in-flight harness runs on *host*.
 
-    Local (bigmac): uses local pgrep.
+    Local (primary host): uses local pgrep.
     Remote: SSH with pgrep. Uses probe_pattern from auto_route config.
 
     On timeout or any error: returns max_concurrent (treat as at-capacity).
@@ -345,7 +360,7 @@ def probe_active_count(
             )
 
     # Local probe: no SSH needed.
-    if host == "bigmac":
+    if host == _local_host(routing):
         argv = ["pgrep", "-f", probe_pattern]
         try:
             result = runner(argv, timeout=probe_timeout)
@@ -393,7 +408,7 @@ def least_active_host(
     Candidate order from routing.auto_route.candidate_order is used for tie-breaking.
     """
     auto_cfg = routing.get("auto_route") or {}
-    fallback = auto_cfg.get("fallback_host") or "bigmac"
+    fallback = auto_cfg.get("fallback_host") or _local_host(routing)
     candidate_order: list[str] = list(auto_cfg.get("candidate_order") or candidates)
 
     eligible = eligible_hosts(project, harness, routing)
@@ -509,10 +524,10 @@ def run_harness(
                 routing,
                 hosts_cfg,
             )
-            if resolved_host == "bigmac":
+            if resolved_host == _local_host(routing):
                 # Fell back to local — run locally.
                 print(
-                    f"[host-routing] auto → bigmac (local fallback); running locally",
+                    f"[host-routing] auto → {resolved_host} (local fallback); running locally",
                     file=sys.stderr,
                 )
                 output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -542,10 +557,10 @@ def run_harness(
                     exit_code = 127
                 combined = f"=== stdout ===\n{stdout}\n=== stderr ===\n{stderr}"
                 output_file.write_text(combined, encoding="utf-8")
-                return exit_code, stdout, stderr, "bigmac", None
+                return exit_code, stdout, stderr, _local_host(routing), None
 
         # Resolved to a specific remote host (including after auto-resolution).
-        if resolved_host != "bigmac":
+        if resolved_host != _local_host(routing):
             remote_cwd_str = resolve_remote_cwd(str(cwd), resolved_host, routing)
             remote_cwd_val = remote_cwd_str
 
@@ -563,7 +578,7 @@ def run_harness(
             final_env = None  # use inherited process env; remote command string is self-contained
             final_cwd = str(cwd)  # local cwd for the SSH subprocess (irrelevant for SSH)
         else:
-            # auto resolved to bigmac — treat as local.
+            # auto resolved to the local host — treat as local.
             final_cmd = cmd
             final_env = env
             final_cwd = str(cwd)
@@ -641,8 +656,8 @@ _EPILOG = textwrap.dedent("""\
       agentic-harness-run --harness auto --task-type review --prompt 'Review this PR' --json
           Auto-route by task type (resolves to claude per defaults) and emit JSON receipt.
 
-      agentic-harness-run --host genomesbox --harness gpt --cwd /Users/genome/projects/ledgerline --prompt 'pwd'
-          Run GPT/Codex on genomesbox; cwd is translated to /home/genome/projects/ledgerline.
+      agentic-harness-run --host example-host --harness gpt --cwd ~/projects/example-product --prompt 'pwd'
+          Run GPT/Codex on example-host; cwd is translated via hosts-routing.yml project_paths.
 
       agentic-harness-run --host auto --harness claude --project 'Agentic OS' --prompt 'pwd'
           Auto-probe eligible hosts for 'Agentic OS', pick least-active, run claude there.
@@ -684,7 +699,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help=(
             "Project name (as in hosts-routing.yml project_paths) for --host auto eligibility. "
-            "If omitted, derived by reverse-lookup of --cwd against bigmac project_paths."
+            "If omitted, derived by reverse-lookup of --cwd against the primary host's project_paths."
         ),
     )
     parser.add_argument(

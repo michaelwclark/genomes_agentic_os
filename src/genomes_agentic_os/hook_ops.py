@@ -182,14 +182,14 @@ def sync_codex_hooks(data: dict[str, Any], root: Path) -> bool:
         hook_command(root, "memory-session-start.sh"),
         matcher="startup|resume|clear",
         timeout=5,
-        status_message="Loading losmon-memory discipline",
+        status_message="Loading memory discipline",
     ) or changed
     changed = ensure_hook_entry(
         data,
         "Stop",
         hook_command(root, "memory-stop.sh"),
         timeout=5,
-        status_message="Reminding losmon-memory capture",
+        status_message="Reminding memory capture",
     ) or changed
     changed = ensure_hook_entry(
         data,
