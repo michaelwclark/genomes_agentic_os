@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/gui-snapshot.schema.json",
+  "title": "AgenticOSGui Snapshot",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "root",
+    "summary",
+    "navigation",
+    "conversations",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {"const": "agentic-os-gui/v1"},
+    "generated_at": {"type": "string"},
+    "root": {"type": "string"},
+    "summary": {
+      "type": "object",
+      "required": ["conversations", "codex", "claude", "pinned", "unrouted"],
+      "properties": {
+        "conversations": {"type": "integer", "minimum": 0},
+        "codex": {"type": "integer", "minimum": 0},
+        "claude": {"type": "integer", "minimum": 0},
+        "pinned": {"type": "integer", "minimum": 0},
+        "unrouted": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "navigation": {
+      "type": "object",
+      "required": ["domains"],
+      "properties": {
+        "domains": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/domain"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "conversations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/conversation"}
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagnostic"}
+    }
+  },
+  "$defs": {
+    "domain": {
+      "type": "object",
+      "required": ["id", "name", "conversation_count", "projects"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "conversation_count": {"type": "integer", "minimum": 0},
+        "projects": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/project"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "domain", "status", "path", "conversation_count"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "domain": {"type": "string"},
+        "status": {"type": "string"},
+        "path": {"type": "string"},
+        "conversation_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "conversation": {
+      "type": "object",
+      "required": [
+        "key",
+        "id",
+        "native_id",
+        "resume_id",
+        "title",
+        "harness",
+        "provider",
+        "model",
+        "model_tier",
+        "reasoning_effort",
+        "status",
+        "updated_at",
+        "pinned",
+        "can_continue",
+        "jira_keys",
+        "pull_requests",
+        "slack_threads",
+        "assets"
+      ],
+      "properties": {
+        "key": {"type": "string", "pattern": "^(codex|claude):"},
+        "id": {"type": "string"},
+        "native_id": {"type": "string"},
+        "resume_id": {"type": "string"},
+        "cli_session_id": {"type": "string"},
+        "title": {"type": "string", "minLength": 1},
+        "harness": {"enum": ["codex", "claude", "unknown"]},
+        "provider": {"enum": ["openai", "anthropic", "unknown"]},
+        "model": {"type": "string"},
+        "model_tier": {"enum": ["economy", "balanced", "frontier", "frontier_max", "human_gate", "unknown"]},
+        "reasoning_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", "unknown"]},
+        "status": {"type": "string"},
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"},
+        "age": {"type": "string"},
+        "domain": {"type": "string"},
+        "project": {"type": "string"},
+        "project_title": {"type": "string"},
+        "project_root": {"type": "string"},
+        "work_item": {"type": "string"},
+        "route_confidence": {"enum": ["high", "medium", "low", "none"]},
+        "route_source": {"type": "string"},
+        "route_conflict": {"type": "boolean"},
+        "cwd": {"type": "string"},
+        "pinned": {"type": "boolean"},
+        "pin_source": {"type": "string"},
+        "can_continue": {"type": "boolean"},
+        "imported": {"type": "boolean"},
+        "continuation_note": {"type": "string"},
+        "continuation": {
+          "type": "object",
+          "required": ["adapter", "session_id", "fallback_argv"],
+          "properties": {
+            "adapter": {"type": "string"},
+            "session_id": {"type": "string"},
+            "fallback_argv": {"type": "array", "items": {"type": "string"}}
+          },
+          "additionalProperties": false
+        },
+        "jira_keys": {"type": "array", "items": {"type": "string"}},
+        "pull_requests": {"type": "array", "items": {"type": "object"}},
+        "slack_threads": {"type": "array", "items": {"type": "string"}},
+        "assets": {"type": "array", "items": {"type": "object"}},
+        "source": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["severity", "message"],
+      "properties": {
+        "severity": {"enum": ["info", "warning", "error"]},
+        "message": {"type": "string"},
+        "source": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

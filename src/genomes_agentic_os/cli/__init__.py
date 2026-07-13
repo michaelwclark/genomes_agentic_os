@@ -20,6 +20,7 @@ from . import automation
 from . import run_lifecycle
 from . import routing
 from . import cockpit
+from . import gui
 from . import customer
 from . import operator
 from . import config
@@ -57,6 +58,7 @@ COMMAND_MODULES = [
     run_lifecycle,
     routing,
     cockpit,
+    gui,
     customer,
     operator,
     config,
