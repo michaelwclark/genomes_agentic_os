@@ -29,8 +29,7 @@ from .mcp_catalog import mcp_tools_markdown
 
 DEFAULT_DOMAINS = (
     "personal",
-    "clarks_consulting",
-    "los",
+    "work",
     "archive",
 )
 
@@ -42,9 +41,10 @@ SOURCE_PACKAGE_VERSION = "0.1.0"
 DEFAULT_UPDATE_CHANNEL = "stable"
 DEFAULT_UPDATE_POLICY = "operator_approved"
 
-DOMAIN_ALIASES = {
-    "lenders": "los",
-}
+# Optional alias map: alternate spellings that normalize to an installed
+# domain slug. Intentionally empty in the generic product; operators can
+# extend it in a fork or downstream configuration.
+DOMAIN_ALIASES: dict[str, str] = {}
 
 STANDARD_LANES = (
     "engineering",
@@ -282,6 +282,25 @@ def domain_path(root: str | Path, domain: str) -> Path:
     return expand_path(root) / normalized
 
 
+def installed_domain_names(root: str | Path) -> list[str]:
+    """Return the domain slugs actually installed under *root*.
+
+    A domain is any top-level directory carrying a ``domain.yml`` marker.
+    Structural roots (``harness/``, and ``shared_factory`` inside it) never
+    appear here because they do not live at the top level of the OS root.
+    This keeps validation and routing keyed to the operator's real tree
+    instead of any built-in default domain list.
+    """
+    os_root = expand_path(root)
+    if not os_root.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in os_root.iterdir()
+        if path.is_dir() and (path / "domain.yml").is_file()
+    )
+
+
 def validate_name(value: str, label: str = "name") -> str:
     if not NAME_PATTERN.fullmatch(value):
         # If the only problem is hyphens, suggest the snake_case form.
@@ -342,10 +361,13 @@ def harness_source_dir() -> Path:
 
 
 def plans_source_dir() -> Path:
-    candidate = repo_root() / "PLANS"
+    # Plans were consolidated into SPECS/ (AGE-35). The installed destination
+    # stays shared_factory/05-knowledge/plans/ so existing installs update
+    # additively; only the copy source moved.
+    candidate = repo_root() / "SPECS"
     if candidate.is_dir():
         return candidate
-    raise FileNotFoundError("Could not find repository PLANS directory")
+    raise FileNotFoundError("Could not find repository SPECS directory")
 
 
 def ensure_dir(path: Path, result: ScaffoldResult) -> None:
@@ -802,8 +824,7 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
 def titleize_name(name: str) -> str:
     known_names = {
         "personal": "Personal",
-        "clarks_consulting": "Clark's Consulting",
-        "los": "LOS",
+        "work": "Work",
         "shared_factory": "Shared Factory",
         "archive": "Archive",
     }
@@ -813,16 +834,15 @@ def titleize_name(name: str) -> str:
 def domain_purpose(domain: str) -> str:
     purposes = {
         "personal": "Personal administration, household operations, learning, planning, and life logistics.",
-        "clarks_consulting": "Client delivery, consulting operations, sales, marketing, and reusable service workflows.",
-        "los": "Loan origination system and lender-related product work, support, releases, implementation, and operational knowledge.",
+        "work": "Professional work: product delivery, client engagements, operations, and reusable service workflows.",
         "shared_factory": "Shared patterns, templates, routers, reusable automations, schemas, and cross-domain tools.",
         "archive": "Inactive work, retired projects, historical runs, and preserved decisions.",
     }
     return purposes.get(domain, "Describe the operating boundary this domain owns.")
 
 
-def root_readme() -> str:
-    domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in DEFAULT_DOMAINS)
+def root_readme(domains_list: tuple[str, ...] | list[str] = DEFAULT_DOMAINS) -> str:
+    domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in domains_list)
     return f"""# Installed Agentic OS
 
 This is the live operating system root for agentic work. It is domain-first: choose the domain, then use that domain's control plane, inbox, projects, workflows, automations, knowledge, runs, metrics, and archive. OS brains and harness-visible capabilities live under `harness/`.
@@ -862,10 +882,10 @@ needs that exact filename.
 """
 
 
-def root_router() -> str:
+def root_router(domains_list: tuple[str, ...] | list[str] = DEFAULT_DOMAINS) -> str:
     routing_rows = "\n".join(
         f"| `{domain}` | {domain_purpose(domain)} | `{domain}/01-inbox/` |"
-        for domain in DEFAULT_DOMAINS
+        for domain in domains_list
     )
     return f"""# Agent Router
 
@@ -884,8 +904,8 @@ After choosing a domain or narrower layer, change to that directory and read its
 
 - First identify the project, product, client, or life area named in the request.
 - Route explicit project or product names to their domain before deciding whether the work is an idea, project, workflow, automation, run, or knowledge update.
-- Examples: requests mentioning `LOS`, loan origination, lender operations, or LOS engineering route to `los/`; requests mentioning Clark's Consulting route to `clarks_consulting/`.
-- If a request says `add an idea`, `capture an idea`, `idea for`, or similar, route to the matching domain's `01-inbox/` unless the user explicitly asks to create a project, workflow, automation, Jira, or implementation branch.
+- Examples: requests mentioning a professional project, product, or client engagement route to that work domain; requests about household, learning, or life logistics route to `personal/`.
+- If a request says `add an idea`, `capture an idea`, `idea for`, or similar, route to the matching domain's `01-inbox/` unless the user explicitly asks to create a project, workflow, automation, tracker ticket, or implementation branch.
 
 ## Operating Rules
 
@@ -950,8 +970,8 @@ Load `AGENTS.md` first, then follow the local route-read-cd loop.
 """
 
 
-def root_context() -> str:
-    domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in DEFAULT_DOMAINS)
+def root_context(domains_list: tuple[str, ...] | list[str] = DEFAULT_DOMAINS) -> str:
+    domains = "\n".join(f"- `{domain}/` - {domain_purpose(domain)}" for domain in domains_list)
     return f"""# Local Context
 
 This installed harness directory is the entry layer for Genome's Agentic OS runtime. It
@@ -1872,7 +1892,9 @@ def ensure_root_files(
     projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
     *,
     include_legacy_agent: bool = False,
+    domains: tuple[str, ...] | list[str] | None = None,
 ) -> None:
+    domains_list = tuple(domains) if domains else DEFAULT_DOMAINS
     ensure_dir(root, result)
     write_root_marker(root, result, projects_source)
     ensure_dir(harness_path(root), result)
@@ -1881,12 +1903,12 @@ def ensure_root_files(
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
     harness_root = harness_path(root)
-    write_file_once(harness_root / "README.md", root_readme(), result)
-    router = root_router()
+    write_file_once(harness_root / "README.md", root_readme(domains_list), result)
+    router = root_router(domains_list)
     write_file_once(harness_root / "ROUTER.md", router, result)
     write_file_once(harness_root / "AGENTS.md", agent_entrypoint("the installed Agentic OS root harness"), result)
     write_file_once(harness_root / "CLAUDE.md", claude_adapter(), result)
-    write_file_once(harness_root / "CONTEXT.md", root_context(), result)
+    write_file_once(harness_root / "CONTEXT.md", root_context(domains_list), result)
     write_file_once(harness_root / "RULES.md", root_rules(), result)
     write_file_once(harness_root / "TOOLS.md", root_tools(), result)
     if include_legacy_agent:
@@ -1975,8 +1997,14 @@ def create_domain_structure(
     )
 
 
-def ensure_default_domains(os_root: Path, result: ScaffoldResult, *, include_legacy_agent: bool = False) -> None:
-    for domain in DEFAULT_DOMAINS:
+def ensure_default_domains(
+    os_root: Path,
+    result: ScaffoldResult,
+    *,
+    include_legacy_agent: bool = False,
+    domains: tuple[str, ...] | list[str] | None = None,
+) -> None:
+    for domain in tuple(domains) if domains else DEFAULT_DOMAINS:
         create_domain_structure(os_root, domain, result, include_legacy_agent=include_legacy_agent)
     create_domain_structure(os_root, SHARED_FACTORY_DOMAIN, result, include_legacy_agent=include_legacy_agent)
     result.extend(copy_tree_missing(template_source_dir(), shared_factory_path(os_root, "05-knowledge", "templates")))
@@ -1988,11 +2016,18 @@ def init_os(
     *,
     projects_source: str | Path = DEFAULT_PROJECTS_SOURCE,
     include_legacy_agent: bool = False,
+    domains: tuple[str, ...] | list[str] | None = None,
 ) -> ScaffoldResult:
+    """Create (or additively repair) an installed OS tree.
+
+    ``domains`` overrides the built-in neutral ``DEFAULT_DOMAINS`` with an
+    explicit domain list; each name is validated as a domain slug.
+    """
     root = expand_path(target)
+    domains_list = tuple(normalize_domain(domain) for domain in domains) if domains else None
     result = ScaffoldResult()
-    ensure_root_files(root, result, projects_source, include_legacy_agent=include_legacy_agent)
-    ensure_default_domains(root, result, include_legacy_agent=include_legacy_agent)
+    ensure_root_files(root, result, projects_source, include_legacy_agent=include_legacy_agent, domains=domains_list)
+    ensure_default_domains(root, result, include_legacy_agent=include_legacy_agent, domains=domains_list)
     return result
 
 
@@ -2070,8 +2105,12 @@ def install_docs(root: str | Path) -> ScaffoldResult:
 def create_domain(root: str | Path, domain: str, *, include_legacy_agent: bool = False) -> ScaffoldResult:
     domain = normalize_domain(domain)
     os_root = expand_path(root)
-    result = init_os(os_root, include_legacy_agent=include_legacy_agent)
-    if domain not in DEFAULT_DOMAINS:
+    # Additive on existing trees: reuse the domains already installed on disk
+    # instead of planting the built-in defaults next to an operator's custom
+    # domain set. A fresh target falls back to DEFAULT_DOMAINS.
+    existing = installed_domain_names(os_root)
+    result = init_os(os_root, include_legacy_agent=include_legacy_agent, domains=existing or None)
+    if domain not in (existing or DEFAULT_DOMAINS):
         create_domain_structure(os_root, domain, result, include_legacy_agent=include_legacy_agent)
     return result
 

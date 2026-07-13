@@ -88,7 +88,7 @@ agentic-os program create os_program_lifecycle --root ~/agentic_os
 Create an instance/domain program:
 
 ```bash
-agentic-os instance-program create los team_pr_sync --root ~/agentic_os
+agentic-os instance-program create work team_pr_sync --root ~/agentic_os
 ```
 
 Both commands are additive. They create the program folder, program context files,

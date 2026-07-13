@@ -380,4 +380,4 @@ Full mechanics and surface setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [11 · Connected Sources](11-connected-sources.md) — watch-sources emit events that chain rules can react to.
 - [07 · Automations](07-automations.md) — automation maturity gates whether a queued chain reaction actually executes.
 - [17 · CLI Reference](17-cli-reference.md) — full flag listing for all `event` and `chain` subcommands.
-- Atlas: [`architecture/system-architecture.md` §6](../.agentic-atlas/architecture/system-architecture.md) · [`command-reference.md` §7](../.agentic-atlas/architecture/command-reference.md) · [`harness/commands/os-event.md`](../harness/commands/os-event.md) · [`harness/commands/os-chain.md`](../harness/commands/os-chain.md)
+- Atlas: [`architecture/system-architecture.md` §6](architecture/system-architecture.md) · [`command-reference.md` §7](architecture/command-reference.md) · [`harness/commands/os-event.md`](../harness/commands/os-event.md) · [`harness/commands/os-chain.md`](../harness/commands/os-chain.md)

@@ -40,6 +40,7 @@ from .scaffold import (
     domain_path,
     expand_path,
     harness_path,
+    installed_domain_names,
     shared_factory_path,
 )
 from .hosts import load_hosts
@@ -1453,7 +1454,12 @@ def validate_root(root: str | Path) -> ValidationResult:
     validate_update_backup_contract(os_root, result)
 
     profile_domains = profile_domain_names(os_root)
-    domains_to_validate = profile_domains or list(DEFAULT_DOMAINS)
+    # Derive the domain list from the tree on disk (directories carrying a
+    # domain.yml marker) so installs with any operator-chosen domain names
+    # validate as-is. Fall back to the neutral defaults only when the tree
+    # has no domains at all, which keeps missing-domain errors for broken or
+    # half-created roots.
+    domains_to_validate = profile_domains or installed_domain_names(os_root) or list(DEFAULT_DOMAINS)
     for domain in domains_to_validate:
         validate_domain(domain_path(os_root, domain), result)
     if not profile_domains:

@@ -269,7 +269,7 @@ profile_warnings: []
 
 **Private-term guard:** domain slugs and the customer slug must not match the
 reserved operator-identity terms (`genome`, `clark`, `clarks_consulting`, `los`,
-`lenders`). Attempting to use one exits 2 with `error: approved domain uses a
+`lenders`, `eduba`). Attempting to use one exits 2 with `error: approved domain uses a
 private Genome source name: 'genome'` (the offending value is named).
 
 ---
@@ -351,8 +351,8 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`customer update` is additive.** It will not overwrite files that already
   exist. Re-run `validate` after to confirm the tree is complete.
 - **Private-term guard is strict.** The terms `genome`, `clark`, `clarks_consulting`,
-  `los`, and `lenders` are blocked in slugs and domain names at init time, not just
-  at validate time. Exit 2; the offending value is named in the error message.
+  `los`, `lenders`, and `eduba` are blocked in slugs and domain names at init time,
+  not just at validate time. Exit 2; the offending value is named in the error message.
 - **macOS path expansion.** The CLI resolves `~/` and symlinks; output paths may
   show `/private/tmp/…` when you passed `/tmp/…`. This is expected.
 - **`profile_warnings` are non-blocking.** Empty `notion_workspace`,
@@ -363,9 +363,6 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 
 ## Related
 
-- [08 · Client OS Patterns](08-client-os-patterns/README.md) — the operating patterns
-  (Client Domain Shape, Client Operations, Candidate Pipeline, Internal Product) that
-  customer OS roots are designed to support.
 - [13 · Agent Surfaces](13-agent-surfaces.md) — the five-layer Codex config model,
   including the `customer_os_root` layer.
 - [14 · Config, Update & Backup](14-config-update-backup.md) — `update register`,
@@ -373,5 +370,5 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — running
   `doctor` inside a customer OS to detect missing files and broken links.
 - [17 · CLI Reference](17-cli-reference.md) — full flag tables for every command.
-- Atlas: [`architecture/system-architecture.md`](../.agentic-atlas/architecture/system-architecture.md) ·
-  [`command-reference.md §13`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) ·
+  [`command-reference.md §13`](architecture/command-reference.md)

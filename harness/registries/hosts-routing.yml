@@ -1,70 +1,57 @@
 # Routing policy for cross-host work distribution (feat/024).
-# SSH identity (ssh_alias, user, home, ssh_options) lives in config/hosts.yml.
+# SSH identity (ssh_alias, user, ssh_options) lives in config/hosts.yml.
 # This file references aliases from hosts.yml — single source of truth for SSH identity.
 #
 # agentic-harness-run reads this file to resolve --host auto and --host <name>.
-# watch.py reads this file in Phase 2 for Host column + phrase override.
+# The entries below are neutral examples: replace them with your own hosts,
+# project paths, and concurrency limits after installing.
 
 hosts:
-  bigmac:
+  localhost:
     role: primary
-    max_concurrent: 5
-    harnesses: [claude, gpt]      # both CLIs installed locally
+    max_concurrent: 4
+    harnesses: [claude, gpt]      # CLIs installed locally
     project_paths:                # ProjectName -> absolute path on THIS host
-      "Agentic OS":   /Users/genome/projects/genomes_agentic_os
-      "Genome's Brain": /Users/genome/projects/genomes_agentic_os
-      "LOS Django":   /Users/genome/projects/los-app-los-django
-      "LedgerLine":   /Users/genome/projects/ledgerline
-      "LOSMON":       /Users/genome/agentic_os/los/02-projects/losmon
-    path_rewrite: []              # bigmac is the reference domain; no rewrites needed
+      "Example Product": ~/projects/example-product
+    path_rewrite: []              # the primary host is the reference domain; no rewrites needed
 
-  genomesbox:
+  example-host:
     role: worker
-    max_concurrent: 3             # conservative for Phase 1; raise after observing real loads
-    harnesses: [claude, gpt]      # confirmed: claude 2.1.168, codex 0.130.0 at ~/.local/bin
+    max_concurrent: 2             # conservative default; raise after observing real loads
+    harnesses: [claude, gpt]
     project_paths:
-      "Agentic OS":   /home/genome/projects/genomes_agentic_os
-      "Genome's Brain": /home/genome/projects/genomes_agentic_os
-      "LedgerLine":   /home/genome/projects/ledgerline
-      "LOSMON":       /home/genome/projects/losmon
-      # NOTE: "LOS Django" intentionally absent -> genomesbox is INELIGIBLE for LOS Django work
+      "Example Product": /home/operator/projects/example-product
     path_rewrite:                 # prefix-substitution fallback when project not in project_paths
-      - { from: /Users/genome, to: /home/genome }
-
-  # mac: Phase 4 placeholder only. Current SSH alias resolves to /Users/mclark,
-  # lacks codex, lacks /Users/genome project checkouts, and has no bigmac-visible
-  # SSHFS artifact mount. Add it here only after those prerequisites are true.
+      - { from: ~/projects, to: /home/operator/projects }
 
 auto_route:
-  enabled: true                   # default ON (hard requirement)
+  enabled: false                  # enable after registering real hosts
   strategy: least_active          # fewest in-flight harness runs among eligible hosts
   probe: ssh_pgrep                # one short SSH per candidate host
   probe_pattern: "[c]laude -p|[c]odex exec"  # bracket trick: regex matches real runs but not the pgrep/zsh wrapper's own argv string
   probe_timeout_sec: 6
   on_probe_failure: treat_at_capacity     # fail-safe: never dispatch to an unmeasurable host
-  candidate_order: [genomesbox, bigmac]   # tie-break: prefer offloading to worker first
-  fallback_host: bigmac
+  candidate_order: [example-host, localhost]   # tie-break: prefer offloading to a worker first
+  fallback_host: localhost
 
 task_overrides:
-  # Manual per-task override (Phase 2: read by watch.py from Notion Host column)
-  notion_host_column: Host        # select on OS Work Intake DB: auto|bigmac|genomesbox|mac
+  # Manual per-task override (read from the intake control plane's Host column)
+  notion_host_column: Host        # select on the work-intake DB: auto|<host alias>
   phrase:
-    enabled: true
-    # Parsed from row body/title (case-insensitive); explicit phrase wins over column:
-    pattern: 'run (?:this )?on (?P<host>bigmac|genomesbox|mac)'
+    enabled: false
+    # Parsed from row body/title (case-insensitive); explicit phrase wins over column.
+    # Extend the alternation with your registered host aliases.
+    pattern: 'run (?:this )?on (?P<host>localhost|example-host)'
     precedence: [phrase, notion_host_column, auto_route]
 
 artifact_return:
-  default: sshfs_visibility       # write on executing host; visible via SSHFS mount on bigmac
-  sshfs_mounts:
-    genomesbox:
-      remote_root: /home/genome/projects
-      local_root:  /Users/genome/agentic_os/SSH_genomesbox/projects
+  default: sshfs_visibility       # write on executing host; visible via SSHFS mount on the primary
+  sshfs_mounts: {}                # e.g. {example-host: {remote_root: /home/operator/projects, local_root: <os-root>/SSH_example-host/projects}}
   rsync_back:
-    enabled: false                # Phase 4 option for hosts without an SSHFS mount
-    dest: null                    # e.g. /Users/genome/agentic_os/watchers/.../runs/<run-id>
+    enabled: false                # option for hosts without an SSHFS mount
+    dest: null                    # e.g. <os-root>/watchers/.../runs/<run-id>
 
 memory_plane:
-  shared: true                    # verified: losmon-memory-mcp @ genomesbox:3155, tunneled to bigmac
+  shared: false                   # set true when one memory service serves every host
   endpoint_local: 127.0.0.1:3155
-  note: "Genome's Brain is one host-agnostic service; no per-host memory work required."
+  note: "Point every host at one shared memory endpoint before enabling."

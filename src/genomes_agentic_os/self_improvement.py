@@ -35,7 +35,9 @@ NOTION_REPORT_PARENT_TITLE = "Genome's Agentic OS"
 NOTION_REPORTS_PAGE_TITLE = "Self Improvement Reports"
 ACTION_OUTPUT_ROOT = f"{OUTPUT_ROOT}/actions"
 NIGHTLY_APPLY_ROOT = f"{OUTPUT_ROOT}/nightly-apply"
-SELF_IMPROVEMENT_WORK_ITEM = "clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
+# OS-relative work-item packet that owns continuous self-improvement work.
+# Lives under the shared factory so every install has a stable home for it.
+SELF_IMPROVEMENT_WORK_ITEM = "harness/shared_factory/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
 STALE_QUEUE_GRACE = timedelta(hours=24)
 # 🧭 OS Work Intake Notion database that receives queued self-improvement work.
 WORK_INTAKE_DB_ID = "c442dd56a24340f0880acfd195f34225"
@@ -117,7 +119,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"path": "harness/shared_factory/05-knowledge", "legacy_read_only": False},
         {"path": "harness/logs", "legacy_read_only": False},
         {"path": "harness/logs/conversations", "legacy_read_only": False},
-        {"path": "clarks_consulting/02-projects/genomes_agentic_os/logs/conversations", "legacy_read_only": False},
         {"path": "harness/skills", "legacy_read_only": False},
         {"path": "harness/commands", "legacy_read_only": False},
         {"path": "harness/rules", "legacy_read_only": False},

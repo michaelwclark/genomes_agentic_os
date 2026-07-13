@@ -343,7 +343,7 @@ _EPILOG = textwrap.dedent("""\
           Receipt: PR, repo, author_harness, reviewer_harness, scrub_passed, artifact path.
 
     EXAMPLES
-      agentic-os-pr-crossreview --repo thesummitgrp/los-app-los-django --pr 25690
+      agentic-os-pr-crossreview --repo owner/repo --pr 123
           Detect author harness, pick opposite, run review, print to stdout. No GitHub post.
 
       agentic-os-pr-crossreview --pr https://github.com/owner/repo/pull/42

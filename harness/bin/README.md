@@ -15,8 +15,8 @@ Executable wrappers owned by the installed Agentic OS harness.
 |---|---|
 | `agentic-os-automation-run-summary` | Replace an automation's Notion last-run summary page after each run. |
 | `agentic-os-intake-sync` | Sync intake data from connected sources. |
-| `agentic-os-jira` | Jira helper for the VenturesGo Atlassian site; prefers OAuth, falls back to API token. |
-| `agentic-os-memory-analytics` | Read-only memory-analytics viewer; runs report on genomesbox via SSH. |
+| `agentic-os-jira` | Jira helper for an Atlassian Jira site; prefers OAuth, falls back to API token. |
+| `agentic-os-memory-analytics` | Read-only memory-analytics viewer; runs the report on the configured analytics host via SSH. |
 | `agentic-os-notify` | Send OS notifications. |
 | `agentic-os-quiet-run` | Start and monitor long-running commands detached from the terminal. |
 | `agentic-os-status-report` | Generate durable OS status report artifacts (markdown, Notion draft, gap analysis). |

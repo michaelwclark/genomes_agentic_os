@@ -61,7 +61,7 @@ rule's idempotency key, so re-running `run-due` is always safe.
 > Making those sources live requires the same pattern: (1) the secrets contract
 > below, (2) a provider adapter in `source_providers.py`, and (3) a supervisor
 > driving `run-due` on a schedule (see [09 · Runtime & Always-On](09-runtime-and-always-on.md)
-> and [Gap A](../.agentic-atlas/gap-register.md)).
+> and Gap A).
 
 `automation-control` has a narrower Notion status probe for gating expensive
 runtime work. It reads a configured watch source's Notion database or data source
@@ -472,5 +472,5 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [17 · CLI Reference](17-cli-reference.md) — full flag listing for all commands.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — doctor failures,
   cursor resets, disabled-source skips.
-- Atlas: [`gap-register.md §F`](../.agentic-atlas/gap-register.md) ·
-  [`command-reference.md §8`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: `gap-register.md §F` ·
+  [`command-reference.md §8`](architecture/command-reference.md)

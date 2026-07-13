@@ -1,7 +1,7 @@
 # 04 · Information Architecture
 
 > **Purpose:** understand how the installed OS is organized on disk — the root
-> layout, the five default domains, the numbered operating lanes inside each
+> layout, the three default domains, the numbered operating lanes inside each
 > domain, and the context files that make every layer agent-readable. This is the
 > physical shape that routing matches against.
 >
@@ -22,7 +22,7 @@ The hierarchy has three levels:
 | Level | Examples | Created by |
 | --- | --- | --- |
 | **OS root** | `~/agentic_os/` | `agentic-os init` |
-| **Domain** | `personal/`, `los/`, `clarks_consulting/` | `init` (defaults) or `domain create` |
+| **Domain** | `personal/`, `work/`, `archive/` | `init` (defaults) or `domain create` |
 | **Numbered lane** | `00-programs/`, `00-control-plane/` … `08-archive/` | created inside every domain |
 
 ---
@@ -34,50 +34,59 @@ Running `agentic-os init` (default target: `~/agentic_os`) produces:
 ```text
 ~/agentic_os/
   .agentic_root          ← boundary marker read by all harnesses
-  AGENTS.md              ← harness-neutral entry point
-  CLAUDE.md              ← one-line adapter: @AGENTS.md
-  ROUTER.md              ← tells agents which domain owns which work
-  CONTEXT.md             ← OS-wide operating context
-  RULES.md               ← OS-wide approval and safety rules
-  TOOLS.md               ← skill and command inventory (rendered by capability_registry)
-  README.md
-  registries/            ← capabilities.yml, commands.yml, skills.yml, …
+  harness/               ← the OS brain — see below
+    AGENTS.md            ← harness-neutral entry point
+    CLAUDE.md             ← one-line adapter: @AGENTS.md
+    ROUTER.md             ← tells agents which domain owns which work
+    CONTEXT.md            ← OS-wide operating context
+    RULES.md              ← OS-wide approval and safety rules
+    TOOLS.md              ← skill and command inventory (rendered by capability_registry)
+    README.md
+    registries/           ← capabilities.yml, commands.yml, skills.yml, …
+    shared_factory/       ← shared patterns, templates, cross-domain knowledge (see 02 · Architecture)
   personal/
-  clarks_consulting/
-  los/
-  shared_factory/
+  work/
   archive/
 ```
 
 The `.agentic_root` marker is how `here route` and `here context build` find the
-OS boundary — they walk up the directory tree until they hit it.
+OS boundary — they walk up the directory tree until they hit it. The context
+files an agent actually reads (`AGENTS.md`, `ROUTER.md`, `CONTEXT.md`,
+`RULES.md`, `TOOLS.md`) live under `harness/`, not at the bare OS root —
+`harness/` is the managed OS brain, and `personal/`, `work/`, and `archive/`
+are the three default domains a real operator routes work into.
 
 ---
 
 ## Domains
 
-The five **default domains** installed by `init`:
+The three **default domains** installed by `init`:
 
 | Domain | What it owns |
 | --- | --- |
 | `personal` | Personal administration, household operations, learning, planning, and life logistics. |
-| `clarks_consulting` | Client delivery, consulting operations, sales, marketing, and reusable service workflows. |
-| `los` | Loan origination system and lender-related product work, support, releases, implementation, and operational knowledge. |
-| `shared_factory` | Shared patterns, templates, routers, reusable automations, schemas, and cross-domain tools. |
+| `work` | Professional work: product delivery, client engagements, operations, and reusable service workflows. |
 | `archive` | Inactive work, retired projects, historical runs, and preserved decisions. |
 
-> `los` is the home for all lender-related work. It is not a separate top-level
-> concept. The alias `lenders` routes to `los` automatically.
+`init` also creates `harness/shared_factory/` — shared patterns, templates,
+routers, reusable automations, schemas, and cross-domain tools — but it is not
+a fourth domain you route work into; see [02 · Architecture](02-architecture.md)
+for why it lives under `harness/` instead of beside the domains above.
 
 Additional domains are created with `agentic-os domain create <name>`. The name
 must be snake_case; hyphens are rejected. Custom domains get the same numbered
-structure as the defaults.
+structure as the defaults. Operators who need alternate spellings to route to
+one canonical domain (for example, an internal codename routing to a real
+domain slug) can extend the empty `DOMAIN_ALIASES` map in a fork; the generic
+product ships no built-in aliases.
 
 ---
 
 ## Domain anatomy diagram
 
-![Domain anatomy: the OS root holds five default domains; each domain contains harness context files plus numbered operating lanes including 00-programs, 00-control-plane, and 01-inbox through 08-archive; the 03-workflows and 04-automations lanes are each sub-divided into the eight standard lanes](diagrams/infoarch-domain-anatomy.png)
+![Domain anatomy: the OS root holds three default domains; each domain contains harness context files plus numbered operating lanes including 00-programs, 00-control-plane, and 01-inbox through 08-archive; the 03-workflows and 04-automations lanes are each sub-divided into the eight standard lanes](diagrams/infoarch-domain-anatomy.png)
+
+<!-- NOTE: this alt text was corrected to three default domains during the AGE-37/38 docs pass, but the underlying PNG was rendered from an older five-domain Mermaid source and was not regenerated (no .mmd source is checked in; see docs/architecture/tools/render-diagrams.sh). Regenerate the source diagram to match before treating the image itself as authoritative. -->
 
 ---
 
@@ -117,10 +126,10 @@ scaffolder:
 | `personal_admin` | Scheduling, personal logistics, admin tasks. |
 | `learning` | Research, reading, courses, skill-building. |
 
-A workflow spec lives at e.g. `los/03-workflows/engineering/deploy_release/`.
-An automation spec lives at e.g. `los/04-automations/support/ticket_intake/`.
+A workflow spec lives at e.g. `work/03-workflows/engineering/deploy_release/`.
+An automation spec lives at e.g. `work/04-automations/support/ticket_intake/`.
 
-An instance program lives at e.g. `los/00-programs/team_pr_sync/`. Shared
+An instance program lives at e.g. `work/00-programs/team_pr_sync/`. Shared
 programs live under `harness/shared_factory/00-programs/<program>/`; see
 [21 · OS Programs](21-os-programs.md).
 
@@ -207,12 +216,12 @@ front matter.
 
 ## Naming rules
 
-- **All filesystem names are snake_case.** `clarks_consulting`, `launch_blog`,
-  `ticket_intake` — not `clarks-consulting`, `launch-blog`, `ticket-intake`.
-  The CLI validates this at creation time and exits 1 if the name contains hyphens
-  or uppercase letters.
+- **All filesystem names are snake_case.** `client_delivery`, `launch_blog`,
+  `ticket_intake` — not `client-delivery`, `launch-blog`, `ticket-intake`.
+  The CLI validates this at creation time and exits 2 (usage error) if the name
+  contains hyphens or uppercase letters.
 - **Notion page titles are human-readable.** Snake_case is for the filesystem;
-  "Clark's Consulting" is for display.
+  a readable display name (for example "Client Delivery") is for Notion.
 - **Do not encode transient status in filenames.** Use YAML front matter or the
   `status:` field in `project.yml` instead.
 - **Stable IDs in sidecar config.** If an object maps to Notion, Jira, GitHub, or
@@ -314,4 +323,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [08 · Runs & Run Logs](08-runs-and-run-logs.md) — how `06-runs-and-logs/` is used.
 - [15 · Customer OS Factory](15-customer-os-factory.md) — creating OS roots for other organizations.
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — validating a root's structural correctness.
-- Atlas: [`architecture/system-architecture.md` §3](../.agentic-atlas/architecture/system-architecture.md) · [`command-reference.md`](../.agentic-atlas/architecture/command-reference.md)
+- Atlas: [`architecture/system-architecture.md` §3](architecture/system-architecture.md) · [`command-reference.md`](architecture/command-reference.md)

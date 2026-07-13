@@ -11,11 +11,11 @@ import yaml
 
 from .lifecycle import WorkItemRecord, record_matches_request, select_project_work_item
 from .scaffold import (
-    DEFAULT_DOMAINS,
     SHARED_FACTORY_DOMAIN,
     domain_path,
     expand_path,
     harness_path,
+    installed_domain_names,
     normalize_domain,
     shared_factory_path,
     validate_name,
@@ -147,15 +147,15 @@ def read_yaml(path: Path) -> dict[str, Any]:
 
 
 def existing_domains(root: Path) -> list[str]:
-    domains = [domain for domain in DEFAULT_DOMAINS if (root / domain).is_dir()]
+    """Domains present on disk (any top-level dir with a domain.yml marker).
+
+    Derived purely from the tree so routing works for installs with any
+    operator-chosen domain names; no built-in name list is consulted.
+    """
+    domains = installed_domain_names(root)
     if shared_factory_path(root).is_dir():
         domains.append(SHARED_FACTORY_DOMAIN)
-    extra = [
-        path.name
-        for path in sorted(root.iterdir())
-        if path.is_dir() and (path / "domain.yml").is_file() and path.name not in domains
-    ] if root.is_dir() else []
-    return domains + extra
+    return domains
 
 
 def project_records(root: Path) -> list[dict[str, Any]]:

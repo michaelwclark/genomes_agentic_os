@@ -3,12 +3,12 @@
 # Tool: harness/bin/agentic-os-intake-row --route-text '<free text>'
 #
 # Policy: first_match_wins — list more-specific projects BEFORE broader ones.
-#   Example: LOSMON before Genome's Brain so "losmon memory" matches LOSMON, not Brain.
-#   Example: LOS Django before generic "los" terms so "los school" routes to Django.
+#   Example: a product codename before a broader program name so the codename
+#   keyword wins even when both would match.
 #
 # Project select values must EXACTLY match the Notion DB options (case-sensitive).
-# Valid values: Agentic OS, Genome's Brain, LOS Django, Rules Engine, LedgerLine,
-#               LOSMON, Forge, Kanga, Grep Memory Battle, Personal
+# The entries below are neutral examples: replace "Example Product" with your
+# own projects and keep this file in sync with the intake tool's VALID_PROJECTS.
 
 ambiguous_policy: first_match_wins  # order matters; more specific projects listed first
 
@@ -16,43 +16,26 @@ default_project: null  # when no keyword matches, Project property is omitted
 
 project_keywords:
 
-  # LOS Django — match before generic "los" terms
-  "LOS Django":
-    - los django
-    - dlos
-    - flywl
-    - los-app
-    - los school
-    - nfcu
-    - lenders
-    - los app
-    - los-app-los-django
-    - learning operations
-    - django
+  # Example Product — replace with your own product/project keywords.
+  # Match product-specific terms before broader program terms.
+  "Example Product":
+    - example product
+    - example-product
+    - exampleproduct
 
-  # LOSMON — match before Genome's Brain (losmon-memory-mcp belongs to LOSMON)
-  "LOSMON":
-    - losmon
-    - losmon-memory
-    - losmon memory mcp
-
-  # Genome's Brain — after LOSMON so losmon-memory-mcp doesn't double-match
+  # Genome's Brain — match before Agentic OS so memory-service phrasing routes here
   "Genome's Brain":
     - genomes brain
     - genome brain
     - genomes-brain
-    - mempalace
-    - mem palace
     - memory mcp
-    - memory palace
     - brain mcp
-    - losmon-memory-mcp
     - memory write
     - memory read
     - memory_write
     - memory_read
 
-  # Agentic OS — after LOS Django so "los" in "the os" doesn't mis-route
+  # Agentic OS — broader OS phrasing after the more specific projects
   "Agentic OS":
     - agentic os
     - agentic_os
@@ -66,37 +49,6 @@ project_keywords:
     - os navigator
     - os intake
     - os update
-
-  # Rules Engine
-  "Rules Engine":
-    - rules engine
-    - rulesengine
-    - rules-engine
-
-  # LedgerLine
-  "LedgerLine":
-    - ledgerline
-    - ledger line
-    - ledger-line
-
-  # Kanga
-  "Kanga":
-    - kanga
-    - kangabooking
-    - kanga booking
-
-  # Forge
-  "Forge":
-    - forge
-    - forge event
-    - forgeevent
-
-  # Grep Memory Battle
-  "Grep Memory Battle":
-    - grep memory
-    - grep battle
-    - grep memory battle
-    - memory battle
 
   # Personal
   "Personal":

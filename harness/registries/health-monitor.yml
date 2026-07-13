@@ -15,7 +15,7 @@ thresholds:
 
   # Number of items with status=failed before an alert fires.
   # The run-queue accumulates historical failures; tune once you know your
-  # normal baseline. Current queue has ~1176 failed items as of 2026-07-02.
+  # normal baseline.
   queue_failed_max:
     value: 1500
     level: warn
@@ -29,8 +29,7 @@ thresholds:
   # ---- Host vitals --------------------------------------------------------
 
   # 1-minute load average ceiling per host.
-  # bigmac: 10-core M-series; genomesbox: 32-core Linux box.
-  # Both hosts alert at the same threshold; tune per-host in a future pass.
+  # All hosts alert at the same threshold; tune per-host in a future pass.
   cpu_pct_max:
     value: 90
     level: warn
@@ -41,16 +40,16 @@ thresholds:
     level: warn
 
   # Fire when a host's SSH probe fails (unreachable / timeout).
-  # level=warn so genomesbox going to sleep doesn't spam critical.
+  # level=warn so a worker host going to sleep doesn't spam critical.
   host_unreachable:
     value: true
     level: warn
 
   # ---- Agents per host ---------------------------------------------------
 
-  # Matches max_concurrent from hosts-routing.yml (bigmac:5, genomesbox:3).
+  # Matches max_concurrent from hosts-routing.yml.
   # Set conservatively — a single threshold across all hosts. Raise if you
-  # routinely run more than 5 parallel agents on bigmac intentionally.
+  # routinely run more parallel agents on the primary host intentionally.
   agents_max_per_host:
     value: 5
     level: warn

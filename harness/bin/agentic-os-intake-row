@@ -18,12 +18,12 @@ EXAMPLES
       --route-text 'intake rewire for agentic os'
       Route via free text → Project=Agentic OS
 
-  agentic-os-intake-row --title 'LOS Django late fee bug' --type bug \\
-      --project 'LOS Django' --priority P1
+  agentic-os-intake-row --title 'Example Product late fee bug' --type bug \\
+      --project 'Example Product' --priority P1
       Explicit project, high priority.
 
   agentic-os-intake-row --title 'Test row' --type idea \\
-      --route-text 'new kanga idea' --dry-run
+      --route-text 'new example product idea' --dry-run
       Preview resolved Project without writing to Notion.
 """
 
@@ -65,16 +65,12 @@ DEFAULT_ROUTING_REGISTRY = _SCRIPT_DIR.parent / "registries" / "intake-routing.y
 VALID_TYPES = {"idea", "spec", "feature", "plan", "gap", "bug", "improvement", "investigation"}
 VALID_STATUSES = {"inbox", "triaged", "spec-ready", "queued", "in-progress", "blocked", "done", "dropped"}
 VALID_PRIORITIES = {"P0", "P1", "P2", "P3"}
+# Neutral example project set. Replace with your own project names; keep in
+# sync with harness/registries/intake-routing.yml project_keywords.
 VALID_PROJECTS = {
     "Agentic OS",
     "Genome's Brain",
-    "LOS Django",
-    "Rules Engine",
-    "LedgerLine",
-    "LOSMON",
-    "Forge",
-    "Kanga",
-    "Grep Memory Battle",
+    "Example Product",
     "Personal",
 }
 VALID_SOURCES = {"night-run-023", "self-improvement", "slack", "granola", "migration", "manual"}
@@ -234,12 +230,12 @@ _EPILOG = textwrap.dedent("""\
           NL routing registry: Project → keywords. First-match-wins order.
 
     EXAMPLES
-      agentic-os-intake-row --title 'New idea for LOS Django late fees' \\
-          --type idea --route-text 'idea for los django late fees'
-          Routes to Project=LOS Django automatically.
+      agentic-os-intake-row --title 'New idea for Example Product late fees' \\
+          --type idea --route-text 'idea for example product late fees'
+          Routes to Project=Example Product automatically.
 
-      agentic-os-intake-row --title 'Kanga Phase 2 planning' --type plan \\
-          --project Kanga --priority P2 --status triaged
+      agentic-os-intake-row --title 'Example Product Phase 2 planning' --type plan \\
+          --project 'Example Product' --priority P2 --status triaged
           Explicit project and status.
 
       agentic-os-intake-row --title 'INTAKE REWIRE SMOKE TEST' --type investigation \\
@@ -247,7 +243,7 @@ _EPILOG = textwrap.dedent("""\
           Preview resolved Project=Agentic OS without writing.
 
       agentic-os-intake-row --title 'Big spec' --type spec \\
-          --route-text 'new losmon feature' --body-file SPEC.md
+          --route-text 'new example product feature' --body-file SPEC.md
           Create row and populate page body from a markdown file.
 """)
 

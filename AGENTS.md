@@ -2,19 +2,15 @@
 
 This repo defines Genome's Agentic OS: the reusable source package for scaffolding installed operating systems for agentic workflows.
 
-## 🗺️ Start at the Atlas
+## 🗺️ Start Here
 
-**Before analyzing this repo, read [`.agentic-atlas/START-HERE.md`](.agentic-atlas/START-HERE.md).**
-The `.agentic-atlas/` folder is the canonical, validated inventory so you don't
-re-derive the system from scratch:
+**Before analyzing this repo, read the handbook index at [`docs/README.md`](docs/README.md)**
+and the maintained architecture map so you don't re-derive the system from scratch:
 
-- [`.agentic-atlas/architecture/system-architecture.md`](.agentic-atlas/architecture/system-architecture.md) — architecture + how to extend without making a mess.
-- [`.agentic-atlas/architecture/command-reference.md`](.agentic-atlas/architecture/command-reference.md) — every command and flag, with real examples.
-- [`.agentic-atlas/gap-register.md`](.agentic-atlas/gap-register.md) — what's designed-but-not-running and which services are missing.
-- [`.agentic-atlas/backlog.md`](.agentic-atlas/backlog.md) — prioritized features/fixes/upgrades.
-- [`.agentic-atlas/tools/`](.agentic-atlas/tools/) — re-runnable validation + diagram-render scripts.
-
-The human-facing handbook lives in [`docs/`](docs/) and is built from and validated against the atlas.
+- [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md) — architecture + how to extend without making a mess.
+- [`docs/architecture/command-reference.md`](docs/architecture/command-reference.md) — every command and flag, with real examples.
+- [`docs/architecture/harness-modes.md`](docs/architecture/harness-modes.md) — how Claude/Codex surfaces execute the same specs.
+- [`docs/architecture/tools/`](docs/architecture/tools/) — re-runnable validation + diagram-render scripts.
 
 ## Working Principles
 
@@ -34,8 +30,7 @@ The human-facing handbook lives in [`docs/`](docs/) and is built from and valida
 | `~/projects/*` | Product/client/code repositories operated by the OS. |
 
 Project lifecycle state for this source package belongs in the installed OS
-project at
-`/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/`.
+project at `<os-root>/<work-domain>/02-projects/genomes_agentic_os/`.
 Do not recreate source-root `PLANS/`, `features/`, `BUILD_LOGS/`, or `spec/`
 for Agentic OS planning or work history; use `SPECS/`, `work-items/`,
 `worklogs/`, `logs/`, and `artifacts/` under the installed project instead.

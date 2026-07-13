@@ -33,15 +33,15 @@ mcp_registration_points:
     credential_policy: no inline secrets
   sentry:
     url: https://mcp.sentry.dev/mcp
-    install_scope: los layers only
+    install_scope: domain-gated via mcp-domain-gating registry
     credential_policy: provider-managed auth or env var names only
   datadog:
     url: https://mcp.datadoghq.com/api/unstable/mcp-server/mcp
-    install_scope: los layers only
+    install_scope: domain-gated via mcp-domain-gating registry
     credential_policy: provider-managed auth or env var names only
   supabase:
     url: https://mcp.supabase.com/mcp
-    install_scope: clarks_consulting layers only
+    install_scope: domain-gated via mcp-domain-gating registry
     credential_policy: provider-managed auth or env var names only
   composio:
     install_scope: visible only until an approved generated MCP URL is available

@@ -1,24 +1,25 @@
 # intake-sync.yml - Config for agentic-os-intake-sync
-# Sync: OS Work Intake Notion DB -> Linear (Clarks Consulting team)
+# Sync: OS Work Intake Notion DB -> a Linear team
 # See: harness/bin/agentic-os-intake-sync --help
+#
+# The values below are neutral placeholders: set your own Linear team id,
+# key, name, and project ids before enabling the sync.
 
 # Linear team (key/name are used by doctor token-visibility remediation labels)
-team_id: "2225b211-a962-4392-98ef-b2e78a26669f"
-team_key: "CC"
-team_name: "Clarks Consulting"
+team_id: "00000000-0000-0000-0000-000000000000"
+team_key: "EX"
+team_name: "Example Team"
 
 # Linear token env var for this tracker (default LINEAR_TOKEN when omitted).
-# CC lives in the Clarks Consulting workspace; the default LINEAR_TOKEN is a
-# personal-workspace key (CASH/LED), so CC uses a dedicated key.
-token_env: "LINEAR_CC_TOKEN"
+# Point this at a workspace-scoped key when the team lives outside your
+# default Linear workspace.
+token_env: "LINEAR_TOKEN"
 
 # Notion Project select value -> Linear project id
-# (Projects not verified in Clarks Consulting are omitted so no stale projectId is set)
+# (Omit projects you have not verified in the target workspace so no stale
+# projectId is ever set.)
 project_map:
-  "Agentic OS": "5812f46f-f7a5-4518-8a59-593aaa45f418"
-  "Genome's Brain": "1e569341-c390-47e3-a98a-14be82b892e7"
-  "Grep Memory Battle": "2be56c7d-77c0-4f60-819d-483d2c171a3b"
-  "Kanga": "21bd0219-e5f3-43e7-896c-d5977fbade8b"
+  "Example Product": "00000000-0000-0000-0000-000000000000"
   # "Personal" -> no entry -> issues created with no project
 
 # Notion Status -> Linear workflow state NAME

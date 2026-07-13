@@ -1,0 +1,26 @@
+# Example SSH identity registry for an installed Agentic OS.
+#
+# Copy this file to <os-root>/config/hosts.yml and replace the entries with
+# your own hosts, or manage entries with `agentic-os host add`.
+#
+# Routing policy (harnesses, project_paths, auto_route) lives in
+# harness/registries/hosts-routing.yml. This file is SSH-identity only:
+# no credentials, no keys — connectivity resolves via ~/.ssh/config.
+#
+# Schema: schemas/hosts.schema.json
+#   {hosts: {<alias>: {ssh_alias, user, description, ssh_options, paths: []}}}
+
+hosts:
+  localhost:
+    ssh_alias: localhost         # not used for self; documented for symmetry
+    user: operator
+    description: The machine this OS is installed on.
+
+  example-host:
+    ssh_alias: example-host      # must resolve via ~/.ssh/config
+    user: operator
+    description: Example always-on worker box; replace with a real host.
+    ssh_options: ["-o", "ClearAllForwardings=yes"]
+    paths:
+      - path: /home/operator/projects
+        purpose: project checkouts

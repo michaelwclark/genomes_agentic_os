@@ -82,30 +82,6 @@ skills:
     bootstrap: false
     purpose: >
       Commit all local changes in logical groups until a repository is clean.
-  - id: los-fast-workon
-    title: LOS Fast Workon
-    source_path: harness/skills/los-fast-workon
-    installed_path: shared_factory/05-knowledge/skills/los-fast-workon
-    harness_targets:
-      - codex
-      - claude
-    status: active
-    builtin: true
-    bootstrap: false
-    purpose: >
-      Prepare and work LOS Jira tasks in dedicated fast worktrees.
-  - id: los-quiet-workon
-    title: LOS Quiet Workon
-    source_path: harness/skills/los-quiet-workon
-    installed_path: shared_factory/05-knowledge/skills/los-quiet-workon
-    harness_targets:
-      - codex
-      - claude
-    status: active
-    builtin: true
-    bootstrap: false
-    purpose: >
-      Work or resume LOS implementation in a fast worktree with minimal chat.
   - id: orchestrate
     title: Orchestrate
     source_path: harness/skills/orchestrate

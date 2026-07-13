@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,14 @@ MAPPING_PATH = ".notion-sync/mapping.yml"
 BOOTSTRAP_MANIFEST_PATH = ".notion-control-plane/manifest.yml"
 ACTIVE_WORK_SYNC_MANIFEST_PATH = ".notion-active-work-sync/last-run.yml"
 GENOME_NOTION = "Genome's Notion"
-BLOCKED_WORKSPACE_MARKERS = ("michael clark", "michaelwclark", "personal notion")
+# Markers that flag a verified workspace as someone's personal Notion rather
+# than the OS control plane. Operators can extend the list (comma-separated)
+# via NOTION_BLOCKED_WORKSPACE_MARKERS without forking the product.
+BLOCKED_WORKSPACE_MARKERS = tuple(
+    marker.strip().lower()
+    for marker in ("personal notion", *os.environ.get("NOTION_BLOCKED_WORKSPACE_MARKERS", "").split(","))
+    if marker.strip()
+)
 
 ACTIVE_WORK_REQUIRED_PROPERTIES: dict[str, str] = {
     "Name": "title",
@@ -169,7 +177,7 @@ def verify_workspace(root: Path, verified_workspace: str | None) -> str:
         raise ValueError(f"cannot apply Notion sync without verified workspace: expected {expected!r}")
     lowered = verified_workspace.lower()
     if any(marker in lowered for marker in BLOCKED_WORKSPACE_MARKERS):
-        raise ValueError("refusing Notion write: verified workspace appears to be Michael Clark's personal Notion")
+        raise ValueError("refusing Notion write: verified workspace appears to be a personal Notion workspace")
     if verified_workspace != expected:
         raise ValueError(f"verified workspace {verified_workspace!r} does not match expected workspace {expected!r}")
     return expected

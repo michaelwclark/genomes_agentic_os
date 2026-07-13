@@ -223,9 +223,9 @@ def sync_project_remote(
     root:
         The OS root directory.
     domain:
-        Domain slug (e.g. ``"los"``).
+        Domain slug (e.g. ``"work"``).
     project:
-        Project slug (e.g. ``"losmon"``).
+        Project slug (e.g. ``"appserver"``).
     name:
         When given, sync only the remote with this name; otherwise sync all.
     timeout:

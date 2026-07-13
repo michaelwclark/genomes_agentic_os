@@ -29,14 +29,14 @@ ENVIRONMENT
   (none required for resolve; agentic-harness-run picks up its own env vars)
 
 EXAMPLES
-  agentic-os-auto-dev-resolve losmon 002
+  agentic-os-auto-dev-resolve example_project 002
       Stage gate check; reports state=specified, blocks without --allow-specified.
 
-  agentic-os-auto-dev-resolve losmon 002 --allow-specified
+  agentic-os-auto-dev-resolve example_project 002 --allow-specified
       Proceeds past gate; runs dev_factory preflight checks.
 
   agentic-os-auto-dev-resolve genomes_agentic_os 023
-      Resolves packet in clarks_consulting domain; reports state from SPEC.md.
+      Resolves packet in its work domain; reports state from SPEC.md.
 """
 
 import argparse
@@ -57,18 +57,24 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-# Primary domain subdirectories searched first (relative to instance root).
-# harness/shared_factory is a factory/template layer, not a project domain;
-# it is only checked when no primary domain has the project (fallback).
-PRIMARY_DOMAIN_DIRS = [
-    "los",
-    "clarks_consulting",
-    "personal",
-]
+# Primary domains are discovered from the instance tree (any top-level
+# directory carrying a domain.yml marker). harness/shared_factory is a
+# factory/template layer, not a project domain; it is only checked when no
+# primary domain has the project (fallback).
 FALLBACK_DOMAIN_DIRS = [
     "harness/shared_factory",
 ]
-DOMAIN_DIRS = PRIMARY_DOMAIN_DIRS + FALLBACK_DOMAIN_DIRS
+
+
+def _primary_domain_dirs(root: Path) -> list[str]:
+    """Domain directory names under *root* (marker: domain.yml)."""
+    if not root.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in root.iterdir()
+        if path.is_dir() and (path / "domain.yml").is_file()
+    )
 
 # Canonical state ordinal — only build-phase states have a rank >= 0.
 # Non-ordinal / terminal states are handled by name, not rank.
@@ -118,7 +124,7 @@ def _find_project(root: Path, project_id: str) -> Path | None:
     """
     # First pass: primary domains only
     primary_hits = []
-    for domain in PRIMARY_DOMAIN_DIRS:
+    for domain in _primary_domain_dirs(root):
         candidate = root / domain / "02-projects" / project_id
         if candidate.is_dir():
             primary_hits.append(candidate)
@@ -151,7 +157,7 @@ def _find_project(root: Path, project_id: str) -> Path | None:
 
     # Not found — suggest similar names
     suggestions = []
-    for domain in DOMAIN_DIRS:
+    for domain in _primary_domain_dirs(root) + FALLBACK_DOMAIN_DIRS:
         projects_dir = root / domain / "02-projects"
         if projects_dir.is_dir():
             for name in sorted(projects_dir.iterdir()):
@@ -611,14 +617,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=textwrap.dedent("""\
             EXAMPLES
-              agentic-os-auto-dev-resolve losmon 002
+              agentic-os-auto-dev-resolve example_project 002
                   Stage gate check; state=specified blocks without --allow-specified.
 
-              agentic-os-auto-dev-resolve losmon 002 --allow-specified
+              agentic-os-auto-dev-resolve example_project 002 --allow-specified
                   Allows specified state; runs dev_factory preflight.
 
               agentic-os-auto-dev-resolve genomes_agentic_os 023
-                  Resolves under clarks_consulting domain; reports state from SPEC.md.
+                  Resolves under its work domain; reports state from SPEC.md.
         """),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

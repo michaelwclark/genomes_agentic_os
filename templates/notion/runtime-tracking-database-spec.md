@@ -7,7 +7,7 @@ Use this spec to create or verify the Notion runtime tracking layer in Genome's 
 | Check | Required Value |
 | --- | --- |
 | Workspace | `Genome's Notion` |
-| Blocked workspace markers | `Michael Clark`, `michaelwclark`, `personal notion` |
+| Blocked workspace markers | `personal notion` (extend via `NOTION_BLOCKED_WORKSPACE_MARKERS`) |
 | Apply command | `agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace "Genome's Notion"` |
 
 ## Databases

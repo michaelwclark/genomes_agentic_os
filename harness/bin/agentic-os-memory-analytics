@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Agentic OS memory-analytics viewer wrapper.
 
-Runs the read-only retrieval analytics report on genomesbox (the host that can
-reach Atlas) and, for `export`, copies the markdown + JSON artifacts back under
-the active work item's artifacts folder. Read-only and redacted: this wrapper
-never prints or transmits the connection string.
+Runs the read-only retrieval analytics report on the configured analytics
+host (the host that can reach the memory store) and, for `export`, copies the
+markdown + JSON artifacts back under the active work item's artifacts folder.
+Read-only and redacted: this wrapper never prints or transmits the connection
+string.
 
 Usage:
     agentic-os-memory-analytics <summary|recent|methods|compare|health|export> \
-        [--project losmon] [--since 7d] [--limit 25] \
-        [--format markdown|json] [--out <dir>] [--host genomesbox]
+        [--project my_project] [--since 7d] [--limit 25] \
+        [--format markdown|json] [--out <dir>] [--host example-host]
+
+Environment:
+    AGENTIC_MEMORY_ANALYTICS_HOST   Default SSH host alias (fallback: example-host).
+    AGENTIC_MEMORY_ANALYTICS_REPO   Remote repo path holding the analytics script.
 """
 
 from __future__ import annotations
@@ -20,15 +25,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import os
+
 ROOT = Path(__file__).resolve().parents[2]
-REMOTE_REPO = "/home/genome/projects/losmon"
+DEFAULT_ANALYTICS_HOST = os.environ.get("AGENTIC_MEMORY_ANALYTICS_HOST", "example-host")
+REMOTE_REPO = os.environ.get("AGENTIC_MEMORY_ANALYTICS_REPO", "/home/operator/projects/memory-analytics")
 REMOTE_SCRIPT = "scripts/memory/retrieval-analytics-report.ts"
 REMOTE_EXPORT_DIR = "/tmp/agentic-os-memory-analytics"
-DEFAULT_OUT = (
-    ROOT
-    / "los/02-projects/losmon/work-items/02-active/001_grep_memory_system_addition"
-    / "artifacts/retrieval-analytics"
-)
+DEFAULT_OUT = ROOT / "harness/shared_factory/06-runs-and-logs/retrieval-analytics"
 COMMANDS = ["summary", "recent", "methods", "compare", "health", "export"]
 
 
@@ -82,9 +86,9 @@ COMMANDS
   export    Copy markdown + JSON artifacts back to the local --out directory.
 
 SERVICE
-  The analytics report runs on the remote host (default: genomesbox) via SSH.
+  The analytics report runs on the configured remote host via SSH.
   The remote host must be reachable with BatchMode=yes (no password prompt).
-  Backend: losmon memory MCP service at genomesbox:3155.
+  Backend: the memory MCP service reachable from that host (port 3155 by default).
 
 FILES
   Remote script:  {REMOTE_REPO}/{REMOTE_SCRIPT}
@@ -95,8 +99,8 @@ EXAMPLES
   agentic-os-memory-analytics summary
       Print a retrieval summary for the last 7 days (default window).
 
-  agentic-os-memory-analytics summary --since 30d --project losmon
-      Summary for the losmon project over the last 30 days.
+  agentic-os-memory-analytics summary --since 30d --project my_project
+      Summary for one project over the last 30 days.
 
   agentic-os-memory-analytics methods --format markdown
       Method breakdown as a markdown table.
@@ -113,7 +117,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Read-only memory-analytics viewer for the Genome's Brain unified memory system. "
-            "Runs the retrieval-analytics report on the remote host (genomesbox) via SSH "
+            "Runs the retrieval-analytics report on the configured remote host via SSH "
             "and prints the result locally. Never prints credentials or connection strings."
         ),
         epilog=_ANALYTICS_EPILOG,
@@ -126,7 +130,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--project",
-        help="Project slug to filter analytics (e.g. losmon). Default: all projects.",
+        help="Project slug to filter analytics. Default: all projects.",
     )
     parser.add_argument(
         "--since",
@@ -151,8 +155,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--host",
-        default="genomesbox",
-        help="SSH host alias that can reach the memory service (default: genomesbox).",
+        default=DEFAULT_ANALYTICS_HOST,
+        help="SSH host alias that can reach the memory service (default: AGENTIC_MEMORY_ANALYTICS_HOST or example-host).",
     )
     args = parser.parse_args()
 

@@ -317,7 +317,7 @@ agentic-os customer init acme_ops \
 
 These are the honest gaps between what the OS describes and what it does today.
 Each is tracked in the atlas gap register
-([`../.agentic-atlas/gap-register.md`](../.agentic-atlas/gap-register.md)).
+(retired atlas gap register; see git history).
 
 ### Gap A — No always-on scheduler or daemon (S1)
 
@@ -340,7 +340,7 @@ agentic-os runtime run-next --apply --root ~/agentic_os
 ```
 
 See [09 · Runtime & Always-On](09-runtime-and-always-on.md) and the backlog
-([`../.agentic-atlas/backlog.md`](../.agentic-atlas/backlog.md)) for the planned
+(retired atlas backlog; see git history) for the planned
 supervisor installer.
 
 ---
@@ -446,6 +446,6 @@ than optimal.
   doctor surface and how to read exit-1 findings.
 - [17 · CLI Reference](17-cli-reference.md) — complete flag tables for every
   command.
-- Atlas: [`gap-register.md`](../.agentic-atlas/gap-register.md) ·
-  [`command-reference.md`](../.agentic-atlas/architecture/command-reference.md) ·
-  [`validation/command-output-examples.md`](../.agentic-atlas/validation/command-output-examples.md)
+- Atlas: `gap-register.md` ·
+  [`command-reference.md`](architecture/command-reference.md) ·
+  `validation/command-output-examples.md`

@@ -22,6 +22,7 @@ from .scaffold import (
     SOURCE_PACKAGE_VERSION,
     ScaffoldResult,
     ensure_default_domains,
+    installed_domain_names,
     ensure_project_operating_surface,
     ensure_root_files,
     ensure_update_metadata,
@@ -740,8 +741,12 @@ def update_apply(
     result = ScaffoldResult()
     layout_migration = migrate_harness_layout(os_root)
     result.extend(layout_migration)
-    ensure_root_files(os_root, result, DEFAULT_PROJECTS_SOURCE)
-    ensure_default_domains(os_root, result)
+    # Update is additive relative to the operator's installed domain set:
+    # never plant built-in default domains into a tree that already has its
+    # own domains. Fresh/degenerate trees fall back to the neutral defaults.
+    existing_domains = installed_domain_names(os_root)
+    ensure_root_files(os_root, result, DEFAULT_PROJECTS_SOURCE, domains=existing_domains or None)
+    ensure_default_domains(os_root, result, domains=existing_domains or None)
     ensure_visible_capability_surface(os_root, result)
     ensure_update_metadata(os_root, result)
     result.extend(install_docs(os_root))

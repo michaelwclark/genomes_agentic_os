@@ -1,8 +1,8 @@
 # Diagrams
 
-Committed diagrams are **PNG** (or hand-authored SVG). The repo stays Mermaid-free at the committed level: handbook diagrams are authored as Mermaid `.mmd` **sources that are gitignored** and rendered to PNG by `.agentic-atlas/tools/render-diagrams.sh` (which drives the local Chrome). The intended publishing targets include Notion and agent-readable markdown, and PNG/SVG assets preserve consistently across those surfaces.
+Committed diagrams are **PNG** (or hand-authored SVG). The repo stays Mermaid-free at the committed level: handbook diagrams are authored as Mermaid `.mmd` **sources that are gitignored** and rendered to PNG by `docs/architecture/tools/render-diagrams.sh` (which drives the local Chrome). The intended publishing targets include Notion and agent-readable markdown, and PNG/SVG assets preserve consistently across those surfaces.
 
-Handbook page diagrams are named `<page-slug>-<name>.png` and live here alongside the legacy standalone SVGs listed below. Regenerate every PNG after editing any `.mmd` with `bash .agentic-atlas/tools/render-diagrams.sh`.
+Handbook page diagrams are named `<page-slug>-<name>.png` and live here alongside the legacy standalone SVGs listed below. Regenerate every PNG after editing any `.mmd` with `bash docs/architecture/tools/render-diagrams.sh`.
 
 ## Available Diagrams
 

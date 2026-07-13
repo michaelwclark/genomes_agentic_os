@@ -15,8 +15,6 @@ evidence_roots:
     legacy_read_only: false
   - path: harness/logs/conversations
     legacy_read_only: false
-  - path: clarks_consulting/02-projects/genomes_agentic_os/logs/conversations
-    legacy_read_only: false
   - path: harness/skills
     legacy_read_only: false
   - path: harness/commands
