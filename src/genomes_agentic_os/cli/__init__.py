@@ -17,6 +17,10 @@ from . import scaffold
 from . import project
 from . import workflow
 from . import hosts
+from . import automation
+from . import run_lifecycle
+from . import routing
+from . import cockpit
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -26,6 +30,10 @@ COMMAND_MODULES = [
     project,
     workflow,
     hosts,
+    automation,
+    run_lifecycle,
+    routing,
+    cockpit,
 ]
 
 
