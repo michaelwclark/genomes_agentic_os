@@ -315,97 +315,68 @@ agentic-os customer init acme_ops \
 
 ## Part B — Known Limitations
 
-These are the honest gaps between what the OS describes and what it does today.
-Each is tracked in the atlas gap register
-(retired atlas gap register; see git history).
+These were the honest gaps between what the OS described and what it did,
+lettered A–K in the retired atlas gap register (`.agentic-atlas/gap-register.md`,
+removed in AGE-35 — git history preserves the full text). The letters are still
+used across this handbook, so they are kept here. Every status below was
+re-verified against the source on 2026-07-13; most of the register has closed.
 
-### Gap A — No always-on scheduler or daemon (S1)
+| Gap | Was (severity) | Status today |
+| --- | --- | --- |
+| A | No always-on scheduler or daemon (S1) | **Closed.** `agentic-os runtime supervise` runs one full tick (`supervisor.py`); `installers/install-scheduler.sh` installs a launchd agent (macOS) or crontab line that calls `runtime supervise --apply` on a cadence. Residual below. |
+| B | Notion control plane is plan-only (S2) | **Closed.** `notion_api.py` is a real Notion client (stdlib `urllib` against `api.notion.com/v1`, token from the `GENOMES_NOTION_PAT` env var). Live writes exist behind `--apply` + `--verified-workspace`: `notion track-runtime` (F-010) and `notion active-work-sync`. `notion sync`/`bootstrap` maintain local mapping/manifest projections. Files stay authoritative. See [12 · Control Plane — Notion](12-control-plane-notion.md). |
+| C | No aggregated health, no `doctor --all` (S2) | **Closed.** `agentic-os doctor --all` (F-003) aggregates the core, runtime, event-graph, and config doctors, persists a per-subsystem snapshot, and appends an `os.doctor.regression` event when health regresses. Residual below. |
+| D | `validate` does not enforce `schemas/` (S2) | **Closed, opt-in.** `validate --strict` (F-011) checks structured YAML/JSON against `schemas/`. Plain `validate` still checks shape and parseability only. Residual below. |
+| E | No `metrics` command (S2) | **Closed.** `agentic-os metrics refresh` computes a scorecard from run logs, doctor findings, and automation maturity, writing `harness/shared_factory/07-metrics/scorecard.yml`. |
+| F | Integrations and connected sources are registries and contracts, not live connections (S2) | **Mostly closed.** `source_providers.py` implements live GitHub and Slack pollers (real HTTP, trimmed payloads, idempotency keys) wired into `watch-source poll`. Residual below. |
+| G | Runtime state plane is files, not a database (S2) | **Open by design** for V1 — the DB/queue layer stays future until file-based state strains. |
+| H | Install & onboarding PATH friction (S3) | **Open** (inherent to venv installs) — documented with workarounds in [01 · Install & Quickstart](01-install-and-quickstart.md) §2. |
+| I | Routing confidence threshold may be aggressive (S3) | **Open** — see below. |
+| K | Project work lifecycle & conversation evidence not first-class (S1) | **Shipped** via the feature-61 lifecycle and conversation auto-logging work (`work_lifecycle.py`, `conversation_logging.py`); hardening continues in the AGE series. |
 
-`runtime`, `heartbeat`, `schedule`, `watch-source`, `event process-due`, and
-`runtime run-next` all exist and work. **None fires automatically.** There is no
-daemon, no launchd plist, no systemd unit, no cron job installed. Every runtime
-command defaults to `--dry-run` and requires an explicit `--apply` to do anything.
+The residuals that still bite day to day:
 
-**Practical impact:** heartbeats don't beat, schedules don't fire, sources aren't
-polled, and chain reactions don't process unless a human runs the command. The
-"always-on" in the design is currently "on-demand."
+### Gap A residual — the scheduler is a per-host opt-in
 
-**Workaround until the gap closes:** add a cron entry or launchd plist that
-periodically runs the tick sequence:
+The supervisor and its installer exist, but nothing installs the scheduler for
+you: heartbeats don't beat and schedules don't fire on a host until an operator
+runs the installer there. That is deliberate — installing a background agent is
+an explicit, per-machine choice. If "nothing is firing," this is almost always
+why.
+
 ```bash
-agentic-os heartbeat run --apply --root ~/agentic_os
-agentic-os schedule run-due --apply --root ~/agentic_os
-agentic-os event process-due --apply --root ~/agentic_os
-agentic-os runtime run-next --apply --root ~/agentic_os
+# one manual tick, end to end (dry-run first, then apply)
+agentic-os runtime supervise --root ~/agentic_os
+agentic-os runtime supervise --apply --root ~/agentic_os
+
+# install the launchd agent / cron line (default cadence 15 min)
+bash installers/install-scheduler.sh --apply
 ```
 
-See [09 · Runtime & Always-On](09-runtime-and-always-on.md) and the backlog
-(retired atlas backlog; see git history) for the planned
-supervisor installer.
+See [09 · Runtime & Always-On](09-runtime-and-always-on.md) for the full
+supervisor contract.
 
----
+### Gap C residual — the supervisor tick does not run `doctor --all`
 
-### Gap B — Notion is plan-only (S2)
+The supervise tick ends with a read-only `runtime doctor` check, not the full
+`doctor --all` aggregation. For monitored whole-OS health, schedule
+`agentic-os doctor --all` on its own cadence and watch the event ledger for
+`os.doctor.regression`.
 
-`notion plan-sync` works (exit 0, real output validated). `notion sync --apply`,
-`notion bootstrap --apply`, and `notion track-runtime --apply` exist in the CLI and
-have the write guards in place, but **no live Notion connection has been exercised
-in the validation suite** — they are structurally sound but untested against a real
-workspace. The control plane is plan-only today.
+### Gap D residual — plain `validate` is not strict
 
-See [12 · Control Plane — Notion](12-control-plane-notion.md).
+Passing plain `validate` means the filesystem shape is right and every YAML/JSON
+file parses — not that structured files conform to `schemas/`. Malformed
+heartbeat, schedule, or chain-rule YAML can still pass. Run
+`agentic-os validate --strict` to schema-check it.
 
----
+### Gap F residual — only GitHub and Slack poll live, and only with tokens
 
-### Gap C — No aggregated / monitored health, no `doctor --all` (S2)
-
-Each subsystem has its own `doctor` subcommand (`heartbeat doctor`, `chain doctor`,
-`runtime doctor`, `config doctor`, etc.). There is no `doctor --all` or aggregated
-health dashboard that runs them in sequence and summarizes across the whole OS. The
-top-level `agentic-os doctor` checks only the core OS root structure.
-
-**Workaround:** run each doctor manually and collect results:
-```bash
-agentic-os doctor --root ~/agentic_os
-agentic-os runtime doctor --root ~/agentic_os
-agentic-os heartbeat doctor --root ~/agentic_os
-agentic-os chain doctor --root ~/agentic_os
-agentic-os integration doctor --root ~/agentic_os
-```
-
-See [16 · Health, Doctor & Validation](16-health-doctor-validation.md).
-
----
-
-### Gap D — `validate` does not enforce `schemas/` (S2)
-
-The OS root includes a `schemas/` directory with YAML schemas for heartbeats,
-schedules, chain rules, and events. `agentic-os validate` does **not** load these
-schemas or check structured files against them. Malformed YAML can pass `validate`
-and fail later at use time.
-
-**Workaround:** manually inspect YAML files against `schemas/` when authoring
-heartbeats, schedules, or chain rules.
-
----
-
-### Gap E — No `metrics` command (S2)
-
-The roadmap (phase 10) lists `agentic-os metrics refresh`, and every domain
-scaffolds `07-metrics/baselines.md` and `scorecards.md`. No `metrics` subcommand
-exists in the CLI today — the metrics layer is templates only.
-
----
-
-### Gap F — Integrations and connected sources are registries and contracts, not live connections (S2)
-
-`integration list`, `connected-system list`, and `watch-source list` show the
-registries populated during `init`. `integration doctor` and `connected-system
-doctor` verify that required fields are present. **No adapter actually polls a live
-external system.** `watch-source poll --apply` and `integration setup --apply` are
-defined but have not been tested against a real endpoint in the validation suite.
-
-See [11 · Connected Sources](11-connected-sources.md).
+Provider coverage is `github` and `slack`; other provider types remain registry
+entries. Without a token (`credential_refs.env_vars`, e.g. `GITHUB_TOKEN` /
+`SLACK_BOT_TOKEN`) a poll degrades gracefully to `live: false` and skips — the
+source looks "connected" in the registry while returning nothing. See
+[11 · Connected Sources](11-connected-sources.md).
 
 ---
 
@@ -446,6 +417,7 @@ than optimal.
   doctor surface and how to read exit-1 findings.
 - [17 · CLI Reference](17-cli-reference.md) — complete flag tables for every
   command.
-- Atlas: `gap-register.md` ·
-  [`command-reference.md`](architecture/command-reference.md) ·
-  `validation/command-output-examples.md`
+- Atlas: [`command-reference.md`](architecture/command-reference.md) · re-run
+  the validation harness via `docs/architecture/tools/validate-cli.sh` (receipts
+  land in gitignored `.validation/`). The retired gap register
+  (`.agentic-atlas/gap-register.md`, git history) is superseded by Part B above.

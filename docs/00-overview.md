@@ -168,9 +168,9 @@ Be precise about the current state:
 
 | Does not do | Status |
 | --- | --- |
-| Run as a persistent, always-on scheduler | `runtime supervise`, `heartbeat run`, and `schedule run-due` each execute one tick and exit; something external (cron, launchd, a wrapper) must call them on a cadence. The CLI calls the real Notion API (`notion sync` / `notion bootstrap`, dry-run by default, `--apply` to write) — that part is wired, not plan-only. |
+| Run as a persistent, always-on scheduler | `runtime supervise`, `heartbeat run`, and `schedule run-due` each execute one tick and exit; something external (cron, launchd, a wrapper) must call them on a cadence. The CLI calls the real Notion API where it counts (`notion track-runtime`, `notion active-work-sync` — dry-run by default, `--apply` + verified workspace to write; `notion sync`/`bootstrap` maintain local projections) — the control plane is wired, not plan-only. |
 | Execute automations autonomously past their maturity gate | Automation specs advance through `observe` → `prepare` → `propose` → `execute_approved` → `execute_guarded`; each step still needs the evidence and approval its level requires. |
-| Perform full JSON Schema validation of workflow/automation content | Templates exist; schema enforcement is a V2 hardening item (Gap D). |
+| Schema-enforce structured content on every plain `validate` run | `validate --strict` (F-011, closing Gap D) checks workflow/automation and other structured YAML/JSON against `schemas/`; plain `validate` checks shape and parseability only. |
 | Install Claude or Codex skills into local harness folders | Skills are authored in this repo; installation into `~/.claude/` or `~/.codex/` is manual in V1. |
 | Store secrets | Secrets belong in the harness keychain or environment; the OS holds references, not values. |
 | Replace project repositories, task trackers, or the human approval process | The OS *wraps* these; it does not replace them. |
@@ -225,4 +225,4 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [04 · Information Architecture](04-information-architecture.md) — the numbered folder scheme in detail.
 - [05 · Routing & Context](05-routing-and-context.md) — how a request becomes a ContextPacket.
 - [17 · CLI Reference](17-cli-reference.md) — every command, every flag.
-- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) · `gap-register.md`
+- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) · gap statuses: [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)

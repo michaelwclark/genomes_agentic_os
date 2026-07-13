@@ -420,4 +420,4 @@ Full mechanics and harness config: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [16 · Health, Doctor & Validation](16-health-doctor-validation.md) — post-apply doctor checks.
 - [17 · CLI Reference](17-cli-reference.md) — full flag index.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — common error messages.
-- Atlas: [`architecture/command-reference.md` §11–12](architecture/command-reference.md) · `validation/command-output-examples.md`
+- Atlas: [`architecture/command-reference.md` §11–12](architecture/command-reference.md) · real command output: re-run `docs/architecture/tools/validate-cli.sh` (receipts in gitignored `.validation/`)

@@ -225,7 +225,10 @@ doesn't match `WORKFLOW_FILES`/`AUTOMATION_FILES`.
 ## 10. Where to look next
 
 - **Command reference (every flag + real example):** [`command-reference.md`](command-reference.md)
-- **What's validated vs designed-but-not-running:** [`../gap-register.md`](../gap-register.md)
-- **Real command output to quote:** [`../validation/command-output-examples.md`](../validation/command-output-examples.md)
-- **Re-run the validation harness:** `bash docs/architecture/tools/validate-cli.sh`
+- **What's validated vs designed-but-not-running:** gap statuses in
+  [`../18-troubleshooting-and-faq.md`](../18-troubleshooting-and-faq.md) (Part B;
+  the retired atlas gap register survives in git history at
+  `.agentic-atlas/gap-register.md`)
+- **Re-run the validation harness (regenerates real command output):**
+  `bash docs/architecture/tools/validate-cli.sh` — receipts land in gitignored `.validation/`
 - **Upstream specs (intent):** `spec/architecture.md`, `spec/product-spec.md`, `spec/harness-context-contract.md`

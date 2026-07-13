@@ -199,10 +199,12 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`run-log close --status done` requires `--validation`.** Omitting it exits 1.
   The evidence field is the loop's integrity gate — every closed run must have a
   stated basis.
-- **Notion control plane is plan-only today (Gap B).** `notion plan-sync` computes
-  a reviewable diff; `notion sync` and `notion bootstrap` are guarded and dry-run
-  by default. Files are authoritative; Notion is a projection. Do not treat a
-  plan-sync output as confirmation that Notion was updated.
+- **Notion writes are real but gated (Gap B closed).** `notion plan-sync` computes
+  a reviewable diff; the live write paths (`notion track-runtime`,
+  `notion active-work-sync`) require `--apply` plus a verified workspace, and
+  `notion sync`/`bootstrap` maintain local projection records. Files are
+  authoritative; Notion is a projection. Do not treat a plan-sync output as
+  confirmation that Notion was updated.
 - **Status moves forward only.** A run marked `done` is not re-opened; create a
   new run log for follow-up work.
 - **All names are snake_case.** `launch_blog`, not `launch-blog`. Routing matches
@@ -219,4 +221,4 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - [07 · Automations](07-automations.md) — promoted workflows with trigger-based entry into the loop.
 - [08 · Runs & Run Logs](08-runs-and-run-logs.md) — the full run-log schema, close options, and activity log.
 - [12 · Control Plane (Notion)](12-control-plane-notion.md) — the plan-sync / sync commands and Notion projection.
-- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) · `gap-register.md`
+- Atlas: [`architecture/system-architecture.md`](architecture/system-architecture.md) · gap statuses: [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)

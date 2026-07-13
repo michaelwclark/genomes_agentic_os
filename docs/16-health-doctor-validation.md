@@ -28,14 +28,19 @@ Neither command mutates your root by default. `doctor --fix-missing` is the
 one additive exception: it creates missing managed files without overwriting
 anything.
 
-**Honest current limits (Gaps C and D):** every doctor is a *one-shot CLI call*
-— there is no `doctor --all` aggregation, no scheduled run, and no alerting. Gap
-D: the 22 schema files in `schemas/` exist but `validate` does not enforce them
-(`validate.py` imports neither `jsonschema` nor `schemas/`); malformed runtime
-YAML can pass `validate` and fail later at use. Both gaps are tracked in the
-backlog; the recommendations are below.
+**Gaps C and D have since closed** (verified against the source 2026-07-13):
+`doctor --all` (F-003) aggregates the core, runtime, event-graph, and config
+doctors into one report, snapshots per-subsystem health, and emits an
+`os.doctor.regression` event on regression; `validate --strict` (F-011) checks
+structured YAML/JSON against `schemas/`. Two residuals remain: plain `validate`
+stays non-strict, and the supervisor tick's built-in health step is a read-only
+`runtime doctor`, not the full aggregation — schedule `doctor --all` yourself
+for monitored whole-OS coverage.
 
 ![Health surface: the family of doctors plus validate and the capability registry, with a clearly labelled NOT YET box for aggregation and scheduling (Gaps C and D)](diagrams/health-surface.png)
+
+> The diagram's "NOT YET" box predates F-003/F-011 — `doctor --all` and
+> `validate --strict` have since shipped. The rest of the surface is unchanged.
 
 ---
 
@@ -101,13 +106,12 @@ Concretely it:
 
 Exits 1 if any errors are found; exits 0 with warnings printed to stderr.
 
-> **Gap D — schemas exist but are not enforced.** `schemas/` contains 18
-> JSON/YAML schema files (workflow, automation, domain, run, registries,
-> update-grant, …). `validate.py` does not load or apply them — only parse
-> correctness is checked, not structural conformance. Malformed heartbeat,
-> schedule, or chain-rule YAML can pass `validate` and fail later at use.
-> Recommendation: add `jsonschema` enforcement (or a `validate --strict` mode)
-> that maps every structured file to its schema. Tracked as Gap D.
+> **Gap D — closed by `--strict` (F-011).** `schemas/` holds the JSON/YAML
+> schemas (workflow, automation, domain, run, registries, update-grant, …), and
+> `validate --strict` loads them and checks every structured file it can map to
+> a schema (the schema → installed-root glob mapping lives in `validate.py`).
+> Plain `validate` still checks parse correctness only, so malformed heartbeat,
+> schedule, or chain-rule YAML passes plain `validate` but fails `--strict`.
 
 **Flags:**
 
@@ -289,22 +293,21 @@ layer or `config install-tree` for a routed OS tree repair.
 
 ---
 
-## The monitoring gap (Gap C) — what is missing and what to do about it
+## The monitoring gap (Gap C) — closed, with one residual
 
-> **Current state:** all doctors are one-shot CLI commands. There is no
-> `doctor --all` aggregation, no supervisor-driven health loop, and no alerting.
-> Drift and failures are invisible until someone manually runs a doctor.
+> **Current state:** `agentic-os doctor --all` (F-003) fans out across the
+> core, runtime, event-graph, and config doctors and returns one consolidated
+> report — `ok`/`findings` per subsystem, with a top-level `ok` that is true
+> only when every subsystem is ok. Each run persists a compact snapshot to
+> `harness/shared_factory/00-control-plane/doctor-snapshot.yml`; when a prior
+> snapshot exists and health regressed, exactly one `os.doctor.regression`
+> event is appended to the event ledger.
 
-**Recommended path (from the backlog):**
-
-1. Add `agentic-os doctor --all` that fans out across every subsystem doctor and
-   returns one consolidated health report — `ok`/`findings` per subsystem, a
-   top-level `ok` that is true only when all subsystems are ok.
-2. Have the supervisor (Gap A — the always-on runtime process) run `doctor --all`
-   each tick, write a health scorecard to a known path, and emit a `HEALTH_REGRESSION`
-   event when any subsystem flips from ok to not-ok.
-3. Until the supervisor exists, run the doctors manually after every significant
-   change and after `agentic-os update apply`.
+**Residual:** the supervisor tick ([09 · Runtime & Always-On](09-runtime-and-always-on.md))
+ends with a read-only `runtime doctor`, not `doctor --all`. For monitored
+whole-OS health, put `doctor --all` on its own cadence (a `schedule` entry, or
+the same cron/launchd cadence as the supervisor) and watch the event ledger for
+`os.doctor.regression`. Until then, aggregation runs only when you run it.
 
 ---
 
@@ -329,9 +332,10 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`config doctor` exits 1 by design when config is missing or incomplete.** A
   missing `config.toml` is a `blocker`, so treat exit 1 as a repair signal. Run
   `config install` for one layer or `config install-tree` for the routed tree.
-- **`validate` does not enforce schemas (Gap D).** Passing `validate` means the
-  filesystem shape is correct and all YAML/JSON parses; it does not mean your
-  heartbeat or chain-rule files conform to the 22 schemas in `schemas/`.
+- **Plain `validate` does not enforce schemas (Gap D residual).** Passing
+  `validate` means the filesystem shape is correct and all YAML/JSON parses; run
+  `validate --strict` to also check heartbeat, chain-rule, and other structured
+  files against `schemas/`.
 - **Names are snake_case.** All domain, workflow, and automation names must use
   lowercase letters, digits, and underscores only.
 - **Always pass `--root` in scripts.** The default `~/agentic_os` is your live
@@ -352,4 +356,5 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   validates the Codex config layer installed by `config install`.
 - [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) — what to do when
   a doctor reports blockers.
-- Atlas: `gap-register.md` (Gaps C + D) · [`command-reference.md`](architecture/command-reference.md)
+- Atlas: [`command-reference.md`](architecture/command-reference.md) · gap
+  statuses (C and D closed): [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)
