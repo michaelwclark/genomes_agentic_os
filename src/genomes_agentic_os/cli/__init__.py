@@ -21,6 +21,10 @@ from . import automation
 from . import run_lifecycle
 from . import routing
 from . import cockpit
+from . import customer
+from . import operator
+from . import config
+from . import notion
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -34,6 +38,10 @@ COMMAND_MODULES = [
     run_lifecycle,
     routing,
     cockpit,
+    customer,
+    operator,
+    config,
+    notion,
 ]
 
 
