@@ -273,27 +273,20 @@ persistent background process — "always-on" means something external (cron,
 launchd, a wrapper script) calls these on a cadence, not that a daemon ships
 in this package.
 
-<!-- state group: verify against --help after AGE-39 merge -->
-
-### State — `cli/state.py` (arriving via AGE-39, not yet merged)
+### State — `cli/state.py`
 
 A local SQLite state plane at `<os-root>/00-control-plane/state.db`, tracking
-runs, events, queues, and cursors as queryable rows alongside the existing
+events, the run queue, and cursors as queryable rows alongside the existing
 markdown files. Command group: `agentic-os state <subcommand>`.
 
 | Command | What it does |
 | --- | --- |
-| `state init` | Create the state database and its schema at the OS root. |
-| `state status` | Report whether the state database exists and summarize its contents. |
-| `state import` | Import existing file-backed records (runs, events, queues, cursors) into the database. |
-| `state query` | Query state-plane rows. |
-| `state prune` | Apply retention rules to remove old rows. |
-| `state verify-import` | Check that an import matches its file-backed source. |
-
-This section lists only what the AGE-39 work item's design brief specifies —
-exact flags, output shapes, and any additional subcommands are not documented
-here yet. Re-verify every row against real `--help` output once `feat/age-39-sqlite-state`
-merges and regenerate this whole reference from the live CLI.
+| `state init` | Create the state.db and apply schema migrations. |
+| `state status` | Show db path, schema version, and per-table counts. |
+| `state import` | Import run-queue/events/cursors YAML into state.db. |
+| `state query` | Query rows from one state table. |
+| `state prune` | Delete old terminal run_queue items, or old events. |
+| `state verify-import` | Compare source file counts against table counts and report drift. |
 
 ### Doctor & Migrations — `cli/doctor.py`
 

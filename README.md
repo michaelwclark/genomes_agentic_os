@@ -35,7 +35,7 @@ subcommand, see [`docs/17-cli-reference.md`](docs/17-cli-reference.md).
 | Intake / tracker sync | Plans where a capture request should land across the filesystem and Notion, polls connected external systems (Jira, Linear, GitHub, Slack, and others) into local events, and syncs OS state into a Notion control plane. | `agentic-os doc-config plan --request "..."` |
 | Self-improvement | Reviews local evidence — conversation reports, doctor findings — and proposes OS improvements for review; nothing lands without an explicit approve/promote step. | `agentic-os self-improvement run` |
 | Cockpit | Builds a local, read-only, self-contained HTML dashboard over conversations, work, reviews, reports, connected sources, hosts, automations, and hygiene, and opens it. | `agentic-os cockpit open` |
-| State plane | A local SQLite state plane at `<os-root>/00-control-plane/state.db` holds runs, events, queues, and cursors as queryable rows alongside the markdown files, with commands to initialize it, check its status, import existing files into it, query it, and prune old rows. Introduced alongside this docs pass. | `agentic-os state status` |
+| State plane | A local SQLite state plane at `<os-root>/00-control-plane/state.db` holds the events ledger, run queue, and watch cursors as queryable rows alongside the markdown files, with commands to initialize it, check its status, import existing files into it, query it, and prune old rows. | `agentic-os state status` |
 | Customer OS factory | Scaffolds an isolated client OS from a profile, blocks Genome's private operator-identity terms from leaking into it, and keeps it current. | `agentic-os customer init <slug>` |
 
 ## Quickstart
@@ -84,8 +84,8 @@ src/genomes_agentic_os/  Installable Python package.
                           (22 today — scaffold, project, workflow, automation,
                           runtime, notion, customer, and others), registered in
                           cli/__init__.py's COMMAND_MODULES list.
-  state/                  Local SQLite state plane (arriving alongside this
-                          docs pass; not present in every checkout yet).
+  state/                  Local SQLite state plane: events ledger, run queue,
+                          cursors, and importers from the file formats.
 docs/                     The handbook: numbered pages, tutorials, feature
                           guides, the architecture atlas, and rendered diagrams.
 SPECS/                    Source-package future-work specs and planning
