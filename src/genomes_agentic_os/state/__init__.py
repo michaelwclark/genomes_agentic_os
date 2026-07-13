@@ -7,8 +7,12 @@ the Python standard library (``sqlite3`` — no new dependency). See
 workflow, and the two-milestone cutover plan.
 
 This package is self-contained: the only integration point the rest of the
-CLI needs is ``register_state_cli`` (added once ``state/cli.py`` lands),
-wired into the top-level argparse subparsers with one import and one call.
+CLI needs is ``register_state_cli``, wired into the top-level argparse
+subparsers with one import and one call.
 """
 
 from __future__ import annotations
+
+from .cli import register_state_cli
+
+__all__ = ["register_state_cli"]
