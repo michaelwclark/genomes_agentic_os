@@ -1,13 +1,13 @@
 projects:
-  los_app:
-    repo_root: ~/projects/los/app/los-app-los-django
-    default_domain: los
+  lending_ops_app:
+    repo_root: ~/projects/lending-ops/app
+    default_domain: work
     primary_lanes:
       - engineering
       - support
-  clarks_consulting_site:
-    repo_root: ~/projects/clarks_consulting
-    default_domain: clarks_consulting
+  acme_consulting_site:
+    repo_root: ~/projects/acme-consulting-site
+    default_domain: work
     primary_lanes:
       - operations
       - support

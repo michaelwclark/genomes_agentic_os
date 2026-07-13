@@ -40,7 +40,7 @@ def test_doc_config_cli_installs_doctors_and_plans_questions(tmp_path: Path, cap
                 "--request",
                 "Create a workflow spec with open questions",
                 "--domain",
-                "clarks_consulting",
+                "work",
                 "--project",
                 "genomes_agentic_os",
                 "--questions-present",

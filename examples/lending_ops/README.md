@@ -1,6 +1,6 @@
-# Example Domain: LOS
+# Example Domain: Lending Ops
 
-LOS work is a strong first pilot because it has repeated daily loops with changing state, code repos, Jira, PRs, releases, support threads, and production safety gates.
+A lending-operations product is a strong first pilot because it has repeated daily loops with changing state, code repos, Jira, PRs, releases, support threads, and production safety gates.
 
 ## Suggested Lanes
 

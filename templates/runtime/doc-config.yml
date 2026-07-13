@@ -24,7 +24,7 @@ routing:
   work_areas:
     - id: genomes_agentic_os
       title: Genome's Agentic OS
-      domain: clarks_consulting
+      domain: work
       project: genomes_agentic_os
       notion_path: Projects -> Genome's Agentic OS
       aliases:
@@ -39,32 +39,18 @@ routing:
         - docs
         - document
         - work item
-    - id: clarks_consulting
-      title: Clark's Consulting
-      domain: clarks_consulting
+    - id: example_product
+      title: Example Product
+      domain: work
       project: ''
-      notion_path: Projects -> Clark's Consulting
+      notion_path: Projects -> Example Product
       aliases:
-        - clarks consulting
-        - consulting
+        - example product
+        - example-product
       keywords:
         - client
-        - consulting
-        - sales
+        - product
         - service
-    - id: los
-      title: LOS
-      domain: los
-      project: ''
-      notion_path: Projects -> LOS
-      aliases:
-        - lenders cooperative
-        - los
-      keywords:
-        - los
-        - lender
-        - flywl
-        - dlos
 
 filesystem_mirror:
   enabled: true

@@ -49,7 +49,7 @@ def test_doc_config_installs_and_plans_questions_bucket(tmp_path: Path, capsys) 
                 "--request",
                 "Add this to Notion with open questions",
                 "--domain",
-                "clarks_consulting",
+                "work",
                 "--project",
                 "genomes_agentic_os",
                 "--work-item",
@@ -78,7 +78,7 @@ def test_doc_config_installs_and_plans_questions_bucket(tmp_path: Path, capsys) 
 def test_project_doc_config_override_can_disable_any_search_method(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
-    assert main(["project", "create", "clarks_consulting", "genomes_agentic_os", "--root", str(root)]) == 0
+    assert main(["project", "create", "work", "genomes_agentic_os", "--root", str(root)]) == 0
     assert (
         main(
             [
@@ -87,14 +87,14 @@ def test_project_doc_config_override_can_disable_any_search_method(tmp_path: Pat
                 "--root",
                 str(root),
                 "--domain",
-                "clarks_consulting",
+                "work",
                 "--project",
                 "genomes_agentic_os",
             ]
         )
         == 0
     )
-    override_path = root / "clarks_consulting" / "02-projects" / "genomes_agentic_os" / "config" / "doc-config.yml"
+    override_path = root / "work" / "02-projects" / "genomes_agentic_os" / "config" / "doc-config.yml"
     config = yaml.safe_load(override_path.read_text(encoding="utf-8"))
     config["search_methods"]["ripgrep"]["enabled"] = False
     config["search_methods"]["context_mode"]["enabled"] = False
@@ -110,7 +110,7 @@ def test_project_doc_config_override_can_disable_any_search_method(tmp_path: Pat
                 "--request",
                 "Add this to notion",
                 "--domain",
-                "clarks_consulting",
+                "work",
                 "--project",
                 "genomes_agentic_os",
             ]
@@ -348,7 +348,7 @@ def test_doc_config_doctor_fails_when_all_search_methods_are_disabled(tmp_path: 
 def test_doc_config_plan_infers_work_area_from_request(tmp_path: Path, capsys) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
-    assert main(["project", "create", "clarks_consulting", "genomes_agentic_os", "--root", str(root)]) == 0
+    assert main(["project", "create", "work", "genomes_agentic_os", "--root", str(root)]) == 0
 
     assert (
         main(
@@ -366,6 +366,6 @@ def test_doc_config_plan_infers_work_area_from_request(tmp_path: Path, capsys) -
     plan = yaml.safe_load(capsys.readouterr().out)
     assert plan["destination"]["work_area"] == "genomes_agentic_os"
     assert plan["destination"]["work_area_confidence"] == "high"
-    assert plan["destination"]["domain"] == "clarks_consulting"
+    assert plan["destination"]["domain"] == "work"
     assert plan["destination"]["project"] == "genomes_agentic_os"
     assert plan["destination"]["notion_path"] == "Projects -> Genome's Agentic OS -> Specs"

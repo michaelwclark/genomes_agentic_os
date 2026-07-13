@@ -23,15 +23,15 @@ registry:
     last_source_hash: ""
   - id: genomes_agentic_os_project_status
     scope: project
-    domain: clarks_consulting
+    domain: shared_factory
     project: genomes_agentic_os
     title: Genome's Agentic OS project status and routing docs
     sources:
-      - clarks_consulting/02-projects/genomes_agentic_os/status.md
-      - clarks_consulting/02-projects/genomes_agentic_os/ROUTER.md
-      - clarks_consulting/02-projects/genomes_agentic_os/CONTEXT.md
-      - clarks_consulting/02-projects/genomes_agentic_os/RULES.md
-      - clarks_consulting/02-projects/genomes_agentic_os/TOOLS.md
+      - harness/shared_factory/02-projects/genomes_agentic_os/status.md
+      - harness/shared_factory/02-projects/genomes_agentic_os/ROUTER.md
+      - harness/shared_factory/02-projects/genomes_agentic_os/CONTEXT.md
+      - harness/shared_factory/02-projects/genomes_agentic_os/RULES.md
+      - harness/shared_factory/02-projects/genomes_agentic_os/TOOLS.md
     target:
       system: notion
       path: Projects -> Genome's Agentic OS -> Docs -> Project Status

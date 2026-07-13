@@ -1,6 +1,6 @@
-# Example Domain: Clark's Consulting
+# Example Domain: Acme Consulting
 
-Clark's Consulting work uses the OS as a client-delivery and automation-school factory: capture requests, turn them into reusable workflows, build guarded automations, and preserve handoff evidence.
+A consulting practice uses the OS as a client-delivery and automation factory: capture requests, turn them into reusable workflows, build guarded automations, and preserve handoff evidence.
 
 ## Suggested Lanes
 
