@@ -1,10 +1,25 @@
-"""Layer-aware MCP catalog for Agentic OS config and tool docs."""
+"""Layer-aware MCP catalog for Agentic OS config and tool docs.
+
+Optional (non-core) servers are never keyed to built-in domain names.
+A domain opts into a gated server through the installed OS registry at
+``harness/registries/mcp-domain-gating.yml``::
+
+    domains:
+      alpha_ops:
+        - sentry
+        - datadog
+
+Layers resolve their gating by walking up from the target path to the
+OS root marker; roots without the registry get core servers only.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -22,17 +37,23 @@ class McpServer:
 
 
 CORE_MCP_IDS = ("notion", "genomes_brain", "github", "context_mode")
-LOS_MCP_IDS = ("sentry", "datadog")
-CLARKS_MCP_IDS = ("supabase",)
+# Servers a domain can opt into via the mcp-domain-gating registry.
+DOMAIN_GATED_MCP_IDS = ("sentry", "datadog", "supabase")
 VISIBLE_ONLY_MCP_IDS = ("composio", "orgo", "playwright")
+
+# Installed-OS registry that maps domain slug -> gated server ids.
+DOMAIN_GATING_REGISTRY = "harness/registries/mcp-domain-gating.yml"
+# Duplicated from scaffold.ROOT_MARKER_FILENAME to avoid a circular import
+# (scaffold imports this module).
+_ROOT_MARKER_FILENAME = ".agentic_root"
 
 MCP_SERVERS: dict[str, McpServer] = {
     "notion": McpServer(
         id="notion",
         display_name="Notion",
         url="https://mcp.notion.com/mcp",
-        use_when="Genome's Notion control-plane reads and approved writes.",
-        boundary="Verify Genome's Notion before writing; do not use Michael Clark's personal workspace.",
+        use_when="Notion control-plane reads and approved writes.",
+        boundary="Verify the intended control-plane workspace before writing.",
         install_scope="every layer",
     ),
     "genomes_brain": McpServer(
@@ -55,7 +76,7 @@ MCP_SERVERS: dict[str, McpServer] = {
     "context_mode": McpServer(
         id="context_mode",
         display_name="Context Mode",
-        command="/Users/genome/.local/bin/context-mode",
+        command="context-mode",
         use_when="Large-file, repo, and session-memory analysis without flooding prompt context.",
         boundary="Use for analysis and retrieval; do not use context-mode subprocesses for file writes.",
         install_scope="every layer",
@@ -64,25 +85,25 @@ MCP_SERVERS: dict[str, McpServer] = {
         id="sentry",
         display_name="Sentry",
         url="https://mcp.sentry.dev/mcp",
-        use_when="LOS error, trace, release, and production incident investigation.",
-        boundary="LOS layers only; production/customer-visible changes still require approval.",
-        install_scope="LOS layers only",
+        use_when="Error, trace, release, and production incident investigation.",
+        boundary="Domain-gated; production/customer-visible changes still require approval.",
+        install_scope="domain-gated via mcp-domain-gating registry",
     ),
     "datadog": McpServer(
         id="datadog",
         display_name="Datadog",
         url="https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
-        use_when="LOS observability, logs, metrics, traces, and monitor investigation.",
-        boundary="LOS layers only; do not expose customer data outside approved observability workflows.",
-        install_scope="LOS layers only",
+        use_when="Observability, logs, metrics, traces, and monitor investigation.",
+        boundary="Domain-gated; do not expose customer data outside approved observability workflows.",
+        install_scope="domain-gated via mcp-domain-gating registry",
     ),
     "supabase": McpServer(
         id="supabase",
         display_name="Supabase",
         url="https://mcp.supabase.com/mcp",
-        use_when="Clark consulting Supabase project work.",
-        boundary="`clarks_consulting` layers only unless a customer profile explicitly approves Supabase.",
-        install_scope="clarks_consulting layers only",
+        use_when="Supabase project work in domains that opt in.",
+        boundary="Domain-gated; install only in layers the gating registry approves.",
+        install_scope="domain-gated via mcp-domain-gating registry",
     ),
     "composio": McpServer(
         id="composio",
@@ -110,45 +131,112 @@ MCP_SERVERS: dict[str, McpServer] = {
 }
 
 
+def _normalized(value: str) -> str:
+    return value.lower().replace("-", "_")
+
+
 def _normalized_parts(path: str | Path | None) -> set[str]:
     if path is None:
         return set()
-    return {part.lower().replace("-", "_") for part in Path(path).parts}
+    return {_normalized(part) for part in Path(path).parts}
 
 
-def active_domain_ids(path: str | Path | None = None, approved_domains: list[str] | tuple[str, ...] | None = None) -> set[str]:
-    parts = _normalized_parts(path)
-    domains = {str(domain).lower().replace("-", "_") for domain in approved_domains or ()}
-    domains.update(parts)
-    active: set[str] = set()
-    if {"los", "lenders"} & domains:
-        active.add("los")
-    if {"clark", "clarks", "clarks_consulting", "clark_consulting"} & domains:
-        active.add("clarks_consulting")
-    return active
+def _find_os_root(path: str | Path | None) -> Path | None:
+    if path is None:
+        return None
+    candidate = Path(path).expanduser()
+    try:
+        candidate = candidate.resolve()
+    except OSError:
+        return None
+    for current in (candidate, *candidate.parents):
+        if (current / _ROOT_MARKER_FILENAME).is_file():
+            return current
+    return None
 
 
-def config_mcp_ids(layer: str, path: str | Path | None = None) -> tuple[str, ...]:
+def load_domain_mcp_gating(path: str | Path | None = None) -> dict[str, tuple[str, ...]]:
+    """Load the domain -> gated-server mapping for the OS root above *path*.
+
+    Returns an empty mapping when no OS root or registry file exists, or
+    when the registry is malformed. Unknown server ids are ignored so a
+    typo can never install an undeclared server.
+    """
+    os_root = _find_os_root(path)
+    if os_root is None:
+        return {}
+    registry = os_root / DOMAIN_GATING_REGISTRY
+    if not registry.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(registry.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    raw = data.get("domains") if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    gating: dict[str, tuple[str, ...]] = {}
+    for domain, server_ids in raw.items():
+        if not isinstance(server_ids, (list, tuple)):
+            continue
+        cleaned = tuple(
+            server_id
+            for server_id in (str(item) for item in server_ids)
+            if server_id in DOMAIN_GATED_MCP_IDS
+        )
+        if cleaned:
+            gating[_normalized(str(domain))] = cleaned
+    return gating
+
+
+def active_domain_ids(
+    path: str | Path | None = None,
+    approved_domains: list[str] | tuple[str, ...] | None = None,
+) -> set[str]:
+    domains = {_normalized(str(domain)) for domain in approved_domains or ()}
+    domains.update(_normalized_parts(path))
+    return domains
+
+
+def _gated_ids(
+    active_domains: set[str],
+    gating: Mapping[str, Sequence[str]],
+) -> tuple[str, ...]:
+    activated = {
+        server_id
+        for domain, server_ids in gating.items()
+        if domain in active_domains
+        for server_id in server_ids
+    }
+    return tuple(server_id for server_id in DOMAIN_GATED_MCP_IDS if server_id in activated)
+
+
+def config_mcp_ids(
+    layer: str,
+    path: str | Path | None = None,
+    gating: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[str, ...]:
+    resolved_gating = load_domain_mcp_gating(path) if gating is None else gating
     ids = list(CORE_MCP_IDS)
-    domains = active_domain_ids(path)
-    if "los" in domains:
-        ids.extend(LOS_MCP_IDS)
-    if "clarks_consulting" in domains:
-        ids.extend(CLARKS_MCP_IDS)
+    ids.extend(_gated_ids(active_domain_ids(path), resolved_gating))
     return tuple(dict.fromkeys(ids))
 
 
 def all_visible_mcp_ids() -> tuple[str, ...]:
-    return tuple(dict.fromkeys((*CORE_MCP_IDS, *LOS_MCP_IDS, *CLARKS_MCP_IDS, *VISIBLE_ONLY_MCP_IDS)))
+    return tuple(dict.fromkeys((*CORE_MCP_IDS, *DOMAIN_GATED_MCP_IDS, *VISIBLE_ONLY_MCP_IDS)))
 
 
-def mcp_status(server_id: str, active_domains: set[str]) -> str:
+def mcp_status(
+    server_id: str,
+    active_domains: set[str],
+    gating: Mapping[str, Sequence[str]] | None = None,
+) -> str:
     if server_id in CORE_MCP_IDS:
         return "installed at every layer"
-    if server_id in LOS_MCP_IDS:
-        return "installed here" if "los" in active_domains else "visible; LOS layers only"
-    if server_id in CLARKS_MCP_IDS:
-        return "installed here" if "clarks_consulting" in active_domains else "visible; clarks_consulting layers only"
+    if server_id in DOMAIN_GATED_MCP_IDS:
+        if server_id in _gated_ids(active_domains, gating or {}):
+            return "installed here"
+        return "visible; domain-gated via mcp-domain-gating registry"
     if server_id == "playwright":
         return "visible; opt in for browser automation layers"
     return "visible; endpoint or bridge approval required"
@@ -160,14 +248,15 @@ def mcp_tools_markdown(
     *,
     include_inactive: bool = True,
     public_customer: bool = False,
+    gating: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
     active_domains = active_domain_ids(path, approved_domains)
+    resolved_gating = load_domain_mcp_gating(path) if gating is None else gating
+    active_gated = set(_gated_ids(active_domains, resolved_gating))
     rows = []
     for server_id in all_visible_mcp_ids():
         if not include_inactive and server_id not in CORE_MCP_IDS:
-            if server_id in LOS_MCP_IDS and "los" not in active_domains:
-                continue
-            if server_id in CLARKS_MCP_IDS and "clarks_consulting" not in active_domains:
+            if server_id in DOMAIN_GATED_MCP_IDS and server_id not in active_gated:
                 continue
             if server_id in VISIBLE_ONLY_MCP_IDS:
                 continue
@@ -183,7 +272,7 @@ def mcp_tools_markdown(
             use_when = "Durable cross-session memory reads and non-secret writes."
             boundary = "No secrets; follow customer memory policy before writing."
         rows.append(
-            f"| `{server.id}` | {display_name} | {use_when} | {mcp_status(server_id, active_domains)} | {boundary} |"
+            f"| `{server.id}` | {display_name} | {use_when} | {mcp_status(server_id, active_domains, resolved_gating)} | {boundary} |"
         )
     return "\n".join(
         [

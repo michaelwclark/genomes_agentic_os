@@ -298,9 +298,9 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     metadata["state"] = "documented"
     metadata["lifecycle"]["state"] = "documented"
     metadata_path.write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
-    automation_root = root / "los" / "04-automations" / "engineering" / "test_auto"
+    automation_root = root / "work" / "04-automations" / "engineering" / "test_auto"
     automation_root.mkdir(parents=True)
-    with (root / "los" / "00-control-plane" / "active-work.md").open("a", encoding="utf-8") as handle:
+    with (root / "work" / "00-control-plane" / "active-work.md").open("a", encoding="utf-8") as handle:
         handle.write(
             "| `test_auto` automation | `active` | OS Owner | Keep running. | `04-automations/engineering/test_auto` |\n"
         )

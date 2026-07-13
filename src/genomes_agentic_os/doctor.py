@@ -13,7 +13,7 @@ from .config_ops import discover_config_tree_targets, doctor_config
 from .customer import customer_update
 from .event_graph import append_event, chain_doctor, utc_now, write_yaml
 from .runtime_ops import runtime_doctor
-from .scaffold import expand_path, init_os, install_docs
+from .scaffold import expand_path, init_os, install_docs, installed_domain_names
 from .validate import lifecycle_staleness_findings, validate_root
 from .workflow_ops import check_workflow
 
@@ -54,7 +54,9 @@ def managed_repair(root: Path) -> list[str]:
             raise ValueError("customer.yml is missing customer.slug")
         customer_update(str(slug), root)
         return ["customer update"]
-    init_os(root)
+    # Repair additively against the operator's installed domain set; only a
+    # tree with no domains at all falls back to the neutral defaults.
+    init_os(root, domains=installed_domain_names(root) or None)
     install_docs(root)
     return ["init os", "install docs"]
 

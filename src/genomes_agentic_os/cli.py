@@ -347,6 +347,10 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
     init_parser.add_argument("--target", default=DEFAULT_ROOT, help="Installed OS target path.")
     init_parser.add_argument("--profile", help="Room-first OS profile YAML.")
     init_parser.add_argument(
+        "--domains",
+        help="Comma-separated domain slugs to create instead of the built-in defaults (e.g. personal,work,archive).",
+    )
+    init_parser.add_argument(
         "--projects-source",
         default=DEFAULT_PROJECTS_SOURCE,
         help="Deprecated compatibility flag; project repo links now live under domain 02-projects entries.",
@@ -1823,8 +1827,19 @@ def handle_init(args: argparse.Namespace) -> int:
             )
         )
         return 0
+    domains = None
+    if getattr(args, "domains", None):
+        domains = tuple(part.strip() for part in str(args.domains).split(",") if part.strip())
+        if not domains:
+            print("--domains requires at least one domain slug", file=sys.stderr)
+            return 2
     print_result(
-        init_os(args.target, projects_source=args.projects_source, include_legacy_agent=args.include_legacy_agent)
+        init_os(
+            args.target,
+            projects_source=args.projects_source,
+            include_legacy_agent=args.include_legacy_agent,
+            domains=domains,
+        )
     )
     return 0
 

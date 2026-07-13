@@ -58,13 +58,12 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert not (root / "projects").exists()
     assert {path.name for path in root.iterdir() if not path.name.startswith(".")} == {
         "archive",
-        "clarks_consulting",
         "harness",
-        "los",
         "personal",
+        "work",
     }
 
-    for domain in ("personal", "clarks_consulting", "los", "archive"):
+    for domain in ("personal", "work", "archive"):
         domain_root = root / domain
         assert domain_root.is_dir()
         assert (domain_root / "config.toml").is_file()
@@ -871,10 +870,10 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
     assert result["status"]["project_surface_repair"] is True
     assert {path.name for path in root.iterdir() if not path.name.startswith(".")} == {
         "archive",
-        "clarks_consulting",
         "harness",
         "los",
         "personal",
+        "work",
     }
     assert (harness(root) / "AGENTS.md").is_file()
     assert (harness(root) / "PROFILE.md").is_file()
@@ -1278,22 +1277,40 @@ def test_config_install_places_mcp_servers_by_layer(tmp_path: Path) -> None:
     for server_id in ("notion", "genomes_brain", "github", "context_mode", "sentry", "datadog", "supabase", "composio", "orgo", "playwright"):
         assert f"`{server_id}`" in tools
 
-    los_root = root / "los"
-    assert main(["config", "install", "--root", str(los_root), "--layer", "domain_or_lane", "--apply"]) == 0
-    los_servers = tomllib.loads((los_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
-    assert {"notion", "genomes_brain", "github", "context_mode", "sentry", "datadog"} <= set(los_servers)
-    assert "supabase" not in los_servers
-    assert "composio" not in los_servers
-    assert "orgo" not in los_servers
-    assert main(["config", "doctor", "--root", str(los_root), "--layer", "domain_or_lane"]) == 0
+    # Domain-gated servers activate only through the mcp-domain-gating
+    # registry of an installed OS root; domain names alone install nothing.
+    assert main(["init", "--target", str(root)]) == 0
+    ungated_root = root / "work"
+    assert main(["config", "install", "--root", str(ungated_root), "--layer", "domain_or_lane", "--apply"]) == 0
+    ungated_servers = tomllib.loads((ungated_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+    assert "sentry" not in ungated_servers
+    assert "datadog" not in ungated_servers
+    assert "supabase" not in ungated_servers
 
-    clarks_root = root / "clarks_consulting"
-    assert main(["config", "install", "--root", str(clarks_root), "--layer", "domain_or_lane", "--apply"]) == 0
-    clarks_servers = tomllib.loads((clarks_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
-    assert {"notion", "genomes_brain", "github", "context_mode", "supabase"} <= set(clarks_servers)
-    assert "sentry" not in clarks_servers
-    assert "datadog" not in clarks_servers
-    assert main(["config", "doctor", "--root", str(clarks_root), "--layer", "domain_or_lane"]) == 0
+    gating = root / "harness" / "registries" / "mcp-domain-gating.yml"
+    gating.write_text(
+        "domains:\n  alpha_ops:\n    - sentry\n    - datadog\n  beta_labs:\n    - supabase\n",
+        encoding="utf-8",
+    )
+    assert main(["domain", "create", "alpha_ops", "--root", str(root)]) == 0
+    assert main(["domain", "create", "beta_labs", "--root", str(root)]) == 0
+
+    alpha_root = root / "alpha_ops"
+    assert main(["config", "install", "--root", str(alpha_root), "--layer", "domain_or_lane", "--apply"]) == 0
+    alpha_servers = tomllib.loads((alpha_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+    assert {"notion", "genomes_brain", "github", "context_mode", "sentry", "datadog"} <= set(alpha_servers)
+    assert "supabase" not in alpha_servers
+    assert "composio" not in alpha_servers
+    assert "orgo" not in alpha_servers
+    assert main(["config", "doctor", "--root", str(alpha_root), "--layer", "domain_or_lane"]) == 0
+
+    beta_root = root / "beta_labs"
+    assert main(["config", "install", "--root", str(beta_root), "--layer", "domain_or_lane", "--apply"]) == 0
+    beta_servers = tomllib.loads((beta_root / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+    assert {"notion", "genomes_brain", "github", "context_mode", "supabase"} <= set(beta_servers)
+    assert "sentry" not in beta_servers
+    assert "datadog" not in beta_servers
+    assert main(["config", "doctor", "--root", str(beta_root), "--layer", "domain_or_lane"]) == 0
 
 
 def test_hook_sync_points_active_settings_at_installed_harness_hooks(tmp_path: Path, capsys) -> None:
@@ -1805,13 +1822,15 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert (plans_root / "23-doc-config-system.md").is_file()
 
 
-def test_lenders_alias_routes_to_los_domain(tmp_path: Path) -> None:
+def test_workflow_create_bootstraps_arbitrary_domain_name(tmp_path: Path) -> None:
+    # Domain names are pure data: any slug bootstraps its own domain and the
+    # tree still validates. No built-in alias map rewrites operator names.
     root = tmp_path / "agentic_os"
 
-    assert main(["workflow", "create", "lenders", "support", "lender_intake", "--root", str(root)]) == 0
+    assert main(["workflow", "create", "lender_ops", "support", "lender_intake", "--root", str(root)]) == 0
 
-    assert (root / "los" / "03-workflows" / "support" / "lender_intake" / "workflow.md").is_file()
-    assert not (root / "lenders").exists()
+    assert (root / "lender_ops" / "03-workflows" / "support" / "lender_intake" / "workflow.md").is_file()
+    assert (root / "lender_ops" / "domain.yml").is_file()
     assert validate_root(root).ok
 
 
@@ -2542,13 +2561,12 @@ def test_project_create_is_idempotent_and_preserves_local_edits(tmp_path: Path) 
     assert validate_root(root).ok
 
 
-def test_project_create_rejects_invalid_names_and_normalizes_domain_alias(tmp_path: Path) -> None:
+def test_project_create_rejects_invalid_names_and_accepts_any_domain(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
-    assert main(["project", "create", "los", "bad-name", "--root", str(root)]) == 2
-    assert main(["project", "create", "lenders", "lender_portal", "--root", str(root)]) == 0
-    assert (root / "los" / "02-projects" / "lender_portal" / "project.yml").is_file()
-    assert not (root / "lenders").exists()
+    assert main(["project", "create", "work", "bad-name", "--root", str(root)]) == 2
+    assert main(["project", "create", "lender_ops", "lender_portal", "--root", str(root)]) == 0
+    assert (root / "lender_ops" / "02-projects" / "lender_portal" / "project.yml").is_file()
 
 
 def test_route_classifies_project_request_and_approval_risk(tmp_path: Path, capsys) -> None:
@@ -2625,7 +2643,7 @@ def test_plan_capture_updates_inbox_control_plane_and_memory(tmp_path: Path, cap
                 "--kind",
                 "domain",
                 "--domain",
-                "los",
+                "work",
                 "--title",
                 title,
                 "--summary",
@@ -2636,12 +2654,12 @@ def test_plan_capture_updates_inbox_control_plane_and_memory(tmp_path: Path, cap
     )
 
     result = yaml.safe_load(capsys.readouterr().out)
-    assert result["target"].endswith("los/01-inbox/raw-ideas.md")
-    raw_ideas = (root / "los" / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
-    triage = (root / "los" / "01-inbox" / "triage.md").read_text(encoding="utf-8")
-    state_index = (root / "los" / "00-control-plane" / "state-index.md").read_text(encoding="utf-8")
-    active_work = (root / "los" / "00-control-plane" / "active-work.md").read_text(encoding="utf-8")
-    memory = (root / "los" / "MEMORY.md").read_text(encoding="utf-8")
+    assert result["target"].endswith("work/01-inbox/raw-ideas.md")
+    raw_ideas = (root / "work" / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
+    triage = (root / "work" / "01-inbox" / "triage.md").read_text(encoding="utf-8")
+    state_index = (root / "work" / "00-control-plane" / "state-index.md").read_text(encoding="utf-8")
+    active_work = (root / "work" / "00-control-plane" / "active-work.md").read_text(encoding="utf-8")
+    memory = (root / "work" / "MEMORY.md").read_text(encoding="utf-8")
     assert title in raw_ideas
     assert summary in raw_ideas
     assert title in triage
@@ -4364,13 +4382,13 @@ def test_run_log_close_records_closeout_and_activity_updates(tmp_path: Path, cap
 def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
-    assert main(["workflow", "create", "los", "engineering", "feature_dev", "--root", str(root)]) == 0
-    assert main(["automation", "create", "los", "support", "production_thread_intake", "--root", str(root)]) == 0
-    assert main(["run-log", "create", "los", "feature_dev", "--root", str(root)]) == 0
+    assert main(["workflow", "create", "work", "engineering", "feature_dev", "--root", str(root)]) == 0
+    assert main(["automation", "create", "work", "support", "production_thread_intake", "--root", str(root)]) == 0
+    assert main(["run-log", "create", "work", "feature_dev", "--root", str(root)]) == 0
 
-    workflow_root = root / "los" / "03-workflows" / "engineering" / "feature_dev"
-    automation_root = root / "los" / "04-automations" / "support" / "production_thread_intake"
-    run_log = next((root / "los" / "06-runs-and-logs" / "runs").glob("*-los-feature_dev/run-log.md"))
+    workflow_root = root / "work" / "03-workflows" / "engineering" / "feature_dev"
+    automation_root = root / "work" / "04-automations" / "support" / "production_thread_intake"
+    run_log = next((root / "work" / "06-runs-and-logs" / "runs").glob("*-work-feature_dev/run-log.md"))
 
     required_sections = {
         harness(root) / "ROUTER.md": ("# Agent Router", "## Routing Table", "## Operating Rules"),
@@ -4379,15 +4397,15 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
         harness(root) / "CONTEXT.md": ("# Local Context", "## What To Load", "## Done Means"),
         harness(root) / "RULES.md": ("# Rules", "## Approval Gates", "## Operating Rules"),
         harness(root) / "TOOLS.md": ("# Tools", "## Skills", "## Commands", "## MCP Servers"),
-        root / "los" / "ROUTER.md": ("# Agent Router: LOS", "## Where To Put Work", "## Approval Rules"),
-        root / "los" / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
-        root / "los" / "CLAUDE.md": ("@AGENTS.md",),
-        root / "los" / "CONTEXT.md": ("# Context: LOS", "## What To Load", "## Tools And Skills", "## Done Means"),
-        root / "los" / "RULES.md": ("# Rules: LOS", "## Approval Gates", "## Operating Rules"),
-        root / "los" / "TOOLS.md": ("# Tools: LOS", "## Skills", "## Commands", "## MCP Servers"),
-        root / "los" / "REFERENCES.md": ("# References: LOS", "## Source Systems", "## Known Gaps"),
-        root / "los" / "03-workflows" / "README.md": ("# Workflows: LOS", "## Lane Directories", "## Workflow Folder Format"),
-        root / "los" / "03-workflows" / "engineering" / "README.md": (
+        root / "work" / "ROUTER.md": ("# Agent Router: Work", "## Where To Put Work", "## Approval Rules"),
+        root / "work" / "AGENTS.md": ("# Agent Entry Point", "## Required Loop", "RULES.md", "TOOLS.md"),
+        root / "work" / "CLAUDE.md": ("@AGENTS.md",),
+        root / "work" / "CONTEXT.md": ("# Context: Work", "## What To Load", "## Tools And Skills", "## Done Means"),
+        root / "work" / "RULES.md": ("# Rules: Work", "## Approval Gates", "## Operating Rules"),
+        root / "work" / "TOOLS.md": ("# Tools: Work", "## Skills", "## Commands", "## MCP Servers"),
+        root / "work" / "REFERENCES.md": ("# References: Work", "## Source Systems", "## Known Gaps"),
+        root / "work" / "03-workflows" / "README.md": ("# Workflows: Work", "## Lane Directories", "## Workflow Folder Format"),
+        root / "work" / "03-workflows" / "engineering" / "README.md": (
             "# Workflow Lane: engineering",
             "## Workflow Folder Format",
             "## Routing Rule",
@@ -4431,16 +4449,16 @@ def test_generated_markdown_has_level_specific_contracts(tmp_path: Path) -> None
         workflow_root / "state-machine.md": ("# State Machine: feature_dev", "| From | To | Condition |"),
         workflow_root / "output-contract.md": ("# Output Contract: feature_dev", "## Required Outputs", "## Quality Bar"),
         workflow_root / "examples" / "README.md": ("# Examples: feature_dev", "## Example Format"),
-        root / "los" / "04-automations" / "README.md": (
-            "# Automations: LOS",
+        root / "work" / "04-automations" / "README.md": (
+            "# Automations: Work",
             "## Lane Directories",
             "## Automation Folder Format",
         ),
         automation_root / "automation.md": ("# Automation: production_thread_intake", "## Metadata", "## Trigger"),
         automation_root / "inputs.md": ("# Inputs: production_thread_intake", "| Input | Required | Source | Validation |"),
         automation_root / "logs" / "README.md": ("# Automation Logs: production_thread_intake", "## Log Format"),
-        root / "los" / "06-runs-and-logs" / "runs" / "README.md": ("# Runs: LOS", "## Run Folder Format"),
-        root / "los" / "06-runs-and-logs" / "failures" / "README.md": ("# Failures: LOS", "## Failure Record Format"),
+        root / "work" / "06-runs-and-logs" / "runs" / "README.md": ("# Runs: Work", "## Run Folder Format"),
+        root / "work" / "06-runs-and-logs" / "failures" / "README.md": ("# Failures: Work", "## Failure Record Format"),
         run_log: ("# Run Log:", "## Metadata", "## Input", "## Session Continuity", "## Validation", "## Handoff"),
     }
 
