@@ -13,6 +13,6 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [05 - Customer Os Factory](05-customer-os-factory.md) | How customer profiles generate customer-safe OS roots, updates, and validation reports. |
 | [06 - Notion Control Plane Sync](06-notion-control-plane-sync.md) | How filesystem state plans guarded Notion control-plane sync and local mapping. |
 | [07 - Doctor Validation And Migrations](07-doctor-validation-and-migrations.md) | How runtime doctor checks, additive repairs, and previewed migrations work. |
-| [08 - Losmon Replacement Validation](08-losmon-replacement-validation.md) | How to generate the LOSMon replacement validation package and comparison evidence. |
+| [08 - Losmon Replacement Validation (Removed)](08-losmon-replacement-validation.md) | Why the LOSMon-specific validation command was removed and how to assemble the same validation from project, workflow, automation, and run-log surfaces. |
 | [09 - Future Ideas Intake](09-future-ideas-intake.md) | How OS, domain, and customer ideas are captured into durable runtime files. |
 | [10 - Notion Control Plane Bootstrap](10-notion-control-plane-bootstrap.md) | How to plan and apply the guarded Notion control-plane bootstrap manifest. |

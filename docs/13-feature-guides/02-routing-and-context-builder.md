@@ -33,13 +33,13 @@ repository references. Run routing commands against an installed root such as
 Route a request:
 
 ```bash
-agentic-os route "Deploy losmon_replacement to production" --root ~/agentic_os
+agentic-os route "Deploy launch to production" --root ~/agentic_os
 ```
 
 Build a context packet from explicit target fields:
 
 ```bash
-agentic-os context build --domain los --project losmon_replacement --root ~/agentic_os
+agentic-os context build --domain acme --project launch --root ~/agentic_os
 ```
 
 Route from the current working directory:
@@ -98,15 +98,15 @@ quickly and precise enough to avoid wandering across unrelated runtime state.
 ```bash
 TMP_PARENT="$(mktemp -d)"
 TMP_ROOT="$TMP_PARENT/agentic_os"
-REPO_PATH="$TMP_PARENT/losmon_repo"
-WORKTREE_PATH="$TMP_PARENT/losmon_feature"
+REPO_PATH="$TMP_PARENT/launch_repo"
+WORKTREE_PATH="$TMP_PARENT/launch_feature"
 mkdir -p "$REPO_PATH"
 mkdir -p "$WORKTREE_PATH/src"
 uv run agentic-os init --target "$TMP_ROOT"
-uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT" --repo "$REPO_PATH"
-uv run agentic-os project worktree add los losmon_replacement feature_branch --root "$TMP_ROOT" --path "$WORKTREE_PATH"
-uv run agentic-os route "Deploy losmon_replacement to production" --root "$TMP_ROOT"
-uv run agentic-os context build --domain los --project losmon_replacement --root "$TMP_ROOT"
+uv run agentic-os project create acme launch --root "$TMP_ROOT" --repo "$REPO_PATH"
+uv run agentic-os project worktree add acme launch feature_branch --root "$TMP_ROOT" --path "$WORKTREE_PATH"
+uv run agentic-os route "Deploy launch to production" --root "$TMP_ROOT"
+uv run agentic-os context build --domain acme --project launch --root "$TMP_ROOT"
 (cd "$REPO_PATH" && uv run --project /path/to/genomes_agentic_os agentic-os here context build --root "$TMP_ROOT")
 (cd "$WORKTREE_PATH/src" && uv run --project /path/to/genomes_agentic_os agentic-os here context build --root "$TMP_ROOT")
 ```

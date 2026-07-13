@@ -38,7 +38,7 @@ Common flags:
 - `--status active|waiting|blocked|done` sets the project status. The default is `active`.
 - `--lane <lane>` records the operating lane for routing.
 
-The project name must use lowercase letters, numbers, and underscores. The domain alias `lenders` normalizes to `los`.
+The project name must use lowercase letters, numbers, and underscores. Creating a project in a domain that does not exist scaffolds that domain first.
 
 Repair an existing project layer:
 
@@ -63,12 +63,15 @@ status.md
 decisions.md
 source-map.md
 AGENTS.md
+CLAUDE.md
 ROUTER.md
 CONTEXT.md
 RULES.md
 TOOLS.md
 MEMORY.md
+PROFILE.md
 config.toml
+SPECS/
 artifacts/
 config/
 ideas/
@@ -76,6 +79,7 @@ work-items/
   01-intake/
   02-active/
   03-complete/
+worklogs/
 worktrees/
 ```
 
@@ -116,27 +120,27 @@ before making manual edits.
 ```bash
 TMP_ROOT="$(mktemp -d)/agentic_os"
 uv run agentic-os init --target "$TMP_ROOT"
-uv run agentic-os project create los losmon_replacement --root "$TMP_ROOT" --repo /tmp/losmon --notion https://notion.example/project --jira FLYWL
-mkdir -p /tmp/losmon-feature
-uv run agentic-os project worktree add los losmon_replacement feature_branch --root "$TMP_ROOT" --path /tmp/losmon-feature
+uv run agentic-os project create acme launch --root "$TMP_ROOT" --repo /tmp/launch-repo --notion https://notion.example/project --jira ACME
+mkdir -p /tmp/launch-feature
+uv run agentic-os project worktree add acme launch feature_branch --root "$TMP_ROOT" --path /tmp/launch-feature
 uv run agentic-os validate --root "$TMP_ROOT"
-test -f "$TMP_ROOT/los/02-projects/losmon_replacement/project.yml"
-test -f "$TMP_ROOT/los/02-projects/losmon_replacement/config/output-artifacts.yml"
-test -L "$TMP_ROOT/los/02-projects/losmon_replacement/worktrees/feature_branch"
-grep -q "losmon_replacement" "$TMP_ROOT/los/00-control-plane/active-work.md"
-grep -q "/tmp/losmon" "$TMP_ROOT/los/02-projects/losmon_replacement/source-map.md"
+test -f "$TMP_ROOT/acme/02-projects/launch/project.yml"
+test -f "$TMP_ROOT/acme/02-projects/launch/config/output-artifacts.yml"
+test -L "$TMP_ROOT/acme/02-projects/launch/worktrees/feature_branch"
+grep -q "launch" "$TMP_ROOT/acme/00-control-plane/active-work.md"
+grep -q "/tmp/launch-repo" "$TMP_ROOT/acme/02-projects/launch/source-map.md"
 ```
 
-Alias check:
+Domain auto-creation check:
 
 ```bash
 TMP_ROOT="$(mktemp -d)/agentic_os"
 uv run agentic-os init --target "$TMP_ROOT"
-uv run agentic-os project create lenders loan_ops --root "$TMP_ROOT"
-test -d "$TMP_ROOT/los/02-projects/loan_ops"
-test ! -d "$TMP_ROOT/lenders"
+uv run agentic-os project create consulting client_portal --root "$TMP_ROOT"
+test -d "$TMP_ROOT/consulting/02-projects/client_portal"
+test -f "$TMP_ROOT/consulting/domain.yml"
 ```
 
 ## Done Signal
 
-Feature 01 is healthy when project creation creates the project folder, project-local agent/config/work-item/worktree surfaces, updates active-work and project indexes, preserves existing files on rerun, records supplied source references, normalizes `lenders` to `los`, routes from registered worktree paths, and leaves `agentic-os validate` passing.
+Feature 01 is healthy when project creation creates the project folder, project-local agent/config/work-item/worktree surfaces, updates active-work and project indexes, preserves existing files on rerun, records supplied source references, scaffolds missing domains on demand, routes from registered worktree paths, and leaves `agentic-os validate` passing.
