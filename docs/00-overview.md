@@ -95,7 +95,7 @@ plane — designed but not yet running. **V1 runs without it.**
 Everything inside the OS is an instance of one of these types:
 
 ```text
-Domain                      (personal, los, clarks_consulting, shared_factory, …)
+Domain                      (personal, work, archive, … plus harness/shared_factory)
   └─ Lane / workstream      (engineering, marketing, sales, support, operations,
                              finance, personal_admin, learning)
       └─ Workflow           (a reusable, human-reviewed procedure spec)
@@ -121,21 +121,28 @@ agentic-os init --target ~/agentic_os
 ```text
 created: .../agentic_os
 created: .../agentic_os/.agentic_root
-created: .../agentic_os/ROUTER.md
-created: .../agentic_os/AGENTS.md
-created: .../agentic_os/CONTEXT.md
-created: .../agentic_os/RULES.md
-created: .../agentic_os/TOOLS.md
-created: .../agentic_os/registries/capabilities.yml
+created: .../agentic_os/harness
+created: .../agentic_os/harness/ROUTER.md
+created: .../agentic_os/harness/AGENTS.md
+created: .../agentic_os/harness/CONTEXT.md
+created: .../agentic_os/harness/RULES.md
+created: .../agentic_os/harness/TOOLS.md
+created: .../agentic_os/harness/registries/capabilities.yml
+created: .../agentic_os/harness/shared_factory
 created: .../agentic_os/personal
 created: .../agentic_os/personal/00-control-plane
 created: .../agentic_os/personal/01-inbox
 ...
-created: .../agentic_os/los
-created: .../agentic_os/clarks_consulting
-created: .../agentic_os/shared_factory
+created: .../agentic_os/work
 created: .../agentic_os/archive
 ```
+
+The root-level `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`
+that agents actually read live under `harness/` — that directory is the OS
+brain. `shared_factory` is not a sibling domain; it is a fixed subdirectory of
+`harness/` that holds shared patterns, templates, and cross-domain knowledge.
+`personal`, `work`, and `archive` are the three default domains; add more with
+`agentic-os domain create <name>`.
 
 V1's full capability surface:
 
@@ -145,7 +152,7 @@ V1's full capability surface:
 | Add a domain | `agentic-os domain create <name>` |
 | Create a workflow folder | `agentic-os workflow create <domain> <lane> <name>` |
 | Create an automation folder | `agentic-os automation create <domain> <lane> <name>` |
-| Open a run log | `agentic-os run-log create <domain> <workflow>` |
+| Open a run log | `agentic-os run-log create <domain> <workflow_or_automation>` |
 | Route a request to a ContextPacket | `agentic-os route "<request>"` |
 | Build context from cwd or explicit target | `agentic-os here route`, `agentic-os context build` |
 | Validate the OS tree structure | `agentic-os validate` |
@@ -161,8 +168,8 @@ Be precise about the current state:
 
 | Does not do | Status |
 | --- | --- |
-| Call the Notion API or create Notion pages | Plan-only (Gap B). Notion sync is designed; the API calls are not yet wired. |
-| Execute automations, schedule jobs, or manage long-running state | No always-on scheduler yet (Gap A — the headline gap). Automation specs exist; the dispatcher does not. |
+| Run as a persistent, always-on scheduler | `runtime supervise`, `heartbeat run`, and `schedule run-due` each execute one tick and exit; something external (cron, launchd, a wrapper) must call them on a cadence. The CLI calls the real Notion API (`notion sync` / `notion bootstrap`, dry-run by default, `--apply` to write) — that part is wired, not plan-only. |
+| Execute automations autonomously past their maturity gate | Automation specs advance through `observe` → `prepare` → `propose` → `execute_approved` → `execute_guarded`; each step still needs the evidence and approval its level requires. |
 | Perform full JSON Schema validation of workflow/automation content | Templates exist; schema enforcement is a V2 hardening item (Gap D). |
 | Install Claude or Codex skills into local harness folders | Skills are authored in this repo; installation into `~/.claude/` or `~/.codex/` is manual in V1. |
 | Store secrets | Secrets belong in the harness keychain or environment; the OS holds references, not values. |
@@ -200,10 +207,13 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   to preview safely.
 - **Exit codes are consistent:** `0` = ok, `1` = health check failed,
   `2` = usage error or deliberate refusal (e.g., low-confidence routing).
-- **Notion and the always-on dispatcher are designed but not running.** Gap A and
-  Gap B from the gap register are the two
-  places where the docs describe more than V1 currently runs. Read that file before
-  building against those surfaces.
+- **"Always-on" still means "invoked on a cadence," not "a background daemon."**
+  `runtime supervise`, `heartbeat run`, `schedule run-due`, and `watch-source run-due`
+  each execute one tick and exit; something external has to call them repeatedly
+  (cron, launchd, a wrapper script) for the system to feel always-on.
+- **Notion writes are real but gated.** `notion sync` / `notion bootstrap` /
+  `notion track-runtime` call the live Notion API through `GENOMES_NOTION_PAT`;
+  they default to dry-run and only write with `--apply`.
 
 ---
 

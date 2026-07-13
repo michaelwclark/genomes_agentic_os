@@ -58,7 +58,7 @@ sources, or when two or more automations compete to update work item state.
 Everything in the OS is an instance of one of six nested objects:
 
 ```text
-Domain                      (personal, los, clarks_consulting, shared_factory, …)
+Domain                      (personal, work, archive, … plus harness/shared_factory)
   └─ Lane / workstream      (engineering, marketing, sales, support, operations,
                              finance, personal_admin, learning)
       └─ Workflow           (a reusable, human-reviewed procedure spec)
@@ -107,7 +107,7 @@ routes there automatically.
 **Migration safety for older installs:**
 
 Installs created before this convention existed may have a top-level
-`shared_factory/` directory (a plain domain alongside `personal/`, `los/`,
+`shared_factory/` directory (a plain domain alongside `personal/`, `work/`,
 etc.). That layout still works — `domain_path` resolves it correctly.  Migrate
 when convenient by running `agentic-os doctor --fix-missing`, which scaffolds
 the canonical `harness/shared_factory/` without touching the existing top-level

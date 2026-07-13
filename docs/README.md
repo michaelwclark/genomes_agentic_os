@@ -9,9 +9,10 @@ mechanical work, and one agent reads the right files at the right moment.
 
 > **The promise:** stop rebuilding operating context from scratch in every chat.
 
-**Validated baseline (2026-06-09):** 53 CLI commands functional · 2 deliberate
-guardrail exits · 0 crashes · 97/97 tests pass. Re-validate with
-`bash docs/architecture/tools/validate-cli.sh` and `.venv/bin/python -m pytest -q`.
+**Test suite:** `.venv/bin/python -m pytest -q` is the source of truth for
+current pass/fail status — this handbook does not track a frozen count because
+it goes stale the moment a test is added. Re-validate the live CLI surface with
+`bash docs/architecture/tools/validate-cli.sh`.
 
 **Canonical doc split:** Use this `docs/` handbook when you are evaluating,
 installing, or extending the source package and need architecture, command
@@ -88,7 +89,10 @@ vs Codex"** callout for its task; the full mechanics live on
 | --- | --- |
 | [17 · CLI Reference](17-cli-reference.md) | The navigable command map (links into the exhaustive atlas reference). |
 | [18 · Troubleshooting & FAQ](18-troubleshooting-and-faq.md) | Common errors + fixes, the exit-code reference, and the honest known-limitations list. |
-| [20 · Doc Config System](20-doc-config-system.md) | Configurable document routing across Agentic OS filesystem and Notion surfaces. |
+| [19 · Factory Patterns](19-factory-patterns.md) | Inventory of factory-derived assets and whether each was copied, adapted, referenced, or rejected when building the OS. |
+| [22 · CLI Help Standard](22-cli-help-standard.md) | The help-text and argparse conventions every `agentic-os` command and harness script must follow. |
+| [23 · Configuration Surfaces](23-configuration-surfaces.md) | Every configuration system the OS reads at runtime, how they interact, and which CLI commands manage them. |
+| [28 · Doc Config System](28-doc-config-system.md) | Configurable document routing across Agentic OS filesystem and Notion surfaces. |
 
 Operator shortcut: use `/new-feature` for new feature or idea intake. It routes
 through doc-config first, creates or repairs the project work item, and then
@@ -104,7 +108,7 @@ packet before implementation continues.
 - **[Feature guides](13-feature-guides/)** — deeper, feature-by-feature implementation guides and gap maps.
 - **[Tutorials](tutorials/)** — worked, scenario-based walkthroughs.
 - **[Architecture](architecture/system-architecture.md)** — the agent-facing architecture map, command reference, harness-modes, and the re-runnable validation + diagram tools under `architecture/tools/`.
-- **[`_archive/`](_archive/)** — the previous conceptual docs (superseded by the pages above; kept for history).
+- **[Design notes](design-notes/)** — in-progress design records for surfaces still taking shape (config.toml, lifecycle, port assessments).
 
 ## About the diagrams
 
