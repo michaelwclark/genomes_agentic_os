@@ -5,8 +5,8 @@ import type { OperatorState } from "../src/shared/contracts";
 
 describe("GUI-owned session snapshot overlay", () => {
   it("finds the local Agentic OS CLI without relying on a GUI PATH", () => {
-    expect(resolveAgenticOsCli(undefined, "/Users/operator", (path) => path === "/Users/operator/.local/bin/agentic-os"))
-      .toBe("/Users/operator/.local/bin/agentic-os");
+    const runtime = "/Users/operator/Library/Application Support/AgenticOSGui/runtime/bin/agentic-os";
+    expect(resolveAgenticOsCli(undefined, "/Users/operator", (path) => path === runtime)).toBe(runtime);
     expect(resolveAgenticOsCli("/custom/agentic-os", "/Users/operator", () => false)).toBe("/custom/agentic-os");
   });
 

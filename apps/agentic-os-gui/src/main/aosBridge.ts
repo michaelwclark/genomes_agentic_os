@@ -22,6 +22,7 @@ export function resolveAgenticOsCli(
 ): string {
   if (configured) return configured;
   const candidates = [
+    join(home, "Library", "Application Support", "AgenticOSGui", "runtime", "bin", "agentic-os"),
     join(home, ".local", "bin", "agentic-os"),
     "/opt/homebrew/bin/agentic-os",
     "/usr/local/bin/agentic-os",
