@@ -139,6 +139,34 @@
           "additionalProperties": false
         },
         "jira_keys": {"type": "array", "items": {"type": "string"}},
+        "jira_issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "url"],
+            "properties": {
+              "key": {"type": "string"},
+              "url": {"type": "string", "format": "uri"},
+              "title": {"type": "string"},
+              "status": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "linear_issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "url"],
+            "properties": {
+              "key": {"type": "string"},
+              "url": {"type": "string", "format": "uri"},
+              "title": {"type": "string"},
+              "status": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
         "pull_requests": {"type": "array", "items": {"type": "object"}},
         "slack_threads": {"type": "array", "items": {"type": "string"}},
         "assets": {"type": "array", "items": {"type": "object"}},

@@ -16,6 +16,35 @@ export function compactAge(iso: string, nowMs = Date.now()): string {
   return `${Math.floor(weeks / 52)}y`;
 }
 
+export function formatMessageDate(iso?: string): string {
+  if (!iso) return "Time unavailable";
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return "Time unavailable";
+  const value = new Date(timestamp);
+  const date = new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(value);
+  const time = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(value).toLocaleLowerCase();
+  return `${date} ${time}`;
+}
+
+export function isArchivedConversation(conversation: ConversationSummary): boolean {
+  return conversation.status.toLocaleLowerCase() === "archived";
+}
+
+export function isActiveConversation(conversation: ConversationSummary, nowMs = Date.now()): boolean {
+  if (isArchivedConversation(conversation)) return false;
+  if (conversation.pinned) return true;
+  const updatedAt = Date.parse(conversation.updated_at);
+  const ageMs = nowMs - updatedAt;
+  return Number.isFinite(updatedAt) && ageMs >= 0 && ageMs <= 24 * 60 * 60 * 1000;
+}
+
 const TIER_INTENSITY: Record<ModelTier, [number, number]> = {
   economy: [0.61, 0.1],
   balanced: [0.68, 0.13],

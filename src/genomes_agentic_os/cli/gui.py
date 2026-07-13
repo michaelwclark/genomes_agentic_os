@@ -1,4 +1,4 @@
-"""CLI projection commands for the local AgenticOSGui desktop app."""
+"""CLI projection commands for the local Command Center desktop app."""
 
 from __future__ import annotations
 
@@ -25,6 +25,9 @@ def _gui_app_candidates(explicit_app: str | None = None) -> list[Path]:
         candidates.append(Path(configured).expanduser())
     candidates.extend(
         [
+            Path.home() / "Applications" / "Command Center.app",
+            Path("/Applications/Command Center.app"),
+            _source_app_dir() / "release" / "mac-arm64" / "Command Center.app",
             Path.home() / "Applications" / "AgenticOSGui.app",
             Path("/Applications/AgenticOSGui.app"),
             _source_app_dir() / "release" / "mac-arm64" / "AgenticOSGui.app",
@@ -39,7 +42,7 @@ def handle_gui_open(args: argparse.Namespace) -> int:
     app_path = next((path.resolve(strict=False) for path in _gui_app_candidates(args.app) if path.is_dir()), None)
     if app_path is None:
         source_dir = _source_app_dir()
-        print("AgenticOSGui.app was not found.")
+        print("Command Center.app was not found (legacy AgenticOSGui.app is also supported).")
         print(f"development: pnpm --dir {source_dir} dev")
         print(f"package: pnpm --dir {source_dir} package:mac")
         return 1
@@ -51,7 +54,7 @@ def handle_gui_open(args: argparse.Namespace) -> int:
         check=False,
     )
     if result.returncode != 0:
-        print(f"AgenticOSGui could not be opened (status {result.returncode}).")
+        print(f"Command Center could not be opened (status {result.returncode}).")
         return result.returncode
     print(f"app: {app_path}")
     print("opened: true")
@@ -108,18 +111,18 @@ def _provider_paths(parser: argparse.ArgumentParser) -> None:
 def register(subparsers) -> None:
     parser = subparsers.add_parser(
         "gui",
-        help="Build local AgenticOSGui conversation projections.",
+        help="Build local Command Center conversation projections.",
         description=(
             "Read local Claude/Codex session metadata and project routes into a "
-            "versioned, renderer-safe AgenticOSGui snapshot."
+            "versioned, renderer-safe Command Center snapshot."
         ),
         formatter_class=AosHelpFormatter,
     )
     commands = parser.add_subparsers(dest="gui_command", required=True)
 
-    open_app = commands.add_parser("open", help="Open the packaged AgenticOSGui desktop application.")
+    open_app = commands.add_parser("open", help="Open the packaged Command Center desktop application.")
     open_app.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    open_app.add_argument("--app", help="Optional explicit path to AgenticOSGui.app.")
+    open_app.add_argument("--app", help="Optional explicit path to Command Center.app.")
     open_app.set_defaults(handler=handle_gui_open)
 
     snapshot = commands.add_parser("snapshot", help="Build the agentic-os-gui/v1 snapshot.")

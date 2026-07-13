@@ -56,12 +56,15 @@ def test_titles_ages_and_model_semantics_are_human_readable() -> None:
 def test_reference_metadata_and_project_routes(tmp_path: Path) -> None:
     root, repo = _project(tmp_path)
     text = (
-        "Fix FLYWL-2044 from https://example.slack.com/archives/C1234567890/p1783951200000000 "
+        "Fix FLYWL-2044 at https://flywheelio.atlassian.net/browse/FLYWL-2044 "
+        "and CC-263 at https://linear.app/agenticoslinear/issue/CC-263/command-center "
+        "from https://example.slack.com/archives/C1234567890/p1783951200000000 "
         "in https://github.com/example/los/pull/42 using " + str(repo / "design.png")
     )
     refs = extract_references([text])
 
-    assert refs["jira"] == [{"key": "FLYWL-2044"}]
+    assert refs["jira"] == [{"key": "FLYWL-2044", "url": "https://flywheelio.atlassian.net/browse/FLYWL-2044"}]
+    assert refs["linear"] == [{"key": "CC-263", "url": "https://linear.app/agenticoslinear/issue/CC-263/command-center"}]
     assert refs["pull_requests"][0]["number"] == "42"
     assert refs["slack"][0]["channel_id"] == "C1234567890"
     assert refs["assets"][0]["kind"] == "png"

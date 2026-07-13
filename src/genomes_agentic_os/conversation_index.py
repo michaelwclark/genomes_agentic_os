@@ -17,6 +17,14 @@ import yaml
 
 
 JIRA_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,15}-\d+)\b")
+JIRA_URL_RE = re.compile(
+    r"https://[A-Za-z0-9.-]+\.atlassian\.net/browse/(?P<key>[A-Z][A-Z0-9]{1,15}-\d+)",
+    re.IGNORECASE,
+)
+LINEAR_URL_RE = re.compile(
+    r"https://linear\.app/[A-Za-z0-9_-]+/issue/(?P<key>[A-Z][A-Z0-9]{1,15}-\d+)(?:/[A-Za-z0-9_-]+)?",
+    re.IGNORECASE,
+)
 PR_URL_RE = re.compile(
     r"https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/pull/(?P<number>\d+)",
     re.IGNORECASE,
@@ -153,7 +161,19 @@ def _clean_asset_path(raw: str) -> str:
 def extract_references(texts: Iterable[str]) -> dict[str, list[dict[str, str]]]:
     """Extract local metadata links without making external calls."""
     text = "\n".join(value for value in texts if isinstance(value, str))
-    jira = [{"key": key} for key in sorted(set(JIRA_RE.findall(text)))]
+    linear: dict[str, dict[str, str]] = {}
+    for match in LINEAR_URL_RE.finditer(text):
+        key = match.group("key").upper()
+        linear[key] = {"key": key, "url": match.group(0)}
+
+    jira: dict[str, dict[str, str]] = {
+        key: {"key": key}
+        for key in sorted(set(JIRA_RE.findall(text)))
+        if key not in linear
+    }
+    for match in JIRA_URL_RE.finditer(text):
+        key = match.group("key").upper()
+        jira[key] = {"key": key, "url": match.group(0)}
 
     prs: dict[str, dict[str, str]] = {}
     for match in PR_URL_RE.finditer(text):
@@ -183,7 +203,8 @@ def extract_references(texts: Iterable[str]) -> dict[str, list[dict[str, str]]]:
             assets[path] = {"path": path, "kind": suffix or "path"}
 
     return {
-        "jira": jira,
+        "jira": [jira[key] for key in sorted(jira)],
+        "linear": [linear[key] for key in sorted(linear)],
         "pull_requests": [prs[key] for key in sorted(prs)],
         "slack": [slack[key] for key in sorted(slack)],
         "assets": [assets[key] for key in sorted(assets)],

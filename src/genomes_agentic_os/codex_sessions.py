@@ -329,6 +329,8 @@ def collect_codex_conversations(
                 "transcript_available": bool(transcript),
                 "can_continue": True,
                 "jira_keys": [item["key"] for item in references["jira"]],
+                "jira_issues": [item for item in references["jira"] if item.get("url")],
+                "linear_issues": references["linear"],
                 "pull_requests": references["pull_requests"],
                 "slack_threads": [item["url"] for item in references["slack"]],
                 "assets": [

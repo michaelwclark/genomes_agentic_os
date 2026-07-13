@@ -52,6 +52,8 @@ CONVERSATION_FIELDS = (
     "continuation_note",
     "continuation",
     "jira_keys",
+    "jira_issues",
+    "linear_issues",
     "pull_requests",
     "slack_threads",
     "assets",

@@ -49,10 +49,9 @@ export function ConversationList({ conversations, selectedId, query, generatedAt
                     <strong>{conversation.title}</strong>
                     <time dateTime={conversation.updated_at}>{compactAge(conversation.updated_at)}</time>
                   </span>
-                  <span className="route-line">
-                    {[conversation.domain, conversation.project].filter(Boolean).join(" / ") || "Unclassified"}
-                  </span>
                   <span className="badge-line">
+                    <span className="route-badge">{conversation.domain || "Unclassified"}</span>
+                    {conversation.project && <span className="route-badge">{conversation.project}</span>}
                     <span className="model-badge">{conversation.model || conversation.provider}</span>
                     {conversation.reasoning_effort && conversation.reasoning_effort !== "unknown" && (
                       <span>{conversation.reasoning_effort}</span>
@@ -67,7 +66,8 @@ export function ConversationList({ conversations, selectedId, query, generatedAt
                 aria-pressed={Boolean(conversation.pinned)}
                 onClick={() => onPin(conversation, !conversation.pinned)}
               >
-                {conversation.pinned ? "◆" : "◇"}
+                <span aria-hidden="true">{conversation.pinned ? "●" : "+"}</span>
+                <span className="pin-label">{conversation.pinned ? "Pinned" : "Pin"}</span>
               </button>
             </article>
           );

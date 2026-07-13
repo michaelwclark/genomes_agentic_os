@@ -50,3 +50,20 @@ export function isAllowedExternalUrl(raw: unknown): raw is string {
     return false;
   }
 }
+
+export interface OpenLocalTargetRequest {
+  conversationId: string;
+  target: "work-item";
+  action: "vscode" | "finder";
+}
+
+export function validateOpenLocalTarget(
+  conversationId: unknown,
+  target: unknown,
+  action: unknown,
+): OpenLocalTargetRequest {
+  if (!isConversationId(conversationId)) throw new Error("invalid conversation id");
+  if (target !== "work-item") throw new Error("unsupported local target");
+  if (action !== "vscode" && action !== "finder") throw new Error("unsupported local action");
+  return { conversationId, target, action };
+}

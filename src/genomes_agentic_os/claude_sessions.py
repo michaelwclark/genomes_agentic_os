@@ -297,6 +297,8 @@ def collect_claude_conversations(
                     "Imported Claude sessions continue as a fork so the native Desktop task remains unchanged."
                 ),
                 "jira_keys": [item["key"] for item in references["jira"]],
+                "jira_issues": [item for item in references["jira"] if item.get("url")],
+                "linear_issues": references["linear"],
                 "pull_requests": references["pull_requests"],
                 "slack_threads": [item["url"] for item in references["slack"]],
                 "assets": [

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedExternalUrl, isConversationId, validateSendTurn } from "../src/shared/validation";
+import {
+  isAllowedExternalUrl,
+  isConversationId,
+  validateOpenLocalTarget,
+  validateSendTurn,
+} from "../src/shared/validation";
 
 describe("IPC input validation", () => {
   it("accepts native and Claude Desktop local conversation ids", () => {
@@ -32,5 +37,19 @@ describe("IPC input validation", () => {
     expect(isAllowedExternalUrl("file:///etc/passwd")).toBe(false);
     expect(isAllowedExternalUrl("https://user:secret@github.com/example/repo")).toBe(false);
     expect(isAllowedExternalUrl("https://github.com.evil.example/phish")).toBe(false);
+  });
+
+  it("accepts only identifier-based local open intents", () => {
+    expect(validateOpenLocalTarget("aos-client-session-001", "work-item", "vscode")).toEqual({
+      conversationId: "aos-client-session-001",
+      target: "work-item",
+      action: "vscode",
+    });
+    expect(() => validateOpenLocalTarget("aos-client-session-001", "/etc", "finder")).toThrow(
+      "unsupported local target",
+    );
+    expect(() => validateOpenLocalTarget("aos-client-session-001", "work-item", "rm -rf")).toThrow(
+      "unsupported local action",
+    );
   });
 });

@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ConversationSummary, ConversationTranscript, StreamEvent } from "../../shared/contracts";
+import { formatMessageDate } from "../../shared/presentation";
 import { MetadataPanel } from "./MetadataPanel";
 
 interface Props {
@@ -8,12 +11,31 @@ interface Props {
   loading: boolean;
   streamEvents: StreamEvent[];
   sending: boolean;
+  operatorLabel: string;
+  showMetadata: boolean;
   sendMessage(prompt: string): Promise<void>;
   cancelMessage(): Promise<void>;
   openExternal(url: string): void;
 }
 
-export function ConversationView({ conversation, transcript, loading, streamEvents, sending, sendMessage, cancelMessage, openExternal }: Props) {
+const roleLabel = (role: string, operatorLabel: string) => role === "user" ? operatorLabel : role === "assistant" ? "Agent" : role;
+
+function MarkdownMessage({ content, openExternal }: { content: string; openExternal(url: string): void }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => (
+          <a href={href} onClick={(event) => { if (href) { event.preventDefault(); openExternal(href); } }}>{children}</a>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
+export function ConversationView({ conversation, transcript, loading, streamEvents, sending, operatorLabel, showMetadata, sendMessage, cancelMessage, openExternal }: Props) {
   const [prompt, setPrompt] = useState("");
   const liveText = useMemo(
     () => streamEvents.filter((event) => event.kind === "delta" && event.content).map((event) => event.content).join(""),
@@ -39,17 +61,23 @@ export function ConversationView({ conversation, transcript, loading, streamEven
         </div>
         <span className="header-model">{conversation.model || conversation.provider}</span>
       </header>
-      <div className="conversation-content">
+      <div className="conversation-content" data-metadata-visible={showMetadata}>
         <section className="transcript-panel" aria-label="Transcript">
           {continuationNote && <div className="limitation-banner"><strong>Continuation boundary</strong><span>{continuationNote}</span></div>}
           <div className="messages" aria-live="polite">
             {loading ? <div className="loading-row">Loading local transcript…</div> : transcript?.messages.length ? transcript.messages.map((message) => (
-              <article className="message" data-role={message.role} key={message.id}>
-                <span className="message-role">{message.role}</span>
-                <div>{message.content}</div>
+              <article className="message" data-role={message.role} key={message.id} title={formatMessageDate(message.created_at)}>
+                <header className="message-header">
+                  <span className="message-role">{roleLabel(message.role, operatorLabel)}</span>
+                  <time dateTime={message.created_at}>{formatMessageDate(message.created_at)}</time>
+                  {message.role === "assistant" && (
+                    <button className="copy-message" aria-label="Copy agent message" title="Copy agent message" onClick={() => void navigator.clipboard.writeText(message.content)}>Copy</button>
+                  )}
+                </header>
+                <div className="message-body"><MarkdownMessage content={message.content} openExternal={openExternal} /></div>
               </article>
             )) : <div className="empty-state"><strong>No transcript was returned</strong><span>The metadata remains available, or continue in the native harness.</span></div>}
-            {liveText && <article className="message" data-role="assistant"><span className="message-role">assistant · live</span><div>{liveText}</div></article>}
+            {liveText && <article className="message" data-role="assistant"><header className="message-header"><span className="message-role">Agent · live</span></header><div className="message-body"><MarkdownMessage content={liveText} openExternal={openExternal} /></div></article>}
             {streamEvents.filter((event) => event.kind === "error").map((event, index) => (
               <div className="stream-error" key={`${event.conversationId}-${index}`}><strong>Continuation failed</strong><span>{event.content}</span>{event.fallbackCommand && <code>{event.fallbackCommand}</code>}</div>
             ))}
@@ -61,7 +89,7 @@ export function ConversationView({ conversation, transcript, loading, streamEven
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); }
               }}
-              placeholder={conversation.can_continue === false ? "This session is read-only in AgenticOSGui" : "Continue this conversation…"}
+              placeholder={conversation.can_continue === false ? "This session is read-only in Command Center" : "Continue this conversation…"}
               disabled={conversation.can_continue === false || sending}
               rows={3}
             />
@@ -75,7 +103,7 @@ export function ConversationView({ conversation, transcript, loading, streamEven
             </div>
           </div>
         </section>
-        <MetadataPanel conversation={conversation} onOpen={openExternal} />
+        {showMetadata && <MetadataPanel conversation={conversation} onOpen={openExternal} />}
       </div>
     </main>
   );

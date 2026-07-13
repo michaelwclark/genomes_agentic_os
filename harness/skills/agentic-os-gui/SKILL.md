@@ -1,11 +1,11 @@
 ---
 name: agentic-os-gui
-description: Build or open the local AgenticOSGui desktop app for domain/project-focused Claude and Codex conversations, metadata, pinning, continuation, and model presentation.
+description: Build or open the local Command Center desktop app for domain/project-focused Claude and Codex conversations, metadata, pinning, continuation, and model presentation.
 ---
 
-# AgenticOSGui
+# Command Center
 
-Use when the user asks for the Agentic OS desktop app, a unified Claude/Codex
+Use when the user asks for Command Center, the Agentic OS desktop app, or a unified Claude/Codex
 conversation driver, domain/project-focused conversations, native conversation
 titles, pins, metadata, or in-app continuation.
 

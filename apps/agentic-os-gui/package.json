@@ -2,7 +2,7 @@
   "name": "agentic-os-gui",
   "version": "0.1.0",
   "private": true,
-  "description": "Local desktop conversation cockpit for Agentic OS",
+  "description": "Local desktop command center for Agentic OS",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
   },
   "dependencies": {
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
@@ -30,7 +32,7 @@
   },
   "build": {
     "appId": "io.agenticos.desktop",
-    "productName": "AgenticOSGui",
+    "productName": "Command Center",
     "directories": {
       "output": "release"
     },

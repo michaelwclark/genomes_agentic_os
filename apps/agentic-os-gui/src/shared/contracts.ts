@@ -24,6 +24,13 @@ export interface LinkedPullRequest {
   status?: string;
 }
 
+export interface LinkedIssue {
+  key: string;
+  url: string;
+  title?: string;
+  status?: string;
+}
+
 export interface LinkedAsset {
   label: string;
   path: string;
@@ -54,6 +61,8 @@ export interface ConversationSummary {
   /** Trusted native CLI session identifier supplied by the Agentic OS snapshot. */
   cli_session_id?: string;
   jira_keys?: string[];
+  jira_issues?: LinkedIssue[];
+  linear_issues?: LinkedIssue[];
   pull_requests?: LinkedPullRequest[];
   slack_threads?: string[];
   assets?: LinkedAsset[];
@@ -97,6 +106,11 @@ export interface GuiSnapshot {
   navigation: { domains: DomainScope[] };
   conversations: ConversationSummary[];
   diagnostics: Diagnostic[];
+}
+
+export interface UiConfig {
+  displayName: string;
+  operatorLabel: string;
 }
 
 export interface OperatorState {
@@ -149,23 +163,31 @@ export interface SendTurnResult {
 }
 
 export const IPC = {
+  uiConfig: "aos:ui-config",
   snapshot: "aos:snapshot",
   transcript: "aos:transcript",
   setPinned: "aos:set-pinned",
   sendTurn: "aos:send-turn",
   cancelTurn: "aos:cancel-turn",
   openExternal: "aos:open-external",
+  openLocalTarget: "aos:open-local-target",
   snapshotChanged: "aos:snapshot-changed",
   streamEvent: "aos:stream-event",
 } as const;
 
 export interface AgenticOSApi {
+  getUiConfig(): Promise<UiConfig>;
   getSnapshot(): Promise<GuiSnapshot>;
   getTranscript(conversationId: string): Promise<ConversationTranscript>;
   setPinned(conversationId: string, pinned: boolean): Promise<OperatorState>;
   sendTurn(request: SendTurnRequest): Promise<SendTurnResult>;
   cancelTurn(leaseId: string): Promise<boolean>;
   openExternal(url: string): Promise<boolean>;
+  openLocalTarget(
+    conversationId: string,
+    target: "work-item",
+    action: "vscode" | "finder",
+  ): Promise<boolean>;
   onSnapshotChanged(listener: (snapshot: GuiSnapshot) => void): () => void;
   onStreamEvent(listener: (event: StreamEvent) => void): () => void;
 }
