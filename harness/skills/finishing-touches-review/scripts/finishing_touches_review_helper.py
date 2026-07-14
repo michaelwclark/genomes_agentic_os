@@ -124,6 +124,7 @@ APPROVAL_TYPES = {
 PLAN_DEFAULTS = {
     "model_identity_status": "proven",
     "reviewer_status": "available",
+    "review_unavailable_policy": "block",
     "validation_status": "not_started",
     "pr_check_status": "not_applicable",
     "copilot_status": "not_applicable",
@@ -142,6 +143,10 @@ SECRET_RE = re.compile(
     r"\b(?:API_KEY|TOKEN|SECRET|PASSWORD|PASS|PRIVATE_KEY|ACCESS_KEY)"
     r"\s*=\s*[^\s]+",
     re.I,
+)
+RECEIPT_FIELD_RE = re.compile(
+    r"^- (?P<label>[A-Za-z][A-Za-z ]+): `(?P<value>[^`\r\n]+)`\s*$",
+    re.MULTILINE,
 )
 
 
@@ -246,6 +251,8 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         raise HelperError("validation-plan model_identity_status is invalid")
     if merged["reviewer_status"] not in {"available", "unavailable", "runtime_failure"}:
         raise HelperError("validation-plan reviewer_status is invalid")
+    if merged["review_unavailable_policy"] not in {"block", "continue_with_receipt"}:
+        raise HelperError("validation-plan review_unavailable_policy is invalid")
     if merged["validation_status"] not in {
         "not_started",
         "passed",
@@ -357,6 +364,43 @@ def scrub_files(run_dir: Path, paths: list[Any]) -> list[str]:
     return failures
 
 
+def validate_unavailable_model_receipt(
+    run_dir: Path,
+    reviewer_status: str,
+) -> tuple[bool, str]:
+    path = run_dir / "model-receipt.md"
+    if not path.is_file():
+        return False, "model_receipt_missing"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False, "model_receipt_unreadable"
+    if not text.strip():
+        return False, "model_receipt_empty"
+
+    fields: dict[str, str] = {}
+    for match in RECEIPT_FIELD_RE.finditer(text):
+        label = match.group("label")
+        if label in fields:
+            return False, f"model_receipt_duplicate_field:{label}"
+        fields[label] = match.group("value").strip()
+
+    required = {
+        "Review run": run_dir.name,
+        "Reviewer status": reviewer_status,
+        "Transport": "claude_cli",
+        "Unavailable policy": "continue_with_receipt",
+    }
+    for label, expected in required.items():
+        if label not in fields:
+            return False, f"model_receipt_missing_field:{label}"
+        if fields[label] != expected:
+            return False, f"model_receipt_field_mismatch:{label}"
+    if not fields.get("Failure code", "").strip():
+        return False, "model_receipt_missing_field:Failure code"
+    return True, f"{reviewer_status}_recorded_in_model_receipt"
+
+
 def compute_review_counts(
     states: dict[str, dict[str, Any]],
     approvals: dict[str, dict[str, Any]],
@@ -405,6 +449,7 @@ def choose_decision(
     plan: dict[str, Any],
     review_counts: dict[str, Any],
     external_failures: list[str],
+    unavailable_receipt_valid: bool,
 ) -> str:
     builder_family = normalize_family(request.get("builder_model"))
     reviewer_family = normalize_family(request.get("selected_reviewer_model"))
@@ -416,9 +461,15 @@ def choose_decision(
     )
     if identity_bad:
         return "blocked_identity_unproven"
-    if plan["reviewer_status"] == "unavailable":
+    reviewer_status = plan["reviewer_status"]
+    review_can_continue = (
+        reviewer_status in {"unavailable", "runtime_failure"}
+        and plan["review_unavailable_policy"] == "continue_with_receipt"
+        and unavailable_receipt_valid
+    )
+    if reviewer_status == "unavailable" and not review_can_continue:
         return "blocked_reviewer_unavailable"
-    if plan["reviewer_status"] == "runtime_failure":
+    if reviewer_status == "runtime_failure" and not review_can_continue:
         return "blocked_reviewer_runtime"
     if review_counts["severe_unapproved"]:
         return "blocked_severe_adjudication"
@@ -481,10 +532,34 @@ def decide(run_dir: Path, write_outputs: bool = True) -> dict[str, Any]:
     states = reduce_ledger(ledger)
     counts = compute_review_counts(states, approvals)
     external_failures = scrub_files(run_dir, plan["external_output_paths"])
-    decision = choose_decision(request, plan, counts, external_failures)
+    model_receipt_present = (run_dir / "model-receipt.md").is_file()
+    unavailable_receipt_valid = False
+    unavailable_receipt_reason = None
+    if plan["reviewer_status"] in {"unavailable", "runtime_failure"}:
+        if plan["review_unavailable_policy"] == "continue_with_receipt":
+            unavailable_receipt_valid, unavailable_receipt_reason = (
+                validate_unavailable_model_receipt(run_dir, plan["reviewer_status"])
+            )
+        else:
+            unavailable_receipt_reason = "review_unavailable_policy_block"
+    decision = choose_decision(
+        request,
+        plan,
+        counts,
+        external_failures,
+        unavailable_receipt_valid,
+    )
+    review_downgraded = (
+        plan["reviewer_status"] in {"unavailable", "runtime_failure"}
+        and plan["review_unavailable_policy"] == "continue_with_receipt"
+        and unavailable_receipt_valid
+    )
+    review_downgrade_reason = unavailable_receipt_reason
     artifact_refs = ["review-request.json", "review-ledger.jsonl", "validation-plan.json"]
     if approvals:
         artifact_refs.append("approval-receipts.jsonl")
+    if model_receipt_present:
+        artifact_refs.append("model-receipt.md")
     result = {
         "decision": decision,
         "active_blocker_count": (
@@ -498,6 +573,9 @@ def decide(run_dir: Path, write_outputs: bool = True) -> dict[str, Any]:
         "validation_status": plan["validation_status"],
         "pr_check_status": plan["pr_check_status"],
         "copilot_status": plan["copilot_status"],
+        "review_unavailable_policy": plan["review_unavailable_policy"],
+        "review_downgraded": review_downgraded,
+        "review_downgrade_reason": review_downgrade_reason,
         "artifact_refs": artifact_refs,
         "decided_at": utc_now(),
     }
@@ -602,6 +680,27 @@ def default_plan(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     return value
 
 
+def fixture_unavailable_receipt(
+    run_id: str,
+    reviewer_status: str,
+    policy: str,
+    overrides: dict[str, Any] | None = None,
+) -> str:
+    fields: dict[str, Any] = {
+        "Review run": run_id,
+        "Reviewer status": reviewer_status,
+        "Transport": "claude_cli",
+        "Failure code": "cli_runtime_failed",
+        "Unavailable policy": policy,
+    }
+    fields.update(overrides or {})
+    lines = ["# Model Receipt", ""]
+    for label, value in fields.items():
+        if value is not None:
+            lines.append(f"- {label}: `{value}`")
+    return "\n".join(lines) + "\n"
+
+
 def write_fixture_run(tmp_dir: Path, case: dict[str, Any]) -> Path:
     run_dir = tmp_dir / case["name"]
     run_dir.mkdir()
@@ -620,6 +719,21 @@ def write_fixture_run(tmp_dir: Path, case: dict[str, Any]) -> Path:
     if external_paths:
         plan["external_output_paths"] = external_paths
     write_json(run_dir / "validation-plan.json", plan)
+    if "model_receipt" in case:
+        (run_dir / "model-receipt.md").write_text(
+            str(case["model_receipt"]),
+            encoding="utf-8",
+        )
+    if "unavailable_receipt" in case:
+        (run_dir / "model-receipt.md").write_text(
+            fixture_unavailable_receipt(
+                run_dir.name,
+                str(plan["reviewer_status"]),
+                str(plan["review_unavailable_policy"]),
+                case["unavailable_receipt"],
+            ),
+            encoding="utf-8",
+        )
     return run_dir
 
 
@@ -660,14 +774,167 @@ def built_in_suite() -> dict[str, Any]:
                 "expected_decision": "blocked_identity_unproven",
             },
             {
-                "name": "reviewer_binary_missing",
-                "plan": {"reviewer_status": "unavailable"},
+                "name": "reviewer_unavailable_missing_receipt",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
                 "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
             },
             {
-                "name": "reviewer_runtime_failure",
-                "plan": {"reviewer_status": "runtime_failure"},
+                "name": "reviewer_runtime_failure_missing_receipt",
+                "plan": {
+                    "reviewer_status": "runtime_failure",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
                 "expected_decision": "blocked_reviewer_runtime",
+                "expected_review_downgraded": False,
+            },
+            {
+                "name": "reviewer_unavailable_block_policy",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "block",
+                },
+                "unavailable_receipt": {},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "review_unavailable_policy_block",
+            },
+            {
+                "name": "reviewer_unavailable_legacy_plan_defaults_block",
+                "plan": {"reviewer_status": "unavailable"},
+                "unavailable_receipt": {"Unavailable policy": "continue_with_receipt"},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "review_unavailable_policy_block",
+            },
+            {
+                "name": "reviewer_unavailable_empty_receipt",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "model_receipt": "",
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_empty",
+            },
+            {
+                "name": "reviewer_unavailable_legacy_placeholder",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "model_receipt": "# Model Receipt\n\nClaude CLI was unavailable.\n",
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_missing_field:Review run",
+            },
+            {
+                "name": "reviewer_unavailable_wrong_run_receipt",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {"Review run": "other-review-run"},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_field_mismatch:Review run",
+            },
+            {
+                "name": "reviewer_unavailable_wrong_status_receipt",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {"Reviewer status": "runtime_failure"},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_field_mismatch:Reviewer status",
+            },
+            {
+                "name": "reviewer_unavailable_wrong_transport_receipt",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {"Transport": "anthropic_api"},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_field_mismatch:Transport",
+            },
+            {
+                "name": "reviewer_unavailable_missing_failure_code",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {"Failure code": None},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_missing_field:Failure code",
+            },
+            {
+                "name": "reviewer_unavailable_wrong_receipt_policy",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {"Unavailable policy": "block"},
+                "expected_decision": "blocked_reviewer_unavailable",
+                "expected_review_downgraded": False,
+                "expected_review_downgrade_reason": "model_receipt_field_mismatch:Unavailable policy",
+            },
+            {
+                "name": "reviewer_unavailable_continue_pre_pr",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {},
+                "expected_decision": "ready_pre_pr",
+                "expected_review_downgraded": True,
+                "expected_review_downgrade_reason": "unavailable_recorded_in_model_receipt",
+            },
+            {
+                "name": "reviewer_runtime_failure_continue_pre_pr",
+                "plan": {
+                    "reviewer_status": "runtime_failure",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {},
+                "expected_decision": "ready_pre_pr",
+                "expected_review_downgraded": True,
+                "expected_review_downgrade_reason": "runtime_failure_recorded_in_model_receipt",
+            },
+            {
+                "name": "reviewer_unavailable_continue_post_pr",
+                "request": {"mode": "post_pr", "pr_number": 123},
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                    "validation_status": "downgraded_to_pr_checks",
+                    "pr_check_status": "passed",
+                },
+                "unavailable_receipt": {},
+                "expected_decision": "ready_post_pr_checks",
+                "expected_review_downgraded": True,
+                "expected_review_downgrade_reason": "unavailable_recorded_in_model_receipt",
+            },
+            {
+                "name": "reviewer_unavailable_with_changes_required",
+                "plan": {
+                    "reviewer_status": "unavailable",
+                    "review_unavailable_policy": "continue_with_receipt",
+                },
+                "unavailable_receipt": {},
+                "ledger_events": [
+                    fixture_event("FT-001", "finding_opened", "OPEN", "High", 0),
+                ],
+                "expected_decision": "blocked_review_findings",
+                "expected_review_downgraded": True,
             },
             {
                 "name": "critical_rejected_no_approval",
@@ -929,6 +1196,17 @@ def command_fixture_test(args: argparse.Namespace) -> int:
             expected = case["expected_decision"]
             if actual != expected:
                 failures.append(f"decision {case['name']}: expected {expected}, got {actual}")
+            for field in ("review_downgraded", "review_downgrade_reason"):
+                expected_key = f"expected_{field}"
+                if expected_key not in case:
+                    continue
+                expected_value = case[expected_key]
+                actual_value = result[field]
+                if actual_value != expected_value:
+                    failures.append(
+                        f"decision {case['name']} {field}: "
+                        f"expected {expected_value!r}, got {actual_value!r}"
+                    )
         for case in suite.get("transition_cases", []):
             try:
                 reduce_ledger(

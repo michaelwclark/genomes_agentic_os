@@ -158,30 +158,78 @@ Use the existing engine; do not alter its decision logic:
 python3 harness/skills/finishing-touches-review/scripts/finishing_touches_review_helper.py decide --run-dir <review-run-dir>
 ```
 
-Default reviewer mode is Tier 2 human-mediated:
+The canonical Anthropic-family reviewer transport is the installed Claude CLI,
+using its native login. Never call the Anthropic API or SDK for this gate. Remove
+API credentials from the child process so an exported key cannot silently
+override CLI-native authentication:
 
 1. Transition to `finishing_review`.
 2. Generate the prompt:
 
 ```bash
-python3 harness/skills/auto-dev/scripts/auto_dev_state.py prepare-review --run-dir <dir> --mode pre_pr
+python3 harness/skills/auto-dev/scripts/auto_dev_state.py prepare-review \
+  --run-dir <dir> --mode pre_pr \
+  --reviewer-transport claude_cli \
+  --review-unavailable-policy continue_with_receipt
 ```
 
-3. Save the GPT/Codex response to `reviewer-response.md`.
-4. Ingest it:
+3. Run the deterministic Claude CLI wrapper:
+
+```bash
+python3 harness/skills/auto-dev/scripts/auto_dev_state.py run-review \
+  --run-dir <dir> \
+  --review-run-dir <dir>/finishing-touches/<run-id>-pre_pr \
+  --reviewer-model opus \
+  --review-unavailable-policy continue_with_receipt
+```
+
+`prepare-review` records the canonical reviewed repository, preferring the
+state-machine worktree over the base repository, plus the expected head SHA.
+`run-review` rechecks both against current state and `git rev-parse HEAD` before
+Claude starts. It executes the equivalent of
+`env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude -p --model opus
+--safe-mode --permission-mode dontAsk` from that verified worktree, with only
+`Read`, `Grep`, `Glob`, and read-only `git diff/show/status/log` Bash commands.
+It passes `reviewer-prompt.md` on stdin and writes only stdout to
+`reviewer-response.md`. It never persists raw stderr. On success it ingests the
+response automatically.
+
+4. If a response was obtained outside the wrapper, ingest it explicitly:
 
 ```bash
 python3 harness/skills/auto-dev/scripts/auto_dev_state.py ingest-review --run-dir <dir> --review-run-dir <dir>/finishing-touches/<run-id>-pre_pr
 ```
 
-`ingest-review` validates the JSON findings array and `VERDICT:` line, appends
-findings to `review-ledger.jsonl`, writes `model-receipt.md` with the
-GPT/Codex-family owner attestation, runs the finishing helper's `decide`, and
-resumes the state machine. A human-mediated run must not end at
-`blocked_identity_unproven`.
+5. If Claude CLI is missing, unauthenticated, out of CLI-accessible capacity,
+times out, or otherwise fails, `run-review` records the sanitized failure
+instead of trying an Anthropic API key. For a manually detected failure, use:
 
-Tier 1 automated reviewer is allowed only behind `reviewer_mode: auto` after a
-host proves unattended Codex/GPT invocation works.
+```bash
+python3 harness/skills/auto-dev/scripts/auto_dev_state.py record-review-unavailable \
+  --run-dir <dir> \
+  --review-run-dir <dir>/finishing-touches/<run-id>-pre_pr \
+  --failure-code cli_auth_failed \
+  --failure-summary "Claude CLI native authentication unavailable" \
+  --review-unavailable-policy continue_with_receipt
+```
+
+`record-review-unavailable` writes a sanitized `model-receipt.md`, updates the
+validation plan, invokes the deterministic finishing helper, and resumes when
+the helper returns `ready_pre_pr` or `ready_post_pr_checks`. Claude CLI transport
+failure is noted but does not block delivery by default. A project may set
+`review_unavailable_policy: block` for security- or compliance-sensitive work.
+Actual reviewer findings, failed validation, CI failures, and product decisions
+remain blocking; the unavailable path refuses to replace an opened finding.
+Non-empty Claude output that is malformed is also not reviewer unavailability:
+keep `reviewer-response.md`, remain in `awaiting_human_review`, and write
+`review-output-error.json` for inspection or explicit re-ingestion.
+
+`ingest-review` validates the JSON findings array and `VERDICT:` line, appends
+findings to `review-ledger.jsonl`, writes `model-receipt.md`, runs the finishing
+helper's `decide`, and resumes the state machine.
+
+Unattended reviewer execution remains allowed only behind `reviewer_mode: auto`
+after a host proves unattended Claude CLI invocation works.
 
 ## Implementation Path
 

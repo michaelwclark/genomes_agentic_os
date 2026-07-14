@@ -40,7 +40,7 @@ FINISHING_HELPER = (
     / "scripts"
     / "finishing_touches_review_helper.py"
 )
-REVIEWER_TEMPLATE = ROOT / "los" / "00-programs" / "auto_dev_queue" / "templates" / "reviewer-prompt.md"
+REVIEWER_TEMPLATE = ROOT / "harness" / "skills" / "auto-dev" / "templates" / "reviewer-prompt.md"
 
 NON_TERMINAL_STATES = {
     "discovered",
@@ -82,6 +82,18 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 TRACKER_KINDS = {"jira", "linear", "hybrid"}
 REVIEW_MODES = {"pre_pr", "post_pr"}
 READY_DECISIONS = {"pre_pr": "ready_pre_pr", "post_pr": "ready_post_pr_checks"}
+REVIEWER_TRANSPORTS = {"claude_cli"}
+REVIEW_UNAVAILABLE_POLICIES = {"continue_with_receipt", "block"}
+REVIEW_FAILURE_CODES = {
+    "cli_not_found",
+    "cli_auth_failed",
+    "cli_credit_or_api_route",
+    "cli_timeout",
+    "cli_runtime_failed",
+    "cli_output_invalid",
+    "unknown",
+}
+CLAUDE_CLI_STRIPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 SKIP_RECEIPT_TYPES = {"validation_downgrade", "reviewer_override", "paid_model_fallback"}
 LOCAL_PATH_RE = re.compile(r"(?:(?:/Users|/home|/private|/tmp)/[^\s)>\]]+|~/(?:[^\s)>\]]+))")
 NOTION_RE = re.compile(r"https?://(?:www\.)?(?:notion\.so|notion\.site|app\.notion\.com)/[^\s)>\]]+", re.I)
@@ -89,6 +101,29 @@ OS_INTERNAL_RE = re.compile(r"\b(?:Agentic OS|auto_dev_queue|harness/skills|work
 SECRET_RE = re.compile(
     r"\b(?:Authorization\s*:\s*(?:Bearer|Basic)\s+\S+|API_KEY|TOKEN|SECRET|PASSWORD|PASS|PRIVATE_KEY|ACCESS_KEY)\s*[:=]?\s*[^\s]+",
     re.I,
+)
+RECEIPT_CREDENTIAL_RE = re.compile(
+    r"(?ix)"
+    r"(?:[\"']?[a-z][a-z0-9_-]*(?:key|token|secret|password|passwd)[\"']?"
+    r"|[\"']?(?:api_key|access_key|private_key|session_token|password|passwd)[\"']?)"
+    r"\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+)
+RECEIPT_SECRET_VALUE_RE = re.compile(
+    r"(?i)\b(?:"
+    r"(?:sk-ant|sk-proj|sk)-[a-z0-9_-]{12,}"
+    r"|gh[pousr]_[a-z0-9]{12,}"
+    r"|github_pat_[a-z0-9_]{12,}"
+    r"|xox[a-z]-[a-z0-9-]{12,}"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}"
+    r"|eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}"
+    r")\b",
+)
+CLAUDE_REVIEW_ALLOWED_TOOLS = (
+    "Read,Grep,Glob,"
+    "Bash(git diff),Bash(git diff *),"
+    "Bash(git show),Bash(git show *),"
+    "Bash(git status),Bash(git status *),"
+    "Bash(git log),Bash(git log *)"
 )
 
 
@@ -414,7 +449,7 @@ def decide(run_dir: Path, write_outputs: bool = True) -> dict[str, Any]:
 
 def choose_next_action(state: str, failures: list[str], blockers: list[Any]) -> str:
     if state == "awaiting_human_review":
-        return "Save the reviewer output to reviewer-response.md, then run ingest-review."
+        return "Run run-review for Claude CLI, or save reviewer-response.md and run ingest-review."
     if blockers:
         return "Resolve active blockers, refresh external state, then rerun decide."
     if failures:
@@ -440,6 +475,34 @@ def scrub_text(text: str) -> list[str]:
         if pattern.search(text):
             findings.append(name)
     return sorted(set(findings))
+
+
+def sanitize_receipt_summary(text: str) -> str:
+    """Return a bounded, single-line failure summary safe for a local receipt."""
+
+    value = re.sub(r"[\x00-\x1f\x7f]+", " ", text)
+    value = LOCAL_PATH_RE.sub("[REDACTED_LOCAL_PATH]", value)
+    value = NOTION_RE.sub("[REDACTED_NOTION_LINK]", value)
+    value = re.sub(
+        r"(?i)\bAuthorization\s*:\s*(?:Bearer|Basic)\s+\S+",
+        "[REDACTED_CREDENTIAL]",
+        value,
+    )
+    value = re.sub(
+        r"(?i)(https?://[^:/\s]+:)[^@\s]+@",
+        r"\1[REDACTED_CREDENTIAL]@",
+        value,
+    )
+    value = re.sub(
+        r"(?i)--(?:api[-_]?key|access[-_]?key|token|secret|password|passwd)"
+        r"(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+        "[REDACTED_CREDENTIAL]",
+        value,
+    )
+    value = RECEIPT_CREDENTIAL_RE.sub("[REDACTED_CREDENTIAL]", value)
+    value = RECEIPT_SECRET_VALUE_RE.sub("[REDACTED_CREDENTIAL]", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:500] or "Claude CLI review failed without a diagnostic summary."
 
 
 def default_state(args: argparse.Namespace) -> dict[str, Any]:
@@ -715,6 +778,37 @@ def render_reviewer_prompt(state: dict[str, Any], review_dir: Path, mode: str, a
     return template
 
 
+def canonical_review_repo(state: dict[str, Any]) -> Path | None:
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    raw_path = context.get("worktree") or context.get("repo_path")
+    if not raw_path:
+        return None
+    return Path(str(raw_path)).expanduser().resolve()
+
+
+def known_git_head(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized or normalized.lower() == "unknown" or normalized == "HEAD":
+        return None
+    return normalized
+
+
+def read_git_head(repo_path: Path) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return known_git_head(completed.stdout)
+
+
 def command_prepare_review(args: argparse.Namespace) -> int:
     if args.mode not in REVIEW_MODES:
         raise AutoDevStateError("--mode must be pre_pr or post_pr")
@@ -725,18 +819,28 @@ def command_prepare_review(args: argparse.Namespace) -> int:
     review_dir = args.review_run_dir or args.run_dir / "finishing-touches" / review_run_id
     review_dir.mkdir(parents=True, exist_ok=True)
     artifact_dir = str(review_dir)
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    reviewed_repo = canonical_review_repo(state)
+    requested_head = known_git_head(args.head_sha) or known_git_head((state.get("pr") or {}).get("head_sha"))
+    expected_head = requested_head or (read_git_head(reviewed_repo) if reviewed_repo and reviewed_repo.is_dir() else None)
+    args.head_sha = expected_head or args.head_sha
     request = {
         "work_item_id": state["work_item_id"],
         "run_id": review_dir.name,
-        "repo_path": (state.get("context") or {}).get("repo_path") or "",
+        "repo_path": str(reviewed_repo or ""),
+        "reviewed_repo_path": str(reviewed_repo or ""),
+        "expected_head_sha": expected_head or "unknown",
         "implementation_summary": args.implementation_summary,
         "spec_source": (state.get("tracker") or {}).get("spec_source") or "tracker",
         "builder_model": args.builder_model,
         "selected_reviewer_model": args.reviewer_model,
-        "reviewer_selection_source": "human-mediated",
-        "target_branch": (state.get("context") or {}).get("branch") or "",
+        "reviewer_selection_source": "opposing-family-cli",
+        "reviewer_transport": args.reviewer_transport,
+        "reviewer_auth": "cli_native",
+        "reviewer_environment_removed": CLAUDE_CLI_STRIPPED_ENV,
+        "target_branch": context.get("branch") or "",
         "base_sha": args.base_sha or "unknown",
-        "head_sha": args.head_sha or ((state.get("pr") or {}).get("head_sha") or "unknown"),
+        "head_sha": expected_head or "unknown",
         "diff_hash": args.diff_hash or "unknown",
         "pr_number": str((state.get("pr") or {}).get("number") or ""),
         "artifact_dir": artifact_dir,
@@ -745,6 +849,8 @@ def command_prepare_review(args: argparse.Namespace) -> int:
     plan = {
         "model_identity_status": "proven",
         "reviewer_status": "available",
+        "reviewer_transport": args.reviewer_transport,
+        "review_unavailable_policy": args.review_unavailable_policy,
         "validation_status": args.validation_status,
         "pr_check_status": args.pr_check_status,
         "copilot_status": args.copilot_status,
@@ -768,7 +874,7 @@ def command_prepare_review(args: argparse.Namespace) -> int:
         to="awaiting_human_review",
         from_state=None,
         actor=args.actor,
-        reason=f"{args.mode} review requires human-mediated GPT/Codex response",
+        reason=f"{args.mode} review prepared for Claude CLI",
         receipt=str((review_dir / "reviewer-prompt.md").relative_to(args.run_dir)),
         idempotency_key=args.idempotency_key or f"review-prompt:{review_dir.name}",
         ref=str((review_dir / "reviewer-prompt.md").relative_to(args.run_dir)),
@@ -776,6 +882,404 @@ def command_prepare_review(args: argparse.Namespace) -> int:
     command_transition(transition_args)
     print(json.dumps({"ok": True, "review_dir": str(review_dir), "prompt": str(review_dir / "reviewer-prompt.md")}, indent=2))
     return 0
+
+
+def write_unavailable_model_receipt(
+    review_dir: Path,
+    *,
+    failure_code: str,
+    failure_summary: str,
+    policy: str,
+) -> None:
+    receipt = [
+        "# Model Receipt",
+        "",
+        f"- Review run: `{review_dir.name}`",
+        "- Reviewer status: `unavailable`",
+        "- Transport: `claude_cli`",
+        "- Authentication: `cli_native`",
+        "- Removed environment: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`",
+        f"- Failure code: `{failure_code}`",
+        f"- Unavailable policy: `{policy}`",
+        f"- Recorded at: `{utc_now()}`",
+        "",
+        "## Sanitized failure summary",
+        "",
+        failure_summary,
+        "",
+        "No reviewer findings were produced or accepted by this unavailable review attempt.",
+    ]
+    (review_dir / "model-receipt.md").write_text("\n".join(receipt) + "\n", encoding="utf-8")
+
+
+def command_record_review_unavailable(args: argparse.Namespace) -> int:
+    state = load_state(args.run_dir)
+    if state["current_state"] not in {"finishing_review", "awaiting_human_review"}:
+        raise AutoDevStateError(
+            "record-review-unavailable requires current_state == finishing_review or awaiting_human_review"
+        )
+    review_dir = args.review_run_dir.resolve()
+    try:
+        review_dir.relative_to(args.run_dir.resolve())
+    except ValueError as exc:
+        raise AutoDevStateError("--review-run-dir must be inside --run-dir") from exc
+    request = read_json(review_dir / "review-request.json")
+    mode = request.get("mode")
+    if mode not in REVIEW_MODES:
+        raise AutoDevStateError("review-request.json mode must be pre_pr or post_pr")
+    if request.get("reviewer_transport") != "claude_cli":
+        raise AutoDevStateError("review unavailability may only be recorded for reviewer_transport claude_cli")
+    ledger_rows = read_jsonl(review_dir / "review-ledger.jsonl", required=False)
+    if any(row.get("event_type") == "finding_opened" for row in ledger_rows):
+        raise AutoDevStateError("cannot record reviewer unavailability after review findings were opened")
+
+    plan_path = review_dir / "validation-plan.json"
+    plan = read_json(plan_path)
+    plan["reviewer_status"] = "unavailable"
+    plan["reviewer_transport"] = "claude_cli"
+    plan["review_unavailable_policy"] = args.review_unavailable_policy
+    plan["review_failure_code"] = args.failure_code
+    atomic_write_json(plan_path, plan)
+    summary = sanitize_receipt_summary(args.failure_summary)
+    write_unavailable_model_receipt(
+        review_dir,
+        failure_code=args.failure_code,
+        failure_summary=summary,
+        policy=args.review_unavailable_policy,
+    )
+
+    decision = run_finishing_decide(review_dir)
+    rel_decision = str((review_dir / "readiness-decision.json").relative_to(args.run_dir.resolve()))
+    state.setdefault("finishing", {}).setdefault(mode, {})
+    state["finishing"][mode]["decision"] = decision["decision"]
+    state["finishing"][mode]["ref"] = rel_decision
+    save_state(args.run_dir, state)
+    next_state = {
+        "ready_pre_pr": "pr_open",
+        "ready_post_pr_checks": "ready_for_merge",
+        "pending_checks": "ci_watch",
+    }.get(decision["decision"])
+    if next_state and state["current_state"] in {"finishing_review", "awaiting_human_review"}:
+        command_transition(
+            argparse.Namespace(
+                run_dir=args.run_dir,
+                to=next_state,
+                from_state=None,
+                actor=args.actor,
+                reason=f"Claude CLI unavailable; finishing {mode} decision {decision['decision']}",
+                receipt=rel_decision,
+                idempotency_key=args.idempotency_key or f"review-unavailable:{review_dir.name}",
+                ref=rel_decision,
+            )
+        )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "mode": mode,
+                "reviewer_transport": "claude_cli",
+                "review_unavailable_policy": args.review_unavailable_policy,
+                "decision": decision["decision"],
+                "next_state": next_state,
+                "receipt": str(review_dir / "model-receipt.md"),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def classify_claude_cli_failure(returncode: int, stderr: str) -> tuple[str, str]:
+    diagnostic = sanitize_receipt_summary(stderr)
+    lowered = diagnostic.lower()
+    if "credit balance" in lowered or "api credit" in lowered or "api key" in lowered:
+        code = "cli_credit_or_api_route"
+    elif "unauthorized" in lowered or "authentication" in lowered or "login" in lowered or "401" in lowered:
+        code = "cli_auth_failed"
+    else:
+        code = "cli_runtime_failed"
+    return code, f"Claude CLI exited {returncode}: {diagnostic}"
+
+
+def record_claude_cli_failure(
+    args: argparse.Namespace,
+    *,
+    failure_code: str,
+    failure_summary: str,
+) -> int:
+    return command_record_review_unavailable(
+        argparse.Namespace(
+            run_dir=args.run_dir,
+            review_run_dir=args.review_run_dir,
+            failure_code=failure_code,
+            failure_summary=failure_summary,
+            review_unavailable_policy=args.review_unavailable_policy,
+            actor=args.actor,
+            idempotency_key=args.idempotency_key,
+        )
+    )
+
+
+def record_malformed_review_output(
+    args: argparse.Namespace,
+    review_dir: Path,
+    request: dict[str, Any],
+    error: AutoDevStateError,
+) -> int:
+    error_path = review_dir / "review-output-error.json"
+    rel_error = str(error_path.relative_to(args.run_dir.resolve()))
+    payload = {
+        "schema_version": 1,
+        "recorded_at": utc_now(),
+        "decision": "malformed_reviewer_output",
+        "mode": request.get("mode"),
+        "reviewer_transport": "claude_cli",
+        "response_ref": "reviewer-response.md",
+        "error": sanitize_receipt_summary(str(error)),
+        "next_action": "Inspect or replace reviewer-response.md, then rerun ingest-review.",
+    }
+    atomic_write_json(error_path, payload)
+    plan_path = review_dir / "validation-plan.json"
+    plan = read_json(plan_path)
+    plan["review_output_status"] = "malformed"
+    plan["review_output_error_ref"] = "review-output-error.json"
+    atomic_write_json(plan_path, plan)
+    state = load_state(args.run_dir)
+    mode = request.get("mode")
+    if mode in REVIEW_MODES:
+        state.setdefault("finishing", {}).setdefault(mode, {})
+        state["finishing"][mode]["decision"] = "malformed_reviewer_output"
+        state["finishing"][mode]["output_error_ref"] = rel_error
+        save_state(args.run_dir, state)
+    if state.get("current_state") == "finishing_review":
+        command_transition(
+            argparse.Namespace(
+                run_dir=args.run_dir,
+                to="awaiting_human_review",
+                from_state=None,
+                actor=args.actor,
+                reason="Claude CLI returned malformed reviewer output",
+                receipt=rel_error,
+                idempotency_key=args.idempotency_key or f"malformed-review:{review_dir.name}",
+                ref=rel_error,
+            )
+        )
+        state = load_state(args.run_dir)
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "decision": "malformed_reviewer_output",
+                "state": state.get("current_state"),
+                "error_ref": rel_error,
+                "next_action": payload["next_action"],
+            },
+            indent=2,
+        )
+    )
+    return 2
+
+
+def record_review_input_error(
+    args: argparse.Namespace,
+    review_dir: Path,
+    request: dict[str, Any],
+    *,
+    error_code: str,
+    summary: str,
+    expected_head: str | None = None,
+    observed_head: str | None = None,
+) -> int:
+    error_path = review_dir / "review-input-error.json"
+    rel_error = str(error_path.relative_to(args.run_dir.resolve()))
+    payload = {
+        "schema_version": 1,
+        "recorded_at": utc_now(),
+        "decision": "review_input_error",
+        "error_code": error_code,
+        "mode": request.get("mode"),
+        "reviewer_transport": "claude_cli",
+        "summary": sanitize_receipt_summary(summary),
+        "expected_head_sha": expected_head,
+        "observed_head_sha": observed_head,
+        "next_action": "Refresh the review request from canonical state, then rerun run-review.",
+    }
+    atomic_write_json(error_path, payload)
+    plan_path = review_dir / "validation-plan.json"
+    plan = read_json(plan_path)
+    plan["review_input_status"] = "error"
+    plan["review_input_error_ref"] = "review-input-error.json"
+    atomic_write_json(plan_path, plan)
+    state = load_state(args.run_dir)
+    mode = request.get("mode")
+    if mode in REVIEW_MODES:
+        state.setdefault("finishing", {}).setdefault(mode, {})
+        state["finishing"][mode]["decision"] = "review_input_error"
+        state["finishing"][mode]["input_error_ref"] = rel_error
+        save_state(args.run_dir, state)
+    if state.get("current_state") == "finishing_review":
+        command_transition(
+            argparse.Namespace(
+                run_dir=args.run_dir,
+                to="awaiting_human_review",
+                from_state=None,
+                actor=args.actor,
+                reason=f"Claude review input failed integrity check: {error_code}",
+                receipt=rel_error,
+                idempotency_key=args.idempotency_key or f"review-input-error:{review_dir.name}:{error_code}",
+                ref=rel_error,
+            )
+        )
+        state = load_state(args.run_dir)
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "decision": "review_input_error",
+                "error_code": error_code,
+                "state": state.get("current_state"),
+                "error_ref": rel_error,
+                "next_action": payload["next_action"],
+            },
+            indent=2,
+        )
+    )
+    return 2
+
+
+def command_run_review(args: argparse.Namespace) -> int:
+    state = load_state(args.run_dir)
+    if state["current_state"] not in {"finishing_review", "awaiting_human_review"}:
+        raise AutoDevStateError("run-review requires current_state == finishing_review or awaiting_human_review")
+    review_dir = args.review_run_dir.resolve()
+    try:
+        review_dir.relative_to(args.run_dir.resolve())
+    except ValueError as exc:
+        raise AutoDevStateError("--review-run-dir must be inside --run-dir") from exc
+    request = read_json(review_dir / "review-request.json")
+    if request.get("reviewer_transport") != "claude_cli":
+        raise AutoDevStateError("run-review requires reviewer_transport claude_cli")
+    prompt_path = review_dir / "reviewer-prompt.md"
+    if not prompt_path.exists():
+        raise AutoDevStateError(f"missing required file: {prompt_path}")
+
+    canonical_repo = canonical_review_repo(state)
+    requested_repo_raw = request.get("reviewed_repo_path") or request.get("repo_path")
+    requested_repo = Path(str(requested_repo_raw)).expanduser().resolve() if requested_repo_raw else None
+    if canonical_repo is None or requested_repo is None or requested_repo != canonical_repo:
+        return record_review_input_error(
+            args,
+            review_dir,
+            request,
+            error_code="canonical_repo_mismatch",
+            summary="Claude CLI review repository does not match the canonical Auto Dev worktree.",
+        )
+    repo_path = canonical_repo
+    if not repo_path.is_dir():
+        return record_review_input_error(
+            args,
+            review_dir,
+            request,
+            error_code="canonical_repo_unavailable",
+            summary="The canonical Auto Dev worktree is unavailable.",
+        )
+    actual_head = read_git_head(repo_path)
+    if actual_head is None:
+        return record_review_input_error(
+            args,
+            review_dir,
+            request,
+            error_code="git_head_unverifiable",
+            summary="Claude CLI review repository HEAD could not be verified.",
+        )
+    expected_head = known_git_head(request.get("expected_head_sha")) or known_git_head(request.get("head_sha"))
+    if expected_head and actual_head != expected_head:
+        return record_review_input_error(
+            args,
+            review_dir,
+            request,
+            error_code="git_head_mismatch",
+            summary="Claude CLI review HEAD does not match the prepared review request.",
+            expected_head=expected_head,
+            observed_head=actual_head,
+        )
+
+    claude_binary = shutil.which("claude")
+    if not claude_binary:
+        return record_claude_cli_failure(
+            args,
+            failure_code="cli_not_found",
+            failure_summary="Claude CLI executable was not found on PATH.",
+        )
+    child_env = os.environ.copy()
+    for name in CLAUDE_CLI_STRIPPED_ENV:
+        child_env.pop(name, None)
+    command = [
+        claude_binary,
+        "-p",
+        "--model",
+        args.reviewer_model,
+        "--safe-mode",
+        "--permission-mode",
+        "dontAsk",
+        "--tools",
+        "Read,Grep,Glob,Bash",
+        "--allowedTools",
+        CLAUDE_REVIEW_ALLOWED_TOOLS,
+        "--no-session-persistence",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            input=prompt_path.read_text(encoding="utf-8"),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=args.timeout_seconds,
+            env=child_env,
+            cwd=str(repo_path),
+        )
+    except subprocess.TimeoutExpired:
+        return record_claude_cli_failure(
+            args,
+            failure_code="cli_timeout",
+            failure_summary=f"Claude CLI timed out after {args.timeout_seconds} seconds.",
+        )
+    except OSError as exc:
+        return record_claude_cli_failure(
+            args,
+            failure_code="cli_runtime_failed",
+            failure_summary=f"Claude CLI could not start: {exc}",
+        )
+
+    if completed.returncode != 0:
+        failure_code, summary = classify_claude_cli_failure(completed.returncode, completed.stderr)
+        return record_claude_cli_failure(args, failure_code=failure_code, failure_summary=summary)
+    if not completed.stdout.strip():
+        return record_claude_cli_failure(
+            args,
+            failure_code="cli_output_invalid",
+            failure_summary="Claude CLI returned an empty reviewer response.",
+        )
+
+    response_path = review_dir / "reviewer-response.md"
+    response_path.write_text(completed.stdout, encoding="utf-8")
+    try:
+        parse_reviewer_response(completed.stdout)
+    except AutoDevStateError as exc:
+        return record_malformed_review_output(args, review_dir, request, exc)
+    return command_ingest_review(
+        argparse.Namespace(
+            run_dir=args.run_dir,
+            review_run_dir=review_dir,
+            response=response_path,
+            reviewer_model=args.reviewer_model,
+            reviewer_transport="claude_cli",
+            attested_by=args.attested_by,
+            actor=args.actor,
+            idempotency_key=args.idempotency_key,
+        )
+    )
 
 
 def parse_reviewer_response(text: str) -> tuple[list[dict[str, Any]], str]:
@@ -805,6 +1309,8 @@ def parse_reviewer_response(text: str) -> tuple[list[dict[str, Any]], str]:
             raise AutoDevStateError(f"finding {index} blocking must be boolean")
     if verdicts[0].lower() == "ready" and any(bool(f.get("blocking")) for f in findings):
         raise AutoDevStateError("VERDICT ready is invalid when blocking findings are present")
+    if verdicts[0].lower() == "changes_required" and not findings:
+        raise AutoDevStateError("VERDICT changes_required is invalid when the findings array is empty")
     return findings, verdicts[0].lower()
 
 
@@ -831,20 +1337,30 @@ def append_review_findings(review_dir: Path, findings: list[dict[str, Any]]) -> 
         )
 
 
+def normalize_reviewer_model(model: str) -> str:
+    value = model.lower()
+    if "claude" in value or "opus" in value or "anthropic" in value:
+        return "opus"
+    return "gpt"
+
+
 def write_model_receipt(review_dir: Path, args: argparse.Namespace, verdict: str, findings: list[dict[str, Any]]) -> None:
+    reviewer_family = "opus" if normalize_reviewer_model(args.reviewer_model) == "opus" else "gpt"
     receipt = [
         "# Model Receipt",
         "",
         f"- Review run: `{review_dir.name}`",
         f"- Reviewer model: `{args.reviewer_model}`",
-        "- Reviewer family: `gpt`",
+        f"- Reviewer family: `{reviewer_family}`",
         f"- Attested by: `{args.attested_by}`",
         f"- Attested at: `{utc_now()}`",
-        "- Transport: `human-mediated`",
+        f"- Transport: `{args.reviewer_transport}`",
+        "- Authentication: `cli_native`",
+        "- Removed environment: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`",
         f"- Verdict: `{verdict}`",
         f"- Finding count: `{len(findings)}`",
         "",
-        "This receipt attests that the saved `reviewer-response.md` came from a GPT/Codex-family reviewer.",
+        "This receipt attests that the saved `reviewer-response.md` came from the selected opposing-family CLI reviewer.",
     ]
     (review_dir / "model-receipt.md").write_text("\n".join(receipt) + "\n", encoding="utf-8")
 
@@ -1033,10 +1549,12 @@ def run_fixture_case(tmp_root: Path, case: dict[str, Any]) -> dict[str, Any]:
                 mode=case.get("mode", "pre_pr"),
                 review_run_id=None,
                 review_run_dir=None,
-                builder_model="claude-opus",
-                reviewer_model="gpt-5.5-codex",
-                builder_family="claude",
-                reviewer_family="gpt",
+                builder_model="gpt-5.6-codex",
+                reviewer_model="claude-opus",
+                builder_family="gpt",
+                reviewer_family="opus",
+                reviewer_transport="claude_cli",
+                review_unavailable_policy="continue_with_receipt",
                 actor="fixture",
                 implementation_summary="fixture",
                 validation_status="passed",
@@ -1066,7 +1584,8 @@ def run_fixture_case(tmp_root: Path, case: dict[str, Any]) -> dict[str, Any]:
                 run_dir=run_dir,
                 review_run_dir=review_dir,
                 response=None,
-                reviewer_model="gpt-5.5-codex",
+                reviewer_model="claude-opus",
+                reviewer_transport="claude_cli",
                 attested_by="Michael Clark",
                 actor="fixture",
                 idempotency_key=f"{case['name']}:ingest_review",
@@ -1182,10 +1701,20 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--mode", choices=sorted(REVIEW_MODES), required=True)
     prepare_parser.add_argument("--review-run-id")
     prepare_parser.add_argument("--review-run-dir", type=Path)
-    prepare_parser.add_argument("--builder-model", default="claude-opus")
-    prepare_parser.add_argument("--reviewer-model", default="gpt-5.5-codex")
-    prepare_parser.add_argument("--builder-family", default="claude")
-    prepare_parser.add_argument("--reviewer-family", default="gpt")
+    prepare_parser.add_argument("--builder-model", default="gpt-5.6-codex")
+    prepare_parser.add_argument("--reviewer-model", default="claude-opus")
+    prepare_parser.add_argument("--builder-family", default="gpt")
+    prepare_parser.add_argument("--reviewer-family", default="opus")
+    prepare_parser.add_argument(
+        "--reviewer-transport",
+        choices=sorted(REVIEWER_TRANSPORTS),
+        default="claude_cli",
+    )
+    prepare_parser.add_argument(
+        "--review-unavailable-policy",
+        choices=sorted(REVIEW_UNAVAILABLE_POLICIES),
+        default="continue_with_receipt",
+    )
     prepare_parser.add_argument("--actor", default="codex")
     prepare_parser.add_argument("--implementation-summary", default="See local artifacts.")
     prepare_parser.add_argument("--validation-status", default="passed")
@@ -1209,11 +1738,45 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--run-dir", type=Path, required=True)
     ingest_parser.add_argument("--review-run-dir", type=Path)
     ingest_parser.add_argument("--response", type=Path)
-    ingest_parser.add_argument("--reviewer-model", default="gpt-5.5-codex")
+    ingest_parser.add_argument("--reviewer-model", default="claude-opus")
+    ingest_parser.add_argument(
+        "--reviewer-transport",
+        choices=sorted(REVIEWER_TRANSPORTS),
+        default="claude_cli",
+    )
     ingest_parser.add_argument("--attested-by", default="Michael Clark")
     ingest_parser.add_argument("--actor", default="codex")
     ingest_parser.add_argument("--idempotency-key")
     ingest_parser.set_defaults(func=command_ingest_review)
+
+    run_review_parser = subparsers.add_parser("run-review")
+    run_review_parser.add_argument("--run-dir", type=Path, required=True)
+    run_review_parser.add_argument("--review-run-dir", type=Path, required=True)
+    run_review_parser.add_argument("--reviewer-model", default="opus")
+    run_review_parser.add_argument("--timeout-seconds", type=int, default=1800)
+    run_review_parser.add_argument(
+        "--review-unavailable-policy",
+        choices=sorted(REVIEW_UNAVAILABLE_POLICIES),
+        default="continue_with_receipt",
+    )
+    run_review_parser.add_argument("--attested-by", default="Auto Dev Claude CLI runner")
+    run_review_parser.add_argument("--actor", default="codex")
+    run_review_parser.add_argument("--idempotency-key")
+    run_review_parser.set_defaults(func=command_run_review)
+
+    unavailable_parser = subparsers.add_parser("record-review-unavailable")
+    unavailable_parser.add_argument("--run-dir", type=Path, required=True)
+    unavailable_parser.add_argument("--review-run-dir", type=Path, required=True)
+    unavailable_parser.add_argument("--failure-code", choices=sorted(REVIEW_FAILURE_CODES), required=True)
+    unavailable_parser.add_argument("--failure-summary", required=True)
+    unavailable_parser.add_argument(
+        "--review-unavailable-policy",
+        choices=sorted(REVIEW_UNAVAILABLE_POLICIES),
+        default="continue_with_receipt",
+    )
+    unavailable_parser.add_argument("--actor", default="codex")
+    unavailable_parser.add_argument("--idempotency-key")
+    unavailable_parser.set_defaults(func=command_record_review_unavailable)
 
     scrub_parser = subparsers.add_parser("scrub-external-output")
     scrub_parser.add_argument("--input", type=Path, required=True)

@@ -4,7 +4,8 @@ The deterministic helper has a built-in fixture suite that runs when this direct
 
 Current built-in coverage:
 
-- 16 readiness decision cases.
+- 29 readiness decision cases, including fail-closed legacy plans and strict,
+  run-bound reviewer-unavailable receipts.
 - 7 transition cases.
 - 11 external-output scrubber cases.
 

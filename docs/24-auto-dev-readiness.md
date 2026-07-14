@@ -80,6 +80,32 @@ Every auto-dev run should leave durable evidence, not just chat text.
 | Finishing review | Review receipt or explicit project policy allowing a skip. |
 | Closeout | Worklog update, tracker update, and operator report update if the project has one. |
 
+### Claude reviewer transport
+
+Anthropic-family finishing reviews use the installed `claude` CLI. Invoke the
+CLI with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed from its subprocess
+environment so the host's Claude CLI login is used instead of API-key billing.
+
+Projects configure reviewer transport under `dev_factory.finishing_review`:
+
+```yaml
+finishing_review:
+  required: true
+  reviewer_transport: claude_cli
+  strip_environment:
+    - ANTHROPIC_API_KEY
+    - ANTHROPIC_AUTH_TOKEN
+  unavailable_policy: continue_with_receipt
+```
+
+`continue_with_receipt` means a missing, unauthenticated, out-of-credit, or
+otherwise unavailable Claude CLI is recorded in a sanitized model receipt, then
+AutoDev evaluates the remaining local-validation, PR, CI, and Copilot gates. It
+does not turn transport failure into a delivery blocker. Set
+`unavailable_policy: block` only when the project explicitly requires an
+independent cross-model review. Reviewer findings and failed validation remain
+blocking regardless of this transport policy.
+
 ---
 
 ## Common Blocks
