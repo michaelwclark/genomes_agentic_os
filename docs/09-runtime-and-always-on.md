@@ -640,6 +640,26 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 
 ---
 
+## Queue and worker health
+
+`agentic-os runtime health-report --root ~/agentic_os` writes deterministic
+JSON and Markdown snapshots under
+`shared_factory/06-runs-and-logs/runtime-health/`. It reports actionable queue
+depth separately from terminal history, stale queued/running work, recent
+dispatch outcomes, top backlog sources, and LaunchAgent supervisor freshness.
+
+The runtime is intentionally lightweight: a YAML queue, Python
+scheduler/dispatcher, macOS LaunchAgent, and bounded per-job subprocesses. It
+does not require Redis, Celery, or a persistent worker pool.
+
+Reusable installs seed the hourly health schedule disabled because its Notion
+target is installation-specific. Once a verified Genome's Notion tracking page
+is configured, enable `queue_worker_health_report`; it uses priority dispatch so
+the generic queue cannot starve its own monitor. `run_queue_prune_daily` uses
+the same priority lane.
+
+---
+
 ## Guardrails & gotchas
 
 - **Dry-run by default.** Every command that enqueues, dispatches, or prunes work

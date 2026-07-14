@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..cli_help import AosHelpFormatter, env_epilog
+from ..runtime_health import build_runtime_health, project_runtime_health, write_runtime_health
 from ..runtime_ops import (
     format_runtime_result,
     heartbeat_list,
@@ -56,6 +57,17 @@ def handle_runtime_doctor(args: argparse.Namespace) -> int:
     result = runtime_doctor(args.root)
     print(format_runtime_result(result))
     return 0 if result["ok"] else 1
+
+
+def handle_runtime_health_report(args: argparse.Namespace) -> int:
+    report = build_runtime_health(args.root)
+    paths = write_runtime_health(args.root, report)
+    result = {"report": report, "paths": paths, "notion": {"applied": False}}
+    if args.apply_notion:
+        projection = project_runtime_health(args.root, report, paths, automation_id=args.automation_id)
+        result["notion"] = {"applied": projection["ok"], **projection}
+    print(format_runtime_result(result))
+    return 0 if not args.apply_notion or result["notion"]["applied"] else 1
 
 
 def handle_runtime_run_next(args: argparse.Namespace) -> int:
@@ -166,6 +178,15 @@ def register(subparsers) -> None:
     runtime_doctor_parser = runtime_subparsers.add_parser("doctor", help="Check runtime registry health.")
     runtime_doctor_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_doctor_parser.set_defaults(handler=handle_runtime_doctor)
+    runtime_health_parser = runtime_subparsers.add_parser(
+        "health-report", help="Write a queue and worker-loop health report."
+    )
+    runtime_health_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_health_parser.add_argument(
+        "--apply-notion", action="store_true", help="Replace the verified Notion summary page."
+    )
+    runtime_health_parser.add_argument("--automation-id", default="queue-worker-health")
+    runtime_health_parser.set_defaults(handler=handle_runtime_health_report)
     runtime_run_next_parser = runtime_subparsers.add_parser("run-next", help="Dispatch the next safe queued runtime item.")
     runtime_run_next_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_run_next_parser.add_argument("--item-id", help="Specific queue item id to inspect or dispatch.")
