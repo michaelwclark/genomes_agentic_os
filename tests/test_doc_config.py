@@ -299,6 +299,7 @@ def test_convention_policy_installed_and_registered(tmp_path: Path) -> None:
     assert {
         path.relative_to(root).as_posix()
         for path in (root / "harness" / "commands").glob("*.md")
+        if path.name != "README.md"
     } <= command_sources
     assert {
         path.relative_to(root).as_posix()

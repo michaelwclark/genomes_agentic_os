@@ -81,21 +81,16 @@ agentic-os init --target ~/agentic_os
 ```text
 src/genomes_agentic_os/  Installable Python package.
   cli/                    The `agentic-os` CLI: one module per command group
-                          (23 today — scaffold, project, workflow, automation,
-                          runtime, notion, customer, and others), registered in
+                          (scaffold, project, workflow, automation, runtime,
+                          notion, customer, and others), registered in
                           cli/__init__.py's COMMAND_MODULES list.
   state/                  Local SQLite state plane: events ledger, run queue,
                           cursors, and importers from the file formats.
 docs/                     The handbook: numbered pages, tutorials, feature
-                          guides, the architecture atlas, and rendered diagrams.
-SPECS/                    Source-package future-work specs and planning
-                          backlog. The legacy PLANS/ directory was
-                          consolidated into this folder; numbered files kept
-                          their numbers.
+                          guides, architecture atlas, rendered diagrams, and
+                          example OS trees under docs/examples/.
 templates/                Copyable source templates for installed OS objects.
 schemas/                  JSON schemas for stricter validation.
-examples/                 Example domain operating systems: acme_consulting,
-                          lending_ops, personal.
 harness/                  Source-of-truth harness assets an install copies in:
                           commands, skills, hooks, registries, rules, and the
                           shared_factory knowledge base.
@@ -105,8 +100,6 @@ installers/               Installer and scaffold planning notes and scripts.
 config/                   Example configuration files (hosts, OS, projects).
 customer_profiles/        Example customer-profile YAML for the customer OS
                           factory.
-skills/                   Claude and Codex skill entrypoints for this source
-                          repository itself.
 system/                   Host-level shell, terminal, runtime, and
                           package-manager conventions.
 tests/                    CLI and scaffold test suite (pytest).
@@ -119,7 +112,9 @@ Key starting points:
 - [Architecture atlas](docs/architecture/system-architecture.md)
 - [Information architecture](docs/04-information-architecture.md)
 - [Install & quickstart](docs/01-install-and-quickstart.md)
-- [Spec backlog](SPECS/README.md)
+- [Example OS trees](docs/examples/README.md)
+- [Harness map](harness/README.md)
+- [Python source map](src/README.md)
 - [Templates](templates/README.md)
 
 ## Customization

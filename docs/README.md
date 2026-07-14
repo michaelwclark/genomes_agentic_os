@@ -106,6 +106,8 @@ compatibility adapters to the same Spec Engine.
 
 - **[Feature guides](13-feature-guides/)** — deeper, feature-by-feature implementation guides and gap maps.
 - **[Tutorials](tutorials/)** — worked, scenario-based walkthroughs.
+- **[Examples](examples/)** — small example domain OS trees used for exploration
+  and documentation, not runtime templates.
 - **[Architecture](architecture/system-architecture.md)** — the agent-facing architecture map, command reference, harness-modes, and the re-runnable validation + diagram tools under `architecture/tools/`.
 - **[Design notes](design-notes/)** — in-progress design records for surfaces still taking shape (config.toml, lifecycle, port assessments).
 

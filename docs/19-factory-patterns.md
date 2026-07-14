@@ -25,7 +25,7 @@ This document categorizes factory-derived assets — from `~/projects/factory` �
 | `vault-toolkit/constraints/07-scaling-vs-automating.md` — scale by docs and stage contracts before automating judgment | Adapted | Automation-fit rules (good/bad first automation gates) encoded in `templates/customer/automation-fit-matrix.md` and brief skill. | `templates/customer/automation-fit-matrix.md`, `harness/skills/client-automation-brief/SKILL.md` |
 | `vault-toolkit/constraints/08-handoff-readiness.md` — handoff checklist: map, context, stage contracts, references, decisions | Adapted | Handoff checklist → `templates/customer/customer-handoff-checklist.md`. | `templates/customer/customer-handoff-checklist.md` |
 | `_notion_school/07-client-factory-playbook.md` — discovery questions, good/bad first automation filters, client brief fields, value metrics, data boundaries | Adapted | Brief fields → `templates/customer/client-automation-brief.md`. Discovery questions → `harness/commands/os-discover-rooms.md`. Fit filters → brief skill. Private/school context stripped. | `templates/customer/client-automation-brief.md`, `harness/skills/client-automation-brief/SKILL.md` |
-| `_notion_school/08-skill-roadmap.md` — skill shapes for intake, planning, session closeout, context audit, memory distillation, client automation briefs | Referenced | Skill shapes documented in installed OS `SPECS/14-client-automation-and-control-plane-playbooks/`. Three skills instantiated (`client-automation-brief`, `control-plane-bootstrap`, `context-audit`). Remaining shapes (intake, planning, session closeout, memory distillation) are future work. | `harness/skills/client-automation-brief/`, `harness/skills/control-plane-bootstrap/`, `harness/skills/context-audit/` |
+| `_notion_school/08-skill-roadmap.md` — skill shapes for intake, planning, session closeout, context audit, memory distillation, client automation briefs | Referenced | Skill shapes are tracked in the installed project's canonical `work-items/` lifecycle. Three skills instantiated (`client-automation-brief`, `control-plane-bootstrap`, `context-audit`). Remaining shapes are future work. | `harness/skills/client-automation-brief/`, `harness/skills/control-plane-bootstrap/`, `harness/skills/context-audit/` |
 | `_notion_clarks_consulting_school/04-notion-control-plane.md` — queue database shape, activity log fields, engine controls, stable planning page, anti-patterns | Adapted | Five-database control-plane shape and queue row fields encoded in `harness/skills/control-plane-bootstrap/SKILL.md`. Anti-patterns (don't make Notion the execution source of truth) added as workspace-verification guard. Clark's Consulting identifiers stripped. | `harness/skills/control-plane-bootstrap/SKILL.md` |
 | `_notion_clarks_consulting_school/06-client-automation-playbook.md` — automation fit matrix, two-week pilot shape, customer deliverables, security notes, training path | Adapted | Fit matrix → `templates/customer/automation-fit-matrix.md`. Pilot shape → brief template `Pilot Scope` section. Security notes → `Data Boundaries` section. Training path deferred. | `templates/customer/automation-fit-matrix.md`, `templates/customer/client-automation-brief.md` |
 | `_notion_agentic_operating_system_manual/*` — domain/lane source-of-truth model, workflow/automation layouts, practical walkthroughs | Referenced | Domain/lane model already encoded in `scaffold.py`. Workflow/automation layouts match existing `WORKFLOW_FILES` / `AUTOMATION_FILES`. Walkthroughs are candidate tutorial content. | `src/genomes_agentic_os/scaffold.py`, `docs/06-workflows.md`, `docs/07-automations.md` |
@@ -46,7 +46,7 @@ This document categorizes factory-derived assets — from `~/projects/factory` �
 
 ## Adapt, Do Not Copy — Rule Summary
 
-Per installed OS `SPECS/12-factory-template-import-backlog/`:
+Per the factory-template import work item in the installed OS:
 
 1. Map factory vocabulary to Agentic OS vocabulary: Map → Router/AGENTS.md; Rooms → Domains with CONTEXT.md; Work → Projects/Workflows/Automations/Run logs.
 2. Strip private, course-specific, and client-identifying names before any template is installed into a customer root.
@@ -57,5 +57,5 @@ Per installed OS `SPECS/12-factory-template-import-backlog/`:
 
 ## Related Plans
 
-- Installed OS `SPECS/12-factory-template-import-backlog/` — source of the import policy and acceptance criteria this doc satisfies.
-- Installed OS `SPECS/14-client-automation-and-control-plane-playbooks/` — playbook deliverables (skills, brief scaffolder, control-plane spec) that complete the factory import for client automation work.
+- Installed project factory-template import work item — source of the import policy and acceptance criteria this doc satisfies.
+- Installed project client-automation/control-plane work item — playbook deliverables that complete the factory import.

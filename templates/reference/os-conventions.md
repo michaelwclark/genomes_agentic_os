@@ -22,9 +22,9 @@ it.
 
 ## Spec And Notion Mirrors
 
-- Project-known future work and proposed features belong in `SPECS/` for
-  user-facing planning and
-  `<domain>/02-projects/<project>/work-items/01-intake/`.
+- Project-known future work and proposed features belong in
+  `<domain>/02-projects/<project>/work-items/01-intake/` as the single
+  canonical Spec object.
 - Active work belongs in
   `<domain>/02-projects/<project>/work-items/02-active/<index>_<slug>/`.
 - The standard packet files are `SPEC.md`, `PLAN.md`, `WORKLOG.md`,

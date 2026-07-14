@@ -221,8 +221,6 @@ SHARED_KNOWLEDGE_FILES = (
     "commands/os-auto-add-feature.md",
     "commands/os-end-chat.md",
     "commands/system-tool-registry.md",
-    "plans/README.md",
-    "plans/23-doc-config-system.md",
     "skills/os-navigator/SKILL.md",
     "skills/room-builder/SKILL.md",
     "skills/workflow-builder/SKILL.md",
@@ -351,20 +349,20 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / filename, result)
     for directory in ("artifacts", "config", "ideas", "work-items", "worktrees"):
         require_dir(project_root / directory, result)
-    if not (project_root / "SPECS").is_dir():
-        result.warnings.append(f"missing recommended specs folder: {project_root / 'SPECS'}")
     if not ((project_root / "worklogs").is_dir() or (project_root / "WORKLOGS").is_dir()):
         result.warnings.append(f"missing recommended worklogs folder: {project_root / 'worklogs'} or {project_root / 'WORKLOGS'}")
     for legacy_bucket in ("features", ".features", "PLANS", "BUILD_LOGS"):
         legacy_path = project_root / legacy_bucket
         if legacy_path.exists():
             result.warnings.append(
-                f"legacy project bucket present; prefer SPECS/ or worklogs/: {legacy_path}"
+                f"legacy project bucket present; prefer work-items/ or worklogs/: {legacy_path}"
             )
     for filename in PROJECT_CONFIG_FILES:
         require_file(project_root / "config" / filename, result)
-    if (project_root / "SPECS").is_dir():
-        require_file(project_root / "SPECS" / "README.md", result)
+    if (project_root / "SPECS").exists():
+        result.warnings.append(
+            f"legacy project bucket present; migrate Specs into work-items/: {project_root / 'SPECS'}"
+        )
     require_file(project_root / "ideas" / "README.md", result)
     require_file(project_root / "ideas" / "raw-ideas.md", result)
     if (project_root / "WORKLOGS").is_dir():
@@ -770,6 +768,8 @@ def validate_command_skill_registry_coverage(root: Path, result: ValidationResul
     command_sources = _registry_sources(root, "commands", "commands")
     command_ids = _registry_ids(root, "commands", "commands")
     for command_doc in sorted(harness_path(root, "commands").glob("*.md")):
+        if command_doc.name == "README.md":
+            continue
         relative = command_doc.relative_to(root).as_posix()
         if relative not in command_sources and command_doc.stem not in command_ids:
             result.errors.append(f"command doc missing registry entry: {relative}")

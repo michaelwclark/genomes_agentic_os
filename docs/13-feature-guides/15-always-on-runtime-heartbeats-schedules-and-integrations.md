@@ -174,7 +174,7 @@ additively.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/15-always-on-runtime-heartbeats-schedules-and-integrations/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/15-always-on-runtime-heartbeats-schedules-and-integrations/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/15-always-on-runtime-heartbeats-schedules-and-integrations/HOLDOUT_QA.md`
 - Runtime implementation: `src/genomes_agentic_os/runtime_ops.py`

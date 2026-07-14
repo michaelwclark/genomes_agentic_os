@@ -59,6 +59,6 @@ git log --all --oneline -- src/genomes_agentic_os/losmon.py
 ```
 
 Installed OS roots may still hold the historical spec and worklog folders under
-`SPECS/08-losmon-replacement-validation/` and
+the installed project's canonical `work-items/` lifecycle and
 `worklogs/source-features/08-losmon-replacement-validation/`. They describe the
 removed feature and are safe to archive.

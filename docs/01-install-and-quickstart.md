@@ -325,7 +325,7 @@ A project lives inside a domain under `02-projects/`.
 agentic-os project create acme launch --root ~/agentic_os --repo ~/projects/acme/launch
 ```
 
-Real output (abbreviated — recent branches added `SPECS/`, `worklogs/`,
+Real output (abbreviated — recent branches added `worklogs/`,
 `work-items/`, and per-concern `config/*.yml` files beyond what is shown here):
 
 ```text
@@ -338,7 +338,6 @@ created: .../agentic_os/acme/02-projects/launch/source-map.md
 created: .../agentic_os/acme/02-projects/launch/src
 created: .../agentic_os/acme/02-projects/launch/artifacts
 created: .../agentic_os/acme/02-projects/launch/config
-created: .../agentic_os/acme/02-projects/launch/SPECS
 created: .../agentic_os/acme/02-projects/launch/worklogs
 created: .../agentic_os/acme/02-projects/launch/ideas
 created: .../agentic_os/acme/02-projects/launch/work-items

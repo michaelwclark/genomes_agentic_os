@@ -7,16 +7,16 @@ finding should become durable OS planning material.
 
 | Plan Type | Source Repo Location | Installed Location |
 | --- | --- | --- |
-| OS product spec or roadmap item | `SPECS/<NNN>-<slug>.md` in the source repo, with legacy `PLANS/` still readable | `shared_factory/05-knowledge/plans/` |
-| Installed project spec | Do not create a source-repo planning file | Installed project `SPECS/<slug>/SPEC.md` |
+| OS product spec or roadmap item | Do not create a source-repo planning file | Installed Agentic OS project `work-items/01-intake/<NNN>_<slug>/SPEC.md` |
+| Installed project spec | Do not create a source-repo planning file | Installed project `work-items/01-intake/<NNN>_<slug>/SPEC.md` |
 | Customer-specific OS need | Customer domain inbox or project folder | Link the reusable pattern back to shared plans |
 | Loose request not yet scoped | `shared_factory/01-inbox/raw-ideas.md` | — |
-| Already-scoped spec ready to plan | `shared_factory/05-knowledge/plans/<NNN>-<slug>.md` | — |
+| Already-scoped spec ready to plan | Installed project `work-items/02-active/<NNN>_<slug>/SPEC.md` | — |
 
 ## Naming Convention
 
 Specs use a sequential three-digit number prefix: `NNN-slug-with-dashes.md`.
-Read the highest existing number in `SPECS/`, legacy `PLANS/`, or `shared_factory/05-knowledge/plans/`
+Read the highest existing number in the installed project's `work-items/` lanes
 and increment by one. Allocate the number before writing; do not let parallel
 agents pick the same number.
 

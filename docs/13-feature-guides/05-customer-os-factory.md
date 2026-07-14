@@ -137,7 +137,7 @@ files.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/05-customer-os-factory/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/05-customer-os-factory/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/05-customer-os-factory/HOLDOUT_QA.md`
 - CLI: `src/genomes_agentic_os/cli.py`

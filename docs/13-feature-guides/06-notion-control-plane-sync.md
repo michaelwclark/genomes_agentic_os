@@ -115,7 +115,7 @@ the customer workspace from that profile.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/06-notion-control-plane-sync/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/06-notion-control-plane-sync/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/06-notion-control-plane-sync/HOLDOUT_QA.md`
 - Sync implementation: `src/genomes_agentic_os/notion_sync.py`

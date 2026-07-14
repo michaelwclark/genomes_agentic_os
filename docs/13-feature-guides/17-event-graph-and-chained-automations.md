@@ -274,7 +274,7 @@ agentic-os event replay <event_id> --root ~/agentic_os --dry-run
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/17-event-graph-and-chained-automations/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/17-event-graph-and-chained-automations/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/17-event-graph-and-chained-automations/HOLDOUT_QA.md`
 - Installed worklog QA results: `worklogs/source-features/17-event-graph-and-chained-automations/HOLDOUT_QA_RESULTS.md`

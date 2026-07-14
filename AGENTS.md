@@ -31,9 +31,9 @@ and the maintained architecture map so you don't re-derive the system from scrat
 
 Project lifecycle state for this source package belongs in the installed OS
 project at `<os-root>/<work-domain>/02-projects/genomes_agentic_os/`.
-Do not recreate source-root `PLANS/`, `features/`, `BUILD_LOGS/`, or `spec/`
-for Agentic OS planning or work history; use `SPECS/`, `work-items/`,
-`worklogs/`, `logs/`, and `artifacts/` under the installed project instead.
+Do not recreate source-root `SPECS/`, `PLANS/`, `features/`, `BUILD_LOGS/`, or
+`spec/` for Agentic OS planning or work history; use `work-items/`, `worklogs/`,
+`logs/`, and `artifacts/` under the installed project instead.
 
 ## System Shell And Host Tools
 

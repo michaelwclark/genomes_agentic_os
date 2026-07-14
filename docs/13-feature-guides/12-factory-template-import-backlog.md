@@ -110,7 +110,7 @@ Validation should pass after the missing managed template is restored.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/12-factory-template-import-backlog/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/12-factory-template-import-backlog/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/12-factory-template-import-backlog/HOLDOUT_QA.md`
 - Factory policy docs: `docs/12-factory-patterns/README.md`

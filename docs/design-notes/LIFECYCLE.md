@@ -13,8 +13,7 @@ project:
 
 Use these installed OS buckets:
 
-- `SPECS/` for future work, product specs, and proposed changes.
-- `work-items/` for lifecycle state from intake through completion.
+- `work-items/` for Specs and lifecycle state from intake through completion.
 - `worklogs/` for human-readable work history and migrated source feature
   packets.
 - `logs/` for raw runtime, transcript, and tool output.
@@ -28,8 +27,8 @@ Canonical vocabulary:
 
 The previous source-repo lifecycle surfaces were consolidated on 2026-06-15:
 
-- `PLANS/` -> installed `SPECS/`
-- `spec/` -> installed `SPECS/source-product-specs/`
+- `PLANS/` -> installed project `work-items/`
+- `spec/` -> installed project `work-items/`
 - `features/` -> installed `worklogs/source-features/`
 - `BUILD_LOGS/` -> installed `worklogs/source-build-logs/`
 

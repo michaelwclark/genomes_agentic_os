@@ -279,7 +279,7 @@ Notion.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/16-connected-source-watch-registry/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/16-connected-source-watch-registry/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/16-connected-source-watch-registry/HOLDOUT_QA.md`
 - Installed worklog QA results: `worklogs/source-features/16-connected-source-watch-registry/HOLDOUT_QA_RESULTS.md`

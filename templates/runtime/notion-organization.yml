@@ -28,7 +28,7 @@ rollups:
 ideas:
   default_view: grouped_by_project
   notion_bucket: Specs
-  filesystem_bucket: SPECS
+  filesystem_bucket: work-items/01-intake
 backup:
   required_before_moves: true
   local_artifact_root: work-items/02-active/010_notion_os_operations_reorg/artifacts/notion-backup

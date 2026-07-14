@@ -77,11 +77,10 @@ uv run agentic-os validate --root "$TMP_ROOT"
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/03-workflow-readiness-and-run-closeout/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog folder: `worklogs/source-features/03-workflow-readiness-and-run-closeout/`
 - Implementation: `src/genomes_agentic_os/workflow_ops.py`
 - CLI parser: `src/genomes_agentic_os/cli.py`
 
 No diagram is included; the evidence flow is clearer as command examples and a
 troubleshooting table.
-

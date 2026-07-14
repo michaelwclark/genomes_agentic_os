@@ -71,7 +71,6 @@ TOOLS.md
 MEMORY.md
 PROFILE.md
 config.toml
-SPECS/
 artifacts/
 config/
 ideas/
