@@ -29,7 +29,9 @@ Every resource includes:
 The first projections are specs from `work.yml` plus `SPEC.md` and normalized
 events from an existing read-only `state.db`. The spec compatibility reader
 supports both legacy top-level work-item metadata and the canonical nested
-`spec` plus `scope` shape.
+`spec` plus `scope` shape. Spec status values use the canonical vocabulary,
+including `in_progress`, and the projection exposes `disposition` and
+`blockedFrom` separately so terminal filing is not confused with delivery state.
 
 ## Safety contract
 

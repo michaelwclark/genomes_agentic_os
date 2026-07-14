@@ -124,12 +124,13 @@ def test_legacy_and_canonical_specs_share_one_projection(tmp_path: Path) -> None
     )
 
     result = _service(root).execute(
-        "{ specs(limit: 10) { id nativeId title status type body resource { scope { domain project } externalRefs { provider nativeId url } } } }"
+        "{ specs(limit: 10) { id nativeId title status disposition blockedFrom type body resource { scope { domain project } externalRefs { provider nativeId url } } } }"
     )
 
     assert "errors" not in result
     specs = {item["nativeId"]: item for item in result["data"]["specs"]}
-    assert specs["010_legacy"]["status"] == "in progress"
+    assert specs["010_legacy"]["status"] == "in_progress"
+    assert specs["010_legacy"]["disposition"] == "active"
     assert specs["010_legacy"]["type"] == "CONFIG"
     assert {ref["provider"] for ref in specs["010_legacy"]["resource"]["externalRefs"]} == {"github", "jira"}
     assert specs["020_canonical"]["status"] == "ready"

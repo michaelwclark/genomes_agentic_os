@@ -88,6 +88,8 @@ type Spec {
   title: String!
   summary: String!
   status: String!
+  disposition: String!
+  blockedFrom: String
   type: SpecType!
   body: String!
   resource: Resource!
@@ -187,16 +189,23 @@ def _normalize_status(value: object) -> str:
         "proposed": "idea",
         "shaping": "grooming",
         "refinement": "grooming",
-        "building": "in progress",
-        "active": "in progress",
-        "inprogress": "in progress",
+        "building": "in_progress",
+        "validating": "in_progress",
+        "active": "in_progress",
+        "inprogress": "in_progress",
         "done": "built",
         "complete": "built",
         "completed": "built",
         "finished": "built",
         "documented": "built",
     }
-    return aliases.get(status, status)
+    return aliases.get(status, status.replace(" ", "_"))
+
+
+def _normalize_disposition(value: object) -> str:
+    normalized = str(value or "active").strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {"canceled": "cancelled", "dropped": "cancelled", "won't_do": "wont_do"}
+    return aliases.get(normalized, normalized)
 
 
 def _normalize_spec_type(value: object) -> str:
@@ -314,6 +323,8 @@ class LocalResourceStore:
         title = str(node.get("title") or metadata.get("title") or native_id.replace("_", " ").title())
         summary = str(node.get("summary") or metadata.get("summary") or "")
         status = _normalize_status(node.get("status") or metadata.get("status") or metadata.get("state"))
+        disposition = _normalize_disposition(node.get("disposition") or metadata.get("disposition"))
+        blocked_from = node.get("blocked_from") or metadata.get("blocked_from")
         spec_type = _normalize_spec_type(node.get("type") or metadata.get("type") or node.get("kind"))
         body_path = metadata_path.parent / "SPEC.md"
         body = _read_text(self.root, body_path, MAX_SPEC_BODY_BYTES)
@@ -349,6 +360,8 @@ class LocalResourceStore:
             "title": title,
             "summary": summary,
             "status": status,
+            "disposition": disposition,
+            "blockedFrom": _normalize_status(blocked_from) if blocked_from else None,
             "type": spec_type,
             "body": body,
             "resource": resource,
