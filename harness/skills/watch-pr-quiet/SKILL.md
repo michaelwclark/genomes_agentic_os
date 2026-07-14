@@ -12,7 +12,7 @@ Do not repeatedly run `gh pr checks`, `gh run watch`, or long polling loops in t
 ## Canonical Command
 
 ```bash
-python3 ~/.codex/skills/watch-pr-quiet/scripts/watch_pr_quiet.py \
+python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr <PR_NUMBER> \
   --output-dir <OUTPUT_FOLDER> \
   --timeout-minutes <MINUTES> \
@@ -23,7 +23,7 @@ python3 ~/.codex/skills/watch-pr-quiet/scripts/watch_pr_quiet.py \
 For LOS work, prefer the Agentic OS work item artifact folder:
 
 ```bash
-python3 ~/.codex/skills/watch-pr-quiet/scripts/watch_pr_quiet.py \
+python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr 12345 \
   --repo thesummitgrp/los-app-los-django \
   --output-dir /Users/genome/agentic_os/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/pr-watch \
@@ -59,7 +59,7 @@ The script prints nothing. It writes:
 Use shell redirection so the conversation does not receive polling output:
 
 ```bash
-nohup python3 ~/.codex/skills/watch-pr-quiet/scripts/watch_pr_quiet.py \
+nohup python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr <PR_NUMBER> \
   --output-dir <OUTPUT_FOLDER> \
   --timeout-minutes 120 \

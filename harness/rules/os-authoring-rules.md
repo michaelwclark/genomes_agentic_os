@@ -43,6 +43,19 @@ rules, hooks, or project worktrees.
 12. Do not ship undocumented OS-level behavior. Every new OS-level feature must
    document ownership, context routing, validation, and projection updates.
 
+## Cross-Model Reviewer Transport
+
+- Run Anthropic-family finishing reviews through the installed `claude` CLI,
+  not a direct Anthropic SDK or HTTP client.
+- Remove `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the Claude CLI
+  subprocess environment so host CLI authentication remains authoritative.
+- If the CLI is missing, unauthenticated, out of credit, or otherwise cannot
+  complete the review, write a sanitized unavailable-review receipt and continue
+  through the remaining validation and delivery gates by default.
+- A project may set `finishing_review.unavailable_policy: block` when an
+  independent cross-model review is a mandatory risk control. Actual reviewer
+  findings such as `changes_required` remain blocking under every policy.
+
 ## Context Budget
 
 Load the compact rule, registry row, command doc, Codex adapter skill, harness
