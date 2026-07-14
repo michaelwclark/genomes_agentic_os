@@ -1,22 +1,10 @@
 ---
 name: feature-intake-router
-description: Compatibility alias for spec-intake-router. Use spec-intake-router for new future-work, proposed-feature, and spec intake; keep this skill callable for legacy /new-feature and /add-feature requests.
+description: Compatibility adapter for spec-engine add with type feature. Use for legacy /new-feature, /add-feature, or /new-idea requests.
 ---
 
 # Feature Intake Router
 
-Compatibility alias for `spec-intake-router`.
-
-Use `harness/skills/spec-intake-router/SKILL.md` as the primary workflow.
-Existing `/new-feature`, `/add-feature`, and `/new-idea` requests route through
-the same doc-config and project work-item intake as `/add-spec`.
-
-## Compatibility Notes
-
-- New packets use `SPEC.md` as the raw-capture plus refined-spec file.
-- Existing `IDEA.md` files remain readable legacy capture.
-- Source repository `features/` or `.features/` folders remain mirrors/artifacts
-  by default, not lifecycle owners.
-- All intake ultimately writes a row to the unified "🧭 OS Work Intake" Notion DB
-  (id c442dd56a24340f0880acfd195f34225) via `agentic-os-intake-row`; see
-  `spec-intake-router` step 11.
+Load `harness/skills/spec-engine/SKILL.md` and execute its add flow with
+`--type feature`. `/new-idea` also defaults to `--status idea`. Do not create a
+separate feature/idea packet, lifecycle, Notion queue row, or tracker sync.

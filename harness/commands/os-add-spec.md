@@ -1,89 +1,64 @@
 # OS Add Spec
 
-Use when the user asks to add future work, capture a rough request, start a
-spec, capture a proposed feature, or create a Notion/project structure for work
-that has not happened yet.
+Canonical slash command: `/add-spec`
 
-Primary slash command: `/add-spec`
-Compatibility aliases: `/new-feature`, `/add-feature`, `/new-idea`
+Use for any idea, ticket, backlog item, feature request, bug, or configuration
+change that should be tracked now or later. The canonical object is a Spec.
+
+## Invocation
+
+Resolve the narrowest domain and project, then run:
+
+```bash
+agentic-os spec add <domain> <project> \
+  --root <root> \
+  --title "<short outcome>" \
+  --summary "<raw intent and desired behavior>" \
+  --type <bug|feature|config> \
+  --status <idea|grooming|blocked|ready|in_progress|built> \
+  [--id <stable-id>] \
+  [--adapter <filesystem|linear|jira>] \
+  [--dry-run|--apply]
+```
+
+Defaults are `--type feature`, `--status idea`, and the project policy's
+adapter. Filesystem creation writes the local Spec by default. Linear and Jira
+operations remain plans unless `--apply` is supplied.
 
 ## Procedure
 
-1. Load the routed Agentic OS layer: `ROUTER.md`, `CONTEXT.md`, `RULES.md`,
-   `TOOLS.md`, and any active project/work-item context.
-2. Read `harness/rules/os-authoring-rules.md` when authoring or changing
-   conventions, workflows, commands, skills, automations, tools, registries, or
-   project worktrees. Use
-   `harness/shared_factory/05-knowledge/references/os-conventions.md` only when
-   the compact rule needs deeper explanation.
-3. Run doc routing before creating anything:
+1. Load routed root, domain, and project context.
+2. Search for an existing matching Spec before creating another one.
+3. Preserve the user's original wording in the summary; do not silently turn
+   assumptions into requirements.
+4. Let layered `spec_engine` policy choose authority, adapter, and placement.
+   Use `--adapter` only for a deliberate invocation override.
+5. Run `spec add`; keep the YAML receipt, including provider identity and
+   readback evidence.
+6. If the request needs deeper product/technical definition, continue with the
+   `spec-engine` skill in grooming mode.
+7. Report the Spec id, canonical status, adapter, external URL when present,
+   and next action.
 
-```bash
-agentic-os doc-config plan --root <root> --request "<user request>" [--domain <domain>] [--project <project>] [--questions-present]
-```
+## Compatibility Aliases
 
-4. If the plan does not resolve a domain/project, ask only for the missing
-   routing fact needed to continue.
-5. Create or repair the project surface when the project is known:
-
-```bash
-agentic-os project onboard <domain> <project> --root <root>
-```
-
-6. Create the intake work item in the configured lifecycle lane. Use packet
-   format when the spec already needs separate `SPEC`, `PLAN`, `WORKLOG`, or
-   `QUESTIONS` files:
-
-```bash
-agentic-os project work-item create <domain> <project> \
-  --root <root> \
-  --title "<spec title>" \
-  --summary "<one sentence outcome>" \
-  --status captured \
-  --format packet
-```
-
-7. If source work will use an external checkout, register it with
-   `agentic-os project worktree add`.
-8. Populate the configured buckets from the doc-config plan. Include
-   `QUESTIONS` whenever unresolved questions exist.
-9. Before Notion writes, verify Genome's Notion or the explicitly selected
-   workspace. Use the Notion path from doc-config and rich Notion blocks/color
-   preferences from `doc-config.yml`.
-10. Update `WORKLOG.md`, `NEXT.md`, and the project or domain control surface
-    when the capture changes durable routing or state.
-11. Create the unified intake row (non-blocking):
-
-```bash
-agentic-os-intake-row \
-  --title "<spec title>" \
-  --type spec \
-  --route-text '<user's original words>' \
-  --body-file <packet SPEC.md path>
-```
-
-   Example: `--route-text 'new idea for LOS Django late fees'` resolves to
-   `Project=LOS Django` via `harness/registries/intake-routing.yml` NL routing.
-   If the row create fails, record the error in `WORKLOG.md` and continue.
-
-## Required Outputs
-
-- Routed destination from `agentic-os doc-config plan`.
-- Project work item path.
-- Filled `SPEC`, `PLAN`, `WORKLOG`, and conditional `QUESTIONS` content.
-- Notion projection path or explicit note that Notion write was skipped.
-- Next action and validation result.
+| Alias | Canonical operation |
+| --- | --- |
+| `/add-bug` | `/add-spec --type bug` |
+| `/new-feature` | `/add-spec --type feature` |
+| `/add-feature` | `/add-spec --type feature` |
+| `/new-idea` | `/add-spec --type feature --status idea` |
+| `/groom-spec` | Add if needed, then groom/transition the Spec to `grooming` |
+| `/auto-add-spec` | Automatically add or update a matching Spec |
+| `/auto-add-feature` | `/auto-add-spec --type feature` |
 
 ## Guardrails
 
-- Do not create Notion pages before doc-config planning and workspace
-  verification.
-- Do not invent a second bucket taxonomy if `doc-config.yml` already resolves
-  one.
-- Do not use a source repository `features/` folder as lifecycle source of truth
-  unless project config explicitly says so; Agentic OS work items own lifecycle
-  state by default.
-- Do not work from a bare external checkout path when a project `worktrees/`
-  registry/link should exist.
-- Do not generate `IDEA.md` for new packets. Existing `IDEA.md` files remain
-  readable legacy capture.
+- Do not create a separate idea, ticket, feature, bug, or backlog lifecycle.
+- Do not use Notion as a mandatory queue. Documentation projection is optional.
+- Do not bypass project Jira/Linear intake rules unless the user explicitly
+  requests an override permitted by policy.
+- Do not include local paths, private Notion links, secrets, or harness-only
+  details in external provider text.
+- A failed adapter call must leave a retryable receipt and must not create a
+  second Spec on retry.

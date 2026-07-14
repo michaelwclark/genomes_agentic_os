@@ -1,4 +1,4 @@
-# Tests: spec_grooming
+# Tests: Spec Engine
 
 ## Focused Tests
 
@@ -13,8 +13,13 @@
 
 ## Manual Holdouts
 
+- A filesystem-only project completes add/show/list/transition/sync without a
+  tracker dependency.
+- A Linear-primary project creates one idempotent backlog projection.
+- An LOS Jira project defaults to backlog and requires an explicit active-sprint
+  override.
+- Block/unblock restores the prior lifecycle status.
 - A rough LOS Django story routes to `$jira-product-orchestrator`.
 - A request overlapping an existing OSProgram records `extend_existing`.
 - A Notion projection stops if the workspace is not Genome's Notion.
 - A Linear/Jira draft contains no local filesystem path or private Notion link.
-

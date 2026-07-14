@@ -318,6 +318,19 @@ skills:
     purpose: >
       Route document captures to configured Agentic OS filesystem and Notion
       destinations before creating pages, work-item files, or knowledge docs.
+  - id: spec-engine
+    title: Spec Engine
+    source_path: harness/skills/spec-engine
+    installed_path: shared_factory/05-knowledge/skills/spec-engine
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Operate the canonical idea-to-built Spec lifecycle through layered policy,
+      deterministic commands, and filesystem, Linear, or Jira adapters.
   - id: spec-intake-router
     title: Spec Intake Router
     source_path: harness/skills/spec-intake-router
@@ -329,8 +342,7 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Capture new spec and future-work intake through doc-config routing, project
-      work items, and optional Notion projection.
+      Compatibility adapter for Spec Engine add operations.
   - id: spec-groomer
     title: Spec Groomer
     source_path: harness/skills/spec-groomer
@@ -342,9 +354,7 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Groom rough software ideas into source-backed implementation specs with
-      original intent, capability discovery, tracker hierarchy, QA, Gherkin,
-      and Notion documentation projection.
+      Compatibility adapter for Spec Engine grooming mode.
   - id: feature-intake-router
     title: Feature Intake Router
     source_path: harness/skills/feature-intake-router
@@ -356,7 +366,7 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Deprecated compatibility alias for spec-intake-router.
+      Compatibility adapter for Spec Engine feature intake.
   - id: bug-intake-router
     title: Bug Intake Router
     source_path: harness/skills/bug-intake-router
@@ -368,8 +378,7 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Capture bug reports and missed enforcement through doc-config routing,
-      project work items, and optional Notion projection.
+      Compatibility adapter for Spec Engine bug intake.
   - id: auto-spec-intake
     title: Auto Spec Intake
     source_path: harness/skills/auto-spec-intake
@@ -381,8 +390,7 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Create or update local spec packets for long OS-shaping requests before
-      implementation work proceeds.
+      Compatibility adapter for automatic Spec Engine capture.
   - id: auto-feature-intake
     title: Auto Feature Intake
     source_path: harness/skills/auto-feature-intake
@@ -394,7 +402,7 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Deprecated compatibility alias for auto-spec-intake.
+      Compatibility adapter for automatic Spec Engine feature capture.
   - id: os-authoring-guard
     title: OS Authoring Guard
     source_path: harness/skills/os-authoring-guard

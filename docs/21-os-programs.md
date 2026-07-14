@@ -98,11 +98,16 @@ Both commands are additive. They create the program folder, program context file
 
 ## Built-in shared programs
 
-### `spec_grooming`
+### `spec_engine` (`spec_grooming` compatibility path)
 
-`spec_grooming` is the shared program for turning rough ideas into
-implementation-ready specs. It owns the universal grooming contract:
+`spec_engine` is the shared program for moving software work from raw intent to
+verified delivery. The source directory remains `spec_grooming` during the
+compatibility window. It owns:
 
+- one lifecycle: `idea`, `grooming`, `blocked`, `ready`, `in_progress`, `built`;
+- three types: `bug`, `feature`, `config`;
+- layered root/domain/project/invocation policy;
+- filesystem, Linear, and Jira adapters with idempotent receipts;
 - preserve raw intent in `ORIGINAL_INTENT.md`;
 - discover existing programs, workflows, automations, skills, docs, trackers,
   and Notion pages before creating new work;
@@ -110,10 +115,12 @@ implementation-ready specs. It owns the universal grooming contract:
   `create_new`;
 - produce product, technical, flow, state, Gherkin, QA, rollout, assumption,
   and projection sections;
-- keep LOS Django and Jira-primary work routed through
-  `$jira-product-orchestrator`.
+- keep LOS/Jira team ceremony behind the project Jira policy and configured
+  product orchestrator.
 
-The linked command is `/groom-spec`; the linked skill is `spec-groomer`.
+The canonical command is `/add-spec`; the canonical skill is `spec-engine`.
+`/groom-spec` and `spec-groomer` remain grooming-mode adapters. Full operator
+guide: [29 · Spec Engine](29-spec-engine.md).
 
 ---
 
