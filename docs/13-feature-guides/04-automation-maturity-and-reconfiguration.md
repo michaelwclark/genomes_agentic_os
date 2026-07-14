@@ -74,11 +74,10 @@ uv run agentic-os validate --root "$TMP_ROOT"
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/04-automation-maturity-and-reconfiguration/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog folder: `worklogs/source-features/04-automation-maturity-and-reconfiguration/`
 - Implementation: `src/genomes_agentic_os/automation_ops.py`
 - CLI parser: `src/genomes_agentic_os/cli.py`
 
 No diagram is included. The maturity table and command sequence are the more
 useful operating surface.
-

@@ -18,9 +18,8 @@ a concrete starting point instead of relying on scattered conversation state.
 The feature is intentionally documentation- and backlog-heavy. Its job is to
 make the next work obvious:
 
-- `SPECS/source-package-plans/README.md` indexes the migrated plan backlog.
-- `SPECS/00-current-state-and-gap-map/SPEC.md` records the initial gap map.
-- `SPECS/09-future-ideas-intake/SPEC.md` preserves a later-feature intake lane.
+- The installed project's `work-items/` lanes index the migrated backlog and
+  preserve the initial gap map and later-feature intake.
 - `worklogs/source-features/00-current-state-and-gap-map/` records the migrated audit trail.
 
 ## Source And Runtime Boundaries
@@ -45,11 +44,10 @@ OS project buckets.
 The migrated backlog is prefix ordered inside the installed OS project:
 
 ```text
-SPECS/
-  source-package-plans/README.md
-  00-current-state-and-gap-map/SPEC.md
-  01-project-create-and-active-work/SPEC.md
-  ...
+work-items/
+  01-intake/
+  02-active/
+  03-complete/
 ```
 
 Each plan should be precise enough to become implementation work. If a later
@@ -82,7 +80,7 @@ uv run agentic-os validate --root /tmp/agentic-os-guide-check
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/00-current-state-and-gap-map/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog folder: `worklogs/source-features/00-current-state-and-gap-map/`
 - Build Runner state: `RUN_STATE.json`
 - Shared logs: `worklogs/source-build-logs/*.md`

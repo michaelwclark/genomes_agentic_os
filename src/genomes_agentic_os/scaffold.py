@@ -376,16 +376,6 @@ def harness_source_dir() -> Path:
     raise FileNotFoundError("Could not find repository harness directory")
 
 
-def plans_source_dir() -> Path:
-    # Plans were consolidated into SPECS/ (AGE-35). The installed destination
-    # stays shared_factory/05-knowledge/plans/ so existing installs update
-    # additively; only the copy source moved.
-    candidate = repo_root() / "SPECS"
-    if candidate.is_dir():
-        return candidate
-    raise FileNotFoundError("Could not find repository SPECS directory")
-
-
 def ensure_dir(path: Path, result: ScaffoldResult) -> None:
     if path.is_dir():
         result.skipped.append(path)
@@ -2104,12 +2094,6 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         )
     result.extend(
         copy_tree(
-            plans_source_dir(),
-            shared_factory_path(os_root, "05-knowledge", "plans"),
-        )
-    )
-    result.extend(
-        copy_tree(
             template_source_dir() / "reference",
             shared_factory_path(os_root, "05-knowledge", "references"),
         )
@@ -2433,7 +2417,7 @@ checkout or feature artifact defines a stricter rule.
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `SPECS/` for user-facing future work and `work-items/01-intake/` for internal lifecycle intake. `ideas/` is a compatibility index, not the lifecycle source of truth.
+- Use `work-items/01-intake/` for future work and proposed Specs. `ideas/` is a compatibility index, not the lifecycle source of truth.
 - Use `WORKLOGS/` or `worklogs/` for human-readable work history; lowercase `logs/` is reserved for raw system output and transcripts.
 - Keep exactly one canonical work object per spec. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
 - Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
@@ -2476,10 +2460,9 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `src/` | Canonical source checkout for this project. |
 | `worktrees/` | Visible links to active worktrees. |
 | `config/` | Parsed project defaults and tool/workflow configuration. |
-| `SPECS/` | User-facing future work, rough requests, proposed features, and reviewable specs. |
 | `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
 | `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
-| `work-items/01-intake/` | Internal lifecycle intake, defaulting to `001_spec_slug.md`; expanded packets keep the same index as `001_spec_slug/`. |
+| `work-items/01-intake/` | Canonical future-work and Spec intake, defaulting to `001_spec_slug.md`; expanded packets keep the same index as `001_spec_slug/`. |
 | `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
 | `work-items/03-complete/` | Finished, documented, or archived work packets. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
@@ -2520,7 +2503,7 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "lane": lane_value,
                     "entrypoint": "AGENTS.md",
                     "canonical_source": "src",
-                    "specs": "SPECS",
+                    "specs": "work-items",
                     "worklogs": "worklogs",
                     "ideas": "work-items/01-intake",
                     "artifacts": "artifacts",
@@ -2548,7 +2531,6 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "enabled": True,
                     "source_of_truth": "agentic_os",
                     "work_items_root": "work-items",
-                    "specs_root": "SPECS",
                     "worklogs_root": "worklogs",
                     "default_state": "captured",
                     "lanes": {
@@ -2632,7 +2614,7 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
             {
                 "output_artifacts": {
                     "feature_root": "work-items/02-active/{ticket_or_slug}/artifacts",
-                    "spec_root": "SPECS/{ticket_or_slug}",
+                    "spec_root": "work-items/01-intake/{ticket_or_slug}",
                     "worklog_root": "worklogs/{ticket_or_slug}",
                     "project_artifacts": "artifacts",
                     "run_logs": "../../06-runs-and-logs/runs",
@@ -2754,18 +2736,6 @@ def worklogs_dir_name(project_root: Path) -> str:
     if uppercase_markers.intersection(existing_names):
         return "WORKLOGS"
     return "worklogs"
-
-
-def specs_readme(project: str) -> str:
-    return f"""# Specs: {project}
-
-Use this folder for user-facing future work, rough requests, proposed features,
-planning docs, and reviewable specs.
-
-The lifecycle source of truth remains `work-items/` unless project config
-explicitly declares another owner. Link specs to their work item instead of
-creating a second lifecycle record.
-"""
 
 
 def worklogs_readme(project: str) -> str:
@@ -3021,7 +2991,6 @@ def ensure_project_operating_surface(
     worklogs_dir = worklogs_dir_name(project_root)
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
-    ensure_dir(project_root / "SPECS", result)
     ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
@@ -3067,7 +3036,6 @@ def ensure_project_operating_surface(
     )
     write_file_once(project_root / "worktrees" / "README.md", worktrees_readme(project), result)
     write_file_once(project_root / "worktrees" / "index.yml", worktrees_index(project), result)
-    write_file_once(project_root / "SPECS" / "README.md", specs_readme(project), result)
     write_file_once(project_root / worklogs_dir / "README.md", worklogs_readme(project), result)
     write_file_once(project_root / "ideas" / "README.md", ideas_readme(project), result)
     write_file_once(project_root / "ideas" / "raw-ideas.md", ideas_raw(project), result)

@@ -109,7 +109,7 @@ restore missing managed playbook files without overwriting local edits.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/14-client-automation-and-control-plane-playbooks/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/14-client-automation-and-control-plane-playbooks/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/14-client-automation-and-control-plane-playbooks/HOLDOUT_QA.md`
 - Command prompts: `harness/commands/os-client-automation-brief.md`, `harness/commands/os-control-plane-bootstrap.md`, `harness/commands/os-context-audit.md`

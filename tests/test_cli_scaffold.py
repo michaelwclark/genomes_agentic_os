@@ -299,8 +299,6 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-watch-source.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-event.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "commands" / "os-chain.md").is_file()
-    assert (shared_factory(root) / "05-knowledge" / "plans" / "README.md").is_file()
-    assert (shared_factory(root) / "05-knowledge" / "plans" / "23-doc-config-system.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "room-builder" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "os-navigator" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "workflow-builder" / "SKILL.md").is_file()
@@ -1780,7 +1778,6 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     watch_template = shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-source.yml"
     event_command = shared_factory(root) / "05-knowledge" / "commands" / "os-event.md"
     event_template = shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "event-envelope.yml"
-    plans_root = shared_factory(root) / "05-knowledge" / "plans"
     planning_template = shared_factory(root) / "05-knowledge" / "templates" / "planning" / "feature-spec.md"
     domain_context_template = shared_factory(root) / "05-knowledge" / "templates" / "domain" / "context.md"
     convention_reference = shared_factory(root) / "05-knowledge" / "references" / "os-conventions.md"
@@ -1807,8 +1804,6 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert watch_template.is_file()
     assert event_command.is_file()
     assert event_template.is_file()
-    assert (plans_root / "README.md").is_file()
-    assert (plans_root / "23-doc-config-system.md").is_file()
     assert planning_template.is_file()
     assert domain_context_template.is_file()
     assert convention_reference.is_file()
@@ -1820,8 +1815,6 @@ def test_docs_update_is_additive_and_preserves_local_edits(tmp_path: Path) -> No
     assert main(["validate", "--root", str(root)]) == 0
     assert main(["docs", "update", "--root", str(root)]) == 0
     assert manual_readme.read_text(encoding="utf-8") == "# local edit\n"
-    assert (plans_root / "README.md").is_file()
-    assert (plans_root / "23-doc-config-system.md").is_file()
 
 
 def test_workflow_create_bootstraps_arbitrary_domain_name(tmp_path: Path) -> None:
@@ -1871,7 +1864,7 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert (project_root / "source-map.md").is_file()
     assert (project_root / "artifacts").is_dir()
     assert (project_root / "config").is_dir()
-    assert (project_root / "SPECS" / "README.md").is_file()
+    assert not (project_root / "SPECS").exists()
     assert (project_root / "worklogs" / "README.md").is_file()
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
     assert (project_root / "work-items" / "01-intake").is_dir()
@@ -1890,7 +1883,7 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert "worktrees/index.yml" in agents
     output_artifacts = yaml.safe_load((project_root / "config" / "output-artifacts.yml").read_text(encoding="utf-8"))
     assert output_artifacts["output_artifacts"]["feature_root"] == "work-items/02-active/{ticket_or_slug}/artifacts"
-    assert output_artifacts["output_artifacts"]["spec_root"] == "SPECS/{ticket_or_slug}"
+    assert output_artifacts["output_artifacts"]["spec_root"] == "work-items/01-intake/{ticket_or_slug}"
     assert output_artifacts["output_artifacts"]["worklog_root"] == "worklogs/{ticket_or_slug}"
     work_lifecycle = yaml.safe_load((project_root / "config" / "work-lifecycle.yml").read_text(encoding="utf-8"))
     assert work_lifecycle["work_lifecycle"]["lanes"] == {

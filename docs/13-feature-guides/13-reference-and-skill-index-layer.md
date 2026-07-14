@@ -122,7 +122,7 @@ after `agentic-os docs update --root <root>` restores missing managed files.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/13-reference-and-skill-index-layer/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/13-reference-and-skill-index-layer/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/13-reference-and-skill-index-layer/HOLDOUT_QA.md`
 - Reference templates: `templates/reference/`

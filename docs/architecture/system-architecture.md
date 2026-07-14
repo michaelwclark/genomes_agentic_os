@@ -79,6 +79,12 @@ The CLI is a single Python package (`src/genomes_agentic_os/`, ~10k LOC). It is
 separation, dependencies passed in, no hidden globals); the mechanism is Pythonic
 (modules of pure functions, argparse composition root).
 
+The apparent repeated name is the standard Python `src` layout: `src/` is an
+import-isolation root, while `genomes_agentic_os/` is the importable package.
+This prevents a checkout from accidentally shadowing the installed package
+during tests. See [`../../src/README.md`](../../src/README.md) for the short
+navigation guide.
+
 ### 4.1 Layering
 
 ![Python package layering: cli.py composition root dispatches to one-concern operation modules, which depend on scaffold.py primitives and the filesystem](diagrams/atlas-package-layers.png)

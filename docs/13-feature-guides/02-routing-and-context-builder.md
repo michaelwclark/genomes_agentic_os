@@ -122,7 +122,7 @@ uv run agentic-os context build --domain acme --project launch --root "$TMP_ROOT
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/02-routing-and-context-builder/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog folder: `worklogs/source-features/02-routing-and-context-builder/`
 - Implementation: `src/genomes_agentic_os/routing.py`
 - CLI parser: `src/genomes_agentic_os/cli.py`

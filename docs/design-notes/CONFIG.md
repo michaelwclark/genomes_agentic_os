@@ -182,7 +182,7 @@ Notes:
 
 ```env
 BUILD_RUNNER_FEATURE_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-features/
-BUILD_RUNNER_PLAN_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/SPECS/
+BUILD_RUNNER_PLAN_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/work-items/01-intake/
 BUILD_RUNNER_LOG_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/
@@ -219,21 +219,21 @@ Notes:
 
 ### `BUILD_RUNNER_PLAN_DIR`
 
-Default for this source package: installed OS `SPECS/`
+Default for this source package: installed OS project `work-items/01-intake/`
 
 Controls where specs and generated prerequisite task files live.
 
 Valid options:
 
 - Installed OS project path, such as
-  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/SPECS/`.
+  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/work-items/01-intake/`.
 - Relative repository path only for legacy compatibility.
 - Absolute path only when explicitly requested.
 
 Notes:
 
-- Existing source plan files were consolidated into installed OS `SPECS/` on
-  2026-06-15.
+- Existing source plan files were consolidated into the installed OS project
+  lifecycle on 2026-06-15 and later normalized into `work-items/`.
 - Generated subtasks should use:
 
 ```text
@@ -515,8 +515,8 @@ Valid options:
 Notes:
 
 - The current database has 18 cards, all currently in `Ready`.
-- Existing local `PLANS/` content was migrated to the installed OS `SPECS/`
-  bucket on 2026-06-15.
+- Existing local `PLANS/` content was migrated into the installed OS project
+  lifecycle on 2026-06-15 and later normalized into `work-items/`.
 
 ### Lanes And Statuses
 
@@ -564,7 +564,7 @@ Current derived properties:
 | `Notion Tracker URL` | url | Link to detailed tracker page when one exists. |
 | `Blocker` | rich_text | Reason a card cannot proceed. |
 | `Owner` | rich_text | Person or agent responsible. |
-| `Plan File` | rich_text | Installed OS `SPECS/*/SPEC.md` path. |
+| `Plan File` | rich_text | Installed OS `work-items/*/*/SPEC.md` path. |
 | `Canonical Source` | checkbox | Marks whether this card maps to canonical local source. |
 | `Installed Runtime Path` | rich_text | Installed OS path affected by the card. |
 | `Source Path` | rich_text | Source repo path affected by the card. |
@@ -672,7 +672,7 @@ For fresh installs:
 
 ```env
 BUILD_RUNNER_FEATURE_DIR=./worklogs/source-features/
-BUILD_RUNNER_PLAN_DIR=./SPECS/
+BUILD_RUNNER_PLAN_DIR=./work-items/01-intake/
 BUILD_RUNNER_LOG_DIR=./worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/

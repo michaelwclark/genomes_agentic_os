@@ -83,7 +83,7 @@ The capture path should preserve installed root validation.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/09-future-ideas-intake/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/09-future-ideas-intake/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/09-future-ideas-intake/HOLDOUT_QA.md`
 - Implementation: `src/genomes_agentic_os/plans.py`

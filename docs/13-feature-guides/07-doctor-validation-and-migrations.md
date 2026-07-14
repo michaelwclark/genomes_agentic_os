@@ -115,7 +115,7 @@ preview matches the intended change.
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/07-doctor-validation-and-migrations/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/07-doctor-validation-and-migrations/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/07-doctor-validation-and-migrations/HOLDOUT_QA.md`
 - Doctor implementation: `src/genomes_agentic_os/doctor.py`

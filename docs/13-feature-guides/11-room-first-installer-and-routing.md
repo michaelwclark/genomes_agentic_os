@@ -164,7 +164,7 @@ agentic-os validate --root /tmp/customer-os
 
 ## Source Artifacts
 
-- Installed spec: `SPECS/11-room-first-installer-and-routing/SPEC.md`
+- Historical Spec: migrated into the installed project's canonical `work-items/` lifecycle.
 - Installed worklog spec: `worklogs/source-features/11-room-first-installer-and-routing/SPEC.md`
 - Installed worklog QA: `worklogs/source-features/11-room-first-installer-and-routing/HOLDOUT_QA.md`
 - Implementation: `src/genomes_agentic_os/room_profile.py`

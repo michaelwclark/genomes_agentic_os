@@ -48,7 +48,7 @@ projection unless local config explicitly changes the source of truth.
 ## Filesystem Mirror
 
 - Keep lifecycle state in Agentic OS `work-items/`.
-- Use `SPECS/` for scannable future-work/spec indexes.
+- Use `work-items/01-intake/` for scannable future-work and Spec indexes.
 - Use `worklogs/` or `WORKLOGS/` for human-readable work history, matching the
   project's local casing.
 - Treat lowercase `logs/` as raw system output, transcripts, and runtime logs.

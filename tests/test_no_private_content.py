@@ -6,7 +6,7 @@ and the word-boundary domain slug ``los``. Modeled on the PRIVATE_TERMS
 guard in src/genomes_agentic_os/customer.py, which protects generated
 customer files; this test protects the source package itself.
 
-Scope (AGE-34): src/, config/, templates/, schemas/, examples/ in full,
+Scope (AGE-34): src/, config/, templates/, schemas/, docs/examples/ in full,
 plus harness/registries/ and harness/bin/. The remaining harness
 subtrees (skills/, commands/, hooks/, mcp/, rules/, plugins/,
 libraries/, shared_factory/) carry doc-prose mentions that are tracked
@@ -50,7 +50,7 @@ SCAN_PREFIXES = (
     "config/",
     "templates/",
     "schemas/",
-    "examples/",
+    "docs/examples/",
     "harness/registries/",
     "harness/bin/",
 )
