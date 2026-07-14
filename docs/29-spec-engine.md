@@ -124,7 +124,9 @@ Doctor validates policy, adapter availability, mappings, and scoped provider
 configuration without creating work.
 
 All commands emit YAML normalized records or receipts suitable for worklogs,
-automation, and later UI/API consumers.
+automation, and later UI/API consumers. Non-dry-run operations also retain
+receipts under the local Spec packet's `artifacts/spec-receipts/` directory;
+successful provider identities are linked from the local record.
 
 ## Grooming And Readiness
 
@@ -159,6 +161,20 @@ and external-provider readback when a tracker owns lifecycle.
 Compatibility adapters call the same engine. They must not create legacy
 Notion intake rows, separate idea/feature/bug packets, or alternate status
 taxonomies.
+
+## Architecture Boundary
+
+The first release deliberately uses small Python adapter protocols instead of
+a GraphQL gateway. A cross-provider data graph may later compose Spec, GitHub,
+Slack, Jira, Linear, runtime, memory, and documentation read models, but it is
+not required for capture or lifecycle correctness. Introduce that layer only
+after stable query use cases, identity rules, and authorization boundaries are
+measured; the Spec adapter contract remains usable behind it.
+
+The legacy `agentic-os-intake-row` Notion helper is not part of the canonical
+path. Replacing it safely requires a deterministic mapping from its display-name
+projects to domain/project slugs. Until that mapping exists, new callers use
+`agentic-os spec add`; no Notion queue is mandatory.
 
 ## Safety And Recovery
 

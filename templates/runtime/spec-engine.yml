@@ -1,0 +1,41 @@
+schema_version: 1
+spec_engine:
+  enabled: true
+  authority:
+    content: filesystem
+    lifecycle: filesystem
+  defaults:
+    type: feature
+    status: idea
+    disposition: active
+  adapters:
+    primary: filesystem
+    mirrors: []
+    filesystem:
+      enabled: true
+      work_items_root: work-items
+    linear:
+      enabled: false
+      mode: backlog
+      target: {}
+      status_map:
+        idea: Backlog
+        grooming: Backlog
+        ready: Todo
+        in_progress: In Progress
+        built: Done
+    jira:
+      enabled: false
+      mode: sprint
+      target: {}
+      placement:
+        default: backlog
+        allow_active_sprint_override: true
+      issue_type_map:
+        bug: Bug
+        feature: Story
+        config: Task
+      status_map: {}
+  sync:
+    conflict_policy: authority_wins
+    local_identity_required: true

@@ -82,7 +82,9 @@ agentic-os spec doctor --root <root> [--domain <domain>] [--project <project>] [
 ```
 
 Commands emit normalized YAML records or receipts. Preserve receipts with the
-Spec worklog when they change external state.
+Spec worklog when they change external state. The filesystem adapter records
+non-dry-run receipts in `artifacts/spec-receipts/` and links verified provider
+identities back to the local record.
 
 ## Intake And Grooming Loop
 

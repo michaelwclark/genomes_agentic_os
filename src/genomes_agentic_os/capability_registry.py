@@ -207,6 +207,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-notion-org.md",
         },
         {
+            "id": "spec-engine",
+            "command": "agentic-os spec",
+            "description": "Capture, groom, transition, synchronize, and diagnose canonical bug, feature, and config Specs.",
+            "source": "harness/commands/os-add-spec.md",
+        },
+        {
             "id": "add-spec",
             "command": "/add-spec",
             "description": "Capture future work, rough requests, or proposed features through doc-config routing and project work-item intake.",
@@ -428,9 +434,15 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/doc-config-router/SKILL.md",
         },
         {
+            "id": "spec-engine",
+            "name": "Spec Engine",
+            "description": "Operate the canonical idea-to-built Spec lifecycle across layered project policy and filesystem, Linear, or Jira adapters.",
+            "source": "harness/skills/spec-engine/SKILL.md",
+        },
+        {
             "id": "spec-intake-router",
             "name": "Spec Intake Router",
-            "description": "Create spec and future-work intake items using doc-config before filesystem or Notion writes.",
+            "description": "Compatibility adapter for canonical Spec Engine add operations.",
             "source": "harness/skills/spec-intake-router/SKILL.md",
         },
         {

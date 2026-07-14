@@ -35,6 +35,7 @@ from . import validate
 from . import docs
 from . import capability
 from . import adaptive
+from . import spec
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -63,6 +64,7 @@ COMMAND_MODULES = [
     docs,
     capability,
     adaptive,
+    spec,
 ]
 
 
