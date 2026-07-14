@@ -9,6 +9,7 @@ description = "Scaffold and validate local operating systems for agentic workflo
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "graphql-core>=3.2,<4",
   "PyYAML>=6.0",
   "jsonschema>=4",
 ]
