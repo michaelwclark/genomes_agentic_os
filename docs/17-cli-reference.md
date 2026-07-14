@@ -94,6 +94,22 @@ path you type after `agentic-os`; the description is verbatim from `--help`.
 | `project worktree cleanup-closed` | Close registered worktrees whose cached Jira status or PR state is terminal. |
 | `project worktree create` | Create an in-place git worktree under the project worktrees directory and register it. |
 
+### Specs — `cli/spec.py`
+
+| Command | What it does |
+| --- | --- |
+| `spec` | Manage canonical software Specs. |
+| `spec add` | Add a policy-routed Spec through filesystem, Linear, or Jira. |
+| `spec show` | Show one normalized Spec record. |
+| `spec list` | List Specs with optional domain, project, status, and type filters. |
+| `spec transition` | Transition a Spec to a canonical status or resume it from blocked. |
+| `spec sync` | Reconcile one or all project Specs through a Linear or Jira adapter. |
+| `spec doctor` | Validate layered Spec Engine policy and adapter configuration. |
+
+All Spec commands emit YAML records or receipts. See
+[29 · Spec Engine](29-spec-engine.md) for exact forms, lifecycle semantics,
+adapter behavior, and compatibility commands.
+
 ### Workflows & Programs — `cli/workflow.py`
 
 | Command | What it does |

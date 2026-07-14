@@ -21,32 +21,34 @@ skills:
   description: Route document captures to the configured Agentic OS filesystem and
     Notion destinations.
   source: harness/skills/doc-config-router/SKILL.md
+- id: spec-engine
+  name: Spec Engine
+  description: Operate the canonical idea-to-built Spec lifecycle across layered
+    project policy and filesystem, Linear, or Jira adapters.
+  source: harness/skills/spec-engine/SKILL.md
 - id: spec-intake-router
   name: Spec Intake Router
-  description: Create spec and future-work intake items using doc-config before filesystem
-    or Notion writes.
+  description: Compatibility adapter for Spec Engine add operations.
   source: harness/skills/spec-intake-router/SKILL.md
 - id: spec-groomer
   name: Spec Groomer
-  description: Groom rough software ideas into source-backed implementation specs
-    with original intent, discovery, tracker hierarchy, QA, Gherkin, and Notion projection.
+  description: Compatibility adapter for Spec Engine grooming mode.
   source: harness/skills/spec-groomer/SKILL.md
 - id: feature-intake-router
   name: Feature Intake Router
-  description: Deprecated compatibility alias for spec intake routing.
+  description: Compatibility adapter for Spec Engine feature intake.
   source: harness/skills/feature-intake-router/SKILL.md
 - id: bug-intake-router
   name: Bug Intake Router
-  description: Capture bug reports and missed enforcement through doc-config and project
-    work-items.
+  description: Compatibility adapter for Spec Engine bug intake.
   source: harness/skills/bug-intake-router/SKILL.md
 - id: auto-spec-intake
   name: Auto Spec Intake
-  description: Create or update local spec packets for long OS-shaping requests.
+  description: Compatibility adapter for automatic Spec Engine capture.
   source: harness/skills/auto-spec-intake/SKILL.md
 - id: auto-feature-intake
   name: Auto Feature Intake
-  description: Deprecated compatibility alias for auto spec intake.
+  description: Compatibility adapter for automatic Spec Engine feature capture.
   source: harness/skills/auto-feature-intake/SKILL.md
 - id: os-authoring-guard
   name: OS Authoring Guard
@@ -172,8 +174,8 @@ skills:
   source: harness/skills/source-watcher/SKILL.md
 - id: aos-product-orchestrator
   name: AOS Product Orchestrator
-  description: Groom Agentic OS self-improvement proposals into spec packets and Linear
-    issues.
+  description: Apply Agentic OS self-improvement discovery, technical mapping,
+    QA, and rollout context through the canonical Spec Engine.
   source: harness/skills/aos-product-orchestrator/SKILL.md
 - id: auto-dev
   name: Auto Dev

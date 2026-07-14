@@ -212,13 +212,14 @@ def test_docs_update_merges_doc_config_registry_entries(tmp_path: Path) -> None:
     )
 
 
-def test_add_spec_command_enforces_doc_config_intake(tmp_path: Path) -> None:
+def test_add_spec_command_uses_canonical_spec_engine_intake(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
 
     command = (root / "harness" / "commands" / "os-add-spec.md").read_text(encoding="utf-8")
     legacy_command = (root / "harness" / "commands" / "os-new-feature.md").read_text(encoding="utf-8")
     skill = (root / "harness" / "skills" / "spec-intake-router" / "SKILL.md").read_text(encoding="utf-8")
+    engine_skill = (root / "harness" / "skills" / "spec-engine" / "SKILL.md").read_text(encoding="utf-8")
     legacy_skill = (root / "harness" / "skills" / "feature-intake-router" / "SKILL.md").read_text(encoding="utf-8")
     workflow = (
         root / "harness" / "shared_factory" / "04-workflows" / "spec-intake.md"
@@ -226,22 +227,21 @@ def test_add_spec_command_enforces_doc_config_intake(tmp_path: Path) -> None:
 
     assert "/add-spec" in command
     assert "/new-feature" in legacy_command
-    assert "Compatibility alias for `/add-spec`" in legacy_command
-    assert "agentic-os doc-config plan" in command
-    assert "agentic-os project work-item create" in command
-    assert "--format packet" in command
-    assert "Do not skip `doc-config plan`" in skill
-    assert "`QUESTIONS`" in skill
-    assert "Filesystem/work-item content remains source of truth" in skill
-    assert "Compatibility alias for `spec-intake-router`" in legacy_skill
+    assert "typed adapters for `/add-spec`" in legacy_command
+    assert "agentic-os spec add" in command
+    assert "bug|feature|config" in command
+    assert "idea|grooming|blocked|ready|in_progress|built" in command
+    assert "Compatibility adapter" in skill
+    assert "agentic-os spec add" in skill
+    assert "spec-engine/SKILL.md" in legacy_skill
+    assert "blocked_from" in engine_skill
+    assert "Notion" in engine_skill and "neither is an implicit lifecycle" in engine_skill
     assert "Trigger Phrases" in workflow
     assert "/add-spec" in workflow
     assert "/new-idea" in workflow
-    assert "os-conventions.md" in command
-    assert "os-authoring-rules.md" in command
-    assert "project worktree add" in command
-    assert "Source repository `features/`" in skill
-    assert "project `worktrees/` registry" in skill
+    assert "Do not use Notion as a mandatory queue" in command
+    assert "project Jira/Linear intake rules" in command
+    assert "filesystem|linear|jira" in command
 
 
 def test_notion_org_doctor_checks_filesystem_and_backup_snapshot(tmp_path: Path, capsys) -> None:

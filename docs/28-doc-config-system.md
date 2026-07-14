@@ -3,10 +3,11 @@
 > **Purpose:** make document placement predictable across Agentic OS filesystem
 > state and the Notion control plane.
 >
-> **You'll use:** `/add-spec`, `agentic-os doc-config`,
+> **You'll use:** `agentic-os doc-config` for document placement and the
+> Spec Engine for tracked software work,
 > `harness/shared_factory/00-control-plane/doc-config.yml`, the
-> `spec-intake-router` skill, the `doc-config-router` skill, `/add-bug`,
-> `/auto-add-spec`, and `harness/rules/os-authoring-rules.md`.
+> `spec-engine` skill, the `doc-config-router` skill, and
+> `harness/rules/os-authoring-rules.md`.
 > **Prereqs:** a routed Agentic OS layer and verified Notion workspace before writes.
 
 ---
@@ -61,10 +62,10 @@ agentic-os doc-config plan --root ~/agentic_os --request "Add this to Notion" --
 agentic-os doc-config init --root ~/agentic_os --domain work --project genomes_agentic_os
 ```
 
-Use `/add-spec` for new spec, proposed feature, or future-work intake. That command is the adoption
-path for doc-config: it runs the route plan first, creates or repairs the project
-work item, fills the configured buckets, and only then projects to Notion after
-workspace verification.
+Use `/add-spec` for tracked software work. It executes `agentic-os spec add`
+through layered `spec_engine` policy. Doc-config may still plan an optional
+Notion or filesystem documentation projection, but it no longer owns Spec
+lifecycle routing and Notion is not an intake dependency.
 
 Use `/add-bug` for lightweight bug reports, missed enforcement, logging gaps, or
 routing drift. Use `/auto-add-spec` when a long Agentic OS request would
@@ -77,10 +78,10 @@ handoffs.
 
 ## Running This From Claude Vs Codex
 
-- **Claude:** use `/add-spec` or the `spec-intake-router` skill for new
-  specs/proposed features; use `doc-config-router` for one-off document placement.
-- **Codex:** load the routed `AGENTS.md` context, use `/add-spec` for intake,
-  run `agentic-os doc-config plan`, and keep receipts in the active work item.
+- **Claude:** use `/add-spec` or the `spec-engine` skill for tracked software
+  work; use `doc-config-router` for one-off document placement.
+- **Codex:** load the routed `AGENTS.md` context, use `agentic-os spec ...` for
+  tracked work, and run `agentic-os doc-config plan` only for document placement.
 
 ## Validation
 
@@ -96,16 +97,17 @@ Fresh installs and `docs update` ship:
 - auto-spec command doc: `harness/commands/os-auto-add-spec.md`
 - legacy auto-feature command doc: `harness/commands/os-auto-add-feature.md`
 - skill: `harness/skills/doc-config-router/SKILL.md`
-- intake skill: `harness/skills/spec-intake-router/SKILL.md`
+- canonical Spec skill: `harness/skills/spec-engine/SKILL.md`
+- legacy intake adapter: `harness/skills/spec-intake-router/SKILL.md`
 - legacy intake skill: `harness/skills/feature-intake-router/SKILL.md`
 - bug skill: `harness/skills/bug-intake-router/SKILL.md`
 - auto-spec skill: `harness/skills/auto-spec-intake/SKILL.md`
 - legacy auto-feature skill: `harness/skills/auto-feature-intake/SKILL.md`
 - authoring guard skill: `harness/skills/os-authoring-guard/SKILL.md`
 - authoring rules: `harness/rules/os-authoring-rules.md`
-- managed workflow: `harness/shared_factory/04-workflows/spec-intake.md`
-- legacy managed workflow: `harness/shared_factory/04-workflows/feature-intake.md`
-- managed bug workflow: `harness/shared_factory/04-workflows/bug-intake.md`
+- compatibility workflow: `harness/shared_factory/04-workflows/spec-intake.md`
+- legacy feature adapter: `harness/shared_factory/04-workflows/feature-intake.md`
+- legacy bug adapter: `harness/shared_factory/04-workflows/bug-intake.md`
 
 Run:
 

@@ -1,10 +1,16 @@
-# Documentation: spec_grooming
+# Documentation: Spec Engine
 
 ## Filesystem Documentation
 
-This program ships with the source package under
-`harness/shared_factory/00-programs/spec_grooming/` and is copied into installed
-OS roots by docs install/update.
+This program ships from the legacy-compatible source path
+`harness/shared_factory/00-programs/spec_grooming/` with canonical identity
+`spec_engine`. It is copied into installed OS roots by docs install/update.
+
+## Provider Documentation
+
+The canonical operator guide is `docs/29-spec-engine.md`. CLI truth comes from
+`agentic-os spec --help`; compatibility commands must link to the canonical
+guide instead of restating lifecycle rules.
 
 ## Notion Projection
 
@@ -18,6 +24,6 @@ the target workspace. The page should summarize:
 - tracker projection receipts;
 - validation and next actions.
 
-Do not paste private local paths into external tracker text. Internal Notion
-receipts may record page ids and private links.
-
+Notion is optional and never an intake dependency. Do not paste private local
+paths into external tracker text. Internal Notion receipts may record page ids
+and private links.

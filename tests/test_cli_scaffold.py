@@ -327,19 +327,21 @@ def test_spec_grooming_program_installs_contract(tmp_path: Path) -> None:
     assert main(["init", "--target", str(root)]) == 0
 
     program_root = shared_factory(root) / "00-programs" / "spec_grooming"
-    skill = (harness(root) / "skills" / "spec-groomer" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (harness(root) / "skills" / "spec-engine" / "SKILL.md").read_text(encoding="utf-8")
+    legacy_skill = (harness(root) / "skills" / "spec-groomer" / "SKILL.md").read_text(encoding="utf-8")
     command = (harness(root) / "commands" / "os-groom-spec.md").read_text(encoding="utf-8")
-    root_tools = (harness(root) / "TOOLS.md").read_text(encoding="utf-8")
+    components = yaml.safe_load((program_root / "components.yml").read_text(encoding="utf-8"))
 
     assert (program_root / "components.yml").is_file()
     assert (program_root / "templates" / "A_PLUS_SPEC_TEMPLATE.md").is_file()
     assert (program_root / "examples" / "01_universal_spec_grooming_os" / "SPEC.md").is_file()
     assert (program_root / "examples" / "02_capability_discovery_gate" / "SPEC.md").is_file()
     assert (program_root / "examples" / "03_pr_reviewer_dashboard_route" / "SPEC.md").is_file()
+    assert components["id"] == "spec_engine"
+    assert "spec_grooming" in components["legacy_ids"]
     assert "ORIGINAL_INTENT.md" in skill
-    assert "$jira-product-orchestrator" in skill
+    assert "Compatibility adapter" in legacy_skill
     assert "/groom-spec" in command
-    assert "spec_grooming" in root_tools
 
 
 def test_validate_requires_self_improvement_surface(tmp_path: Path) -> None:

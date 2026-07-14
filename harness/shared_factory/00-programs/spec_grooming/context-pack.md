@@ -1,12 +1,12 @@
-# Context Pack: spec_grooming
+# Context Pack: Spec Engine
 
 ## Always Load
 
 - `program.md`
 - `components.yml`
 - `RULES.md`
-- `harness/skills/spec-groomer/SKILL.md`
-- `harness/commands/os-groom-spec.md`
+- `harness/skills/spec-engine/SKILL.md`
+- `harness/commands/os-add-spec.md`
 
 ## Load For Template Changes
 
@@ -27,3 +27,7 @@
 - The target project `project.yml`.
 - The local Notion and tracker rules before any write.
 
+## Compatibility Path
+
+The directory remains `spec_grooming` during migration. Treat `spec_engine` as
+the canonical program identity and `spec_grooming` as an alias.

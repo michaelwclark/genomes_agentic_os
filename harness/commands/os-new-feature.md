@@ -1,20 +1,17 @@
 # OS New Feature
 
-Compatibility alias for `/add-spec`.
+Compatibility commands: `/new-feature`, `/add-feature`, `/new-idea`
 
-Use `/add-spec` as the primary command for future work, rough requests,
-proposed features, and spec intake. Keep `/new-feature`, `/add-feature`, and
-`/new-idea` working during the migration window for users and harnesses that
-still use the older names.
+These are typed adapters for `/add-spec`, not separate feature or idea intake
+workflows.
 
-## Procedure
+| Alias | Canonical operation |
+| --- | --- |
+| `/new-feature` | `/add-spec --type feature` |
+| `/add-feature` | `/add-spec --type feature` |
+| `/new-idea` | `/add-spec --type feature --status idea` |
 
-Follow `harness/commands/os-add-spec.md`.
-
-## Compatibility Notes
-
-- `/new-feature` routes to the same doc-config and project work-item intake as
-  `/add-spec`.
-- New packets use `SPEC.md` as the raw-capture plus refined-spec file.
-- Existing `IDEA.md` files remain readable legacy capture, but new packets
-  should not generate them.
+Follow `harness/commands/os-add-spec.md` and the `spec-engine` skill. New work
+must use the canonical Spec statuses and one configured filesystem, Linear, or
+Jira adapter. Existing `IDEA.md` and older feature packets remain readable
+migration inputs; do not create them for new work.

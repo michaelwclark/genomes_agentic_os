@@ -1,11 +1,17 @@
-id: spec_grooming
+id: spec_engine
+legacy_ids:
+  - spec_grooming
 status: active
 owner: shared_factory
-description: Universal filesystem-first spec grooming capability.
+description: Canonical policy-driven Spec lifecycle and adapter capability.
 commands:
+  - id: add-spec
+    path: harness/commands/os-add-spec.md
   - id: groom-spec
     path: harness/commands/os-groom-spec.md
 skills:
+  - id: spec-engine
+    path: harness/skills/spec-engine/SKILL.md
   - id: spec-groomer
     path: harness/skills/spec-groomer/SKILL.md
   - id: spec-intake-router
@@ -29,6 +35,7 @@ examples:
   - harness/shared_factory/00-programs/spec_grooming/examples/03_pr_reviewer_dashboard_route
 docs:
   - docs/21-os-programs.md
+  - docs/29-spec-engine.md
 validation:
   - tests/test_cli_scaffold.py
 projection:
@@ -38,4 +45,3 @@ projection:
   tracker:
     linear: Parent issue with child issues when Linear is requested and verified.
     jira: Delegate Jira-primary work to jira-product-orchestrator.
-

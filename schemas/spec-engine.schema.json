@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes.dev/agentic-os/spec-engine.schema.json",
+  "title": "Agentic OS Spec Engine Policy",
+  "type": "object",
+  "required": ["schema_version", "spec_engine"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "spec_engine": {
+      "type": "object",
+      "required": ["enabled", "authority", "defaults", "adapters"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "authority": {
+          "type": "object",
+          "properties": {
+            "content": {"enum": ["filesystem", "linear", "jira"]},
+            "lifecycle": {"enum": ["filesystem", "linear", "jira"]}
+          },
+          "required": ["content", "lifecycle"]
+        },
+        "defaults": {
+          "type": "object",
+          "properties": {
+            "type": {"enum": ["bug", "feature", "config"]},
+            "status": {"enum": ["idea", "grooming", "blocked", "ready", "in_progress", "built"]},
+            "disposition": {"enum": ["active", "cancelled", "duplicate", "wont_do", "archived"]}
+          }
+        },
+        "adapters": {
+          "type": "object",
+          "required": ["primary", "mirrors", "filesystem", "linear", "jira"],
+          "properties": {
+            "primary": {"enum": ["filesystem", "linear", "jira"]},
+            "mirrors": {"type": "array", "items": {"enum": ["filesystem", "linear", "jira"]}},
+            "filesystem": {"type": "object"},
+            "linear": {"type": "object"},
+            "jira": {"type": "object"}
+          }
+        },
+        "sync": {"type": "object"}
+      }
+    }
+  },
+  "additionalProperties": false
+}

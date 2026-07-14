@@ -1,12 +1,13 @@
-# Tools: spec_grooming
+# Tools: Spec Engine
 
 ## Skills
 
 | Skill | Use When |
 | --- | --- |
-| `spec-groomer` | Universal idea-to-spec grooming, original intent capture, discovery, routing, packet creation, and projection receipts. |
-| `spec-intake-router` | Filesystem packet placement through doc-config. |
-| `auto-spec-intake` | Long OS-shaping requests that need a durable packet before implementation. |
+| `spec-engine` | Canonical add, groom, inspect, transition, sync, and doctor workflow. |
+| `spec-groomer` | Compatibility adapter for `spec-engine` grooming mode. |
+| `spec-intake-router` | Compatibility adapter for `spec-engine add`. |
+| `auto-spec-intake` | Compatibility adapter for automatic `spec-engine add` and grooming. |
 | `aos-product-orchestrator` | Agentic OS self-improvement proposals that need product grooming and tracker projection. |
 | `jira-product-orchestrator` | LOS Django or Jira-primary story/task/subtask grooming. |
 | `program-builder` | Updates to this OSProgram and its component map. |
@@ -15,8 +16,9 @@
 
 | Command | Use When |
 | --- | --- |
-| `/groom-spec` | Start the universal spec grooming workflow. |
-| `/add-spec` | Capture future work through doc-config when full grooming is not requested. |
-| `/auto-add-spec` | Create or update a spec packet for long OS-shaping requests. |
-| `agentic-os doc-config plan` | Resolve filesystem and Notion destinations before packet or document creation. |
-
+| `/add-spec` | Canonical natural-language entrypoint for new tracked work. |
+| `/groom-spec` | Compatibility entrypoint for `agentic-os spec transition ... grooming`. |
+| `/add-bug` | Compatibility entrypoint for `/add-spec --type bug`. |
+| `/new-feature`, `/add-feature`, `/new-idea` | Compatibility entrypoints for `/add-spec --type feature`. |
+| `/auto-add-spec`, `/auto-add-feature` | Compatibility entrypoints for automatic Spec capture/grooming. |
+| `agentic-os spec add|show|list|transition|sync|doctor` | Canonical deterministic CLI surface. |

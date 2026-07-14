@@ -59,6 +59,11 @@ STANDARD_LANES = (
 
 MANAGED_RUNTIME_FILES = (
     (
+        "templates/runtime/spec-engine.yml",
+        "harness/shared_factory/00-control-plane/spec-engine.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "templates/runtime/spec-intake-workflow.md",
         "harness/shared_factory/04-workflows/spec-intake.md",
         "replace_if_managed_unchanged",
@@ -114,6 +119,11 @@ MANAGED_RUNTIME_FILES = (
         "replace_if_managed_unchanged",
     ),
     (
+        "harness/commands/os-add-spec.md",
+        "harness/shared_factory/05-knowledge/commands/os-add-spec.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "templates/runtime/notion-organization.yml",
         "harness/shared_factory/00-control-plane/notion-organization.yml",
         "replace_if_managed_unchanged",
@@ -138,6 +148,11 @@ MANAGED_RUNTIME_FILES = (
         "harness/shared_factory/05-knowledge/skills/spec-groomer/SKILL.md",
         "replace_if_managed_unchanged",
     ),
+    (
+        "harness/skills/spec-engine/SKILL.md",
+        "harness/shared_factory/05-knowledge/skills/spec-engine/SKILL.md",
+        "replace_if_managed_unchanged",
+    ),
 )
 
 PROJECT_STATUSES = (
@@ -151,6 +166,7 @@ PROJECT_CONFIG_FILES = (
     "project-profile.yml",
     "workflows.yml",
     "work-lifecycle.yml",
+    "spec-engine.yml",
     "output-artifacts.yml",
     "validation.yml",
     "worktrees.yml",
@@ -2581,6 +2597,33 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                         "type": "none",
                     },
                 }
+            },
+            sort_keys=False,
+        )
+    if filename == "spec-engine.yml":
+        return yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "spec_engine": {
+                    "enabled": True,
+                    "authority": {"content": "filesystem", "lifecycle": "filesystem"},
+                    "defaults": {"type": "feature", "status": "idea", "disposition": "active"},
+                    "adapters": {
+                        "primary": "filesystem",
+                        "mirrors": [],
+                        "filesystem": {"enabled": True, "work_items_root": "work-items"},
+                        "linear": {"enabled": False, "mode": "backlog", "target": {}, "status_map": {}},
+                        "jira": {
+                            "enabled": False,
+                            "mode": "sprint",
+                            "target": {},
+                            "placement": {"default": "backlog", "allow_active_sprint_override": True},
+                            "issue_type_map": {"bug": "Bug", "feature": "Story", "config": "Task"},
+                            "status_map": {},
+                        },
+                    },
+                    "sync": {"conflict_policy": "authority_wins", "local_identity_required": True},
+                },
             },
             sort_keys=False,
         )

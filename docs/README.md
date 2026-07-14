@@ -93,13 +93,12 @@ vs Codex"** callout for its task; the full mechanics live on
 | [22 · CLI Help Standard](22-cli-help-standard.md) | The help-text and argparse conventions every `agentic-os` command and harness script must follow. |
 | [23 · Configuration Surfaces](23-configuration-surfaces.md) | Every configuration system the OS reads at runtime, how they interact, and which CLI commands manage them. |
 | [28 · Doc Config System](28-doc-config-system.md) | Configurable document routing across Agentic OS filesystem and Notion surfaces. |
+| [29 · Spec Engine](29-spec-engine.md) | Canonical idea-to-built lifecycle, layered policy, and filesystem/Linear/Jira adapters. |
 
-Operator shortcut: use `/new-feature` for new feature or idea intake. It routes
-through doc-config first, creates or repairs the project work item, and then
-projects to Notion only after workspace verification.
-Use `/add-bug` for lightweight bug or missed-enforcement capture, and
-`/auto-add-feature` when a long OS-shaping request should become a local feature
-packet before implementation continues.
+Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
+changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,
+`/new-idea`, `/groom-spec`, `/auto-add-spec`, and `/auto-add-feature` remain
+compatibility adapters to the same Spec Engine.
 
 ---
 

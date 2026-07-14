@@ -1,42 +1,13 @@
 ---
 name: auto-spec-intake
-description: Automatically create or update a local Agentic OS spec packet for long OS-shaping requests before implementation work continues. Use when the user gives a multi-part Agentic OS feature/rules/conventions request or says /auto-add-spec.
+description: Compatibility adapter for automatic Spec Engine capture. Use for legacy /auto-add-spec requests; the canonical spec-engine skill owns add, update, grooming, adapters, and receipts.
 ---
 
 # Auto Spec Intake
 
-Use this skill when a request is large enough that losing the chat would lose
-the work definition.
+Compatibility adapter for `spec-engine`.
 
-## Intake Loop
-
-1. Load the routed OS layer and `harness/rules/os-authoring-rules.md`.
-2. Run `agentic-os doc-config plan` with the original request.
-3. Search active and intake work-items for a matching spec.
-4. Create or update a packet with `SPEC`, `PLAN`, `WORKLOG`, `NEXT`, and
-   `QUESTIONS` when unresolved questions exist.
-5. Add `CONVENTIONS` when the request creates reusable OS behavior.
-6. Record any required source worktree registration.
-7. Hand the packet path back to the orchestrator before implementation.
-8. Create the unified intake row (non-blocking):
-
-```bash
-agentic-os-intake-row \
-  --title "<spec title>" \
-  --type spec \
-  --route-text '<user's original words>' \
-  --body-file <packet SPEC.md path>
-```
-
-   If the row create fails, record the error in the packet worklog and continue.
-
-## Context Budget
-
-Do not load all prior work. Search by title/request terms, active work indexes,
-and doc-config search methods. Load only the matching packet and the compact
-authoring rules.
-
-## Guardrails
-
-- Do not generate `IDEA.md` for new packets. Existing `IDEA.md` files remain
-  readable legacy capture.
+For a long OS-shaping request, search scoped Specs, update the match or execute
+`agentic-os spec add`, and return the YAML receipt before implementation. Use
+status `grooming` only when spec development has started; otherwise retain
+`idea`. Do not create a Notion intake row or parallel feature packet.

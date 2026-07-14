@@ -132,7 +132,8 @@ by `capability_registry`. Shared skills can be invoked from Claude or Codex.
 | `learning-promoter` | Promote ephemeral learning to durable memory |
 | `automation-qualifier` | Qualify an automation for the maturity ladder |
 | `client-automation-brief` | Generate a customer automation brief |
-| `spec-groomer` | Groom rough ideas into implementation-ready specs with intent preservation, discovery, QA, Gherkin, and projection receipts |
+| `spec-engine` | Add, inspect, groom, transition, sync, and diagnose canonical Specs across configured adapters |
+| `spec-groomer` | Compatibility adapter for Spec Engine grooming mode |
 
 ### Slash-commands
 
@@ -161,7 +162,13 @@ Claude. Helper files such as `composio-debug-bundle.md` and
 | `/os-context-audit` | Audit context files at a layer |
 | `/os-capture-plan` | Capture a plan into the OS |
 | `/os-run-build-runner` | Execute a build-runner run |
-| `/groom-spec` | Groom rough ideas into complete implementation specs with discovery and projection receipts |
+| `/add-spec` | Add an idea, feature, bug, config change, ticket, or backlog item through the canonical Spec Engine |
+| `/groom-spec` | Compatibility adapter that enters Spec Engine grooming mode |
+
+The `spec-engine` skill is canonical in both harnesses. `/add-bug`,
+`/new-feature`, `/add-feature`, `/new-idea`, `/auto-add-spec`, and
+`/auto-add-feature` remain compatibility adapters with canonical type/status
+defaults; they do not own separate lifecycle workflows.
 
 ### MCP (Claude)
 

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes.dev/agentic-os/spec.schema.json",
+  "title": "Agentic OS Spec",
+  "type": "object",
+  "required": ["schema_version", "id", "title", "type", "status", "disposition", "domain", "project"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "type": {"enum": ["bug", "feature", "config"]},
+    "status": {"enum": ["idea", "grooming", "blocked", "ready", "in_progress", "built"]},
+    "state": {"enum": ["idea", "grooming", "blocked", "ready", "in_progress", "built"]},
+    "disposition": {"enum": ["active", "cancelled", "duplicate", "wont_do", "archived"]},
+    "blocked_from": {
+      "type": ["string", "null"],
+      "enum": ["idea", "grooming", "ready", "in_progress", "built", null]
+    },
+    "domain": {"type": "string", "minLength": 1},
+    "project": {"type": "string", "minLength": 1},
+    "summary": {"type": "string"},
+    "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+    "external_refs": {"type": "array", "items": {"type": "object"}},
+    "authority": {"type": "object", "additionalProperties": {"type": "string"}},
+    "legacy": {"type": "object"},
+    "provenance": {"type": "object"},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  },
+  "additionalProperties": true
+}

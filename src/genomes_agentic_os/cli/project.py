@@ -13,6 +13,7 @@ from ..lifecycle import (
     repair_project_work_item,
 )
 from ..lifecycle import finalize_lingering_work_items, sync_active_container
+from ..spec_engine import SPEC_STATUSES, SPEC_TYPES
 from ..scaffold import (
     create_project,
     create_project_worktree,
@@ -25,6 +26,7 @@ from ..remote_ops import sync_project_remote
 from ..remote_mounts import exec_remote, mount_remote, unmount_remote
 
 from ._shared import DEFAULT_ROOT, print_result, yaml_dump
+from .spec import handle_spec_add
 
 
 def handle_project_create(args: argparse.Namespace) -> int:
@@ -213,6 +215,25 @@ def handle_project_worktree_cleanup_closed(args: argparse.Namespace) -> int:
 
 
 def handle_project_work_item_create(args: argparse.Namespace) -> int:
+    # Compatibility entrypoint: explicit canonical type/status requests use the
+    # Spec Engine. Historical invocations retain their exact legacy layout.
+    if getattr(args, "type", None) or args.status in SPEC_STATUSES:
+        return handle_spec_add(
+            argparse.Namespace(
+                root=args.root,
+                domain=args.domain,
+                project=args.project,
+                title=args.title,
+                summary=args.summary,
+                type=args.type,
+                status=args.status,
+                spec_id=args.work_id,
+                adapter="filesystem",
+                placement=None,
+                dry_run=False,
+                apply=False,
+            )
+        )
     print_result(
         create_project_work_item(
             args.root,
@@ -393,7 +414,8 @@ def register(subparsers) -> None:
     project_work_item_create.add_argument("--title", required=True)
     project_work_item_create.add_argument("--summary", required=True)
     project_work_item_create.add_argument("--work-id", help="Optional work item slug. Defaults to a slug from the title.")
-    project_work_item_create.add_argument("--status", default="captured", choices=WORK_LIFECYCLE_STATES)
+    project_work_item_create.add_argument("--status", default="captured", choices=tuple(dict.fromkeys((*WORK_LIFECYCLE_STATES, *SPEC_STATUSES))))
+    project_work_item_create.add_argument("--type", choices=SPEC_TYPES, help="Canonical Spec type; routes creation through the Spec Engine.")
     project_work_item_create.add_argument(
         "--format",
         choices=("markdown", "packet"),

@@ -1,24 +1,27 @@
-# Context: spec_grooming
+# Context: Spec Engine
 
-`spec_grooming` is the shared Agentic OS capability for turning rough ideas
-into implementation-grade spec packets without losing the user's original
-intent.
+`spec_engine` is the shared Agentic OS capability for turning rough intent into
+a durable, implementation-grade Spec and moving it through one lifecycle:
+`idea`, `grooming`, `blocked`, `ready`, `in_progress`, and `built`.
 
-The program is intentionally a thin universal layer. It owns raw intent capture,
-capability discovery, route selection, packet completeness, assumption tracking,
-and projection receipts. Domain-specific groomers remain responsible for their
-own execution details.
+The only canonical Spec types are `bug`, `feature`, and `config`. Terms such as
+idea, ticket, Jira, Linear item, backlog item, and feature name the intake or
+projection surface; they do not create separate lifecycle objects.
 
-## Source Of Truth
+The engine owns raw intent capture, capability discovery, route selection,
+packet completeness, lifecycle transitions, adapter selection, assumption
+tracking, and projection receipts. Domain and project policy decides whether
+filesystem, Linear, or Jira owns content and lifecycle state.
 
-- Filesystem work item packets are authoritative.
-- Linear, Jira, and Notion are projections.
-- Notion writes require verified Genome's Notion.
-- External tracker text must be sanitized before posting.
+## Policy Precedence
 
-## Key Adapter Rule
+1. shipped Spec Engine defaults;
+2. installed-root policy;
+3. domain policy;
+4. project policy;
+5. explicit invocation override.
 
-LOS Django and Jira-primary work must route to `$jira-product-orchestrator`.
-The universal groomer may capture routing context, but it does not replace the
-Jira-specific grooming suite.
-
+Filesystem always retains local identity, provenance, and receipts. A narrower
+policy may make Linear or Jira authoritative for lifecycle state. Notion is an
+optional documentation projection and never a required queue between the Spec
+Engine and a tracker.
