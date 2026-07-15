@@ -854,7 +854,7 @@ Create a schedule entry in the runtime registry.
 |---|---|---|
 | `schedule_id` | Yes | Schedule ID (snake_case) |
 | `--root` | No | Installed OS root path |
-| `--cadence` | No (default: `manual`) | Cadence string (e.g. `daily`, `weekly`, cron expression) |
+| `--cadence` | No (default: `manual`) | Cadence string (`manual`, `hourly`, `daily`, `weekly`, or a supported interval) |
 | `--timezone` | No (default: `America/Chicago`) | IANA timezone name |
 | `--command` | No | Command to invoke when due |
 
@@ -864,6 +864,39 @@ agentic-os schedule create weekly_review \
   --command "agentic-os runtime run-next --apply" \
   --root /tmp/aos-ref
 ```
+
+For operator applications, pass `--dry-run --json` to preview or `--apply
+--json` to write with a registry backup, mutation receipt, and readback. The
+historical no-mode invocation remains an immediate create for compatibility.
+Governed creates are disabled unless `--enabled` is explicit.
+
+### Governed schedule CRUD
+
+```bash
+agentic-os schedule list --root ~/agentic_os --json
+agentic-os schedule get weekly_review --root ~/agentic_os --json
+agentic-os schedule update weekly_review --cadence daily --local-time 09:00 --dry-run --root ~/agentic_os --json
+agentic-os schedule disable weekly_review --apply --root ~/agentic_os --json
+agentic-os schedule delete weekly_review --apply --root ~/agentic_os --json
+agentic-os schedule queue-now daily_agentic_os_doctor --apply --root ~/agentic_os --json
+```
+
+Updates are field-allowlisted. Delete requires a disabled schedule with no
+active queue references. `queue-now` only appends a queue record and never
+dispatches the command.
+
+### `resource create` / `resource validate`
+
+Plan or scaffold filesystem-backed resources and run their supported checks:
+
+```bash
+agentic-os resource create workflow operator_review --domain work --lane engineering --dry-run --root ~/agentic_os --json
+agentic-os resource validate workflow operator_review --domain work --lane engineering --root ~/agentic_os --json
+agentic-os resource create program command_center --apply --root ~/agentic_os --json
+```
+
+Supported resource kinds are `automation`, `workflow`, `program`, and
+`instance-program`. These operations never execute the created resource.
 
 Status: **OK** (rc 0)
 

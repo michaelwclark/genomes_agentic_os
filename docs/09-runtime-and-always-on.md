@@ -205,10 +205,47 @@ Register a new schedule entry in the runtime registry.
 | Arg / Flag | Required | Description |
 | --- | --- | --- |
 | `schedule_id` | ✅ | snake_case schedule ID. |
-| `--cadence` | — | `daily`, `weekly`, or supported cron string. Defaults to `manual`. |
+| `--cadence` | — | `manual`, `hourly`, `daily`, `weekly`, or a supported `every_N_minutes` / `every_N_hours` interval. Defaults to `manual`. |
 | `--timezone` | — | IANA timezone. Defaults to `America/Chicago`. |
 | `--command` | — | Shell command to invoke when due. |
+| `--disabled` | — | Create the schedule disabled. |
+| `--enabled` | — | Explicitly enable a governed create. Explicit-mode creates are disabled by default. |
+| `--dry-run` | — | Preview the validated schedule without writing. |
+| `--apply` | — | Explicitly apply the create. Existing callers that pass neither mode retain the legacy immediate-create behavior. |
+| `--json` | — | Print the stable `resource-actions/v1` JSON envelope for GUI consumers. |
 | `--root` | — | Installed OS root. Defaults to `~/agentic_os`. |
+
+Applied creates write a registry backup and a redacted mutation receipt under
+`harness/shared_factory/06-runs-and-logs/resource-actions/`, then read the
+schedule back before returning success. The legacy invocation without
+`--dry-run`/`--apply` remains enabled by default for compatibility; governed
+creates are disabled unless `--enabled` is explicit.
+
+### Governed schedule operations
+
+The operator/GUI surface uses explicit, deterministic schedule commands:
+
+| Command | Behavior |
+| --- | --- |
+| `schedule list` | Return all schedules sorted by ID. |
+| `schedule get <id>` | Return one schedule plus normalized validation. |
+| `schedule update <id>` | Change only allowlisted fields; dry-run by default. |
+| `schedule enable/disable <id>` | Toggle the enabled flag; dry-run by default. |
+| `schedule queue-now <id>` | Add exactly one queue item; never dispatch or execute it. |
+| `schedule delete <id>` | Delete only a disabled schedule with no active queue references. |
+
+All accept `--json`. Mutations require `--apply`, produce readback evidence,
+and preserve a registry backup/receipt. `queue-now --apply` writes only to the
+run queue; execution still requires a separate `runtime run-next --apply`.
+
+### Governed resource scaffolds
+
+`agentic-os resource create {automation,workflow,program,instance-program}
+<name>` is dry-run by default and only scaffolds files when `--apply` is
+provided. `resource validate` runs the supported readiness/structural check.
+These commands never run an automation, workflow, or program. Automation and
+workflow scaffolds can be created successfully while still reporting readiness
+findings that must be groomed before execution.
 
 ### `agentic-os schedule run-due`
 
