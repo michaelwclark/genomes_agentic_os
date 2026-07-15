@@ -1,0 +1,23 @@
+schema_version: 1
+kind: automation
+inherits:
+  - domain
+read:
+  first:
+    - automation.md
+    - permissions.md
+    - runbook.md
+  deferred:
+    - inputs.md
+    - outputs.md
+    - failure-modes.md
+    - tests.md
+  exclude:
+    - logs/**
+    - runs/**
+    - artifacts/**
+    - snapshots/**
+capabilities: []
+providers: {}
+overrides:
+  rules: []

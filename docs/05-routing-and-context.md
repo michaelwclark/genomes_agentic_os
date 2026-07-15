@@ -4,7 +4,8 @@
 > deterministic, auditable answer — with **no model guesswork**. This is the step
 > that hands an agent the *right files at the right moment* (the core MWP idea).
 >
-> **You'll use:** `agentic-os route`, `agentic-os here route|context`, `agentic-os context build`.
+> **You'll use:** `agentic-os route`, `agentic-os here route|context`, and
+> `agentic-os context build|explain|check|compact`.
 > **Prereqs:** an installed OS root ([01 · Install & Quickstart](01-install-and-quickstart.md)) with at least one domain/project.
 
 ---
@@ -55,6 +56,19 @@ Build a context packet for a specific target without a request string.
 | `--workflow` | — | Narrow to a workflow. |
 | `--lane` | — | Narrow to a lane. |
 | `--root` | — | Installed OS root (default `~/agentic_os`). |
+
+### `agentic-os context explain|check|compact`
+
+- `context explain` resolves a workflow or automation's inherited
+  `context-contract.yml` and prints source/provider provenance.
+- `context check` inventories invalid manifests, legacy fallbacks, and copied
+  context hashes without traversing worktrees, runs, logs, artifacts, snapshots,
+  or archives.
+- `context compact --dry-run` emits a deterministic plan and exact rollback
+  manifest; it does not delete files.
+
+See [30 · Compact Context Contracts](30-context-contracts.md) for the contract
+shape and migration procedure.
 
 ---
 
@@ -158,6 +172,8 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **Names are snake_case.** `launch_blog`, not `launch-blog`.
 - **Routing reads, never writes.** `route`/`context build` are safe to run anytime;
   they only compute and print.
+- **Compaction is plan-only.** `context compact` requires `--dry-run`; only an
+  explicitly supplied `--output-dir` receives plan and rollback receipts.
 
 ## Related
 

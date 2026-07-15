@@ -44,6 +44,20 @@ MCP_REGISTRATION_POINTS = (
     "filesystem_runtime",
 )
 BASE_PROMPT_FILES = ("AGENTS.md", "PROFILE.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
+COMPACT_OBJECT_PROMPT_FILES = ("AGENTS.md", "PROFILE.md", "CLAUDE.md")
+COMPACT_OBJECT_AGENTS_TEMPLATE = """# Agent Entry Point
+
+This workflow or automation inherits its route, rules, and tool registry through
+`context-contract.yml`; do not copy parent contract catalogs into this folder.
+
+## Required Loop
+
+1. Read `context-contract.yml` and the canonical object document.
+2. Resolve inherited context with `agentic-os context explain --path .` when provenance matters.
+3. Load `read.first` now and `read.deferred` only when the task requires it.
+4. Follow inherited approval and safety rules plus explicit local overrides.
+5. Record validation and evidence before closeout.
+"""
 
 
 def expand_path(path: str | Path) -> Path:
@@ -476,7 +490,11 @@ def policy_for_layer(layer: str) -> CodexLayerPolicy:
     return LAYER_POLICIES[layer]
 
 
-def profile_toml_block(policy: CodexLayerPolicy, profile_name: str) -> str:
+def profile_toml_block(policy: CodexLayerPolicy, profile_name: str, *, compact_context: bool = False) -> str:
+    context_contract = "context-contract.yml" if compact_context else "route-read-cd-repeat"
+    rules_file = "inherited" if compact_context else "RULES.md"
+    tool_registry_file = "inherited" if compact_context else "TOOLS.md"
+    prompt_files = COMPACT_OBJECT_PROMPT_FILES if compact_context else policy.prompt_files
     return f"""[profiles.{profile_name}]
 model = "{policy.model}"
 model_reasoning_effort = "{policy.model_reasoning_effort}"
@@ -487,18 +505,21 @@ sandbox_mode = "{policy.sandbox_mode}"
 
 [profiles.{profile_name}.agentic_os]
 layer = "{policy.layer_token}"
-prompt_files = {toml_array(policy.prompt_files)}
-context_contract = "route-read-cd-repeat"
-rules_file = "RULES.md"
-tool_registry_file = "TOOLS.md"
+prompt_files = {toml_array(prompt_files)}
+context_contract = "{context_contract}"
+rules_file = "{rules_file}"
+tool_registry_file = "{tool_registry_file}"
 mcp_availability = "{policy.mcp_scope}"
 environment = "local filesystem"
 """
 
 
-def config_template(layer: str, root: str | Path | None = None) -> str:
+def config_template(layer: str, root: str | Path | None = None, *, compact_context: bool = False) -> str:
     policy = policy_for_layer(layer)
-    profile_blocks = "\n\n".join(profile_toml_block(policy, profile_name) for profile_name in policy.profile_names)
+    profile_blocks = "\n\n".join(
+        profile_toml_block(policy, profile_name, compact_context=compact_context)
+        for profile_name in policy.profile_names
+    )
     return f"""# Agentic OS Codex config template
 # Layer: {layer}
 # Local edits are preserved by the installer. Review diffs before applying.
@@ -510,7 +531,7 @@ model_reasoning_summary = "{policy.model_reasoning_summary}"
 approval_policy = "{policy.approval_policy}"
 sandbox_mode = "{policy.sandbox_mode}"
 project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
-project_doc_fallback_filenames = {toml_array(PROJECT_DOC_FALLBACK_FILES)}
+project_doc_fallback_filenames = {toml_array(COMPACT_OBJECT_PROMPT_FILES if compact_context else PROJECT_DOC_FALLBACK_FILES)}
 
 {profile_blocks}
 
@@ -585,7 +606,7 @@ def merge_agents_role_block(existing: str, policy: CodexLayerPolicy) -> str:
     return existing if existing.endswith("\n") else existing + "\n"
 
 
-def sidecar_payload(policy: CodexLayerPolicy) -> dict[str, Any]:
+def sidecar_payload(policy: CodexLayerPolicy, *, prompt_files: tuple[str, ...] | None = None) -> dict[str, Any]:
     return {
         "layer": policy.layer_token,
         "profile": policy.profile,
@@ -596,7 +617,7 @@ def sidecar_payload(policy: CodexLayerPolicy) -> dict[str, Any]:
         "model_reasoning_effort": policy.model_reasoning_effort,
         "model_verbosity": policy.model_verbosity,
         "model_reasoning_summary": policy.model_reasoning_summary,
-        "prompt_files": list(policy.prompt_files),
+        "prompt_files": list(prompt_files or policy.prompt_files),
         "mcp_availability": policy.mcp_scope,
         "customer_safe": policy.customer_safe,
         "managed_by": MANAGED_BY,
@@ -605,8 +626,8 @@ def sidecar_payload(policy: CodexLayerPolicy) -> dict[str, Any]:
     }
 
 
-def sidecar_template(policy: CodexLayerPolicy) -> str:
-    return yaml.safe_dump(sidecar_payload(policy), sort_keys=False)
+def sidecar_template(policy: CodexLayerPolicy, *, prompt_files: tuple[str, ...] | None = None) -> str:
+    return yaml.safe_dump(sidecar_payload(policy, prompt_files=prompt_files), sort_keys=False)
 
 
 def prompt_file_template(policy: CodexLayerPolicy, filename: str) -> str:
@@ -761,12 +782,18 @@ def install_config(
     dry_run: bool = True,
     backup: bool = False,
     confirm_conflicts: bool = False,
+    compact_context: bool | None = None,
 ) -> ConfigInstallResult:
     policy = policy_for_layer(layer)
 
     root_path = expand_path(root)
+    if compact_context is None:
+        compact_context = (
+            layer in {"workflow_or_task", "automation"}
+            and (root_path / "context-contract.yml").is_file()
+        )
     config_path = root_path / CONFIG_FILENAME
-    template = config_template(layer, root_path)
+    template = config_template(layer, root_path, compact_context=compact_context)
     existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     planned, conflicts = merge_config(existing, template)
     result = ConfigInstallResult(root=root_path, layer=layer, dry_run=dry_run, conflicts=conflicts)
@@ -775,7 +802,8 @@ def install_config(
     profile_path = root_path / "PROFILE.md"
     sidecar = sidecar_path(root_path)
     profile_content = profile_markdown_template(policy)
-    sidecar_content = sidecar_template(policy)
+    prompt_files = COMPACT_OBJECT_PROMPT_FILES if compact_context else policy.prompt_files
+    sidecar_content = sidecar_template(policy, prompt_files=prompt_files)
     managed_artifacts = (
         (profile_path, profile_content),
         (sidecar, sidecar_content),
@@ -792,12 +820,15 @@ def install_config(
 
     agents_path = root_path / "AGENTS.md"
     agents_existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
-    agents_planned = merge_agents_role_block(agents_existing, policy)
+    agents_planned = (
+        agents_markdown_template(policy, COMPACT_OBJECT_AGENTS_TEMPLATE)
+        if compact_context and not agents_existing.strip()
+        else merge_agents_role_block(agents_existing, policy)
+    )
     agents_diff = diff_text(agents_existing, agents_planned, agents_path)
     if agents_diff:
         result.diff = f"{result.diff.rstrip()}\n{agents_diff}".lstrip()
 
-    prompt_files = policy.prompt_files
     if dry_run:
         if not root_path.exists():
             result.created.append(root_path)
@@ -918,6 +949,10 @@ def install_config_tree(
     targets = discover_config_tree_targets(root_path)
     result = ConfigTreeInstallResult(root=root_path, dry_run=dry_run, targets=targets)
     for target in targets:
+        compact_context = (
+            target.layer in {"workflow_or_task", "automation"}
+            and (target.root / "context-contract.yml").is_file()
+        )
         result.installations.append(
             install_config(
                 target.root,
@@ -925,6 +960,7 @@ def install_config_tree(
                 dry_run=dry_run,
                 backup=backup,
                 confirm_conflicts=confirm_conflicts,
+                compact_context=compact_context,
             )
         )
     return result
@@ -934,6 +970,10 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
     policy = policy_for_layer(layer)
 
     root_path = expand_path(root)
+    compact_context = (
+        layer in {"workflow_or_task", "automation"}
+        and (root_path / "context-contract.yml").is_file()
+    )
     config_path = root_path / CONFIG_FILENAME
     findings: list[ConfigDoctorFinding] = []
     if not config_path.is_file():
@@ -1103,7 +1143,10 @@ def doctor_config(root: str | Path, *, layer: str) -> dict[str, Any]:
                 )
             )
             sidecar_data = {}
-        expected_sidecar = sidecar_payload(policy)
+        expected_sidecar = sidecar_payload(
+            policy,
+            prompt_files=COMPACT_OBJECT_PROMPT_FILES if compact_context else None,
+        )
         for key, expected_value in expected_sidecar.items():
             if sidecar_data.get(key) != expected_value:
                 findings.append(

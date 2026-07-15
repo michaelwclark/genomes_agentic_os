@@ -94,6 +94,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [23 · Configuration Surfaces](23-configuration-surfaces.md) | Every configuration system the OS reads at runtime, how they interact, and which CLI commands manage them. |
 | [28 · Doc Config System](28-doc-config-system.md) | Configurable document routing across Agentic OS filesystem and Notion surfaces. |
 | [29 · Spec Engine](29-spec-engine.md) | Canonical idea-to-built lifecycle, layered policy, and filesystem/Linear/Jira adapters. |
+| [30 · Compact Context Contracts](30-context-contracts.md) | Versioned inheritance manifests, explain/check commands, duplicate detection, and reversible dry-run migration plans. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,
