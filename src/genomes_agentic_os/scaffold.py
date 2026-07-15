@@ -524,6 +524,7 @@ def backup_policy_payload() -> dict[str, object]:
                 "harness/bin/",
                 "harness/commands/",
                 "harness/registries/",
+                "harness/reports/",
                 "harness/rules/",
                 "harness/skills/",
                 "harness/shared_factory/00-control-plane/",
