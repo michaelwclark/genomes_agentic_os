@@ -247,6 +247,11 @@ These commands never run an automation, workflow, or program. Automation and
 workflow scaffolds can be created successfully while still reporting readiness
 findings that must be groomed before execution.
 
+Registry-backed `rule`, `report`, `skill`, and `command` resources use the same
+`resource-actions/v1` envelope and add list/get/create/update/archive/restore/
+rollback operations. See [Governed Registry Authoring](32-registry-resource-authoring.md)
+for scope routing, safety rules, receipts, and the analytics presentation registry.
+
 ### `agentic-os schedule run-due`
 
 Find all schedules whose `next_due_at` has passed and enqueue them. Writes queue

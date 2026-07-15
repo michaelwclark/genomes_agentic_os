@@ -13,7 +13,7 @@
           "id": { "type": "string" },
           "type": {
             "type": "string",
-            "enum": ["command", "skill", "mcp_server", "library", "hook", "plugin", "rule"]
+            "enum": ["command", "skill", "mcp_server", "library", "hook", "plugin", "rule", "report"]
           },
           "ref": { "type": "string" },
           "name": { "type": "string" },

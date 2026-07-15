@@ -59,6 +59,11 @@ STANDARD_LANES = (
 
 MANAGED_RUNTIME_FILES = (
     (
+        "templates/runtime/analytics-metrics.yml",
+        "harness/registries/analytics-metrics.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "templates/runtime/spec-engine.yml",
         "harness/shared_factory/00-control-plane/spec-engine.yml",
         "replace_if_managed_unchanged",
@@ -832,6 +837,7 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
         "plugins",
         "libraries",
         "hooks",
+        "reports",
         "rules",
         "shared_factory",
     ):

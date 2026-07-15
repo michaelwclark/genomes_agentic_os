@@ -899,18 +899,27 @@ Updates are field-allowlisted. Delete requires a disabled schedule with no
 active queue references. `queue-now` only appends a queue record and never
 dispatches the command.
 
-### `resource create` / `resource validate`
+### Governed `resource` operations
 
-Plan or scaffold filesystem-backed resources and run their supported checks:
+Plan or scaffold filesystem-backed resources, or safely author registry-backed
+rules, reports, skills, and commands:
 
 ```bash
 agentic-os resource create workflow operator_review --domain work --lane engineering --dry-run --root ~/agentic_os --json
 agentic-os resource validate workflow operator_review --domain work --lane engineering --root ~/agentic_os --json
 agentic-os resource create program command_center --apply --root ~/agentic_os --json
+agentic-os resource create report weekly_review --display-name "Weekly review" --description "Concise verified weekly delivery report." --prompt "Summarize verified delivery evidence." --dry-run --root ~/agentic_os --json
+agentic-os resource update report weekly_review --description "Verified weekly delivery and risk report." --apply --root ~/agentic_os --json
+agentic-os resource archive report weekly_review --apply --root ~/agentic_os --json
+agentic-os resource rollback report weekly_review --backup-id 20260715T120000000000Z-0123abcd --dry-run --root ~/agentic_os --json
 ```
 
 Supported resource kinds are `automation`, `workflow`, `program`, and
-`instance-program`. These operations never execute the created resource.
+`instance-program` for scaffold create/validate, and `rule`, `report`, `skill`,
+and `command` for governed list/get/create/update/archive/restore/rollback and
+validation. Registry targets are fixed by scope. Mutations are dry-run first,
+emit backup and receipt IDs, and verify readback. These operations never execute
+the created resource or accept arbitrary paths, shell commands, or queries.
 
 Status: **OK** (rc 0)
 

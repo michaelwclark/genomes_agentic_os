@@ -84,6 +84,7 @@ LEGACY_ROOT_FOLDERS = (
     "plugins",
     "libraries",
     "hooks",
+    "reports",
     "rules",
     "registries",
     "logs",
@@ -732,11 +733,17 @@ def validate_capability_registries(root: Path, result: ValidationResult) -> None
     for capability_type, collection in CAPABILITY_COLLECTIONS.items():
         relative_path = REGISTRY_FILES[collection]
         path = root / relative_path
-        if not path.is_file():
-            continue
+        registry_paths = [path] if path.is_file() else []
+        if capability_type in {"command", "skill", "rule", "report"}:
+            registry_paths.extend(
+                candidate
+                for candidate in root.rglob(f"resource-registries/{collection}.yml")
+                if candidate.is_file()
+            )
         typed_ids[capability_type] = {
             str(entry.get("id"))
-            for entry in load_registry(path, collection)
+            for registry_path in registry_paths
+            for entry in load_registry(registry_path, collection)
             if entry.get("id")
         }
 
@@ -1043,6 +1050,7 @@ def validate_update_backup_contract(root: Path, result: ValidationResult) -> Non
 _SCHEMA_DIR = Path(__file__).parent.parent.parent / "schemas"
 
 SCHEMA_TARGETS: dict[str, list[str]] = {
+    "analytics-metrics.schema.json": ["harness/registries/analytics-metrics.yml"],
     "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
     "command-registry.schema.json": [REGISTRY_FILES["commands"]],
     "skill-visibility-registry.schema.json": [REGISTRY_FILES["skills"]],
@@ -1055,6 +1063,7 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "hook-registry.schema.json": [REGISTRY_FILES["hooks"]],
     "plugin-registry.schema.json": [REGISTRY_FILES["plugins"]],
     "rule-registry.schema.json": [REGISTRY_FILES["rules"]],
+    "report-registry.schema.json": [REGISTRY_FILES["reports"]],
     "composio-tool-routing.schema.json": [REGISTRY_FILES["composio_tools"]],
     "update-grant.schema.json": ["harness/registries/update-grant.json"],
     "backup-policy.schema.json": ["harness/registries/backup-policy.yml"],

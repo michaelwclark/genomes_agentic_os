@@ -1,0 +1,103 @@
+schema_version: 1
+managed_by: agentic-os
+description: Presentation metadata for Command Center analytics. Runtime collectors own values and aggregation.
+metrics:
+  - id: queue_depth
+    name: Queue depth
+    summary: Work waiting across governed execution queues.
+    category: runtime
+    unit: items
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: line
+      color: teal
+      precision: 0
+  - id: task_process_time_seconds
+    name: Task process time
+    summary: Elapsed processing time for completed tasks.
+    category: runtime
+    unit: seconds
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: line
+      color: blue
+      precision: 1
+  - id: messages
+    name: Messages
+    summary: User and agent messages recorded in the selected period.
+    category: conversations
+    unit: count
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: bar
+      color: violet
+      precision: 0
+  - id: workers
+    name: Workers
+    summary: Active workers observed by the runtime.
+    category: runtime
+    unit: count
+    default_window: 1h
+    enabled: true
+    visualization:
+      type: stat
+      color: green
+      precision: 0
+  - id: token_count
+    name: Tokens
+    summary: Tokens attributed to recorded conversations and executions.
+    category: usage
+    unit: tokens
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: area
+      color: amber
+      precision: 0
+  - id: chats_by_harness
+    name: Chats by harness
+    summary: Conversation count grouped by Claude, Codex, or another registered harness.
+    category: conversations
+    unit: count
+    default_window: 7d
+    enabled: true
+    visualization:
+      type: bar
+      color: cyan
+      precision: 0
+  - id: automation_runs
+    name: Automation runs
+    summary: Governed automation executions in the selected period.
+    category: execution
+    unit: count
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: bar
+      color: indigo
+      precision: 0
+  - id: errors
+    name: Errors
+    summary: Recorded execution and integration errors.
+    category: reliability
+    unit: count
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: line
+      color: red
+      precision: 0
+  - id: tool_runs
+    name: Tool runs
+    summary: Governed tool invocations in the selected period.
+    category: execution
+    unit: count
+    default_window: 24h
+    enabled: true
+    visualization:
+      type: bar
+      color: orange
+      precision: 0
