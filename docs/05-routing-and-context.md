@@ -172,8 +172,10 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **Names are snake_case.** `launch_blog`, not `launch-blog`.
 - **Routing reads, never writes.** `route`/`context build` are safe to run anytime;
   they only compute and print.
-- **Compaction is plan-only.** `context compact` requires `--dry-run`; only an
-  explicitly supplied `--output-dir` receives plan and rollback receipts.
+- **Compaction is review-gated.** Start with `context compact --dry-run` and a
+  durable `--output-dir`. `--apply` requires that untampered plan plus a receipt
+  directory, validates semantic parity and the installed root, and rolls back
+  exact bytes automatically on failure. `context restore` refuses stale state.
 
 ## Related
 

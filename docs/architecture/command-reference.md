@@ -378,15 +378,29 @@ Writes: nothing. Invalid manifests exit 1.
 
 ### `context compact`
 
-Build a reversible migration plan. This release is plan-only.
+Build or apply a guarded, reversible migration plan.
 
 | Arg / Flag | Required | Description |
 |---|---|---|
-| `--dry-run` | Yes | Required safety gate; context files are never changed |
-| `--output-dir` | No | Write plan and exact rollback JSON receipts |
+| `--dry-run` | One mode | Build a plan; context files are never changed |
+| `--apply` | One mode | Apply a reviewed plan with automatic rollback |
+| `--output-dir` | Dry-run only | Write plan and review rollback JSON |
+| `--plan` | Apply only | Reviewed plan JSON produced by `--dry-run` |
+| `--receipt-dir` | Apply only | Durable destination for the apply receipt |
 | `--root` | No | Installed OS root path |
 
-Without `--output-dir`, writes nothing. Without `--dry-run`, exits 2.
+Without either mode, exits 2. Apply enforces hashes, inherited-source identity,
+at least 40% local-context reduction, semantic parity, and root validation.
+
+### `context restore`
+
+Restore exact pre-compaction bytes from an applied receipt. Restore rejects a
+root whose post-apply context hash changed, so it cannot overwrite newer work.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--receipt` | Yes | Applied context-compaction receipt JSON |
+| `--root` | No | Installed OS root path |
 
 ---
 
