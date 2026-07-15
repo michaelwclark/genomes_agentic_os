@@ -1,4 +1,8 @@
 skills:
+- id: agentic-os-operating-contract
+  name: Agentic OS Operating Contract
+  description: Apply the shared Agentic OS routing, context, tool-use, workflow, automation, and closeout contract across Claude and Codex.
+  source: harness/skills/agentic-os-operating-contract/SKILL.md
 - id: os-navigator
   name: OS Navigator
   description: Route work through installed Agentic OS rooms.

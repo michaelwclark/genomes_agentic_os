@@ -14,6 +14,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-automation-control.md`](os-automation-control.md) | Inspect or operate the guarded automation control loop. |
 | [`os-capture-plan.md`](os-capture-plan.md) | Capture future work into canonical project work-items. |
 | [`os-chain.md`](os-chain.md) | Define, inspect, or test event-chain rules. |
+| [`os-claude-desktop-bridge.md`](os-claude-desktop-bridge.md) | Build or audit the optional Claude Desktop custom-skill and instruction package. |
 | [`os-clean-worktrees.md`](os-clean-worktrees.md) | Reconcile terminal work and safely close stale worktrees. |
 | [`os-client-automation-brief.md`](os-client-automation-brief.md) | Turn client discovery into a bounded automation brief. |
 | [`os-cockpit.md`](os-cockpit.md) | Build or open the local engineering cockpit. |
