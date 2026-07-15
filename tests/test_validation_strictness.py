@@ -110,6 +110,7 @@ def test_schema_targets_covers_registry_schemas() -> None:
         "hook-registry.schema.json",
         "plugin-registry.schema.json",
         "rule-registry.schema.json",
+        "report-registry.schema.json",
         "composio-tool-routing.schema.json",
     }
     assert registry_schemas <= set(SCHEMA_TARGETS)

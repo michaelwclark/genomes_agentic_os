@@ -22,6 +22,7 @@ VISIBLE_CAPABILITY_DIRECTORIES = (
     "harness/libraries",
     "harness/hooks",
     "harness/rules",
+    "harness/reports",
     "harness/registries",
 )
 
@@ -34,6 +35,7 @@ REGISTRY_FILES = {
     "hooks": "harness/registries/hooks.yml",
     "plugins": "harness/registries/plugins.yml",
     "rules": "harness/registries/rules.yml",
+    "reports": "harness/registries/reports.yml",
     "composio_tools": "harness/registries/composio-tools.yml",
 }
 
@@ -45,6 +47,7 @@ CAPABILITY_COLLECTIONS = {
     "hook": "hooks",
     "plugin": "plugins",
     "rule": "rules",
+    "report": "reports",
 }
 
 
@@ -902,6 +905,7 @@ def registry_payloads() -> dict[str, dict[str, Any]]:
         "hooks": {"hooks": hook_entries()},
         "plugins": {"plugins": plugin_entries()},
         "rules": {"rules": rule_entries()},
+        "reports": {"reports": []},
         "composio_tools": {"composio_tools": composio_tool_entries()},
     }
 

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic OS Analytics Metric Presentation Registry",
+  "description": "Presentation-only metric metadata. Executable queries, commands, URLs, and filesystem paths are intentionally unsupported.",
+  "type": "object",
+  "required": ["schema_version", "managed_by", "description", "metrics"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "managed_by": { "const": "agentic-os" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "summary", "category", "unit", "default_window", "enabled", "visualization"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "category": {
+            "enum": ["runtime", "conversations", "usage", "execution", "reliability", "delivery", "custom"]
+          },
+          "unit": { "enum": ["items", "seconds", "count", "tokens", "percent", "bytes", "custom"] },
+          "default_window": { "enum": ["1h", "6h", "24h", "7d", "30d", "90d"] },
+          "enabled": { "type": "boolean" },
+          "visualization": {
+            "type": "object",
+            "required": ["type", "color", "precision"],
+            "properties": {
+              "type": { "enum": ["stat", "line", "area", "bar", "table"] },
+              "color": { "enum": ["teal", "blue", "violet", "green", "amber", "cyan", "indigo", "red", "orange", "gray"] },
+              "precision": { "type": "integer", "minimum": 0, "maximum": 6 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

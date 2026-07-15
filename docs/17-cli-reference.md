@@ -300,11 +300,20 @@ in this package.
 
 | Command | What it does |
 | --- | --- |
-| `resource create` | Dry-run or scaffold an automation, workflow, shared program, or instance program without running it. |
-| `resource validate` | Validate automation/workflow readiness or program structural completeness. |
+| `resource list` | List rules, reports, skills, or commands in one canonical scope. |
+| `resource get` | Read one registry-backed resource and its prompt document. |
+| `resource create` | Dry-run or create a supported scaffold or managed registry resource without running it. |
+| `resource update` | Change allowlisted metadata or prompt content on a managed registry resource. |
+| `resource archive` | Soft-delete a managed registry resource while keeping it recoverable. |
+| `resource restore` | Restore a managed archived registry resource. |
+| `resource rollback` | Restore a managed registry resource from a fixed backup ID. |
+| `resource validate` | Validate readiness, structural completeness, or registry/source/projection consistency. |
 
 `--json` returns the stable `resource-actions/v1` contract used by local GUI
-clients. New mutations are dry-run by default and require `--apply`.
+clients. Mutations are dry-run by default and require `--apply`. Registry
+authoring supports `rule`, `report`, `skill`, and `command` at `system`,
+`domain`, or `project` scope. The CLI derives every target; it accepts no
+arbitrary path, shell command, executable, or query field.
 
 ### State — `cli/state.py`
 

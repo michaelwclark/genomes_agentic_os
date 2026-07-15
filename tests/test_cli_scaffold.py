@@ -141,6 +141,8 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "hooks.yml",
         "plugins.yml",
         "rules.yml",
+        "reports.yml",
+        "analytics-metrics.yml",
         "composio-tools.yml",
     ):
         assert (harness(root) / "registries" / registry_name).is_file()
