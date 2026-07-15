@@ -31,7 +31,8 @@ REPORT_QUERY_API_VERSION = "report-query/v1"
 REPORT_REGISTRY_API_VERSION = "report-registry/v1"
 REPORT_RUN_REGISTRY_API_VERSION = "report-run-registry/v1"
 REPORT_ARTIFACT_REGISTRY_API_VERSION = "report-artifact-registry/v1"
-REPORT_REGISTRY = "harness/registries/reports.yml"
+REPORT_REGISTRY = "harness/registries/report-definitions.yml"
+REPORT_CATALOG_REGISTRY = "harness/registries/reports.yml"
 REPORT_RUN_REGISTRY = "harness/registries/report-runs.yml"
 REPORT_ARTIFACT_REGISTRY = "harness/registries/report-artifacts.yml"
 REPORT_LOG_ROOT = "harness/shared_factory/06-runs-and-logs/report-engine"
@@ -164,6 +165,17 @@ def _definition_reference_findings(root: Path, definition: Mapping[str, Any]) ->
         if section.get("type") == "chart" and not section.get("chart_type"):
             findings.append({"code": "chart_type_missing", "severity": "error", "section_id": section.get("id")})
 
+    catalog_ref = definition.get("catalog_ref")
+    if catalog_ref:
+        catalog = _load_yaml(root / REPORT_CATALOG_REGISTRY, {"reports": []})
+        catalog_rows = catalog.get("reports", []) if isinstance(catalog, dict) else []
+        catalog_entry = next(
+            (item for item in catalog_rows if isinstance(item, dict) and item.get("id") == catalog_ref),
+            None,
+        )
+        if catalog_entry is None:
+            findings.append({"code": "catalog_reference_stale", "severity": "error", "catalog_ref": catalog_ref})
+
     schedule_id = (definition.get("schedule") or {}).get("schedule_id")
     if schedule_id:
         runtime_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
@@ -237,6 +249,16 @@ def _related(root: Path, definition_id: str) -> tuple[list[dict[str, Any]], list
     return runs, artifacts
 
 
+def _catalog_entry(root: Path, catalog_ref: str | None) -> dict[str, Any] | None:
+    if not catalog_ref:
+        return None
+    registry = _load_yaml(root / REPORT_CATALOG_REGISTRY, {"reports": []})
+    rows = registry.get("reports", []) if isinstance(registry, dict) else []
+    return deepcopy(
+        next((item for item in rows if isinstance(item, dict) and item.get("id") == catalog_ref), None)
+    )
+
+
 def _health_projection(definition: Mapping[str, Any], runs: list[Mapping[str, Any]], now: datetime) -> dict[str, Any]:
     latest = max(runs, key=lambda item: str(item.get("completed_at") or ""), default=None)
     if definition.get("status") == "archived":
@@ -254,21 +276,43 @@ def report_resource_projection(root: str | Path, definition: Mapping[str, Any], 
     os_root = expand_path(root)
     runs, artifacts = _related(os_root, str(definition["id"]))
     health = _health_projection(definition, runs, now or _now())
+    latest_artifact = max(artifacts, key=lambda item: str(item.get("created_at") or ""), default=None)
+    catalog = _catalog_entry(os_root, definition.get("catalog_ref"))
     return {
         "id": definition["id"],
         "name": definition["name"],
         "summary": definition["summary"],
         "status": definition["status"],
+        "scope": deepcopy(definition.get("scope") or {}),
         "domain": (definition.get("scope") or {}).get("domain"),
         "project": (definition.get("scope") or {}).get("project"),
+        "source": {"kind": "registry", "path": REPORT_REGISTRY},
+        "catalog_ref": definition.get("catalog_ref"),
+        "catalog": catalog,
         "schedule_id": (definition.get("schedule") or {}).get("schedule_id"),
         "generator": definition.get("generator"),
         "source_count": len(definition.get("sources") or []),
         "run_count": len(runs),
         "artifact_count": len(artifacts),
         "health": health,
+        "latest_run": health["latest_run"],
+        "latest_artifact": latest_artifact,
         "definition": deepcopy(dict(definition)),
     }
+
+
+def _indexed_projection(root: Path, resource_kind: str, item: Mapping[str, Any], definitions: Mapping[str, Any]) -> dict[str, Any]:
+    projected = deepcopy(dict(item))
+    definition = definitions.get(str(projected.get("definition_id")))
+    projected["scope"] = deepcopy((definition or {}).get("scope") or {})
+    projected["source"] = {
+        "kind": "artifact" if resource_kind == "artifact" else "run",
+        "path": projected.get("path"),
+    }
+    if definition:
+        projected["definition_name"] = definition.get("name")
+        projected["catalog_ref"] = definition.get("catalog_ref")
+    return projected
 
 
 def query_report_resources(
@@ -278,20 +322,31 @@ def query_report_resources(
     definition_id: str | None = None,
     status: str | None = None,
     include_archived: bool = False,
+    limit: int = 200,
 ) -> dict[str, Any]:
     os_root = expand_path(root)
+    if limit < 1 or limit > 500:
+        raise ValueError("report query limit must be between 1 and 500")
+    definitions_by_id = {
+        str(item.get("id")): item
+        for item in _load_registry(os_root, REPORT_REGISTRY)["definitions"]
+        if isinstance(item, dict) and item.get("id")
+    }
     if resource_kind == "definition":
-        definitions = _load_registry(os_root, REPORT_REGISTRY)["definitions"]
         items = [
             report_resource_projection(os_root, item)
-            for item in definitions
+            for item in definitions_by_id.values()
             if isinstance(item, dict) and (include_archived or item.get("status") != "archived")
         ]
     elif resource_kind == "run":
-        items = [deepcopy(item) for item in _load_registry(os_root, REPORT_RUN_REGISTRY)["runs"] if isinstance(item, dict)]
+        items = [
+            _indexed_projection(os_root, "run", item, definitions_by_id)
+            for item in _load_registry(os_root, REPORT_RUN_REGISTRY)["runs"]
+            if isinstance(item, dict)
+        ]
     elif resource_kind == "artifact":
         items = [
-            deepcopy(item)
+            _indexed_projection(os_root, "artifact", item, definitions_by_id)
             for item in _load_registry(os_root, REPORT_ARTIFACT_REGISTRY)["artifacts"]
             if isinstance(item, dict)
         ]
@@ -303,18 +358,44 @@ def query_report_resources(
     if status:
         items = [item for item in items if item.get("status") == status or (item.get("health") or {}).get("status") == status]
     items.sort(key=lambda item: (str(item.get("completed_at") or item.get("updated_at") or ""), str(item.get("id"))), reverse=True)
+    total_count = len(items)
+    items = items[:limit]
     return {
         "api_version": REPORT_QUERY_API_VERSION,
         "resource_kind": resource_kind,
         "count": len(items),
+        "total_count": total_count,
+        "limit": limit,
+        "truncated": total_count > len(items),
         "items": items,
     }
 
 
 def get_report_resource(root: str | Path, resource_kind: str, resource_id: str) -> dict[str, Any]:
     resource_id = validate_name(resource_id, "resource_id")
-    result = query_report_resources(root, resource_kind, include_archived=True)
-    found = next((item for item in result["items"] if item.get("id") == resource_id), None)
+    os_root = expand_path(root)
+    definitions = {
+        str(item.get("id")): item
+        for item in _load_registry(os_root, REPORT_REGISTRY)["definitions"]
+        if isinstance(item, dict) and item.get("id")
+    }
+    if resource_kind == "definition":
+        raw = definitions.get(resource_id)
+        found = report_resource_projection(os_root, raw) if raw else None
+    elif resource_kind in {"run", "artifact"}:
+        relative = REPORT_RUN_REGISTRY if resource_kind == "run" else REPORT_ARTIFACT_REGISTRY
+        collection = "runs" if resource_kind == "run" else "artifacts"
+        raw = next(
+            (
+                item
+                for item in _load_registry(os_root, relative)[collection]
+                if isinstance(item, dict) and item.get("id") == resource_id
+            ),
+            None,
+        )
+        found = _indexed_projection(os_root, resource_kind, raw, definitions) if raw else None
+    else:
+        raise ValueError(f"unsupported report resource kind: {resource_kind}")
     if found is None:
         raise ValueError(f"unknown report {resource_kind}: {resource_id}")
     return {"api_version": REPORT_QUERY_API_VERSION, "resource_kind": resource_kind, "resource": found}
@@ -434,6 +515,7 @@ def create_report_definition(root: str | Path, definition: Mapping[str, Any], *,
     report_id = validate_name(str(normalized.get("id") or ""), "report_id")
     timestamp = _iso()
     normalized.setdefault("schema_version", DEFINITION_SCHEMA_VERSION)
+    normalized.setdefault("catalog_ref", None)
     normalized.setdefault("status", "active")
     normalized.setdefault("created_at", timestamp)
     normalized.setdefault("updated_at", normalized["created_at"])
@@ -1014,6 +1096,24 @@ def consolidation_plan(root: str | Path, *, stale_days: int = 30) -> dict[str, A
         for row in collect_reports(os_root, max_files=500)
         if row["source"] not in canonical_paths and REPORT_LOG_ROOT not in row["source"]
     ]
+    catalog = _load_yaml(os_root / REPORT_CATALOG_REGISTRY, {"reports": []})
+    catalog_rows = catalog.get("reports", []) if isinstance(catalog, dict) else []
+    catalog_ids = {
+        str(item.get("id")) for item in catalog_rows if isinstance(item, dict) and item.get("id")
+    }
+    definitions_by_catalog = {
+        str(item.get("catalog_ref"))
+        for item in definitions
+        if isinstance(item, dict) and item.get("catalog_ref")
+    }
+    catalog_gaps = {
+        "catalog_without_definition": sorted(catalog_ids - definitions_by_catalog),
+        "definition_without_catalog": sorted(
+            str(item.get("id"))
+            for item in definitions
+            if isinstance(item, dict) and not item.get("catalog_ref")
+        ),
+    }
     return {
         "api_version": REPORT_QUERY_API_VERSION,
         "action": "report.consolidation_plan",
@@ -1022,7 +1122,14 @@ def consolidation_plan(root: str | Path, *, stale_days: int = 30) -> dict[str, A
         "duplicates": duplicates,
         "stale": stale,
         "legacy_artifacts": legacy,
-        "summary": {"duplicate_groups": len(duplicates), "stale_definitions": len(stale), "legacy_artifacts": len(legacy)},
+        "catalog_gaps": catalog_gaps,
+        "summary": {
+            "duplicate_groups": len(duplicates),
+            "stale_definitions": len(stale),
+            "legacy_artifacts": len(legacy),
+            "catalog_without_definition": len(catalog_gaps["catalog_without_definition"]),
+            "definition_without_catalog": len(catalog_gaps["definition_without_catalog"]),
+        },
         "mutation": {"performed": False, "deletions": 0, "automatic_archive": False},
     }
 

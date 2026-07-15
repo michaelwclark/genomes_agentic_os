@@ -49,6 +49,7 @@ def handle_query(args: argparse.Namespace) -> int:
         definition_id=args.definition_id,
         status=args.status,
         include_archived=args.include_archived,
+        limit=args.limit,
     )
     _print(result, json_output=args.json)
     return 0
@@ -139,6 +140,7 @@ def register(subparsers) -> None:
     query_parser.add_argument("--definition-id")
     query_parser.add_argument("--status")
     query_parser.add_argument("--include-archived", action="store_true")
+    query_parser.add_argument("--limit", type=int, default=200, help="Maximum 1-500 resources (default: 200).")
     _common(query_parser)
     query_parser.set_defaults(handler=handle_query)
 

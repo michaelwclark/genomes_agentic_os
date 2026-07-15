@@ -934,7 +934,7 @@ are dry-run by default and require `--apply` to persist.
 | Subcommand | Required arguments | Important flags |
 | --- | --- | --- |
 | `init` | — | `--root`, `--json` |
-| `query` | `definition\|run\|artifact` | `--definition-id`, `--status`, `--include-archived` |
+| `query` | `definition\|run\|artifact` | `--definition-id`, `--status`, `--include-archived`, `--limit` (1-500) |
 | `get` | `definition\|run\|artifact <id>` | `--root`, `--json` |
 | `validate` | `--definition-file <path>` | `--root`, `--json` |
 | `create` | `--definition-file <path>` | `--dry-run`, `--apply`, `--root`, `--json` |

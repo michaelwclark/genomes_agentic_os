@@ -187,6 +187,57 @@ def test_run_now_builds_all_rich_sections_and_independent_run_artifact_records(t
     assert projection["run_count"] == projection["artifact_count"] == 1
 
 
+def test_bounded_query_contract_links_catalog_scope_source_latest_run_and_artifact(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    _init(root, capsys)
+    _write_json(root / "data/report.json", [{"count": 2}])
+    catalog_path = root / "harness/registries/reports.yml"
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "reports": [
+                    {
+                        "id": "daily_engineering_catalog",
+                        "name": "Daily engineering catalog",
+                        "description": "Prompt-backed authoring entry.",
+                        "source": "harness/reports/daily_engineering_catalog.md",
+                        "status": "draft",
+                    }
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    definition = _definition()
+    definition["catalog_ref"] = "daily_engineering_catalog"
+    create_report_definition(root, definition, dry_run=False)
+    result = run_report_now(root, "daily_engineering", dry_run=False)
+
+    definitions = query_report_resources(root, "definition", limit=1)
+    assert definitions["count"] == definitions["total_count"] == 1
+    assert definitions["limit"] == 1
+    assert definitions["truncated"] is False
+    row = definitions["items"][0]
+    assert row["source"] == {"kind": "registry", "path": REPORT_REGISTRY}
+    assert row["scope"] == {"domain": "clarks_consulting", "project": "genomes_agentic_os"}
+    assert row["catalog_ref"] == "daily_engineering_catalog"
+    assert row["catalog"]["source"] == "harness/reports/daily_engineering_catalog.md"
+    assert row["latest_run"]["id"] == result["run"]["id"]
+    assert row["latest_artifact"]["id"] == result["artifact"]["id"]
+    assert row["schedule_id"] is None
+
+    run_row = query_report_resources(root, "run", limit=1)["items"][0]
+    artifact_row = query_report_resources(root, "artifact", limit=1)["items"][0]
+    assert run_row["scope"] == row["scope"]
+    assert run_row["source"]["kind"] == "run"
+    assert artifact_row["scope"] == row["scope"]
+    assert artifact_row["source"]["kind"] == "artifact"
+
+    with pytest.raises(ValueError, match="between 1 and 500"):
+        query_report_resources(root, "definition", limit=0)
+
+
 @pytest.mark.parametrize(
     ("required", "expected_status", "evidence_status"),
     [(True, "error", "error"), (False, "partial", "partial")],
@@ -273,6 +324,10 @@ def test_retention_and_consolidation_are_plans_without_deletion(tmp_path: Path, 
     assert plan["mutation"] == {"performed": False, "deletions": 0, "automatic_archive": False}
     assert plan["summary"]["duplicate_groups"] == 1
     assert {item["definition_id"] for item in plan["stale"]} == {"daily_engineering_copy"}
+    assert plan["catalog_gaps"]["definition_without_catalog"] == [
+        "daily_engineering",
+        "daily_engineering_copy",
+    ]
 
 
 def test_filesystem_sources_cannot_escape_or_traverse_symlinks(tmp_path: Path, capsys) -> None:

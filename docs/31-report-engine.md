@@ -8,12 +8,19 @@ separate identities and can be queried independently.
 
 | Resource | Canonical registry | Durable content |
 | --- | --- | --- |
-| `ReportDefinition` | `harness/registries/reports.yml` | generator links, sources, schedule, destinations, retention, permissions, health, sections |
+| report prompt/catalog entry | `harness/registries/reports.yml` | governed draft/archive CRUD and source prompt document |
+| `ReportDefinition` | `harness/registries/report-definitions.yml` | runnable generator links, catalog ref, sources, schedule, destinations, retention, permissions, health, sections |
 | `ReportRun` | `harness/registries/report-runs.yml` | status, timing, source completeness, errors, projection evidence, artifact ids |
 | `ReportArtifact` | `harness/registries/report-artifacts.yml` | artifact identity, checksum, JSON path, rendered Markdown path |
 
 The filesystem is canonical. A Notion page is an optional projection and never
 becomes report identity or lifecycle state.
+
+The catalog and runtime definition are deliberately separate layers. A catalog
+entry can exist as a draft before its sources, schedule, and destinations are
+configured. A runnable definition may link it with `catalog_ref`. Validation
+refuses stale explicit links, while consolidation shows catalog entries lacking
+definitions and definitions lacking catalog links.
 
 Schemas are versioned independently as `report-definition.schema.json`,
 `report-run.schema.json`, and `report-artifact.schema.json`. `agentic-os init`
@@ -114,6 +121,9 @@ agentic-os report consolidate-plan --stale-days 30 --root ~/agentic_os --json
 - Tests cover lifecycle receipts, optimistic rollback, all rich section types,
   missing required/optional sources, retention planning, stale schedules,
   workspace guards, projection failure, path traversal, and consolidation.
-- Operator UIs should consume `report query definition|run|artifact --json`;
-  the definition projection includes current health and related run/artifact
-  counts without scraping Markdown.
+- Operator UIs should consume the bounded
+  `report query definition|run|artifact --limit 200 --json` contract. Every
+  resource includes `id`, `status`, `scope`, and `source`; definitions also
+  include `catalog_ref`, catalog metadata, schedule, current health, latest run,
+  latest artifact, and related counts without scraping Markdown. The response
+  declares `count`, `total_count`, `limit`, and `truncated`.

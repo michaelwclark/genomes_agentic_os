@@ -1,5 +1,6 @@
 schema_version: 1
 id: daily_operator_report
+catalog_ref: null
 name: Daily operator report
 summary: A progressive, source-evidenced view of current Agentic OS work.
 status: active

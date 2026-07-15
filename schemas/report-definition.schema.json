@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "id", "name", "summary", "status", "scope",
+    "schema_version", "id", "catalog_ref", "name", "summary", "status", "scope",
     "generator", "sources", "parameters", "schedule", "destinations",
     "retention", "permissions", "health_policy", "sections", "created_at",
     "updated_at"
@@ -13,6 +13,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "catalog_ref": {"type": ["string", "null"], "pattern": "^[a-z0-9_]+$"},
     "name": {"type": "string", "minLength": 1, "maxLength": 160},
     "summary": {"type": "string", "minLength": 1, "maxLength": 500},
     "status": {"enum": ["active", "archived"]},

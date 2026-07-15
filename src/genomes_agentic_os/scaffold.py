@@ -607,7 +607,7 @@ def ensure_report_engine_contract(root: Path, result: ScaffoldResult) -> None:
     never overwrite these registries after their first creation.
     """
     registries = {
-        "reports.yml": {"api_version": "report-registry/v1", "definitions": []},
+        "report-definitions.yml": {"api_version": "report-registry/v1", "definitions": []},
         "report-runs.yml": {"api_version": "report-run-registry/v1", "runs": []},
         "report-artifacts.yml": {"api_version": "report-artifact-registry/v1", "artifacts": []},
     }
