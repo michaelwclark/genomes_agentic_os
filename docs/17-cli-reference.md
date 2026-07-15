@@ -429,6 +429,24 @@ Nothing in this group applies an OS change without an explicit `approve` /
 | `adaptive-routing rollback-plan` | Build non-mutating Feature 62 static rollback instructions. |
 | `adaptive-routing status` | Show policy lifecycle, version, and enforce eligibility without changes. |
 
+### Reports — `cli/reporting.py`
+
+| Command | What it does |
+| --- | --- |
+| `report init` | Add missing versioned report registries without overwriting data. |
+| `report query definition\|run\|artifact` | Return typed resource projections and definition/run/artifact relationships. |
+| `report get definition\|run\|artifact <id>` | Read one independently addressable report resource. |
+| `report validate` | Validate a definition schema and schedule/source references. |
+| `report create` / `report update` | Plan or apply a receipted definition mutation. |
+| `report archive` / `report restore` | Plan or apply a reversible lifecycle change. |
+| `report run-now` | Plan or produce a source-evidenced run plus JSON/Markdown artifact. |
+| `report rollback` | Optimistically restore a lifecycle registry backup. |
+| `report consolidate-plan` | Find duplicate, stale, and legacy candidates without deleting them. |
+
+Lifecycle and run actions are dry-run by default. See
+[31 · First-Class Report Engine](31-report-engine.md) for schemas, projection
+guards, and examples.
+
 ---
 
 ## Real examples

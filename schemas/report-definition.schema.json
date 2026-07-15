@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes.dev/agentic-os/report-definition.schema.json",
+  "title": "Agentic OS ReportDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "id", "catalog_ref", "name", "summary", "status", "scope",
+    "generator", "sources", "parameters", "schedule", "destinations",
+    "retention", "permissions", "health_policy", "sections", "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "catalog_ref": {"type": ["string", "null"], "pattern": "^[a-z0-9_]+$"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 160},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+    "status": {"enum": ["active", "archived"]},
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["domain", "project"],
+      "properties": {
+        "domain": {"type": ["string", "null"], "pattern": "^[a-z0-9_]+$"},
+        "project": {"type": ["string", "null"], "pattern": "^[a-z0-9_]+$"}
+      }
+    },
+    "generator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "builtin"},
+        "id": {"const": "rich_sections_v1"},
+        "workflow_ref": {"type": ["string", "null"]},
+        "program_ref": {"type": ["string", "null"]}
+      }
+    },
+    "sources": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind", "required"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+          "kind": {"enum": ["filesystem", "report_inventory"]},
+          "required": {"type": "boolean"},
+          "path": {"type": "string"},
+          "parser": {"enum": ["text", "json", "yaml"]},
+          "query": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "domain": {"type": "string"}, "project": {"type": "string"},
+              "status": {"type": "string"}, "type": {"type": "string"},
+              "limit": {"type": "integer", "minimum": 1, "maximum": 500}
+            }
+          }
+        }
+      }
+    },
+    "parameters": {"type": "object"},
+    "schedule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schedule_id"],
+      "properties": {"schedule_id": {"type": ["string", "null"], "pattern": "^[a-z0-9_]+$"}}
+    },
+    "destinations": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["kind", "enabled"],
+        "properties": {
+          "kind": {"enum": ["filesystem", "notion"]},
+          "enabled": {"type": "boolean"},
+          "workspace": {"type": "string"},
+          "parent_id": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "retention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_runs", "max_age_days"],
+      "properties": {
+        "max_runs": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "max_age_days": {"type": "integer", "minimum": 1, "maximum": 3650}
+      }
+    },
+    "permissions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_now", "edit", "notion_projection"],
+      "properties": {
+        "run_now": {"type": "boolean"}, "edit": {"type": "boolean"},
+        "notion_projection": {"type": "boolean"}
+      }
+    },
+    "health_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_stale_hours", "partial_is_error"],
+      "properties": {
+        "max_stale_hours": {"type": "integer", "minimum": 1, "maximum": 8760},
+        "partial_is_error": {"type": "boolean"}
+      }
+    },
+    "sections": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "type", "title", "source_id"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+          "type": {"enum": ["markdown", "table", "chart", "list", "timeline", "links", "evidence"]},
+          "title": {"type": "string", "minLength": 1, "maxLength": 160},
+          "source_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+          "chart_type": {"enum": ["bar", "line", "area", "pie"]},
+          "x": {"type": "string"}, "y": {"type": "string"}
+        }
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "archived_at": {"type": ["string", "null"], "format": "date-time"}
+  }
+}

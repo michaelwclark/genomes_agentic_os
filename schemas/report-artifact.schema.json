@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes.dev/agentic-os/report-artifact.schema.json",
+  "title": "Agentic OS ReportArtifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "definition_id", "run_id", "created_at", "status", "title", "summary", "sections", "source_completeness", "errors", "content_sha256"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "definition_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "run_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["success", "partial", "error"]},
+    "title": {"type": "string"}, "summary": {"type": "string"},
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "type", "title", "status", "data", "evidence"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"enum": ["markdown", "table", "chart", "list", "timeline", "links", "evidence"]},
+          "title": {"type": "string"}, "status": {"enum": ["complete", "partial", "error"]},
+          "data": {}, "evidence": {"type": "object"}
+        }
+      }
+    },
+    "source_completeness": {"type": "number", "minimum": 0, "maximum": 1},
+    "errors": {"type": "array", "items": {"type": "object"}},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

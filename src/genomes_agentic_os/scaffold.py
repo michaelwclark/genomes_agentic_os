@@ -600,6 +600,25 @@ def ensure_schemas_dir(root: Path, result: ScaffoldResult) -> None:
         copy_file(schema_file, dest / schema_file.name, result)
 
 
+def ensure_report_engine_contract(root: Path, result: ScaffoldResult) -> None:
+    """Install additive, empty first-class report registries.
+
+    Report content belongs to the installed OS, so source-package upgrades must
+    never overwrite these registries after their first creation.
+    """
+    registries = {
+        "report-definitions.yml": {"api_version": "report-registry/v1", "definitions": []},
+        "report-runs.yml": {"api_version": "report-run-registry/v1", "runs": []},
+        "report-artifacts.yml": {"api_version": "report-artifact-registry/v1", "artifacts": []},
+    }
+    for filename, payload in registries.items():
+        write_file_once(
+            harness_path(root, "registries", filename),
+            yaml.safe_dump(payload, sort_keys=False),
+            result,
+        )
+
+
 def copy_file_once(source: Path, destination: Path, result: ScaffoldResult) -> None:
     copy_file(source, destination, result)
 
@@ -1967,6 +1986,7 @@ def ensure_root_files(
     ensure_dir(harness_path(root), result)
     ensure_visible_capability_surface(root, result)
     ensure_schemas_dir(root, result)
+    ensure_report_engine_contract(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
     harness_root = harness_path(root)
@@ -2106,6 +2126,7 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     ensure_capability_registries(os_root, result)
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)
+    ensure_report_engine_contract(os_root, result)
     copy_file(
         template_source_dir() / "runtime" / "doc-config.yml",
         shared_factory_path(os_root, "00-control-plane", "doc-config.yml"),

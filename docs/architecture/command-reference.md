@@ -925,6 +925,39 @@ Status: **OK** (rc 0)
 
 ---
 
+### `report`
+
+Operate versioned `ReportDefinition`, `ReportRun`, and `ReportArtifact`
+resources. `create`, `update`, `archive`, `restore`, `run-now`, and `rollback`
+are dry-run by default and require `--apply` to persist.
+
+| Subcommand | Required arguments | Important flags |
+| --- | --- | --- |
+| `init` | — | `--root`, `--json` |
+| `query` | `definition\|run\|artifact` | `--definition-id`, `--status`, `--include-archived`, `--limit` (1-500) |
+| `get` | `definition\|run\|artifact <id>` | `--root`, `--json` |
+| `validate` | `--definition-file <path>` | `--root`, `--json` |
+| `create` | `--definition-file <path>` | `--dry-run`, `--apply`, `--root`, `--json` |
+| `update` | `<report_id> --definition-file <path>` | `--dry-run`, `--apply`, `--root`, `--json` |
+| `archive` / `restore` | `<report_id>` | `--dry-run`, `--apply`, `--root`, `--json` |
+| `run-now` | `<report_id>` | `--trigger`, `--project-notion`, `--notion-workspace`, `--dry-run`, `--apply` |
+| `rollback` | `<receipt-relative-path>` | `--dry-run`, `--apply`, `--root`, `--json` |
+| `consolidate-plan` | — | `--stale-days`, `--root`, `--json` |
+
+```bash
+agentic-os report create --definition-file report.yml --dry-run --root ~/agentic_os --json
+agentic-os report run-now daily_operator_report --apply --root ~/agentic_os --json
+agentic-os report query artifact --definition-id daily_operator_report --root ~/agentic_os --json
+```
+
+`run-now` executes only bounded built-in projections. It does not evaluate an
+arbitrary generator command. Notion is optional and exact-workspace guarded;
+projection failures remain explicit in the run and make the result partial.
+
+Status: **OK** (covered by report engine contract tests)
+
+---
+
 ### `schedule run-due`
 
 Queue schedules that are currently due. Dry-run by default.

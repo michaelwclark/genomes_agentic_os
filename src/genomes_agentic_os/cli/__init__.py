@@ -38,6 +38,7 @@ from . import adaptive
 from . import spec
 from . import resource_graph
 from . import resource_actions
+from . import reporting
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -69,6 +70,7 @@ COMMAND_MODULES = [
     spec,
     resource_graph,
     resource_actions,
+    reporting,
 ]
 
 

@@ -114,6 +114,7 @@ belong in `scaffold.py`, not a new `utils.py`.
 | `routing.py` | — | **Deterministic routing.** `ContextPacket` assembly, `route_request`, `context_from_here`, `RISK_KEYWORDS` approval detection. No LLM. |
 | `context_contracts.py` | — | **Context inheritance.** Versioned manifest parsing, parent/source provenance, duplicate suppression, and central provider-route resolution. |
 | `context_compaction.py` | — | **Context migration analysis.** Bounded duplicate scans plus deterministic dry-run and rollback plans; never deletes. |
+| `report_engine.py` | — | **First-class reports.** Versioned definition/run/artifact registries, rich sections, explicit source/projection evidence, governed lifecycle/run actions, and consolidation plans. |
 | `automation_ops.py` | 282 | **Automation maturity.** Readiness checks + the `observe→prepare→propose→execute_approved→execute_guarded` ladder + project attachment. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
 | `notion_sync.py` | 261 | **Notion projection.** Build/apply a reviewable filesystem→Notion sync plan. |
