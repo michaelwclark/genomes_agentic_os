@@ -124,6 +124,84 @@ def test_evidence_files_orders_newest_first(tmp_path: Path) -> None:
     assert ordered[1] == older
 
 
+def test_evidence_files_age_cutoff_excludes_stale_files(tmp_path: Path) -> None:
+    import time
+
+    folder = tmp_path / "evidence"
+    folder.mkdir()
+    stale = folder / "stale.md"
+    fresh = folder / "fresh.md"
+    stale.write_text("stale operator failure evidence entry\n", encoding="utf-8")
+    fresh.write_text("fresh operator failure evidence entry\n", encoding="utf-8")
+    thirty_days_ago = time.time() - 30 * 86400
+    os.utime(stale, (thirty_days_ago, thirty_days_ago))
+
+    windowed = si._evidence_files(folder, max_age_days=7)
+    assert fresh in windowed
+    assert stale not in windowed
+
+    # No window (None) keeps every file, preserving prior behavior.
+    unwindowed = si._evidence_files(folder)
+    assert stale in unwindowed and fresh in unwindowed
+
+
+def test_collect_evidence_respects_configured_age_cutoff(tmp_path: Path) -> None:
+    import time
+
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    stale = _seed_conversation(root, "2020-01-01-session.md", "old blocked failure evidence\n")
+    fresh = _seed_conversation(root, "today-session.md", "new blocked failure evidence\n")
+    long_ago = time.time() - 400 * 86400
+    os.utime(stale, (long_ago, long_ago))
+
+    config = si._load_yaml(root / si.CONFIG_PATH)
+    evidence_roots = si._configured_evidence_roots(root, config)
+    records = si._collect_evidence(evidence_roots, max_age_days=si._evidence_max_age_days(config))
+
+    locators = {si._record_locator(root, record) for record in records}
+    assert fresh.relative_to(root).as_posix() in locators
+    assert stale.relative_to(root).as_posix() not in locators
+
+
+def test_evidence_max_age_days_config_merging() -> None:
+    # Missing key falls back to the default window.
+    assert si._evidence_max_age_days({}) == float(si.EVIDENCE_MAX_AGE_DAYS_DEFAULT)
+    # Explicit override wins.
+    assert si._evidence_max_age_days({"evidence_max_age_days": 30}) == 30.0
+    # Zero / negative disables the cutoff entirely.
+    assert si._evidence_max_age_days({"evidence_max_age_days": 0}) is None
+    assert si._evidence_max_age_days({"evidence_max_age_days": -1}) is None
+    # Invalid values fall back to the default rather than crashing the run.
+    assert si._evidence_max_age_days({"evidence_max_age_days": "soon"}) == float(
+        si.EVIDENCE_MAX_AGE_DAYS_DEFAULT
+    )
+
+
+def test_fixture_marked_lines_never_score_as_evidence(tmp_path: Path) -> None:
+    marked = "TEST-FIXTURE: validation failed repeatedly for doctor"
+    assert si._is_low_value_evidence_line(marked) is True
+
+    record = si.EvidenceRecord(
+        path=tmp_path / "run.md",
+        text="",
+        redacted_text=f"{marked}\nreal adapter error: retry loop blocked twice\n",
+        redactions=0,
+    )
+    keywords = ("validation failed", "test failed", "failed", "blocked", "error:")
+    hits = si._keyword_hits([record], keywords)
+    # Only the unmarked line contributes ("error:" + "blocked").
+    assert hits == 2
+
+    fixture_only = si.EvidenceRecord(
+        path=tmp_path / "fixture.md",
+        text="",
+        redacted_text=f"{marked}\n{marked}\n",
+        redactions=0,
+    )
+    assert si._keyword_hits([fixture_only], keywords) == 0
+
+
 def test_repeated_evidence_filters_structured_noise_and_semantic_dedupe(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     root.mkdir()

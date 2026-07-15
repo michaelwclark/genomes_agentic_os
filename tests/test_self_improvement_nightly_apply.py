@@ -113,8 +113,8 @@ def _make_proposal(
     finding = {
         "type": finding_type,
         "title": f"Finding {slug}",
-        "summary": f"Recurring signal {slug} needs attention.",
-        "evidence": f"validation failed repeatedly for {slug}",
+        "summary": f"TEST-FIXTURE: Recurring signal {slug} needs attention.",
+        "evidence": f"TEST-FIXTURE: validation failed repeatedly for {slug}",
         "score": score,
     }
     proposal = si._proposal_from_finding(root, [], finding)

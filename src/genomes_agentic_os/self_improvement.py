@@ -53,6 +53,14 @@ NIGHTLY_APPLY_DEFAULTS: dict[str, Any] = {
 MAX_EVIDENCE_FILES = 400
 MAX_EVIDENCE_FILES_PER_ROOT = 40
 MAX_EVIDENCE_BYTES = 16_000
+# Recency window for evidence sampling: files whose mtime is older than this many
+# days are never scanned, so stale transcripts cannot regenerate old proposals
+# forever. Overridable via the `evidence_max_age_days` control-plane key.
+EVIDENCE_MAX_AGE_DAYS_DEFAULT = 7
+# Lines carrying this marker are test-fixture noise, never operator evidence.
+# Test fixtures stamp it on their synthetic failure strings so leaked fixture
+# text echoed through harness-run transcripts can never score as evidence.
+TEST_FIXTURE_MARKER = "test-fixture"
 EVIDENCE_SUFFIXES = {".md", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".log"}
 ACTIONABLE_EVIDENCE_TERMS = (
     "blocked",
@@ -127,6 +135,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"path": "ROUTER.md", "legacy_read_only": False},
         {"path": "shared_factory", "legacy_read_only": True},
     ],
+    "evidence_max_age_days": EVIDENCE_MAX_AGE_DAYS_DEFAULT,
     "proposal_thresholds": {"minimum_total": 18, "minimum_confidence": 3},
     "cooldowns": {
         "feature-spec": "30d",
@@ -404,17 +413,53 @@ def _candidate_sort_key(path: Path) -> tuple[float, str]:
     return (-mtime, path.as_posix())
 
 
-def _evidence_files(path: Path, *, limit: int = MAX_EVIDENCE_FILES_PER_ROOT) -> list[Path]:
+def _evidence_max_age_days(config: dict[str, Any]) -> float | None:
+    """Resolve the configured evidence recency window over the safe default.
+
+    Mirrors the ``_nightly_apply_policy`` merge pattern: a missing or invalid
+    ``evidence_max_age_days`` key falls back to ``EVIDENCE_MAX_AGE_DAYS_DEFAULT``
+    so control-plane files that predate the knob stay deterministic. A value of
+    0 or less explicitly disables the age cutoff (scan regardless of mtime).
+    """
+    raw = config.get("evidence_max_age_days", EVIDENCE_MAX_AGE_DAYS_DEFAULT)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return float(EVIDENCE_MAX_AGE_DAYS_DEFAULT)
+    if value <= 0:
+        return None
+    return value
+
+
+def _evidence_files(
+    path: Path,
+    *,
+    limit: int = MAX_EVIDENCE_FILES_PER_ROOT,
+    max_age_days: float | None = None,
+) -> list[Path]:
+    cutoff: float | None = None
+    if max_age_days is not None:
+        cutoff = datetime.now(timezone.utc).timestamp() - max_age_days * 86400.0
+
+    def _within_window(candidate: Path) -> bool:
+        if cutoff is None:
+            return True
+        try:
+            return candidate.stat().st_mtime >= cutoff
+        except OSError:
+            return False
+
     if not path.exists():
         return []
     if path.is_file():
-        return [path] if path.suffix.lower() in EVIDENCE_SUFFIXES else []
+        return [path] if path.suffix.lower() in EVIDENCE_SUFFIXES and _within_window(path) else []
     eligible = [
         candidate
         for candidate in path.rglob("*")
         if candidate.is_file()
         and OUTPUT_ROOT not in candidate.as_posix()
         and candidate.suffix.lower() in EVIDENCE_SUFFIXES
+        and _within_window(candidate)
     ]
     eligible.sort(key=_candidate_sort_key)
     return eligible[:limit]
@@ -427,19 +472,25 @@ def _redact(text: str) -> tuple[str, int]:
     return redacted, count
 
 
-def _collect_evidence(evidence_roots: list[dict[str, Any]]) -> list[EvidenceRecord]:
+def _collect_evidence(
+    evidence_roots: list[dict[str, Any]],
+    *,
+    max_age_days: float | None = EVIDENCE_MAX_AGE_DAYS_DEFAULT,
+) -> list[EvidenceRecord]:
     """Sample evidence from every configured root.
 
     A per-root cap (``MAX_EVIDENCE_FILES_PER_ROOT``) guarantees that small but
     high-signal roots (conversation logs, OS-shape files) are always represented
     even when a large root such as ``06-runs-and-logs`` could otherwise exhaust a
     single global budget. The global ceiling (``MAX_EVIDENCE_FILES``) still bounds
-    total work for a daily run.
+    total work for a daily run. ``max_age_days`` bounds recency: files last
+    modified before the window are skipped so old transcripts cannot keep
+    regenerating the same proposal indefinitely.
     """
     records: list[EvidenceRecord] = []
     seen: set[Path] = set()
     for entry in evidence_roots:
-        for path in _evidence_files(entry["resolved"]):
+        for path in _evidence_files(entry["resolved"], max_age_days=max_age_days):
             if path in seen:
                 continue
             seen.add(path)
@@ -461,6 +512,8 @@ def _has_actionable_signal(line: str) -> bool:
 
 def _is_low_value_evidence_line(line: str) -> bool:
     lower = " ".join(line.strip().lower().split())
+    if TEST_FIXTURE_MARKER in lower:
+        return True
     if len(lower) < 20:
         return True
     if lower.startswith(("#", "---", "|")):
@@ -515,11 +568,13 @@ def _line_counts(records: list[EvidenceRecord]) -> Counter[str]:
 
 
 def _keyword_hits(records: list[EvidenceRecord], keywords: tuple[str, ...]) -> int:
-    return sum(
-        record.redacted_text.lower().count(keyword)
-        for record in records
-        for keyword in keywords
-    )
+    total = 0
+    for record in records:
+        for line in record.redacted_text.lower().splitlines():
+            if TEST_FIXTURE_MARKER in line:
+                continue
+            total += sum(line.count(keyword) for keyword in keywords)
+    return total
 
 
 def _score(*, frequency: int, severity: int, reuse: int, confidence: int, blast_radius: int, staleness: int) -> dict[str, int]:
@@ -2619,7 +2674,7 @@ def run_self_improvement(root: str | Path, *, dry_run: bool = True) -> dict[str,
     config_path = os_root / CONFIG_PATH
     config = _load_yaml(config_path)
     evidence_roots = _configured_evidence_roots(os_root, config)
-    records = _collect_evidence(evidence_roots)
+    records = _collect_evidence(evidence_roots, max_age_days=_evidence_max_age_days(config))
     findings = _findings(os_root, records)
     candidates = [_proposal_from_finding(os_root, records, finding) for finding in findings]
     redactions = sum(record.redactions for record in records)
