@@ -282,12 +282,29 @@ dry-run; pass `--apply` to write.
 | `runtime supervise` | Run one supervisor tick across the runtime surface (heartbeats, schedules, sources, events, run queue) plus a health check. |
 | `schedule` | Manage runtime schedules. |
 | `schedule create` | Create a schedule in the runtime registry. |
+| `schedule delete` | Delete a disabled schedule with no active queue references. |
+| `schedule disable` | Plan or apply disabling one schedule. |
+| `schedule enable` | Plan or apply enabling one schedule. |
+| `schedule get` | Read and validate one schedule. |
+| `schedule list` | List configured schedules in stable ID order. |
+| `schedule queue-now` | Queue one schedule without dispatching it. |
 | `schedule run-due` | Queue due schedules without executing external effects. |
+| `schedule update` | Plan or apply an allowlisted schedule-field update. |
 
 Every command in this table executes **one tick and exits**. None of them is a
 persistent background process — "always-on" means something external (cron,
 launchd, a wrapper script) calls these on a cadence, not that a daemon ships
 in this package.
+
+### Governed resources — `cli/resource_actions.py`
+
+| Command | What it does |
+| --- | --- |
+| `resource create` | Dry-run or scaffold an automation, workflow, shared program, or instance program without running it. |
+| `resource validate` | Validate automation/workflow readiness or program structural completeness. |
+
+`--json` returns the stable `resource-actions/v1` contract used by local GUI
+clients. New mutations are dry-run by default and require `--apply`.
 
 ### State — `cli/state.py`
 

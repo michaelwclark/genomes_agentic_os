@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from ..cli_help import AosHelpFormatter, env_epilog
 from ..runtime_health import build_runtime_health, project_runtime_health, write_runtime_health
+from ..resource_actions import (
+    schedule_create_governed,
+    schedule_delete,
+    schedule_get,
+    schedule_list,
+    schedule_queue_now,
+    schedule_set_enabled,
+    schedule_update,
+)
 from ..runtime_ops import (
     format_runtime_result,
     heartbeat_list,
@@ -17,12 +27,25 @@ from ..runtime_ops import (
     runtime_doctor,
     runtime_init,
     runtime_run_next,
-    schedule_create,
     schedule_run_due,
 )
 from ..supervisor import format_supervise_result, supervise_tick
 
 from ._shared import DEFAULT_ROOT
+
+
+def _print_structured(result: dict, *, json_output: bool = False) -> None:
+    print(json.dumps(result, sort_keys=True) if json_output else format_runtime_result(result))
+
+
+def _add_json_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
+
+
+def _add_safe_mutation_mode(parser: argparse.ArgumentParser) -> None:
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", default=True)
+    mode.add_argument("--apply", action="store_true")
 
 
 def _add_run_queue_prune_args(parser: argparse.ArgumentParser) -> None:
@@ -108,18 +131,74 @@ def handle_heartbeat_run(args: argparse.Namespace) -> int:
 
 
 def handle_schedule_create(args: argparse.Namespace) -> int:
-    print(
-        format_runtime_result(
-            schedule_create(
-                args.root,
-                args.schedule_id,
-                cadence=args.cadence,
-                timezone_name=args.timezone,
-                command=args.command,
-            )
-        )
+    # Preserve the historical immediate-create behavior when neither new mode
+    # flag is supplied. Command Center always supplies an explicit mode.
+    governed_mode = args.dry_run is not None or args.apply
+    dry_run = bool(args.dry_run) if governed_mode else False
+    enabled = (not args.disabled) if not governed_mode else bool(args.enabled and not args.disabled)
+    result = schedule_create_governed(
+        args.root,
+        args.schedule_id,
+        cadence=args.cadence,
+        timezone_name=args.timezone,
+        command=args.command,
+        enabled=enabled,
+        dry_run=dry_run,
     )
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("readback", {}).get("ok") else 1
+
+
+def handle_schedule_list(args: argparse.Namespace) -> int:
+    _print_structured(schedule_list(args.root), json_output=args.json)
     return 0
+
+
+def handle_schedule_get(args: argparse.Namespace) -> int:
+    _print_structured(schedule_get(args.root, args.schedule_id), json_output=args.json)
+    return 0
+
+
+def handle_schedule_update(args: argparse.Namespace) -> int:
+    changes = {
+        key: value
+        for key, value in {
+            "display_name": args.display_name,
+            "cadence": args.cadence,
+            "timezone": args.timezone,
+            "command": args.command,
+            "local_time": None if args.clear_local_time else args.local_time,
+            "execution_target": args.execution_target,
+            "enabled": args.enabled,
+        }.items()
+        if value is not None or (key == "local_time" and args.clear_local_time)
+    }
+    result = schedule_update(args.root, args.schedule_id, changes=changes, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("readback", {}).get("ok") else 1
+
+
+def handle_schedule_enabled(args: argparse.Namespace) -> int:
+    result = schedule_set_enabled(
+        args.root,
+        args.schedule_id,
+        enabled=args.enabled_value,
+        dry_run=not args.apply,
+    )
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("readback", {}).get("ok") else 1
+
+
+def handle_schedule_delete(args: argparse.Namespace) -> int:
+    result = schedule_delete(args.root, args.schedule_id, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("readback", {}).get("ok") else 1
+
+
+def handle_schedule_queue_now(args: argparse.Namespace) -> int:
+    result = schedule_queue_now(args.root, args.schedule_id, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("readback", {}).get("ok") and result.get("status") != "blocked" else 1
 
 
 def handle_schedule_run_due(args: argparse.Namespace) -> int:
@@ -231,7 +310,72 @@ def register(subparsers) -> None:
     schedule_create_parser.add_argument("--cadence", default="manual")
     schedule_create_parser.add_argument("--timezone", default="America/Chicago")
     schedule_create_parser.add_argument("--command")
+    schedule_create_enabled = schedule_create_parser.add_mutually_exclusive_group()
+    schedule_create_enabled.add_argument(
+        "--enabled",
+        action="store_true",
+        help="Enable a governed create; explicit-mode creates are disabled by default.",
+    )
+    schedule_create_enabled.add_argument("--disabled", action="store_true", help="Create the schedule disabled.")
+    schedule_create_mode = schedule_create_parser.add_mutually_exclusive_group()
+    schedule_create_mode.add_argument("--dry-run", action="store_true", default=None)
+    schedule_create_mode.add_argument("--apply", action="store_true")
+    _add_json_arg(schedule_create_parser)
     schedule_create_parser.set_defaults(handler=handle_schedule_create)
+    schedule_list_parser = schedule_subparsers.add_parser("list", help="List configured schedules.")
+    schedule_list_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(schedule_list_parser)
+    schedule_list_parser.set_defaults(handler=handle_schedule_list)
+    schedule_get_parser = schedule_subparsers.add_parser("get", help="Read and validate one schedule.")
+    schedule_get_parser.add_argument("schedule_id")
+    schedule_get_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(schedule_get_parser)
+    schedule_get_parser.set_defaults(handler=handle_schedule_get)
+    schedule_update_parser = schedule_subparsers.add_parser(
+        "update",
+        help="Plan or apply an allowlisted schedule-field update.",
+    )
+    schedule_update_parser.add_argument("schedule_id")
+    schedule_update_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    schedule_update_parser.add_argument("--display-name")
+    schedule_update_parser.add_argument("--cadence")
+    schedule_update_parser.add_argument("--timezone")
+    schedule_update_parser.add_argument("--command")
+    schedule_update_parser.add_argument("--local-time")
+    schedule_update_parser.add_argument("--clear-local-time", action="store_true")
+    schedule_update_parser.add_argument("--execution-target")
+    schedule_update_parser.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)
+    _add_safe_mutation_mode(schedule_update_parser)
+    _add_json_arg(schedule_update_parser)
+    schedule_update_parser.set_defaults(handler=handle_schedule_update)
+    for command_name, enabled_value in (("enable", True), ("disable", False)):
+        enabled_parser = schedule_subparsers.add_parser(
+            command_name,
+            help=f"Plan or apply a schedule {command_name} operation.",
+        )
+        enabled_parser.add_argument("schedule_id")
+        enabled_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+        _add_safe_mutation_mode(enabled_parser)
+        _add_json_arg(enabled_parser)
+        enabled_parser.set_defaults(handler=handle_schedule_enabled, enabled_value=enabled_value)
+    schedule_delete_parser = schedule_subparsers.add_parser(
+        "delete",
+        help="Delete a disabled schedule with no active queue references; dry-run by default.",
+    )
+    schedule_delete_parser.add_argument("schedule_id")
+    schedule_delete_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(schedule_delete_parser)
+    _add_json_arg(schedule_delete_parser)
+    schedule_delete_parser.set_defaults(handler=handle_schedule_delete)
+    schedule_queue_now_parser = schedule_subparsers.add_parser(
+        "queue-now",
+        help="Queue one named schedule without dispatching or executing it.",
+    )
+    schedule_queue_now_parser.add_argument("schedule_id")
+    schedule_queue_now_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(schedule_queue_now_parser)
+    _add_json_arg(schedule_queue_now_parser)
+    schedule_queue_now_parser.set_defaults(handler=handle_schedule_queue_now)
     schedule_run_due_parser = schedule_subparsers.add_parser("run-due", help="Queue due schedules without executing external effects.")
     schedule_run_due_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     schedule_run_due_mode = schedule_run_due_parser.add_mutually_exclusive_group()
