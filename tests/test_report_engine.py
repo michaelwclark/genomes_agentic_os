@@ -191,24 +191,16 @@ def test_bounded_query_contract_links_catalog_scope_source_latest_run_and_artifa
     root = tmp_path / "agentic_os"
     _init(root, capsys)
     _write_json(root / "data/report.json", [{"count": 2}])
-    catalog_path = root / "harness/registries/reports.yml"
-    catalog_path.write_text(
-        yaml.safe_dump(
-            {
-                "reports": [
-                    {
-                        "id": "daily_engineering_catalog",
-                        "name": "Daily engineering catalog",
-                        "description": "Prompt-backed authoring entry.",
-                        "source": "harness/reports/daily_engineering_catalog.md",
-                        "status": "draft",
-                    }
-                ]
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
+    assert main(
+        [
+            "resource", "create", "report", "daily_engineering_catalog",
+            "--display-name", "Daily engineering catalog",
+            "--description", "Prompt-backed authoring entry.",
+            "--prompt", "Build the report from verified engineering sources.",
+            "--apply", "--root", str(root), "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
     definition = _definition()
     definition["catalog_ref"] = "daily_engineering_catalog"
     create_report_definition(root, definition, dry_run=False)
