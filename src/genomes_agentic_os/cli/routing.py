@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import yaml
 
-from ..context_compaction import build_compaction_plan, check_context_contracts
+from ..context_compaction import (
+    apply_compaction_plan,
+    build_compaction_plan,
+    check_context_contracts,
+    restore_compaction_receipt,
+    write_compaction_plan,
+)
 from ..context_contracts import resolve_context_contract
 from ..routing import build_context, context_from_here, detect_from_cwd, format_packet, project_records, route_request
 from ..scaffold import domain_path, expand_path, normalize_domain, validate_name
@@ -137,21 +142,27 @@ def handle_context_check(args: argparse.Namespace) -> int:
 
 
 def handle_context_compact(args: argparse.Namespace) -> int:
-    if not args.dry_run:
-        raise ValueError("context compact is plan-only in this release; pass --dry-run")
-    plan = build_compaction_plan(args.root)
-    if args.output_dir:
-        output_dir = Path(args.output_dir).expanduser().resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "context-compaction-plan.json").write_text(
-            json.dumps({key: value for key, value in plan.items() if key != "rollback_manifest"}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        (output_dir / "context-compaction-rollback.json").write_text(
-            json.dumps(plan["rollback_manifest"], indent=2) + "\n",
-            encoding="utf-8",
-        )
-    print(yaml.safe_dump(plan, sort_keys=False).strip())
+    if args.dry_run:
+        if args.plan or args.receipt_dir:
+            raise ValueError("--plan and --receipt-dir are valid only with --apply")
+        if args.output_dir:
+            _, _, plan = write_compaction_plan(args.root, args.output_dir)
+        else:
+            plan = build_compaction_plan(args.root)
+        print(yaml.safe_dump(plan, sort_keys=False).strip())
+        return 0
+    if args.apply:
+        if not args.plan or not args.receipt_dir:
+            raise ValueError("context compact --apply requires --plan and --receipt-dir")
+        result = apply_compaction_plan(args.root, args.plan, args.receipt_dir)
+        print(yaml.safe_dump(result, sort_keys=False).strip())
+        return 0
+    raise ValueError("context compact requires exactly one of --dry-run or --apply")
+
+
+def handle_context_restore(args: argparse.Namespace) -> int:
+    result = restore_compaction_receipt(args.root, args.receipt)
+    print(yaml.safe_dump(result, sort_keys=False).strip())
     return 0
 
 
@@ -196,12 +207,23 @@ def register(subparsers) -> None:
     context_check.set_defaults(handler=handle_context_check)
     context_compact = context_subparsers.add_parser(
         "compact",
-        help="Build a reversible compaction plan without deleting files.",
+        help="Plan or apply a guarded, reversible context compaction.",
     )
     context_compact.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    context_compact.add_argument("--dry-run", action="store_true", help="Required; never mutates context files.")
+    compact_mode = context_compact.add_mutually_exclusive_group()
+    compact_mode.add_argument("--dry-run", action="store_true", help="Build a plan without mutating context files.")
+    compact_mode.add_argument("--apply", action="store_true", help="Apply a previously reviewed plan.")
     context_compact.add_argument("--output-dir", help="Optional directory for plan and rollback JSON receipts.")
+    context_compact.add_argument("--plan", help="Reviewed plan JSON produced by --dry-run.")
+    context_compact.add_argument("--receipt-dir", help="Required durable receipt directory for --apply.")
     context_compact.set_defaults(handler=handle_context_compact)
+    context_restore = context_subparsers.add_parser(
+        "restore",
+        help="Restore exact pre-compaction bytes from an applied receipt.",
+    )
+    context_restore.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    context_restore.add_argument("--receipt", required=True, help="Applied context-compaction receipt JSON.")
+    context_restore.set_defaults(handler=handle_context_restore)
 
     here_parser = subparsers.add_parser("here", help="Route from the current working directory.")
     here_subparsers = here_parser.add_subparsers(dest="here_command", required=True)
