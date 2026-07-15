@@ -969,6 +969,46 @@ def claude_adapter() -> str:
     return "@AGENTS.md\n"
 
 
+def root_instruction_adapter(filename: str) -> str:
+    """Return a root-level discovery adapter for the canonical harness contract.
+
+    The installed root is a conversation launch point for both Claude and
+    Codex.  Keep the complete contract under ``harness/``, but leave a small,
+    portable entry surface at the root so neither harness starts without a
+    route-read context contract after the harness-layout migration.
+    """
+
+    if filename == "AGENTS.md":
+        return """# Agentic OS Root Entry Point
+
+This directory is the automatic entry point for the installed Agentic OS.
+Before replying, selecting a tool, or changing state for Agentic OS work, read
+the canonical root contract in this order:
+
+1. `harness/AGENTS.md`
+2. `harness/ROUTER.md`, `harness/CONTEXT.md`, `harness/RULES.md`, and `harness/TOOLS.md`
+3. The routed domain's local `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`
+
+Route to the narrowest domain, project, workflow, automation, or run before
+acting, then repeat the local route-read loop. `harness/` owns the canonical
+root contract; these root adapters exist solely so Claude and Codex discover it
+when a conversation starts in this directory.
+"""
+    if filename == "CLAUDE.md":
+        return claude_adapter()
+    title = filename.removesuffix(".md").replace("_", " ").title()
+    return f"""# Agentic OS Root {title} Adapter
+
+The canonical root `{filename}` is `harness/{filename}`. Read that file before
+acting on Agentic OS work started from this directory.
+"""
+
+
+def ensure_root_instruction_adapters(root: Path, result: ScaffoldResult) -> None:
+    for filename in ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
+        write_file_once(root / filename, root_instruction_adapter(filename), result)
+
+
 def legacy_agent_adapter() -> str:
     return """# Legacy Agent Adapter
 
@@ -1917,6 +1957,7 @@ def ensure_root_files(
     write_file_once(harness_root / "CONTEXT.md", root_context(domains_list), result)
     write_file_once(harness_root / "RULES.md", root_rules(), result)
     write_file_once(harness_root / "TOOLS.md", root_tools(), result)
+    ensure_root_instruction_adapters(root, result)
     if include_legacy_agent:
         write_file_once(harness_root / "AGENT.md", legacy_agent_adapter(), result)
     ensure_codex_config(harness_root, "agentic_os_root", result)

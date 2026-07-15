@@ -57,6 +57,12 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (root / ".agentic_root").is_file()
     assert not (root / "projects").exists()
     assert {path.name for path in root.iterdir() if not path.name.startswith(".")} == {
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CONTEXT.md",
+        "ROUTER.md",
+        "RULES.md",
+        "TOOLS.md",
         "archive",
         "harness",
         "personal",
@@ -869,6 +875,12 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
     assert result["status"]["layout_migration"] is True
     assert result["status"]["project_surface_repair"] is True
     assert {path.name for path in root.iterdir() if not path.name.startswith(".")} == {
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CONTEXT.md",
+        "ROUTER.md",
+        "RULES.md",
+        "TOOLS.md",
         "archive",
         "harness",
         "los",
@@ -888,8 +900,22 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
     assert not (root / "shared_factory").exists()
     assert not (root / "PROFILE.md").exists()
     assert not (root / "config").exists()
+    assert "harness/AGENTS.md" in (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
     assert list((harness(root) / "logs" / "migrations").glob("harness-layout-*/legacy-root/AGENTS.md"))
     assert validate_root(root).ok
+
+
+def test_root_instruction_adapters_dispatch_from_the_conversation_root(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    for filename in ("AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
+        assert (root / filename).is_file()
+    assert "harness/AGENTS.md" in (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert "harness/TOOLS.md" in (root / "TOOLS.md").read_text(encoding="utf-8")
 
 
 def test_license_register_update_pull_and_backup_use_local_grants(tmp_path: Path, capsys) -> None:

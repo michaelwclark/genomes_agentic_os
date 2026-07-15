@@ -51,6 +51,12 @@ CAPABILITY_COLLECTIONS = {
 def command_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "claude-desktop-bridge",
+            "command": "harness/bin/agentic-os-claude-desktop-bridge",
+            "description": "Build or audit the optional Claude Desktop custom-skill and instruction package.",
+            "source": "harness/commands/os-claude-desktop-bridge.md",
+        },
+        {
             "id": "make-skill",
             "command": "/make-skill",
             "description": "Create or update a reusable Agentic OS skill.",
@@ -403,6 +409,12 @@ def command_entries() -> list[dict[str, str]]:
 
 def skill_entries() -> list[dict[str, str]]:
     return [
+        {
+            "id": "agentic-os-operating-contract",
+            "name": "Agentic OS Operating Contract",
+            "description": "Apply the shared Agentic OS routing, context, tool-use, workflow, automation, and closeout contract across Claude and Codex.",
+            "source": "harness/skills/agentic-os-operating-contract/SKILL.md",
+        },
         {
             "id": "os-navigator",
             "name": "OS Navigator",

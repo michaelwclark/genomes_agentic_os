@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Build and audit the Agentic OS package for Claude Desktop.
+
+Claude Desktop ordinary conversations do not read repository CLAUDE.md files or
+Claude Code's ~/.claude/settings.json hooks. The supported bridge is an enabled
+custom skill plus Claude's account-level or project-level instructions. This
+tool produces those exact, versioned artifacts without attempting to edit
+Claude's cloud-hosted account settings.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import sys
+import zipfile
+
+
+SKILL_ID = "agentic-os-operating-contract"
+ASSET_RELATIVE = Path("harness/desktop/claude")
+SKILL_RELATIVE = Path("harness/skills") / SKILL_ID
+PROFILE_NAME = "PROFILE_INSTRUCTIONS.md"
+PROJECT_NAME = "PROJECT_INSTRUCTIONS.md"
+PACKAGE_NAME = f"{SKILL_ID}.zip"
+MANIFEST_NAME = "manifest.json"
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def required_paths(root: Path) -> dict[str, Path]:
+    paths = {
+        "profile": root / ASSET_RELATIVE / PROFILE_NAME,
+        "project": root / ASSET_RELATIVE / PROJECT_NAME,
+        "skill": root / SKILL_RELATIVE / "SKILL.md",
+    }
+    missing = [name for name, path in paths.items() if not path.is_file()]
+    if missing:
+        raise ValueError("missing required source asset(s): " + ", ".join(missing))
+    return paths
+
+
+def build(root: Path, output_dir: Path) -> dict[str, object]:
+    paths = required_paths(root)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied = {}
+    for name in ("profile", "project"):
+        destination = output_dir / paths[name].name
+        shutil.copyfile(paths[name], destination)
+        copied[name] = destination
+
+    package = output_dir / PACKAGE_NAME
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(paths["skill"], f"{SKILL_ID}/SKILL.md")
+
+    manifest = {
+        "schema_version": 1,
+        "skill_id": SKILL_ID,
+        "source_root": str(root),
+        "artifacts": {
+            "profile_instructions": {"path": PROFILE_NAME, "sha256": sha256(copied["profile"])},
+            "project_instructions": {"path": PROJECT_NAME, "sha256": sha256(copied["project"])},
+            "skill_package": {"path": PACKAGE_NAME, "sha256": sha256(package)},
+        },
+        "manual_install": [
+            "In Claude Desktop, enable Code execution and file creation if needed.",
+            "Open Customize > Skills, upload the skill package, and enable it.",
+            "Paste PROFILE_INSTRUCTIONS.md into Settings > Instructions for Claude for all chats.",
+            "For an Agentic OS project, also paste PROJECT_INSTRUCTIONS.md into that project's instructions.",
+        ],
+        "verification_limit": (
+            "This manifest verifies generated local artifacts only. Claude Desktop account and project "
+            "settings are cloud-hosted and require the listed UI actions."
+        ),
+    }
+    (output_dir / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
+
+
+def audit(root: Path, output_dir: Path) -> list[str]:
+    paths = required_paths(root)
+    manifest_path = output_dir / MANIFEST_NAME
+    if not manifest_path.is_file():
+        return [f"missing manifest: {manifest_path}"]
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [f"invalid manifest: {exc}"]
+    errors = []
+    if manifest.get("skill_id") != SKILL_ID:
+        errors.append("manifest skill_id differs from expected skill")
+    expected = {
+        PROFILE_NAME: sha256(paths["profile"]),
+        PROJECT_NAME: sha256(paths["project"]),
+    }
+    for filename, source_hash in expected.items():
+        output = output_dir / filename
+        if not output.is_file():
+            errors.append(f"missing artifact: {filename}")
+        elif sha256(output) != source_hash:
+            errors.append(f"stale artifact: {filename}")
+    package = output_dir / PACKAGE_NAME
+    if not package.is_file():
+        errors.append(f"missing artifact: {PACKAGE_NAME}")
+    else:
+        with zipfile.ZipFile(package) as archive:
+            names = set(archive.namelist())
+            expected_name = f"{SKILL_ID}/SKILL.md"
+            if names != {expected_name}:
+                errors.append("skill package has an unexpected file layout")
+            elif archive.read(expected_name) != paths["skill"].read_bytes():
+                errors.append("skill package is stale")
+    return errors
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path.home() / "agentic_os")
+    parser.add_argument("--output-dir", type=Path)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--build", action="store_true", help="Write the Desktop upload and instruction artifacts.")
+    group.add_argument("--audit", action="store_true", help="Verify previously built local artifacts.")
+    group.add_argument("--print-profile", action="store_true", help="Print the account-level instruction payload.")
+    group.add_argument("--print-project", action="store_true", help="Print the project-level instruction payload.")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    root = args.root.expanduser().resolve()
+    try:
+        paths = required_paths(root)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.print_profile:
+        print(paths["profile"].read_text(), end="")
+        return 0
+    if args.print_project:
+        print(paths["project"].read_text(), end="")
+        return 0
+    output_dir = (args.output_dir or root / "harness/artifacts/claude-desktop").expanduser()
+    if args.build:
+        manifest = build(root, output_dir)
+        print(f"built: {output_dir}")
+        print(f"skill package: {output_dir / PACKAGE_NAME}")
+        print("next: upload and enable the package in Claude Desktop, then paste the generated instructions.")
+        print(manifest["verification_limit"])
+        return 0
+    errors = audit(root, output_dir)
+    if errors:
+        print("audit failed:")
+        print("\n".join(f"- {error}" for error in errors))
+        return 1
+    print(f"audit passed: {output_dir}")
+    print("note: local artifacts are verified; enablement in Claude Desktop still requires the documented UI actions.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

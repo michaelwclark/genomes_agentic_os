@@ -15,8 +15,18 @@ from genomes_agentic_os.cli import main
 from genomes_agentic_os.validate import validate_root
 
 
+# Root-level discovery adapters scaffolded next to the domain directories so
+# Claude and Codex pick up the harness contract when a conversation starts at
+# the installed root. They are instruction surface, not domains.
+ROOT_ADAPTERS = {"AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"}
+
+
 def _top_level(root: Path) -> set[str]:
-    return {path.name for path in root.iterdir() if not path.name.startswith(".")}
+    return {
+        path.name
+        for path in root.iterdir()
+        if not path.name.startswith(".") and path.name not in ROOT_ADAPTERS
+    }
 
 
 def test_arbitrary_domain_names_validate_and_update_additively(tmp_path: Path, capsys) -> None:

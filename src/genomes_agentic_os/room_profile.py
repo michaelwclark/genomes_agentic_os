@@ -15,6 +15,7 @@ from .scaffold import (
     create_domain_structure,
     ensure_customer_update_contract,
     ensure_codex_config,
+    ensure_root_instruction_adapters,
     ensure_update_metadata,
     ensure_visible_capability_surface,
     expand_path,
@@ -230,6 +231,7 @@ def install_profile_os(
     write_file_once(harness_root / "CONTEXT.md", root_context(), result)
     write_file_once(harness_root / "RULES.md", root_rules(), result)
     write_file_once(harness_root / "TOOLS.md", root_tools(), result)
+    ensure_root_instruction_adapters(root, result)
     if include_legacy_agent:
         write_file_once(harness_root / "AGENT.md", "# Legacy Agent Adapter\n\nLoad `AGENTS.md` first.\n", result)
     ensure_codex_config(harness_root, "agentic_os_root", result)
