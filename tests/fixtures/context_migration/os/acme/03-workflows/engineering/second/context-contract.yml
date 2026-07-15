@@ -1,0 +1,12 @@
+schema_version: 1
+kind: workflow
+inherits: [parent]
+read:
+  first: [workflow.md]
+  deferred: []
+  exclude: []
+capabilities: []
+providers: {}
+overrides:
+  rules: []
+
