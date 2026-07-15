@@ -1,0 +1,51 @@
+schema_version: 1
+id: daily_operator_report
+name: Daily operator report
+summary: A progressive, source-evidenced view of current Agentic OS work.
+status: active
+scope:
+  domain: null
+  project: null
+generator:
+  kind: builtin
+  id: rich_sections_v1
+  workflow_ref: null
+  program_ref: status_report
+sources:
+  - id: recent_reports
+    kind: report_inventory
+    required: true
+    query:
+      limit: 100
+parameters: {}
+schedule:
+  schedule_id: null
+destinations:
+  - kind: filesystem
+    enabled: true
+  - kind: notion
+    enabled: false
+    workspace: Genome's Notion
+    parent_id: null
+retention:
+  max_runs: 30
+  max_age_days: 90
+permissions:
+  run_now: true
+  edit: true
+  notion_projection: false
+health_policy:
+  max_stale_hours: 26
+  partial_is_error: false
+sections:
+  - id: recent_work
+    type: table
+    title: Recent work
+    source_id: recent_reports
+  - id: source_evidence
+    type: evidence
+    title: Source evidence
+    source_id: recent_reports
+created_at: '2026-07-15T00:00:00Z'
+updated_at: '2026-07-15T00:00:00Z'
+archived_at: null

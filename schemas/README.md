@@ -5,3 +5,8 @@ code uses them to validate registries, Specs, workflows, automations, runs,
 updates, customer profiles, and operator projections. A schema change should be
 paired with fixture coverage and migration/compatibility guidance when it
 changes an existing file contract.
+
+Report resources use three independently versioned contracts:
+`report-definition.schema.json`, `report-run.schema.json`, and
+`report-artifact.schema.json`. Definitions are mutable through governed actions;
+runs and artifacts are immutable evidence.
