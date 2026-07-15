@@ -1568,6 +1568,49 @@ def _imperative_slug(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Durable intake projection ledger — proposal_id -> {seq, page_id, url}
+# ---------------------------------------------------------------------------
+
+_SI_INTAKE_LEDGER_FILENAME = "si-intake-ledger.json"
+
+
+def _intake_ledger_path(root: Path) -> Path:
+    """Absolute path to the intake projection ledger inside *root*."""
+    ledger_dir = _resolve_root_relative(root, OUTPUT_ROOT)
+    return _safe_child(root, ledger_dir, _SI_INTAKE_LEDGER_FILENAME)
+
+
+def _read_intake_ledger(root: Path) -> dict[str, Any]:
+    """Load the durable projection ledger for *root*.
+
+    The ledger is the primary dedup guard for Notion projections: it records,
+    per proposal_id, the pinned SI sequence number and the intake page created
+    for it, plus (under ``actions``) which suggestion-page actions were already
+    queued. A missing or corrupt file degrades to an empty ledger — the
+    Notion-side guard still applies downstream.
+    """
+    path = _intake_ledger_path(root)
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                proposals = raw.get("proposals")
+                actions = raw.get("actions")
+                return {
+                    "schema_version": 1,
+                    "proposals": proposals if isinstance(proposals, dict) else {},
+                    "actions": actions if isinstance(actions, dict) else {},
+                }
+        except Exception:  # noqa: BLE001 - corrupt ledger degrades to empty
+            pass
+    return {"schema_version": 1, "proposals": {}, "actions": {}}
+
+
+def _write_intake_ledger(root: Path, ledger: dict[str, Any]) -> None:
+    _atomic_write_text(root, _intake_ledger_path(root), json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+
+
+# ---------------------------------------------------------------------------
 # Notion-side dedup guard
 # ---------------------------------------------------------------------------
 
@@ -2083,6 +2126,7 @@ def process_self_improvement_actions(
         "skipped": [],
     }
 
+    ledger = _read_intake_ledger(os_root)
     manifest = _notion_manifest(os_root)
     if not manifest.get("live"):
         result.update({"status": "blocked", "reason": "notion runtime tracking is not live in the manifest"})
@@ -2147,6 +2191,35 @@ def process_self_improvement_actions(
         if not proposal_id:
             result["skipped"].append({"page_id": page_id, "reason": "missing_proposal_id"})
             continue
+        # Durable ledger guard: a proposal+action pair is queued at most once,
+        # even when the daily report mints a fresh suggestion page (new page_id)
+        # for the same proposal or the post-queue Notion update failed last tick.
+        action_key = f"{proposal_id}:{action_type}"
+        prior = (ledger.get("actions") or {}).get(action_key)
+        if prior:
+            result["skipped"].append(
+                {
+                    "page_id": page_id,
+                    "proposal_id": proposal_id,
+                    "reason": "already_processed_ledger",
+                    "queue_item_id": prior.get("queue_id"),
+                }
+            )
+            if not dry_run:
+                # Re-clear the trigger boxes so a stale page stops re-firing the watcher.
+                update_props = {
+                    "Action Status": notion_api._select_prop("queued"),
+                    "Action Log": notion_api._rich_text_prop(
+                        f"Already queued as {prior.get('queue_id')} (durable ledger); not re-queued."
+                    ),
+                }
+                if action_type == "groom":
+                    update_props["Auto Groom"] = notion_api._checkbox_prop(False)
+                    update_props["Run Grooming"] = notion_api._checkbox_prop(False)
+                else:
+                    update_props["Auto-dev Implementation"] = notion_api._checkbox_prop(False)
+                notion_api.update_database_page(page_id, update_props, NOTION_TOKEN_ENV, fetcher=transport)
+            continue
         try:
             proposal = _load_proposal(os_root, config, proposal_id)
         except ValueError as exc:
@@ -2173,6 +2246,10 @@ def process_self_improvement_actions(
 
         queued = append_run_queue_item(os_root, item)
         result["queued"].append(queued["queue_item"])
+        # Durable record BEFORE the Notion page update: if the update below
+        # fails, the next watcher tick hits the ledger instead of re-queueing.
+        ledger["actions"][action_key] = {"queue_id": item["id"], "page_id": page_id, "queued_at": _now()}
+        _write_intake_ledger(os_root, ledger)
         update_props = {
             "Action Status": notion_api._select_prop("queued"),
             "Action Log": notion_api._rich_text_prop(f"Queued {item['id']} at {_now()}."),
@@ -2919,27 +2996,26 @@ def _nightly_intake_properties(
     available: dict[str, str],
     proposal: dict[str, Any],
     *,
-    root: Path | None = None,
+    seq: int = 0,
 ) -> dict[str, Any]:
     """Build 🧭 OS Work Intake row properties, sending only columns that exist.
 
     Auto Mode is intentionally left UNCHECKED: an operator (or the Notion watcher)
     flips it to actually dispatch the queued work.
 
-    Title format: ``SI-NNN — imperative-slug`` where NNN is a monotonic 3-digit
-    counter (from ``root/harness/…/si-seq.json``) and the slug is derived from
-    the proposal summary. When *root* is None the seq defaults to 0 (test/dry-run
-    path that never persists a counter).
+    Title format: ``SI-NNN — imperative-slug [proposal-id]`` where NNN is the
+    caller-allocated sequence number (pinned per proposal in the intake ledger)
+    and the slug is derived from the proposal summary. The trailing proposal id
+    is load-bearing: the Notion-side dedup guard filters on title *contains*
+    proposal_id, so a title without it never matches and every re-projection
+    files a fresh row (the 2026-07 SI-003 duplicate incident).
     """
-    proposal_id = str(proposal.get("proposal_id"))
+    proposal_id = str(proposal.get("proposal_id") or "")
     summary = str(proposal.get("title") or proposal.get("summary") or proposal_id)
-    if root is not None:
-        seq = _next_si_seq(root)
-        slug = _imperative_slug(summary)
-        title_str = f"SI-{seq:03d} — {slug}"
-    else:
-        slug = _imperative_slug(summary)
-        title_str = f"SI-000 — {slug}"
+    slug = _imperative_slug(summary)
+    title_str = f"SI-{seq:03d} — {slug}"
+    if proposal_id:
+        title_str = f"{title_str} [{proposal_id}]"
     desired: dict[str, tuple[str, Any]] = {
         "Name": ("title", title_str),
         "Type": ("select", "improvement"),
@@ -3013,28 +3089,62 @@ def _project_nightly_row_to_intake(
     OS rules).
 
     Defense layers (in order):
-    1. Token check — short-circuit if Notion token is absent.
-    2. Notion-side dedup guard — query the Work Intake DB for an existing
-       non-dropped row whose title contains the proposal_id before creating.
-    3. SI sequence counter — the title uses SI-NNN format via ``_next_si_seq``.
+    1. Durable ledger — root-local ``si-intake-ledger.json`` records
+       proposal_id -> page_id on every successful create; a hit short-circuits
+       before any Notion call, so re-processing stays a no-op even when Notion
+       is unreachable.
+    2. Token check — short-circuit if Notion token is absent.
+    3. Notion-side dedup guard — query the Work Intake DB for an existing
+       non-dropped row whose title contains the proposal_id. Row titles carry
+       the proposal_id (``SI-NNN — slug [proposal-id]``) precisely so this
+       filter can match; a hit heals the local ledger.
+    4. SI sequence counter — allocated once per proposal via ``_next_si_seq``
+       and pinned in the ledger, so a retry after a Notion failure reuses the
+       same SI-NNN instead of consuming a new number.
     """
     transport = fetcher or notion_api._default_fetcher
+    proposal_id = str(proposal.get("proposal_id") or "")
+    # --- Durable ledger guard (primary) ------------------------------------
+    ledger: dict[str, Any] | None = None
+    entry: dict[str, Any] = {}
+    if root is not None and proposal_id:
+        ledger = _read_intake_ledger(root)
+        entry = dict(ledger["proposals"].get(proposal_id) or {})
+        if entry.get("page_id"):
+            page_id = str(entry["page_id"])
+            return {
+                "projected": True,
+                "page_id": page_id,
+                "url": str(entry.get("url") or _notion_url(page_id)),
+                "deduped": "ledger",
+            }
     if not notion_api.resolve_token(NOTION_TOKEN_ENV):
         return {"projected": False, "reason": "notion_token_missing"}
-    # --- Notion-side dedup guard -------------------------------------------
-    proposal_id = str(proposal.get("proposal_id") or "")
+    # --- Notion-side dedup guard (secondary; heals a lost ledger) -----------
     if proposal_id:
         existing_id = _query_existing_intake_row(proposal_id, transport, NOTION_TOKEN_ENV)
         if existing_id:
+            if ledger is not None:
+                entry.update({"page_id": existing_id, "url": _notion_url(existing_id), "projected_at": _now()})
+                ledger["proposals"][proposal_id] = entry
+                _write_intake_ledger(root, ledger)
             return {
-                "projected": False,
-                "reason": "duplicate_page_exists",
-                "existing_page_id": existing_id,
+                "projected": True,
+                "page_id": existing_id,
+                "url": _notion_url(existing_id),
+                "deduped": "notion_guard",
             }
-    # -----------------------------------------------------------------------
+    # --- SI sequence: allocate once per proposal, pinned in the ledger ------
+    seq = int(entry.get("seq") or 0)
+    if seq <= 0 and root is not None:
+        seq = _next_si_seq(root)
+        if ledger is not None:
+            entry["seq"] = seq
+            ledger["proposals"][proposal_id] = entry
+            _write_intake_ledger(root, ledger)
     try:
         available = notion_api.get_database_property_types(WORK_INTAKE_DB_ID, NOTION_TOKEN_ENV, fetcher=transport)
-        properties = _nightly_intake_properties(available, proposal, root=root)
+        properties = _nightly_intake_properties(available, proposal, seq=seq)
         if "Name" not in properties:
             return {"projected": False, "reason": "intake_missing_name_property"}
         page_id = notion_api.create_database_page(
@@ -3046,6 +3156,10 @@ def _project_nightly_row_to_intake(
         )
     except Exception as exc:  # noqa: BLE001 - projection must never fail the run
         return {"projected": False, "reason": f"notion_error: {type(exc).__name__}: {exc}"[:300]}
+    if ledger is not None:
+        entry.update({"seq": seq, "page_id": page_id, "url": _notion_url(page_id), "projected_at": _now()})
+        ledger["proposals"][proposal_id] = entry
+        _write_intake_ledger(root, ledger)
     return {"projected": True, "page_id": page_id, "url": _notion_url(page_id)}
 
 

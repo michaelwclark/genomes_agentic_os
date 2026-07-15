@@ -599,6 +599,52 @@ def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
     assert update_body["properties"]["Run Grooming"]["checkbox"] is False
     assert update_body["properties"]["Action Status"]["select"]["name"] == "queued"
 
+    # Re-processing the same proposal+action is a durable no-op, even when the
+    # trigger box shows checked again on a FRESH suggestion page (new page_id):
+    # the intake ledger — not the Notion page state — is what blocks the re-queue.
+    rerun_responses = [
+        responses[0],  # workspace check
+        responses[1],  # database property types
+        {
+            "results": [
+                {
+                    "id": "page-action-2",  # daily report minted a new page for the same proposal
+                    "properties": {
+                        "Name": {"type": "title", "title": [{"plain_text": "Actionable suggestion"}]},
+                        "Type": {"type": "select", "select": {"name": "Suggestion"}},
+                        "Proposal ID": {"type": "rich_text", "rich_text": [{"plain_text": "si-action123"}]},
+                        "Action Status": {"type": "select", "select": {"name": "ready"}},
+                        "Auto Groom": {"type": "checkbox", "checkbox": True},
+                        "Run Grooming": {"type": "checkbox", "checkbox": False},
+                        "Auto-dev Implementation": {"type": "checkbox", "checkbox": False},
+                    },
+                }
+            ]
+        },
+        {"id": "page-action-2"},  # PATCH re-clearing the stale trigger boxes
+    ]
+    transport2 = _FakeTransport(rerun_responses)
+    with patch.dict(os.environ, {"GENOMES_NOTION_PAT": SENTINEL_TOKEN}):
+        rerun = si.process_self_improvement_actions(root, dry_run=False, fetcher=transport2)
+
+    assert rerun["status"] == "processed"
+    assert rerun["queued"] == [], "re-processing must not enqueue a duplicate worker"
+    assert rerun["skipped"] == [
+        {
+            "page_id": "pageaction2",
+            "proposal_id": "si-action123",
+            "reason": "already_processed_ledger",
+            "queue_item_id": queued["id"],
+        }
+    ]
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    assert len(queue["run_queue"]) == 1, "run queue must still hold exactly one item"
+    # The stale page's boxes were re-cleared so it stops re-firing the watcher.
+    rerun_update = json.loads(transport2.requests[-1]["data"].decode("utf-8"))
+    assert rerun_update["properties"]["Auto Groom"]["checkbox"] is False
+    assert rerun_update["properties"]["Action Status"]["select"]["name"] == "queued"
+    assert "not re-queued" in rerun_update["properties"]["Action Log"]["rich_text"][0]["text"]["content"]
+
 
 # ---------------------------------------------------------------------------
 # Doctor checks

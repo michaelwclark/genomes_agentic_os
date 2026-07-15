@@ -429,10 +429,12 @@ def test_re_projection_blocked_by_durable_status_and_notion_guard(
 def test_title_format_is_si_seq_imperative_slug(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Projected rows use 'SI-NNN — imperative-slug' titles with bold 'What to do:' body.
+    """Projected rows use 'SI-NNN — imperative-slug [proposal-id]' titles with bold 'What to do:' body.
 
     Verifies:
-    - Title matches SI-NNN — <slug> where NNN is a zero-padded 3-digit integer
+    - Title matches SI-NNN — <slug> [<proposal-id>] where NNN is a zero-padded 3-digit integer
+    - The trailing proposal id is present (it is what the Notion dedup guard's
+      title-contains filter matches on)
     - Slug is ≤ 60 characters
     - First body block is a bold paragraph starting with 'What to do:'
     - Sequence increments monotonically across two consecutive projections
@@ -477,9 +479,11 @@ def test_title_format_is_si_seq_imperative_slug(
     for req in create_requests:
         body = json.loads(req["data"].decode("utf-8"))
         name_text = body["properties"]["Name"]["title"][0]["text"]["content"]
-        assert _re.match(r"^SI-\d{3} — .+", name_text), f"Title format wrong: {name_text!r}"
-        slug_part = name_text.split(" — ", 1)[1]
+        match = _re.match(r"^SI-\d{3} — (.+) \[(si-[0-9a-f]{12})\]$", name_text)
+        assert match, f"Title format wrong: {name_text!r}"
+        slug_part = match.group(1)
         assert len(slug_part) <= 60, f"Slug too long ({len(slug_part)}): {slug_part!r}"
+        assert match.group(2) in {doctor["proposal_id"], nurse["proposal_id"]}
         titles.append(name_text)
         # Verify bold 'What to do:' is the first child block
         children = body.get("children") or []
@@ -498,3 +502,156 @@ def test_title_format_is_si_seq_imperative_slug(
     # Sequence numbers must be distinct and monotonically increasing
     seq_nums = [int(_re.search(r"SI-(\d{3})", t).group(1)) for t in titles]  # type: ignore[union-attr]
     assert seq_nums[1] == seq_nums[0] + 1, f"Seq must increment: {seq_nums}"
+
+
+# ---------------------------------------------------------------------------
+# Durable intake ledger: idempotent re-projection, guard healing, pinned seq
+# ---------------------------------------------------------------------------
+
+
+def _intake_props_response() -> dict[str, Any]:
+    return {
+        "properties": {
+            "Name": {"type": "title"},
+            "Status": {"type": "select"},
+            "Auto Mode": {"type": "checkbox"},
+        }
+    }
+
+
+def test_ledger_short_circuits_re_projection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Second projection of the same proposal is a no-op returning the existing page.
+
+    The durable ledger is the primary guard: after the first successful create it
+    records proposal_id -> page_id, so a re-projection never touches Notion at
+    all (regression for the 2026-07 loop where every watcher tick filed a new
+    SI-003 row).
+    """
+    root = _seed_root(tmp_path, enable_nightly=True)
+    doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
+    _persist(root, [doctor])
+    monkeypatch.setenv(si.NOTION_TOKEN_ENV, SENTINEL_TOKEN)
+
+    transport = _FakeTransport(
+        [
+            {"results": []},  # dedup query — no existing rows
+            _intake_props_response(),
+            {"id": "intake-page-first"},  # POST create page
+        ]
+    )
+    first = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=transport)
+    assert first["projected"] is True
+    assert first["page_id"] == "intakepagefirst"
+
+    # Re-projection: transport has NO responses, so any Notion call would raise.
+    transport2 = _FakeTransport([])
+    second = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=transport2)
+    assert second["projected"] is True
+    assert second["deduped"] == "ledger"
+    assert second["page_id"] == "intakepagefirst"
+    assert transport2.requests == [], "ledger hit must short-circuit before any Notion call"
+
+
+def test_notion_guard_matches_and_heals_a_lost_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Row titles carry the proposal_id so the title-contains guard actually matches.
+
+    Regression for the guard mismatch: rows used to be titled 'SI-NNN — slug'
+    without the proposal_id, so the dedup query ('Name' contains proposal_id)
+    never matched and every projection created a fresh row. Now the created
+    title embeds the proposal_id, and a guard hit re-records the page into the
+    local ledger (self-healing after a lost/foreign root).
+    """
+    root = _seed_root(tmp_path, enable_nightly=True)
+    doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
+    _persist(root, [doctor])
+    monkeypatch.setenv(si.NOTION_TOKEN_ENV, SENTINEL_TOKEN)
+    proposal_id = doctor["proposal_id"]
+
+    transport = _FakeTransport(
+        [
+            {"results": []},  # dedup query — no existing rows
+            _intake_props_response(),
+            {"id": "intake-page-first"},  # POST create page
+        ]
+    )
+    first = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=transport)
+    assert first["projected"] is True
+
+    # The dedup query filtered on the proposal_id, and the created title carries it.
+    dedup_body = json.loads(transport.requests[0]["data"].decode("utf-8"))
+    assert dedup_body["filter"] == {"property": "Name", "title": {"contains": proposal_id}}
+    create_body = json.loads(transport.requests[-1]["data"].decode("utf-8"))
+    created_title = create_body["properties"]["Name"]["title"][0]["text"]["content"]
+    assert proposal_id in created_title, f"guard can never match a title without the id: {created_title!r}"
+
+    # Simulate a lost local ledger (e.g. projection ran from an ephemeral root).
+    si._intake_ledger_path(root).unlink()
+
+    transport2 = _FakeTransport(
+        [
+            {  # dedup query — the existing row matches by title now
+                "results": [
+                    {
+                        "id": "intake-page-first",
+                        "properties": {"Status": {"type": "select", "select": {"name": "queued"}}},
+                    }
+                ]
+            }
+        ]
+    )
+    second = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=transport2)
+    assert second["projected"] is True
+    assert second["deduped"] == "notion_guard"
+    assert second["page_id"] == "intakepagefirst"
+    assert len(transport2.requests) == 1, "guard hit must not create a page"
+
+    # The guard hit healed the ledger, so a third pass is a pure local no-op.
+    ledger = si._read_intake_ledger(root)
+    assert ledger["proposals"][proposal_id]["page_id"] == "intakepagefirst"
+    third = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=_FakeTransport([]))
+    assert third["deduped"] == "ledger"
+
+
+def test_seq_is_pinned_across_notion_failure_and_consumed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed create does not burn the SI number; the retry reuses it.
+
+    The sequence is allocated once per proposal and pinned in the ledger before
+    the create call, so a Notion failure + retry produces the same SI-NNN and
+    si-seq.json advances exactly once per NEW proposal.
+    """
+    root = _seed_root(tmp_path, enable_nightly=True)
+    doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
+    _persist(root, [doctor])
+    monkeypatch.setenv(si.NOTION_TOKEN_ENV, SENTINEL_TOKEN)
+
+    # First attempt: dedup query answers, then the transport runs dry so the
+    # property-types call fails -> projection degrades after the seq was pinned.
+    failing = _FakeTransport([{"results": []}])
+    first = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=failing)
+    assert first["projected"] is False
+
+    ledger = si._read_intake_ledger(root)
+    pinned_seq = ledger["proposals"][doctor["proposal_id"]]["seq"]
+    assert pinned_seq == si._SI_SEQ_SEED
+    seq_state = json.loads(si._si_seq_path(root).read_text(encoding="utf-8"))
+    assert seq_state["next_seq"] == si._SI_SEQ_SEED + 1
+
+    # Retry succeeds and reuses the pinned number instead of consuming a new one.
+    transport = _FakeTransport(
+        [
+            {"results": []},  # dedup query — still no row (create never landed)
+            _intake_props_response(),
+            {"id": "intake-page-retry"},
+        ]
+    )
+    second = si._project_nightly_row_to_intake(doctor, [], root=root, fetcher=transport)
+    assert second["projected"] is True
+    create_body = json.loads(transport.requests[-1]["data"].decode("utf-8"))
+    title = create_body["properties"]["Name"]["title"][0]["text"]["content"]
+    assert title.startswith(f"SI-{pinned_seq:03d} — ")
+    seq_state = json.loads(si._si_seq_path(root).read_text(encoding="utf-8"))
+    assert seq_state["next_seq"] == si._SI_SEQ_SEED + 1, "retry must not consume a second number"
