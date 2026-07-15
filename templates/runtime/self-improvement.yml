@@ -29,6 +29,11 @@ evidence_roots:
     legacy_read_only: false
   - path: shared_factory
     legacy_read_only: true
+# Recency window for evidence sampling. Files whose mtime is older than this
+# many days are skipped entirely, so stale transcripts and old run logs cannot
+# keep regenerating the same proposal forever. Set to 0 (or a negative value)
+# to disable the cutoff and scan every file regardless of age.
+evidence_max_age_days: 7
 external_sources:
   - id: notion_genome
     provider: notion
