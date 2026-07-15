@@ -350,6 +350,46 @@ Status: **OK** (rc 0)
 
 ---
 
+### `context explain`
+
+Resolve a workflow or automation `context-contract.yml` and print inherited
+sources, local/deferred files, exclusions, skipped duplicates, capabilities,
+provider routes, and provenance.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--path` | One target form | Workflow or automation folder |
+| `--domain`, `--lane`, `--workflow` | One target form | Identify a workflow |
+| `--domain`, `--lane`, `--automation` | One target form | Identify an automation |
+| `--root` | No | Installed OS root path |
+
+Writes: nothing.
+
+### `context check`
+
+Validate managed context manifests and report legacy fallbacks plus exact copied
+contract hashes. High-volume evidence trees are not scanned.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+
+Writes: nothing. Invalid manifests exit 1.
+
+### `context compact`
+
+Build a reversible migration plan. This release is plan-only.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--dry-run` | Yes | Required safety gate; context files are never changed |
+| `--output-dir` | No | Write plan and exact rollback JSON receipts |
+| `--root` | No | Installed OS root path |
+
+Without `--output-dir`, writes nothing. Without `--dry-run`, exits 2.
+
+---
+
 ### `here route`
 
 Route a request from the current working directory (cwd-aware routing). Exits 2 when routing confidence is low — this is a deliberate guardrail, not a crash.

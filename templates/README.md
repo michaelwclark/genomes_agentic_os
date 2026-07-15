@@ -16,6 +16,7 @@ Agents should not invent new document shapes when a template exists. They should
 | `customer/` | Customer discovery, automation-fit, and handoff templates for custom OS builds. |
 | `workflow/` | Repeatable process specs, outcome briefs, alignment questions, PRDs, implementation plans, dispatch handoffs, progress files, context packs, run logs, and approvals. |
 | `automation/` | Triggered process specs, permissions, and failure policies. |
+| `context-contract/` | Versioned workflow/automation inheritance manifests that replace copied object-level routing boilerplate. |
 | `notion/` | Notion control-plane mapping, page structure, and bootstrap templates. |
 | `memory/` | Memory policy for durable agent context. |
 | `thread/` | Thread lifecycle closeout receipts for `/end-chat`, `/finalize`, cleanup, archive, and stale finalization. |

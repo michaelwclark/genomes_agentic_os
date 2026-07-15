@@ -111,7 +111,9 @@ belong in `scaffold.py`, not a new `utils.py`.
 | `validate.py` | 510 | **Structural validation.** Confirms an installed root has the expected shape; parses YAML/JSON. |
 | `update_ops.py` | 454 | **Update & backup.** Grants/keys, plan/apply/rollback, `phone-home` heartbeat payload. |
 | `capability_registry.py` | 331 | **Visible capability registry.** Commands, skills, MCP servers, libraries, hooks, plugins, rules → registry YAML + inventory markdown. |
-| `routing.py` | 283 | **Deterministic routing.** `ContextPacket` assembly, `route_request`, `context_from_here`, `RISK_KEYWORDS` approval detection. No LLM. |
+| `routing.py` | — | **Deterministic routing.** `ContextPacket` assembly, `route_request`, `context_from_here`, `RISK_KEYWORDS` approval detection. No LLM. |
+| `context_contracts.py` | — | **Context inheritance.** Versioned manifest parsing, parent/source provenance, duplicate suppression, and central provider-route resolution. |
+| `context_compaction.py` | — | **Context migration analysis.** Bounded duplicate scans plus deterministic dry-run and rollback plans; never deletes. |
 | `automation_ops.py` | 282 | **Automation maturity.** Readiness checks + the `observe→prepare→propose→execute_approved→execute_guarded` ladder + project attachment. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
 | `notion_sync.py` | 261 | **Notion projection.** Build/apply a reviewable filesystem→Notion sync plan. |

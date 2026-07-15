@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/context-contract.schema.json",
+  "title": "Agentic OS context contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "inherits", "read"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "type": "string", "enum": ["root", "workflow", "automation", "project", "domain", "program", "task"] },
+    "inherits": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["first", "deferred", "exclude"],
+      "properties": {
+        "first": { "$ref": "#/$defs/relativePaths" },
+        "deferred": { "$ref": "#/$defs/relativePaths" },
+        "exclude": { "$ref": "#/$defs/relativePaths" }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$" },
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": { "id": { "type": "string", "minLength": 1 } },
+            "additionalProperties": true
+          }
+        ]
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+          { "type": "object" }
+        ]
+      },
+      "default": {}
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rules": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "read": { "$ref": "#/$defs/readOverrides" },
+        "capabilities": { "$ref": "#/properties/capabilities" },
+        "providers": { "$ref": "#/properties/providers" }
+      },
+      "default": {}
+    }
+  },
+  "$defs": {
+    "relativePaths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": { "pattern": "^(?:/|~|[A-Za-z]:|.*(?:^|/)\\.\\.(?:/|$))" }
+      },
+      "uniqueItems": true
+    },
+    "readOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "first": { "$ref": "#/$defs/relativePaths" },
+        "deferred": { "$ref": "#/$defs/relativePaths" },
+        "exclude": { "$ref": "#/$defs/relativePaths" }
+      }
+    }
+  }
+}

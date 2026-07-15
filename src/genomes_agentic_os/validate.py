@@ -13,6 +13,7 @@ import yaml
 
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .config_ops import CONFIG_FILENAME
+from .context_compaction import check_context_contracts
 from .lifecycle import (
     WORK_ITEM_LANES,
     WORK_ITEM_DIRECTORIES,
@@ -294,7 +295,13 @@ def warn_legacy_agent(path: Path, result: ValidationResult) -> None:
 
 
 def validate_agent_layer(layer_root: Path, result: ValidationResult) -> None:
-    for filename in (CONFIG_FILENAME, "AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"):
+    compact = (layer_root / "context-contract.yml").is_file()
+    required = (
+        (CONFIG_FILENAME, "AGENTS.md", "CLAUDE.md", "PROFILE.md", "context-contract.yml")
+        if compact
+        else (CONFIG_FILENAME, "AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
+    )
+    for filename in required:
         require_file(layer_root / filename, result)
     validate_claude_adapter(layer_root / "CLAUDE.md", result)
     warn_legacy_agent(layer_root / "AGENT.md", result)
@@ -1057,6 +1064,10 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "domain.schema.json": ["**/domain.yml"],
     "run.schema.json": ["**/06-runs-and-logs/runs/*/run.yml"],
     "workflow.schema.json": ["**/03-workflows/*/*/workflow.yml"],
+    "context-contract.schema.json": [
+        "**/03-workflows/*/*/context-contract.yml",
+        "**/04-automations/*/*/context-contract.yml",
+    ],
     "update-manifest.schema.json": [],  # generated; no installed glob
     "hosts.schema.json": ["config/hosts.yml"],
     "doc-config.schema.json": [
@@ -1452,6 +1463,15 @@ def validate_root(root: str | Path) -> ValidationResult:
     validate_registered_hooks(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)
+    context_check = check_context_contracts(os_root)
+    result.errors.extend(context_check.errors)
+    if context_check.legacy_fallbacks or context_check.duplicate_groups:
+        result.warnings.append(
+            "context contracts need compaction: "
+            f"legacy_fallbacks={context_check.legacy_fallbacks}, "
+            f"duplicate_groups={context_check.duplicate_groups}; "
+            "run `agentic-os context check` and `context compact --dry-run`"
+        )
 
     profile_domains = profile_domain_names(os_root)
     # Derive the domain list from the tree on disk (directories carrying a

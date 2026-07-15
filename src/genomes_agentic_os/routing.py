@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from .context_contracts import resolve_context_contract
 from .lifecycle import WorkItemRecord, record_matches_request, select_project_work_item
 from .scaffold import (
     SHARED_FACTORY_DOMAIN,
@@ -439,13 +440,30 @@ def build_context(
         detected_lane, workflow_root = find_workflow(os_root, domain, workflow, detected_lane or None)
         target = workflow_root
         object_type = "workflow"
-        sources.extend(
-            [
-                workflow_root / "quick-reference.md",
-                workflow_root / "context-pack.md",
-                workflow_root / "runbook.md",
-            ]
+        legacy_workflow_sources = (
+            workflow_root / "quick-reference.md",
+            workflow_root / "context-pack.md",
+            workflow_root / "runbook.md",
         )
+        resolved = resolve_context_contract(
+            workflow_root,
+            root=os_root,
+            legacy_sources=legacy_workflow_sources,
+        )
+        sources.extend(source.path for source in resolved.read_first)
+        known_gaps.extend(item.message for item in resolved.diagnostics if item.severity in {"warning", "error"})
+
+    # Keep source ordering deterministic while avoiding the same file being
+    # loaded twice through legacy and inherited paths.
+    deduplicated_sources: list[Path] = []
+    seen_sources: set[Path] = set()
+    for source in sources:
+        resolved_source = source.resolve()
+        if resolved_source in seen_sources:
+            continue
+        seen_sources.add(resolved_source)
+        deduplicated_sources.append(source)
+    sources = deduplicated_sources
 
     for source in sources:
         if not source.is_file():

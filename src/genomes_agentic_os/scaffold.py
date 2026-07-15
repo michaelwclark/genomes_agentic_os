@@ -216,6 +216,7 @@ DOMAIN_DIRECTORIES = (
 )
 
 WORKFLOW_FILES = (
+    "context-contract.yml",
     "workflow.md",
     "outcome-brief.md",
     "alignment-questions.md",
@@ -232,6 +233,7 @@ WORKFLOW_FILES = (
 )
 
 AUTOMATION_FILES = (
+    "context-contract.yml",
     "automation.md",
     "inputs.md",
     "outputs.md",
@@ -397,8 +399,20 @@ def ensure_spotlight_never_index(directory: Path, result: ScaffoldResult) -> Non
     write_file_once(directory / SPOTLIGHT_NEVER_INDEX_FILENAME, "", result)
 
 
-def ensure_codex_config(root: Path, layer: str, result: ScaffoldResult) -> None:
-    config_result = install_config(root, layer=layer, dry_run=False, confirm_conflicts=True)
+def ensure_codex_config(
+    root: Path,
+    layer: str,
+    result: ScaffoldResult,
+    *,
+    compact_context: bool = False,
+) -> None:
+    config_result = install_config(
+        root,
+        layer=layer,
+        dry_run=False,
+        confirm_conflicts=True,
+        compact_context=compact_context,
+    )
     result.created.extend(config_result.created)
     result.updated.extend(config_result.updated)
     result.skipped.extend(config_result.skipped)
@@ -3893,6 +3907,8 @@ def workflow_scaffold_content(domain: str, lane: str, name: str, filename: str) 
         "<workflow_or_domain>": name,
     }
     template_dir = template_source_dir() / "workflow"
+    if filename == "context-contract.yml":
+        return (template_source_dir() / "context-contract" / "workflow.yml").read_text(encoding="utf-8")
     if filename == "workflow.md":
         return render_template((template_dir / "workflow.md").read_text(encoding="utf-8"), replacements)
     if filename == "outcome-brief.md":
@@ -4018,7 +4034,7 @@ def create_workflow(root: str | Path, domain: str, lane: str, name: str) -> Scaf
     write_file_once(workflow_root / "runs" / "README.md", workflow_runs_readme(domain, lane, name), result)
     for filename in WORKFLOW_FILES:
         write_file_once(workflow_root / filename, workflow_scaffold_content(domain, lane, name, filename), result)
-    ensure_codex_config(workflow_root, "workflow_or_task", result)
+    ensure_codex_config(workflow_root, "workflow_or_task", result, compact_context=True)
     append_control_signal(
         domain_path(root, domain),
         "Workflow Opportunities",
@@ -4040,6 +4056,8 @@ def automation_scaffold_content(domain: str, lane: str, name: str, filename: str
         "<yyyy-mm-dd>": datetime.now(timezone.utc).date().isoformat(),
     }
     template_dir = template_source_dir() / "automation"
+    if filename == "context-contract.yml":
+        return (template_source_dir() / "context-contract" / "automation.yml").read_text(encoding="utf-8")
     if filename == "automation.md":
         return render_template((template_dir / "automation.md").read_text(encoding="utf-8"), replacements)
     if filename == "permissions.md":
@@ -4138,7 +4156,7 @@ def create_automation(root: str | Path, domain: str, lane: str, name: str) -> Sc
     write_file_once(automation_root / "logs" / "README.md", automation_logs_readme(domain, lane, name), result)
     for filename in AUTOMATION_FILES:
         write_file_once(automation_root / filename, automation_scaffold_content(domain, lane, name, filename), result)
-    ensure_codex_config(automation_root, "automation", result)
+    ensure_codex_config(automation_root, "automation", result, compact_context=True)
     append_control_signal(
         domain_path(root, domain),
         "Automation Status",
