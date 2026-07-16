@@ -2780,6 +2780,68 @@ def test_context_build_returns_exact_project_sources(tmp_path: Path, capsys) -> 
     assert str(root / "los" / "02-projects" / "losmon_replacement" / "project.yml") in packet["sources_to_load"]
 
 
+def test_context_build_loads_project_manifest_repository_contracts(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "command_center"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "AGENTS.md").write_text("# Repository contract\n", encoding="utf-8")
+    (repo / "docs" / "DEVELOPMENT.md").write_text("# Development contract\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "project",
+                "create",
+                "work",
+                "command_center",
+                "--repo",
+                str(repo),
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    project_root = root / "work" / "02-projects" / "command_center"
+    (project_root / "context-contract.yml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "project",
+                "inherits": ["parent"],
+                "read": {
+                    "first": ["AGENTS.md", "src/AGENTS.md", "src/docs/DEVELOPMENT.md"],
+                    "deferred": ["status.md"],
+                    "exclude": ["worktrees/**", "artifacts/**", "logs/**"],
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "context",
+                "build",
+                "--domain",
+                "work",
+                "--project",
+                "command_center",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    packet = yaml.safe_load(capsys.readouterr().out)
+    assert str(repo / "AGENTS.md") in packet["sources_to_load"]
+    assert str(repo / "docs" / "DEVELOPMENT.md") in packet["sources_to_load"]
+    assert packet["known_gaps"] == []
+
+
 def test_here_detects_os_path_and_linked_project_repo(tmp_path: Path, monkeypatch, capsys) -> None:
     root = tmp_path / "agentic_os"
     repo = tmp_path / "losmon_repo"
