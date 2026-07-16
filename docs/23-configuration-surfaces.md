@@ -36,7 +36,7 @@ Located at `~/agentic_os/harness/registries/`. Each file is a YAML registry for 
 
 | File | Contents |
 |---|---|
-| `alerts.yml` | Alert routing rules and recipients. |
+| `alerts.yml` | Local macOS alert policy: severity, source routing, quiet hours, sound/DND behavior, anti-flood limits, and the 48-hour notification-history retention rule. |
 | `backup-policy.yml` | Backup schedule and retention config. |
 | `capabilities.yml` | Installed OS capabilities (commands, skills, MCP servers, plugins). |
 | `commands.yml` | OS command registry: slash commands visible to agents. |
@@ -192,6 +192,24 @@ Each tool reads env vars from the process environment, with automatic fallback t
 | Variable | Default | Purpose |
 |---|---|---|
 | `AGENTIC_OS_ACTIVE_WORK_ITEM` | — | Sets the async-run base directory when `--artifact-dir` is omitted. |
+
+### agentic-os-notify
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AGENTIC_OS_ROOT` | `~/agentic_os` | Resolves `harness/registries/alerts.yml` and the canonical alert history. |
+
+`agentic-os-notify` writes delivery and suppression decisions to
+`harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl`. It prunes all
+alert-history segments older than the configured 48-hour default before each
+non-dry-run delivery. `--history` reads that retained history and `--cleanup`
+performs maintenance without sending an alert.
+
+The registry controls severity (`info`, `warning`, `error`, `critical`), quiet
+hours, source-level minimum severity, sound, click URL support, DND override,
+repeat cooldowns, and hourly delivery caps. Notifications are local macOS
+notifications: banner versus alert style and Apple-device mirroring remain user
+settings in macOS Notification Center and iCloud, respectively.
 
 ### agentic-os-status-report
 
