@@ -1,4 +1,4 @@
-"""Host registry for <os-root>/config/hosts.yml.
+"""Host registry and read-only operator projection.
 
 Provides load/save/upsert/list helpers for the host alias registry.
 No SSH connections are made here — alias-based only.
@@ -7,6 +7,7 @@ No SSH connections are made here — alias-based only.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,22 @@ import yaml
 # ---------------------------------------------------------------------------
 
 def _hosts_path(root: str | Path) -> Path:
-    return Path(root).expanduser().resolve() / "config" / "hosts.yml"
+    """Resolve the active host registry without creating parallel truth.
+
+    Older installs use ``config/hosts.yml`` while current installed roots keep
+    harness-owned configuration in ``harness/config/hosts.yml``.  Prefer an
+    existing legacy file when both exist for backwards compatibility; use the
+    harness path when it is the only installed registry.  Fresh installs keep
+    the historical write target until a reviewed migration moves it.
+    """
+    resolved_root = Path(root).expanduser().resolve()
+    legacy = resolved_root / "config" / "hosts.yml"
+    harness = resolved_root / "harness" / "config" / "hosts.yml"
+    if legacy.exists():
+        return legacy
+    if harness.exists():
+        return harness
+    return legacy
 
 
 def _host_routing_path(root: str | Path) -> Path:
@@ -111,7 +127,7 @@ def _validate_hosts_data(data: Any) -> dict[str, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def load_hosts(root: str | Path) -> dict[str, dict[str, Any]]:
-    """Load hosts.yml from *root*/config/hosts.yml.
+    """Load hosts.yml from the active installed registry.
 
     Returns an empty dict if the file does not exist.
     Raises ValueError if the file exists but is malformed.
@@ -136,7 +152,7 @@ def load_host_routing_policy(root: str | Path) -> dict[str, Any]:
 
 
 def save_hosts(root: str | Path, data: dict[str, dict[str, Any]]) -> None:
-    """Write *data* (a hosts alias map) to hosts.yml under *root*/config/.
+    """Write *data* to the already-active registry (or legacy fresh target).
 
     The file is written as ``{hosts: <data>}``.
     """
@@ -226,33 +242,94 @@ def _recent_harness_runs(root: str | Path, limit: int) -> list[dict[str, Any]]:
                 "output_file": row.get("output_file"),
             }
         )
-    return rows[-limit:][::-1] if limit > 0 else rows[::-1]
+    ordered = rows[::-1]
+    return ordered[:limit] if limit > 0 else ordered
 
 
 def host_routing_status(root: str | Path, *, recent_runs: int = 8) -> dict[str, Any]:
-    """Return read-only cross-host routing state for operators."""
-    hosts = load_hosts(root)
-    routing = load_host_routing_policy(root)
+    """Return a stable, failure-tolerant ``host-query/v1`` operator view.
+
+    This projection intentionally reports observed evidence only.  It never
+    probes SSH, starts work, or guesses that a configured host is healthy.
+    """
+    diagnostics: list[dict[str, str]] = []
+    try:
+        hosts = load_hosts(root)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        hosts = {}
+        diagnostics.append(
+            {"severity": "error", "source": "identity_registry", "message": str(exc)}
+        )
+    try:
+        routing = load_host_routing_policy(root)
+    except (OSError, yaml.YAMLError) as exc:
+        routing = {}
+        diagnostics.append(
+            {"severity": "error", "source": "routing_registry", "message": str(exc)}
+        )
     routing_hosts = routing.get("hosts") if isinstance(routing.get("hosts"), dict) else {}
+    all_runs = _recent_harness_runs(root, -1)
+    recent = all_runs[: max(recent_runs, 0)]
+    latest_by_host: dict[str, dict[str, Any]] = {}
+    for run in all_runs:
+        alias = run.get("host")
+        if isinstance(alias, str) and alias not in latest_by_host:
+            latest_by_host[alias] = run
 
     host_rows: list[dict[str, Any]] = []
     for alias in sorted(set(hosts) | set(routing_hosts)):
         identity = hosts.get(alias, {})
         policy = routing_hosts.get(alias, {})
         project_paths = policy.get("project_paths") if isinstance(policy.get("project_paths"), dict) else {}
+        last_run = latest_by_host.get(alias)
+        exit_code = last_run.get("exit_code") if last_run else None
+        if isinstance(exit_code, int):
+            health_status = "healthy" if exit_code == 0 else "degraded"
+            health_source = "recent_harness_run"
+        else:
+            health_status = "unknown"
+            health_source = "no_observation"
         host_rows.append(
             {
                 "alias": alias,
                 "ssh_alias": identity.get("ssh_alias") or alias,
                 "home": identity.get("home"),
+                "description": identity.get("description"),
                 "role": policy.get("role"),
                 "max_concurrent": policy.get("max_concurrent"),
                 "harnesses": list(policy.get("harnesses") or []),
                 "projects": sorted(project_paths),
+                "project_paths": {key: project_paths[key] for key in sorted(project_paths)},
+                "configured": {"identity": alias in hosts, "routing": alias in routing_hosts},
+                "health": {
+                    "status": health_status,
+                    "source": health_source,
+                    "observed_at": last_run.get("ts") if last_run else None,
+                    "exit_code": exit_code,
+                },
+                "last_run": last_run,
             }
         )
+        if alias not in hosts:
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "source": "identity_registry",
+                    "message": f"Host {alias!r} has routing policy but no identity entry.",
+                }
+            )
+        if alias not in routing_hosts:
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "source": "routing_registry",
+                    "message": f"Host {alias!r} has identity but no routing policy.",
+                }
+            )
 
     return {
+        "api_version": "host-query/v1",
+        "generated_at": datetime.now(UTC).isoformat(),
         "root": str(Path(root).expanduser().resolve()),
         "hosts_path": str(_hosts_path(root)),
         "routing_path": str(_host_routing_path(root)),
@@ -260,7 +337,8 @@ def host_routing_status(root: str | Path, *, recent_runs: int = 8) -> dict[str, 
         "auto_route": routing.get("auto_route") or {},
         "artifact_return": routing.get("artifact_return") or {},
         "memory_plane": routing.get("memory_plane") or {},
-        "recent_harness_runs": _recent_harness_runs(root, recent_runs),
+        "recent_harness_runs": recent,
+        "diagnostics": diagnostics,
     }
 
 

@@ -1,4 +1,4 @@
-"""CLI commands for the SSH host registry (config/hosts.yml)."""
+"""CLI commands for the installed SSH host registry."""
 
 from __future__ import annotations
 
@@ -24,6 +24,11 @@ def handle_host_add(args: argparse.Namespace) -> int:
 
 def handle_host_list(args: argparse.Namespace) -> int:
     hosts = list_hosts(args.root)
+    if getattr(args, "json", False):
+        import json
+
+        print(json.dumps({"api_version": "host-list/v1", "hosts": hosts}, indent=2, sort_keys=True))
+        return 0
     if not hosts:
         print("No hosts registered. Use: agentic-os host add <alias>")
         return 0
@@ -50,7 +55,7 @@ def handle_host_routing(args: argparse.Namespace) -> int:
 
 def register(subparsers) -> None:
     """Register the host command group."""
-    host_parser = subparsers.add_parser("host", help="Manage the SSH host registry (config/hosts.yml).")
+    host_parser = subparsers.add_parser("host", help="Manage the installed SSH host registry.")
     host_subparsers = host_parser.add_subparsers(dest="host_command", required=True)
     host_add = host_subparsers.add_parser("add", help="Add or update a host alias in the registry.")
     host_add.add_argument("alias", help="Host alias (identifier used in project remotes).")
@@ -62,6 +67,7 @@ def register(subparsers) -> None:
     host_add.set_defaults(handler=handle_host_add)
     host_list = host_subparsers.add_parser("list", help="List registered hosts.")
     host_list.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_list.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     host_list.set_defaults(handler=handle_host_list)
     host_routing = host_subparsers.add_parser(
         "routing",
