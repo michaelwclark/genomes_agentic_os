@@ -6,6 +6,7 @@ state and customer-specific values belong in the installed OS.
 
 | Registry | Purpose | Primary consumer |
 | --- | --- | --- |
+| `first-class-resources.json` (installed, generated) | Atomic, versioned index of Automations, Programs, Workflows, Rules, Reports, Skills, and Commands across system, domain, and project scopes. Refresh with `agentic-os resource-registry refresh`; normal reads never scan the tree. | Command Center and other latency-sensitive operator surfaces |
 | [`alerts.yml`](alerts.yml) | Alert thresholds, quiet hours, sounds, and source policies. | `agentic-os-notify` and monitoring helpers |
 | [`harness-crossreview.schedule.snippet.yml`](harness-crossreview.schedule.snippet.yml) | Disabled example schedule for PR cross-review. | Operator copying into an installed runtime registry |
 | [`harness-routing.yml`](harness-routing.yml) | Maps implementation/review task types to Claude or Codex. | `agentic-harness-run`, PR cross-review |
@@ -20,3 +21,8 @@ state and customer-specific values belong in the installed OS.
 Registry schemas live in [`../../schemas/`](../../schemas/). Neutral example
 values must remain safe to publish; installed overrides carry real host,
 workspace, or project identity.
+
+The first-class resource snapshot is derived installed state, not an authoring
+surface. Canonical definitions remain in their scoped registries and resource
+folders. Governed authoring refreshes the snapshot automatically; use the
+explicit refresh command after manual filesystem changes.

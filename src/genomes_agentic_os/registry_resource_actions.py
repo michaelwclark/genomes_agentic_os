@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from .capability_registry import REGISTRY_FILES
+from .first_class_registry import refresh_first_class_registry
 from .scaffold import domain_path, expand_path, normalize_domain, validate_name
 
 
@@ -395,6 +396,7 @@ def _write_state(
             targets["source"].unlink()
     else:
         _atomic_write(targets["source"], source)
+    refresh_first_class_registry(root)
 
 
 def _readback(root: Path, targets: dict[str, Any]) -> dict[str, Any]:

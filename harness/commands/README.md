@@ -36,6 +36,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-new-feature.md`](os-new-feature.md) | Legacy alias for canonical Spec intake. |
 | [`os-notion-org.md`](os-notion-org.md) | Audit or reconcile the verified Notion organization. |
 | [`os-operator-resource.md`](os-operator-resource.md) | Query typed read-only Program and Automation operator projections. |
+| [`os-resource-registry.md`](os-resource-registry.md) | Refresh or read the atomic first-class resource snapshot used by Command Center. |
 | [`os-ps.md`](os-ps.md) | Show Agentic OS process and runtime state. |
 | [`os-quiet-run.md`](os-quiet-run.md) | Run long commands with artifact-backed status. |
 | [`os-route.md`](os-route.md) | Resolve a request to the narrowest OS room. |
