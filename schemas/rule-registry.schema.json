@@ -11,9 +11,19 @@
         "required": ["id", "name", "description", "source"],
         "properties": {
           "id": { "type": "string" },
+          "key": { "type": "string", "description": "Shared conflict identity across scopes; defaults to id." },
           "name": { "type": "string" },
           "description": { "type": "string" },
-          "source": { "type": "string" }
+          "summary": { "type": "string" },
+          "source": { "type": "string" },
+          "scope": { "enum": ["system", "os", "domain", "project", "workflow", "automation"] },
+          "effect": { "enum": ["inform", "allow", "prefer", "require", "deny"] },
+          "strictness": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "body_markdown": { "type": "string" },
+          "references": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
         },
         "additionalProperties": true
       }

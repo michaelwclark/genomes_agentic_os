@@ -98,7 +98,9 @@ vs Codex"** callout for its task; the full mechanics live on
 | [30 · Compact Context Contracts](30-context-contracts.md) | Versioned inheritance manifests, explain/check commands, duplicate detection, and reversible dry-run migration plans. |
 | [31 · First-Class Report Engine](31-report-engine.md) | Versioned report definitions, runs, artifacts, rich sections, governed lifecycle/run actions, and guarded projections. |
 | [32 · Governed Registry Authoring](32-registry-resource-authoring.md) | Safe create/update/archive/restore/rollback for rules, reports, skills, and commands, plus analytics presentation metadata. |
+| [33 · Filesystem Resource Lifecycle](33-filesystem-resource-lifecycle.md) | Canonical discovery, lifecycle mutation, drift guards, schedules, and queue-only run requests for filesystem-backed resources. |
 | [34 · Activity Analytics Ingestion](34-activity-analytics-ingestion.md) | Privacy-safe provider event envelopes, opt-in scopes, metric bindings, cursors, and health. |
+| [35 · Effective Rule Hierarchy](35-effective-rule-hierarchy.md) | Context-aligned inheritance, stable numbering, strictest-applicable conflict resolution, and the GUI-safe `rules/v1` projection. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,
