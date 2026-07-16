@@ -360,6 +360,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-operator-resource.md",
         },
         {
+            "id": "resource-registry",
+            "command": "agentic-os resource-registry",
+            "description": "Refresh or query the atomic first-class resource snapshot used by operator surfaces.",
+            "source": "harness/commands/os-resource-registry.md",
+        },
+        {
             "id": "route",
             "command": "agentic-os route",
             "description": "Route a request to the correct installed OS layer.",
