@@ -25,8 +25,8 @@ overrides:
 `read.first` is the small operating packet. `read.deferred` stays discoverable
 but is loaded only when the task needs it. `read.exclude` keeps evidence-heavy
 trees out of broad discovery. Parent `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`,
-`RULES.md`, and `TOOLS.md` remain authoritative and are inherited with source
-provenance. Exact duplicate content is skipped and reported.
+`RULES.md`, `TOOLS.md`, and `MEMORY.md` remain authoritative and are inherited
+with source provenance. Exact duplicate content is skipped and reported.
 
 Capability IDs are stable identities, not copied tool documentation. Provider
 routes resolve first from `harness/registries/composio-tools.yml`; a manifest
@@ -42,6 +42,13 @@ agentic-os context explain \
 agentic-os context check --root ~/agentic_os
 
 agentic-os context compact --dry-run --root ~/agentic_os \
+  --output-dir ./context-compaction-receipts
+
+# Legacy objects require an explicit bounded selection. This may promote their
+# exact local contracts to the immediate lane and create the manifest.
+agentic-os context compact --dry-run --root ~/agentic_os \
+  --target harness/shared_factory/04-automations/engineering/example \
+  --promote-legacy --baseline-validation \
   --output-dir ./context-compaction-receipts
 
 # Only after reviewing the plan and merging the source change:
@@ -82,6 +89,19 @@ base64-preserved bytes automatically and marks the receipt `rolled_back`.
 Manual restore refuses to overwrite newer work if the post-apply tree hash has
 changed.
 
+Legacy promotion is never inferred for the whole OS. `--promote-legacy`
+requires one or more explicit `--target` paths. For each selected object, the
+plan creates a manifest, promotes missing byte-identical contracts to the
+immediate lane, and removes the local copies only when the projected local
+object reduction is at least 40%. The semantic comparison uses the full legacy
+source set before migration and the resolved manifest set after migration.
+
+`--baseline-validation` records the complete installed-root validation error
+set and its hash in the reviewed plan. Apply first confirms that baseline is
+unchanged, then runs full validation again and rejects any new error. This
+allows a bounded migration in an older root with unrelated pre-existing drift
+without silently accepting a regression or broadening the migration scope.
+
 ## Safe migration guide
 
 1. Install the new source package additively; do not delete existing contracts.
@@ -94,6 +114,8 @@ changed.
    and `plan_sha256` must be stable before they are trusted.
 6. Review every proposed removal, `inherited_from` source, before hash, semantic
    signature, and the reported reduction ratio.
+   For legacy promotion, also review every parent file creation, manifest
+   payload hash, per-target reduction, and validation-baseline hash.
 7. Apply only after the source package containing these safeguards is merged.
    Keep the resulting receipt outside the mutable object folders.
 8. Keep legacy folders working throughout migration. Missing manifests use the

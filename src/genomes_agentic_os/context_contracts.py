@@ -12,7 +12,7 @@ import yaml
 
 
 MANIFEST_CANDIDATES = ("context-contract.yml", "context.yml", ".context.yml")
-PARENT_CONTRACT_FILES = ("AGENTS.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md")
+PARENT_CONTRACT_FILES = ("AGENTS.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md")
 DEFAULT_EXCLUDES = (
     "**/worktrees/**",
     "**/runs/**",

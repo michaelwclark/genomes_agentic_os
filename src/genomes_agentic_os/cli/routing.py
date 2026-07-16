@@ -146,12 +146,25 @@ def handle_context_compact(args: argparse.Namespace) -> int:
         if args.plan or args.receipt_dir:
             raise ValueError("--plan and --receipt-dir are valid only with --apply")
         if args.output_dir:
-            _, _, plan = write_compaction_plan(args.root, args.output_dir)
+            _, _, plan = write_compaction_plan(
+                args.root,
+                args.output_dir,
+                target_paths=args.target,
+                promote_legacy=args.promote_legacy,
+                capture_validation_baseline=args.baseline_validation,
+            )
         else:
-            plan = build_compaction_plan(args.root)
+            plan = build_compaction_plan(
+                args.root,
+                target_paths=args.target,
+                promote_legacy=args.promote_legacy,
+                capture_validation_baseline=args.baseline_validation,
+            )
         print(yaml.safe_dump(plan, sort_keys=False).strip())
         return 0
     if args.apply:
+        if args.target or args.promote_legacy or args.baseline_validation:
+            raise ValueError("--target, --promote-legacy, and --baseline-validation are dry-run planning options")
         if not args.plan or not args.receipt_dir:
             raise ValueError("context compact --apply requires --plan and --receipt-dir")
         result = apply_compaction_plan(args.root, args.plan, args.receipt_dir)
@@ -214,6 +227,22 @@ def register(subparsers) -> None:
     compact_mode.add_argument("--dry-run", action="store_true", help="Build a plan without mutating context files.")
     compact_mode.add_argument("--apply", action="store_true", help="Apply a previously reviewed plan.")
     context_compact.add_argument("--output-dir", help="Optional directory for plan and rollback JSON receipts.")
+    context_compact.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="Managed workflow/automation path to migrate; repeat for a bounded group.",
+    )
+    context_compact.add_argument(
+        "--promote-legacy",
+        action="store_true",
+        help="With explicit --target, create a manifest and promote local contracts to its lane.",
+    )
+    context_compact.add_argument(
+        "--baseline-validation",
+        action="store_true",
+        help="Record full installed validation so apply can reject new errors without requiring legacy drift cleanup.",
+    )
     context_compact.add_argument("--plan", help="Reviewed plan JSON produced by --dry-run.")
     context_compact.add_argument("--receipt-dir", help="Required durable receipt directory for --apply.")
     context_compact.set_defaults(handler=handle_context_compact)
