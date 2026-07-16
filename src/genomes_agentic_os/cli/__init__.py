@@ -41,6 +41,7 @@ from . import resource_actions
 from . import reporting
 from . import activity
 from . import rules
+from . import operator_resources
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -75,6 +76,7 @@ COMMAND_MODULES = [
     reporting,
     activity,
     rules,
+    operator_resources,
 ]
 
 

@@ -13,7 +13,7 @@ parent `genomes_agentic_os` package.
 | `runtime.py`, `state.py`, `event_graph.py` | Operate queues, schedules, state projections, and event chains. |
 | `routing.py`, `capability.py`, `adaptive.py` | Resolve context, inspect capabilities, and evaluate model routing. |
 | `source_watch.py`, `resource_graph.py`, `notion.py` | Query or synchronize connected information sources. |
-| `cockpit.py`, `operator.py`, `hosts.py` | Render operator surfaces and inspect local or remote hosts. |
+| `cockpit.py`, `operator.py`, `hosts.py`, `operator_resources.py` | Render operator surfaces and query hosts, Programs, and Automations. |
 | `doctor.py`, `validate.py`, `config.py`, `self_improvement.py` | Diagnose, configure, validate, and improve an installation. |
 
 Keep argument parsing and presentation here. Business logic belongs in focused

@@ -1779,6 +1779,47 @@ Status: **OK** (covered by remote-source contract tests)
 
 ---
 
+## 13A. Program and Automation operator projection: `operator-resource`
+
+### `operator-resource query`
+
+Read all source-backed Program or Automation resources through the stable
+`operator-resource-query/v1` envelope.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `kind` | Yes | `program` or `automation` |
+| `--root` | No | Installed OS root path |
+
+```bash
+agentic-os operator-resource query program --root ~/agentic_os
+agentic-os operator-resource query automation --root ~/agentic_os
+```
+
+### `operator-resource get`
+
+Return one exact resource identity from the same projection. The command does
+not resolve display names or aliases.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `kind` | Yes | `program` or `automation` |
+| `resource_id` | Yes | Exact ID returned by `query` |
+| `--root` | No | Installed OS root path |
+
+```bash
+agentic-os operator-resource get program program_definition:thread_management --root ~/agentic_os
+agentic-os operator-resource get automation automation_definition:los:engineering:active_prs_board --root ~/agentic_os
+```
+
+These commands are read-only, always emit JSON, never probe remote hosts, and
+preserve malformed, unmatched, missing, stale, and error evidence through
+structured diagnostics.
+
+Status: **OK** (covered by operator resource contract and installed-root smoke tests)
+
+---
+
 ## 14. Customer OS factory: `customer`
 
 ### `customer init`

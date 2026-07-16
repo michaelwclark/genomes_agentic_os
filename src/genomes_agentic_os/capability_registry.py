@@ -354,6 +354,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-integration-setup.md",
         },
         {
+            "id": "operator-resource",
+            "command": "agentic-os operator-resource",
+            "description": "Query typed read-only Program and Automation operator projections.",
+            "source": "harness/commands/os-operator-resource.md",
+        },
+        {
             "id": "route",
             "command": "agentic-os route",
             "description": "Route a request to the correct installed OS layer.",

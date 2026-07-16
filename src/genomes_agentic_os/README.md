@@ -14,7 +14,7 @@ modules, which receive the OS root explicitly and read or write durable files.
 | Automations and workflows | `automation_ops.py`, `automation_control.py`, `workflow_ops.py`, `workflow_engine.py` | Maturity gates, readiness, versioned workflow authoring, immutable publish, queue-only run requests, and receipts. |
 | Connected sources | `source_providers.py`, `source_watch.py`, `source_observation.py` | Normalize and poll external/provider data without leaking provider shapes. |
 | Activity analytics | `activity_ingestion.py` | Convert opted-in Slack, GitHub, Jira, Linear, and Agentic OS activity into metadata-only metric events. |
-| Operator surfaces | `cockpit.py`, `cockpit_render.py`, `conversation_logging.py`, `conversation_reports.py` | Cockpit, conversation indexing, transcripts, and GUI-facing operations. |
+| Operator surfaces | `cockpit.py`, `cockpit_render.py`, `operator_resources.py`, `conversation_logging.py`, `conversation_reports.py` | Cockpit, typed Program/Automation projections, conversation indexing, transcripts, and GUI-facing operations. |
 | Adaptive routing | `adaptive_*.py` | Offline model/tier assessment, policy, evaluation, and redacted receipts. |
 | Installation and maintenance | `config_ops.py`, `update_ops.py`, `migrations.py`, `doctor.py`, `validate.py` | Configuration, updates, migration, health checks, and structural validation. |
 | Customer factory | `customer.py` | Render isolated customer OS installations from verified profiles. |
