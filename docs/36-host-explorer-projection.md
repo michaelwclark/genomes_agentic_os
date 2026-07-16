@@ -30,9 +30,13 @@ existing registry; the CLI does not silently create a second source of truth.
 
 Host health is evidence-backed:
 
-- `healthy`: the latest included harness-run receipt exited zero.
-- `degraded`: the latest included receipt has a non-zero exit code.
+- `healthy`: the latest harness-run receipt exited zero and is at most 24 hours old.
+- `degraded`: the latest receipt failed or is more than 24 hours old.
 - `unknown`: there is no included observation.
+
+The health object preserves the last outcome, observation age, freshness, and
+staleness threshold so clients can distinguish a recent failure from an old
+success. An old successful run is not presented as proof of current health.
 
 The projection never performs an SSH probe and never labels a configured host
 healthy merely because it appears in YAML. Malformed identity or routing input

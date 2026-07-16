@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+HOST_OBSERVATION_STALE_AFTER_SECONDS = 24 * 60 * 60
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -246,12 +247,30 @@ def _recent_harness_runs(root: str | Path, limit: int) -> list[dict[str, Any]]:
     return ordered[:limit] if limit > 0 else ordered
 
 
-def host_routing_status(root: str | Path, *, recent_runs: int = 8) -> dict[str, Any]:
+def _observed_age_seconds(value: Any, now: datetime) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    return max(0, int((now - observed.astimezone(UTC)).total_seconds()))
+
+
+def host_routing_status(
+    root: str | Path,
+    *,
+    recent_runs: int = 8,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Return a stable, failure-tolerant ``host-query/v1`` operator view.
 
     This projection intentionally reports observed evidence only.  It never
     probes SSH, starts work, or guesses that a configured host is healthy.
     """
+    generated_at = (now or datetime.now(UTC)).astimezone(UTC)
     diagnostics: list[dict[str, str]] = []
     try:
         hosts = load_hosts(root)
@@ -283,9 +302,11 @@ def host_routing_status(root: str | Path, *, recent_runs: int = 8) -> dict[str, 
         project_paths = policy.get("project_paths") if isinstance(policy.get("project_paths"), dict) else {}
         last_run = latest_by_host.get(alias)
         exit_code = last_run.get("exit_code") if last_run else None
+        age_seconds = _observed_age_seconds(last_run.get("ts") if last_run else None, generated_at)
+        stale = age_seconds is not None and age_seconds > HOST_OBSERVATION_STALE_AFTER_SECONDS
         if isinstance(exit_code, int):
-            health_status = "healthy" if exit_code == 0 else "degraded"
-            health_source = "recent_harness_run"
+            health_status = "degraded" if stale or exit_code != 0 else "healthy"
+            health_source = "stale_harness_run" if stale else "recent_harness_run"
         else:
             health_status = "unknown"
             health_source = "no_observation"
@@ -306,6 +327,10 @@ def host_routing_status(root: str | Path, *, recent_runs: int = 8) -> dict[str, 
                     "source": health_source,
                     "observed_at": last_run.get("ts") if last_run else None,
                     "exit_code": exit_code,
+                    "last_outcome": "success" if exit_code == 0 else "failure" if isinstance(exit_code, int) else None,
+                    "freshness": "stale" if stale else "current" if age_seconds is not None else "unknown",
+                    "age_seconds": age_seconds,
+                    "stale_after_seconds": HOST_OBSERVATION_STALE_AFTER_SECONDS,
                 },
                 "last_run": last_run,
             }
@@ -329,7 +354,7 @@ def host_routing_status(root: str | Path, *, recent_runs: int = 8) -> dict[str, 
 
     return {
         "api_version": "host-query/v1",
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": generated_at.isoformat(),
         "root": str(Path(root).expanduser().resolve()),
         "hosts_path": str(_hosts_path(root)),
         "routing_path": str(_host_routing_path(root)),
