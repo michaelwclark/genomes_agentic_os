@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -49,6 +50,28 @@ LOCAL_READ_FILES = (
 PLAN_SCHEMA_VERSION = 3
 RECEIPT_SCHEMA_VERSION = 2
 MINIMUM_REDUCTION_RATIO = 0.40
+MIGRATION_REGISTRY_PATH = Path("harness/shared_factory/00-control-plane/context-migrations.yml")
+MIGRATION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
+MAX_MIGRATION_TARGETS = 10
+
+
+@dataclass(frozen=True)
+class ContextMigrationProfile:
+    migration_id: str
+    targets: tuple[str, ...]
+    promote_legacy: bool
+    baseline_validation: bool
+    registry_path: Path
+    registry_sha256: str
+    profile_sha256: str
+
+    def plan_metadata(self, root: Path) -> dict[str, Any]:
+        return {
+            "id": self.migration_id,
+            "registry": self.registry_path.relative_to(root).as_posix(),
+            "registry_sha256": self.registry_sha256,
+            "profile_sha256": self.profile_sha256,
+        }
 
 
 @dataclass
@@ -98,6 +121,64 @@ def managed_context_targets(root: str | Path) -> list[Path]:
 
 def file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_context_migration(root: str | Path, migration_id: str) -> ContextMigrationProfile:
+    """Load one approved, bounded migration batch from the installed control plane."""
+
+    os_root = expand_path(root)
+    if not MIGRATION_ID_PATTERN.fullmatch(migration_id):
+        raise ValueError(f"invalid context migration id: {migration_id!r}")
+    registry = os_root / MIGRATION_REGISTRY_PATH
+    if not registry.is_file() or registry.is_symlink():
+        raise ValueError(f"context migration registry not found: {MIGRATION_REGISTRY_PATH}")
+    data = yaml.safe_load(registry.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        raise ValueError("context migration registry requires schema_version: 1")
+    entries = data.get("migrations")
+    if not isinstance(entries, list):
+        raise ValueError("context migration registry migrations must be a list")
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("id") == migration_id]
+    if len(matches) != 1:
+        reason = "not found" if not matches else "declared more than once"
+        raise ValueError(f"context migration {migration_id!r} {reason}")
+    entry = matches[0]
+    if entry.get("enabled") is not True or entry.get("status") != "approved":
+        raise ValueError(f"context migration {migration_id!r} is not enabled and approved")
+    targets = entry.get("targets")
+    if not isinstance(targets, list) or not targets or len(targets) > MAX_MIGRATION_TARGETS:
+        raise ValueError(
+            f"context migration targets must contain 1-{MAX_MIGRATION_TARGETS} explicit paths"
+        )
+    normalized: list[str] = []
+    for value in targets:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("context migration targets must be non-empty strings")
+        candidate = Path(value.strip())
+        if candidate.is_absolute() or value.startswith("~") or ".." in candidate.parts:
+            raise ValueError(f"context migration target must be a safe relative path: {value!r}")
+        normalized.append(candidate.as_posix())
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("context migration targets must be unique")
+    promote_legacy = entry.get("promote_legacy")
+    baseline_validation = entry.get("baseline_validation")
+    if not isinstance(promote_legacy, bool) or not isinstance(baseline_validation, bool):
+        raise ValueError("context migration flags promote_legacy and baseline_validation must be booleans")
+    profile_value = {
+        "id": migration_id,
+        "targets": normalized,
+        "promote_legacy": promote_legacy,
+        "baseline_validation": baseline_validation,
+    }
+    return ContextMigrationProfile(
+        migration_id=migration_id,
+        targets=tuple(normalized),
+        promote_legacy=promote_legacy,
+        baseline_validation=baseline_validation,
+        registry_path=registry,
+        registry_sha256=file_digest(registry),
+        profile_sha256=_canonical_hash(profile_value),
+    )
 
 
 def duplicate_legacy_groups(targets: Iterable[Path]) -> dict[str, list[Path]]:
@@ -350,6 +431,7 @@ def build_compaction_plan(
     promote_legacy: bool = False,
     capture_validation_baseline: bool = False,
     validation_validator: Callable[[Path], Any] | None = None,
+    migration_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a deterministic plan of byte-identical inheritance changes.
 
@@ -368,6 +450,7 @@ def build_compaction_plan(
     duplicate_paths = {path for paths in duplicate_groups.values() for path in paths}
     actions: list[dict[str, Any]] = []
     rollback_files: list[dict[str, Any]] = []
+    planned_inherited_contracts: dict[Path, str] = {}
 
     for target in targets:
         relative_object = target.relative_to(os_root).as_posix()
@@ -408,17 +491,31 @@ def build_compaction_plan(
                             }
                         )
                         continue
-                    actions.append(
-                        {
-                            "action": "create_inherited_contract",
-                            "object": relative_object,
-                            "target": inherited.relative_to(os_root).as_posix(),
-                            "source": local.relative_to(os_root).as_posix(),
-                            "status": "proposed",
-                            "sha256_after": digest,
-                            "bytes_after": local.stat().st_size,
-                        }
-                    )
+                    planned_digest = planned_inherited_contracts.get(inherited)
+                    if planned_digest is not None and planned_digest != digest:
+                        actions.append(
+                            {
+                                "action": "blocked_parent_conflict",
+                                "object": relative_object,
+                                "target": inherited.relative_to(os_root).as_posix(),
+                                "status": "blocked",
+                                "reason": f"another selected object promotes different {filename} content",
+                            }
+                        )
+                        continue
+                    if planned_digest is None:
+                        planned_inherited_contracts[inherited] = digest
+                        actions.append(
+                            {
+                                "action": "create_inherited_contract",
+                                "object": relative_object,
+                                "target": inherited.relative_to(os_root).as_posix(),
+                                "source": local.relative_to(os_root).as_posix(),
+                                "status": "proposed",
+                                "sha256_after": digest,
+                                "bytes_after": local.stat().st_size,
+                            }
+                        )
                 actions.append(
                     {
                         "action": "remove_promoted_contract",
@@ -513,6 +610,7 @@ def build_compaction_plan(
         "selection": {
             "targets": [target.relative_to(os_root).as_posix() for target in targets],
             "promote_legacy": promote_legacy,
+            **({"migration": dict(migration_metadata)} if migration_metadata else {}),
         },
         "state_paths": state_paths,
         "root_state_sha256_before": _root_state_hash(os_root, targets, extra_paths),
@@ -555,6 +653,7 @@ def write_compaction_plan(
     promote_legacy: bool = False,
     capture_validation_baseline: bool = False,
     validation_validator: Callable[[Path], Any] | None = None,
+    migration_metadata: Mapping[str, Any] | None = None,
 ) -> tuple[Path, Path, dict[str, Any]]:
     plan = build_compaction_plan(
         root,
@@ -562,6 +661,7 @@ def write_compaction_plan(
         promote_legacy=promote_legacy,
         capture_validation_baseline=capture_validation_baseline,
         validation_validator=validation_validator,
+        migration_metadata=migration_metadata,
     )
     directory = Path(output_dir).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
@@ -676,6 +776,18 @@ def apply_compaction_plan(
         raise ValueError(f"plan root {plan['root']} does not match apply root {os_root}")
     if int(plan["summary"].get("blocked_actions", 0)):
         raise ValueError("context compaction plan contains blocked actions")
+    migration = plan.get("selection", {}).get("migration")
+    if migration is not None:
+        if not isinstance(migration, dict):
+            raise ValueError("context compaction migration metadata must be a mapping")
+        registry = _bounded_path(os_root, str(migration.get("registry", "")))
+        if not registry.is_file() or file_digest(registry) != migration.get("registry_sha256"):
+            raise ValueError("context migration registry changed after planning; build a fresh plan")
+        profile = load_context_migration(os_root, str(migration.get("id", "")))
+        if profile.profile_sha256 != migration.get("profile_sha256"):
+            raise ValueError("context migration profile changed after planning; build a fresh plan")
+        if list(profile.targets) != plan.get("selection", {}).get("targets"):
+            raise ValueError("context migration targets do not match the reviewed plan")
     targets = _selected_targets(os_root, plan["selection"]["targets"])
     state_paths = [str(path) for path in plan.get("state_paths", [])]
     extra_paths = [_bounded_path(os_root, path) for path in state_paths]

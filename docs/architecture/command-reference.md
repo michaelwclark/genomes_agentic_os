@@ -386,6 +386,7 @@ Build or apply a guarded, reversible migration plan.
 | `--apply` | One mode | Apply a reviewed plan with automatic rollback |
 | `--output-dir` | Dry-run only | Write plan and review rollback JSON |
 | `--target` | Legacy promotion | Repeatable managed workflow/automation path; bounds the plan |
+| `--migration` | Named dry-run | Enabled, approved batch from the installed context-migrations registry; mutually exclusive with ad hoc targets and policy flags |
 | `--promote-legacy` | No | With explicit targets, create manifests and promote exact contracts to the lane |
 | `--baseline-validation` | No | Hash full validation drift and reject new errors during apply |
 | `--plan` | Apply only | Reviewed plan JSON produced by `--dry-run` |
@@ -394,6 +395,7 @@ Build or apply a guarded, reversible migration plan.
 
 Without either mode, exits 2. Apply enforces hashes, inherited-source identity,
 at least 40% local-context reduction, semantic parity, and root validation.
+Named plans also pin the registry and selected-profile digests.
 
 ### `context restore`
 

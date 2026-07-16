@@ -624,6 +624,15 @@ def ensure_report_engine_contract(root: Path, result: ScaffoldResult) -> None:
         )
 
 
+def ensure_context_migration_contract(root: Path, result: ScaffoldResult) -> None:
+    """Install the empty operator-owned named context migration registry."""
+    write_file_once(
+        shared_factory_path(root, "00-control-plane", "context-migrations.yml"),
+        yaml.safe_dump({"schema_version": 1, "migrations": []}, sort_keys=False),
+        result,
+    )
+
+
 def copy_file_once(source: Path, destination: Path, result: ScaffoldResult) -> None:
     copy_file(source, destination, result)
 
@@ -1992,6 +2001,7 @@ def ensure_root_files(
     ensure_visible_capability_surface(root, result)
     ensure_schemas_dir(root, result)
     ensure_report_engine_contract(root, result)
+    ensure_context_migration_contract(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)
     harness_root = harness_path(root)
@@ -2132,6 +2142,7 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)
     ensure_report_engine_contract(os_root, result)
+    ensure_context_migration_contract(os_root, result)
     copy_file(
         template_source_dir() / "runtime" / "doc-config.yml",
         shared_factory_path(os_root, "00-control-plane", "doc-config.yml"),

@@ -44,6 +44,11 @@ agentic-os context check --root ~/agentic_os
 agentic-os context compact --dry-run --root ~/agentic_os \
   --output-dir ./context-compaction-receipts
 
+# Reuse a bounded, approved rollout batch from the installed control plane.
+agentic-os context compact --dry-run --root ~/agentic_os \
+  --migration los_engineering_automation_wave_1 \
+  --output-dir ./context-compaction-receipts
+
 # Legacy objects require an explicit bounded selection. This may promote their
 # exact local contracts to the immediate lane and create the manifest.
 agentic-os context compact --dry-run --root ~/agentic_os \
@@ -101,6 +106,13 @@ set and its hash in the reviewed plan. Apply first confirms that baseline is
 unchanged, then runs full validation again and rejects any new error. This
 allows a bounded migration in an older root with unrelated pre-existing drift
 without silently accepting a regression or broadening the migration scope.
+
+Named rollout batches live in
+`harness/shared_factory/00-control-plane/context-migrations.yml`. A batch must
+be enabled, approved, contain no more than ten unique safe relative targets,
+and declare both legacy-promotion and validation-baseline policy. The reviewed
+plan records the registry and profile digests; apply refuses a plan if either
+changed. `--migration` cannot be combined with ad hoc target or policy flags.
 
 ## Safe migration guide
 
