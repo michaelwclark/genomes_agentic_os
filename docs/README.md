@@ -101,6 +101,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [33 · Filesystem Resource Lifecycle](33-filesystem-resource-lifecycle.md) | Canonical discovery, lifecycle mutation, drift guards, schedules, and queue-only run requests for filesystem-backed resources. |
 | [34 · Activity Analytics Ingestion](34-activity-analytics-ingestion.md) | Privacy-safe provider event envelopes, opt-in scopes, metric bindings, cursors, and health. |
 | [35 · Effective Rule Hierarchy](35-effective-rule-hierarchy.md) | Context-aligned inheritance, stable numbering, strictest-applicable conflict resolution, and the GUI-safe `rules/v1` projection. |
+| [36 · Host Explorer Projection](36-host-explorer-projection.md) | Canonical host identity resolution and the failure-tolerant `host-query/v1` operator contract. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,

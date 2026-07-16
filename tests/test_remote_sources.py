@@ -85,6 +85,30 @@ class TestHostsModule:
         loaded = load_hosts(tmp_path)
         assert loaded == data
 
+    def test_existing_harness_registry_is_the_active_source(self, tmp_path: Path) -> None:
+        hosts_file = tmp_path / "harness" / "config" / "hosts.yml"
+        hosts_file.parent.mkdir(parents=True)
+        hosts_file.write_text(
+            yaml.safe_dump({"hosts": {"genomesbox": {"home": "/home/genome"}}}),
+            encoding="utf-8",
+        )
+
+        result = upsert_host(tmp_path, "genomesbox", description="Always-on worker")
+
+        assert result["path"] == str(hosts_file)
+        assert load_hosts(tmp_path)["genomesbox"]["description"] == "Always-on worker"
+        assert not (tmp_path / "config" / "hosts.yml").exists()
+
+    def test_existing_legacy_registry_wins_when_both_exist(self, tmp_path: Path) -> None:
+        legacy = tmp_path / "config" / "hosts.yml"
+        harness = tmp_path / "harness" / "config" / "hosts.yml"
+        legacy.parent.mkdir(parents=True)
+        harness.parent.mkdir(parents=True)
+        legacy.write_text(yaml.safe_dump({"hosts": {"legacy": {}}}), encoding="utf-8")
+        harness.write_text(yaml.safe_dump({"hosts": {"harness": {}}}), encoding="utf-8")
+
+        assert set(load_hosts(tmp_path)) == {"legacy"}
+
     def test_load_hosts_validates_structure(self, tmp_path: Path) -> None:
         hosts_file = tmp_path / "config" / "hosts.yml"
         hosts_file.parent.mkdir(parents=True)
@@ -194,8 +218,30 @@ memory_plane:
         text = format_host_routing_status(status)
 
         assert {host["alias"] for host in status["hosts"]} == {"bigmac", "genomesbox"}
+        assert status["api_version"] == "host-query/v1"
+        assert status["diagnostics"] == []
+        genomesbox = next(host for host in status["hosts"] if host["alias"] == "genomesbox")
+        assert genomesbox["health"]["status"] == "healthy"
+        assert genomesbox["health"]["source"] == "recent_harness_run"
+        bigmac = next(host for host in status["hosts"] if host["alias"] == "bigmac")
+        assert bigmac["health"]["status"] == "unknown"
         assert status["recent_harness_runs"][0]["host"] == "genomesbox"
         assert "local_view=/Users/genome/agentic_os/SSH_genomesbox/projects/genomes_agentic_os" in text
+
+    def test_host_routing_status_degrades_when_identity_registry_is_malformed(self, tmp_path: Path) -> None:
+        hosts_file = tmp_path / "harness" / "config" / "hosts.yml"
+        hosts_file.parent.mkdir(parents=True)
+        hosts_file.write_text("- malformed\n", encoding="utf-8")
+        routing = tmp_path / "harness" / "registries" / "hosts-routing.yml"
+        routing.parent.mkdir(parents=True)
+        routing.write_text("hosts:\n  genomesbox:\n    role: worker\n", encoding="utf-8")
+
+        status = host_routing_status(tmp_path)
+
+        assert status["api_version"] == "host-query/v1"
+        assert status["hosts"][0]["alias"] == "genomesbox"
+        assert status["hosts"][0]["health"]["status"] == "unknown"
+        assert any(item["severity"] == "error" for item in status["diagnostics"])
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +622,11 @@ class TestCLI:
         assert hosts["genomesbox"]["home"] == "/home/genome"
         assert "home: /home/genome" in listed
 
+        assert main(["host", "list", "--root", str(tmp_path), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["api_version"] == "host-list/v1"
+        assert payload["hosts"][0]["alias"] == "genomesbox"
+
     def test_host_routing_cli_json(self, tmp_path: Path, capsys) -> None:
         _init_root(tmp_path)
         capsys.readouterr()
@@ -602,6 +653,7 @@ auto_route:
         assert main(["host", "routing", "--root", str(tmp_path), "--json"]) == 0
         payload = json.loads(capsys.readouterr().out)
 
+        assert payload["api_version"] == "host-query/v1"
         assert payload["hosts"][0]["alias"] == "genomesbox"
         assert payload["auto_route"]["strategy"] == "least_active"
 

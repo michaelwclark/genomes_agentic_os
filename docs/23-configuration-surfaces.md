@@ -68,9 +68,12 @@ agentic-os update apply [--apply]         Apply safe additive update changes.
 
 ---
 
-## 3. config/hosts.yml — SSH Host Identity
+## 3. Host identity registry
 
-Located at `~/agentic_os/config/hosts.yml`.
+Located at `~/agentic_os/config/hosts.yml` in the historical package layout or
+`~/agentic_os/harness/config/hosts.yml` in the installed harness-owned layout.
+The host CLI resolves the existing source and writes back to it so it does not
+create a parallel registry.
 
 Stores SSH identity only: host alias, SSH alias, user, home/path-domain root, description, SSH options, and optional path metadata. Routing policy is deliberately separate in `harness/registries/hosts-routing.yml`, so credentials and dispatch decisions do not drift together.
 
@@ -83,7 +86,7 @@ Cross-host work distribution reads both files:
 
 ```
 agentic-os host add <alias> --ssh-alias <ssh-name> --home <path> [--description "..."]
-agentic-os host list
+agentic-os host list [--json]
 agentic-os host routing [--recent-runs N] [--json]
 ```
 

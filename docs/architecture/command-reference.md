@@ -1731,7 +1731,55 @@ Status: **OK** (rc 0)
 
 ---
 
-## 13. Customer OS factory: `customer`
+## 13. Host registry and operator projection: `host`
+
+### `host add`
+
+Create or update one SSH identity in the active installed host registry. The
+resolver writes back to an existing `config/hosts.yml` or
+`harness/config/hosts.yml` and does not create a parallel registry.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `alias` | Yes | Stable host alias |
+| `--ssh-alias` | No | Alias resolved by SSH config |
+| `--user` | No | Informational remote username |
+| `--home` | No | Absolute path-domain root on the host |
+| `--description` | No | Human-readable host summary |
+| `--root` | No | Installed OS root path |
+
+### `host list`
+
+List identities from the active registry. Pass `--json` for the stable
+`host-list/v1` response.
+
+```bash
+agentic-os host list --root ~/agentic_os --json
+```
+
+### `host routing`
+
+Join identity, routing policy, and recent harness receipts into the read-only,
+failure-tolerant `host-query/v1` operator projection.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+| `--recent-runs` | No (default: 8) | Maximum remote harness receipts to include |
+| `--json` | No | Emit machine-readable JSON |
+
+Health remains `unknown` without an observed receipt; this command never probes
+SSH or dispatches work.
+
+```bash
+agentic-os host routing --root ~/agentic_os --recent-runs 20 --json
+```
+
+Status: **OK** (covered by remote-source contract tests)
+
+---
+
+## 14. Customer OS factory: `customer`
 
 ### `customer init`
 
