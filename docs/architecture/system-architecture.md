@@ -118,6 +118,7 @@ belong in `scaffold.py`, not a new `utils.py`.
 | `report_engine.py` | — | **First-class reports.** Versioned definition/run/artifact registries, rich sections, explicit source/projection evidence, governed lifecycle/run actions, and consolidation plans. |
 | `automation_ops.py` | 282 | **Automation maturity.** Readiness checks + the `observe→prepare→propose→execute_approved→execute_guarded` ladder + project attachment. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
+| `workflow_engine.py` | — | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, drift-safe create/update/publish, exact readback, rollback, and queue-only run requests. |
 | `notion_sync.py` | 261 | **Notion projection.** Build/apply a reviewable filesystem→Notion sync plan. |
 | `room_profile.py` | 238 | **Room-first profiles.** Profile templates + validation for profile-driven installs. |
 | `mcp_catalog.py` | 208 | **MCP catalog.** Known MCP servers for the capability registry/tools layer. |

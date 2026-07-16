@@ -102,6 +102,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [34 · Activity Analytics Ingestion](34-activity-analytics-ingestion.md) | Privacy-safe provider event envelopes, opt-in scopes, metric bindings, cursors, and health. |
 | [35 · Effective Rule Hierarchy](35-effective-rule-hierarchy.md) | Context-aligned inheritance, stable numbering, strictest-applicable conflict resolution, and the GUI-safe `rules/v1` projection. |
 | [36 · Host Explorer Projection](36-host-explorer-projection.md) | Canonical host identity resolution and the failure-tolerant `host-query/v1` operator contract. |
+| [37 · Governed Workflow Engine](37-governed-workflow-engine.md) | Versioned workflow definitions, immutable publish, installed instances, field/step validation, drift-safe authoring, rollback, and honest queue-only run requests. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,

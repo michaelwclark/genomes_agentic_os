@@ -36,6 +36,10 @@ The filesystem is the source of truth. No database, no control plane, no
 approval from the OS is required to author a workflow — only the files on disk
 matter to `workflow check`.
 
+Operator applications can add the governed `workflow-engine/v1` definition,
+version, instance, and queue-request contract without replacing these readable
+workflow files. See [37 · Governed Workflow Engine](37-governed-workflow-engine.md).
+
 ---
 
 ## Required files
@@ -235,6 +239,9 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **Dispatch does not happen at the workflow layer.** Routing (`agentic-os route`)
   selects the workflow; the workflow spec tells the agent what to do once there.
   See [05 · Routing & Context](05-routing-and-context.md).
+- **`workflow run-now` is queue-only.** It writes a typed, idempotent run request
+  with `dispatch_performed: false`; the harness/runtime worker must provide
+  later execution evidence. See [37 · Governed Workflow Engine](37-governed-workflow-engine.md).
 
 ---
 
