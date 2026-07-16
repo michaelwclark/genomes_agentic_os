@@ -325,6 +325,18 @@ from the immediately preceding dry-run or get response. Queue-only run-now
 records current drift directly. See
 [Filesystem Resource Lifecycle](33-filesystem-resource-lifecycle.md).
 
+### Effective rules — `cli/rules.py`
+
+| Command | What it does |
+| --- | --- |
+| `rules effective` | Resolve context-aligned system/domain/project/workflow/automation rules, stable numbering, strictest-applicable winners, and conflict evidence. |
+
+The command accepts a contained `--path` or validated domain/project/workflow/
+automation selectors. `--query`, repeatable `--scope` / `--effect`,
+`--local-only`, and `--conflicts-only` filter the typed `rules/v1` projection.
+`--json` is intended for Command Center. See
+[35 · Effective Rule Hierarchy](35-effective-rule-hierarchy.md).
+
 ### State — `cli/state.py`
 
 A local SQLite state plane at `<os-root>/00-control-plane/state.db`, tracking
