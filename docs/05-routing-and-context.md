@@ -66,6 +66,8 @@ Build a context packet for a specific target without a request string.
   or archives.
 - `context compact --dry-run` emits a deterministic plan and exact rollback
   manifest; it does not delete files.
+- `context compact --dry-run --migration <id>` reuses one enabled, approved,
+  bounded rollout batch and pins its registry/profile digests in the plan.
 
 See [30 · Compact Context Contracts](30-context-contracts.md) for the contract
 shape and migration procedure.
@@ -180,6 +182,9 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
   `--promote-legacy`; whole-root manifest creation is refused. When an older
   installed root has unrelated validation drift, `--baseline-validation`
   records it and apply rejects any new error.
+- **Named batches stay bounded.** An installed migration profile can select at
+  most ten unique relative workflow/automation paths. Conflicting lane
+  contracts block the batch; identical promoted contracts are created once.
 
 ## Related
 

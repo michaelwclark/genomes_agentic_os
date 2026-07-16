@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 
+import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
@@ -13,6 +14,7 @@ from genomes_agentic_os.context_compaction import (
     apply_compaction_plan,
     build_compaction_plan,
     check_context_contracts,
+    load_context_migration,
     managed_context_targets,
     restore_compaction_receipt,
     write_compaction_plan,
@@ -66,6 +68,7 @@ def test_context_cli_explain_check_and_plan_receipts(tmp_path: Path, capsys) -> 
     assert main(["workflow", "create", "acme", "engineering", "ship", "--root", str(root)]) == 0
     assert main(["automation", "create", "acme", "engineering", "watch_ship", "--root", str(root)]) == 0
     capsys.readouterr()
+    assert (root / "harness/shared_factory/00-control-plane/context-migrations.yml").is_file()
 
     assert main(
         [
@@ -268,6 +271,126 @@ def legacy_automation(root: Path) -> Path:
     return target
 
 
+def write_migration_registry(
+    root: Path,
+    targets: list[str],
+    *,
+    enabled: bool = True,
+    status: str = "approved",
+    promote_legacy: bool = True,
+    baseline_validation: bool = False,
+) -> Path:
+    path = root / "harness/shared_factory/00-control-plane/context-migrations.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "migrations": [
+                    {
+                        "id": "live_wave_1",
+                        "enabled": enabled,
+                        "status": status,
+                        "targets": targets,
+                        "promote_legacy": promote_legacy,
+                        "baseline_validation": baseline_validation,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_named_migration_cli_records_registry_provenance(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "os"
+    target = legacy_automation(root)
+    relative = target.relative_to(root).as_posix()
+    registry = write_migration_registry(root, [relative])
+    output = tmp_path / "plans"
+
+    assert main(
+        [
+            "context",
+            "compact",
+            "--dry-run",
+            "--root",
+            str(root),
+            "--migration",
+            "live_wave_1",
+            "--output-dir",
+            str(output),
+        ]
+    ) == 0
+    capsys.readouterr()
+    plan = json.loads((output / "context-compaction-plan.json").read_text(encoding="utf-8"))
+
+    assert plan["selection"]["targets"] == [relative]
+    assert plan["selection"]["promote_legacy"] is True
+    assert plan["selection"]["migration"]["id"] == "live_wave_1"
+    assert plan["selection"]["migration"]["registry"].endswith("context-migrations.yml")
+    assert plan["selection"]["migration"]["registry_sha256"] == hashlib.sha256(
+        registry.read_bytes()
+    ).hexdigest()
+    assert len(plan["selection"]["migration"]["profile_sha256"]) == 64
+
+
+def test_named_migration_rejects_unsafe_disabled_and_conflicting_selection(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "os"
+    target = legacy_automation(root)
+    relative = target.relative_to(root).as_posix()
+    write_migration_registry(root, [relative], enabled=False)
+    with pytest.raises(ValueError, match="not enabled and approved"):
+        load_context_migration(root, "live_wave_1")
+
+    write_migration_registry(root, ["../outside"])
+    with pytest.raises(ValueError, match="safe relative path"):
+        load_context_migration(root, "live_wave_1")
+
+    write_migration_registry(root, [relative, relative])
+    with pytest.raises(ValueError, match="unique"):
+        load_context_migration(root, "live_wave_1")
+
+    write_migration_registry(root, [relative])
+    assert main(
+        [
+            "context",
+            "compact",
+            "--dry-run",
+            "--root",
+            str(root),
+            "--migration",
+            "live_wave_1",
+            "--target",
+            relative,
+        ]
+    ) == 2
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_apply_rejects_named_migration_registry_drift(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    target = legacy_automation(root)
+    relative = target.relative_to(root).as_posix()
+    registry = write_migration_registry(root, [relative])
+    profile = load_context_migration(root, "live_wave_1")
+    plan_path, _, _ = write_compaction_plan(
+        root,
+        tmp_path / "plans",
+        target_paths=profile.targets,
+        promote_legacy=profile.promote_legacy,
+        migration_metadata=profile.plan_metadata(root),
+    )
+    registry.write_text(registry.read_text(encoding="utf-8") + "# reviewed profile changed\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="registry changed after planning"):
+        apply_compaction_plan(root, plan_path, tmp_path / "receipts", validator=lambda _: [])
+
+
 def test_promote_legacy_target_creates_manifest_and_lane_contracts(tmp_path: Path) -> None:
     root = tmp_path / "os"
     target = legacy_automation(root)
@@ -313,6 +436,45 @@ def test_promote_legacy_target_creates_manifest_and_lane_contracts(tmp_path: Pat
         if path.is_file()
     }
     assert after == before
+
+
+def test_promote_legacy_batch_reuses_identical_lane_contracts(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    first = legacy_automation(root)
+    second = root / "acme/04-automations/engineering/archive"
+    shutil.copytree(first, second)
+    targets = [path.relative_to(root).as_posix() for path in (first, second)]
+
+    plan_path, _, plan = write_compaction_plan(
+        root,
+        tmp_path / "plans",
+        target_paths=targets,
+        promote_legacy=True,
+    )
+
+    assert plan["summary"]["blocked_actions"] == 0
+    assert plan["summary"]["targets_migrated"] == 2
+    assert sum(action["action"] == "create_inherited_contract" for action in plan["actions"]) == 4
+    result = apply_compaction_plan(root, plan_path, tmp_path / "receipts", validator=lambda _: [])
+    assert result["status"] == "applied"
+    assert result["semantic_before"] == result["semantic_after"]
+
+
+def test_promote_legacy_batch_blocks_different_lane_contracts(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    first = legacy_automation(root)
+    second = root / "acme/04-automations/engineering/archive"
+    shutil.copytree(first, second)
+    (second / "RULES.md").write_text("# Different safety contract\n", encoding="utf-8")
+    targets = [path.relative_to(root).as_posix() for path in (first, second)]
+
+    plan = build_compaction_plan(root, target_paths=targets, promote_legacy=True)
+
+    assert plan["summary"]["blocked_actions"] == 1
+    assert any(
+        action["status"] == "blocked" and "different RULES.md" in action["reason"]
+        for action in plan["actions"]
+    )
 
 
 def test_promote_legacy_requires_explicit_target(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from ..context_compaction import (
     apply_compaction_plan,
     build_compaction_plan,
     check_context_contracts,
+    load_context_migration,
     restore_compaction_receipt,
     write_compaction_plan,
 )
@@ -145,26 +146,39 @@ def handle_context_compact(args: argparse.Namespace) -> int:
     if args.dry_run:
         if args.plan or args.receipt_dir:
             raise ValueError("--plan and --receipt-dir are valid only with --apply")
+        if args.migration and (args.target or args.promote_legacy or args.baseline_validation):
+            raise ValueError(
+                "--migration cannot be combined with --target, --promote-legacy, or --baseline-validation"
+            )
+        migration = load_context_migration(args.root, args.migration) if args.migration else None
+        targets = list(migration.targets) if migration else args.target
+        promote_legacy = migration.promote_legacy if migration else args.promote_legacy
+        baseline_validation = migration.baseline_validation if migration else args.baseline_validation
+        migration_metadata = migration.plan_metadata(expand_path(args.root)) if migration else None
         if args.output_dir:
             _, _, plan = write_compaction_plan(
                 args.root,
                 args.output_dir,
-                target_paths=args.target,
-                promote_legacy=args.promote_legacy,
-                capture_validation_baseline=args.baseline_validation,
+                target_paths=targets,
+                promote_legacy=promote_legacy,
+                capture_validation_baseline=baseline_validation,
+                migration_metadata=migration_metadata,
             )
         else:
             plan = build_compaction_plan(
                 args.root,
-                target_paths=args.target,
-                promote_legacy=args.promote_legacy,
-                capture_validation_baseline=args.baseline_validation,
+                target_paths=targets,
+                promote_legacy=promote_legacy,
+                capture_validation_baseline=baseline_validation,
+                migration_metadata=migration_metadata,
             )
         print(yaml.safe_dump(plan, sort_keys=False).strip())
         return 0
     if args.apply:
-        if args.target or args.promote_legacy or args.baseline_validation:
-            raise ValueError("--target, --promote-legacy, and --baseline-validation are dry-run planning options")
+        if args.target or args.migration or args.promote_legacy or args.baseline_validation:
+            raise ValueError(
+                "--target, --migration, --promote-legacy, and --baseline-validation are dry-run planning options"
+            )
         if not args.plan or not args.receipt_dir:
             raise ValueError("context compact --apply requires --plan and --receipt-dir")
         result = apply_compaction_plan(args.root, args.plan, args.receipt_dir)
@@ -232,6 +246,10 @@ def register(subparsers) -> None:
         action="append",
         default=[],
         help="Managed workflow/automation path to migrate; repeat for a bounded group.",
+    )
+    context_compact.add_argument(
+        "--migration",
+        help="Approved named batch from the installed context-migrations registry.",
     )
     context_compact.add_argument(
         "--promote-legacy",
