@@ -103,3 +103,23 @@ def test_auto_dev_resolver_passes_matching_linear_tracker(monkeypatch, tmp_path)
     check = linear_check(results)
     assert check["ok"] is True
     assert "Linear tracker verified: CC-182" in check["detail"]
+
+
+def test_auto_dev_resolver_uses_configured_linear_token_env(monkeypatch, tmp_path):
+    module = load_resolver_module()
+    config = project_yml(tmp_path)
+    config["dev_factory"]["tracker"]["linear"]["token_env"] = "LINEAR_CC_TOKEN"
+    monkeypatch.delenv("LINEAR_TOKEN", raising=False)
+    monkeypatch.setenv("LINEAR_CC_TOKEN", "cc-token")
+    observed = {}
+
+    def fake_graphql(query, variables, token):
+        observed["token"] = token
+        return linear_response()
+
+    monkeypatch.setattr(module, "_linear_graphql", fake_graphql)
+
+    results = module._preflight(tmp_path, config, tmp_path / "packet", {"tracker": "CC-182"})
+
+    assert linear_check(results)["ok"] is True
+    assert observed["token"] == "cc-token"
