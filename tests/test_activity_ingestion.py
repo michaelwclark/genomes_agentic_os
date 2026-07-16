@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from genomes_agentic_os.cli import main
 
 from genomes_agentic_os.activity_ingestion import (
     CURSORS,
@@ -9,6 +10,8 @@ from genomes_agentic_os.activity_ingestion import (
     METRICS,
     REGISTRY,
     event_envelope,
+    collect_local_activity,
+    discover_local_activity,
     ingest_fixture,
     ingest_pages,
     validate_sources,
@@ -245,3 +248,216 @@ def test_provider_aliases_cover_operator_activity_families() -> None:
         }
         event = event_envelope(source, {"id": "stable-1", "type": raw_type})
         assert event["type"] == canonical
+
+
+def setup_local_source(root: Path) -> None:
+    write(
+        root / METRICS,
+        {
+            "metrics": [
+                {"id": "messages"},
+                {"id": "tool_runs"},
+                {"id": "automation_runs"},
+                {"id": "errors"},
+            ]
+        },
+    )
+    write(
+        root / REGISTRY,
+        {
+            "schema_version": 1,
+            "activity_sources": [
+                {
+                    "id": "agentic_os_local",
+                    "provider": "agentic_os",
+                    "enabled": True,
+                    "opt_in": True,
+                    "scope": {
+                        "domain": "clarks_consulting",
+                        "project": "genomes_agentic_os",
+                    },
+                    "dimensions": {"host_class": "workstation"},
+                    "metric_bindings": {
+                        "os.tool.ran": "tool_runs",
+                        "os.conversation.message": "messages",
+                        "os.automation.ran": "automation_runs",
+                        "os.error.recorded": "errors",
+                    },
+                }
+            ],
+        },
+    )
+
+
+def write_local_evidence(root: Path) -> None:
+    write(
+        root / "harness/shared_factory/06-runs-and-logs/events/evt_message.yml",
+        {
+            "id": "evt_message",
+            "type": "os.conversation.message",
+            "occurred_at": "2026-07-16T00:00:00Z",
+            "text": "private conversation body",
+            "url": "https://private.invalid/thread",
+        },
+    )
+    write(
+        root / "harness/shared_factory/06-runs-and-logs/runs/run-1/run-log.yml",
+        {
+            "run_id": "run-1",
+            "kind": "runtime_dispatch",
+            "status": "done",
+            "provider": "customer_name",
+            "finished_at": "2026-07-16T00:01:00Z",
+            "command": "print a secret",
+            "evidence": {"stdout": "customer body", "token": "xoxb-secret"},
+        },
+    )
+
+
+def test_local_collector_dry_run_is_metadata_only_and_read_only(tmp_path: Path) -> None:
+    setup_local_source(tmp_path)
+    write_local_evidence(tmp_path)
+    result = collect_local_activity(tmp_path, "agentic_os_local", limit=10)
+    rendered = yaml.safe_dump(result)
+    assert result["emitted"] == 2
+    assert {event["type"] for event in result["events"]} == {
+        "os.conversation.message",
+        "os.automation.ran",
+    }
+    assert "private conversation body" not in rendered
+    assert "private.invalid" not in rendered
+    assert "print a secret" not in rendered
+    assert "customer body" not in rendered
+    assert "xoxb-secret" not in rendered
+    assert "customer_name" not in rendered
+    assert not (tmp_path / CURSORS).exists()
+    assert not (tmp_path / HEALTH).exists()
+    assert not list((tmp_path / EVENTS).glob("*.yml"))
+
+
+def test_local_collector_apply_advances_cursor_and_replay_is_empty(
+    tmp_path: Path,
+) -> None:
+    setup_local_source(tmp_path)
+    write_local_evidence(tmp_path)
+    first = collect_local_activity(tmp_path, "agentic_os_local", limit=10, apply=True)
+    second = collect_local_activity(tmp_path, "agentic_os_local", limit=10, apply=True)
+    assert first["emitted"] == 2
+    assert first["cursor"]
+    assert second["emitted"] == 0
+    assert len(list((tmp_path / EVENTS).glob("*.yml"))) == 2
+    cursor = yaml.safe_load((tmp_path / CURSORS).read_text())["sources"][
+        "agentic_os_local"
+    ]
+    assert cursor["cursor"] == first["cursor"]
+
+
+def test_local_discovery_is_bounded_and_reports_unsupported(tmp_path: Path) -> None:
+    events = tmp_path / "harness/shared_factory/06-runs-and-logs/events"
+    for index in range(3):
+        write(
+            events / f"evt_{index}.yml",
+            {"id": f"evt_{index}", "type": "unmapped.event"},
+        )
+    result = discover_local_activity(tmp_path, limit=2)
+    assert result["scanned"] == 2
+    assert result["unsupported"] == 2
+    assert result["items"] == []
+
+
+def test_local_collector_malformed_evidence_is_degraded_and_recoverable(
+    tmp_path: Path,
+) -> None:
+    setup_local_source(tmp_path)
+    events = tmp_path / "harness/shared_factory/06-runs-and-logs/events"
+    events.mkdir(parents=True)
+    (events / "evt_bad.yml").write_text("bad: [yaml", encoding="utf-8")
+    result = collect_local_activity(tmp_path, "agentic_os_local", apply=True)
+    assert result["ok"] is True
+    assert result["status"] == "degraded"
+    assert result["collector"]["malformed"] == 1
+    health = yaml.safe_load((tmp_path / HEALTH).read_text())["sources"][
+        "agentic_os_local"
+    ]
+    assert health["status"] == "degraded"
+    assert "1 malformed" in health["last_error"]
+
+
+def test_local_collector_missing_evidence_does_not_advance_cursor(
+    tmp_path: Path,
+) -> None:
+    setup_local_source(tmp_path)
+    result = collect_local_activity(tmp_path, "agentic_os_local", apply=True)
+    assert result["ok"] is False
+    assert result["status"] == "unavailable"
+    cursor_data = yaml.safe_load((tmp_path / CURSORS).read_text())
+    assert cursor_data["sources"] == {}
+
+
+def test_local_collector_rejects_external_provider_source(tmp_path: Path) -> None:
+    setup_root(tmp_path)
+    try:
+        collect_local_activity(tmp_path, "slack_los")
+    except ValueError as exc:
+        assert "requires an agentic_os" in str(exc)
+    else:
+        raise AssertionError("external provider source was accepted")
+
+
+def test_local_collector_maps_tool_and_error_receipts(tmp_path: Path) -> None:
+    setup_local_source(tmp_path)
+    write(
+        tmp_path / "harness/shared_factory/06-runs-and-logs/runs/tool/run-log.yml",
+        {
+            "run_id": "tool-1",
+            "kind": "tool_call",
+            "status": "done",
+            "finished_at": "2026-07-16T00:00:00Z",
+        },
+    )
+    write(
+        tmp_path / "harness/shared_factory/06-runs-and-logs/events/evt_error.yml",
+        {
+            "id": "evt_error",
+            "type": "os.doctor.regression",
+            "occurred_at": "2026-07-16T00:01:00Z",
+        },
+    )
+    result = collect_local_activity(tmp_path, "agentic_os_local")
+    assert {event["type"] for event in result["events"]} == {
+        "os.tool.ran",
+        "os.error.recorded",
+    }
+
+
+def test_collect_local_cli_dry_run(tmp_path: Path, capsys) -> None:
+    setup_local_source(tmp_path)
+    write_local_evidence(tmp_path)
+    assert (
+        main(
+            [
+                "activity",
+                "collect-local",
+                "agentic_os_local",
+                "--root",
+                str(tmp_path),
+                "--limit",
+                "1",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    output = yaml.safe_load(capsys.readouterr().out)
+    assert output["dry_run"] is True
+    assert output["collector"]["scanned"] == 1
+
+
+def test_local_collector_rejects_nonpositive_limit(tmp_path: Path) -> None:
+    setup_local_source(tmp_path)
+    try:
+        collect_local_activity(tmp_path, "agentic_os_local", limit=0)
+    except ValueError as exc:
+        assert "at least 1" in str(exc)
+    else:
+        raise AssertionError("nonpositive limit was accepted")

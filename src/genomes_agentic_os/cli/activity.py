@@ -1,7 +1,13 @@
 """CLI for privacy-safe activity analytics ingestion."""
 
 import yaml
-from ..activity_ingestion import health, ingest_fixture, list_sources, validate_sources
+from ..activity_ingestion import (
+    collect_local_activity,
+    health,
+    ingest_fixture,
+    list_sources,
+    validate_sources,
+)
 from ._shared import DEFAULT_ROOT
 
 
@@ -33,5 +39,24 @@ def register(subparsers):
     ingest.set_defaults(
         handler=lambda args: (
             _print(ingest_fixture(args.root, args.fixture, apply=args.apply)) or 0
+        )
+    )
+    collect = commands.add_parser(
+        "collect-local", help="Collect canonical metadata-only local runtime evidence."
+    )
+    collect.add_argument("source_id")
+    collect.add_argument("--root", default=DEFAULT_ROOT)
+    collect.add_argument("--limit", type=int, default=100)
+    collect_mode = collect.add_mutually_exclusive_group(required=True)
+    collect_mode.add_argument("--dry-run", action="store_true")
+    collect_mode.add_argument("--apply", action="store_true")
+    collect.set_defaults(
+        handler=lambda args: (
+            _print(
+                collect_local_activity(
+                    args.root, args.source_id, limit=args.limit, apply=args.apply
+                )
+            )
+            or 0
         )
     )
