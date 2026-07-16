@@ -18,6 +18,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -214,7 +215,7 @@ memory_plane:
             encoding="utf-8",
         )
 
-        status = host_routing_status(tmp_path)
+        status = host_routing_status(tmp_path, now=datetime(2026, 7, 4, 22, tzinfo=UTC))
         text = format_host_routing_status(status)
 
         assert {host["alias"] for host in status["hosts"]} == {"bigmac", "genomesbox"}
@@ -223,6 +224,7 @@ memory_plane:
         genomesbox = next(host for host in status["hosts"] if host["alias"] == "genomesbox")
         assert genomesbox["health"]["status"] == "healthy"
         assert genomesbox["health"]["source"] == "recent_harness_run"
+        assert genomesbox["health"]["freshness"] == "current"
         bigmac = next(host for host in status["hosts"] if host["alias"] == "bigmac")
         assert bigmac["health"]["status"] == "unknown"
         assert status["recent_harness_runs"][0]["host"] == "genomesbox"
@@ -242,6 +244,24 @@ memory_plane:
         assert status["hosts"][0]["alias"] == "genomesbox"
         assert status["hosts"][0]["health"]["status"] == "unknown"
         assert any(item["severity"] == "error" for item in status["diagnostics"])
+
+    def test_host_routing_status_marks_old_success_receipt_degraded_and_stale(self, tmp_path: Path) -> None:
+        save_hosts(tmp_path, {"genomesbox": {"ssh_alias": "genomesbox"}})
+        runs_log = tmp_path / "harness" / "shared_factory" / "06-runs-and-logs" / "harness-runs" / "runs.jsonl"
+        runs_log.parent.mkdir(parents=True)
+        runs_log.write_text(
+            '{"ts":"2026-07-04T21:00:00Z","host":"genomesbox","harness":"gpt","exit_code":0}\n',
+            encoding="utf-8",
+        )
+
+        status = host_routing_status(tmp_path, now=datetime(2026, 7, 6, 22, tzinfo=UTC))
+        health = status["hosts"][0]["health"]
+
+        assert health["status"] == "degraded"
+        assert health["source"] == "stale_harness_run"
+        assert health["last_outcome"] == "success"
+        assert health["freshness"] == "stale"
+        assert health["age_seconds"] > health["stale_after_seconds"]
 
 
 # ---------------------------------------------------------------------------
