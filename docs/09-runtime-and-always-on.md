@@ -252,6 +252,11 @@ Registry-backed `rule`, `report`, `skill`, and `command` resources use the same
 rollback operations. See [Governed Registry Authoring](32-registry-resource-authoring.md)
 for scope routing, safety rules, receipts, and the analytics presentation registry.
 
+Filesystem-backed resources also support canonical list/get/update/disable/
+archive/restore/rollback actions, drift-confirmed applies, exact-byte overlay
+backups, queue-only automation run-now, and derived automation schedules. See
+[Filesystem Resource Lifecycle](33-filesystem-resource-lifecycle.md).
+
 ### `agentic-os schedule run-due`
 
 Find all schedules whose `next_due_at` has passed and enqueue them. Writes queue
