@@ -7,7 +7,7 @@ import sys
 import pytest
 import yaml
 
-from genomes_agentic_os import supervisor
+from genomes_agentic_os import runtime_ops, supervisor
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref, runtime_run_next
 from genomes_agentic_os.supervisor import supervise_tick
@@ -249,6 +249,106 @@ def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> N
     dispatched = yaml.safe_load(capsys.readouterr().out)
     assert dispatched["status"] == "done"
     assert dispatched["queue_item"]["status"] == "done"
+
+
+def test_runtime_dispatch_adds_user_local_bin_to_quiet_run_path(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fresh_root(tmp_path)
+    home = tmp_path / "service-home"
+    home.mkdir()
+    observed_path = root / "quiet-run-path.txt"
+    quiet_run = root / "harness" / "bin" / "agentic-os-quiet-run"
+    quiet_run.write_text(
+        f"#!/bin/bash\nprintf '%s' \"$PATH\" > {observed_path}\n",
+        encoding="utf-8",
+    )
+    quiet_run.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    queue.setdefault("items", []).append(
+        {
+            "id": "queue_quiet_run_path",
+            "kind": "source_trigger",
+            "ref": "path_contract",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-07-16T00:00:00Z",
+            "idempotency_key": "test:quiet-run-path",
+            "execution_target": "script",
+            "command": f"{quiet_run} start -- /bin/true",
+        }
+    )
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    capsys.readouterr()
+
+    dispatched = runtime_run_next(root, dry_run=False, item_id="queue_quiet_run_path")
+
+    assert dispatched["status"] == "done"
+    assert observed_path.read_text(encoding="utf-8").split(os.pathsep) == [
+        str(home / ".local" / "bin"),
+        "/usr/bin",
+        "/bin",
+    ]
+
+
+def test_runtime_dispatch_does_not_duplicate_user_local_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "service-home"
+    user_bin = home / ".local" / "bin"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"/usr/bin:{user_bin}:/bin")
+
+    env = runtime_ops._runtime_subprocess_env(tmp_path / "agentic_os")
+
+    assert env["PATH"].split(os.pathsep) == ["/usr/bin", str(user_bin), "/bin"]
+
+
+def test_runtime_dispatch_adds_user_local_bin_to_general_script_path(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fresh_root(tmp_path)
+    home = tmp_path / "service-home"
+    home.mkdir()
+    observed_path = root / "general-script-path.txt"
+    worker = root / "record-path.sh"
+    worker.write_text(f"#!/bin/bash\nprintf '%s' \"$PATH\" > {observed_path}\n", encoding="utf-8")
+    worker.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    queue_path = root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
+    queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
+    queue.setdefault("items", []).append(
+        {
+            "id": "queue_general_path",
+            "kind": "source_trigger",
+            "ref": "path_contract",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-07-16T00:00:00Z",
+            "idempotency_key": "test:general-path",
+            "execution_target": "script",
+            "command": str(worker),
+        }
+    )
+    queue["run_queue"] = queue["items"]
+    queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
+    capsys.readouterr()
+
+    dispatched = runtime_run_next(root, dry_run=False, item_id="queue_general_path")
+
+    assert dispatched["status"] == "done"
+    assert observed_path.read_text(encoding="utf-8").split(os.pathsep) == [
+        str(home / ".local" / "bin"),
+        "/usr/bin",
+        "/bin",
+    ]
 
 
 def test_runtime_dispatches_latest_priority_ref_and_skips_older_duplicates(tmp_path: Path) -> None:

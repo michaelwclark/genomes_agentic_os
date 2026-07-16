@@ -1194,6 +1194,24 @@ def _trim_dispatch_output(value: str | bytes | None) -> str:
     return f"{text[:SCRIPT_DISPATCH_OUTPUT_LIMIT]}\n... <truncated {omitted} chars>"
 
 
+def _runtime_subprocess_env(root: Path) -> dict[str, str]:
+    """Build the stable environment inherited by runtime-dispatched workers.
+
+    Service managers commonly start the supervisor without the interactive
+    shell's user-local binary directory.  Preserve the inherited PATH, but make
+    the standard user-local launcher location available to deterministic child
+    scripts and the detached workers they start.
+    """
+    env = os.environ.copy()
+    env.setdefault("AGENTIC_OS_ROOT", str(root))
+    user_local_bin = str(Path.home() / ".local" / "bin")
+    path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
+    if user_local_bin not in path_entries:
+        path_entries.insert(0, user_local_bin)
+    env["PATH"] = os.pathsep.join(path_entries)
+    return env
+
+
 def _run_subprocess_script(root: Path, command: str, *, timeout_seconds: int) -> dict[str, Any]:
     try:
         args = shlex.split(command)
@@ -1216,8 +1234,7 @@ def _run_subprocess_script(root: Path, command: str, *, timeout_seconds: int) ->
             "external_effect": "local script failed before execution",
         }
 
-    env = os.environ.copy()
-    env.setdefault("AGENTIC_OS_ROOT", str(root))
+    env = _runtime_subprocess_env(root)
     try:
         completed = subprocess.run(
             args,
@@ -1678,6 +1695,7 @@ def _run_registered_watcher_script(
         completed = subprocess.run(
             parsed,
             cwd=root,
+            env=_runtime_subprocess_env(root),
             check=False,
             capture_output=True,
             text=True,
@@ -1745,6 +1763,7 @@ def _run_quiet_run_script(root: Path, command: str) -> dict[str, Any] | None:
         completed = subprocess.run(
             resolved_parts,
             cwd=root,
+            env=_runtime_subprocess_env(root),
             check=False,
             capture_output=True,
             text=True,
