@@ -102,10 +102,12 @@ object reduction is at least 40%. The semantic comparison uses the full legacy
 source set before migration and the resolved manifest set after migration.
 
 `--baseline-validation` records the complete installed-root validation error
-set and its hash in the reviewed plan. Apply first confirms that baseline is
-unchanged, then runs full validation again and rejects any new error. This
-allows a bounded migration in an older root with unrelated pre-existing drift
-without silently accepting a regression or broadening the migration scope.
+set and its hash in the reviewed plan. The reviewed plan preserves that
+snapshot as provenance. Apply captures a fresh pre-mutation snapshot, then
+runs full validation again and rejects any error added after that immediate
+snapshot. This allows a bounded migration in an older or concurrently active
+root without silently accepting a regression caused by the migration or
+making safe live migration depend on unrelated OS work remaining frozen.
 
 Named rollout batches live in
 `harness/shared_factory/00-control-plane/context-migrations.yml`. A batch must

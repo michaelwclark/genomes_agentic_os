@@ -859,8 +859,6 @@ def apply_compaction_plan(
     validation_before = None
     if planned_validation_before is not None:
         validation_before = _validation_snapshot(_validation_errors(os_root, validator))
-        if validation_before != planned_validation_before:
-            raise ValueError("installed-root validation baseline changed after planning")
     receipt: dict[str, Any] = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
         "operation": "context_compact_apply",
@@ -877,6 +875,7 @@ def apply_compaction_plan(
         "target_reductions": reductions,
         "context_check_before": check_before.as_dict(),
         "context_check_after": None,
+        "validation_planned": planned_validation_before,
         "validation_before": validation_before,
         "validation_after": None,
         "summary": {

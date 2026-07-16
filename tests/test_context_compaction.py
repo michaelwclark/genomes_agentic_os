@@ -537,6 +537,28 @@ def test_validation_baseline_allows_existing_errors_but_rejects_regression(tmp_p
 
     result = apply_compaction_plan(root, plan_path, tmp_path / "receipts", validator=existing)
     assert result["status"] == "applied"
+    assert result["validation_planned"] == plan["validation_before"]
+    assert result["validation_before"] == result["validation_after"]
+    restore_compaction_receipt(root, result["receipt_path"])
+
+    plan_path, _, plan = write_compaction_plan(
+        root,
+        tmp_path / "concurrent-plans",
+        target_paths=[relative],
+        promote_legacy=True,
+        capture_validation_baseline=True,
+        validation_validator=existing,
+    )
+    concurrent = lambda _: ["pre-existing drift", "unrelated concurrent drift"]
+    result = apply_compaction_plan(
+        root,
+        plan_path,
+        tmp_path / "concurrent-receipts",
+        validator=concurrent,
+    )
+    assert result["status"] == "applied"
+    assert result["validation_planned"] == plan["validation_before"]
+    assert result["validation_before"]["error_count"] == 2
     assert result["validation_before"] == result["validation_after"]
     restore_compaction_receipt(root, result["receipt_path"])
 
