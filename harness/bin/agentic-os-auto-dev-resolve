@@ -303,14 +303,18 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
     if not tracker_id:
         return None
 
-    token = os.environ.get("LINEAR_TOKEN") or os.environ.get("LINEAR_API_KEY")
+    token_env = str(linear_cfg.get("token_env") or "LINEAR_TOKEN")
+    token = os.environ.get(token_env)
+    if token_env == "LINEAR_TOKEN" and not token:
+        token = os.environ.get("LINEAR_API_KEY")
     if not token:
+        fallback = " or LINEAR_API_KEY" if token_env == "LINEAR_TOKEN" else ""
         return {
             "name": "linear_tracker",
             "ok": False,
             "detail": (
-                "Linear tracker preflight requires LINEAR_TOKEN or LINEAR_API_KEY, but neither is set.\n"
-                "  Remedy: export the approved Linear token and re-run the resolver before auto-dev claim."
+                f"Linear tracker preflight requires {token_env}{fallback}, but no approved token is set.\n"
+                f"  Remedy: export {token_env} for the configured Linear workspace and re-run the resolver before auto-dev claim."
             ),
         }
 
@@ -351,7 +355,7 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
             detail = (
                 f"Linear tracker preflight failed while reading team/project/issue metadata.{suffix}\n"
                 f"  Error: {exc}\n"
-                "  Remedy: verify LINEAR_TOKEN, team_id, project_id, and Linear API access before auto-dev claim."
+                f"  Remedy: verify {token_env}, team_id, project_id, and Linear API access before auto-dev claim."
             )
         return {"name": "linear_tracker", "ok": False, "detail": detail}
 
