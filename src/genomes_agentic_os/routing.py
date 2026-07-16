@@ -423,6 +423,12 @@ def build_context(
                 project_root / "worktrees" / "index.yml",
             ]
         )
+        project_context = resolve_context_contract(project_root, root=os_root)
+        if not project_context.legacy_fallback:
+            sources.extend(source.path for source in project_context.read_first)
+            known_gaps.extend(
+                item.message for item in project_context.diagnostics if item.severity in {"warning", "error"}
+            )
         selected_work_item = select_project_work_item(
             project_root,
             request=request,
