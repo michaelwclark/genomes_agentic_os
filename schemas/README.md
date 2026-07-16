@@ -10,3 +10,8 @@ Report resources use three independently versioned contracts:
 `report-definition.schema.json`, `report-run.schema.json`, and
 `report-artifact.schema.json`. Definitions are mutable through governed actions;
 runs and artifacts are immutable evidence.
+
+Workflow Studio uses `workflow-definition.schema.json` for the editable,
+unknown-field-tolerant definition. Published versions and installed instance
+pointers are immutable/readback records owned by `workflow-engine/v1`; they are
+not aliases for the editable definition.
