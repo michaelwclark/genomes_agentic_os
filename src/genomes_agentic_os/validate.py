@@ -24,7 +24,7 @@ from .lifecycle import (
     conversation_log_files,
     lifecycle_status,
     load_yaml_mapping,
-    local_project_work_items,
+    local_work_item_candidates,
     metadata_path_for,
 )
 from .scaffold import (
@@ -539,27 +539,39 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
     work_items_root = project_root / "work-items"
     if not work_items_root.is_dir():
         return
-    for work_item_root in sorted(
-        record.path
-        for record in local_project_work_items(project_root)
-        if record.source == "project_work_item"
-    ):
+    records: list[WorkItemRecord] = []
+    for work_item_root in local_work_item_candidates(work_items_root):
         metadata_path = metadata_path_for(work_item_root)
         if metadata_path is None:
             result.errors.append(
                 f"work item missing metadata file ({', '.join(WORK_ITEM_METADATA_FILES)}): {work_item_root}"
             )
             continue
-        metadata = load_yaml_mapping(metadata_path)
+        try:
+            metadata = load_yaml_mapping(metadata_path)
+        except (OSError, yaml.YAMLError) as exc:
+            result.errors.append(f"invalid work item metadata: {metadata_path}: {exc}")
+            continue
         status = lifecycle_status(metadata)
         if status not in WORK_LIFECYCLE_STATES:
             result.errors.append(f"work item has invalid lifecycle status {status!r}: {metadata_path}")
+        records.append(
+            WorkItemRecord(
+                path=work_item_root,
+                metadata_path=metadata_path,
+                status=status,
+                title=str(metadata.get("title") or work_item_root.name),
+                slug=str(metadata.get("slug") or metadata.get("id") or work_item_root.stem),
+                source="project_work_item",
+                metadata=metadata,
+            )
+        )
         if work_item_root.is_dir():
             for directory in WORK_ITEM_DIRECTORIES:
                 path = work_item_root / directory
                 if not path.is_dir():
                     result.warnings.append(f"work item missing recommended folder: {path}")
-    for record in local_project_work_items(project_root):
+    for record in records:
         for path in record.missing_required_files:
             message = f"work item {record.path.name} status {record.status!r} missing required file: {path}"
             result.warnings.append(message)
@@ -735,9 +747,14 @@ def validate_capability_registries(root: Path, result: ValidationResult) -> None
         path = root / relative_path
         registry_paths = [path] if path.is_file() else []
         if capability_type in {"command", "skill", "rule", "report"}:
+            scoped_patterns = (
+                f"*/00-control-plane/resource-registries/{collection}.yml",
+                f"*/02-projects/*/config/resource-registries/{collection}.yml",
+            )
             registry_paths.extend(
                 candidate
-                for candidate in root.rglob(f"resource-registries/{collection}.yml")
+                for pattern in scoped_patterns
+                for candidate in root.glob(pattern)
                 if candidate.is_file()
             )
         typed_ids[capability_type] = {
@@ -838,13 +855,22 @@ def _runtime_invocation_ids(root: Path) -> set[str]:
     run_queue_path = control / "run-queue.yml"
     if run_queue_path.is_file():
         try:
-            run_queue = yaml.safe_load(run_queue_path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            run_queue = {}
-        for collection in ("items", "run_queue"):
-            for entry in run_queue.get(collection, []) or []:
-                if isinstance(entry, dict) and entry.get("ref"):
-                    ids.add(str(entry["ref"]))
+            with run_queue_path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.lstrip()
+                    if not line[:1].isspace() or not stripped.startswith("ref:"):
+                        continue
+                    raw_value = stripped.removeprefix("ref:").strip()
+                    if not raw_value:
+                        continue
+                    try:
+                        value = yaml.safe_load(raw_value)
+                    except yaml.YAMLError:
+                        continue
+                    if isinstance(value, (str, int, float)):
+                        ids.add(str(value))
+        except OSError:
+            pass
 
     return ids
 
@@ -855,13 +881,34 @@ def _has_registered_invocation(
     object_id: str,
     *,
     include_runtime: bool = False,
+    command_sources: set[str] | None = None,
+    skill_sources: set[str] | None = None,
+    command_ids: set[str] | None = None,
+    skill_ids: set[str] | None = None,
+    runtime_ids: set[str] | None = None,
 ) -> bool:
-    command_sources = _registry_sources(root, "commands", "commands")
-    skill_sources = _registry_sources(root, "skills", "skills")
+    command_sources = (
+        command_sources
+        if command_sources is not None
+        else _registry_sources(root, "commands", "commands")
+    )
+    skill_sources = (
+        skill_sources
+        if skill_sources is not None
+        else _registry_sources(root, "skills", "skills")
+    )
     if any(source.startswith(f"{relative_folder}/") for source in command_sources | skill_sources):
         return True
-    command_ids = _registry_ids(root, "commands", "commands")
-    skill_ids = _registry_ids(root, "skills", "skills")
+    command_ids = (
+        command_ids
+        if command_ids is not None
+        else _registry_ids(root, "commands", "commands")
+    )
+    skill_ids = (
+        skill_ids
+        if skill_ids is not None
+        else _registry_ids(root, "skills", "skills")
+    )
     candidates = {object_id, object_id.replace("_", "-")}
     if include_runtime:
         parts = relative_folder.split("/")
@@ -869,7 +916,7 @@ def _has_registered_invocation(
             domain, lane = parts[0], parts[2]
             candidates.add(f"{domain}_{lane}_{object_id}")
             candidates.add(f"{domain}-{lane}-{object_id.replace('_', '-')}")
-        runtime_ids = _runtime_invocation_ids(root)
+        runtime_ids = runtime_ids if runtime_ids is not None else _runtime_invocation_ids(root)
         if candidates & runtime_ids:
             return True
         if any(runtime_id.endswith(f"_{object_id}") for runtime_id in runtime_ids):
@@ -878,12 +925,28 @@ def _has_registered_invocation(
 
 
 def validate_workflow_automation_invocations(root: Path, result: ValidationResult) -> None:
-    for workflow_spec in sorted(root.glob("*/03-workflows/*/*/workflow.md")):
+    workflow_specs = sorted(root.glob("*/03-workflows/*/*/workflow.md"))
+    automation_specs = sorted(root.glob("*/04-automations/*/*/automation.md"))
+    command_sources = _registry_sources(root, "commands", "commands")
+    skill_sources = _registry_sources(root, "skills", "skills")
+    command_ids = _registry_ids(root, "commands", "commands")
+    skill_ids = _registry_ids(root, "skills", "skills")
+    runtime_ids = _runtime_invocation_ids(root) if automation_specs else set()
+
+    invocation_snapshot = {
+        "command_sources": command_sources,
+        "skill_sources": skill_sources,
+        "command_ids": command_ids,
+        "skill_ids": skill_ids,
+        "runtime_ids": runtime_ids,
+    }
+
+    for workflow_spec in workflow_specs:
         relative_folder = workflow_spec.parent.relative_to(root).as_posix()
         workflow_id = workflow_spec.parent.name
         content = workflow_spec.read_text(encoding="utf-8", errors="replace")
         status = _markdown_table_field(content, "Status") or "draft"
-        if _has_registered_invocation(root, relative_folder, workflow_id):
+        if _has_registered_invocation(root, relative_folder, workflow_id, **invocation_snapshot):
             continue
         message = (
             f"workflow `{workflow_id}` missing matching command or skill registry entry: "
@@ -891,13 +954,19 @@ def validate_workflow_automation_invocations(root: Path, result: ValidationResul
         )
         result.warnings.append(message)
 
-    for automation_spec in sorted(root.glob("*/04-automations/*/*/automation.md")):
+    for automation_spec in automation_specs:
         relative_folder = automation_spec.parent.relative_to(root).as_posix()
         automation_id = automation_spec.parent.name
         content = automation_spec.read_text(encoding="utf-8", errors="replace")
         status = _markdown_table_field(content, "Status") or "draft"
         level = _markdown_table_field(content, "Level") or "observe"
-        if _has_registered_invocation(root, relative_folder, automation_id, include_runtime=True):
+        if _has_registered_invocation(
+            root,
+            relative_folder,
+            automation_id,
+            include_runtime=True,
+            **invocation_snapshot,
+        ):
             continue
         message = (
             f"automation `{automation_id}` missing matching command, skill, trigger, or runtime registry entry: "
@@ -1120,6 +1189,21 @@ def _load_document(path: Path) -> Any | None:
         return None
 
 
+def _schema_target_candidates(root: Path, pattern: str) -> list[Path]:
+    """Resolve schema targets only across declared OS ownership layers."""
+    if pattern.startswith("**/"):
+        suffix = pattern.removeprefix("**/")
+        candidates = [
+            *root.glob(f"*/{suffix}"),
+            *root.glob(f"harness/shared_factory/{suffix}"),
+        ]
+    elif "*" in pattern:
+        candidates = list(root.glob(pattern))
+    else:
+        candidates = [root / pattern]
+    return list(dict.fromkeys(candidates))
+
+
 def validate_schemas_strict(root: Path) -> list[StrictFinding]:
     """Validate installed files against their JSON schemas.
 
@@ -1170,14 +1254,7 @@ def validate_schemas_strict(root: Path) -> list[StrictFinding]:
             continue
 
         for pattern in target_patterns:
-            if "**" in pattern or "*" in pattern:
-                candidates = list(root.rglob(pattern.lstrip("**/").lstrip("*/")))
-                if "**/" in pattern:
-                    candidates = list(root.rglob(pattern[pattern.index("**/") + 3 :]))
-            else:
-                candidates = [root / pattern]
-
-            for target_path in candidates:
+            for target_path in _schema_target_candidates(root, pattern):
                 if not target_path.is_file():
                     continue
                 doc = _load_document(target_path)

@@ -7,6 +7,7 @@ Kept in a separate file to avoid contention with tests/test_cli_scaffold.py.
 from __future__ import annotations
 
 import datetime
+import importlib
 import json
 import os
 from pathlib import Path
@@ -24,9 +25,12 @@ from genomes_agentic_os.validate import (
     ValidationResult,
     lifecycle_staleness_findings,
     validate_automation_projection_registry,
+    validate_capability_registries,
     validate_root,
     validate_schemas_strict,
 )
+
+validate_module = importlib.import_module("genomes_agentic_os.validate")
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +131,32 @@ def test_validate_schemas_strict_returns_list(tmp_path: Path) -> None:
     assert isinstance(findings, list)
 
 
+def test_schema_targets_scan_declared_layers_without_generated_tree_walk(
+    tmp_path: Path,
+) -> None:
+    domain_target = tmp_path / "personal/04-automations/engineering/demo/automation.yml"
+    shared_target = (
+        tmp_path
+        / "harness/shared_factory/04-automations/engineering/shared/automation.yml"
+    )
+    generated_target = (
+        tmp_path
+        / "logs/archive/nested/04-automations/engineering/stale/automation.yml"
+    )
+    for path in (domain_target, shared_target, generated_target):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("id: test\n", encoding="utf-8")
+
+    candidates = validate_module._schema_target_candidates(
+        tmp_path,
+        "**/04-automations/*/*/automation.yml",
+    )
+
+    assert domain_target in candidates
+    assert shared_target in candidates
+    assert generated_target not in candidates
+
+
 def test_validate_schemas_strict_clean_on_fresh_install(tmp_path: Path) -> None:
     """A fresh install produces zero strict schema violations.
 
@@ -216,6 +246,43 @@ def test_validate_reports_missing_composio_tool_registry_entry(tmp_path: Path) -
     assert any("phantom_tool" in e for e in result.errors)
 
 
+def test_capability_validation_loads_scoped_project_resource_registry(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    _init_root(root)
+    local_registry = (
+        root
+        / "personal/02-projects/demo/config/resource-registries/skills.yml"
+    )
+    local_registry.parent.mkdir(parents=True)
+    local_registry.write_text(
+        yaml.safe_dump(
+            {"skills": [{"id": "project-only-skill", "source": "SKILL.md"}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    capabilities_path = registries(root) / "capabilities.yml"
+    capabilities = yaml.safe_load(capabilities_path.read_text(encoding="utf-8"))
+    capabilities["capabilities"].append(
+        {
+            "id": "skill:project-only-skill",
+            "type": "skill",
+            "ref": "project-only-skill",
+            "name": "Project-only skill",
+            "description": "Project-scoped test skill.",
+        }
+    )
+    capabilities_path.write_text(
+        yaml.safe_dump(capabilities, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = ValidationResult(root=root)
+    validate_capability_registries(root, result)
+
+    assert not any("project-only-skill" in error for error in result.errors)
+
+
 def test_validate_composio_tools_registry_file_is_required(tmp_path: Path) -> None:
     """The composio-tools.yml registry file is required by validate_root."""
     root = tmp_path / "agentic_os"
@@ -283,6 +350,81 @@ def test_validate_accepts_explicit_automation_run_tracking_exclusion(tmp_path: P
         "missing automation-run-tracking representation" in error
         for error in result.errors
     )
+
+
+def test_project_work_item_validation_reports_invalid_yaml_without_crashing(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "personal/02-projects/demo"
+    work_item = project_root / "work-items/02-active/broken"
+    work_item.mkdir(parents=True)
+    (work_item / "work.yml").write_text(
+        "status: in_progress\nacceptance_criteria:\n- `invalid`\n",
+        encoding="utf-8",
+    )
+
+    result = ValidationResult(root=tmp_path)
+    validate_module.validate_project_work_items(project_root, result)
+
+    assert any("invalid work item metadata" in error for error in result.errors)
+
+
+def test_invocation_validation_snapshots_registry_and_runtime_state_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "agentic_os"
+    for index in range(2):
+        workflow = root / f"personal/03-workflows/engineering/workflow_{index}/workflow.md"
+        workflow.parent.mkdir(parents=True, exist_ok=True)
+        workflow.write_text("# Workflow\n", encoding="utf-8")
+        automation = root / f"personal/04-automations/engineering/automation_{index}/automation.md"
+        automation.parent.mkdir(parents=True, exist_ok=True)
+        automation.write_text("# Automation\n", encoding="utf-8")
+
+    calls = {"registry_sources": 0, "registry_ids": 0, "runtime_ids": 0}
+
+    def fake_registry_sources(*_args: Any) -> set[str]:
+        calls["registry_sources"] += 1
+        return set()
+
+    def fake_registry_ids(*_args: Any) -> set[str]:
+        calls["registry_ids"] += 1
+        return set()
+
+    def fake_runtime_ids(*_args: Any) -> set[str]:
+        calls["runtime_ids"] += 1
+        return set()
+
+    monkeypatch.setattr(validate_module, "_registry_sources", fake_registry_sources)
+    monkeypatch.setattr(validate_module, "_registry_ids", fake_registry_ids)
+    monkeypatch.setattr(validate_module, "_runtime_invocation_ids", fake_runtime_ids)
+
+    result = ValidationResult(root=root)
+    validate_module.validate_workflow_automation_invocations(root, result)
+
+    assert calls == {"registry_sources": 2, "registry_ids": 2, "runtime_ids": 1}
+    assert len(result.warnings) == 4
+
+
+def test_runtime_invocation_ids_stream_large_queue_refs(tmp_path: Path) -> None:
+    queue_path = tmp_path / "harness/shared_factory/00-control-plane/run-queue.yml"
+    queue_path.parent.mkdir(parents=True)
+    queue_path.write_text(
+        "version: 0.1.0\n"
+        "items:\n"
+        "- id: first\n"
+        "  ref: plain_ref\n"
+        "- id: second\n"
+        "  ref: 'quoted_ref'\n"
+        "run_queue: []\n",
+        encoding="utf-8",
+    )
+
+    assert validate_module._runtime_invocation_ids(tmp_path) == {
+        "plain_ref",
+        "quoted_ref",
+    }
 
 
 # ---------------------------------------------------------------------------
