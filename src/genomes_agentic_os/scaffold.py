@@ -59,6 +59,11 @@ STANDARD_LANES = (
 
 MANAGED_RUNTIME_FILES = (
     (
+        "templates/runtime/activity-sources.yml",
+        "harness/shared_factory/00-control-plane/activity-sources.yml",
+        "replace_if_managed_unchanged",
+    ),
+    (
         "templates/runtime/analytics-metrics.yml",
         "harness/registries/analytics-metrics.yml",
         "replace_if_managed_unchanged",

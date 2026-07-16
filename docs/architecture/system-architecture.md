@@ -105,6 +105,7 @@ belong in `scaffold.py`, not a new `utils.py`.
 | `runtime_ops.py` | 1186 | **Runtime registries.** Heartbeats, schedules, integrations, the run-queue, and `run-next` dispatch. File-backed; dry-run by default. |
 | `cli.py` | 1176 | **Composition root.** `build_parser()` declares every command; `handle_*` functions adapt args → ops calls; `main()` dispatches. The one place wiring lives. |
 | `source_watch.py` | 665 | **Connected sources.** `connected-system` + `watch-source` registries, cursors, polling. |
+| `activity_ingestion.py` | — | **Operator analytics ingestion.** Opt-in provider adapters, metadata-only event envelopes, durable cursors, dedupe, metric bindings, and source health. |
 | `config_ops.py` | 720 | **Codex `config.toml`.** Per-layer install/doctor plus routed tree install with conflict-aware merge. |
 | `customer.py` | 734 | **Customer-OS factory.** Renders a client OS (router/context/rules/tools/assets) from a profile. |
 | `event_graph.py` | 582 | **Event ledger + chains.** Append-only event log, declarative chain rules, idempotency keys, chain-depth loop guard, run-queue emission. |

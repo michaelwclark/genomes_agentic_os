@@ -379,6 +379,15 @@ Nothing in this group applies an OS change without an explicit `approve` /
 | `watch-source poll` | Poll one watch source. |
 | `watch-source run-due` | Poll enabled watch sources. |
 
+### Activity Analytics — `cli/activity.py`
+
+| Command | What it does |
+| --- | --- |
+| `activity list` | List opted-in activity source definitions. |
+| `activity validate` | Validate provider, scope, opt-in, and metric bindings. |
+| `activity ingest` | Dry-run or apply credential-free paginated provider records. |
+| `activity health` | Read freshness, completeness, cursor, rate-limit, and last-error state. |
+
 ### Event Graph — `cli/event_graph.py`
 
 | Command | What it does |
