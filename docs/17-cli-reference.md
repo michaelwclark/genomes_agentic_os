@@ -409,6 +409,7 @@ Nothing in this group applies an OS change without an explicit `approve` /
 | `activity validate` | Validate provider, scope, opt-in, and metric bindings. |
 | `activity ingest` | Dry-run or apply credential-free paginated provider records. |
 | `activity health` | Read freshness, completeness, cursor, rate-limit, and last-error state. |
+| `activity collect-local` | Collect bounded metadata-only local event and run receipts. |
 
 ### Event Graph — `cli/event_graph.py`
 

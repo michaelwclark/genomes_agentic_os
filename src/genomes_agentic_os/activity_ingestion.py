@@ -15,6 +15,8 @@ CURSORS = CONTROL_PLANE / "activity-cursors.yml"
 HEALTH = CONTROL_PLANE / "activity-source-health.yml"
 EVENTS = Path("harness/shared_factory/06-runs-and-logs/source-events/activity")
 METRICS = Path("harness/registries/analytics-metrics.yml")
+LOCAL_EVENT_LEDGER = Path("harness/shared_factory/06-runs-and-logs/events")
+LOCAL_RUN_LOGS = Path("harness/shared_factory/06-runs-and-logs/runs")
 PROVIDERS = {"slack", "github", "jira", "linear", "agentic_os"}
 EVENT_ALIASES = {
     "slack": {
@@ -82,6 +84,36 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_.:/-]{0,99}$")
 ISO_TIMESTAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
+LOCAL_STATUS_VALUES = {
+    "approval-needed",
+    "blocked",
+    "completed",
+    "done",
+    "dry-run",
+    "error",
+    "failed",
+    "finalized",
+    "healthy",
+    "passed",
+    "queued",
+    "running",
+    "skipped",
+    "success",
+    "unavailable",
+}
+LOCAL_KIND_VALUES = {
+    "automation",
+    "command",
+    "event_chain",
+    "heartbeat",
+    "integration",
+    "run",
+    "runtime_dispatch",
+    "schedule",
+    "source_trigger",
+    "tool",
+    "tool_call",
+}
 
 
 def utc_now() -> str:
@@ -293,6 +325,200 @@ def _update_health(root: Path, source_id: str, **values: Any) -> None:
     data.setdefault("sources", {}).setdefault(source_id, {}).update(values)
     data["sources"][source_id]["checked_at"] = utc_now()
     _write(root / HEALTH, data)
+
+
+def _local_event_type(evidence_kind: str, record: dict[str, Any]) -> str | None:
+    """Classify local evidence without copying its provider payload."""
+    raw_type = str(record.get("type") or record.get("event_type") or "").lower()
+    status = str(record.get("status") or "").lower()
+    kind = str(record.get("kind") or "").lower()
+    combined = f"{raw_type} {status} {kind}"
+    if any(
+        marker in combined
+        for marker in ("error", "failed", "failure", "regression", "unavailable")
+    ):
+        return "error"
+    if evidence_kind == "event" and (
+        "conversation.message" in raw_type or raw_type.endswith(".message")
+    ):
+        return "message"
+    if evidence_kind == "event" and ("tool." in raw_type or ".tool" in raw_type):
+        return "tool_ran"
+    if evidence_kind == "run" and kind in {"tool", "tool_call", "command"}:
+        return "tool_ran"
+    if (
+        evidence_kind == "run"
+        or raw_type.startswith("os.run.")
+        or raw_type.startswith("os.schedule.")
+    ):
+        return "automation_ran"
+    return None
+
+
+def _local_occurred_at(record: dict[str, Any]) -> str:
+    for key in (
+        "finished_at",
+        "updated_at",
+        "observed_at",
+        "occurred_at",
+        "started_at",
+        "created_at",
+    ):
+        candidate = str(record.get(key) or "")
+        if ISO_TIMESTAMP.fullmatch(candidate):
+            return candidate
+    return utc_now()
+
+
+def _local_item(evidence_kind: str, record: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = _local_event_type(evidence_kind, record)
+    stable_id = (
+        record.get("id") or record.get("run_id") or record.get("idempotency_key")
+    )
+    if not event_type or not stable_id:
+        return None
+    item: dict[str, Any] = {
+        "id": hashlib.sha256(f"{evidence_kind}:{stable_id}".encode()).hexdigest(),
+        "type": event_type,
+        "occurred_at": _local_occurred_at(record),
+    }
+    status = str(record.get("status") or "").lower()
+    kind = str(record.get("kind") or "").lower()
+    if status in LOCAL_STATUS_VALUES:
+        item["status"] = status
+    if kind in LOCAL_KIND_VALUES:
+        item["kind"] = kind
+    return item
+
+
+def discover_local_activity(
+    root: str | Path,
+    *,
+    after_cursor: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Read bounded canonical local receipts and return metadata-only records."""
+    if limit < 1:
+        raise ValueError("local activity limit must be at least 1")
+    os_root = expand_path(root)
+    candidates: list[tuple[str, str, Path]] = []
+    roots_present = 0
+    for evidence_kind, directory, pattern in (
+        ("event", os_root / LOCAL_EVENT_LEDGER, "evt_*.yml"),
+        ("run", os_root / LOCAL_RUN_LOGS, "*/run-log.yml"),
+    ):
+        if not directory.is_dir():
+            continue
+        roots_present += 1
+        for path in directory.glob(pattern):
+            if not path.is_file():
+                continue
+            path_digest = hashlib.sha256(
+                str(path.relative_to(os_root)).encode()
+            ).hexdigest()[:16]
+            cursor = f"{path.stat().st_mtime_ns:020d}:{path_digest}"
+            if after_cursor and cursor <= after_cursor:
+                continue
+            candidates.append((cursor, evidence_kind, path))
+    candidates.sort(key=lambda item: item[0])
+    records: list[dict[str, Any]] = []
+    malformed = 0
+    unsupported = 0
+    last_cursor = after_cursor
+    for cursor, evidence_kind, path in candidates:
+        if malformed + unsupported + len(records) >= max(1, limit):
+            break
+        try:
+            record = _load(path)
+        except (OSError, yaml.YAMLError):
+            malformed += 1
+            last_cursor = cursor
+            continue
+        if not record:
+            malformed += 1
+            last_cursor = cursor
+            continue
+        item = _local_item(evidence_kind, record)
+        last_cursor = cursor
+        if not item:
+            unsupported += 1
+            continue
+        records.append(item)
+    return {
+        "available": roots_present > 0,
+        "items": records,
+        "next_cursor": last_cursor,
+        "malformed": malformed,
+        "unsupported": unsupported,
+        "scanned": malformed + unsupported + len(records),
+    }
+
+
+def collect_local_activity(
+    root: str | Path,
+    source_id: str,
+    *,
+    limit: int = 100,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Collect local receipts through the same CC-307 envelope and cursor path."""
+    if limit < 1:
+        raise ValueError("local activity limit must be at least 1")
+    os_root = ensure_state(root) if apply else expand_path(root)
+    source = next(
+        (item for item in list_sources(os_root) if item.get("id") == source_id), None
+    )
+    if not source:
+        raise ValueError(f"activity source not found: {source_id}")
+    if source.get("provider") != "agentic_os":
+        raise ValueError("collect-local requires an agentic_os activity source")
+    cursor_state = _load(os_root / CURSORS).get("sources") or {}
+    current_cursor = (cursor_state.get(source_id) or {}).get("cursor")
+    discovered = discover_local_activity(
+        os_root, after_cursor=current_cursor, limit=limit
+    )
+    if not discovered["available"]:
+        error = "canonical local evidence directories are unavailable"
+        if apply:
+            _update_health(
+                os_root,
+                source_id,
+                status="unavailable",
+                freshness="stale",
+                completeness="none",
+                last_error=error,
+                cursor=current_cursor,
+                events=0,
+            )
+        return {
+            "ok": False,
+            "source_id": source_id,
+            "status": "unavailable",
+            "error": error,
+            "dry_run": not apply,
+            **discovered,
+        }
+    page = {"items": discovered["items"], "next_cursor": discovered["next_cursor"]}
+    result = ingest_pages(os_root, source_id, [page], apply=apply)
+    result["collector"] = {
+        key: discovered[key] for key in ("scanned", "malformed", "unsupported")
+    }
+    if discovered["malformed"]:
+        result["status"] = "degraded"
+        result["ok"] = True
+        result["error"] = f"{discovered['malformed']} malformed local evidence file(s)"
+        if apply:
+            _update_health(
+                os_root,
+                source_id,
+                status="degraded",
+                freshness="fresh",
+                completeness="partial",
+                last_error=result["error"],
+                cursor=result.get("cursor"),
+                events=result.get("emitted", 0),
+            )
+    return result
 
 
 def ingest_pages(
