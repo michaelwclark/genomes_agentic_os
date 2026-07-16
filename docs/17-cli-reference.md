@@ -145,6 +145,18 @@ adapter behavior, and compatibility commands.
 | `automation-control list` | List managed automation gates. |
 | `automation-control run` | Evaluate configured automation gates and enqueue ready work. |
 
+### Program and Automation operator query — `cli/operator_resources.py`
+
+| Command | What it does |
+| --- | --- |
+| `operator-resource` | Query the read-only Program and Automation operator projection. |
+| `operator-resource query` | List Program or Automation resources as `operator-resource-query/v1` JSON. |
+| `operator-resource get` | Get one exact Program or Automation resource ID as `operator-resource-query/v1` JSON. |
+
+The fixed forms are `operator-resource query <program|automation>` and
+`operator-resource get <program|automation> <resource-id>`. Both accept
+`--root`; JSON is the only output mode.
+
 ### Runs & Thread Lifecycle — `cli/run_lifecycle.py`
 
 | Command | What it does |

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentic-os.local/operator-resource-query-v1.schema.json",
+  "title": "Agentic OS Operator Resource Query v1",
+  "type": "object",
+  "required": [
+    "api_version",
+    "generated_at",
+    "root",
+    "query",
+    "resources",
+    "diagnostics",
+    "summary"
+  ],
+  "properties": {
+    "api_version": {"const": "operator-resource-query/v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "root": {"type": "string"},
+    "query": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["program", "automation"]},
+        "id": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/resource"}
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
+    "summary": {
+      "type": "object",
+      "required": ["returned", "errors", "warnings", "partial", "remote_probes"],
+      "properties": {
+        "returned": {"type": "integer", "minimum": 0},
+        "errors": {"type": "integer", "minimum": 0},
+        "warnings": {"type": "integer", "minimum": 0},
+        "partial": {"type": "boolean"},
+        "remote_probes": {"const": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "required": ["severity", "code", "source", "message"],
+      "properties": {
+        "severity": {"enum": ["info", "warning", "error"]},
+        "code": {"type": "string"},
+        "source": {"type": "string"},
+        "message": {"type": "string"},
+        "resource_id": {"type": "string"},
+        "path": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "required": ["status", "source", "liveness_observed"],
+      "properties": {
+        "status": {
+          "enum": ["healthy", "active", "stale", "error", "disabled", "unknown"]
+        },
+        "source": {"type": "string"},
+        "observed_at": {"type": ["string", "null"]},
+        "liveness_observed": {"const": false}
+      },
+      "additionalProperties": true
+    },
+    "configuration": {
+      "type": "object",
+      "required": ["effective", "field_provenance", "layers"],
+      "properties": {
+        "effective": {"type": "object"},
+        "field_provenance": {"type": "array", "items": {"type": "object"}},
+        "layers": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "resource": {
+      "type": "object",
+      "required": [
+        "kind",
+        "resource_type",
+        "id",
+        "icon",
+        "configuration",
+        "routing",
+        "health",
+        "recent_evidence",
+        "diagnostics"
+      ],
+      "properties": {
+        "kind": {"enum": ["program", "automation"]},
+        "resource_type": {
+          "enum": ["definition", "instance", "tracking_instance", "unmatched_schedule"]
+        },
+        "id": {"type": "string", "minLength": 1},
+        "icon": {
+          "type": "object",
+          "required": ["value", "source"],
+          "properties": {
+            "value": {"type": "string", "minLength": 1},
+            "source": {"enum": ["metadata", "deterministic_fallback"]}
+          },
+          "additionalProperties": false
+        },
+        "configuration": {"$ref": "#/$defs/configuration"},
+        "routing": {"type": "object"},
+        "health": {"$ref": "#/$defs/health"},
+        "recent_evidence": {"type": "array", "items": {"type": "object"}},
+        "diagnostics": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": true
+    }
+  }
+}
