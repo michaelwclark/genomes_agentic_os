@@ -300,13 +300,18 @@ in this package.
 
 | Command | What it does |
 | --- | --- |
-| `resource list` | List rules, reports, skills, or commands in one canonical scope. |
-| `resource get` | Read one registry-backed resource and its prompt document. |
+| `resource list` | List registry-backed or filesystem-backed resources from canonical locations. |
+| `resource get` | Read one canonical resource, operator metadata, and drift hash. |
 | `resource create` | Dry-run or create a supported scaffold or managed registry resource without running it. |
-| `resource update` | Change allowlisted metadata or prompt content on a managed registry resource. |
-| `resource archive` | Soft-delete a managed registry resource while keeping it recoverable. |
-| `resource restore` | Restore a managed archived registry resource. |
-| `resource rollback` | Restore a managed registry resource from a fixed backup ID. |
+| `resource update` | Change allowlisted registry or filesystem metadata with the kind-specific contract. |
+| `resource disable` | Pause a filesystem resource; automations are also marked disabled. |
+| `resource repair` | Repair canonical lifecycle metadata while preserving unknown overlay fields. |
+| `resource archive` | Move a managed resource to reversible archived state without deleting it. |
+| `resource restore` | Restore a managed archived resource. |
+| `resource rollback` | Restore a managed resource from an identity-bound fixed backup ID. |
+| `resource run-now automation` | Queue one idempotent automation request without dispatching it. |
+| `resource schedule-get automation` | Read the schedule derived for one automation identity. |
+| `resource schedule-configure automation` | Configure a derived automation schedule without accepting a caller command. |
 | `resource validate` | Validate readiness, structural completeness, or registry/source/projection consistency. |
 
 `--json` returns the stable `resource-actions/v1` contract used by local GUI
@@ -314,6 +319,11 @@ clients. Mutations are dry-run by default and require `--apply`. Registry
 authoring supports `rule`, `report`, `skill`, and `command` at `system`,
 `domain`, or `project` scope. The CLI derives every target; it accepts no
 arbitrary path, shell command, executable, or query field.
+
+Filesystem metadata lifecycle applies also require `--expected-drift-hash`
+from the immediately preceding dry-run or get response. Queue-only run-now
+records current drift directly. See
+[Filesystem Resource Lifecycle](33-filesystem-resource-lifecycle.md).
 
 ### State — `cli/state.py`
 
