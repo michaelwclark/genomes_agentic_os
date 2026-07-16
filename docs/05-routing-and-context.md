@@ -176,6 +176,10 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
   durable `--output-dir`. `--apply` requires that untampered plan plus a receipt
   directory, validates semantic parity and the installed root, and rolls back
   exact bytes automatically on failure. `context restore` refuses stale state.
+- **Legacy promotion is explicit.** Use repeatable `--target` paths with
+  `--promote-legacy`; whole-root manifest creation is refused. When an older
+  installed root has unrelated validation drift, `--baseline-validation`
+  records it and apply rejects any new error.
 
 ## Related
 

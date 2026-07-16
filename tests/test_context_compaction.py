@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -8,9 +9,11 @@ import yaml
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.config_ops import BASE_PROMPT_FILES, policy_for_layer, prompt_file_template
 from genomes_agentic_os.context_compaction import (
+    _legacy_v1_root_state_hash,
     apply_compaction_plan,
     build_compaction_plan,
     check_context_contracts,
+    managed_context_targets,
     restore_compaction_receipt,
     write_compaction_plan,
 )
@@ -244,3 +247,189 @@ def test_apply_refuses_stale_or_tampered_plan(tmp_path: Path) -> None:
         assert "plan hash mismatch" in str(exc)
     else:
         raise AssertionError("tampered plan must be rejected")
+
+
+def legacy_automation(root: Path) -> Path:
+    target = root / "acme/04-automations/engineering/cleanup"
+    target.mkdir(parents=True)
+    (target / "AGENTS.md").write_text("# Automation agent\n", encoding="utf-8")
+    (target / "MEMORY.md").write_text("# Durable memory\n", encoding="utf-8")
+    (target / "automation.md").write_text("# Cleanup automation\n", encoding="utf-8")
+    (target / "permissions.md").write_text("# Permissions\n\nGuarded.\n", encoding="utf-8")
+    (target / "runbook.md").write_text("# Runbook\n\nPlan, apply, validate.\n", encoding="utf-8")
+    contracts = {
+        "ROUTER.md": "# Router\n\nRoute to engineering.\n" * 8,
+        "CONTEXT.md": "# Context\n\nUse current receipts.\n" * 8,
+        "RULES.md": "# Rules\n\nKeep changes reversible.\n" * 8,
+        "TOOLS.md": "# Tools\n\nUse the guarded Agentic OS CLI.\n" * 40,
+    }
+    for filename, content in contracts.items():
+        (target / filename).write_text(content, encoding="utf-8")
+    return target
+
+
+def test_promote_legacy_target_creates_manifest_and_lane_contracts(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    target = legacy_automation(root)
+    relative = target.relative_to(root).as_posix()
+    before = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in target.iterdir()
+        if path.is_file()
+    }
+    plan_path, _, plan = write_compaction_plan(
+        root,
+        tmp_path / "plans",
+        target_paths=[relative],
+        promote_legacy=True,
+    )
+
+    assert plan["summary"]["targets_migrated"] == 1
+    assert plan["summary"]["proposed_removals"] == 4
+    assert plan["summary"]["blocked_actions"] == 0
+    assert plan["target_reductions"][relative]["reduction_ratio"] >= 0.40
+    assert sum(action["action"] == "create_inherited_contract" for action in plan["actions"]) == 4
+
+    result = apply_compaction_plan(root, plan_path, tmp_path / "receipts", validator=lambda _: [])
+
+    assert result["status"] == "applied"
+    assert result["semantic_before"] == result["semantic_after"]
+    assert result["context_check_before"]["legacy_fallbacks"] == 1
+    assert result["context_check_after"]["legacy_fallbacks"] == 0
+    assert result["context_check_after"]["manifests"] == 1
+    assert (target / "context-contract.yml").is_file()
+    for filename in ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
+        assert not (target / filename).exists()
+        assert (target.parent / filename).is_file()
+
+    restored = restore_compaction_receipt(root, result["receipt_path"])
+    assert restored["status"] == "restored"
+    assert not (target / "context-contract.yml").exists()
+    for filename in ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
+        assert not (target.parent / filename).exists()
+    after = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in target.iterdir()
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_promote_legacy_requires_explicit_target(tmp_path: Path) -> None:
+    legacy_automation(tmp_path / "os")
+    try:
+        build_compaction_plan(tmp_path / "os", promote_legacy=True)
+    except ValueError as exc:
+        assert "explicit target" in str(exc)
+    else:
+        raise AssertionError("legacy promotion must be explicitly bounded")
+
+
+def test_promote_legacy_validation_failure_removes_created_parent_files(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    target = legacy_automation(root)
+    relative = target.relative_to(root).as_posix()
+    before = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    plan_path, _, _ = write_compaction_plan(
+        root,
+        tmp_path / "plans",
+        target_paths=[relative],
+        promote_legacy=True,
+    )
+
+    try:
+        apply_compaction_plan(root, plan_path, tmp_path / "receipts", validator=lambda _: ["forced failure"])
+    except ValueError as exc:
+        assert "was rolled back" in str(exc)
+    else:
+        raise AssertionError("failed manifest migration must roll back")
+
+    after = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    receipt = json.loads(next((tmp_path / "receipts").glob("*.json")).read_text())
+    assert receipt["status"] == "rolled_back"
+
+
+def test_validation_baseline_allows_existing_errors_but_rejects_regression(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    target = legacy_automation(root)
+    relative = target.relative_to(root).as_posix()
+    existing = lambda _: ["pre-existing drift"]
+    plan_path, _, plan = write_compaction_plan(
+        root,
+        tmp_path / "plans",
+        target_paths=[relative],
+        promote_legacy=True,
+        capture_validation_baseline=True,
+        validation_validator=existing,
+    )
+    assert plan["validation_before"]["error_count"] == 1
+
+    result = apply_compaction_plan(root, plan_path, tmp_path / "receipts", validator=existing)
+    assert result["status"] == "applied"
+    assert result["validation_before"] == result["validation_after"]
+    restore_compaction_receipt(root, result["receipt_path"])
+
+    plan_path, _, _ = write_compaction_plan(
+        root,
+        tmp_path / "regression-plans",
+        target_paths=[relative],
+        promote_legacy=True,
+        capture_validation_baseline=True,
+        validation_validator=existing,
+    )
+    calls = 0
+
+    def regresses(_: Path) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return ["pre-existing drift"] if calls == 1 else ["pre-existing drift", "new regression"]
+
+    try:
+        apply_compaction_plan(root, plan_path, tmp_path / "regression-receipts", validator=regresses)
+    except ValueError as exc:
+        assert "was rolled back" in str(exc)
+    else:
+        raise AssertionError("a new validation error must roll back the migration")
+    assert not (target / "context-contract.yml").exists()
+
+
+def test_restore_accepts_schema_v1_receipt_hashes(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    targets = managed_context_targets(root)
+    target = root / "acme/03-workflows/engineering/first/ROUTER.md"
+    content = target.read_bytes()
+    before_hash = _legacy_v1_root_state_hash(root, targets)
+    target.unlink()
+    after_hash = _legacy_v1_root_state_hash(root, targets)
+    receipt = {
+        "schema_version": 1,
+        "operation": "context_compact_apply",
+        "status": "applied",
+        "root": str(root),
+        "root_state_sha256_before": before_hash,
+        "root_state_sha256_after": after_hash,
+        "files": [
+            {
+                "path": target.relative_to(root).as_posix(),
+                "sha256_before": hashlib.sha256(content).hexdigest(),
+                "content_base64": base64.b64encode(content).decode("ascii"),
+                "sha256_after": None,
+            }
+        ],
+    }
+    receipt_path = tmp_path / "v1-receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    restored = restore_compaction_receipt(root, receipt_path)
+
+    assert restored["status"] == "restored"
+    assert target.read_bytes() == content

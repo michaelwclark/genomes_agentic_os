@@ -385,6 +385,9 @@ Build or apply a guarded, reversible migration plan.
 | `--dry-run` | One mode | Build a plan; context files are never changed |
 | `--apply` | One mode | Apply a reviewed plan with automatic rollback |
 | `--output-dir` | Dry-run only | Write plan and review rollback JSON |
+| `--target` | Legacy promotion | Repeatable managed workflow/automation path; bounds the plan |
+| `--promote-legacy` | No | With explicit targets, create manifests and promote exact contracts to the lane |
+| `--baseline-validation` | No | Hash full validation drift and reject new errors during apply |
 | `--plan` | Apply only | Reviewed plan JSON produced by `--dry-run` |
 | `--receipt-dir` | Apply only | Durable destination for the apply receipt |
 | `--root` | No | Installed OS root path |
