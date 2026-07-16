@@ -583,6 +583,14 @@ auditable per-step report (`ok`, `health_ok`, and a summary per step). Each step
 is **isolated**: if one subsystem raises, the tick records it, continues the rest,
 and the command exits 1 so a scheduler can alert.
 
+Runtime-dispatched subprocesses preserve the supervisor's environment and add
+the standard user-local executable directory (`$HOME/.local/bin`) when it is not
+already present on `PATH`. This is part of the automation contract: launchd and
+systemd do not necessarily load interactive shell startup files, while installed
+Agentic OS launchers and host helpers commonly live in that directory. A worker
+that requires a specific executable should still validate or resolve it at its
+own boundary and produce a clear failure receipt when it is unavailable.
+
 ### Schedule it — `install-scheduler.sh`
 
 ```bash
