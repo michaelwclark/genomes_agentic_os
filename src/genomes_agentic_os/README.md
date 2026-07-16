@@ -13,6 +13,7 @@ modules, which receive the OS root explicitly and read or write durable files.
 | Runtime and state | `runtime_ops.py`, `supervisor.py`, `state/`, `event_graph.py` | Queues, schedules, heartbeats, SQLite projection, events, and guarded dispatch. |
 | Automations and workflows | `automation_ops.py`, `automation_control.py`, `workflow_ops.py` | Maturity gates, readiness, execution contracts, and receipts. |
 | Connected sources | `source_providers.py`, `source_watch.py`, `source_observation.py` | Normalize and poll external/provider data without leaking provider shapes. |
+| Activity analytics | `activity_ingestion.py` | Convert opted-in Slack, GitHub, Jira, Linear, and Agentic OS activity into metadata-only metric events. |
 | Operator surfaces | `cockpit.py`, `cockpit_render.py`, `conversation_logging.py`, `conversation_reports.py` | Cockpit, conversation indexing, transcripts, and GUI-facing operations. |
 | Adaptive routing | `adaptive_*.py` | Offline model/tier assessment, policy, evaluation, and redacted receipts. |
 | Installation and maintenance | `config_ops.py`, `update_ops.py`, `migrations.py`, `doctor.py`, `validate.py` | Configuration, updates, migration, health checks, and structural validation. |
