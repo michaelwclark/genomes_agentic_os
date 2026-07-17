@@ -1,418 +1,361 @@
 #!/usr/bin/env python3
-"""
-agentic-os-notify — post a native macOS notification from any Agentic OS source.
+"""Deliver governed Agentic OS alerts through macOS Notification Center.
 
-Reads per-source config from alerts.yml (global quiet-hours + per-source settings),
-delivers via terminal-notifier (if available) or osascript, and appends one JSON
-line to the shared alerts log.
+The notifier is intentionally the one delivery seam for automations, watchers,
+and agent-facing helpers.  It records both deliveries and suppressions in the
+canonical local history, so operators can see why an alert did (or did not)
+interrupt them.
 
-ENVIRONMENT
-  AGENTIC_OS_ROOT   Override the installed OS root (default: ~/agentic_os).
-
-FILES
-  harness/registries/alerts.yml                    Source config (--config overrides).
-  harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl   Append-only delivery log.
+The macOS user controls banner/alert presentation and cross-device mirroring in
+System Settings and iCloud.  This command controls only the local notification
+payload, sound, click URL, and terminal-notifier's optional DND override.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 SCRIPT_NAME = "agentic-os-notify"
-LEVEL_ORDER = {"info": 0, "warn": 1, "warning": 1, "critical": 2}
-LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+LEVEL_ORDER = {"info": 0, "warn": 1, "warning": 1, "error": 2, "critical": 3}
+CANONICAL_LEVELS = {"info", "warning", "error", "critical"}
+LOG_MAX_BYTES = 5 * 1024 * 1024
+HISTORY_GLOB = "alerts*.jsonl"
 
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def local_now(tz_name: str) -> dt.datetime:
-    """Return the current wall-clock time in the given IANA timezone name."""
+def parse_timestamp(value: object) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
     try:
-        import zoneinfo  # Python 3.9+
-        tz = zoneinfo.ZoneInfo(tz_name)
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def local_now(tz_name: str) -> dt.datetime:
+    try:
+        import zoneinfo
+
+        return dt.datetime.now(zoneinfo.ZoneInfo(tz_name))
     except Exception:
-        # Fallback: use UTC offset from system if zoneinfo unavailable.
-        tz = dt.timezone.utc
-    return dt.datetime.now(tz)
-
-
-def parse_time(s: str) -> tuple[int, int]:
-    """Parse 'HH:MM' -> (hour, minute)."""
-    h, m = s.strip().split(":")
-    return int(h), int(m)
+        return dt.datetime.now(dt.timezone.utc)
 
 
 def level_int(level: str) -> int:
-    return LEVEL_ORDER.get(level.lower(), 1)
+    return LEVEL_ORDER.get(level.lower(), -1)
+
+
+def canonical_level(level: str) -> str:
+    return "warning" if level.lower() == "warn" else level.lower()
+
+
+def parse_time(value: str) -> tuple[int, int]:
+    hour, minute = value.strip().split(":")
+    return int(hour), int(minute)
 
 
 def in_quiet_hours(global_cfg: dict[str, Any], level: str) -> bool:
-    """
-    Returns True when the current local time falls inside the configured quiet
-    window AND the notification level is below the override threshold.
-    """
-    if not global_cfg.get("enabled", True):
-        return False
-
     quiet = global_cfg.get("quiet_hours", "")
     if not quiet:
         return False
-
-    tz_name = global_cfg.get("timezone", "America/Chicago")
-    override_level = global_cfg.get("quiet_hours_override_level", "critical")
-
-    # If this level is >= the override level it fires even during quiet hours.
-    if level_int(level) >= level_int(override_level):
+    if level_int(level) >= level_int(str(global_cfg.get("quiet_hours_override_level", "critical"))):
         return False
-
     try:
-        start_str, end_str = quiet.split("-")
-        sh, sm = parse_time(start_str)
-        eh, em = parse_time(end_str)
-    except ValueError:
+        start, end = quiet.split("-")
+        sh, sm = parse_time(start)
+        eh, em = parse_time(end)
+    except (AttributeError, ValueError):
         return False
-
-    now = local_now(tz_name)
-    current_minutes = now.hour * 60 + now.minute
+    now = local_now(str(global_cfg.get("timezone", "America/Chicago")))
+    current = now.hour * 60 + now.minute
     start_minutes = sh * 60 + sm
     end_minutes = eh * 60 + em
+    return start_minutes <= current < end_minutes if start_minutes <= end_minutes else current >= start_minutes or current < end_minutes
 
-    if start_minutes <= end_minutes:
-        # Same-day window e.g. 09:00–17:00
-        return start_minutes <= current_minutes < end_minutes
-    else:
-        # Overnight window e.g. 23:00–07:00
-        return current_minutes >= start_minutes or current_minutes < end_minutes
+
+def merge_dicts(*configs: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for config in configs:
+        for key, value in config.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = merge_dicts(merged[key], value)
+            else:
+                merged[key] = value
+    return merged
+
+
+def resolve_source_config(alerts_cfg: dict[str, Any], source_id: str, level: str) -> tuple[dict[str, Any], bool]:
+    sources = alerts_cfg.get("sources", {}) or {}
+    default = sources.get("default", {}) or {}
+    source = sources.get(source_id, {}) or {}
+    level_defaults = (alerts_cfg.get("level_defaults", {}) or {}).get(canonical_level(level), {}) or {}
+    return merge_dicts(default, level_defaults, source), source_id in sources
+
+
+def history_path(root: Path) -> Path:
+    return root / "harness" / "shared_factory" / "06-runs-and-logs" / "alerts" / "alerts.jsonl"
+
+
+@contextlib.contextmanager
+def alert_lock(log_path: Path) -> Iterator[None]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with (log_path.parent / ".alerts.lock").open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def read_history(log_path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in sorted(log_path.parent.glob(HISTORY_GLOB)):
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    records.append(value)
+        except OSError:
+            continue
+    return sorted(records, key=lambda record: str(record.get("ts", "")))
+
+
+def cleanup_history(log_path: Path, retention_hours: int, *, now: dt.datetime | None = None) -> tuple[int, int]:
+    """Prune expired JSONL records from every alert-history segment.
+
+    Invalid records are retained: throwing away an unreadable audit record would
+    hide evidence.  The return is ``(removed, retained)``.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    cutoff = now - dt.timedelta(hours=max(0, retention_hours))
+    removed = retained = 0
+    for path in sorted(log_path.parent.glob(HISTORY_GLOB)):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        kept: list[str] = []
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                kept.append(line)
+                retained += 1
+                continue
+            timestamp = parse_timestamp(record.get("ts") if isinstance(record, dict) else None)
+            if timestamp is not None and timestamp < cutoff:
+                removed += 1
+            else:
+                kept.append(line)
+                retained += 1
+        try:
+            if kept:
+                tmp = path.with_suffix(path.suffix + ".tmp")
+                tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                tmp.replace(path)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return removed, retained
 
 
 def rotate_log_if_needed(log_path: Path) -> None:
-    """Rename log file with a date suffix when it exceeds LOG_MAX_BYTES."""
     try:
         if log_path.exists() and log_path.stat().st_size > LOG_MAX_BYTES:
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            rotated = log_path.with_name(f"alerts-{stamp}.jsonl")
-            log_path.rename(rotated)
+            log_path.rename(log_path.with_name(f"alerts-{stamp}.jsonl"))
     except OSError:
-        pass  # Non-fatal; logging best-effort.
+        pass
 
 
 def append_log(log_path: Path, record: dict[str, Any]) -> None:
-    """Append one JSON line to the delivery log; rotate if oversized."""
     rotate_log_if_needed(log_path)
     try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
     except OSError as exc:
-        print(f"[{SCRIPT_NAME}] WARNING: could not write log: {exc}", file=sys.stderr)
+        print(f"[{SCRIPT_NAME}] WARNING: could not write history: {exc}", file=sys.stderr)
 
 
-def resolve_source_config(
-    alerts_cfg: dict[str, Any], source_id: str
-) -> tuple[dict[str, Any], bool]:
-    """
-    Return (source_config_dict, is_registered).
-    Falls back to 'default' section when source_id is not found.
-    """
-    sources: dict[str, Any] = alerts_cfg.get("sources", {})
-    if source_id in sources:
-        return sources[source_id], True
-    default = sources.get("default", {})
-    return default, False
+def fingerprint(source: str, level: str, title: str, message: str, url: str | None, dedupe_key: str | None) -> str:
+    identity = dedupe_key or "\x1f".join((source, canonical_level(level), title, message, url or ""))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+
+def suppression_reason(
+    history: list[dict[str, Any]], *, source: str, alert_fingerprint: str, now: dt.datetime,
+    cooldown_seconds: int, max_deliveries_per_hour: int, bypass: bool,
+) -> str | None:
+    if bypass:
+        return None
+    delivered = [record for record in history if record.get("outcome") == "delivered" and record.get("source") == source]
+    if cooldown_seconds > 0:
+        cutoff = now - dt.timedelta(seconds=cooldown_seconds)
+        if any(record.get("fingerprint") == alert_fingerprint and (timestamp := parse_timestamp(record.get("ts"))) and timestamp >= cutoff for record in delivered):
+            return f"cooldown({cooldown_seconds}s)"
+    if max_deliveries_per_hour > 0:
+        cutoff = now - dt.timedelta(hours=1)
+        count = sum(1 for record in delivered if (timestamp := parse_timestamp(record.get("ts"))) and timestamp >= cutoff)
+        if count >= max_deliveries_per_hour:
+            return f"hourly_limit({max_deliveries_per_hour})"
+    return None
 
 
 def deliver_osascript(title: str, message: str, subtitle: str = "") -> int:
-    """Post a macOS notification via osascript. Returns exit code."""
-    subtitle_part = f'subtitle "{subtitle}" ' if subtitle else ""
-    script = (
-        f'display notification "{message}" with title "{title}" '
-        f"{subtitle_part}"
-    )
-    result = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True,
-    )
-    return result.returncode
+    script = "on run argv\nset theMessage to item 1 of argv\nset theTitle to item 2 of argv\nset theSubtitle to item 3 of argv\ndisplay notification theMessage with title theTitle subtitle theSubtitle\nend run"
+    return subprocess.run(["osascript", "-e", script, message, title, subtitle], capture_output=True, timeout=15).returncode
 
 
-def deliver_terminal_notifier(
-    title: str,
-    message: str,
-    sound: str | None,
-    sticky: bool,
-    url: str | None,
-    subtitle: str = "",
-) -> int:
-    """Post a macOS notification via terminal-notifier. Returns exit code."""
-    cmd = [
-        "terminal-notifier",
-        "-title", title,
-        "-message", message,
-    ]
+def deliver_terminal_notifier(title: str, message: str, sound: str | None, override_dnd: bool, url: str | None, subtitle: str = "") -> int:
+    command = ["terminal-notifier", "-title", title, "-message", message]
     if subtitle:
-        cmd += ["-subtitle", subtitle]
-    if sound and sound.lower() not in ("none", ""):
-        cmd += ["-sound", sound]
-    if sticky:
-        cmd += ["-ignoreDnD"]
+        command += ["-subtitle", subtitle]
+    if sound and sound.lower() not in {"none", "default", ""}:
+        command += ["-sound", sound]
+    if override_dnd:
+        command.append("-ignoreDnD")
     if url:
-        cmd += ["-open", url]
-    result = subprocess.run(cmd, capture_output=True)
-    return result.returncode
-
-
-# ---------------------------------------------------------------------------
-# Argument parsing
-# ---------------------------------------------------------------------------
+        command += ["-open", url]
+    return subprocess.run(command, capture_output=True, timeout=15).returncode
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=SCRIPT_NAME,
-        description=(
-            "Post a native macOS notification from an Agentic OS automation or watcher.\n"
-            "Reads per-source settings from alerts.yml (quiet hours, min level, sound, sticky).\n"
-            "Appends one JSON line to the shared alerts log regardless of delivery outcome."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-ENVIRONMENT
-  AGENTIC_OS_ROOT   Override the installed OS root (default: ~/agentic_os).
-
-FILES
-  harness/registries/alerts.yml
-      Per-source alert configuration.  Pass --config to override for testing.
-
-  harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl
-      Append-only JSON-lines delivery log (rotated at 5 MB).
-
-EXAMPLES
-  # Post a critical alert from the OS doctor
-  agentic-os-notify --source os.doctor --level critical \\
-      --title "Agentic OS night run" --message "Alert layer online"
-
-  # Test suppression with a custom config covering the current hour
-  agentic-os-notify --source watchers.notion_work_intake --level warn \\
-      --title "Test" --message "Should be suppressed" \\
-      --config /tmp/test-alerts.yml
-
-  # Post a watcher notification with a link (terminal-notifier required)
-  agentic-os-notify --source watchers.slack_ingest --level info \\
-      --title "New Slack item" --message "3 items queued" \\
-      --url "https://app.slack.com/client"
-
-  # Dry-run: print what would happen without delivering
-  agentic-os-notify --source automation.pr_health --level warn \\
-      --title "PR health" --message "2 PRs stale" --dry-run
-""",
-    )
-    parser.add_argument("--source", required=True, help="Source ID (e.g. os.doctor, automation.pr_health).")
-    parser.add_argument("--title", required=True, help="Notification title.")
-    parser.add_argument("--message", required=True, help="Notification body text.")
-    parser.add_argument(
-        "--level",
-        default="warn",
-        choices=["info", "warn", "critical"],
-        help="Severity level (default: warn).",
-    )
-    parser.add_argument("--url", default=None, help="URL to open on click (terminal-notifier only).")
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Path to an alternative alerts.yml (useful for testing).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print what would happen; do not deliver the notification or write the log.",
-    )
+    parser = argparse.ArgumentParser(prog=SCRIPT_NAME, description="Deliver governed native macOS Agentic OS alerts.")
+    parser.add_argument("--source", help="Stable source ID, for example automation.pr_health.")
+    parser.add_argument("--title", help="Notification title.")
+    parser.add_argument("--message", help="Notification body.")
+    parser.add_argument("--level", default="warning", choices=sorted(CANONICAL_LEVELS | {"warn"}), help="Severity (default: warning).")
+    parser.add_argument("--url", help="URL to open on click when terminal-notifier is available.")
+    parser.add_argument("--dedupe-key", help="Stable identity for repeated state alerts; defaults to the full payload.")
+    parser.add_argument("--config", help="Alternative alerts.yml, primarily for test or isolated runtime use.")
+    parser.add_argument("--dry-run", action="store_true", help="Evaluate delivery without writing history or showing a notification.")
+    parser.add_argument("--history", nargs="?", type=int, const=20, metavar="LIMIT", help="Print retained history as JSON lines and exit.")
+    parser.add_argument("--cleanup", action="store_true", help="Prune expired history now and exit.")
     return parser
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+def load_config(config_path: Path) -> dict[str, Any]:
+    try:
+        with config_path.open(encoding="utf-8") as handle:
+            value = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"failed to parse {config_path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"alerts config must be a mapping: {config_path}")
+    return value
 
 
 def main() -> int:
-    parser = build_parser()
-    args = parser.parse_args()
-
-    # Resolve installed OS root.
-    os_root = Path(os.environ.get("AGENTIC_OS_ROOT", Path.home() / "agentic_os")).expanduser()
-
-    # Resolve config path.
-    if args.config:
-        config_path = Path(args.config).expanduser()
-    else:
-        config_path = os_root / "harness" / "registries" / "alerts.yml"
-
-    # Load alerts config.
+    args = build_parser().parse_args()
+    root = Path(os.environ.get("AGENTIC_OS_ROOT", Path.home() / "agentic_os")).expanduser()
+    config_path = Path(args.config).expanduser() if args.config else root / "harness" / "registries" / "alerts.yml"
     if not config_path.exists():
-        print(
-            f"[{SCRIPT_NAME}] ERROR: alerts config not found: {config_path}",
-            file=sys.stderr,
-        )
+        print(f"[{SCRIPT_NAME}] ERROR: alerts config not found: {config_path}", file=sys.stderr)
         return 1
-
     try:
-        with config_path.open("r", encoding="utf-8") as fh:
-            alerts_cfg: dict[str, Any] = yaml.safe_load(fh) or {}
-    except Exception as exc:
-        print(f"[{SCRIPT_NAME}] ERROR: failed to parse {config_path}: {exc}", file=sys.stderr)
+        config = load_config(config_path)
+    except ValueError as exc:
+        print(f"[{SCRIPT_NAME}] ERROR: {exc}", file=sys.stderr)
         return 1
+    global_cfg = config.get("global", {}) or {}
+    log_path = history_path(root)
+    retention_hours = int(global_cfg.get("history_retention_hours", 48))
 
-    global_cfg: dict[str, Any] = alerts_cfg.get("global", {})
-    source_cfg, is_registered = resolve_source_config(alerts_cfg, args.source)
+    if args.history is not None or args.cleanup:
+        with alert_lock(log_path):
+            removed, retained = cleanup_history(log_path, retention_hours)
+            if args.cleanup:
+                print(json.dumps({"removed": removed, "retained": retained, "history": str(log_path)}))
+            if args.history is not None:
+                history_limit = max(0, args.history)
+                for record in (read_history(log_path)[-history_limit:] if history_limit else []):
+                    print(json.dumps(record, ensure_ascii=False, sort_keys=True))
+        return 0
 
-    # Log path.
-    log_path = (
-        os_root
-        / "harness"
-        / "shared_factory"
-        / "06-runs-and-logs"
-        / "alerts"
-        / "alerts.jsonl"
-    )
+    missing = [name for name in ("source", "title", "message") if not getattr(args, name)]
+    if missing:
+        print(f"[{SCRIPT_NAME}] ERROR: required for delivery: {', '.join('--' + name for name in missing)}", file=sys.stderr)
+        return 2
+    level = canonical_level(args.level)
+    source_cfg, registered = resolve_source_config(config, args.source, level)
+    now = dt.datetime.now(dt.timezone.utc)
+    alert_fingerprint = fingerprint(args.source, level, args.title, args.message, args.url, args.dedupe_key)
+    record: dict[str, Any] = {"ts": utc_now(), "source": args.source, "level": level, "title": args.title, "message": args.message, "fingerprint": alert_fingerprint, "registered": registered}
+    if args.url:
+        record["url"] = args.url
+    if args.dedupe_key:
+        record["dedupe_key"] = args.dedupe_key
 
-    # Build base log record.
-    log_record: dict[str, Any] = {
-        "ts": utc_now(),
-        "source": args.source,
-        "level": args.level,
-        "title": args.title,
-        "registered": is_registered,
-    }
-
-    # --- Global enabled check ---
     if not global_cfg.get("enabled", True):
         reason = "global_disabled"
-        log_record["outcome"] = "suppressed"
-        log_record["reason"] = reason
-        if args.dry_run:
-            print(f"[dry-run] suppressed: {reason}")
-        else:
-            append_log(log_path, log_record)
-        return 0
-
-    # --- Per-source enabled check ---
-    if not source_cfg.get("enabled", True):
+    elif not source_cfg.get("enabled", True):
         reason = "source_disabled"
-        log_record["outcome"] = "suppressed"
-        log_record["reason"] = reason
-        if args.dry_run:
-            print(f"[dry-run] suppressed: {reason}")
-        else:
-            append_log(log_path, log_record)
-        return 0
-
-    # --- Min level check ---
-    min_level = source_cfg.get("min_level", "warn")
-    if level_int(args.level) < level_int(min_level):
-        reason = f"below_min_level({min_level})"
-        log_record["outcome"] = "suppressed"
-        log_record["reason"] = reason
-        if args.dry_run:
-            print(f"[dry-run] suppressed: {reason}")
-        else:
-            append_log(log_path, log_record)
-        return 0
-
-    # --- Quiet hours check ---
-    if in_quiet_hours(global_cfg, args.level):
+    elif level_int(level) < level_int(str(source_cfg.get("min_level", "warning"))):
+        reason = f"below_min_level({source_cfg.get('min_level')})"
+    elif in_quiet_hours(global_cfg, level):
         reason = "quiet_hours"
-        log_record["outcome"] = "suppressed"
-        log_record["reason"] = reason
-        if args.dry_run:
-            print(f"[dry-run] suppressed: {reason}")
-        else:
-            append_log(log_path, log_record)
-        return 0
-
-    # --- Delivery ---
-    sound: str | None = source_cfg.get("sound", None)
-    sticky: bool = bool(source_cfg.get("sticky", False))
-
-    # Use source ID as subtitle so the user knows which automation fired.
-    subtitle = args.source
+    else:
+        reason = None
 
     if args.dry_run:
-        has_tn = bool(shutil.which("terminal-notifier"))
-        driver = "terminal-notifier" if has_tn else "osascript"
-        print(
-            f"[dry-run] would deliver via {driver}: "
-            f"title={args.title!r} message={args.message!r} "
-            f"level={args.level} sound={sound!r} sticky={sticky} url={args.url!r}"
-        )
+        driver = "terminal-notifier" if shutil.which("terminal-notifier") else "osascript"
+        print(json.dumps({"dry_run": True, "driver": driver, "history": str(log_path), "reason": reason, **record}, sort_keys=True))
         return 0
 
-    # Attempt delivery.
-    rc = 1
-    driver_used = "none"
+    with alert_lock(log_path):
+        cleanup_history(log_path, retention_hours, now=now)
+        if reason is None:
+            history = read_history(log_path)
+            bypass_levels = {canonical_level(str(item)) for item in source_cfg.get("bypass_rate_limit_levels", ["critical"])}
+            reason = suppression_reason(history, source=args.source, alert_fingerprint=alert_fingerprint, now=now, cooldown_seconds=int(source_cfg.get("cooldown_seconds", global_cfg.get("default_cooldown_seconds", 900))), max_deliveries_per_hour=int(source_cfg.get("max_deliveries_per_hour", global_cfg.get("max_deliveries_per_hour", 8))), bypass=level in bypass_levels)
+        if reason:
+            record.update({"outcome": "suppressed", "reason": reason})
+            append_log(log_path, record)
+            return 0
 
-    if shutil.which("terminal-notifier"):
-        rc = deliver_terminal_notifier(
-            title=args.title,
-            message=args.message,
-            sound=sound,
-            sticky=sticky,
-            url=args.url,
-            subtitle=subtitle,
-        )
-        driver_used = "terminal-notifier"
+        sound = source_cfg.get("sound")
+        override_dnd = bool(source_cfg.get("override_dnd", source_cfg.get("sticky", False)))
+        driver = str(source_cfg.get("driver", global_cfg.get("driver", "auto"))).lower()
+        subtitle = str(source_cfg.get("subtitle", args.source))
+        rc = 1
+        driver_used = "none"
+        try:
+            if driver in {"auto", "terminal-notifier"} and shutil.which("terminal-notifier"):
+                rc = deliver_terminal_notifier(args.title, args.message, sound, override_dnd, args.url, subtitle)
+                driver_used = "terminal-notifier"
+            if rc != 0 and driver in {"auto", "osascript", "terminal-notifier"}:
+                rc = deliver_osascript(args.title, args.message, subtitle)
+                driver_used = "osascript" if driver_used == "none" else "osascript(fallback)"
+        except (OSError, subprocess.SubprocessError) as exc:
+            record["delivery_error"] = f"{type(exc).__name__}: {exc}"[:240]
+        record.update({"outcome": "delivered" if rc == 0 else "delivery_error", "driver": driver_used})
         if rc != 0:
-            # Fall back to osascript.
-            rc = deliver_osascript(args.title, args.message, subtitle=subtitle)
-            driver_used = "osascript(fallback)"
-    else:
-        rc = deliver_osascript(args.title, args.message, subtitle=subtitle)
-        driver_used = "osascript"
-
-    if rc == 0:
-        log_record["outcome"] = "delivered"
-        log_record["driver"] = driver_used
-    else:
-        log_record["outcome"] = "delivery_error"
-        log_record["driver"] = driver_used
-        log_record["exit_code"] = rc
-
-    if args.url:
-        log_record["url"] = args.url
-
-    # Track unregistered sources so config can be extended later.
-    if not is_registered:
-        log_record["note"] = f"unregistered_source:{args.source} — add to alerts.yml sources section"
-        print(
-            f"[{SCRIPT_NAME}] WARNING: unknown source '{args.source}'; used 'default' config. "
-            "Add it to harness/registries/alerts.yml.",
-            file=sys.stderr,
-        )
-
-    append_log(log_path, log_record)
-
+            record["exit_code"] = rc
+        append_log(log_path, record)
+    if not registered:
+        print(f"[{SCRIPT_NAME}] WARNING: unregistered source '{args.source}' used default policy", file=sys.stderr)
     return 0 if rc == 0 else rc
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

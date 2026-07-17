@@ -1,0 +1,17 @@
+id: project-domain-architecture-analysis
+version: 1
+owner: project_domain_intelligence
+inputs: [project_config, focus, source_revision, existing_articles, consumer]
+outputs: [article, evidence_refs, context_receipt, drift_receipt]
+states: [discovered, bounded, evidence_collected, article_proposed, validated, available, blocked, stale, invalid, cancelled, retired]
+steps: [resolve_config, bound_topic, collect_evidence, create_or_refresh, validate, retrieve_and_emit]
+validations: [path_containment, stable_identity, required_sections, evidence_provenance, deterministic_receipt, privacy]
+failure_modes:
+  config_invalid: block_until_repaired
+  path_escape: reject_without_write
+  evidence_stale: emit_attention_and_refresh
+  article_invalid: rollback_content_addressed_backup
+  no_match: emit_no_context
+  scheduled_error: attention_receipt_manual_retry
+events: [domain.discovered, domain.evidence_collected, domain.article_proposed, domain.article_validated, domain.context_loaded, domain.stale, domain.retired]
+receipts: [context_receipt, drift_receipt, validation_receipt, rollback_backup]

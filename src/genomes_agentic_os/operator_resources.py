@@ -61,7 +61,7 @@ DIAGNOSTIC_REPAIRS = {
     ),
     "automation_schedule_unassociated": (
         "associate_schedule_identity",
-        "Add automation_id, definition_id, automation_ref, or an exact canonical automation path to the schedule.",
+        "Add automation_id, definition_id, automation_ref, or an exact canonical automation path; non-automation runtime jobs must set intentional_orphan: true with a non-empty orphan_reason.",
     ),
 }
 
@@ -93,6 +93,16 @@ def _rel(root: Path, path: Path) -> str:
         return str(path.resolve().relative_to(root.resolve()))
     except ValueError:
         return str(path)
+
+
+def _stable_schedule_id(schedule: dict[str, Any]) -> str:
+    """Return a deterministic diagnostic identity even for malformed unnamed rows."""
+    declared = str(schedule.get("id") or "").strip()
+    if declared:
+        return declared
+    canonical = json.dumps(schedule, sort_keys=True, default=str, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+    return f"unnamed-{digest}"
 
 
 def _diagnostic(
@@ -1371,13 +1381,25 @@ def _automation_resources(
                     ],
                 }
             )
-    if unmatched_schedules:
+    for item in unmatched_schedules:
+        schedule_id = _stable_schedule_id(item)
+        resource_id = f"automation_schedule:{schedule_id}"
+        orphan_requested = item.get("intentional_orphan") is True
+        orphan_reason = str(item.get("orphan_reason") or "").strip()
+        if orphan_requested and orphan_reason:
+            continue
+        message = (
+            "schedule declares intentional_orphan without a non-empty orphan_reason"
+            if orphan_requested
+            else "schedule has no explicit automation identity or canonical automation path"
+        )
         _diagnostic(
             diagnostics,
-            severity="info",
+            severity="warning" if orphan_requested else "info",
             code="automation_schedule_unassociated",
             source="runtime_registry",
-            message=f"{len(unmatched_schedules)} schedules have no explicit automation identity or folder path",
+            message=message,
+            resource_id=resource_id,
             path=str(RUNTIME_REGISTRY),
         )
     for resource in resources:

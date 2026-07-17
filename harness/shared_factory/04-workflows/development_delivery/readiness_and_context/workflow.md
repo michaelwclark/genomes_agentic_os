@@ -15,7 +15,8 @@ required data evidence is missing.
 
 ## Outputs
 
-- Verified claim, groom-check decision, bounded context pack, risk level,
+- Verified claim, groom-check decision, bounded context pack, explicit
+  project-domain context receipt (including `no_context`), risk level,
   implementation/test plan, and explicit blocker or `context_ready` receipt.
 
 ## States
@@ -29,7 +30,9 @@ may move to `blocked`, `abandoned`, or `cancelled` with a receipt.
    criteria, fix version, and duplicate/overlap risk.
 2. Claim with a provider-side token, then re-read to prove exclusive ownership.
 3. Load the project profile and validate every adapter needed by this ticket.
-4. Search existing project-domain articles and inspect only the relevant code.
+4. Invoke `project-domain-investigate` for the focus topic, preserve its
+   `project-domain-context/v1` receipt, and inspect only the relevant code. A
+   `no_context` receipt is valid but must name the uncovered questions.
 5. If correctness depends on real data, gather minimum read-only evidence and
    redact secrets/customer data from prompts and external writebacks.
 6. Produce a change map, risk classification, required test layers, and the
@@ -40,7 +43,8 @@ may move to `blocked`, `abandoned`, or `cancelled` with a receipt.
 - Claim token, assignee, tracker project/team, and current state match.
 - Acceptance criteria are observable and internally consistent.
 - Repository/base branch and validation commands resolve.
-- Context sources are recorded; stale or contradictory evidence is called out.
+- Context sources and the consumed domain receipt are recorded; stale or
+  contradictory evidence is called out.
 - High-risk/data-dependent work has explicit rollback and test evidence needs.
 
 ## Success modes
@@ -62,8 +66,8 @@ may move to `blocked`, `abandoned`, or `cancelled` with a receipt.
 
 Emit `task.claimed`, `groom_check.passed|failed`, `context.loaded`, and
 `task.blocked|cancelled`. Store tracker snapshot, claim readback, source list,
-data-query summary, risk decision, and implementation/test plan in the work
-item artifacts.
+  data-query summary, domain context receipt, risk decision, and
+  implementation/test plan in the work item artifacts.
 
 ## Cleanup and handoff
 

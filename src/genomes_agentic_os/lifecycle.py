@@ -732,7 +732,12 @@ def local_project_work_items(project_root: Path) -> list[WorkItemRecord]:
         metadata_path = metadata_path_for(candidate)
         if not metadata_path:
             continue
-        metadata = load_yaml_mapping(metadata_path)
+        try:
+            metadata = load_yaml_mapping(metadata_path)
+        except yaml.YAMLError as exc:
+            # Agent-authored metadata can be malformed; validation must report
+            # the broken work item, not crash every caller that walks the tree.
+            metadata = {"metadata_error": f"invalid yaml: {exc}"[:300]}
         status = lifecycle_status(metadata)
         records.append(
             WorkItemRecord(

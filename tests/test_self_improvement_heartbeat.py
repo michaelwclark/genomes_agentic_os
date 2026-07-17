@@ -367,6 +367,35 @@ def test_runtime_dispatch_supports_morning_report_command(tmp_path: Path) -> Non
     assert execution["logs_path"].endswith("logs.yml")
 
 
+def test_runtime_dispatch_supports_nightly_apply_command(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    execution = runtime_ops._run_local_script(
+        root,
+        f"agentic-os self-improvement nightly-apply --root {root} --apply",
+    )
+    assert execution["supported"] is True
+    assert execution["ok"] is True
+    assert execution["enabled"] is False
+    assert execution["receipt_path"]
+
+    preview = runtime_ops._run_local_script(
+        root,
+        f"agentic-os self-improvement nightly-apply --root {root} --dry-run",
+    )
+    assert preview["supported"] is True
+    assert preview["ok"] is True
+    assert preview["receipt_path"] is None
+
+    assert (
+        runtime_ops._local_script_dispatch_preflight(
+            root, f"agentic-os self-improvement nightly-apply --root {root} --apply"
+        )
+        is None
+    )
+
+
 def test_repair_validation_drift_creates_work_item_placeholders_and_json_backup(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     root.mkdir()

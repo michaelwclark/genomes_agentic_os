@@ -1,0 +1,9 @@
+api_version: report-definition/v1
+id: project-domain-refresh-receipt
+title: Project domain refresh receipt
+purpose: Surface observe-only freshness results and uncovered coverage gaps.
+source: .project-domain-analysis/runs/project-domain-refresh.yml
+status_mapping:
+  success: healthy
+  stale: attention
+  invalid: attention

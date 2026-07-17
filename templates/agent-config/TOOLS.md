@@ -53,7 +53,7 @@ List the visible capabilities intended for this layer.
 
 | Wrapper | Use When | Notes |
 | --- | --- | --- |
-|  |  |  |
+| `harness/bin/agentic-os-notify` | A watcher, automation, or agent-side helper has a bounded attention signal for the operator. | Native macOS Notification Center delivery with severity, quiet hours, source policy, durable local history, 48-hour retention, and anti-flood controls. Do not use it for routine progress narration. |
 
 ## When To Use What
 

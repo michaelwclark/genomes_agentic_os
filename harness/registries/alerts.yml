@@ -1,51 +1,70 @@
+# Agentic OS alert policy. Individual sources inherit `sources.default`.
+# History is always local at harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl.
 global:
   enabled: true
   quiet_hours: 23:00-07:00
   timezone: America/Chicago
   quiet_hours_override_level: critical
+  history_retention_hours: 48
+  default_cooldown_seconds: 900
+  max_deliveries_per_hour: 8
+  driver: auto
+
+level_defaults:
+  info:
+    sound: null
+    override_dnd: false
+  warning:
+    sound: Tink
+    override_dnd: false
+  error:
+    sound: Basso
+    override_dnd: false
+  critical:
+    sound: Basso
+    override_dnd: true
+
 sources:
+  default:
+    enabled: true
+    min_level: warning
+    cooldown_seconds: 900
+    max_deliveries_per_hour: 8
+    bypass_rate_limit_levels: [critical]
   watchers.notion_work_intake:
     enabled: true
     min_level: info
     sound: Tink
-    sticky: false
+    override_dnd: false
   watchers.slack_ingest:
     enabled: true
     min_level: info
     sound: Tink
-    sticky: false
+    override_dnd: false
   watchers.granola:
     enabled: true
     min_level: info
     sound: Tink
-    sticky: false
+    override_dnd: false
   automation.self_improvement:
     enabled: true
-    min_level: warn
+    min_level: warning
     sound: Pop
-    sticky: false
   automation.intake_sync:
     enabled: true
-    min_level: warn
+    min_level: warning
     sound: Pop
-    sticky: false
   automation.pr_health:
     enabled: true
-    min_level: warn
+    min_level: warning
     sound: Submarine
-    sticky: true
+    override_dnd: true
   os.doctor:
     enabled: true
     min_level: critical
     sound: Basso
-    sticky: true
-  default:
-    enabled: true
-    min_level: warn
-    sound: default
-    sticky: false
+    override_dnd: true
   os.health_monitor:
     enabled: true
-    min_level: warn
+    min_level: warning
     sound: null
-    sticky: false

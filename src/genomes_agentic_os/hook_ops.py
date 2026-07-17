@@ -19,6 +19,7 @@ HOOK_FILENAMES = (
     "harness-emit-trace.sh",
     "conversation-auto-log.py",
     "context-mode-cache-heal.mjs",
+    "work-item-routing-guard.py",
 )
 
 
@@ -207,6 +208,14 @@ def sync_codex_hooks(data: dict[str, Any], root: Path) -> bool:
     ) or changed
     changed = ensure_hook_entry(
         data,
+        "PostToolUse",
+        hook_command(root, "work-item-routing-guard.py"),
+        matcher="Write|Edit|MultiEdit|apply_patch",
+        timeout=10,
+        status_message="Guarding work-item routing",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
         "SessionStart",
         context_mode_command("codex", "sessionstart"),
         matcher="",
@@ -261,6 +270,14 @@ def sync_claude_hooks(data: dict[str, Any], root: Path) -> bool:
     ) or changed
     changed = ensure_hook_entry(
         data,
+        "PostToolUse",
+        hook_command(root, "work-item-routing-guard.py"),
+        matcher="Write|Edit|MultiEdit",
+        timeout=10,
+        status_message="Guarding work-item routing",
+    ) or changed
+    changed = ensure_hook_entry(
+        data,
         "SessionStart",
         mempalace_command("session-start"),
         matcher="startup|resume|clear",
@@ -293,6 +310,7 @@ def required_commands(root: Path, target: str) -> tuple[str, ...]:
             hook_command(root, "memory-stop.sh"),
             hook_command(root, "harness-emit-trace.sh", "codex"),
             hook_command(root, "conversation-auto-log.py"),
+            hook_command(root, "work-item-routing-guard.py"),
             context_mode_command("codex", "sessionstart"),
             context_mode_command("codex", "stop"),
             context_mode_command("codex", "pretooluse"),
@@ -308,6 +326,7 @@ def required_commands(root: Path, target: str) -> tuple[str, ...]:
             hook_command(root, "harness-emit-trace.sh", "claude"),
             hook_command(root, "conversation-auto-log.py"),
             hook_command(root, "context-mode-cache-heal.mjs"),
+            hook_command(root, "work-item-routing-guard.py"),
             mempalace_command("session-start"),
             mempalace_command("stop"),
             mempalace_command("precompact"),
