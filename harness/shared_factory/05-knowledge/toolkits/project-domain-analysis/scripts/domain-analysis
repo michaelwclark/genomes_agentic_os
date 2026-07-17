@@ -1,32 +1,309 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""Operate evidence-backed project-domain articles without external writes.
 
-usage() {
-  cat <<'USAGE'
-Usage: domain-analysis <prompt|drift|validate|config> [git-range]
-USAGE
-}
+The toolkit deliberately keeps policy small: configuration chooses project-
+relative storage paths, articles use a stable Markdown contract, and every
+replacement first creates a content-addressed backup.  Source code and tests
+remain authoritative; this script only manages searchable orientation material
+and deterministic receipts.
+"""
 
-root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-config="$root/.project-domain-analysis/config.yml"
-[[ -f "$config" ]] || { echo "Missing config: $config" >&2; exit 1; }
+from __future__ import annotations
 
-value() { awk -F': ' -v key="$1" '$1 ~ "^[[:space:]]*" key "$" {print $2; exit}' "$config"; }
-output_dir="$(value output_dir)"
-runs_dir="$(value runs_dir)"
-case "${1:-help}" in
-  config) echo "$config" ;;
-  validate)
-    test -d "$root/${output_dir:-docs/domains}" && echo "OK ${output_dir:-docs/domains}" || exit 1
-    ;;
-  drift)
-    range="${2:-origin/main...HEAD}"
-    mkdir -p "$root/${runs_dir:-docs/domain-analysis/runs}"
-    out="$root/${runs_dir:-docs/domain-analysis/runs}/drift.md"
-    { echo "# Domain Analysis Drift Report"; echo; echo "Range: $range"; echo; git -C "$root" diff --name-only "$range" 2>/dev/null | sed 's#^#- `#; s#$#`#' || true; } > "$out"
-    echo "$out"
-    ;;
-  prompt) echo "Use the project_domain_intelligence program and emit a context receipt." ;;
-  help|-h|--help) usage ;;
-  *) usage >&2; exit 2 ;;
-esac
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from typing import Any
+
+import yaml
+
+
+ARTICLE_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+REQUIRED_HEADINGS = (
+    "## Evidence",
+    "## Commands and tools",
+    "## Important symbols and data structures",
+    "## Patterns",
+    "## Risks and failures",
+    "## Extension guidance",
+)
+
+
+def git(root: Path, *args: str) -> str:
+    """Return quiet Git output, or an empty string outside a usable checkout."""
+    completed = subprocess.run(
+        ["git", "-C", str(root), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def project_root() -> Path:
+    discovered = git(Path.cwd(), "rev-parse", "--show-toplevel")
+    return Path(discovered or Path.cwd()).resolve()
+
+
+def contained_path(root: Path, value: str) -> Path:
+    """Resolve a configured path and reject traversal outside the project."""
+    candidate = (root / value).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"configured path escapes project root: {value}")
+    return candidate
+
+
+def load_config(root: Path) -> tuple[Path, dict[str, Any]]:
+    path = root / ".project-domain-analysis/config.yml"
+    if not path.is_file():
+        raise ValueError(f"missing config: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"config must be a mapping: {path}")
+    analysis = data.get("analysis", data)
+    if not isinstance(analysis, dict):
+        raise ValueError("analysis config must be a mapping")
+    return path, analysis
+
+
+def configured_paths(root: Path, config: dict[str, Any]) -> tuple[Path, Path, Path]:
+    return (
+        contained_path(root, str(config.get("output_dir") or "docs/domains")),
+        contained_path(root, str(config.get("evidence_dir") or "docs/domain-analysis/evidence")),
+        contained_path(root, str(config.get("runs_dir") or "docs/domain-analysis/runs")),
+    )
+
+
+def article_path(output_dir: Path, article_id: str) -> Path:
+    if not ARTICLE_ID.fullmatch(article_id):
+        raise ValueError("article id must be a lowercase hyphenated slug")
+    return output_dir / f"{article_id}.md"
+
+
+def revision(root: Path) -> str:
+    return git(root, "rev-parse", "HEAD") or "unavailable"
+
+
+def atomic_write(path: Path, content: str) -> None:
+    """Replace one file atomically so interruption cannot leave partial prose."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def article_template(article_id: str, title: str, source_revision: str) -> str:
+    return f"""# {title}
+
+Article ID: `{article_id}`
+Source revision: `{source_revision}`
+Status: `available`
+
+## Evidence
+
+- Add repository-relative source, test, configuration, or safe runtime evidence.
+
+## Commands and tools
+
+- Record the commands that reproduce or validate the behavior.
+
+## Important symbols and data structures
+
+- Record important classes, functions, schemas, and persisted structures.
+
+## Patterns
+
+- Good: record conventions worth continuing.
+- Tradeoffs: record intentional complexity and its reason.
+
+## Risks and failures
+
+- Bad or ugly: record failed patterns, unsafe shortcuts, and recovery guidance.
+
+## Extension guidance
+
+- Explain the smallest safe seam for future changes and the tests it requires.
+
+## Open questions
+
+- Record evidence gaps instead of inventing conclusions.
+"""
+
+
+def backup_article(article: Path, runs_dir: Path, article_id: str) -> Path:
+    """Create one deduplicated content-addressed rollback point."""
+    content = article.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()[:16]
+    backup = runs_dir / "backups" / article_id / f"{digest}.md"
+    if not backup.exists():
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_bytes(content)
+    return backup
+
+
+def command_create(root: Path, config: dict[str, Any], args: argparse.Namespace) -> int:
+    output_dir, _evidence_dir, _runs_dir = configured_paths(root, config)
+    article = article_path(output_dir, args.article_id)
+    if article.exists():
+        raise ValueError(f"article already exists: {article.relative_to(root)}")
+    atomic_write(article, article_template(args.article_id, args.title, revision(root)))
+    print(article)
+    return 0
+
+
+def command_refresh(root: Path, config: dict[str, Any], args: argparse.Namespace) -> int:
+    output_dir, _evidence_dir, runs_dir = configured_paths(root, config)
+    article = article_path(output_dir, args.article_id)
+    if not article.is_file():
+        raise ValueError(f"article does not exist: {article.relative_to(root)}")
+    backup = backup_article(article, runs_dir, args.article_id)
+    source_revision = revision(root)
+    content = article.read_text(encoding="utf-8")
+    updated, replacements = re.subn(
+        r"(?m)^Source revision:.*$",
+        f"Source revision: `{source_revision}`",
+        content,
+        count=1,
+    )
+    if replacements == 0:
+        lines = content.splitlines()
+        lines.insert(1, f"\nSource revision: `{source_revision}`")
+        updated = "\n".join(lines) + "\n"
+    atomic_write(article, updated)
+    print(f"article: {article}")
+    print(f"backup: {backup}")
+    return 0
+
+
+def command_retrieve(root: Path, config: dict[str, Any], args: argparse.Namespace) -> int:
+    output_dir, _evidence_dir, _runs_dir = configured_paths(root, config)
+    query = args.query.casefold()
+    selected = []
+    if output_dir.is_dir():
+        for article in sorted(output_dir.glob("*.md")):
+            if query in article.stem.casefold() or query in article.read_text(encoding="utf-8").casefold():
+                selected.append(article)
+    for article in selected:
+        print(article)
+    if args.receipt:
+        receipt = contained_path(root, args.receipt)
+        payload = {
+            "api_version": "project-domain-context/v1",
+            "status": "context_ready" if selected else "no_context",
+            "query": args.query,
+            "source_revision": revision(root),
+            "selected_articles": [str(path.relative_to(root)) for path in selected],
+            "skipped_articles": [],
+            "uncovered_questions": [] if selected else [args.query],
+        }
+        atomic_write(receipt, yaml.safe_dump(payload, sort_keys=False))
+    return 0
+
+
+def command_drift(root: Path, config: dict[str, Any], args: argparse.Namespace) -> int:
+    _output_dir, _evidence_dir, runs_dir = configured_paths(root, config)
+    changed = set(filter(None, git(root, "diff", "--name-only", args.git_range).splitlines()))
+    changed.update(filter(None, git(root, "ls-files", "--others", "--exclude-standard").splitlines()))
+    report = runs_dir / "drift.md"
+    body = ["# Domain Analysis Drift Report", "", f"Range: `{args.git_range}`", ""]
+    body.extend(f"- `{path}`" for path in sorted(changed))
+    atomic_write(report, "\n".join(body).rstrip() + "\n")
+    print(report)
+    return 0
+
+
+def command_validate(root: Path, config: dict[str, Any], _args: argparse.Namespace) -> int:
+    output_dir, evidence_dir, runs_dir = configured_paths(root, config)
+    errors: list[str] = []
+    if not output_dir.is_dir():
+        errors.append(f"missing output directory: {output_dir.relative_to(root)}")
+    for article in sorted(output_dir.glob("*.md")) if output_dir.is_dir() else []:
+        content = article.read_text(encoding="utf-8")
+        for heading in REQUIRED_HEADINGS:
+            if heading not in content:
+                errors.append(f"{article.relative_to(root)} missing {heading}")
+    # Evidence and runs directories are created lazily, but their configured
+    # paths must still have passed containment checks above.
+    _ = evidence_dir, runs_dir
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        return 1
+    print(f"OK {output_dir.relative_to(root)}")
+    return 0
+
+
+def command_rollback(root: Path, config: dict[str, Any], args: argparse.Namespace) -> int:
+    output_dir, _evidence_dir, runs_dir = configured_paths(root, config)
+    article = article_path(output_dir, args.article_id)
+    backups = list((runs_dir / "backups" / args.article_id).glob("*.md"))
+    if not backups:
+        raise ValueError(f"no rollback backup for: {args.article_id}")
+    latest = max(backups, key=lambda path: path.stat().st_mtime_ns)
+    article.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(latest, article)
+    print(article)
+    return 0
+
+
+def command_retire(root: Path, config: dict[str, Any], args: argparse.Namespace) -> int:
+    output_dir, _evidence_dir, runs_dir = configured_paths(root, config)
+    article = article_path(output_dir, args.article_id)
+    if not article.is_file():
+        raise ValueError(f"article does not exist: {article.relative_to(root)}")
+    backup = backup_article(article, runs_dir, args.article_id)
+    retired = output_dir / ".retired" / article.name
+    retired.parent.mkdir(parents=True, exist_ok=True)
+    article.replace(retired)
+    print(f"retired: {retired}")
+    print(f"backup: {backup}")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="domain-analysis")
+    commands = result.add_subparsers(dest="command", required=True)
+    commands.add_parser("config")
+    commands.add_parser("prompt")
+    create = commands.add_parser("create")
+    create.add_argument("article_id")
+    create.add_argument("--title", required=True)
+    refresh = commands.add_parser("refresh")
+    refresh.add_argument("article_id")
+    retrieve = commands.add_parser("retrieve")
+    retrieve.add_argument("query")
+    retrieve.add_argument("--receipt")
+    drift = commands.add_parser("drift")
+    drift.add_argument("git_range", nargs="?", default="origin/main...HEAD")
+    commands.add_parser("validate")
+    rollback = commands.add_parser("rollback")
+    rollback.add_argument("article_id")
+    retire = commands.add_parser("retire")
+    retire.add_argument("article_id")
+    return result
+
+
+def main() -> int:
+    args = parser().parse_args()
+    root = project_root()
+    try:
+        config_path, config = load_config(root)
+        if args.command == "config":
+            print(config_path)
+            return 0
+        if args.command == "prompt":
+            print("Use project_domain_intelligence, cite source evidence, and emit a context receipt.")
+            return 0
+        handler = globals()[f"command_{args.command}"]
+        return int(handler(root, config, args))
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        print(f"domain-analysis: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

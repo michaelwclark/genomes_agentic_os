@@ -175,6 +175,27 @@ MANAGED_RUNTIME_FILES = (
     ),
 )
 
+# Source-owned first-class resources are copied additively into an installed
+# root.  Unlike run state and operator configuration, these directories are
+# product definitions: a fresh install must be able to discover and execute
+# them without reaching back into the source checkout.  ``copy_tree`` and
+# ``copy_file`` deliberately preserve an existing destination so upgrades do
+# not overwrite operator-owned changes.
+MANAGED_RESOURCE_TREES = (
+    (
+        "harness/shared_factory/00-programs/project_domain_intelligence",
+        "harness/shared_factory/00-programs/project_domain_intelligence",
+    ),
+    (
+        "harness/shared_factory/05-knowledge/toolkits/project-domain-analysis",
+        "harness/shared_factory/05-knowledge/toolkits/project-domain-analysis",
+    ),
+    (
+        "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
+        "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
+    ),
+)
+
 PROJECT_STATUSES = (
     "active",
     "waiting",
@@ -813,6 +834,19 @@ def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
 
 def copy_tree_missing(source: Path, destination: Path) -> ScaffoldResult:
     return copy_tree(source, destination)
+
+
+def ensure_managed_resource_surfaces(root: Path, result: ScaffoldResult) -> None:
+    """Install source-owned programs, workflows, and toolkits additively.
+
+    Runtime state is intentionally absent from these allowlists.  Each source
+    path is a reusable definition required for cross-harness discovery; local
+    receipts, schedules, articles, and project data remain operator-owned.
+    """
+    for source, destination in MANAGED_RESOURCE_TREES:
+        source_path = source_relative_path(source)
+        if source_path.is_dir():
+            result.extend(copy_tree(source_path, root / destination))
 
 
 def ensure_visible_capability_directories(root: Path, result: ScaffoldResult) -> None:
@@ -2208,6 +2242,7 @@ def install_docs(root: str | Path) -> ScaffoldResult:
             shared_factory_path(os_root, "05-knowledge", "references"),
         )
     )
+    ensure_managed_resource_surfaces(os_root, result)
     ensure_self_improvement_surface(os_root, result)
     return result
 

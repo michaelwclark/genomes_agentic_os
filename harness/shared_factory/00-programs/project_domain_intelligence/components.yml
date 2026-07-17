@@ -11,7 +11,7 @@ skills:
     path: harness/skills/project-domain-investigate/SKILL.md
 workflows:
   - id: project-domain-architecture-analysis
-    path: harness/shared_factory/04-workflows/project-domain-architecture-analysis.md
+    path: harness/shared_factory/04-workflows/project-domain-architecture-analysis
 automations:
   - id: project-domain-refresh
     path: scripts/project-domain-refresh

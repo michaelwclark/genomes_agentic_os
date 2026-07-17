@@ -29,7 +29,9 @@ def test_project_domain_intelligence_program_is_installed_and_cross_harness_visi
     assert schedule["permissions"]["article_write"] is False
     assert (program / "operator-attention.md").is_file()
     assert (program / "reports/project-domain-refresh-receipt.yml").is_file()
-    assert (root / "harness/shared_factory/04-workflows/project-domain-architecture-analysis.md").is_file()
+    workflow = root / "harness/shared_factory/04-workflows/project-domain-architecture-analysis"
+    assert (workflow / "workflow.md").is_file()
+    assert yaml.safe_load((workflow / "workflow.yml").read_text(encoding="utf-8"))["owner"] == "project_domain_intelligence"
     assert (root / "harness/shared_factory/05-knowledge/toolkits/project-domain-analysis/scripts/domain-analysis").is_file()
     assert (root / "harness/shared_factory/05-knowledge/commands/project-domain-investigate.md").is_file()
     assert (root / "harness/shared_factory/05-knowledge/skills/project-domain-investigate/SKILL.md").is_file()
@@ -70,3 +72,53 @@ def test_observe_only_refresh_writes_a_deterministic_receipt_without_articles(tm
     assert receipt["mode"] == "observe"
     assert receipt["article_writes"] is False
     assert not list(project.glob("**/*.md"))
+
+
+def test_domain_analysis_article_lifecycle_is_recoverable_and_receipt_backed(tmp_path: Path) -> None:
+    # Arrange: create a configured project with a stable initial revision.
+    project = tmp_path / "project"
+    config = project / ".project-domain-analysis/config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """analysis:
+  output_dir: docs/domains
+  evidence_dir: docs/domain-analysis/evidence
+  runs_dir: docs/domain-analysis/runs
+  write_mode: propose
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    subprocess.run(["git", "-C", str(project), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(project), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(project), "commit", "-qm", "configure analysis"], check=True)
+    script = (
+        Path(__file__).parents[1]
+        / "harness/shared_factory/05-knowledge/toolkits/project-domain-analysis/scripts/domain-analysis"
+    )
+
+    # Act: create, modify, refresh, retrieve, validate, drift, and roll back.
+    subprocess.run([str(script), "create", "payments", "--title", "Payments"], cwd=project, check=True)
+    article = project / "docs/domains/payments.md"
+    assert "## Risks and failures" in article.read_text(encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(project), "commit", "-qm", "add payments article"], check=True)
+    article.write_text(article.read_text(encoding="utf-8") + "\nTemporary refresh evidence.\n", encoding="utf-8")
+    before_refresh = article.read_text(encoding="utf-8")
+    subprocess.run([str(script), "refresh", "payments"], cwd=project, check=True)
+    receipt = "docs/domain-analysis/runs/context-payments.yml"
+    subprocess.run([str(script), "retrieve", "payments", "--receipt", receipt], cwd=project, check=True)
+    subprocess.run([str(script), "validate"], cwd=project, check=True)
+    subprocess.run([str(script), "drift", "HEAD"], cwd=project, check=True)
+    subprocess.run([str(script), "rollback", "payments"], cwd=project, check=True)
+
+    # Assert: retrieval is deterministic, drift is visible, and rollback restores
+    # the exact pre-refresh bytes rather than reconstructing approximate prose.
+    context = yaml.safe_load((project / receipt).read_text(encoding="utf-8"))
+    assert context["status"] == "context_ready"
+    assert context["selected_articles"] == ["docs/domains/payments.md"]
+    assert "docs/domains/payments.md" in (
+        project / "docs/domain-analysis/runs/drift.md"
+    ).read_text(encoding="utf-8")
+    assert article.read_text(encoding="utf-8") == before_refresh

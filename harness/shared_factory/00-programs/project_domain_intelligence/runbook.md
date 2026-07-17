@@ -15,6 +15,9 @@
 
 ## Recovery and rollback
 
-Disable the refresh schedule before a manual repair. Restore the prior article
-revision recorded in the last approved receipt; do not infer rollback content
-from a generated summary.
+Disable the refresh schedule before a manual repair. Run
+`domain-analysis rollback <article-id>` to restore the latest exact,
+content-addressed backup, then run `domain-analysis validate`. Do not infer
+rollback content from a generated summary. Use `domain-analysis retire
+<article-id>` when current source proves that guidance is obsolete; retirement
+removes the article from retrieval but preserves its backup.
