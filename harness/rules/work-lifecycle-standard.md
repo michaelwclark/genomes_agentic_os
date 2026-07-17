@@ -2,7 +2,7 @@
 
 **Source of truth:** `harness/rules/work-lifecycle-standard.md` (repo canonical).
 Instance copy lives at the same path under `/Users/genome/agentic_os/`.
-Last updated: 2026-07-02.
+Last updated: 2026-07-07.
 
 ---
 
@@ -53,6 +53,50 @@ first.
 > **Note on `blocked`:** this state is non-terminal and non-ordinal. It is
 > reachable from any build-phase state and exits to the state it paused. The
 > resolver treats it like `building` for gate purposes.
+
+---
+
+## 1a. Work-Item Artifact Destination (canonical location)
+
+The phases above describe *state*. This section is the binding rule for *where*
+the work-item and its packet artifacts physically live — the gap that most often
+misfires when an agent is running with its `cwd` inside a linked code repository.
+
+**Canonical location.** For any project that has an Agentic OS room
+(`<domain>/02-projects/<project>/`), the single source of truth for a work item
+and its lifecycle/handoff packet is the OS room:
+
+```
+<OS_ROOT>/<domain>/02-projects/<project>/work-items/<lane>/<index>_<slug>/
+```
+
+where `<lane>` follows the state → lane mapping in §3
+(`01-intake`, `02-active`, `03-complete`). Resolve the exact path with:
+
+```bash
+agentic-os doc-config plan --root ~/agentic_os \
+  --domain <domain> --project <project> --work-item <index>_<slug>
+```
+
+The `filesystem` field it returns is the destination. This holds **even when the
+agent's `cwd` is the code clone, a worktree, or a subagent sandbox** — the code
+repo's location must never redirect where the canonical packet is written.
+
+**Packet artifacts** that belong in the OS work item (not the code repo):
+`PROMPT-PACK.md`, `WORKLOG.md`, `JIRA.md`, `PR.md`, `QA_HANDOFF.md`, `SPEC.md`,
+`PLAN.md` / `implementation-plan.md`, `DECISIONS.md`, review packets, handoff
+packs, and `NEXT.md`.
+
+**`.features/` is a mirror, never the source of truth.** A `.features/<ticket>/`
+directory inside a code repository (e.g.
+`/Users/genome/projects/los/app/los-app-los-django/.features/…`) is at most a
+disposable mirror, kept only when existing repo tooling requires it. Do not treat
+it as canonical, and do not write lifecycle/handoff packets there. Disposable raw
+evidence (watcher state files, CI logs, screenshots) may remain in `.features/`.
+
+The `work-item-routing-guard` PostToolUse hook enforces this: writing a
+packet-shaped file into a code-repo `.features/` directory emits an advisory
+naming the canonical OS destination. It does not fire on disposable raw evidence.
 
 ---
 
