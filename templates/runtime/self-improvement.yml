@@ -103,6 +103,25 @@ nightly_apply:
   # Source/provenance tag stamped on notifications and queued rows so operators
   # can trace queued work back to this automated lane.
   notify_source: automation.self_improvement
+  # Autonomous implementation lane: per-class feature toggles. When enabled,
+  # proposals that were auto-approved + promoted this run and whose class maps
+  # to true below are queued straight into the auto_dev execution lane, with a
+  # per-improvement on/off switch recorded in self-improvement-toggles.yml.
+  # Disabled by default; an operator flips individual classes to true after review.
+  auto_implement:
+    enabled: false
+    # Map of recommended_artifact class -> bool. Only classes explicitly set to
+    # true are auto-implemented; everything else stays queued for the operator.
+    classes:
+      doctor-check-draft: false
+      skill-draft: false
+      command-draft: false
+      workflow-draft: false
+      tool-wrapper-draft: false
+      reference-update-plan: false
+      feature-spec: false
+    # Hard cap on auto-implementations queued per nightly run.
+    max_per_night: 2
   # Proposals older than this many days that do NOT match the auto_approve policy
   # are surfaced in the run receipt as `stale_triage` for operator visibility.
   # This is visibility only; it never changes proposal state.

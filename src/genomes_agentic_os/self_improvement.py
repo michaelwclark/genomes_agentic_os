@@ -35,6 +35,11 @@ NOTION_REPORT_PARENT_TITLE = "Genome's Agentic OS"
 NOTION_REPORTS_PAGE_TITLE = "Self Improvement Reports"
 ACTION_OUTPUT_ROOT = f"{OUTPUT_ROOT}/actions"
 NIGHTLY_APPLY_ROOT = f"{OUTPUT_ROOT}/nightly-apply"
+# Per-improvement feature-toggle ledger: which auto-implemented improvements are
+# live, which artifact files they registered, and where disabled artifacts were
+# parked so a toggle-on can restore them.
+SI_TOGGLES_PATH = "harness/shared_factory/00-control-plane/self-improvement-toggles.yml"
+SI_DISABLED_ROOT = f"{OUTPUT_ROOT}/disabled"
 # OS-relative work-item packet that owns continuous self-improvement work.
 # Lives under the shared factory so every install has a stable home for it.
 SELF_IMPROVEMENT_WORK_ITEM = "harness/shared_factory/02-projects/genomes_agentic_os/work-items/02-active/017_self_improvement_v2_continuous_flywheel"
@@ -46,6 +51,10 @@ NOTIFY_BIN = "harness/bin/agentic-os-notify"
 NIGHTLY_APPLY_DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "auto_approve": {"classes": ["doctor-check-draft"], "min_score": 20, "max_per_night": 3},
+    # Per-class feature toggles for the autonomous implementation lane. `classes`
+    # maps artifact class -> bool; only classes explicitly set to true are queued
+    # into the auto_dev worker lane after approve+promote. Disabled by default.
+    "auto_implement": {"enabled": False, "classes": {}, "max_per_night": 2},
     "queue_target": "work_intake",
     "notify_source": "automation.self_improvement",
     "stale_after_days": 7,
@@ -160,6 +169,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "classes": ["doctor-check-draft"],
             "min_score": 20,
             "max_per_night": 3,
+        },
+        "auto_implement": {
+            "enabled": False,
+            "classes": {},
+            "max_per_night": 2,
         },
         "queue_target": "work_intake",
         "notify_source": "automation.self_improvement",
@@ -2066,6 +2080,15 @@ def _action_prompt(proposal: dict[str, Any], *, action_type: str, page_id: str) 
             "run focused validation, and leave receipt-backed status."
         )
     proposal_yaml = yaml.safe_dump(proposal, sort_keys=False)
+    registration_rules = ""
+    if action_type == "auto_dev":
+        registration_rules = (
+            "- Register every artifact file you create or modify: append its OS-root-relative path to the "
+            f"`artifacts` list of this proposal's entry ({proposal_id}) in `{SI_TOGGLES_PATH}`. "
+            "This registration is what lets the operator switch the improvement off later.\n"
+            "- Changes must be additive and reversible: create new surfaces; never delete or rewrite "
+            "unrelated existing ones.\n"
+        )
     return f"""# Self-Improvement Action Worker
 
 Action: {action_type}
@@ -2085,7 +2108,7 @@ Work item: {SELF_IMPROVEMENT_WORK_ITEM}
 - Do not publish local paths or private Notion links to Jira, GitHub, Slack, or email.
 - For grooming, create or update the Linear issue in the Agentic OS project only after workspace/project/team verification.
 - If implementation is unsafe or underspecified, stop with a blocker-grade receipt instead of guessing.
-
+{registration_rules}
 ## Proposal
 
 ```yaml
@@ -2329,6 +2352,83 @@ def _markdown_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]]) 
     return lines
 
 
+ADDED_TO_SYSTEM_EMPTY = "Nothing was auto-applied overnight."
+ADDED_TO_SYSTEM_TOGGLE_HINT = "agentic-os self-improvement toggle <proposal-id> --off --root <root>"
+
+
+def _added_to_system_last_24h(root: Path, *, now: datetime | None = None) -> dict[str, Any]:
+    """Collect what the autonomous lanes added in the last 24 hours.
+
+    Reads the nightly-apply receipts (approved/queued/implemented rows) and the
+    per-improvement toggle ledger so the morning report can show the operator
+    exactly what changed overnight and how to switch any item off.
+    """
+    now = now or datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=24)
+    items: list[dict[str, Any]] = []
+    receipts_dir = _resolve_root_relative(root, NIGHTLY_APPLY_ROOT)
+    if receipts_dir.is_dir():
+        for path in sorted(receipts_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            generated = _parse_time(str(payload.get("generated_at") or ""))
+            if generated is None or generated < window_start:
+                continue
+            receipt_rel = _relative_path(root, path)
+            for row in payload.get("approved") or []:
+                if isinstance(row, dict):
+                    items.append(
+                        {"kind": "approved", "proposal_id": row.get("proposal_id"), "target": "", "receipt": receipt_rel}
+                    )
+            for row in payload.get("queued") or []:
+                if isinstance(row, dict):
+                    items.append(
+                        {
+                            "kind": "queued",
+                            "proposal_id": row.get("proposal_id"),
+                            "target": row.get("target"),
+                            "receipt": receipt_rel,
+                        }
+                    )
+            for row in payload.get("implemented") or []:
+                if isinstance(row, dict):
+                    items.append(
+                        {
+                            "kind": "implemented",
+                            "proposal_id": row.get("proposal_id"),
+                            "target": row.get("target"),
+                            "receipt": receipt_rel,
+                        }
+                    )
+    toggles: list[dict[str, Any]] = []
+    for proposal_id, entry in sorted((_read_si_toggles(root).get("toggles") or {}).items()):
+        if not isinstance(entry, dict):
+            continue
+        queued_at = _parse_time(str(entry.get("queued_at") or ""))
+        if queued_at is None or queued_at < window_start:
+            continue
+        toggles.append(
+            {
+                "proposal_id": proposal_id,
+                "title": entry.get("title"),
+                "target": entry.get("target"),
+                "enabled": bool(entry.get("enabled", True)),
+                "artifacts": [str(item) for item in entry.get("artifacts") or []],
+                "queued_at": entry.get("queued_at"),
+            }
+        )
+    return {
+        "window_hours": 24,
+        "items": items,
+        "toggles": toggles,
+        "toggle_command": ADDED_TO_SYSTEM_TOGGLE_HINT,
+    }
+
+
 def _morning_report_markdown(root: Path, result: dict[str, Any]) -> str:
     date_value = str(result.get("date") or _today())
     validation_before = result.get("validation_before") or {}
@@ -2421,6 +2521,40 @@ def _morning_report_markdown(root: Path, result: dict[str, Any]) -> str:
         lines.extend(_markdown_table(updated_rows, [("Status", "Status"), ("Type", "Type"), ("Path", "Path")]))
     else:
         lines.append("- No deterministic repair actions were needed.")
+    lines.append("")
+
+    lines.append("## Added To The System (Last 24h)")
+    lines.append("")
+    added = result.get("added_to_system") or {}
+    added_items = added.get("items") or []
+    added_toggles = added.get("toggles") or []
+    if added_items or added_toggles:
+        if added_items:
+            item_rows = [
+                {
+                    "Kind": str(item.get("kind") or ""),
+                    "Proposal": str(item.get("proposal_id") or ""),
+                    "Target": str(item.get("target") or ""),
+                    "Receipt": str(item.get("receipt") or ""),
+                }
+                for item in added_items
+            ]
+            lines.extend(
+                _markdown_table(
+                    item_rows,
+                    [("Kind", "Kind"), ("Proposal", "Proposal"), ("Target", "Target"), ("Receipt", "Receipt")],
+                )
+            )
+        for toggle in added_toggles:
+            state = "on" if toggle.get("enabled") else "off"
+            artifacts = ", ".join(f"`{path}`" for path in toggle.get("artifacts") or []) or "none registered yet"
+            lines.append(
+                f"- Toggle {toggle.get('proposal_id')} [{state}] target={toggle.get('target')} artifacts: {artifacts}"
+            )
+        lines.append("")
+        lines.append(f"Switch any item off with: `{ADDED_TO_SYSTEM_TOGGLE_HINT}`")
+    else:
+        lines.append(ADDED_TO_SYSTEM_EMPTY)
     lines.append("")
 
     lines.append("## Filesystem Receipts")
@@ -2640,6 +2774,22 @@ def _morning_report_notion_blocks(result: dict[str, Any]) -> list[dict[str, Any]
             or ["No deterministic repair actions were needed."]
         )
     )
+    blocks.append(_notion_block("heading_2", "Added To The System (Last 24h)"))
+    added = result.get("added_to_system") or {}
+    added_lines = [
+        f"{item.get('kind')}: {item.get('proposal_id')}" + (f" ({item.get('target')})" if item.get("target") else "")
+        for item in (added.get("items") or [])[:30]
+    ]
+    added_lines.extend(
+        f"toggle {toggle.get('proposal_id')} [{'on' if toggle.get('enabled') else 'off'}] "
+        f"target={toggle.get('target')} artifacts={len(toggle.get('artifacts') or [])}"
+        for toggle in (added.get("toggles") or [])[:30]
+    )
+    if added_lines:
+        added_lines.append(f"Switch any item off with: {ADDED_TO_SYSTEM_TOGGLE_HINT}")
+        blocks.extend(_notion_bullets(added_lines))
+    else:
+        blocks.extend(_notion_bullets([ADDED_TO_SYSTEM_EMPTY]))
     paths = result.get("morning_report") or {}
     blocks.append(_notion_block("heading_2", "Filesystem Version"))
     blocks.extend(_notion_bullets([f"{key}: {value}" for key, value in sorted(paths.items())] or ["Filesystem report path not recorded."]))
@@ -2776,6 +2926,7 @@ def run_self_improvement_morning_report(
         "repair": repair,
         "source_inventory": _source_inventory(os_root, config),
         "self_improvement": self_review,
+        "added_to_system": _added_to_system_last_24h(os_root),
         "writes": [],
     }
     if dry_run:
@@ -3029,6 +3180,13 @@ def _nightly_apply_policy(config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(configured_auto, dict):
         auto.update(configured_auto)
     policy["auto_approve"] = auto
+    implement = dict(NIGHTLY_APPLY_DEFAULTS["auto_implement"])
+    configured_implement = configured.get("auto_implement") if isinstance(configured, dict) else None
+    if isinstance(configured_implement, dict):
+        implement.update(configured_implement)
+    classes = implement.get("classes")
+    implement["classes"] = dict(classes) if isinstance(classes, dict) else {}
+    policy["auto_implement"] = implement
     return policy
 
 
@@ -3226,11 +3384,12 @@ def _send_nightly_notification(
     queued: int,
     skipped: int,
     dry_run: bool,
+    implemented: int = 0,
     notifier: Any | None = None,
 ) -> dict[str, Any]:
     """Emit one summary notification via agentic-os-notify. Best-effort."""
     title = "Self-improvement nightly-apply" + (" (dry-run)" if dry_run else "")
-    message = f"approved {approved}, queued {queued}, skipped {skipped}"
+    message = f"approved {approved}, queued {queued}, implemented {implemented}, skipped {skipped}"
     if notifier is not None:
         try:
             notifier(source=source, title=title, message=message, level="info", dry_run=dry_run)
@@ -3293,6 +3452,12 @@ def nightly_apply_self_improvement(
     config = _load_yaml(os_root / CONFIG_PATH)
     policy = _nightly_apply_policy(config)
     auto = policy["auto_approve"]
+    implement_policy = policy["auto_implement"]
+    implement_enabled = bool(implement_policy.get("enabled"))
+    implement_classes = {
+        str(key): bool(value) for key, value in (implement_policy.get("classes") or {}).items()
+    }
+    implement_max = int(implement_policy.get("max_per_night") or 0)
     now = now or datetime.now(timezone.utc)
     classes = {str(item) for item in (auto.get("classes") or [])}
     min_score = int(auto.get("min_score") or 0)
@@ -3356,6 +3521,11 @@ def nightly_apply_self_improvement(
             "stale_after_days": stale_after_days,
             "queue_target": policy.get("queue_target"),
             "notify_source": notify_source,
+            "auto_implement": {
+                "enabled": implement_enabled,
+                "classes": implement_classes,
+                "max_per_night": implement_max,
+            },
         },
         "eligible": [item.get("proposal_id") for item in eligible],
         "selected": [item.get("proposal_id") for item in selected],
@@ -3363,12 +3533,30 @@ def nightly_apply_self_improvement(
         "stale_triage": stale_triage,
         "approved": [],
         "queued": [],
+        "implemented": [],
+        "implement_candidates": [],
+        "skipped_implement": [],
         "notion_failures": [],
         "errors": [],
     }
 
     if not enabled:
         result["skipped_reason"] = "nightly_apply_disabled"
+
+    # Preview of the auto-implement lane: which selected proposals would be
+    # queued for implementation. Computed for dry-run reporting and reused as
+    # the apply-mode plan (the apply lane still re-checks the durable ledger).
+    if implement_enabled:
+        ledger_actions = _read_intake_ledger(os_root).get("actions") or {}
+        for item in selected:
+            if len(result["implement_candidates"]) >= implement_max:
+                break
+            target = str(item.get("recommended_artifact") or "")
+            if not implement_classes.get(target):
+                continue
+            if f"{item.get('proposal_id')}:auto_dev" in ledger_actions:
+                continue
+            result["implement_candidates"].append({"proposal_id": item.get("proposal_id"), "target": target})
 
     if dry_run or not selected:
         # No approvals happen on a dry-run or when nothing is eligible. We
@@ -3382,6 +3570,7 @@ def nightly_apply_self_improvement(
             queued=len(result["queued"]),
             skipped=len(stale_triage) + len(deferred_over_cap),
             dry_run=True,  # quiet: no delivery for a preview or a no-op apply
+            implemented=len(result["implemented"]),
             notifier=notifier,
         )
         if not dry_run:
@@ -3390,6 +3579,7 @@ def nightly_apply_self_improvement(
         return result
 
     _validate_output_paths(os_root, config)
+    promoted_rows: list[dict[str, Any]] = []
     for proposal in selected:
         proposal_id = str(proposal.get("proposal_id"))
         target = str(proposal.get("recommended_artifact") or "")
@@ -3414,6 +3604,76 @@ def nightly_apply_self_improvement(
         result["queued"].append(queued_row)
         if not projection.get("projected"):
             result["notion_failures"].append({"proposal_id": proposal_id, "reason": projection.get("reason")})
+        promoted_rows.append(
+            {"proposal_id": proposal_id, "target": target, "proposal": refreshed, "projection": projection}
+        )
+
+    # Auto-implement lane: queue an auto_dev worker (reusing the Notion-action
+    # mechanics) for approved+promoted proposals whose class toggle is on.
+    if implement_enabled and promoted_rows:
+        ledger = _read_intake_ledger(os_root)
+        for row in promoted_rows:
+            proposal_id = str(row["proposal_id"])
+            target = str(row["target"])
+            if not implement_classes.get(target):
+                continue
+            if len(result["implemented"]) >= implement_max:
+                result["skipped_implement"].append(
+                    {"proposal_id": proposal_id, "reason": "over_auto_implement_max_per_night"}
+                )
+                continue
+            action_key = f"{proposal_id}:auto_dev"
+            prior = (ledger.get("actions") or {}).get(action_key)
+            if prior:
+                result["skipped_implement"].append(
+                    {
+                        "proposal_id": proposal_id,
+                        "reason": "already_processed_ledger",
+                        "queue_item_id": prior.get("queue_id"),
+                    }
+                )
+                continue
+            projection = row.get("projection") or {}
+            page_id = (
+                str(projection.get("page_id"))
+                if projection.get("projected") and projection.get("page_id")
+                else f"local{_digest(proposal_id, 12)}"
+            )
+            try:
+                worker = _write_action_worker(os_root, row["proposal"], action_type="auto_dev", page_id=page_id)
+                item = _action_queue_item(
+                    os_root, row["proposal"], action_type="auto_dev", page_id=page_id, worker=worker
+                )
+                from .runtime_ops import append_run_queue_item
+
+                append_run_queue_item(os_root, item)
+                # Durable record BEFORE any Notion write: a later tick (or the
+                # Notion action watcher) hits the ledger instead of re-queueing.
+                ledger["actions"][action_key] = {"queue_id": item["id"], "page_id": page_id, "queued_at": _now()}
+                _write_intake_ledger(os_root, ledger)
+                toggles = _read_si_toggles(os_root)
+                toggles["toggles"][proposal_id] = {
+                    "enabled": True,
+                    "status": "queued",
+                    "target": target,
+                    "title": str(row["proposal"].get("title") or ""),
+                    "queued_at": _now(),
+                    "artifacts": [],
+                    "disabled_at": None,
+                }
+                _write_si_toggles(os_root, toggles)
+            except Exception as exc:  # noqa: BLE001 - record and continue with the next item
+                result["errors"].append({"proposal_id": proposal_id, "error": f"{type(exc).__name__}: {exc}"[:300]})
+                continue
+            result["implemented"].append(
+                {
+                    "proposal_id": proposal_id,
+                    "target": target,
+                    "queue_id": item["id"],
+                    "prompt": worker["prompt"],
+                    "script": worker["script"],
+                }
+            )
 
     result["notification"] = _send_nightly_notification(
         os_root,
@@ -3422,6 +3682,7 @@ def nightly_apply_self_improvement(
         queued=len(result["queued"]),
         skipped=len(stale_triage) + len(deferred_over_cap),
         dry_run=False,
+        implemented=len(result["implemented"]),
         notifier=notifier,
     )
     result["receipt"] = _write_nightly_apply_receipt(os_root, result)
@@ -3440,6 +3701,9 @@ def _write_nightly_apply_receipt(root: Path, result: dict[str, Any]) -> str:
         "selected": result.get("selected"),
         "approved": result.get("approved"),
         "queued": result.get("queued"),
+        "implemented": result.get("implemented"),
+        "implement_candidates": result.get("implement_candidates"),
+        "skipped_implement": result.get("skipped_implement"),
         "deferred_over_cap": result.get("deferred_over_cap"),
         "stale_triage": result.get("stale_triage"),
         "notion_failures": result.get("notion_failures"),
@@ -3448,6 +3712,126 @@ def _write_nightly_apply_receipt(root: Path, result: dict[str, Any]) -> str:
     }
     _atomic_write_text(root, path, json.dumps(payload, indent=2, default=str) + "\n")
     return str(path.relative_to(root))
+
+
+# ---------------------------------------------------------------------------
+# Per-improvement feature toggles
+# ---------------------------------------------------------------------------
+
+
+def _si_toggles_path(root: Path) -> Path:
+    directory = _resolve_root_relative(root, str(Path(SI_TOGGLES_PATH).parent))
+    return _safe_child(root, directory, Path(SI_TOGGLES_PATH).name)
+
+
+def _read_si_toggles(root: Path) -> dict[str, Any]:
+    """Load the per-improvement toggle ledger. Missing or corrupt degrades to empty."""
+    path = _si_toggles_path(root)
+    if path.exists():
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                toggles = raw.get("toggles")
+                return {
+                    "schema_version": 1,
+                    "toggles": toggles if isinstance(toggles, dict) else {},
+                }
+        except Exception:  # noqa: BLE001 - corrupt ledger degrades to empty
+            pass
+    return {"schema_version": 1, "toggles": {}}
+
+
+def _write_si_toggles(root: Path, data: dict[str, Any]) -> None:
+    _atomic_write_yaml(root, _si_toggles_path(root), data)
+
+
+def _flattened_artifact_name(index: int, artifact: str) -> str:
+    flattened = re.sub(r"[^A-Za-z0-9._-]+", "-", artifact).strip("-.") or "artifact"
+    return f"{index}-{flattened}"[:120]
+
+
+def list_self_improvement_toggles(root: str | Path) -> dict[str, Any]:
+    os_root = expand_path(root)
+    ledger = _read_si_toggles(os_root)
+    return {"action": "toggles", "root": os_root, "toggles": ledger["toggles"]}
+
+
+def set_self_improvement_toggle(root: str | Path, proposal_id: str, *, enabled: bool) -> dict[str, Any]:
+    """Switch one auto-implemented improvement on or off.
+
+    Toggle OFF parks every registered artifact under the disabled run root
+    (recording the move so toggle ON can restore it); paths that resolve outside
+    the OS root are refused and left untouched. Toggling to the current state is
+    a no-op that reports ``changed: false``.
+    """
+    os_root = expand_path(root)
+    ledger = _read_si_toggles(os_root)
+    entry = ledger["toggles"].get(proposal_id)
+    if not isinstance(entry, dict):
+        raise ValueError(f"unknown self-improvement toggle: {proposal_id}")
+    result: dict[str, Any] = {
+        "action": "toggle",
+        "root": os_root,
+        "proposal_id": proposal_id,
+        "enabled": enabled,
+        "changed": False,
+        "moved": [],
+        "restored": [],
+        "refused": [],
+        "skipped": [],
+    }
+    if bool(entry.get("enabled", True)) == enabled:
+        return result
+    if not enabled:
+        disabled_dir = _safe_descendant(
+            os_root, _resolve_root_relative(os_root, SI_DISABLED_ROOT), proposal_id
+        )
+        moved: list[dict[str, str]] = []
+        for index, artifact in enumerate(str(item) for item in entry.get("artifacts") or []):
+            source = _path_under_root(os_root, artifact)
+            if source is None:
+                result["refused"].append({"path": artifact, "reason": "outside_os_root"})
+                continue
+            if not source.exists():
+                result["skipped"].append({"path": artifact, "reason": "missing"})
+                continue
+            destination = _safe_child(os_root, disabled_dir, _flattened_artifact_name(index, artifact))
+            if destination.exists():
+                result["skipped"].append({"path": artifact, "reason": "disabled_copy_exists"})
+                continue
+            source.rename(destination)
+            moved.append({"from": _relative_path(os_root, source), "to": _relative_path(os_root, destination)})
+        entry["moved"] = moved
+        entry["enabled"] = False
+        entry["disabled_at"] = _now()
+        result["moved"] = moved
+    else:
+        restored: list[dict[str, str]] = []
+        for move in entry.get("moved") or []:
+            if not isinstance(move, dict):
+                continue
+            source = _path_under_root(os_root, str(move.get("to") or ""))
+            destination = _path_under_root(os_root, str(move.get("from") or ""))
+            if source is None or destination is None:
+                result["refused"].append({"path": str(move.get("from") or ""), "reason": "outside_os_root"})
+                continue
+            if destination.exists():
+                result["skipped"].append({"path": _relative_path(os_root, destination), "reason": "destination_exists"})
+                continue
+            if not source.exists():
+                result["skipped"].append({"path": _relative_path(os_root, source), "reason": "disabled_copy_missing"})
+                continue
+            _ensure_safe_dir(os_root, destination.parent)
+            source.rename(destination)
+            restored.append({"from": _relative_path(os_root, source), "to": _relative_path(os_root, destination)})
+        entry["moved"] = []
+        entry["enabled"] = True
+        entry["disabled_at"] = None
+        result["restored"] = restored
+    ledger["toggles"][proposal_id] = entry
+    _write_si_toggles(os_root, ledger)
+    result["changed"] = True
+    return result
 
 
 def format_self_improvement_result(result: dict[str, Any]) -> str:
@@ -3470,11 +3854,19 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
         lines.append(f"selected: {len(result.get('selected') or [])}")
         lines.append(f"approved: {len(result.get('approved') or [])}")
         lines.append(f"queued: {len(result.get('queued') or [])}")
+        lines.append(f"implemented: {len(result.get('implemented') or [])}")
+        lines.append(f"implement_candidates: {len(result.get('implement_candidates') or [])}")
         lines.append(f"stale_triage: {len(result.get('stale_triage') or [])}")
         for row in result.get("queued") or []:
             notion = row.get("notion") or {}
             state = notion.get("url") if notion.get("projected") else f"notion:{notion.get('reason')}"
             lines.append(f"- queued {row.get('proposal_id')} ({row.get('target')}) -> {state}")
+        for row in result.get("implemented") or []:
+            lines.append(f"- implemented {row.get('proposal_id')} ({row.get('target')}) -> {row.get('queue_id')}")
+        for row in result.get("implement_candidates") or []:
+            lines.append(f"- implement_candidate {row.get('proposal_id')} ({row.get('target')})")
+        for row in result.get("skipped_implement") or []:
+            lines.append(f"- skipped_implement {row.get('proposal_id')}: {row.get('reason')}")
         for item in result.get("stale_triage") or []:
             lines.append(f"- stale_triage {item.get('proposal_id')} ({item.get('age_days')}d, score={item.get('score')})")
         for item in result.get("errors") or []:
@@ -3558,6 +3950,39 @@ def format_self_improvement_result(result: dict[str, Any]) -> str:
 
     if action == "show":
         return yaml.safe_dump(result["proposal"], sort_keys=False)
+
+    if action == "toggles":
+        lines = ["Self Improvement Toggles", f"root: {result['root']}"]
+        toggles = result.get("toggles") or {}
+        if not toggles:
+            lines.append("- none")
+        for proposal_id, entry in sorted(toggles.items()):
+            entry = entry if isinstance(entry, dict) else {}
+            state = "on" if entry.get("enabled", True) else "off"
+            lines.append(
+                f"- {proposal_id} [{state}] target={entry.get('target')} "
+                f"artifacts={len(entry.get('artifacts') or [])} queued_at={entry.get('queued_at')}"
+            )
+        return "\n".join(lines)
+
+    if action == "toggle":
+        state = "on" if result.get("enabled") else "off"
+        lines = [
+            "Self Improvement Toggle",
+            f"root: {result['root']}",
+            f"proposal: {result.get('proposal_id')}",
+            f"enabled: {state}",
+            f"changed: {result.get('changed')}",
+        ]
+        for move in result.get("moved") or []:
+            lines.append(f"- moved {move.get('from')} -> {move.get('to')}")
+        for move in result.get("restored") or []:
+            lines.append(f"- restored {move.get('from')} -> {move.get('to')}")
+        for item in result.get("refused") or []:
+            lines.append(f"- refused {item.get('path')}: {item.get('reason')}")
+        for item in result.get("skipped") or []:
+            lines.append(f"- skipped {item.get('path')}: {item.get('reason')}")
+        return "\n".join(lines)
 
     if action == "actions":
         lines = [
