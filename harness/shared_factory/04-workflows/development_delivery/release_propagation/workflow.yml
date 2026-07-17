@@ -1,0 +1,16 @@
+id: release_propagation
+version: 1
+owner: development_delivery
+inputs: [ready_pull_request, fix_version, release_profile, version_registry, source_sha]
+outputs: [release_decision, target_matrix, release_pull_requests, conflict_receipts]
+states: [release_evaluation, not_required, release_preparing, release_ready, blocked]
+steps: [read_fix_version, map_targets, deduplicate, cherry_pick, validate_targets, open_and_watch_release_prs]
+validations: [version_branch_agreement, one_pr_per_target, intent_preserved, target_tests_green, writeback_readback]
+failure_modes:
+  fix_version_missing: block_for_grooming
+  target_mapping_missing: block_for_config_repair
+  cherry_pick_conflict: preserve_worktree_and_escalate_intent
+  target_checks_failed: repair_target_and_rewatch
+  partial_propagation: resume_missing_targets_idempotently
+events: [release.evaluated, release.not_required, release.target.started, release.pr.opened, release.target.failed, release.ready]
+receipts: [fix_version_snapshot, target_matrix, source_sha, cherry_pick_result, target_tests, pr_checks, conflicts]

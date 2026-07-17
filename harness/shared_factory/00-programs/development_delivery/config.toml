@@ -1,0 +1,3 @@
+enabled = true
+profile_version = 1
+command = "agentic-os develop"

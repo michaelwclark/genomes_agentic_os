@@ -1,0 +1,38 @@
+version: 1
+enabled: true
+tracker:
+  primary: linear
+repository:
+  root: /absolute/path/to/canonical/repository
+  base_branch: main
+worktrees:
+  directory: worktrees
+  branch_template: feature/{ticket}-{slug}
+work_items:
+  active_status: building
+validation:
+  commands:
+    - python3 -m pytest tests -q
+  test_policy: risk_based_triangle
+  ci_fallback_on_environment_failure: true
+review:
+  opposing_harness:
+    required: true
+    preferred: claude
+    fallback: codex
+    unavailable_policy: continue_with_receipt
+  copilot:
+    require_no_actionable_threads: true
+merge:
+  policy: never_auto
+release:
+  fix_version_drives_targets: true
+deployment:
+  required: false
+recovery:
+  max_attempts: 3
+  lease_minutes: 30
+  stale_after_minutes: 45
+retention:
+  raw_logs_days: 4
+  merged_worktree_grace_days: 3

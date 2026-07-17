@@ -174,6 +174,7 @@ PROJECT_STATUSES = (
 
 PROJECT_CONFIG_FILES = (
     "project-profile.yml",
+    "development.yml",
     "workflows.yml",
     "work-lifecycle.yml",
     "spec-engine.yml",
@@ -2590,7 +2591,15 @@ control-plane changes that future sessions should not rediscover.
 """
 
 
-def project_config_file_content(domain: str, project: str, status: str, lane: str | None, filename: str) -> str:
+def project_config_file_content(
+    domain: str,
+    project: str,
+    status: str,
+    lane: str | None,
+    filename: str,
+    *,
+    repo: str | None = None,
+) -> str:
     lane_value = lane or ""
     if filename == "project-profile.yml":
         return yaml.safe_dump(
@@ -2607,6 +2616,39 @@ def project_config_file_content(domain: str, project: str, status: str, lane: st
                     "ideas": "work-items/01-intake",
                     "artifacts": "artifacts",
                 }
+            },
+            sort_keys=False,
+        )
+    if filename == "development.yml":
+        return yaml.safe_dump(
+            {
+                "version": 1,
+                "enabled": True,
+                "tracker": {"primary": "filesystem"},
+                "repository": {"root": repo or "", "base_branch": "main"},
+                "worktrees": {
+                    "directory": "worktrees",
+                    "branch_template": "feature/{ticket}-{slug}",
+                },
+                "work_items": {"active_status": "building"},
+                "validation": {
+                    "commands": [],
+                    "test_policy": "risk_based_triangle",
+                    "ci_fallback_on_environment_failure": True,
+                },
+                "review": {
+                    "opposing_harness": {
+                        "required": True,
+                        "preferred": "claude",
+                        "fallback": "codex",
+                        "unavailable_policy": "continue_with_receipt",
+                    }
+                },
+                "merge": {"policy": "never_auto"},
+                "release": {"fix_version_drives_targets": True},
+                "deployment": {"required": False, "monitor_after_merge": True},
+                "recovery": {"max_attempts": 3, "lease_minutes": 30, "stale_after_minutes": 45},
+                "retention": {"raw_logs_days": 4, "merged_worktree_grace_days": 3},
             },
             sort_keys=False,
         )
@@ -3141,7 +3183,7 @@ def ensure_project_operating_surface(
     for filename in PROJECT_CONFIG_FILES:
         write_file_once(
             project_root / "config" / filename,
-            project_config_file_content(domain, project, status, lane, filename),
+            project_config_file_content(domain, project, status, lane, filename, repo=repo),
             result,
         )
     ensure_codex_config(project_root, "project", result)

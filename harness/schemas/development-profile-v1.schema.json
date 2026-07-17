@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "development-profile-v1.schema.json",
+  "title": "Agentic OS development delivery project profile",
+  "type": "object",
+  "required": ["version", "enabled", "tracker", "repository", "worktrees", "work_items", "validation", "review", "merge", "recovery"],
+  "properties": {
+    "version": {"const": 1},
+    "enabled": {"const": true},
+    "tracker": {"type": "object", "required": ["primary"]},
+    "repository": {
+      "type": "object",
+      "required": ["root", "base_branch"],
+      "properties": {"root": {"type": "string", "minLength": 1}, "base_branch": {"type": "string", "minLength": 1}},
+      "additionalProperties": true
+    },
+    "worktrees": {
+      "type": "object",
+      "required": ["directory", "branch_template"],
+      "properties": {"directory": {"type": "string"}, "branch_template": {"type": "string"}},
+      "additionalProperties": true
+    },
+    "work_items": {"type": "object", "required": ["active_status"]},
+    "validation": {
+      "type": "object",
+      "required": ["commands", "test_policy", "ci_fallback_on_environment_failure"],
+      "properties": {"commands": {"type": "array", "items": {"type": "string"}}, "test_policy": {"const": "risk_based_triangle"}, "ci_fallback_on_environment_failure": {"type": "boolean"}},
+      "additionalProperties": true
+    },
+    "review": {"type": "object"},
+    "merge": {"type": "object", "required": ["policy"]},
+    "recovery": {
+      "type": "object",
+      "required": ["max_attempts", "lease_minutes", "stale_after_minutes"],
+      "properties": {"max_attempts": {"type": "integer", "minimum": 1}, "lease_minutes": {"type": "integer", "minimum": 1}, "stale_after_minutes": {"type": "integer", "minimum": 1}},
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

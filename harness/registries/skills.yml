@@ -187,6 +187,11 @@ skills:
     state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge
     or merge-blocked closeout.
   source: harness/skills/auto-dev/SKILL.md
+- id: develop
+  name: Develop
+  description: Canonical 1-N programming delivery with project profiles, isolated
+    worktrees, quality and repair loops, release propagation, recovery, and cleanup.
+  source: harness/skills/develop/SKILL.md
 - id: finishing-touches-review
   name: Finishing Touches Review
   description: Run a deterministic cross-model finishing review loop before PR readiness

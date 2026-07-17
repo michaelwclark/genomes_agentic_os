@@ -5,6 +5,11 @@ description: Run a Jira or Linear tracker item through project-aware SDLC orches
 
 # Auto Dev
 
+> Compatibility alias: all new generic Agentic OS programming jobs start with
+> `agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply`
+> and follow the `development_delivery` program. The contracts below remain
+> available for existing Auto-Dev runs and provider adapters during migration.
+
 Auto Dev is the Agentic OS dark-factory SDLC runner. It starts from a tracker
 item, resolves the routed project `project.yml dev_factory` block, creates or
 resumes a local state-machine run, delegates implementation to the project

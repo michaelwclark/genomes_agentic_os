@@ -1,0 +1,22 @@
+program: development_delivery
+version: 1
+command: agentic-os develop
+profile: <project>/config/development.yml
+workflows:
+  - id: readiness_and_context
+    path: ../../04-workflows/development_delivery/readiness_and_context
+  - id: isolated_implementation
+    path: ../../04-workflows/development_delivery/isolated_implementation
+  - id: testing_review_and_pr_repair
+    path: ../../04-workflows/development_delivery/testing_review_and_pr_repair
+  - id: release_propagation
+    path: ../../04-workflows/development_delivery/release_propagation
+  - id: merge_deployment_and_cleanup
+    path: ../../04-workflows/development_delivery/merge_deployment_and_cleanup
+state:
+  portfolio: <project>/state/development-runs/<run-id>/portfolio.json
+  task: <project>/state/development-runs/<run-id>/tasks/<ticket>/state.json
+  events: <project>/state/development-runs/events.jsonl
+compatibility:
+  auto_dev_skill: harness/skills/auto-dev/SKILL.md
+  project_profile: project.yml#dev_factory

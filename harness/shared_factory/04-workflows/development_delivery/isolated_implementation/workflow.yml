@@ -1,0 +1,15 @@
+id: isolated_implementation
+version: 1
+owner: development_delivery
+inputs: [context_ready_receipt, implementation_plan, test_plan, development_profile]
+outputs: [active_work_item, registered_worktree, base_sha, implementation_diff, local_validation_receipt]
+states: [context_ready, work_item_ready, worktree_ready, planned, implementing, local_validation, blocked, abandoned]
+steps: [create_work_item, fetch_base, create_worktree, verify_ownership, implement, fast_validate]
+validations: [unique_work_item, isolated_worktree, exact_remote_base, scoped_diff, tests_updated, secret_scan]
+failure_modes:
+  ownership_conflict: block_without_overwrite
+  provider_unavailable: retry_with_backoff
+  code_failed: repair_in_implementing
+  environment_unavailable: preserve_evidence_for_ci_fallback
+events: [work_item.created, worktree.created, implementation.started, implementation.updated, local_validation.completed, local_validation.failed]
+receipts: [work_item_ref, worktree_registry_entry, branch_base_sha, changed_files, test_changes, command_results]
