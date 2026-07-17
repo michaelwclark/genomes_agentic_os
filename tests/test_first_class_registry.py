@@ -208,6 +208,7 @@ def test_summary_counts_every_diagnostic_and_static_health_is_not_applicable(
         {"resource_id", "path", "repair_kind", "guidance"}.issubset(item)
         for item in payload["diagnostics"]
     )
+    assert all(item["resource_id"] for item in payload["diagnostics"])
     skill = next(item for item in payload["resources"] if item["kind"] == "skill")
     assert skill["health"] == {
         "state": "not_applicable",
@@ -243,3 +244,63 @@ def test_filtered_query_recomputes_exact_diagnostic_summary(tmp_path: Path) -> N
         "automation_schedule_unassociated": 1
     }
     assert result["summary"]["partial"] is False
+
+
+def test_schedule_orphan_exception_requires_an_explicit_reason(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _yaml(
+        root / "harness/shared_factory/00-control-plane/runtime-registry.yml",
+        {
+            "schedules": [
+                {
+                    "id": "runtime-only-with-reason",
+                    "enabled": True,
+                    "intentional_orphan": True,
+                    "orphan_reason": "This is a host maintenance job, not an automation.",
+                },
+                {
+                    "id": "runtime-only-missing-reason",
+                    "enabled": True,
+                    "intentional_orphan": True,
+                },
+            ]
+        },
+    )
+
+    payload = refresh_first_class_registry(root)
+    schedule_diagnostics = [
+        item
+        for item in payload["diagnostics"]
+        if item["code"] == "automation_schedule_unassociated"
+    ]
+
+    assert len(schedule_diagnostics) == 1
+    assert schedule_diagnostics[0]["severity"] == "warning"
+    assert schedule_diagnostics[0]["resource_id"] == (
+        "automation_schedule:runtime-only-missing-reason"
+    )
+    assert "orphan_reason" in schedule_diagnostics[0]["message"]
+
+
+def test_unnamed_schedule_diagnostic_identity_is_stable(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _yaml(
+        root / "harness/shared_factory/00-control-plane/runtime-registry.yml",
+        {"schedules": [{"enabled": True, "command": "run-maintenance"}]},
+    )
+
+    first = refresh_first_class_registry(root)
+    second = refresh_first_class_registry(root)
+
+    first_id = next(
+        item["resource_id"]
+        for item in first["diagnostics"]
+        if item["code"] == "automation_schedule_unassociated"
+    )
+    second_id = next(
+        item["resource_id"]
+        for item in second["diagnostics"]
+        if item["code"] == "automation_schedule_unassociated"
+    )
+    assert first_id == second_id
+    assert first_id.startswith("automation_schedule:unnamed-")
