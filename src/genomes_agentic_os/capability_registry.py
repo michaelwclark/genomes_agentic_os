@@ -366,6 +366,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-heartbeat.md",
         },
         {
+            "id": "notify",
+            "command": "/notify",
+            "description": "Send one governed local macOS notification for an operator-actionable Agentic OS condition.",
+            "source": "harness/commands/os-notify.md",
+        },
+        {
             "id": "integration-setup",
             "command": "agentic-os integration",
             "description": "Prepare and diagnose approval-gated runtime integrations.",
@@ -453,6 +459,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Agentic OS Operating Contract",
             "description": "Apply the shared Agentic OS routing, context, tool-use, workflow, automation, and closeout contract across Claude and Codex.",
             "source": "harness/skills/agentic-os-operating-contract/SKILL.md",
+        },
+        {
+            "id": "notification-operator",
+            "name": "Notification Operator",
+            "description": "Send one governed local macOS notification for an operator-actionable Agentic OS condition without creating alert noise.",
+            "source": "harness/skills/notification-operator/SKILL.md",
         },
         {
             "id": "os-navigator",
