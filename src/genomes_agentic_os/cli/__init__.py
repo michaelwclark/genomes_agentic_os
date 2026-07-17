@@ -43,6 +43,7 @@ from . import activity
 from . import rules
 from . import operator_resources
 from . import first_class_registry
+from . import develop
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -79,6 +80,7 @@ COMMAND_MODULES = [
     rules,
     operator_resources,
     first_class_registry,
+    develop,
 ]
 
 

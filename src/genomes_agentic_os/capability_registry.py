@@ -174,6 +174,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-clean-worktrees.md",
         },
         {
+            "id": "develop",
+            "command": "agentic-os develop",
+            "description": "Run one or many tracker-backed programming tasks through canonical project-configured delivery.",
+            "source": "harness/commands/develop.md",
+        },
+        {
             "id": "quiet-run",
             "command": "harness/bin/agentic-os-quiet-run",
             "description": "Start long-running local commands with artifact-backed async state instead of chat polling.",
@@ -681,6 +687,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Auto Dev",
             "description": "Run a Jira or Linear tracker item through project-aware SDLC orchestration, state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge or merge-blocked closeout.",
             "source": "harness/skills/auto-dev/SKILL.md",
+        },
+        {
+            "id": "develop",
+            "name": "Develop",
+            "description": "Run one or many programming tasks through the canonical project-configured development-delivery program.",
+            "source": "harness/skills/develop/SKILL.md",
         },
         {
             "id": "finishing-touches-review",

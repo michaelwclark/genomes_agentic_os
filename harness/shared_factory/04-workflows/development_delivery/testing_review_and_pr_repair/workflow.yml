@@ -1,0 +1,16 @@
+id: testing_review_and_pr_repair
+version: 1
+owner: development_delivery
+inputs: [implementation_diff, acceptance_criteria, risk_test_plan, validation_commands, review_policy]
+outputs: [test_ledger, pre_pr_review, pull_request, ci_receipts, repair_commits, post_pr_review, ready_decision]
+states: [local_validation, pre_pr_review, pr_open, ci_repair, review_repair, post_pr_review, ready_for_merge, blocked, abandoned]
+steps: [run_test_triangle, classify_results, pre_pr_opposing_review, open_pr, watch_ci, repair_reviews, post_pr_opposing_review]
+validations: [required_layers, aaa_structure, ci_green, no_actionable_threads, opposing_review_clean, external_text_scrub]
+failure_modes:
+  code_failed: repair_and_rerun_affected_layer
+  environment_unavailable: require_ci_when_policy_allows
+  infrastructure_flake: one_evidence_based_rerun
+  review_findings: repair_or_record_non_actionable_reason
+  opposing_harness_unavailable: retry_alternate_then_pause
+events: [quality.layer.completed, quality.layer.failed, review.pre_pr.completed, pr.opened, ci.failed, ci.passed, review.finding.repaired, review.post_pr.completed, task.ready_for_merge]
+receipts: [test_commands, classified_results, environment_evidence, review_requests, review_responses, pr_snapshot, check_runs, thread_ledger, repair_commits]

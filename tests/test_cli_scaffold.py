@@ -1902,6 +1902,11 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert (project_root / "worktrees" / "index.yml").is_file()
     for filename in PROJECT_CONFIG_FILES:
         assert (project_root / "config" / filename).is_file()
+    development = yaml.safe_load((project_root / "config" / "development.yml").read_text(encoding="utf-8"))
+    assert development["repository"]["root"] == str(repo)
+    assert development["worktrees"]["directory"] == "worktrees"
+    assert development["worktrees"]["branch_template"] == "feature/{ticket}-{slug}"
+    assert development["merge"]["policy"] == "never_auto"
     assert (project_root / "config.toml").is_file()
     assert (project_root / "AGENTS.md").is_file()
     assert (project_root / "src").is_symlink()
