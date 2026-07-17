@@ -39,7 +39,10 @@ The commands always emit JSON. `get` accepts only an exact ID returned by
 Every resource includes its exact identity, resource type, icon provenance,
 effective configuration and field provenance, a host/harness/model/complexity
 routing projection with per-field provenance, evidence-backed health, recent
-local receipts, and resource-local diagnostics.
+local receipts, and resource-local diagnostics. Health uses only
+`not_applicable`, `unobserved`, `disabled`, `healthy`, `degraded`, and
+`unhealthy`; every projection also names its evidence basis and whether process
+or host liveness was actually observed.
 
 ## Program rules
 
@@ -52,7 +55,10 @@ local receipts, and resource-local diagnostics.
   exists.
 - Components remain visible even when a path dependency is missing.
 - Configuration precedence is definition → config documents → instance overlay.
-  Runtime stays `unknown` unless a durable runtime observation exists.
+  Runnable resources stay `unobserved` unless durable runtime evidence exists.
+- Domain-owned instance programs may declare `standalone: true` (and an
+  optional `standalone_reason`) instead of pretending to join a missing shared
+  definition.
 - A program icon comes from metadata when available; otherwise a stable hash of
   its ID selects a deterministic fallback.
 
@@ -65,8 +71,12 @@ local receipts, and resource-local diagnostics.
   schedule command. Similar names are not treated as evidence.
 - Queue runs join through exact schedule IDs.
 - Last run, next run, and health use only joined schedule and queue receipts.
-  `healthy`, `active`, `stale`, `error`, `disabled`, and `unknown` never imply a
-  remote-host or process probe.
+  A fresh successful/running/queued receipt is `healthy`, a stale or
+  unrecognized receipt is `degraded`, and a failed/blocked receipt is
+  `unhealthy`; none imply a remote-host or process probe.
+- Tracking-only resources may declare `intentional_orphan: true` with an
+  `orphan_reason`. They remain visible without a misleading missing-definition
+  warning and do not masquerade as installed automation definitions.
 - Tracking-only runtime entries remain visible with missing-definition and
   placement diagnostics.
 - Qualification findings come from the existing automation checker. Placement
@@ -76,8 +86,11 @@ local receipts, and resource-local diagnostics.
 
 The boundary is failure-tolerant. A malformed optional file, missing dependency,
 unmatched instance, or tracking-only automation becomes a structured diagnostic.
-Other readable resources remain available and `summary.partial` is true. The
-boundary never repairs, writes, schedules, probes, or executes work.
+Every diagnostic includes a stable `resource_id`, `path`, `repair_kind`, and
+operator-facing `guidance` (nullable identity/path values are used for global
+source failures). Other readable resources remain available and
+`summary.partial` is true only for warning/error diagnostics. The boundary never
+repairs, writes, schedules, probes, or executes work.
 
 ## Ownership, routing, and validation
 

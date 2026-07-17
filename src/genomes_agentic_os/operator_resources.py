@@ -34,6 +34,37 @@ MAX_RUNTIME_BYTES = 16 * 1_048_576
 MAX_EVIDENCE_FILES = 8
 ICON_PALETTE = ("🧭", "⚙️", "🧩", "🛠️", "📦", "🔧", "🧠", "🚦")
 
+DIAGNOSTIC_REPAIRS = {
+    "source_missing": (
+        "restore_source",
+        "Restore the required source at the reported path or update its canonical source reference.",
+    ),
+    "source_malformed": (
+        "repair_source",
+        "Repair the structured source so it parses as the declared JSON, TOML, or YAML format.",
+    ),
+    "source_shape_invalid": (
+        "repair_source_shape",
+        "Change the structured source to the required mapping shape.",
+    ),
+    "dependency_missing": (
+        "repair_dependency_reference",
+        "Restore the component or update/remove its declared path; mark optional state explicitly when absence is intentional.",
+    ),
+    "program_definition_unmatched": (
+        "declare_program_relationship",
+        "Set an exact definition_id or explicitly declare the instance standalone.",
+    ),
+    "automation_definition_unmatched": (
+        "declare_automation_relationship",
+        "Point the tracking row at an installed automation definition or mark it as an intentional external tracker.",
+    ),
+    "automation_schedule_unassociated": (
+        "associate_schedule_identity",
+        "Add automation_id, definition_id, automation_ref, or an exact canonical automation path to the schedule.",
+    ),
+}
+
 
 def _iso(value: datetime | None = None) -> str:
     return (
@@ -74,17 +105,46 @@ def _diagnostic(
     resource_id: str | None = None,
     path: str | None = None,
 ) -> None:
+    repair_kind, guidance = DIAGNOSTIC_REPAIRS.get(
+        code,
+        (
+            "inspect_source",
+            "Inspect the reported source and resource evidence before changing the canonical definition.",
+        ),
+    )
     row: dict[str, Any] = {
         "severity": severity,
         "code": code,
         "source": source,
         "message": message,
+        "resource_id": resource_id,
+        "path": path,
+        "repair_kind": repair_kind,
+        "guidance": guidance,
     }
-    if resource_id:
-        row["resource_id"] = resource_id
-    if path:
-        row["path"] = path
     diagnostics.append(row)
+
+
+def _health_projection(
+    state: str,
+    *,
+    evidence_basis: str,
+    summary: str,
+    observed_at: str | None = None,
+    liveness_observed: bool = False,
+    **details: Any,
+) -> dict[str, Any]:
+    """Build the honest, stable health contract used by operator projections."""
+    return {
+        "status": state,
+        "source": evidence_basis,
+        "evidence_basis": evidence_basis,
+        "applicable": state != "not_applicable",
+        "observed_at": observed_at,
+        "liveness_observed": liveness_observed,
+        "reason": summary,
+        **details,
+    }
 
 
 def _load_structured(
@@ -331,6 +391,8 @@ def _component_projection(
                 )
                 path_value = value.get("path")
                 role = value.get("role")
+                source_package = value.get("source_package")
+                required = value.get("required") is not False
             else:
                 component_id = str(value)
                 path_value = (
@@ -339,12 +401,19 @@ def _component_projection(
                     else None
                 )
                 role = None
+                source_package = None
+                required = True
             resolved: Path | None = None
             if isinstance(path_value, str) and path_value:
                 candidate = Path(path_value).expanduser()
                 if not candidate.is_absolute():
-                    candidate = owner_path / candidate
-                    if not candidate.exists():
+                    source_root = (
+                        Path(str(source_package)).expanduser()
+                        if source_package
+                        else owner_path
+                    )
+                    candidate = source_root / candidate
+                    if not candidate.exists() and not source_package:
                         candidate = root / path_value
                 resolved = candidate
             exists = resolved.exists() if resolved else None
@@ -354,9 +423,10 @@ def _component_projection(
                 "role": role,
                 "path": _rel(root, resolved) if resolved else None,
                 "exists": exists,
+                "required": required,
             }
             rows.append(row)
-            if exists is False:
+            if exists is False and required:
                 _diagnostic(
                     diagnostics,
                     severity="warning",
@@ -521,7 +591,7 @@ def _program_resources(
             },
             "instance": None,
             "instances": [],
-            "icon": _icon(definition_id, overlay, components),
+            "icon": _icon(definition_id or path.name, overlay, components),
             "configuration": _program_config_layers(
                 root, path, None, overlay, {}, diagnostics
             ),
@@ -529,12 +599,11 @@ def _program_resources(
                 root, path, resource_id, components, diagnostics
             ),
             "recent_evidence": _evidence_files(root, path),
-            "health": {
-                "status": "unknown",
-                "source": "no_runtime_observation",
-                "observed_at": None,
-                "liveness_observed": False,
-            },
+            "health": _health_projection(
+                "unobserved",
+                evidence_basis="no_runtime_observation",
+                summary="This runnable definition has no durable runtime observation.",
+            ),
             "diagnostics": [],
         }
 
@@ -543,13 +612,24 @@ def _program_resources(
         overlay = _program_overlay(
             root, path, diagnostics, source="program_instance_overlay"
         )
-        definition_id = str(overlay.get("definition_id") or path.name)
+        standalone = (
+            overlay.get("standalone") is True
+            or overlay.get("definition_required") is False
+        )
+        declared_definition_id = overlay.get("definition_id")
+        definition_id = (
+            str(declared_definition_id)
+            if declared_definition_id
+            else None
+            if standalone
+            else path.name
+        )
         metadata = _markdown_metadata(path / "program.md", path.name)
         components = _load_structured(
             root, path / "components.yml", diagnostics, source="program_components"
         )
         instance_id = f"program_instance:{domain}:{path.name}"
-        definition = definition_records.get(definition_id)
+        definition = definition_records.get(definition_id) if definition_id else None
         instance = {
             "instance_id": instance_id,
             "definition_id": definition_id,
@@ -560,9 +640,13 @@ def _program_resources(
             "project": overlay.get("project"),
             "status": overlay.get("status") or metadata["status"],
             "path": _rel(root, path),
-            "definition_join": "exact_definition_id"
-            if definition
-            else "unmatched_definition_id",
+            "definition_join": (
+                "exact_definition_id"
+                if definition
+                else "standalone_instance"
+                if standalone
+                else "unmatched_definition_id"
+            ),
         }
         config = _program_config_layers(
             root,
@@ -587,25 +671,40 @@ def _program_resources(
             "definition": definition["definition"] if definition else None,
             "instance": instance,
             "instances": [],
-            "icon": _icon(definition_id, overlay, components),
+            "icon": _icon(definition_id or path.name, overlay, components),
             "configuration": config,
             "components": _component_projection(
                 root, path, instance_id, components, diagnostics
             ),
             "recent_evidence": recent,
-            "health": {
-                "status": "unknown",
-                "source": "filesystem_receipts_only"
-                if recent
-                else "no_runtime_observation",
-                "observed_at": recent[0]["observed_at"] if recent else None,
-                "liveness_observed": False,
-            },
+            "health": _health_projection(
+                "unobserved",
+                evidence_basis=(
+                    "filesystem_receipts_only" if recent else "no_runtime_observation"
+                ),
+                summary=(
+                    "Filesystem receipts exist, but they do not prove current process or host liveness."
+                    if recent
+                    else "This runnable instance has no durable runtime observation."
+                ),
+                observed_at=recent[0]["observed_at"] if recent else None,
+            ),
+            "orphan_disposition": (
+                {
+                    "intentional": True,
+                    "reason": str(
+                        overlay.get("standalone_reason")
+                        or "declared standalone instance program"
+                    ),
+                }
+                if standalone
+                else None
+            ),
             "diagnostics": [],
         }
         if definition:
             definition["instances"].append(instance)
-        else:
+        elif not standalone:
             message = (
                 f"definition_id {definition_id!r} has no installed Program definition"
             )
@@ -617,6 +716,10 @@ def _program_resources(
                     if overlay
                     else "implicit_legacy_identity",
                     "message": message,
+                    "resource_id": instance_id,
+                    "path": _rel(root, path),
+                    "repair_kind": "declare_program_relationship",
+                    "guidance": DIAGNOSTIC_REPAIRS["program_definition_unmatched"][1],
                 }
             )
             _diagnostic(
@@ -775,43 +878,36 @@ def _health(
     enabled = [item for item in schedules if item.get("enabled") is not False]
     latest = max(runs, key=_run_sort_value) if runs else None
     if schedules and not enabled:
-        return {
-            "status": "disabled",
-            "source": "runtime_schedule",
-            "observed_at": None,
-            "liveness_observed": False,
-            "reason": "all joined schedules are disabled",
-        }
+        return _health_projection(
+            "disabled",
+            evidence_basis="runtime_schedule",
+            summary="All joined schedules are explicitly disabled.",
+        )
     if not latest:
-        return {
-            "status": "unknown",
-            "source": "no_run_receipt",
-            "observed_at": None,
-            "liveness_observed": False,
-            "reason": "no joined queue or run receipt",
-        }
-    status = str(latest.get("status") or "unknown")
+        return _health_projection(
+            "unobserved",
+            evidence_basis="no_run_receipt",
+            summary="No joined queue or run receipt is available.",
+        )
+    status = str(latest.get("status") or "unobserved").lower()
     observed = _run_sort_value(latest)
     age = max(0, int((now - observed).total_seconds()))
     if status in {"failed", "blocked"}:
-        projected = "error"
-    elif status in {"running", "queued"}:
-        projected = "active"
+        projected = "unhealthy"
     elif age > STALE_AFTER_SECONDS:
-        projected = "stale"
-    elif status in {"done", "skipped"}:
+        projected = "degraded"
+    elif status in {"done", "skipped", "running", "queued"}:
         projected = "healthy"
     else:
-        projected = "unknown"
-    return {
-        "status": projected,
-        "source": "run_queue_receipt",
-        "observed_at": _iso(observed),
-        "age_seconds": age,
-        "last_outcome": status,
-        "liveness_observed": False,
-        "reason": "derived from durable queue evidence; not a process or host probe",
-    }
+        projected = "degraded"
+    return _health_projection(
+        projected,
+        evidence_basis="run_queue_receipt",
+        summary="Derived from durable queue evidence; process and host liveness were not observed.",
+        observed_at=_iso(observed),
+        age_seconds=age,
+        last_outcome=status,
+    )
 
 
 def _qualification(
@@ -942,6 +1038,15 @@ def _automation_resources(
             if (parsed := _parse_time(item.get("next_due_at"))) is not None
         ]
         last = joined_runs[0] if joined_runs else None
+        projected_health = (
+            _health_projection(
+                "disabled",
+                evidence_basis="automation_definition",
+                summary="The automation definition is explicitly disabled.",
+            )
+            if overlay.get("enabled") is False
+            else _health(joined_schedules, joined_runs, now)
+        )
         tracking_match = None
         expected_path = _rel(root, path)
         for key, value in tracking_rows.items():
@@ -1013,7 +1118,7 @@ def _automation_resources(
                     }
                     for item in joined_runs[:20]
                 ],
-                "health": _health(joined_schedules, joined_runs, now),
+                "health": projected_health,
                 "last_run_at": _iso(_run_sort_value(last)) if last else None,
                 "next_run_at": _iso(min(next_times)) if next_times else None,
                 "tracking": tracking_match,
@@ -1061,15 +1166,35 @@ def _automation_resources(
         ]
         joined_runs.sort(key=_run_sort_value, reverse=True)
         resource_id = f"automation_instance:tracking:{tracking_id}"
+        intentional_orphan = (
+            tracked.get("intentional_orphan") is True
+            or tracked.get("definition_required") is False
+        )
+        orphan_reason = str(
+            tracked.get("orphan_reason")
+            or tracked.get("reason")
+            or "tracking-only projection declared outside the automation definition tree"
+        )
         message = "tracking instance has no exact installed automation definition path"
-        _diagnostic(
-            diagnostics,
-            severity="warning",
-            code="automation_definition_unmatched",
-            source="automation_tracking",
-            message=message,
-            resource_id=resource_id,
-            path=str(AUTOMATION_TRACKING),
+        if not intentional_orphan:
+            _diagnostic(
+                diagnostics,
+                severity="warning",
+                code="automation_definition_unmatched",
+                source="automation_tracking",
+                message=message,
+                resource_id=resource_id,
+                path=str(AUTOMATION_TRACKING),
+            )
+        tracked_status = str(tracked.get("status") or "").upper()
+        projected_health = (
+            _health_projection(
+                "disabled",
+                evidence_basis="automation_tracking",
+                summary="The tracking entry is explicitly paused or disabled.",
+            )
+            if tracked_status in {"PAUSED", "DISABLED"}
+            else _health(joined_schedules, joined_runs, now)
         )
         resources.append(
             {
@@ -1083,8 +1208,7 @@ def _automation_resources(
                         "definition_id": None,
                         "source": "automation_tracking",
                         "path": tracked.get("cwd"),
-                        "enabled": str(tracked.get("status") or "").upper()
-                        not in {"PAUSED", "DISABLED"},
+                        "enabled": tracked_status not in {"PAUSED", "DISABLED"},
                     }
                 ],
                 "schedules": [
@@ -1117,7 +1241,7 @@ def _automation_resources(
                     }
                     for item in joined_runs[:20]
                 ],
-                "health": _health(joined_schedules, joined_runs, now),
+                "health": projected_health,
                 "last_run_at": _iso(_run_sort_value(joined_runs[0]))
                 if joined_runs
                 else None,
@@ -1148,22 +1272,37 @@ def _automation_resources(
                     {
                         "finding_type": "placement",
                         "source": "os_authoring_rules",
-                        "severity": "blocker",
-                        "decision": "denied",
-                        "message": message,
+                        "severity": "observation" if intentional_orphan else "blocker",
+                        "decision": "allowed" if intentional_orphan else "denied",
+                        "message": orphan_reason if intentional_orphan else message,
                         "policy_path": str(AUTHORING_RULES),
                         "resource_id": resource_id,
                     }
                 ],
+                "orphan_disposition": (
+                    {"intentional": True, "reason": orphan_reason}
+                    if intentional_orphan
+                    else None
+                ),
                 "recent_evidence": [],
-                "diagnostics": [
-                    {
-                        "severity": "warning",
-                        "code": "automation_definition_unmatched",
-                        "source": "automation_tracking",
-                        "message": message,
-                    }
-                ],
+                "diagnostics": (
+                    []
+                    if intentional_orphan
+                    else [
+                        {
+                            "severity": "warning",
+                            "code": "automation_definition_unmatched",
+                            "source": "automation_tracking",
+                            "message": message,
+                            "resource_id": resource_id,
+                            "path": str(AUTOMATION_TRACKING),
+                            "repair_kind": "declare_automation_relationship",
+                            "guidance": DIAGNOSTIC_REPAIRS[
+                                "automation_definition_unmatched"
+                            ][1],
+                        }
+                    ]
+                ),
             }
         )
 
@@ -1222,6 +1361,12 @@ def _automation_resources(
                             "code": "automation_definition_unmatched",
                             "source": "runtime_registry",
                             "message": message,
+                            "resource_id": resource_id,
+                            "path": str(RUNTIME_REGISTRY),
+                            "repair_kind": "declare_automation_relationship",
+                            "guidance": DIAGNOSTIC_REPAIRS[
+                                "automation_definition_unmatched"
+                            ][1],
                         }
                     ],
                 }

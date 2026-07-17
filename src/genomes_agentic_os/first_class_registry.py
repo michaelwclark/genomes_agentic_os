@@ -34,6 +34,17 @@ RESOURCE_KINDS = (
     "skill",
     "command",
 )
+
+DIAGNOSTIC_REPAIRS = {
+    "resource_read_failed": (
+        "repair_resource_source",
+        "Restore read access or repair the reported resource source.",
+    ),
+    "registry_unavailable": (
+        "repair_registry_source",
+        "Repair the registry source so it can be loaded deterministically.",
+    ),
+}
 REGISTRY_SOURCES = (
     ("skill", "skills", "harness/registries/skills.yml"),
     ("command", "commands", "harness/registries/commands.yml"),
@@ -55,7 +66,13 @@ SKIP_PARTS = {
 
 
 def _iso(value: datetime | None = None) -> str:
-    return (value or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        (value or datetime.now(UTC))
+        .astimezone(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _stable_id(kind: str, identity: str) -> str:
@@ -88,19 +105,92 @@ def _relative_source(root: Path, value: Any) -> str:
 
 def _summary_from_markdown(path: Path, fallback: str) -> tuple[str, str]:
     body = path.read_text(encoding="utf-8", errors="replace")[:64_000]
-    heading = re.search(r"^#\s+(?:OSProgram|InstanceOSProgram|Automation|Workflow)?\s*:?\s*(.+)$", body, re.M)
-    purpose = re.search(r"^##\s+(?:Purpose|Summary)\s*$\n+(.+?)(?=\n##\s|\Z)", body, re.M | re.S)
-    title = heading.group(1).strip() if heading else fallback.replace("_", " ").replace("-", " ").title()
-    summary = " ".join(line.strip() for line in purpose.group(1).splitlines() if line.strip())[:600] if purpose else ""
+    heading = re.search(
+        r"^#\s+(?:OSProgram|InstanceOSProgram|Automation|Workflow)?\s*:?\s*(.+)$",
+        body,
+        re.M,
+    )
+    purpose = re.search(
+        r"^##\s+(?:Purpose|Summary)\s*$\n+(.+?)(?=\n##\s|\Z)", body, re.M | re.S
+    )
+    title = (
+        heading.group(1).strip()
+        if heading
+        else fallback.replace("_", " ").replace("-", " ").title()
+    )
+    summary = (
+        " ".join(
+            line.strip() for line in purpose.group(1).splitlines() if line.strip()
+        )[:600]
+        if purpose
+        else ""
+    )
     return title, summary
 
 
+def _normalize_diagnostic(item: dict[str, Any]) -> dict[str, Any]:
+    code = str(item.get("code") or "unknown_diagnostic")
+    repair_kind, guidance = DIAGNOSTIC_REPAIRS.get(
+        code,
+        (
+            str(item.get("repair_kind") or "inspect_source"),
+            str(
+                item.get("guidance")
+                or "Inspect the reported source and resource evidence before changing canonical state."
+            ),
+        ),
+    )
+    if code.endswith("_registry_unavailable"):
+        repair_kind, guidance = DIAGNOSTIC_REPAIRS["registry_unavailable"]
+    return {
+        **item,
+        "resource_id": item.get("resource_id"),
+        "path": item.get("path") or item.get("source"),
+        "repair_kind": repair_kind,
+        "guidance": guidance,
+    }
+
+
+def _diagnostic_summary(
+    diagnostics: list[dict[str, Any]], *, returned: int
+) -> dict[str, Any]:
+    by_code = {
+        code: sum(item.get("code") == code for item in diagnostics)
+        for code in sorted({str(item.get("code")) for item in diagnostics})
+    }
+    errors = sum(item.get("severity") == "error" for item in diagnostics)
+    warnings = sum(item.get("severity") == "warning" for item in diagnostics)
+    info = sum(item.get("severity") == "info" for item in diagnostics)
+    return {
+        "returned": returned,
+        "diagnostics": len(diagnostics),
+        "info": info,
+        "warnings": warnings,
+        "errors": errors,
+        "partial": bool(errors or warnings),
+        "by_diagnostic_code": by_code,
+    }
+
+
 def _entry(
-    *, kind: str, resource_id: str, native_id: str, title: str, summary: str,
-    source: str, generated_at: str, domain: str | None = None,
-    project: str | None = None, subtype: str | None = None,
-    health_state: str = "unknown", health_summary: str = "No runtime health assertion is available.",
-    tags: Iterable[str | None] = (), source_updated_at: str | None = None,
+    *,
+    kind: str,
+    resource_id: str,
+    native_id: str,
+    title: str,
+    summary: str,
+    source: str,
+    generated_at: str,
+    domain: str | None = None,
+    project: str | None = None,
+    subtype: str | None = None,
+    health_state: str = "not_applicable",
+    health_summary: str = "Runtime health does not apply to this static resource.",
+    health_evidence_basis: str = "static_registration",
+    health_liveness_observed: bool = False,
+    health_observed_at: str | None = None,
+    tags: Iterable[str | None] = (),
+    source_updated_at: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": resource_id,
@@ -113,88 +203,204 @@ def _entry(
         "observed_at": generated_at,
         "source_updated_at": source_updated_at,
         "subtype": subtype,
-        "health": {"state": health_state, "summary": health_summary},
+        "health": {
+            "state": health_state,
+            "summary": health_summary,
+            "evidence_basis": health_evidence_basis,
+            "liveness_observed": health_liveness_observed,
+            "observed_at": health_observed_at,
+        },
         "tags": sorted({tag for tag in tags if tag}),
     }
 
 
-def _operator_entries(root: Path, kind: str, generated_at: str, diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _operator_entries(
+    root: Path, kind: str, generated_at: str, diagnostics: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     try:
         envelope = query_operator_resources(root, kind)
-    except Exception as exc:  # malformed resources remain visible as a refresh diagnostic
-        diagnostics.append({"severity": "error", "code": f"{kind}_projection_failed", "source": "operator-resource-query/v1", "message": f"{type(exc).__name__}: {exc}", "kind": kind})
+    except (
+        Exception
+    ) as exc:  # malformed resources remain visible as a refresh diagnostic
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": f"{kind}_projection_failed",
+                "source": "operator-resource-query/v1",
+                "message": f"{type(exc).__name__}: {exc}",
+                "kind": kind,
+                "resource_id": None,
+                "path": None,
+                "repair_kind": "repair_projection",
+                "guidance": f"Repair the {kind} operator projection before refreshing the registry.",
+            }
+        )
         return []
-    diagnostics.extend({**item, "kind": kind} for item in (envelope.get("diagnostics") or []))
+    diagnostics.extend(
+        {**item, "kind": kind} for item in (envelope.get("diagnostics") or [])
+    )
     result: list[dict[str, Any]] = []
     for resource in envelope.get("resources") or []:
         resource_type = str(resource.get("resource_type") or "definition")
         mapped_kind = kind if resource_type == "definition" else f"{kind}_instance"
-        identity = resource.get("definition") or resource.get("instance") or resource.get("tracking") or {}
+        identity = (
+            resource.get("definition")
+            or resource.get("instance")
+            or resource.get("tracking")
+            or {}
+        )
         if not isinstance(identity, dict):
             identity = {}
-        source = _relative_source(root, identity.get("path") or identity.get("cwd") or REGISTRY_PATH)
-        domain = identity.get("domain") if isinstance(identity.get("domain"), str) else None
-        project = identity.get("project") if isinstance(identity.get("project"), str) else None
-        health = resource.get("health") if isinstance(resource.get("health"), dict) else {}
-        status = str(health.get("status") or "unknown").lower()
-        health_state = "unhealthy" if status in {"failed", "failure", "error", "unhealthy"} else "degraded" if status in {"stale", "partial", "degraded"} else "healthy" if status in {"healthy", "success", "active", "done", "queued"} else "unknown"
-        result.append(_entry(
-            kind=mapped_kind,
-            resource_id=str(resource["id"]),
-            native_id=str(resource["id"]),
-            title=str(identity.get("display_name") or identity.get("name") or resource["id"]),
-            summary=str(identity.get("summary") or f"{mapped_kind.replace('_', ' ')} projected by Agentic OS."),
-            source=source,
-            generated_at=generated_at,
-            domain=domain,
-            project=project,
-            subtype=resource_type,
-            health_state=health_state,
-            health_summary=f"Evidence-backed status: {status}. Process and host liveness were not observed.",
-            tags=(mapped_kind, resource_type, status),
-            source_updated_at=health.get("observed_at") if isinstance(health.get("observed_at"), str) else None,
-        ))
+        source = _relative_source(
+            root, identity.get("path") or identity.get("cwd") or REGISTRY_PATH
+        )
+        domain = (
+            identity.get("domain") if isinstance(identity.get("domain"), str) else None
+        )
+        project = (
+            identity.get("project")
+            if isinstance(identity.get("project"), str)
+            else None
+        )
+        health = (
+            resource.get("health") if isinstance(resource.get("health"), dict) else {}
+        )
+        status = str(health.get("status") or "unobserved").lower()
+        health_state = (
+            status
+            if status
+            in {
+                "not_applicable",
+                "unobserved",
+                "disabled",
+                "healthy",
+                "degraded",
+                "unhealthy",
+            }
+            else "unhealthy"
+            if status in {"failed", "failure", "error"}
+            else "degraded"
+            if status in {"stale", "partial"}
+            else "healthy"
+            if status in {"success", "active", "done", "queued"}
+            else "unobserved"
+        )
+        evidence_basis = str(
+            health.get("evidence_basis") or health.get("source") or "unobserved"
+        )
+        liveness_observed = health.get("liveness_observed") is True
+        health_summary = str(
+            health.get("reason")
+            or (
+                "Runtime health does not apply to this static resource."
+                if health_state == "not_applicable"
+                else f"Evidence-backed status: {health_state}."
+            )
+        )
+        result.append(
+            _entry(
+                kind=mapped_kind,
+                resource_id=str(resource["id"]),
+                native_id=str(resource["id"]),
+                title=str(
+                    identity.get("display_name")
+                    or identity.get("name")
+                    or resource["id"]
+                ),
+                summary=str(
+                    identity.get("summary")
+                    or f"{mapped_kind.replace('_', ' ')} projected by Agentic OS."
+                ),
+                source=source,
+                generated_at=generated_at,
+                domain=domain,
+                project=project,
+                subtype=resource_type,
+                health_state=health_state,
+                health_summary=health_summary,
+                health_evidence_basis=evidence_basis,
+                health_liveness_observed=liveness_observed,
+                health_observed_at=(
+                    health.get("observed_at")
+                    if isinstance(health.get("observed_at"), str)
+                    else None
+                ),
+                tags=(mapped_kind, resource_type, status),
+                source_updated_at=health.get("observed_at")
+                if isinstance(health.get("observed_at"), str)
+                else None,
+            )
+        )
     return result
 
 
-def _document_entries(root: Path, generated_at: str, diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _document_entries(
+    root: Path, generated_at: str, diagnostics: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     patterns = {"workflow.md": "workflow_instance", "RULES.md": "rule"}
     result: list[dict[str, Any]] = []
     for current, directories, filenames in os.walk(root):
-        directories[:] = [name for name in directories if name not in SKIP_PARTS and not name.startswith(".")]
+        directories[:] = [
+            name
+            for name in directories
+            if name not in SKIP_PARTS and not name.startswith(".")
+        ]
         for filename in sorted(set(filenames).intersection(patterns)):
             base_kind = patterns[filename]
             path = Path(current) / filename
             relative = path.relative_to(root)
             relative_ref = relative.as_posix()
             kind = base_kind
-            if base_kind == "workflow_instance" and relative_ref.startswith("harness/shared_factory/"):
+            if base_kind == "workflow_instance" and relative_ref.startswith(
+                "harness/shared_factory/"
+            ):
                 kind = "workflow"
             try:
-                native_id = path.parent.name if kind != "rule" else ":".join(relative.parts[:-1]) or "root"
+                native_id = (
+                    path.parent.name
+                    if kind != "rule"
+                    else ":".join(relative.parts[:-1]) or "root"
+                )
                 title, summary = _summary_from_markdown(path, native_id)
                 domain, project = _scope(relative_ref)
-                result.append(_entry(
-                    kind=kind,
-                    resource_id=_stable_id(kind, relative_ref),
-                    native_id=native_id,
-                    title=title,
-                    summary=summary,
-                    source=relative_ref,
-                    generated_at=generated_at,
-                    domain=domain,
-                    project=project,
-                    subtype="rule_document" if kind == "rule" else ("definition" if kind == "workflow" else "instance"),
-                    health_summary="Present in the canonical Agentic OS filesystem.",
-                    tags=(kind, domain, project),
-                    source_updated_at=_iso(datetime.fromtimestamp(path.stat().st_mtime, UTC)),
-                ))
+                result.append(
+                    _entry(
+                        kind=kind,
+                        resource_id=_stable_id(kind, relative_ref),
+                        native_id=native_id,
+                        title=title,
+                        summary=summary,
+                        source=relative_ref,
+                        generated_at=generated_at,
+                        domain=domain,
+                        project=project,
+                        subtype="rule_document"
+                        if kind == "rule"
+                        else ("definition" if kind == "workflow" else "instance"),
+                        health_summary="Runtime health does not apply to this canonical filesystem document.",
+                        health_evidence_basis="static_filesystem_presence",
+                        tags=(kind, domain, project),
+                        source_updated_at=_iso(
+                            datetime.fromtimestamp(path.stat().st_mtime, UTC)
+                        ),
+                    )
+                )
             except OSError as exc:
-                diagnostics.append({"severity": "warning", "code": "resource_read_failed", "source": relative_ref, "message": str(exc), "kind": base_kind})
+                diagnostics.append(
+                    {
+                        "severity": "warning",
+                        "code": "resource_read_failed",
+                        "source": relative_ref,
+                        "message": str(exc),
+                        "kind": base_kind,
+                    }
+                )
     return result
 
 
-def _registry_entries(root: Path, generated_at: str, diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _registry_entries(
+    root: Path, generated_at: str, diagnostics: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     sources = list(REGISTRY_SOURCES)
     for path in root.glob("*/02-projects/*/config/resource-registries/*.yml"):
         key = path.stem
@@ -215,36 +421,81 @@ def _registry_entries(root: Path, generated_at: str, diagnostics: list[dict[str,
                 if not isinstance(record, dict) or not record.get("id"):
                     continue
                 native_id = str(record["id"])
-                scope = record.get("scope") if isinstance(record.get("scope"), dict) else {}
+                scope = (
+                    record.get("scope") if isinstance(record.get("scope"), dict) else {}
+                )
                 domain, project = _scope(relative_ref)
-                domain = record.get("domain") if isinstance(record.get("domain"), str) else scope.get("domain") if isinstance(scope.get("domain"), str) else domain
-                project = record.get("project") if isinstance(record.get("project"), str) else scope.get("project") if isinstance(scope.get("project"), str) else project
-                declared_source = _relative_source(root, record.get("source") or relative_ref)
-                source = declared_source if (root / declared_source).exists() else relative_ref
-                title = str(record.get("name") or record.get("command") or native_id.replace("-", " ").title())
-                identity = f"typed:definition:{native_id}" if relative_ref == "harness/registries/report-definitions.yml" else f"{relative_ref}:{native_id}"
-                result.append(_entry(
-                    kind=kind,
-                    resource_id=_stable_id(kind, identity),
-                    native_id=native_id,
-                    title=title,
-                    summary=str(record.get("description") or record.get("summary") or ""),
-                    source=source,
-                    generated_at=generated_at,
-                    domain=domain,
-                    project=project,
-                    subtype="registry_entry" if kind != "report" else "definition",
-                    health_state="healthy",
-                    health_summary="Present in the canonical Agentic OS registry.",
-                    tags=(kind, domain, project),
-                    source_updated_at=_iso(datetime.fromtimestamp(path.stat().st_mtime, UTC)),
-                ))
+                domain = (
+                    record.get("domain")
+                    if isinstance(record.get("domain"), str)
+                    else scope.get("domain")
+                    if isinstance(scope.get("domain"), str)
+                    else domain
+                )
+                project = (
+                    record.get("project")
+                    if isinstance(record.get("project"), str)
+                    else scope.get("project")
+                    if isinstance(scope.get("project"), str)
+                    else project
+                )
+                declared_source = _relative_source(
+                    root, record.get("source") or relative_ref
+                )
+                source = (
+                    declared_source
+                    if (root / declared_source).exists()
+                    else relative_ref
+                )
+                title = str(
+                    record.get("name")
+                    or record.get("command")
+                    or native_id.replace("-", " ").title()
+                )
+                identity = (
+                    f"typed:definition:{native_id}"
+                    if relative_ref == "harness/registries/report-definitions.yml"
+                    else f"{relative_ref}:{native_id}"
+                )
+                result.append(
+                    _entry(
+                        kind=kind,
+                        resource_id=_stable_id(kind, identity),
+                        native_id=native_id,
+                        title=title,
+                        summary=str(
+                            record.get("description") or record.get("summary") or ""
+                        ),
+                        source=source,
+                        generated_at=generated_at,
+                        domain=domain,
+                        project=project,
+                        subtype="registry_entry" if kind != "report" else "definition",
+                        health_state="not_applicable",
+                        health_summary="Runtime health does not apply to this canonical registry definition.",
+                        health_evidence_basis="static_registry_presence",
+                        tags=(kind, domain, project),
+                        source_updated_at=_iso(
+                            datetime.fromtimestamp(path.stat().st_mtime, UTC)
+                        ),
+                    )
+                )
         except (OSError, ValueError, yaml.YAMLError) as exc:
-            diagnostics.append({"severity": "warning", "code": f"{kind}_registry_unavailable", "source": relative_ref, "message": f"{type(exc).__name__}: {exc}", "kind": kind})
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "code": f"{kind}_registry_unavailable",
+                    "source": relative_ref,
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "kind": kind,
+                }
+            )
     return result
 
 
-def refresh_first_class_registry(root: str | Path, *, now: datetime | None = None) -> dict[str, Any]:
+def refresh_first_class_registry(
+    root: str | Path, *, now: datetime | None = None
+) -> dict[str, Any]:
     os_root = expand_path(root)
     generated_at = _iso(now)
     diagnostics: list[dict[str, Any]] = []
@@ -255,10 +506,21 @@ def refresh_first_class_registry(root: str | Path, *, now: datetime | None = Non
         *_registry_entries(os_root, generated_at, diagnostics),
     ]
     unique: dict[str, dict[str, Any]] = {}
-    for resource in sorted(resources, key=lambda item: (item["kind"], item["id"], item["source"])):
+    for resource in sorted(
+        resources, key=lambda item: (item["kind"], item["id"], item["source"])
+    ):
         unique.setdefault(resource["id"], resource)
     resources = list(unique.values())
-    fingerprint = hashlib.sha256(json.dumps(resources, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    diagnostics = [_normalize_diagnostic(item) for item in diagnostics]
+    fingerprint_resources = [
+        {key: value for key, value in resource.items() if key != "observed_at"}
+        for resource in resources
+    ]
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            fingerprint_resources, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
     payload = {
         "api_version": API_VERSION,
         "generated_at": generated_at,
@@ -268,16 +530,19 @@ def refresh_first_class_registry(root: str | Path, *, now: datetime | None = Non
         "resources": resources,
         "diagnostics": diagnostics,
         "summary": {
-            "returned": len(resources),
-            "by_kind": {kind: sum(item["kind"] == kind for item in resources) for kind in RESOURCE_KINDS},
-            "errors": sum(item.get("severity") == "error" for item in diagnostics),
-            "warnings": sum(item.get("severity") == "warning" for item in diagnostics),
+            **_diagnostic_summary(diagnostics, returned=len(resources)),
+            "by_kind": {
+                kind: sum(item["kind"] == kind for item in resources)
+                for kind in RESOURCE_KINDS
+            },
         },
     }
     target = os_root / REGISTRY_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     temporary.replace(target)
     return payload
 
@@ -296,21 +561,38 @@ def query_first_class_registry(
     if ensure and not path.is_file():
         refresh_first_class_registry(os_root)
     if not path.is_file():
-        raise ValueError(f"first-class resource registry is missing; run refresh: {path}")
+        raise ValueError(
+            f"first-class resource registry is missing; run refresh: {path}"
+        )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("api_version") != API_VERSION or not isinstance(payload.get("resources"), list):
+    if payload.get("api_version") != API_VERSION or not isinstance(
+        payload.get("resources"), list
+    ):
         raise ValueError("first-class resource registry contract is invalid")
     needle = (query or "").strip().lower()
     resources = [
-        item for item in payload["resources"]
+        item
+        for item in payload["resources"]
         if (not kind or item.get("kind") == kind)
         and (not domain or (item.get("scope") or {}).get("domain") == domain)
         and (not project or (item.get("scope") or {}).get("project") == project)
-        and (not needle or any(needle in str(item.get(field) or "").lower() for field in ("title", "summary", "native_id", "kind")))
+        and (
+            not needle
+            or any(
+                needle in str(item.get(field) or "").lower()
+                for field in ("title", "summary", "native_id", "kind")
+            )
+        )
     ]
     diagnostics = [
-        item for item in payload.get("diagnostics") or []
-        if not kind or item.get("kind") == kind or (kind.endswith("_instance") and item.get("kind") == kind.removesuffix("_instance"))
+        item
+        for item in payload.get("diagnostics") or []
+        if not kind
+        or item.get("kind") == kind
+        or (
+            kind.endswith("_instance")
+            and item.get("kind") == kind.removesuffix("_instance")
+        )
     ]
     return {
         **payload,
@@ -319,8 +601,6 @@ def query_first_class_registry(
         "diagnostics": diagnostics,
         "summary": {
             **payload["summary"],
-            "returned": len(resources),
-            "errors": sum(item.get("severity") == "error" for item in diagnostics),
-            "warnings": sum(item.get("severity") == "warning" for item in diagnostics),
+            **_diagnostic_summary(diagnostics, returned=len(resources)),
         },
     }
