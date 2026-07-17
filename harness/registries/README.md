@@ -7,7 +7,7 @@ state and customer-specific values belong in the installed OS.
 | Registry | Purpose | Primary consumer |
 | --- | --- | --- |
 | `first-class-resources.json` (installed, generated) | Atomic, versioned index of Automations, Programs, Workflows, Rules, Reports, Skills, and Commands across system, domain, and project scopes. Refresh with `agentic-os resource-registry refresh`; normal reads never scan the tree. | Command Center and other latency-sensitive operator surfaces |
-| [`alerts.yml`](alerts.yml) | Alert thresholds, quiet hours, sounds, and source policies. | `agentic-os-notify` and monitoring helpers |
+| [`alerts.yml`](alerts.yml) | Alert severity, quiet hours, local delivery appearance, anti-flood policy, and the 48-hour history retention rule. | `agentic-os-notify` and monitoring helpers |
 | [`harness-crossreview.schedule.snippet.yml`](harness-crossreview.schedule.snippet.yml) | Disabled example schedule for PR cross-review. | Operator copying into an installed runtime registry |
 | [`harness-routing.yml`](harness-routing.yml) | Maps implementation/review task types to Claude or Codex. | `agentic-harness-run`, PR cross-review |
 | [`health-monitor.yml`](health-monitor.yml) | Queue, runtime, disk, and process health thresholds. | `agentic-os-monitor` |
