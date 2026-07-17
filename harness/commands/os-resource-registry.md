@@ -26,6 +26,13 @@ Health is intentionally limited to `not_applicable`, `unobserved`, `disabled`,
 liveness-observed flag; static rules, skills, commands, reports, and workflow
 documents are `not_applicable`, not artificially healthy.
 
+Automation entries also publish bounded `evidence.logs`, `evidence.runs`, and
+`evidence.recent` groups. Each group has deterministic availability, an
+operator-readable reason, an unavailable code, and only existing root-relative
+file or directory references. Absolute paths, traversal, missing targets, and
+symlink escapes are omitted. These references are navigation evidence only;
+they do not imply runtime health or authorize streaming/tailing.
+
 Agentic OS registry authoring refreshes the snapshot after a successful apply.
 Operator surfaces should invalidate and refresh after other governed authoring
 or publishing operations. Manual filesystem edits require an explicit refresh.

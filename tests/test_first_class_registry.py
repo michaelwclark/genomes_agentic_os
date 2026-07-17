@@ -27,6 +27,7 @@ def _yaml(path: Path, value: object) -> None:
 def _root(tmp_path: Path) -> Path:
     root = tmp_path / "os"
     _write(root / ".agentic_root", "agentic-os\n")
+    _yaml(root / "work/domain.yml", {"id": "work", "name": "Work"})
     _write(root / "harness/rules/os-authoring-rules.md", "# Rules\n")
     _yaml(
         root / "harness/registries/skills.yml",
@@ -244,6 +245,150 @@ def test_filtered_query_recomputes_exact_diagnostic_summary(tmp_path: Path) -> N
         "automation_schedule_unassociated": 1
     }
     assert result["summary"]["partial"] is False
+
+
+def test_automation_evidence_refs_are_bounded_root_relative_and_honest(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    automation = root / "work/04-automations/engineering/digest"
+    _write(
+        automation / "automation.md",
+        "# Automation: Digest\n\n## Purpose\n\nBuild a digest.\n",
+    )
+    _write(automation / "logs/latest.log", "ok\n")
+    _write(automation / "runs/receipt.json", "{}\n")
+    _write(root / "harness/shared_factory/00-control-plane/run-queue.yml", "items: []\n")
+
+    payload = refresh_first_class_registry(root)
+    item = next(
+        resource
+        for resource in payload["resources"]
+        if resource["id"] == "automation_definition:work:engineering:digest"
+    )
+
+    assert item["evidence"]["logs"] == {
+        "available": True,
+        "reason": "1 canonical log reference(s) available.",
+        "unavailable_code": None,
+        "references": [
+            {
+                "path": "work/04-automations/engineering/digest/logs",
+                "kind": "directory",
+                "label": "Logs folder",
+                "source": "automation_definition",
+                "observed_at": None,
+            }
+        ],
+    }
+    assert item["evidence"]["runs"]["available"] is True
+    assert item["evidence"]["runs"]["references"][0]["kind"] == "directory"
+    recent_paths = {
+        ref["path"] for ref in item["evidence"]["recent"]["references"]
+    }
+    assert recent_paths == {
+        "work/04-automations/engineering/digest/logs/latest.log",
+        "work/04-automations/engineering/digest/runs/receipt.json",
+    }
+    assert all(
+        not Path(ref["path"]).is_absolute() and ".." not in Path(ref["path"]).parts
+        for group in item["evidence"].values()
+        for ref in group["references"]
+    )
+
+
+def test_automation_evidence_rejects_absolute_traversal_and_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    automation = root / "work/04-automations/engineering/digest"
+    _write(automation / "automation.md", "# Automation: Digest\n")
+    outside = tmp_path / "outside"
+    _write(outside / "secret.log", "secret\n")
+    (automation / "logs").symlink_to(outside, target_is_directory=True)
+    _yaml(
+        root / "harness/shared_factory/00-control-plane/runtime-registry.yml",
+        {
+            "schedules": [
+                {
+                    "id": "digest-schedule",
+                    "automation_id": "work:engineering:digest",
+                    "enabled": True,
+                }
+            ]
+        },
+    )
+    _yaml(
+        root / "harness/shared_factory/00-control-plane/run-queue.yml",
+        {
+            "items": [
+                {
+                    "id": "absolute",
+                    "ref": "digest-schedule",
+                    "status": "done",
+                    "log": str(outside / "secret.log"),
+                },
+                {
+                    "id": "traversal",
+                    "ref": "digest-schedule",
+                    "status": "done",
+                    "log": "../outside/secret.log",
+                },
+            ]
+        },
+    )
+
+    payload = refresh_first_class_registry(root)
+    item = next(
+        resource
+        for resource in payload["resources"]
+        if resource["id"] == "automation_definition:work:engineering:digest"
+    )
+
+    assert item["evidence"]["logs"] == {
+        "available": False,
+        "reason": "No canonical root-relative log evidence is available.",
+        "unavailable_code": "no_log_evidence",
+        "references": [],
+    }
+    # Joined run receipts still provide a safe entry point to the canonical queue.
+    assert item["evidence"]["runs"]["available"] is True
+    assert item["evidence"]["runs"]["references"] == [
+        {
+            "path": "harness/shared_factory/00-control-plane/run-queue.yml",
+            "kind": "file",
+            "label": "Run queue receipts",
+            "source": "run_receipt",
+            "observed_at": None,
+        }
+    ]
+    assert item["evidence"]["recent"] == {
+        "available": False,
+        "reason": "No recent root-relative evidence file is available.",
+        "unavailable_code": "no_recent_evidence",
+        "references": [],
+    }
+
+
+def test_automation_without_evidence_has_deterministic_disabled_reasons(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    _write(
+        root / "work/04-automations/engineering/digest/automation.md",
+        "# Automation: Digest\n",
+    )
+
+    payload = refresh_first_class_registry(root)
+    item = next(
+        resource
+        for resource in payload["resources"]
+        if resource["id"] == "automation_definition:work:engineering:digest"
+    )
+
+    assert item["evidence"]["logs"]["unavailable_code"] == "no_log_evidence"
+    assert item["evidence"]["runs"]["unavailable_code"] == "no_run_evidence"
+    assert item["evidence"]["recent"]["unavailable_code"] == "no_recent_evidence"
 
 
 def test_schedule_orphan_exception_requires_an_explicit_reason(tmp_path: Path) -> None:

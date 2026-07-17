@@ -63,6 +63,7 @@ SKIP_PARTS = {
     "templates",
     "logs",
 }
+MAX_AUTOMATION_EVIDENCE_REFS = 12
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -191,8 +192,9 @@ def _entry(
     health_observed_at: str | None = None,
     tags: Iterable[str | None] = (),
     source_updated_at: str | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    entry = {
         "id": resource_id,
         "native_id": native_id,
         "kind": kind,
@@ -211,6 +213,162 @@ def _entry(
             "observed_at": health_observed_at,
         },
         "tags": sorted({tag for tag in tags if tag}),
+    }
+    if evidence is not None:
+        entry["evidence"] = evidence
+    return entry
+
+
+def _safe_evidence_ref(
+    root: Path,
+    value: Any,
+    *,
+    label: str,
+    source: str,
+    observed_at: str | None = None,
+) -> dict[str, Any] | None:
+    """Project one existing path without granting absolute or escaped authority."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    relative = Path(value.strip())
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = root / relative
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not (resolved.is_file() or resolved.is_dir()):
+        return None
+    return {
+        "path": relative.as_posix(),
+        "kind": "directory" if resolved.is_dir() else "file",
+        "label": label,
+        "source": source,
+        "observed_at": observed_at,
+    }
+
+
+def _evidence_group(
+    refs: Iterable[dict[str, Any] | None],
+    *,
+    available_reason: str,
+    unavailable_reason: str,
+    unavailable_code: str,
+) -> dict[str, Any]:
+    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for ref in refs:
+        if ref is not None:
+            unique.setdefault((ref["path"], ref["kind"]), ref)
+    bounded = list(unique.values())[:MAX_AUTOMATION_EVIDENCE_REFS]
+    return {
+        "available": bool(bounded),
+        "reason": available_reason.format(count=len(bounded))
+        if bounded
+        else unavailable_reason,
+        "unavailable_code": None if bounded else unavailable_code,
+        "references": bounded,
+    }
+
+
+def _automation_evidence(root: Path, resource: dict[str, Any]) -> dict[str, Any]:
+    identity = (
+        resource.get("definition")
+        or resource.get("instance")
+        or resource.get("tracking")
+        or {}
+    )
+    if not isinstance(identity, dict):
+        identity = {}
+    owner = identity.get("path") or identity.get("cwd")
+    log_refs: list[dict[str, Any] | None] = []
+    run_refs: list[dict[str, Any] | None] = []
+    recent_refs: list[dict[str, Any] | None] = []
+
+    if isinstance(owner, str) and owner:
+        log_refs.append(
+            _safe_evidence_ref(
+                root,
+                (Path(owner) / "logs").as_posix(),
+                label="Logs folder",
+                source="automation_definition",
+            )
+        )
+        run_refs.append(
+            _safe_evidence_ref(
+                root,
+                (Path(owner) / "runs").as_posix(),
+                label="Runs folder",
+                source="automation_definition",
+            )
+        )
+
+    for run in resource.get("runs") or []:
+        if not isinstance(run, dict):
+            continue
+        observed_at = next(
+            (
+                run.get(field)
+                for field in ("finished_at", "updated_at", "started_at", "created_at")
+                if isinstance(run.get(field), str)
+            ),
+            None,
+        )
+        log_refs.append(
+            _safe_evidence_ref(
+                root,
+                run.get("log"),
+                label="Run log",
+                source="run_receipt",
+                observed_at=observed_at,
+            )
+        )
+        run_refs.append(
+            _safe_evidence_ref(
+                root,
+                run.get("source_path"),
+                label="Run queue receipts",
+                source="run_receipt",
+                observed_at=observed_at,
+            )
+        )
+
+    for item in resource.get("recent_evidence") or []:
+        if not isinstance(item, dict):
+            continue
+        recent_refs.append(
+            _safe_evidence_ref(
+                root,
+                item.get("path"),
+                label="Recent evidence",
+                source=str(item.get("source") or "filesystem_receipt"),
+                observed_at=item.get("observed_at")
+                if isinstance(item.get("observed_at"), str)
+                else None,
+            )
+        )
+
+    return {
+        "logs": _evidence_group(
+            log_refs,
+            available_reason="{count} canonical log reference(s) available.",
+            unavailable_reason="No canonical root-relative log evidence is available.",
+            unavailable_code="no_log_evidence",
+        ),
+        "runs": _evidence_group(
+            run_refs,
+            available_reason="{count} canonical run reference(s) available.",
+            unavailable_reason="No canonical root-relative run evidence is available.",
+            unavailable_code="no_run_evidence",
+        ),
+        "recent": _evidence_group(
+            recent_refs,
+            available_reason="{count} recent evidence reference(s) available.",
+            unavailable_reason="No recent root-relative evidence file is available.",
+            unavailable_code="no_recent_evidence",
+        ),
     }
 
 
@@ -328,6 +486,9 @@ def _operator_entries(
                 tags=(mapped_kind, resource_type, status),
                 source_updated_at=health.get("observed_at")
                 if isinstance(health.get("observed_at"), str)
+                else None,
+                evidence=_automation_evidence(root, resource)
+                if kind == "automation"
                 else None,
             )
         )
