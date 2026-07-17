@@ -33,6 +33,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-end-chat.md`](os-end-chat.md) | Finalize a substantial task with receipts and next action. |
 | [`os-event.md`](os-event.md) | Append, inspect, or replay durable OS events. |
 | [`os-groom-spec.md`](os-groom-spec.md) | Turn a rough Spec into implementation-ready work. |
+| [`os-gui.md`](os-gui.md) | Open the local Agentic OS Command Center desktop application. |
 | [`os-heartbeat.md`](os-heartbeat.md) | Operate runtime heartbeat definitions and checks. |
 | [`os-integration-setup.md`](os-integration-setup.md) | Prepare or diagnose an external integration. |
 | [`os-new-feature.md`](os-new-feature.md) | Legacy alias for canonical Spec intake. |

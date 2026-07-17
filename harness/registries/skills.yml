@@ -222,3 +222,8 @@ skills:
   description: Retrieve bounded, evidence-backed project-domain context and emit a
     receipt for grooming, planning, coding, review, or documentation upkeep.
   source: harness/skills/project-domain-investigate/SKILL.md
+- id: agentic-os-gui
+  name: AgenticOSGui
+  description: Build or open the local desktop conversation driver with domain/project
+    focus, native Claude/Codex sessions, pinning, metadata, and continuation.
+  source: harness/skills/agentic-os-gui/SKILL.md

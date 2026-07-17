@@ -1206,6 +1206,7 @@ the source of truth by themselves.
 | `automation-qualifier` | Decide whether a process is safe to automate. | `shared_factory/05-knowledge/skills/automation-qualifier/` |
 | `quiet-async-runner` | Run long waits through artifact-backed async state instead of chat polling. | `shared_factory/05-knowledge/skills/quiet-async-runner/` |
 | `cockpit` | Build or open the local engineering cockpit over canonical OS state. | `shared_factory/05-knowledge/skills/cockpit/` |
+| `agentic-os-gui` | Open or build the domain/project-focused desktop conversation driver. | `shared_factory/05-knowledge/skills/agentic-os-gui/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
 
 ## Commands
@@ -1229,6 +1230,7 @@ the source of truth by themselves.
 | `agentic-os project onboard` | Create or repair a project-local agent/config surface. | Additive by default. |
 | `harness/bin/agentic-os-quiet-run` | Run long local commands with file-backed state. | Use for tests, setup, watchers, and slow waits. |
 | `agentic-os cockpit snapshot/build/open` | Build or open the read-only local engineering cockpit. | Generates disposable JSON/HTML under the canonical report root. |
+| `agentic-os gui snapshot/transcript/open` | Inspect or open AgenticOSGui's native Claude/Codex conversation surface. | Provider stores remain read-only; interactive actions stay behind desktop IPC. |
 | `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | `--remove-files` deletes merged-PR checkouts unless `REOPEN.md` is present. |
 | `agentic-os project work-item infer-complete` | Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity. | Use before `finalize-lingering` in cleanup workflows. |
 | `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and refresh the global active symlink container. | Use after closeout/stale-finalization cleanup. |
