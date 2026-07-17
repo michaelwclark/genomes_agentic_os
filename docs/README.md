@@ -104,6 +104,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [36 · Host Explorer Projection](36-host-explorer-projection.md) | Canonical host identity resolution and the failure-tolerant `host-query/v1` operator contract. |
 | [37 · Governed Workflow Engine](37-governed-workflow-engine.md) | Versioned workflow definitions, immutable publish, installed instances, field/step validation, drift-safe authoring, rollback, and honest queue-only run requests. |
 | [38 · Program and Automation Operator Resource Query](38-operator-resource-query.md) | One typed read-only envelope for Program and Automation definitions, instances, configuration provenance, schedules, runs, health, qualification, and diagnostics. |
+| [39 · First-Class Resource Registry and Tags](39-first-class-resource-registry.md) | Atomic local resource snapshot plus a guarded durable custom-tag overlay, mutation receipts, and deterministic tag provenance. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,

@@ -157,6 +157,16 @@ The fixed forms are `operator-resource query <program|automation>` and
 `operator-resource get <program|automation> <resource-id>`. Both accept
 `--root`; JSON is the only output mode.
 
+### First-class resource registry — `cli/first_class_registry.py`
+
+| Command | What it does |
+| --- | --- |
+| `resource-registry refresh` | Reconcile source resources and atomically replace the local snapshot. |
+| `resource-registry query` | Read/filter the local snapshot without scanning the OS tree. |
+| `resource-registry tags list` | Return merged, derived, and custom tags for one exact stable resource ID. |
+| `resource-registry tags add` | Normalize and atomically add one durable custom tag, refresh, and emit a receipt. |
+| `resource-registry tags remove` | Atomically remove one custom tag, refresh, and emit a receipt. |
+
 ### Runs & Thread Lifecycle — `cli/run_lifecycle.py`
 
 | Command | What it does |

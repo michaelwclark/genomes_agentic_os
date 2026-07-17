@@ -7,21 +7,32 @@ atomic JSON snapshot from ``harness/registries/first-class-resources.json``.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import threading
 from typing import Any, Iterable
+from uuid import uuid4
 
 import yaml
 
 from .operator_resources import query_operator_resources
 from .scaffold import expand_path
 
-
 API_VERSION = "first-class-resource-registry/v1"
 REGISTRY_PATH = Path("harness/registries/first-class-resources.json")
+TAG_OVERLAY_API_VERSION = "first-class-resource-tags/v1"
+TAG_MUTATION_API_VERSION = "first-class-resource-tag-mutation/v1"
+TAG_OVERLAY_PATH = Path("harness/registries/first-class-resource-tags.json")
+TAG_RECEIPT_ROOT = Path(
+    "harness/shared_factory/06-runs-and-logs/resource-tag-mutations"
+)
+TAG_LOCK_PATH = Path("harness/registries/.first-class-resource-tags.lock")
+_PROCESS_TAG_LOCK = threading.RLock()
 RESOURCE_KINDS = (
     "automation",
     "automation_instance",
@@ -74,6 +85,93 @@ def _iso(value: datetime | None = None) -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def normalize_resource_tag(value: str) -> str:
+    """Return the canonical custom-tag spelling or reject unsafe input."""
+
+    if not isinstance(value, str):
+        raise ValueError("tag must be a string")
+    normalized = re.sub(r"[\s_]+", "-", value.strip().lower())
+    normalized = re.sub(r"-+", "-", normalized).strip("-")
+    if not normalized:
+        raise ValueError("tag must not be empty")
+    if len(normalized) > 32:
+        raise ValueError("tag must be 32 characters or fewer")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", normalized):
+        raise ValueError("tag may contain only letters, numbers, spaces, '_' or '-'")
+    return normalized
+
+
+def _validate_resource_id(value: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 510:
+        raise ValueError("resource id is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]+", value):
+        raise ValueError("resource id contains unsupported characters")
+    if ":" not in value:
+        raise ValueError("resource id must be a stable first-class resource identity")
+    return value
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _tag_mutation_lock(root: Path):
+    lock_path = root / TAG_LOCK_PATH
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _PROCESS_TAG_LOCK, lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _empty_tag_overlay() -> dict[str, Any]:
+    return {
+        "api_version": TAG_OVERLAY_API_VERSION,
+        "updated_at": None,
+        "resources": {},
+    }
+
+
+def _load_tag_overlay(root: Path) -> dict[str, Any]:
+    path = root / TAG_OVERLAY_PATH
+    if not path.is_file():
+        return _empty_tag_overlay()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("api_version") != TAG_OVERLAY_API_VERSION or not isinstance(
+        payload.get("resources"), dict
+    ):
+        raise ValueError("first-class resource tag overlay contract is invalid")
+    normalized: dict[str, dict[str, Any]] = {}
+    for resource_id, entry in payload["resources"].items():
+        resource_id = _validate_resource_id(resource_id)
+        if not isinstance(entry, dict) or not isinstance(entry.get("tags"), list):
+            raise ValueError(f"tag overlay entry is invalid: {resource_id}")
+        tags = sorted({normalize_resource_tag(tag) for tag in entry["tags"]})
+        if tags:
+            normalized[resource_id] = {
+                "tags": tags,
+                "updated_at": entry.get("updated_at"),
+            }
+    return {
+        "api_version": TAG_OVERLAY_API_VERSION,
+        "updated_at": payload.get("updated_at"),
+        "resources": normalized,
+    }
 
 
 def _stable_id(kind: str, identity: str) -> str:
@@ -435,13 +533,19 @@ def _operator_entries(
                 "degraded",
                 "unhealthy",
             }
-            else "unhealthy"
-            if status in {"failed", "failure", "error"}
-            else "degraded"
-            if status in {"stale", "partial"}
-            else "healthy"
-            if status in {"success", "active", "done", "queued"}
-            else "unobserved"
+            else (
+                "unhealthy"
+                if status in {"failed", "failure", "error"}
+                else (
+                    "degraded"
+                    if status in {"stale", "partial"}
+                    else (
+                        "healthy"
+                        if status in {"success", "active", "done", "queued"}
+                        else "unobserved"
+                    )
+                )
+            )
         )
         evidence_basis = str(
             health.get("evidence_basis") or health.get("source") or "unobserved"
@@ -535,9 +639,11 @@ def _document_entries(
                         generated_at=generated_at,
                         domain=domain,
                         project=project,
-                        subtype="rule_document"
-                        if kind == "rule"
-                        else ("definition" if kind == "workflow" else "instance"),
+                        subtype=(
+                            "rule_document"
+                            if kind == "rule"
+                            else ("definition" if kind == "workflow" else "instance")
+                        ),
                         health_summary="Runtime health does not apply to this canonical filesystem document.",
                         health_evidence_basis="static_filesystem_presence",
                         tags=(kind, domain, project),
@@ -589,16 +695,20 @@ def _registry_entries(
                 domain = (
                     record.get("domain")
                     if isinstance(record.get("domain"), str)
-                    else scope.get("domain")
-                    if isinstance(scope.get("domain"), str)
-                    else domain
+                    else (
+                        scope.get("domain")
+                        if isinstance(scope.get("domain"), str)
+                        else domain
+                    )
                 )
                 project = (
                     record.get("project")
                     if isinstance(record.get("project"), str)
-                    else scope.get("project")
-                    if isinstance(scope.get("project"), str)
-                    else project
+                    else (
+                        scope.get("project")
+                        if isinstance(scope.get("project"), str)
+                        else project
+                    )
                 )
                 declared_source = _relative_source(
                     root, record.get("source") or relative_ref
@@ -654,7 +764,55 @@ def _registry_entries(
     return result
 
 
-def refresh_first_class_registry(
+def _merge_custom_tags(
+    root: Path,
+    resources: list[dict[str, Any]],
+    diagnostics: list[dict[str, Any]],
+) -> None:
+    try:
+        overlay = _load_tag_overlay(root)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": "resource_tag_overlay_invalid",
+                "source": TAG_OVERLAY_PATH.as_posix(),
+                "message": f"{type(exc).__name__}: {exc}",
+                "kind": None,
+                "resource_id": None,
+                "path": TAG_OVERLAY_PATH.as_posix(),
+                "repair_kind": "repair_resource_tag_overlay",
+                "guidance": "Repair or restore the custom-tag overlay before changing tags.",
+            }
+        )
+        overlay = _empty_tag_overlay()
+    entries = overlay["resources"]
+    known_ids = {resource["id"] for resource in resources}
+    for resource in resources:
+        derived = sorted(set(resource.get("tags") or []))
+        custom = list((entries.get(resource["id"]) or {}).get("tags") or [])
+        resource["tags"] = sorted(set((*derived, *custom)))
+        resource["tag_provenance"] = {
+            "derived": derived,
+            "custom": custom,
+        }
+    for resource_id in sorted(set(entries).difference(known_ids)):
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "code": "resource_tag_target_missing",
+                "source": TAG_OVERLAY_PATH.as_posix(),
+                "message": f"custom tags reference an unknown resource: {resource_id}",
+                "kind": None,
+                "resource_id": resource_id,
+                "path": TAG_OVERLAY_PATH.as_posix(),
+                "repair_kind": "remove_or_restore_resource_tag_target",
+                "guidance": "Restore the resource or remove its custom tags with the governed tag command.",
+            }
+        )
+
+
+def _refresh_first_class_registry_unlocked(
     root: str | Path, *, now: datetime | None = None
 ) -> dict[str, Any]:
     os_root = expand_path(root)
@@ -672,6 +830,7 @@ def refresh_first_class_registry(
     ):
         unique.setdefault(resource["id"], resource)
     resources = list(unique.values())
+    _merge_custom_tags(os_root, resources, diagnostics)
     diagnostics = [_normalize_diagnostic(item) for item in diagnostics]
     fingerprint_resources = [
         {key: value for key, value in resource.items() if key != "observed_at"}
@@ -699,13 +858,132 @@ def refresh_first_class_registry(
         },
     }
     target = os_root / REGISTRY_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    temporary.replace(target)
+    _write_json_atomic(target, payload)
     return payload
+
+
+def refresh_first_class_registry(
+    root: str | Path, *, now: datetime | None = None
+) -> dict[str, Any]:
+    os_root = expand_path(root)
+    with _tag_mutation_lock(os_root):
+        return _refresh_first_class_registry_unlocked(os_root, now=now)
+
+
+def list_resource_tags(root: str | Path, resource_id: str) -> dict[str, Any]:
+    os_root = expand_path(root)
+    resource_id = _validate_resource_id(resource_id)
+    with _tag_mutation_lock(os_root):
+        snapshot_path = os_root / REGISTRY_PATH
+        snapshot = (
+            json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if snapshot_path.is_file()
+            else _refresh_first_class_registry_unlocked(os_root)
+        )
+        resource = next(
+            (
+                item
+                for item in snapshot.get("resources") or []
+                if item.get("id") == resource_id
+            ),
+            None,
+        )
+        if resource is None or not isinstance(resource.get("tag_provenance"), dict):
+            snapshot = _refresh_first_class_registry_unlocked(os_root)
+            resource = next(
+                (
+                    item
+                    for item in snapshot["resources"]
+                    if item.get("id") == resource_id
+                ),
+                None,
+            )
+        if resource is None:
+            raise ValueError(f"unknown first-class resource id: {resource_id}")
+        provenance = resource.get("tag_provenance") or {}
+        return {
+            "api_version": TAG_OVERLAY_API_VERSION,
+            "resource_id": resource_id,
+            "tags": list(resource.get("tags") or []),
+            "derived_tags": list(provenance.get("derived") or []),
+            "custom_tags": list(provenance.get("custom") or []),
+            "registry_fingerprint": snapshot.get("fingerprint"),
+        }
+
+
+def mutate_resource_tag(
+    root: str | Path,
+    *,
+    operation: str,
+    resource_id: str,
+    tag: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Add or remove one custom tag and atomically refresh the materialized view."""
+
+    if operation not in {"add", "remove"}:
+        raise ValueError("tag operation must be add or remove")
+    os_root = expand_path(root)
+    resource_id = _validate_resource_id(resource_id)
+    tag = normalize_resource_tag(tag)
+    occurred_at = _iso(now)
+    with _tag_mutation_lock(os_root):
+        snapshot_path = os_root / REGISTRY_PATH
+        snapshot = (
+            json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if snapshot_path.is_file()
+            else _refresh_first_class_registry_unlocked(os_root, now=now)
+        )
+        if not any(
+            item.get("id") == resource_id for item in snapshot.get("resources") or []
+        ):
+            snapshot = _refresh_first_class_registry_unlocked(os_root, now=now)
+        if not any(
+            item.get("id") == resource_id for item in snapshot.get("resources") or []
+        ):
+            raise ValueError(f"unknown first-class resource id: {resource_id}")
+
+        overlay = _load_tag_overlay(os_root)
+        entries = overlay["resources"]
+        current = set((entries.get(resource_id) or {}).get("tags") or [])
+        changed = tag not in current if operation == "add" else tag in current
+        if operation == "add":
+            current.add(tag)
+        else:
+            current.discard(tag)
+        if current:
+            entries[resource_id] = {
+                "tags": sorted(current),
+                "updated_at": occurred_at,
+            }
+        else:
+            entries.pop(resource_id, None)
+        overlay["updated_at"] = occurred_at
+        _write_json_atomic(os_root / TAG_OVERLAY_PATH, overlay)
+        refreshed = _refresh_first_class_registry_unlocked(os_root, now=now)
+        resource = next(
+            item for item in refreshed["resources"] if item["id"] == resource_id
+        )
+        receipt = {
+            "api_version": TAG_MUTATION_API_VERSION,
+            "operation": operation,
+            "resource_id": resource_id,
+            "tag": tag,
+            "changed": changed,
+            "custom_tags": resource["tag_provenance"]["custom"],
+            "tags": resource["tags"],
+            "occurred_at": occurred_at,
+            "overlay_path": TAG_OVERLAY_PATH.as_posix(),
+            "registry_path": REGISTRY_PATH.as_posix(),
+            "registry_fingerprint": refreshed["fingerprint"],
+        }
+        receipt_name = (
+            f"{occurred_at.replace(':', '').replace('-', '')}-{uuid4().hex[:12]}.json"
+        )
+        receipt_path = TAG_RECEIPT_ROOT / receipt_name
+        receipt["receipt_path"] = receipt_path.as_posix()
+        _write_json_atomic(os_root / receipt_path, receipt)
+        return receipt
 
 
 def query_first_class_registry(
