@@ -45,6 +45,26 @@ watchers/
    by appending the schedule entry (copy from `schedule.snippet.yml`).
 8. Add the source to `harness/registries/alerts.yml` so notifications route correctly.
 
+## Notification integration
+
+Use the single `agentic-os-notify` seam only for a watcher result that needs
+operator attention. Give the watcher a stable source id such as
+`watchers.<name>`, add an inherited policy entry before production use, and use
+the same stable condition identity as `--dedupe-key` on repeatable alerts:
+
+```yaml
+sources:
+  watchers.<name>:
+    enabled: true
+    min_level: warning
+    cooldown_seconds: 900
+    max_deliveries_per_hour: 3
+```
+
+Use `--dry-run` when wiring the watcher. Never notify for routine polling or
+unchanged results; the shared policy enforces quiet hours, history retention,
+and rate limits.
+
 ## How scheduling works
 
 Watchers are driven by the runtime supervisor, which reads `runtime-registry.yml`

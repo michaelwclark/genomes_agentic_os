@@ -1,0 +1,2 @@
+name: notification-operator
+description: Send one governed local macOS notification for an operator-actionable Agentic OS condition without creating alert noise.

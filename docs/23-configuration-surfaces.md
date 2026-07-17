@@ -211,6 +211,20 @@ repeat cooldowns, and hourly delivery caps. Notifications are local macOS
 notifications: banner versus alert style and Apple-device mirroring remain user
 settings in macOS Notification Center and iCloud, respectively.
 
+### Agent invocation and source registration
+
+Agents use the visible `/notify` command or `notification-operator` skill when
+a receipt-backed, operator-actionable condition needs local attention. The
+command takes a stable source id, severity, concise title and message, and a
+stable `--dedupe-key`. It is not a progress-reporting channel and does not
+authorize Slack, email, tracker, or other external communication.
+
+New watcher or automation sources must first add an inherited entry under
+`sources` in `alerts.yml`, then verify wiring with `--dry-run`. The source entry
+should retain the conservative cooldown and hourly cap unless there is a
+documented reason to change them. See `harness/commands/os-notify.md` for the
+copyable invocation and source-policy recipe.
+
 ### agentic-os-status-report
 
 No env vars are read directly. The collector script (`agentic_status.py`) may read `AGENTIC_OS_ROOT` and similar variables from `~/.zshenv`.

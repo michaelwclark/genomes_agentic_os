@@ -25,3 +25,17 @@ non-executing, text-free telemetry; duplicate turn correlations are no-ops.
 - Use `TOOLS.md` as the visible tool contract before assuming a skill, MCP server, command, plugin, wrapper, or library is available.
 
 Read `MEMORY.md` when present before writing durable memory.
+
+## Notification Contract
+
+Use `/notify` or the `notification-operator` skill only for a bounded,
+operator-actionable condition in the current scope: a failed build or run, an
+error that needs a decision, a critical availability or safety condition, or a
+high-priority item that needs timely attention. Do not send notifications for
+ordinary progress, successful routine work, repeated unchanged failures, or
+chat-only status updates.
+
+The local macOS notification is not authorization to send Slack, email, tracker,
+or other external messages. Load `TOOLS.md` and the notification skill before
+use; the policy registry owns quiet hours, source registration, retention, and
+anti-flood behavior.

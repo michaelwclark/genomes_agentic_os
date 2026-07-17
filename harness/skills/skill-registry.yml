@@ -19,6 +19,19 @@ harness_targets:
     runtime_dir: ~/.claude/skills
     install_mode: copy
 skills:
+  - id: notification-operator
+    title: Notification Operator
+    source_path: harness/skills/notification-operator
+    installed_path: shared_factory/05-knowledge/skills/notification-operator
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Send one governed local macOS notification for a receipt-backed,
+      operator-actionable condition while respecting severity and anti-flood policy.
   - id: agentic-os-gui
     title: AgenticOSGui
     source_path: harness/skills/agentic-os-gui
