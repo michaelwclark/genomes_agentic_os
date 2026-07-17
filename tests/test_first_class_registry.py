@@ -4,10 +4,12 @@ from datetime import UTC, datetime
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 import yaml
 
+import genomes_agentic_os.first_class_registry as registry
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.first_class_registry import (
     API_VERSION,
@@ -538,6 +540,136 @@ def test_concurrent_tag_writes_are_serialized_without_lost_updates(
     assert list_resource_tags(root, resource_id)["custom_tags"] == expected
     assert len({receipt["receipt_path"] for receipt in receipts}) == 8
     assert not list((root / TAG_OVERLAY_PATH).parent.glob(".*.tmp"))
+
+
+def _tag_mutation_baseline(root: Path) -> tuple[str, bytes, bytes]:
+    snapshot = refresh_first_class_registry(root)
+    resource_id = next(
+        item["id"]
+        for item in snapshot["resources"]
+        if item["kind"] == "skill" and item["native_id"] == "review"
+    )
+    mutate_resource_tag(root, operation="add", resource_id=resource_id, tag="before")
+    return (
+        resource_id,
+        (root / TAG_OVERLAY_PATH).read_bytes(),
+        (root / REGISTRY_PATH).read_bytes(),
+    )
+
+
+@pytest.mark.parametrize("failure_stage", ["snapshot", "refresh", "receipt"])
+def test_tag_mutation_failure_restores_exact_overlay_and_snapshot_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str
+) -> None:
+    root = _root(tmp_path)
+    resource_id, overlay_before, snapshot_before = _tag_mutation_baseline(root)
+    receipt_names_before = {
+        path.name for path in (root / registry.TAG_RECEIPT_ROOT).glob("*.json")
+    }
+    original_write = registry._write_json_atomic
+
+    if failure_stage == "snapshot":
+        def fail_snapshot(root_arg: Path, relative: Path, value: dict[str, object]) -> None:
+            if relative == REGISTRY_PATH:
+                raise OSError("simulated snapshot write failure")
+            original_write(root_arg, relative, value)
+
+        monkeypatch.setattr(registry, "_write_json_atomic", fail_snapshot)
+        expected = "snapshot write"
+    elif failure_stage == "refresh":
+        def fail_refresh(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("simulated refresh failure")
+
+        monkeypatch.setattr(registry, "_refresh_first_class_registry_unlocked", fail_refresh)
+        expected = "refresh failure"
+    else:
+        def fail_receipt(root_arg: Path, relative: Path, value: dict[str, object]) -> None:
+            original_write(root_arg, relative, value)
+            if relative.parent == registry.TAG_RECEIPT_ROOT:
+                raise OSError("simulated receipt write failure")
+
+        monkeypatch.setattr(registry, "_write_json_atomic", fail_receipt)
+        expected = "receipt write"
+
+    with pytest.raises((OSError, RuntimeError), match=expected):
+        mutate_resource_tag(root, operation="add", resource_id=resource_id, tag="after")
+
+    assert (root / TAG_OVERLAY_PATH).read_bytes() == overlay_before
+    assert (root / REGISTRY_PATH).read_bytes() == snapshot_before
+    assert {
+        path.name for path in (root / registry.TAG_RECEIPT_ROOT).glob("*.json")
+    } == receipt_names_before
+
+
+def test_tag_mutation_source_disappearance_restores_exact_prior_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    resource_id, overlay_before, snapshot_before = _tag_mutation_baseline(root)
+    source = root / "harness/registries/skills.yml"
+    original_write = registry._write_json_atomic
+
+    def disappear_after_overlay(root_arg: Path, relative: Path, value: dict[str, object]) -> None:
+        original_write(root_arg, relative, value)
+        if relative == TAG_OVERLAY_PATH:
+            source.unlink()
+
+    monkeypatch.setattr(registry, "_write_json_atomic", disappear_after_overlay)
+
+    with pytest.raises(ValueError, match="resource disappeared"):
+        mutate_resource_tag(root, operation="add", resource_id=resource_id, tag="after")
+
+    assert (root / TAG_OVERLAY_PATH).read_bytes() == overlay_before
+    assert (root / REGISTRY_PATH).read_bytes() == snapshot_before
+
+
+def test_tag_mutation_rejects_symlinked_overlay_and_lock_file_escapes(
+    tmp_path: Path,
+) -> None:
+    for path_name in (registry.TAG_OVERLAY_PATH, registry.TAG_LOCK_PATH):
+        root = _root(tmp_path / path_name.stem)
+        snapshot = refresh_first_class_registry(root)
+        resource_id = next(item["id"] for item in snapshot["resources"] if item["kind"] == "skill")
+        outside = root.parent / f"outside-{path_name.stem}"
+        outside.mkdir()
+        target = root / path_name
+        target.unlink(missing_ok=True)
+        target.symlink_to(outside / path_name.name)
+
+        with pytest.raises(ValueError, match="escaped the installed root"):
+            mutate_resource_tag(root, operation="add", resource_id=resource_id, tag="review")
+        assert not (outside / path_name.name).exists()
+
+
+def test_refresh_rejects_symlinked_snapshot_escape(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = root / REGISTRY_PATH
+    target.symlink_to(outside / target.name)
+
+    with pytest.raises(ValueError, match="escaped the installed root"):
+        refresh_first_class_registry(root)
+    assert not (outside / target.name).exists()
+
+
+def test_tag_mutation_rejects_symlinked_receipt_directory_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    resource_id, overlay_before, snapshot_before = _tag_mutation_baseline(root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    receipt_root = root / registry.TAG_RECEIPT_ROOT
+    shutil.rmtree(receipt_root)
+    receipt_root.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="escaped the installed root"):
+        mutate_resource_tag(root, operation="add", resource_id=resource_id, tag="after")
+
+    assert (root / TAG_OVERLAY_PATH).read_bytes() == overlay_before
+    assert (root / REGISTRY_PATH).read_bytes() == snapshot_before
+    assert not list(outside.iterdir())
 
 
 def test_cli_tag_add_list_remove_round_trip(tmp_path: Path, capsys) -> None:

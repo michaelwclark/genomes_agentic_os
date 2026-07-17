@@ -113,13 +113,41 @@ def _validate_resource_id(value: str) -> str:
     return value
 
 
-def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _confined_child_path(
+    root: Path, relative: Path, *, create_parents: bool = False
+) -> Path:
+    """Resolve a managed child path without following an escape symlink.
+
+    The registry persists a handful of generated files beneath the installed
+    root.  A stale or hostile symlink in one of those paths must not turn a
+    registry refresh or tag mutation into a write outside that root.
+    """
+
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"managed registry path must be root-relative: {relative}")
+    resolved_root = root.resolve(strict=True)
+    target = resolved_root / relative
+    try:
+        target.resolve().relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError(f"managed registry path escaped the installed root: {relative}") from exc
+    if create_parents:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.resolve().relative_to(resolved_root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ValueError(
+                f"managed registry path escaped the installed root after parent creation: {relative}"
+            ) from exc
+    return target
+
+
+def _write_bytes_atomic(root: Path, relative: Path, value: bytes) -> None:
+    path = _confined_child_path(root, relative, create_parents=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid4().hex}.tmp")
     try:
-        with temporary.open("w", encoding="utf-8") as handle:
-            json.dump(value, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        with temporary.open("wb") as handle:
+            handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(path)
@@ -127,10 +155,14 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _write_json_atomic(root: Path, relative: Path, value: dict[str, Any]) -> None:
+    serialized = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    _write_bytes_atomic(root, relative, serialized)
+
+
 @contextmanager
 def _tag_mutation_lock(root: Path):
-    lock_path = root / TAG_LOCK_PATH
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _confined_child_path(root, TAG_LOCK_PATH, create_parents=True)
     with _PROCESS_TAG_LOCK, lock_path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -148,7 +180,7 @@ def _empty_tag_overlay() -> dict[str, Any]:
 
 
 def _load_tag_overlay(root: Path) -> dict[str, Any]:
-    path = root / TAG_OVERLAY_PATH
+    path = _confined_child_path(root, TAG_OVERLAY_PATH)
     if not path.is_file():
         return _empty_tag_overlay()
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -172,6 +204,30 @@ def _load_tag_overlay(root: Path) -> dict[str, Any]:
         "updated_at": payload.get("updated_at"),
         "resources": normalized,
     }
+
+
+def _capture_managed_file(root: Path, relative: Path) -> bytes | None:
+    """Capture exact bytes for a tag mutation rollback journal."""
+
+    path = _confined_child_path(root, relative)
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise ValueError(f"managed registry target is not a file: {relative}")
+    return path.read_bytes()
+
+
+def _restore_managed_file(root: Path, relative: Path, before: bytes | None) -> None:
+    """Restore the exact pre-mutation file state after a failed mutation."""
+
+    path = _confined_child_path(root, relative, create_parents=True)
+    if before is not None:
+        _write_bytes_atomic(root, relative, before)
+        return
+    if path.exists():
+        if not path.is_file():
+            raise ValueError(f"managed registry target is not a file: {relative}")
+        path.unlink()
 
 
 def _stable_id(kind: str, identity: str) -> str:
@@ -857,8 +913,7 @@ def _refresh_first_class_registry_unlocked(
             },
         },
     }
-    target = os_root / REGISTRY_PATH
-    _write_json_atomic(target, payload)
+    _write_json_atomic(os_root, REGISTRY_PATH, payload)
     return payload
 
 
@@ -874,7 +929,7 @@ def list_resource_tags(root: str | Path, resource_id: str) -> dict[str, Any]:
     os_root = expand_path(root)
     resource_id = _validate_resource_id(resource_id)
     with _tag_mutation_lock(os_root):
-        snapshot_path = os_root / REGISTRY_PATH
+        snapshot_path = _confined_child_path(os_root, REGISTRY_PATH)
         snapshot = (
             json.loads(snapshot_path.read_text(encoding="utf-8"))
             if snapshot_path.is_file()
@@ -928,7 +983,7 @@ def mutate_resource_tag(
     tag = normalize_resource_tag(tag)
     occurred_at = _iso(now)
     with _tag_mutation_lock(os_root):
-        snapshot_path = os_root / REGISTRY_PATH
+        snapshot_path = _confined_child_path(os_root, REGISTRY_PATH)
         snapshot = (
             json.loads(snapshot_path.read_text(encoding="utf-8"))
             if snapshot_path.is_file()
@@ -959,31 +1014,61 @@ def mutate_resource_tag(
         else:
             entries.pop(resource_id, None)
         overlay["updated_at"] = occurred_at
-        _write_json_atomic(os_root / TAG_OVERLAY_PATH, overlay)
-        refreshed = _refresh_first_class_registry_unlocked(os_root, now=now)
-        resource = next(
-            item for item in refreshed["resources"] if item["id"] == resource_id
-        )
-        receipt = {
-            "api_version": TAG_MUTATION_API_VERSION,
-            "operation": operation,
-            "resource_id": resource_id,
-            "tag": tag,
-            "changed": changed,
-            "custom_tags": resource["tag_provenance"]["custom"],
-            "tags": resource["tags"],
-            "occurred_at": occurred_at,
-            "overlay_path": TAG_OVERLAY_PATH.as_posix(),
-            "registry_path": REGISTRY_PATH.as_posix(),
-            "registry_fingerprint": refreshed["fingerprint"],
+        journal = {
+            "overlay": _capture_managed_file(os_root, TAG_OVERLAY_PATH),
+            "snapshot": _capture_managed_file(os_root, REGISTRY_PATH),
         }
-        receipt_name = (
-            f"{occurred_at.replace(':', '').replace('-', '')}-{uuid4().hex[:12]}.json"
-        )
-        receipt_path = TAG_RECEIPT_ROOT / receipt_name
-        receipt["receipt_path"] = receipt_path.as_posix()
-        _write_json_atomic(os_root / receipt_path, receipt)
-        return receipt
+        receipt_path: Path | None = None
+        receipt_before: bytes | None = None
+        receipt_journaled = False
+        try:
+            _write_json_atomic(os_root, TAG_OVERLAY_PATH, overlay)
+            refreshed = _refresh_first_class_registry_unlocked(os_root, now=now)
+            resource = next(
+                (
+                    item
+                    for item in refreshed["resources"]
+                    if item["id"] == resource_id
+                ),
+                None,
+            )
+            if resource is None:
+                raise ValueError(
+                    "first-class resource disappeared while applying tag mutation"
+                )
+            receipt = {
+                "api_version": TAG_MUTATION_API_VERSION,
+                "operation": operation,
+                "resource_id": resource_id,
+                "tag": tag,
+                "changed": changed,
+                "custom_tags": resource["tag_provenance"]["custom"],
+                "tags": resource["tags"],
+                "occurred_at": occurred_at,
+                "overlay_path": TAG_OVERLAY_PATH.as_posix(),
+                "registry_path": REGISTRY_PATH.as_posix(),
+                "registry_fingerprint": refreshed["fingerprint"],
+            }
+            receipt_name = (
+                f"{occurred_at.replace(':', '').replace('-', '')}-{uuid4().hex[:12]}.json"
+            )
+            receipt_path = TAG_RECEIPT_ROOT / receipt_name
+            receipt_before = _capture_managed_file(os_root, receipt_path)
+            receipt_journaled = True
+            receipt["receipt_path"] = receipt_path.as_posix()
+            _write_json_atomic(os_root, receipt_path, receipt)
+            return receipt
+        except Exception as exc:
+            try:
+                if receipt_path is not None and receipt_journaled:
+                    _restore_managed_file(os_root, receipt_path, receipt_before)
+                _restore_managed_file(os_root, TAG_OVERLAY_PATH, journal["overlay"])
+                _restore_managed_file(os_root, REGISTRY_PATH, journal["snapshot"])
+            except Exception as rollback_exc:
+                raise RuntimeError(
+                    f"tag mutation failed and rollback could not restore the prior state: {rollback_exc}"
+                ) from exc
+            raise
 
 
 def query_first_class_registry(
@@ -996,7 +1081,7 @@ def query_first_class_registry(
     ensure: bool = False,
 ) -> dict[str, Any]:
     os_root = expand_path(root)
-    path = os_root / REGISTRY_PATH
+    path = _confined_child_path(os_root, REGISTRY_PATH)
     if ensure and not path.is_file():
         refresh_first_class_registry(os_root)
     if not path.is_file():
