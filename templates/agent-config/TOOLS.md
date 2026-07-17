@@ -6,13 +6,13 @@ List the visible capabilities intended for this layer.
 
 | Skill | Use When | Source |
 | --- | --- | --- |
-|  |  |  |
+| `notification-operator` | A bounded local macOS alert is warranted and the agent needs the right severity, dedupe key, or source-registration guidance. | `harness/skills/notification-operator/SKILL.md` |
 
 ## Commands
 
 | Command | Use When | Notes |
 | --- | --- | --- |
-|  |  |  |
+| `/notify` | A failed run, high-priority item, or other operator-actionable condition needs a governed local notification. | Uses `agentic-os-notify`; follow quiet hours, severity, source, dedupe, and anti-flood policy. |
 
 ## MCP Servers
 

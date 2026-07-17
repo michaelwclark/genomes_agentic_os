@@ -25,3 +25,10 @@ Executable wrappers owned by the installed Agentic OS harness.
 
 Add scripts here only when the OS package owns the wrapper and the script is safe
 to mirror into installed roots.
+
+## Notification usage
+
+Agents invoke `agentic-os-notify` through `/notify` or the
+`notification-operator` skill. Those surfaces define eligibility, severity,
+dedupe, source registration, and retained-history handling; do not treat this
+wrapper index as the policy contract.

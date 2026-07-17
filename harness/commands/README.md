@@ -37,6 +37,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-heartbeat.md`](os-heartbeat.md) | Operate runtime heartbeat definitions and checks. |
 | [`os-integration-setup.md`](os-integration-setup.md) | Prepare or diagnose an external integration. |
 | [`os-new-feature.md`](os-new-feature.md) | Legacy alias for canonical Spec intake. |
+| [`os-notify.md`](os-notify.md) | Send one governed local macOS notification for an operator-actionable condition. |
 | [`os-notion-org.md`](os-notion-org.md) | Audit or reconcile the verified Notion organization. |
 | [`os-operator-resource.md`](os-operator-resource.md) | Query typed read-only Program and Automation operator projections. |
 | [`os-resource-registry.md`](os-resource-registry.md) | Refresh or read the atomic first-class resource snapshot used by Command Center. |
