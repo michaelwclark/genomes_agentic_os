@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.first_class_registry import (
     API_VERSION,
     REGISTRY_PATH,
+    TAG_MUTATION_API_VERSION,
+    TAG_OVERLAY_PATH,
+    list_resource_tags,
+    mutate_resource_tag,
+    normalize_resource_tag,
     query_first_class_registry,
     refresh_first_class_registry,
 )
@@ -449,3 +456,148 @@ def test_unnamed_schedule_diagnostic_identity_is_stable(tmp_path: Path) -> None:
     )
     assert first_id == second_id
     assert first_id.startswith("automation_schedule:unnamed-")
+def test_custom_tags_are_durable_and_merged_with_explicit_provenance(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    initial = refresh_first_class_registry(root)
+    resource = next(item for item in initial["resources"] if item["kind"] == "skill")
+
+    receipt = mutate_resource_tag(
+        root,
+        operation="add",
+        resource_id=resource["id"],
+        tag="Needs Review",
+        now=datetime(2026, 7, 17, 15, tzinfo=UTC),
+    )
+
+    assert receipt["api_version"] == TAG_MUTATION_API_VERSION
+    assert receipt["tag"] == "needs-review"
+    assert receipt["changed"] is True
+    assert (root / receipt["receipt_path"]).is_file()
+    overlay = json.loads((root / TAG_OVERLAY_PATH).read_text(encoding="utf-8"))
+    assert overlay["resources"][resource["id"]]["tags"] == ["needs-review"]
+
+    refreshed = refresh_first_class_registry(root)
+    tagged = next(
+        item for item in refreshed["resources"] if item["id"] == resource["id"]
+    )
+    assert tagged["tag_provenance"]["custom"] == ["needs-review"]
+    assert set(tagged["tag_provenance"]["derived"]).issubset(tagged["tags"])
+    assert "needs-review" in tagged["tags"]
+    assert list_resource_tags(root, resource["id"])["custom_tags"] == ["needs-review"]
+
+    removed = mutate_resource_tag(
+        root, operation="remove", resource_id=resource["id"], tag="needs_review"
+    )
+    assert removed["changed"] is True
+    assert removed["custom_tags"] == []
+
+
+def test_tag_mutations_reject_invalid_unknown_and_traversal_inputs(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    refresh_first_class_registry(root)
+    resource_id = query_first_class_registry(root, kind="skill")["resources"][0]["id"]
+
+    for invalid in ("", "🔥", "x" * 33, "customer/private"):
+        with pytest.raises(ValueError):
+            mutate_resource_tag(
+                root, operation="add", resource_id=resource_id, tag=invalid
+            )
+    for resource_id in ("../../etc/passwd", "skill:unknown"):
+        with pytest.raises(ValueError):
+            mutate_resource_tag(
+                root, operation="add", resource_id=resource_id, tag="review"
+            )
+    assert normalize_resource_tag(" Needs__Review ") == "needs-review"
+    assert not (root / TAG_OVERLAY_PATH).exists()
+
+
+def test_concurrent_tag_writes_are_serialized_without_lost_updates(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    snapshot = refresh_first_class_registry(root)
+    resource_id = next(
+        item["id"] for item in snapshot["resources"] if item["kind"] == "skill"
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        receipts = list(
+            pool.map(
+                lambda tag: mutate_resource_tag(
+                    root, operation="add", resource_id=resource_id, tag=tag
+                ),
+                [f"team-{index}" for index in range(8)],
+            )
+        )
+
+    expected = [f"team-{index}" for index in range(8)]
+    assert list_resource_tags(root, resource_id)["custom_tags"] == expected
+    assert len({receipt["receipt_path"] for receipt in receipts}) == 8
+    assert not list((root / TAG_OVERLAY_PATH).parent.glob(".*.tmp"))
+
+
+def test_cli_tag_add_list_remove_round_trip(tmp_path: Path, capsys) -> None:
+    root = _root(tmp_path)
+    snapshot = refresh_first_class_registry(root)
+    resource_id = next(
+        item["id"] for item in snapshot["resources"] if item["kind"] == "skill"
+    )
+
+    assert (
+        main(
+            [
+                "resource-registry",
+                "tags",
+                "add",
+                "--resource-id",
+                resource_id,
+                "--tag",
+                "priority",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    added = json.loads(capsys.readouterr().out)
+    assert added["custom_tags"] == ["priority"]
+
+    assert (
+        main(
+            [
+                "resource-registry",
+                "tags",
+                "list",
+                "--resource-id",
+                resource_id,
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["custom_tags"] == ["priority"]
+
+    assert (
+        main(
+            [
+                "resource-registry",
+                "tags",
+                "remove",
+                "--resource-id",
+                resource_id,
+                "--tag",
+                "priority",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    removed = json.loads(capsys.readouterr().out)
+    assert removed["custom_tags"] == []

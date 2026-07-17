@@ -120,6 +120,7 @@ belong in `scaffold.py`, not a new `utils.py`.
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
 | `workflow_engine.py` | — | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, drift-safe create/update/publish, exact readback, rollback, and queue-only run requests. |
 | `operator_resources.py` | — | **Program and Automation operator projection.** Exact identity joins, configuration provenance, runtime evidence, qualification, health, and failure-tolerant `operator-resource-query/v1` JSON. |
+| `first_class_registry.py` | — | **Fast first-class resource projection.** Atomic snapshot reads, explicit reconciliation, deterministic derived/custom tag merge, guarded tag mutations, and receipts. |
 | `notion_sync.py` | 261 | **Notion projection.** Build/apply a reviewable filesystem→Notion sync plan. |
 | `room_profile.py` | 238 | **Room-first profiles.** Profile templates + validation for profile-driven installs. |
 | `mcp_catalog.py` | 208 | **MCP catalog.** Known MCP servers for the capability registry/tools layer. |

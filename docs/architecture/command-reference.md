@@ -1820,6 +1820,28 @@ Status: **OK** (covered by operator resource contract and installed-root smoke t
 
 ---
 
+## 13B. First-class resource snapshot and tags: `resource-registry`
+
+`resource-registry query` reads the atomic local snapshot and supports `--kind`,
+`--domain`, `--project`, `--query`, and `--ensure`. `resource-registry refresh`
+explicitly reconciles the installed tree.
+
+Custom tags use the exact resource ID returned by `query`:
+
+```bash
+agentic-os resource-registry tags list --resource-id <id> --root ~/agentic_os
+agentic-os resource-registry tags add --resource-id <id> --tag needs-review --root ~/agentic_os
+agentic-os resource-registry tags remove --resource-id <id> --tag needs-review --root ~/agentic_os
+```
+
+The add/remove forms validate and normalize input, serialize concurrent writes,
+atomically update the dedicated tag overlay, refresh the snapshot, and emit a
+JSON mutation receipt. They never edit the generated snapshot in place.
+
+Status: **OK** (covered by registry, mutation, concurrency, and CLI tests)
+
+---
+
 ## 14. Customer OS factory: `customer`
 
 ### `customer init`
