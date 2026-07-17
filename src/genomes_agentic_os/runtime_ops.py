@@ -20,6 +20,7 @@ from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
 from .scaffold import expand_path, install_docs, validate_name
 from .self_improvement import (
+    nightly_apply_self_improvement,
     process_self_improvement_actions,
     run_self_improvement,
     run_self_improvement_morning_report,
@@ -1423,6 +1424,40 @@ def _run_local_script(
             "report_path": report.get("latest"),
             "notion_projected": bool(notion_projection.get("projected")),
         }
+    _si_nightly_persist_forms = {
+        f"agentic-os self-improvement nightly-apply --root {root} --apply",
+        f"agentic-os self-improvement nightly-apply --root {str(root)} --apply",
+    }
+    _si_nightly_dry_forms = {
+        f"agentic-os self-improvement nightly-apply --root {root}",
+        f"agentic-os self-improvement nightly-apply --root {str(root)}",
+        f"agentic-os self-improvement nightly-apply --root {root} --dry-run",
+        f"agentic-os self-improvement nightly-apply --root {str(root)} --dry-run",
+    }
+    if normalized in _si_nightly_persist_forms | _si_nightly_dry_forms:
+        _dry = normalized not in _si_nightly_persist_forms
+        try:
+            result = nightly_apply_self_improvement(root, dry_run=_dry)
+        except ValueError as exc:
+            return {
+                "supported": True,
+                "ok": False,
+                "command": normalized,
+                "errors": [str(exc)],
+                "warnings": [],
+            }
+        return {
+            "supported": True,
+            "ok": bool(result.get("ok")),
+            "command": normalized,
+            "errors": [str(item) for item in result.get("errors") or []],
+            "warnings": [],
+            "enabled": bool(result.get("enabled")),
+            "approved": len(result.get("approved") or []),
+            "queued": len(result.get("queued") or []),
+            "implemented": len(result.get("implemented") or []),
+            "receipt_path": result.get("receipt"),
+        }
     if normalized in {
         f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
         f"agentic-os thread stale-finalize --root {str(root)} --older-than-days 3 --apply",
@@ -1516,6 +1551,12 @@ def _local_script_dispatch_preflight(root: Path, command: str) -> str | None:
         f"agentic-os self-improvement actions --root {str(root)}",
         f"agentic-os self-improvement actions --root {root} --dry-run",
         f"agentic-os self-improvement actions --root {str(root)} --dry-run",
+        f"agentic-os self-improvement nightly-apply --root {root} --apply",
+        f"agentic-os self-improvement nightly-apply --root {str(root)} --apply",
+        f"agentic-os self-improvement nightly-apply --root {root}",
+        f"agentic-os self-improvement nightly-apply --root {str(root)}",
+        f"agentic-os self-improvement nightly-apply --root {root} --dry-run",
+        f"agentic-os self-improvement nightly-apply --root {str(root)} --dry-run",
         f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
         f"agentic-os thread stale-finalize --root {str(root)} --older-than-days 3 --apply",
         f"agentic-os project worktree cleanup-closed --root {root} --apply",
