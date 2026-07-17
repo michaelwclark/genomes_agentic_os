@@ -50,25 +50,29 @@
   "$defs": {
     "diagnostic": {
       "type": "object",
-      "required": ["severity", "code", "source", "message"],
+      "required": ["severity", "code", "source", "message", "resource_id", "path", "repair_kind", "guidance"],
       "properties": {
         "severity": {"enum": ["info", "warning", "error"]},
         "code": {"type": "string"},
         "source": {"type": "string"},
         "message": {"type": "string"},
-        "resource_id": {"type": "string"},
-        "path": {"type": "string"}
+        "resource_id": {"type": ["string", "null"]},
+        "path": {"type": ["string", "null"]},
+        "repair_kind": {"type": "string", "minLength": 1},
+        "guidance": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     },
     "health": {
       "type": "object",
-      "required": ["status", "source", "liveness_observed"],
+      "required": ["status", "source", "evidence_basis", "applicable", "liveness_observed"],
       "properties": {
         "status": {
-          "enum": ["healthy", "active", "stale", "error", "disabled", "unknown"]
+          "enum": ["not_applicable", "unobserved", "disabled", "healthy", "degraded", "unhealthy"]
         },
         "source": {"type": "string"},
+        "evidence_basis": {"type": "string"},
+        "applicable": {"type": "boolean"},
         "observed_at": {"type": ["string", "null"]},
         "liveness_observed": {"const": false}
       },

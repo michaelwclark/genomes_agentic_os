@@ -289,7 +289,7 @@ def test_program_malformed_component_source_is_partial_not_fatal(
     assert any(row["code"] == "source_malformed" for row in result["diagnostics"])
 
 
-def test_automation_keeps_identities_distinct_and_projects_error_health(
+def test_automation_keeps_identities_distinct_and_projects_unhealthy_health(
     tmp_path: Path,
 ) -> None:
     root = _root(tmp_path)
@@ -305,7 +305,8 @@ def test_automation_keeps_identities_distinct_and_projects_error_health(
     assert resource["instances"][0]["instance_id"].startswith("automation_instance:")
     assert resource["schedules"][0]["schedule_id"] == "daily_sync_hourly"
     assert resource["runs"][0]["run_id"] == "run-1"
-    assert resource["health"]["status"] == "error"
+    assert resource["health"]["status"] == "unhealthy"
+    assert resource["health"]["evidence_basis"] == "run_queue_receipt"
     assert resource["health"]["liveness_observed"] is False
     assert resource["next_run_at"] == "2026-07-16T03:00:00Z"
     assert resource["tracking"]["tracking_id"] == "daily-sync"
@@ -323,7 +324,7 @@ def test_automation_keeps_identities_distinct_and_projects_error_health(
     )
 
 
-def test_automation_stale_health_and_placement_denial(tmp_path: Path) -> None:
+def test_automation_degraded_health_and_placement_denial(tmp_path: Path) -> None:
     root = _root(tmp_path)
     automation = _automation(root, harness="claude")
     _runtime(root, automation, status="done", finished_at="2026-07-14T00:00:00Z")
@@ -333,7 +334,7 @@ def test_automation_stale_health_and_placement_denial(tmp_path: Path) -> None:
     )
     resource = result["resources"][0]
 
-    assert resource["health"]["status"] == "stale"
+    assert resource["health"]["status"] == "degraded"
     placement = next(
         row
         for row in resource["qualification_findings"]
@@ -405,3 +406,143 @@ def test_get_rejects_unknown_exact_identity(tmp_path: Path) -> None:
         assert str(exc) == "operator resource not found: program_definition:missing"
     else:
         raise AssertionError("expected exact get to fail")
+
+
+def test_static_programs_are_unobserved_and_diagnostics_have_repair_metadata(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    definition = _program_definition(root, "repairable")
+    _yaml(
+        definition / "components.yml",
+        {"components": {"skills": [{"id": "missing", "path": "missing.md"}]}},
+    )
+
+    result = query_operator_resources(root, "program")
+    resource = next(
+        row for row in result["resources"] if row["resource_type"] == "definition"
+    )
+    diagnostic = next(
+        row for row in result["diagnostics"] if row["code"] == "dependency_missing"
+    )
+
+    assert resource["health"] == {
+        "status": "unobserved",
+        "source": "no_runtime_observation",
+        "evidence_basis": "no_runtime_observation",
+        "applicable": True,
+        "observed_at": None,
+        "liveness_observed": False,
+        "reason": "This runnable definition has no durable runtime observation.",
+    }
+    assert diagnostic["resource_id"] == resource["id"]
+    assert diagnostic["path"].endswith("missing.md")
+    assert diagnostic["repair_kind"] == "repair_dependency_reference"
+    assert diagnostic["guidance"]
+    schema = json.loads(
+        (
+            Path(__file__).parents[1] / "schemas/operator-resource-query-v1.schema.json"
+        ).read_text()
+    )
+    jsonschema.validate(result, schema)
+
+
+def test_program_component_source_package_optional_dependency_and_standalone_instance(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    source_package = tmp_path / "source-package"
+    _write(source_package / "src/present.py", "present = True\n")
+    definition = _program_definition(root)
+    _yaml(
+        definition / "components.yml",
+        {
+            "components": {
+                "scripts": [
+                    {
+                        "id": "present",
+                        "path": "src/present.py",
+                        "source_package": str(source_package),
+                    },
+                    {"id": "optional", "path": "missing.py", "required": False},
+                ]
+            }
+        },
+    )
+    instance = _program_instance(root, "standalone", definition_id="unused")
+    _yaml(
+        instance / ".agentic-resource.yml",
+        {
+            "kind": "instance-program",
+            "id": "standalone",
+            "standalone": True,
+            "standalone_reason": "domain-owned program",
+        },
+    )
+
+    result = query_operator_resources(root, "program")
+    defined = next(
+        row for row in result["resources"] if row["resource_type"] == "definition"
+    )
+    standalone = next(
+        row for row in result["resources"] if row["id"].endswith(":standalone")
+    )
+
+    assert [item["exists"] for item in defined["components"]] == [True, False]
+    assert not any(row["code"] == "dependency_missing" for row in result["diagnostics"])
+    assert standalone["instance"]["definition_join"] == "standalone_instance"
+    assert standalone["orphan_disposition"] == {
+        "intentional": True,
+        "reason": "domain-owned program",
+    }
+    assert not any(
+        row["resource_id"] == standalone["id"] for row in result["diagnostics"]
+    )
+
+
+def test_tracking_only_automation_can_be_explicitly_intentional_and_disabled(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    _yaml(
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml",
+        {
+            "automations": {
+                "external-watcher": {
+                    "cwd": "work/project",
+                    "status": "PAUSED",
+                    "intentional_orphan": True,
+                    "orphan_reason": "project-owned watcher",
+                }
+            }
+        },
+    )
+
+    result = query_operator_resources(root, "automation")
+    resource = result["resources"][0]
+
+    assert resource["health"]["status"] == "disabled"
+    assert resource["health"]["liveness_observed"] is False
+    assert resource["orphan_disposition"] == {
+        "intentional": True,
+        "reason": "project-owned watcher",
+    }
+    assert resource["qualification_findings"][0]["decision"] == "allowed"
+    assert result["summary"]["warnings"] == 0
+
+
+def test_disabled_automation_definition_does_not_require_runtime_evidence(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    automation = _automation(root)
+    overlay = yaml.safe_load((automation / ".agentic-resource.yml").read_text())
+    overlay["enabled"] = False
+    _yaml(automation / ".agentic-resource.yml", overlay)
+
+    result = query_operator_resources(root, "automation")
+    health = result["resources"][0]["health"]
+
+    assert health["status"] == "disabled"
+    assert health["evidence_basis"] == "automation_definition"
+    assert health["liveness_observed"] is False

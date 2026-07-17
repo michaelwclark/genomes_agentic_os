@@ -17,6 +17,15 @@ filesystem-backed resources across system, domain, and project scopes, joins
 the richer Program and Automation projections, and replaces the snapshot
 atomically.
 
+The snapshot reports exact diagnostic totals (`diagnostics`, `info`,
+`warnings`, `errors`, and `by_diagnostic_code`) and marks `partial` only when a
+warning or error exists. Diagnostics include stable repair metadata so operator
+surfaces can explain the affected resource, path, repair class, and next action.
+Health is intentionally limited to `not_applicable`, `unobserved`, `disabled`,
+`healthy`, `degraded`, and `unhealthy`, with an evidence basis and explicit
+liveness-observed flag; static rules, skills, commands, reports, and workflow
+documents are `not_applicable`, not artificially healthy.
+
 Agentic OS registry authoring refreshes the snapshot after a successful apply.
 Operator surfaces should invalidate and refresh after other governed authoring
 or publishing operations. Manual filesystem edits require an explicit refresh.
