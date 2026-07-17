@@ -9,6 +9,7 @@ from ..self_improvement import (
     approve_self_improvement_proposal,
     format_self_improvement_result,
     list_self_improvement_proposals,
+    list_self_improvement_toggles,
     nightly_apply_self_improvement,
     process_self_improvement_actions,
     promote_self_improvement_proposal,
@@ -16,6 +17,7 @@ from ..self_improvement import (
     reject_self_improvement_proposal,
     run_self_improvement,
     self_improvement_status,
+    set_self_improvement_toggle,
     show_self_improvement_proposal,
 )
 
@@ -74,6 +76,20 @@ def handle_self_improvement_actions(args: argparse.Namespace) -> int:
 
 def handle_self_improvement_reconcile_queue(args: argparse.Namespace) -> int:
     print(format_self_improvement_result(reconcile_self_improvement_queue(args.root, dry_run=not args.apply)))
+    return 0
+
+
+def handle_self_improvement_toggles(args: argparse.Namespace) -> int:
+    print(format_self_improvement_result(list_self_improvement_toggles(args.root)))
+    return 0
+
+
+def handle_self_improvement_toggle(args: argparse.Namespace) -> int:
+    print(
+        format_self_improvement_result(
+            set_self_improvement_toggle(args.root, args.proposal_id, enabled=args.toggle_enabled)
+        )
+    )
     return 0
 
 
@@ -198,3 +214,29 @@ def register(subparsers) -> None:
     self_improvement_nightly_mode.add_argument("--dry-run", action="store_true", help="Preview selection without approving, promoting, or queuing (default behaviour).")
     self_improvement_nightly_mode.add_argument("--apply", action="store_true", help="Approve, promote, and queue eligible proposals.")
     self_improvement_nightly.set_defaults(handler=handle_self_improvement_nightly_apply)
+    self_improvement_toggles = self_improvement_subparsers.add_parser(
+        "toggles",
+        help="List per-improvement feature toggles recorded by the auto-implement lane.",
+    )
+    self_improvement_toggles.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_toggles.set_defaults(handler=handle_self_improvement_toggles)
+    self_improvement_toggle = self_improvement_subparsers.add_parser(
+        "toggle",
+        help="Switch one auto-implemented improvement on or off (off parks its registered artifacts).",
+    )
+    self_improvement_toggle.add_argument("proposal_id")
+    self_improvement_toggle_mode = self_improvement_toggle.add_mutually_exclusive_group(required=True)
+    self_improvement_toggle_mode.add_argument(
+        "--on",
+        dest="toggle_enabled",
+        action="store_true",
+        help="Enable the improvement and restore its parked artifacts.",
+    )
+    self_improvement_toggle_mode.add_argument(
+        "--off",
+        dest="toggle_enabled",
+        action="store_false",
+        help="Disable the improvement and park its registered artifacts.",
+    )
+    self_improvement_toggle.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    self_improvement_toggle.set_defaults(handler=handle_self_improvement_toggle)
