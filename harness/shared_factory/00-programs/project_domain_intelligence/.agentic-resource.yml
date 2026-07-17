@@ -1,0 +1,7 @@
+kind: program
+id: project_domain_intelligence
+display_name: Project Domain Intelligence
+icon: "🧭"
+settings:
+  mode: observe
+  article_writes: false

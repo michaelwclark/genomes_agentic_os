@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: project-domain-refresh --root <project-root> --receipt <receipt.yml>
+
+Writes one observe-only project-domain-refresh/v1 receipt. It never changes an
+article, source file, external system, or scheduler configuration.
+USAGE
+}
+
+root=""
+receipt=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root) root="$2"; shift 2 ;;
+    --receipt) receipt="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[[ -n "$root" && -n "$receipt" ]] || { usage >&2; exit 2; }
+if [[ -d "$root/.git" ]] || git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  revision="$(git -C "$root" rev-parse HEAD 2>/dev/null || printf 'unavailable')"
+  changed_paths="$(git -C "$root" status --porcelain 2>/dev/null | awk '{print $2}' | LC_ALL=C sort)"
+else
+  revision="unavailable"
+  changed_paths=""
+fi
+path_hash="$(printf '%s\n' "$changed_paths" | shasum -a 256 | awk '{print $1}')"
+mkdir -p "$(dirname "$receipt")"
+{
+  echo "api_version: project-domain-refresh/v1"
+  echo "mode: observe"
+  echo "article_writes: false"
+  echo "source_revision: $revision"
+  echo "changed_paths_sha256: $path_hash"
+  echo "status: success"
+  echo "next_action: review stale coverage before any approved article replacement"
+} > "$receipt"

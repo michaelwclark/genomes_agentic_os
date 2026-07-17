@@ -2,14 +2,14 @@ id: readiness_and_context
 version: 1
 owner: development_delivery
 inputs: [tracker_snapshot, development_profile, project_domain_context]
-outputs: [claim_receipt, groom_decision, context_pack, implementation_plan, test_plan]
+outputs: [claim_receipt, groom_decision, domain_context_receipt, context_pack, implementation_plan, test_plan]
 states: [discovered, claimed, groom_check, context_ready, blocked, abandoned, cancelled]
 steps: [verify_tracker, claim_and_readback, validate_profile, stitch_context, gather_optional_data, plan]
-validations: [exclusive_claim, acceptance_criteria, adapter_readiness, evidence_provenance, risk_test_mapping]
+validations: [exclusive_claim, acceptance_criteria, adapter_readiness, domain_context_receipt, evidence_provenance, risk_test_mapping]
 failure_modes:
   provider_unavailable: retry_with_backoff
   duplicate_claim: block_and_release_local_lease
   acceptance_criteria_missing: block_for_grooming
   decision_data_unavailable: block_with_preflight_receipt
 events: [task.claimed, groom_check.passed, groom_check.failed, context.loaded, task.blocked, task.cancelled]
-receipts: [tracker_snapshot, claim_readback, profile_snapshot, context_sources, risk_decision, implementation_plan]
+receipts: [tracker_snapshot, claim_readback, profile_snapshot, domain_context_receipt, context_sources, risk_decision, implementation_plan]

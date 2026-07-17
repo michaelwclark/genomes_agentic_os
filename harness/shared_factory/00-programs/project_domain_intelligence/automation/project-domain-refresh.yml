@@ -1,0 +1,19 @@
+api_version: project-domain-automation/v1
+id: project-domain-refresh
+status: active
+schedule:
+  enabled: false
+  cadence: weekly
+  timezone: UTC
+mode: observe
+execution_target: scripts/project-domain-refresh
+permissions:
+  source_read: true
+  article_write: false
+  external_write: false
+outputs:
+  receipt_api_version: project-domain-refresh/v1
+  deterministic_receipt: true
+failure_policy:
+  on_error: emit_attention_receipt
+  retry: manual

@@ -1,0 +1,13 @@
+project:
+  name: "Example Project"
+  repo_root: "."
+analysis:
+  output_dir: "docs/domains"
+  evidence_dir: "docs/domain-analysis/evidence"
+  runs_dir: "docs/domain-analysis/runs"
+  lanes: "backend,frontend,platform,risk"
+  write_mode: "propose"
+automation:
+  weekly_drift_scan: true
+  monthly_partial_refresh: true
+  quarterly_full_refresh: false
