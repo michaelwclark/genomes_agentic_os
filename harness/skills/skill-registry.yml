@@ -416,3 +416,16 @@ skills:
     purpose: >
       Apply compact OS authoring rules to commands, skills, workflows,
       automations, tools, registries, runtime templates, and worktrees.
+  - id: project-domain-investigate
+    title: Project Domain Investigate
+    source_path: harness/skills/project-domain-investigate
+    installed_path: shared_factory/05-knowledge/skills/project-domain-investigate
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Retrieve bounded, evidence-backed project-domain context and emit the
+      receipt consumed by grooming, planning, coding, review, or upkeep.

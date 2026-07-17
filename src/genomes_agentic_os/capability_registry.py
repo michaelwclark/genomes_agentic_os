@@ -54,6 +54,12 @@ CAPABILITY_COLLECTIONS = {
 def command_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "project-domain-investigate",
+            "command": "/project-domain-investigate",
+            "description": "Retrieve bounded project-domain context and emit the receipt consumed by development work.",
+            "source": "harness/commands/project-domain-investigate.md",
+        },
+        {
             "id": "claude-desktop-bridge",
             "command": "harness/bin/agentic-os-claude-desktop-bridge",
             "description": "Build or audit the optional Claude Desktop custom-skill and instruction package.",
@@ -430,6 +436,12 @@ def command_entries() -> list[dict[str, str]]:
 
 def skill_entries() -> list[dict[str, str]]:
     return [
+        {
+            "id": "project-domain-investigate",
+            "name": "Project Domain Investigate",
+            "description": "Retrieve bounded, evidence-backed project-domain context and emit a development context receipt.",
+            "source": "harness/skills/project-domain-investigate/SKILL.md",
+        },
         {
             "id": "agentic-os-operating-contract",
             "name": "Agentic OS Operating Contract",

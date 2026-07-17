@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: domain-analysis <prompt|drift|validate|config> [git-range]
+USAGE
+}
+
+root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+config="$root/.project-domain-analysis/config.yml"
+[[ -f "$config" ]] || { echo "Missing config: $config" >&2; exit 1; }
+
+value() { awk -F': ' -v key="$1" '$1 ~ "^[[:space:]]*" key "$" {print $2; exit}' "$config"; }
+output_dir="$(value output_dir)"
+runs_dir="$(value runs_dir)"
+case "${1:-help}" in
+  config) echo "$config" ;;
+  validate)
+    test -d "$root/${output_dir:-docs/domains}" && echo "OK ${output_dir:-docs/domains}" || exit 1
+    ;;
+  drift)
+    range="${2:-origin/main...HEAD}"
+    mkdir -p "$root/${runs_dir:-docs/domain-analysis/runs}"
+    out="$root/${runs_dir:-docs/domain-analysis/runs}/drift.md"
+    { echo "# Domain Analysis Drift Report"; echo; echo "Range: $range"; echo; git -C "$root" diff --name-only "$range" 2>/dev/null | sed 's#^#- `#; s#$#`#' || true; } > "$out"
+    echo "$out"
+    ;;
+  prompt) echo "Use the project_domain_intelligence program and emit a context receipt." ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

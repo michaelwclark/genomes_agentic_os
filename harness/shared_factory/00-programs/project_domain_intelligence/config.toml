@@ -1,0 +1,5 @@
+mode = "observe"
+
+[refresh]
+article_writes = false
+receipt_format = "project-domain-refresh/v1"

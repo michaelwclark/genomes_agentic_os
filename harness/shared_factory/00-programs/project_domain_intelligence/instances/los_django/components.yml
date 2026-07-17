@@ -1,0 +1,14 @@
+definition_id: project_domain_intelligence
+project: los_app_los_django
+domains_root: domains/
+article_write_mode: observe
+source_precedence:
+  - source
+  - tests
+  - configuration
+  - runtime_observations
+  - articles
+refresh:
+  enabled: false
+  cadence: weekly
+  receipt: .project-domain-analysis/runs/project-domain-refresh.yml

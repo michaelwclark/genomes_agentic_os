@@ -217,3 +217,8 @@ skills:
   description: Build or open the local engineering cockpit for conversations, work,
     reviews, reports, sources, hosts, automations, and hygiene.
   source: harness/skills/cockpit/SKILL.md
+- id: project-domain-investigate
+  name: Project Domain Investigate
+  description: Retrieve bounded, evidence-backed project-domain context and emit a
+    receipt for grooming, planning, coding, review, or documentation upkeep.
+  source: harness/skills/project-domain-investigate/SKILL.md

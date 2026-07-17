@@ -163,6 +163,16 @@ MANAGED_RUNTIME_FILES = (
         "harness/shared_factory/05-knowledge/skills/spec-engine/SKILL.md",
         "replace_if_managed_unchanged",
     ),
+    (
+        "harness/commands/project-domain-investigate.md",
+        "harness/shared_factory/05-knowledge/commands/project-domain-investigate.md",
+        "replace_if_managed_unchanged",
+    ),
+    (
+        "harness/skills/project-domain-investigate/SKILL.md",
+        "harness/shared_factory/05-knowledge/skills/project-domain-investigate/SKILL.md",
+        "replace_if_managed_unchanged",
+    ),
 )
 
 PROJECT_STATUSES = (

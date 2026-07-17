@@ -1,0 +1,7 @@
+kind: instance-program
+id: project_domain_intelligence
+definition_id: project_domain_intelligence
+display_name: LOS Django Project Domain Intelligence
+settings:
+  mode: observe
+  article_writes: false
