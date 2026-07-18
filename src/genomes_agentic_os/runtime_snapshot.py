@@ -57,6 +57,9 @@ WORKER_FIELDS = (
     "created_at",
     "updated_at",
 )
+REQUIRED_FABRIC_TABLES = frozenset(
+    {"run_queue", "execution_queues", "worker_pools", "execution_workers"}
+)
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -139,33 +142,18 @@ def _fabric_backend_snapshot(
     task_limit: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, Any], str]:
     admission = _admission_metrics(root)
-    empty_metrics = {
-        "queue_count": 0,
-        "worker_pool_count": 0,
-        "worker_count": 0,
-        "live_worker_count": 0,
-        "unhealthy_worker_count": 0,
-        "queues": [],
-        "worker_pools": [],
-        **admission,
-    }
     db_path = state_db.default_db_path(root)
     if not db_path.is_file():
-        return [], [], empty_metrics, {
-            "total_records": 0,
-            "matching_tasks": 0,
-            "status_counts": {},
-            "oldest_wait_seconds": 0.0,
-            "stale_queued": 0,
-            "expired_running_leases": 0,
-            "failed_last_hour": 0,
-        }, "sqlite_read_transaction"
-    conn = sqlite3.connect(
-        f"file:{quote(str(db_path))}?mode=ro",
-        uri=True,
-        isolation_level=None,
-        timeout=5,
-    )
+        raise RuntimeError(f"Execution Fabric state database is missing: {db_path}")
+    try:
+        conn = sqlite3.connect(
+            f"file:{quote(str(db_path))}?mode=ro",
+            uri=True,
+            isolation_level=None,
+            timeout=5,
+        )
+    except sqlite3.DatabaseError as exc:
+        raise RuntimeError(f"Execution Fabric state database is unreadable: {exc}") from exc
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA query_only = ON")
@@ -174,6 +162,12 @@ def _fabric_backend_snapshot(
             str(row[0])
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
         }
+        missing_tables = sorted(REQUIRED_FABRIC_TABLES - tables)
+        if missing_tables:
+            raise RuntimeError(
+                "Execution Fabric state database is not initialized; missing required tables: "
+                + ", ".join(missing_tables)
+            )
         where: list[str] = []
         parameters: list[Any] = []
         if queue_name is not None:
@@ -192,35 +186,33 @@ def _fabric_backend_snapshot(
             ORDER BY COALESCE(updated_at, created_at) DESC, id DESC{limit_clause}
             """,
             task_parameters,
-        ).fetchall() if "run_queue" in tables else []
+        ).fetchall()
         tasks = [dict(row) for row in task_rows]
         _snapshot_read_hook("fabric_tasks")
 
         queue_map: dict[str, dict[str, Any]] = {}
         status_counts: Counter[str] = Counter()
-        if "run_queue" in tables:
-            for row in conn.execute(
-                "SELECT queue_name, status, COUNT(*) AS count FROM run_queue GROUP BY queue_name, status ORDER BY queue_name, status"
-            ).fetchall():
-                task_queue = str(row["queue_name"] or "unrouted")
-                status = str(row["status"] or "unknown")
-                count = int(row["count"])
-                entry = queue_map.setdefault(task_queue, {"queue_name": task_queue, "statuses": {}, "total": 0})
-                entry["statuses"][status] = count
-                entry["total"] += count
-                status_counts[status] += count
-        if "execution_queues" in tables:
-            for row in conn.execute(
-                "SELECT name, max_concurrency, enabled, metadata_json FROM execution_queues ORDER BY name"
-            ).fetchall():
-                name = str(row["name"])
-                entry = queue_map.setdefault(name, {"queue_name": name, "statuses": {}, "total": 0})
-                metadata = json.loads(row["metadata_json"] or "{}")
-                entry.update(
-                    max_concurrency=int(row["max_concurrency"]),
-                    enabled=bool(row["enabled"]),
-                    max_queued=int(metadata.get("max_queued") or 0),
-                )
+        for row in conn.execute(
+            "SELECT queue_name, status, COUNT(*) AS count FROM run_queue GROUP BY queue_name, status ORDER BY queue_name, status"
+        ).fetchall():
+            task_queue = str(row["queue_name"] or "unrouted")
+            status = str(row["status"] or "unknown")
+            count = int(row["count"])
+            entry = queue_map.setdefault(task_queue, {"queue_name": task_queue, "statuses": {}, "total": 0})
+            entry["statuses"][status] = count
+            entry["total"] += count
+            status_counts[status] += count
+        for row in conn.execute(
+            "SELECT name, max_concurrency, enabled, metadata_json FROM execution_queues ORDER BY name"
+        ).fetchall():
+            name = str(row["name"])
+            entry = queue_map.setdefault(name, {"queue_name": name, "statuses": {}, "total": 0})
+            metadata = json.loads(row["metadata_json"] or "{}")
+            entry.update(
+                max_concurrency=int(row["max_concurrency"]),
+                enabled=bool(row["enabled"]),
+                max_queued=int(metadata.get("max_queued") or 0),
+            )
 
         captured_iso = _iso(captured)
         pools: list[dict[str, Any]] = []
@@ -266,11 +258,7 @@ def _fabric_backend_snapshot(
             "worker_pools": pools,
             **admission,
         }
-        matching_tasks = (
-            int(conn.execute(f"SELECT COUNT(*) FROM run_queue{predicate}", parameters).fetchone()[0])
-            if "run_queue" in tables
-            else 0
-        )
+        matching_tasks = int(conn.execute(f"SELECT COUNT(*) FROM run_queue{predicate}", parameters).fetchone()[0])
         health_row = conn.execute(
             """
             SELECT
@@ -281,7 +269,7 @@ def _fabric_backend_snapshot(
             FROM run_queue
             """,
             (captured_iso, captured_iso, captured_iso, captured_iso),
-        ).fetchone() if "run_queue" in tables else None
+        ).fetchone()
         oldest_wait_seconds = 0.0
         if health_row is not None and health_row["oldest_wait"] is not None:
             captured_julian = conn.execute("SELECT julianday(?)", (captured_iso,)).fetchone()[0]
@@ -296,9 +284,14 @@ def _fabric_backend_snapshot(
             "failed_last_hour": int(health_row["failed_last_hour"] or 0) if health_row is not None else 0,
         }
         return tasks, workers, metrics, stats, "sqlite_read_transaction"
+    except sqlite3.DatabaseError as exc:
+        raise RuntimeError(f"Execution Fabric state database is unreadable: {exc}") from exc
     finally:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
+        try:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+        except sqlite3.DatabaseError:
+            pass
         conn.close()
 
 

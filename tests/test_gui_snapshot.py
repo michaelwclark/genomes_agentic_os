@@ -11,6 +11,7 @@ import yaml
 from genomes_agentic_os.gui_snapshot import SCHEMA_VERSION, build_gui_snapshot, build_transcript_snapshot
 from genomes_agentic_os.runtime_backend import apply_queue_mode
 from genomes_agentic_os.runtime_ops import append_run_queue_item, runtime_init
+from genomes_agentic_os.state import db
 
 
 NOW = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
@@ -313,6 +314,25 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["captured_at"]
     assert snapshot["runtime"]["max_interactive_running"] == 1
     assert snapshot["runtime"]["workers"] == []
+
+
+def test_command_center_marks_selected_fabric_unavailable_when_state_database_is_missing(tmp_path: Path) -> None:
+    fixture = make_gui_fixture(tmp_path)
+    runtime_init(fixture["root"])
+    apply_queue_mode(fixture["root"], "execution_fabric", dry_run=False)
+    db.default_db_path(fixture["root"]).unlink()
+
+    snapshot = build_gui_snapshot(
+        fixture["root"],
+        codex_home=fixture["codex_home"],
+        claude_home=fixture["claude_home"],
+        claude_desktop_root=fixture["claude_desktop"],
+        now=NOW,
+    )
+
+    assert snapshot["runtime"]["status"] == "unavailable"
+    assert "state database is missing" in snapshot["runtime"]["reason"]
+    assert any(item["message"] == "Runtime queue health is unavailable." for item in snapshot["diagnostics"])
 
 
 def test_transcripts_return_only_visible_user_and_assistant_text(tmp_path: Path) -> None:

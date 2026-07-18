@@ -104,4 +104,21 @@ describe("GUI-owned session snapshot overlay", () => {
     expect(firstResult.conversations.find((item) => item.id === source.id)?.pinned).toBe(true);
     expect(secondResult.conversations.find((item) => item.id === source.id)?.pinned).toBe(true);
   });
+
+  it("runs one trailing refresh when an invalidated unresolved snapshot rejects", async () => {
+    const state: OperatorState = { schemaVersion: 1, pinnedConversationIds: [], routeOverrides: {}, launchedSessions: {} };
+    let rejectFirst!: (reason: Error) => void;
+    const readState = vi.fn()
+      .mockImplementationOnce(() => new Promise<OperatorState>((_resolve, reject) => { rejectFirst = reject; }))
+      .mockResolvedValue(state);
+    const bridge = new AosBridge(fixtureSnapshot.root, readState, true);
+
+    const beforeInvalidation = bridge.snapshot(true);
+    bridge.invalidate();
+    const afterInvalidation = bridge.snapshot(true);
+    rejectFirst(new Error("stale read failed"));
+
+    await expect(Promise.all([beforeInvalidation, afterInvalidation])).resolves.toHaveLength(2);
+    expect(readState).toHaveBeenCalledTimes(2);
+  });
 });

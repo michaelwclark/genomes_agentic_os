@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import sqlite3
 import threading
 import time
 
@@ -117,6 +118,36 @@ def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_p
     assert "lease_token" not in snapshot["workers"][0]
     assert "QUEUES" in format_runtime_snapshot(snapshot)
     assert "snapshot-codex" in format_runtime_snapshot(snapshot)
+
+
+def test_fabric_snapshot_rejects_missing_state_database(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    db.default_db_path(root).unlink()
+
+    with pytest.raises(RuntimeError, match="state database is missing"):
+        build_runtime_snapshot(root)
+
+
+def test_fabric_snapshot_rejects_corrupt_state_database(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    db.default_db_path(root).write_bytes(b"not a sqlite database")
+
+    with pytest.raises(RuntimeError, match="state database is unreadable"):
+        build_runtime_snapshot(root)
+
+
+def test_fabric_snapshot_rejects_pre_migration_state_database(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    db.default_db_path(root).unlink()
+    conn = sqlite3.connect(db.default_db_path(root))
+    conn.execute("CREATE TABLE legacy_queue (id TEXT PRIMARY KEY)")
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="missing required tables"):
+        build_runtime_snapshot(root)
 
 
 def test_fabric_snapshot_uses_one_sqlite_read_transaction_during_concurrent_write(

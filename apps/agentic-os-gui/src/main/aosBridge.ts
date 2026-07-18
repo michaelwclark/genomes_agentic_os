@@ -149,14 +149,23 @@ export class AosBridge {
       );
       return normalizeSnapshot(parseJson<GuiSnapshot>(stdout, "gui snapshot"), this.root, state);
     })();
-    const pending = load.then(async (snapshot) => {
-      if (generation !== this.snapshotGeneration) {
-        if (this.snapshotInFlight === pending) this.snapshotInFlight = undefined;
-        return this.snapshot(true);
-      }
-      this.snapshotCache = snapshot;
-      return snapshot;
-    });
+    const pending = load.then(
+      async (snapshot) => {
+        if (generation !== this.snapshotGeneration) {
+          if (this.snapshotInFlight === pending) this.snapshotInFlight = undefined;
+          return this.snapshot(true);
+        }
+        this.snapshotCache = snapshot;
+        return snapshot;
+      },
+      async (error: unknown) => {
+        if (generation !== this.snapshotGeneration) {
+          if (this.snapshotInFlight === pending) this.snapshotInFlight = undefined;
+          return this.snapshot(true);
+        }
+        throw error;
+      },
+    );
     this.snapshotInFlight = pending;
     try {
       return await pending;
