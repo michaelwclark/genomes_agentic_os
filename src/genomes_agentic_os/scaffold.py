@@ -183,6 +183,10 @@ MANAGED_RUNTIME_FILES = (
 # not overwrite operator-owned changes.
 MANAGED_RESOURCE_TREES = (
     (
+        "harness/shared_factory/00-programs/execution_fabric",
+        "harness/shared_factory/00-programs/execution_fabric",
+    ),
+    (
         "harness/shared_factory/00-programs/project_domain_intelligence",
         "harness/shared_factory/00-programs/project_domain_intelligence",
     ),
@@ -1244,6 +1248,7 @@ the source of truth by themselves.
 
 | Program | Use When | Source |
 | --- | --- | --- |
+| `execution_fabric` | Design or validate optional named queues, bounded worker pools, and explicit migration from the filesystem queue. Installed inactive by default. | `harness/shared_factory/00-programs/execution_fabric/` |
 | `spec_grooming` | Turn rough ideas into implementation-ready specs while preserving original intent, discovering existing capability, and projecting to filesystem, tracker, and Notion surfaces. | `harness/shared_factory/00-programs/spec_grooming/` |
 
 ## MCP Servers

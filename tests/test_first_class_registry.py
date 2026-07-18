@@ -150,6 +150,23 @@ def test_refresh_fingerprint_ignores_refresh_timestamp(tmp_path: Path) -> None:
     assert not list((root / REGISTRY_PATH).parent.glob(".*.tmp"))
 
 
+def test_refresh_discovers_installed_inactive_execution_fabric(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    payload = refresh_first_class_registry(root)
+    resource = next(
+        item
+        for item in payload["resources"]
+        if item["id"] == "program_definition:execution_fabric"
+    )
+
+    assert resource["kind"] == "program"
+    assert resource["native_id"] == "program_definition:execution_fabric"
+    assert resource["source"] == "harness/shared_factory/00-programs/execution_fabric"
+    assert resource["scope"] == {"domain": None, "project": None}
+
+
 def test_refresh_excludes_templates_artifacts_and_worktrees(tmp_path: Path) -> None:
     root = _root(tmp_path)
     for excluded in ("templates", "artifacts", "worktrees", "logs"):

@@ -16,6 +16,13 @@ from ..resource_actions import (
     schedule_set_enabled,
     schedule_update,
 )
+from ..runtime_backend import (
+    apply_queue_mode,
+    plan_queue_mode,
+    plan_queue_mode_rollback,
+    queue_mode_status,
+    rollback_queue_mode,
+)
 from ..runtime_ops import (
     format_runtime_result,
     heartbeat_list,
@@ -97,6 +104,33 @@ def handle_runtime_run_next(args: argparse.Namespace) -> int:
     result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
     print(format_runtime_result(result))
     return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
+
+
+def handle_queue_mode_status(args: argparse.Namespace) -> int:
+    _print_structured(queue_mode_status(args.root), json_output=args.json)
+    return 0
+
+
+def handle_queue_mode_plan(args: argparse.Namespace) -> int:
+    result = plan_queue_mode(args.root, args.target_mode)
+    _print_structured(result, json_output=args.json)
+    return 0 if result["ready"] else 1
+
+
+def handle_queue_mode_apply(args: argparse.Namespace) -> int:
+    result = apply_queue_mode(args.root, args.target_mode, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("ready", True) else 1
+
+
+def handle_queue_mode_rollback(args: argparse.Namespace) -> int:
+    result = (
+        rollback_queue_mode(args.root, dry_run=False)
+        if args.apply
+        else plan_queue_mode_rollback(args.root) | {"dry_run": True, "applied": False}
+    )
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("ready", True) else 1
 
 
 def handle_run_queue_prune(args: argparse.Namespace) -> int:
@@ -273,6 +307,37 @@ def register(subparsers) -> None:
     runtime_run_next_mode.add_argument("--dry-run", action="store_true", default=True)
     runtime_run_next_mode.add_argument("--apply", action="store_true")
     runtime_run_next_parser.set_defaults(handler=handle_runtime_run_next)
+    queue_mode_parser = runtime_subparsers.add_parser(
+        "queue-mode",
+        help="Read, plan, apply, or roll back the runtime queue backend selector.",
+    )
+    queue_mode_subparsers = queue_mode_parser.add_subparsers(dest="queue_mode_command", required=True)
+    queue_mode_status_parser = queue_mode_subparsers.add_parser("status", help="Read the effective queue mode.")
+    queue_mode_status_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(queue_mode_status_parser)
+    queue_mode_status_parser.set_defaults(handler=handle_queue_mode_status)
+    queue_mode_plan_parser = queue_mode_subparsers.add_parser("plan", help="Preflight a queue-mode switch.")
+    queue_mode_plan_parser.add_argument("target_mode", choices=("filesystem", "execution_fabric"))
+    queue_mode_plan_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(queue_mode_plan_parser)
+    queue_mode_plan_parser.set_defaults(handler=handle_queue_mode_plan)
+    queue_mode_apply_parser = queue_mode_subparsers.add_parser(
+        "apply",
+        help="Plan by default; pass --apply to persist a preflighted queue-mode switch.",
+    )
+    queue_mode_apply_parser.add_argument("target_mode", choices=("filesystem", "execution_fabric"))
+    queue_mode_apply_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(queue_mode_apply_parser)
+    _add_json_arg(queue_mode_apply_parser)
+    queue_mode_apply_parser.set_defaults(handler=handle_queue_mode_apply)
+    queue_mode_rollback_parser = queue_mode_subparsers.add_parser(
+        "rollback",
+        help="Plan by default; pass --apply to restore the previous queue mode.",
+    )
+    queue_mode_rollback_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(queue_mode_rollback_parser)
+    _add_json_arg(queue_mode_rollback_parser)
+    queue_mode_rollback_parser.set_defaults(handler=handle_queue_mode_rollback)
     runtime_prune_parser = runtime_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
     _add_run_queue_prune_args(runtime_prune_parser)
     runtime_prune_parser.set_defaults(handler=handle_run_queue_prune)

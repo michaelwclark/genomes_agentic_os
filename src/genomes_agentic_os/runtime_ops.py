@@ -6,6 +6,7 @@ from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -18,6 +19,12 @@ import yaml
 
 from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
+from .runtime_backend import (
+    EXECUTION_FABRIC_MODE,
+    FILESYSTEM_MODE,
+    effective_queue_mode,
+    queue_backend_mutation_guard,
+)
 from .scaffold import expand_path, install_docs, validate_name
 from .self_improvement import (
     nightly_apply_self_improvement,
@@ -27,6 +34,9 @@ from .self_improvement import (
     self_improvement_queue_health,
 )
 from .thread_closeout import stale_finalize_threads
+from .state import db as state_db
+from .state import execution_fabric
+from .state import queue as state_queue
 from .validate import validate_root
 
 RUNTIME_REGISTRY = "harness/shared_factory/00-control-plane/runtime-registry.yml"
@@ -801,6 +811,89 @@ def _queue(root: Path) -> dict[str, Any]:
     return _normalized_queue(_load_yaml(_runtime_path(root, RUN_QUEUE), DEFAULT_RUN_QUEUE))
 
 
+def _queue_mode(root: Path) -> str:
+    return effective_queue_mode(root)
+
+
+_STATE_QUEUE_CORE_FIELDS = {
+    "id",
+    "kind",
+    "ref",
+    "status",
+    "approval_state",
+    "priority",
+    "idempotency_key",
+    "execution_target",
+    "dry_run",
+    "created_at",
+    "updated_at",
+    "due_at",
+    "started_at",
+    "finished_at",
+    "attempts",
+    "lease_owner",
+    "lease_until",
+    "blocked_reason",
+    "error",
+    "queue_name",
+    "worker_pool",
+    "max_attempts",
+    "dead_letter_queue",
+}
+
+
+def _runtime_item_from_state(item: dict[str, Any]) -> dict[str, Any]:
+    payload = item.get("payload")
+    flattened = dict(payload) if isinstance(payload, dict) else {}
+    flattened.update({key: value for key, value in item.items() if key != "payload"})
+    return flattened
+
+
+def _append_execution_fabric_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str, Any], bool]:
+    db_path = state_db.default_db_path(root)
+    conn = state_db.connect(db_path)
+    try:
+        idempotency_key = item.get("idempotency_key")
+        existing = None
+        if item.get("id"):
+            existing = state_queue.get(conn, str(item["id"]))
+        if existing is None and idempotency_key:
+            row = conn.execute(
+                "SELECT id FROM run_queue WHERE idempotency_key = ?",
+                (str(idempotency_key),),
+            ).fetchone()
+            if row is not None:
+                existing = state_queue.get(conn, str(row["id"]))
+        if existing is not None:
+            return db_path, _runtime_item_from_state(existing), False
+
+        queue_name = str(item.get("queue_name") or "default")
+        worker_pool = str(item.get("worker_pool") or "default")
+        payload = {key: value for key, value in item.items() if key not in _STATE_QUEUE_CORE_FIELDS}
+        written = execution_fabric.enqueue_task(
+            conn,
+            queue_name=queue_name,
+            worker_pool=worker_pool,
+            kind=str(item.get("kind") or "unknown"),
+            id=str(item["id"]) if item.get("id") else None,
+            ref=str(item["ref"]) if item.get("ref") is not None else None,
+            status=str(item.get("status") or "queued"),
+            approval_state=str(item.get("approval_state") or "not_required"),
+            priority=int(item.get("priority") or 0),
+            idempotency_key=str(idempotency_key) if idempotency_key else None,
+            execution_target=str(item["execution_target"]) if item.get("execution_target") else None,
+            dry_run=bool(item.get("dry_run", False)),
+            due_at=str(item["due_at"]) if item.get("due_at") else None,
+            created_at=str(item["created_at"]) if item.get("created_at") else None,
+            max_attempts=int(item.get("max_attempts") or 3),
+            dead_letter_queue=str(item["dead_letter_queue"]) if item.get("dead_letter_queue") else None,
+            payload=payload,
+        )
+        return db_path, _runtime_item_from_state(written), True
+    finally:
+        conn.close()
+
+
 def _items_by_id(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(item.get("id")): item for item in items if isinstance(item, dict) and item.get("id")}
 
@@ -834,11 +927,15 @@ def _append_queue_item_to_queue(queue: dict[str, Any], item: dict[str, Any]) -> 
 
 
 def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str, Any], bool]:
-    path = _runtime_path(root, RUN_QUEUE)
-    queue = _queue(root)
-    written, created = _append_queue_item_to_queue(queue, item)
-    _write_queue(path, queue)
-    return path, written, created
+    mode = _queue_mode(root)
+    with queue_backend_mutation_guard(root, mode):
+        if mode == EXECUTION_FABRIC_MODE:
+            return _append_execution_fabric_item(root, item)
+        path = _runtime_path(root, RUN_QUEUE)
+        queue = _queue(root)
+        written, created = _append_queue_item_to_queue(queue, item)
+        _write_queue(path, queue)
+        return path, written, created
 
 
 def append_run_queue_item(root: str | Path, item: dict[str, Any]) -> dict[str, Any]:
@@ -976,9 +1073,15 @@ def schedule_create(
 
 def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     os_root = expand_path(root)
+    mode = _queue_mode(os_root)
+    with queue_backend_mutation_guard(os_root, mode):
+        return _schedule_run_due_locked(os_root, dry_run=dry_run, mode=mode)
+
+
+def _schedule_run_due_locked(os_root: Path, *, dry_run: bool, mode: str) -> dict[str, Any]:
     registry = _registry(os_root)
     queue_path = _runtime_path(os_root, RUN_QUEUE)
-    queue = _queue(os_root)
+    queue = _queue(os_root) if mode == FILESYSTEM_MODE else deepcopy(DEFAULT_RUN_QUEUE)
     queued = []
     skipped = []
     now = datetime.now(timezone.utc)
@@ -1037,7 +1140,10 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
             "evidence": [{"type": "run_log", "path": str(log_path.relative_to(os_root))}],
             "blocked_reason": gate.get("blocked_reason"),
         }
-        written_item, created = _append_queue_item_to_queue(queue, item)
+        if mode == EXECUTION_FABRIC_MODE:
+            queue_path, written_item, created = _append_execution_fabric_item(os_root, item)
+        else:
+            written_item, created = _append_queue_item_to_queue(queue, item)
         queue_changed = True
         queued.append({**written_item, "created": created})
         if not dry_run:
@@ -1049,7 +1155,7 @@ def schedule_run_due(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
                 now,
             )
             registry_changed = True
-    if queue_changed:
+    if queue_changed and mode == FILESYSTEM_MODE:
         _write_queue(queue_path, queue)
     if registry_changed:
         _write_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), registry)
@@ -1108,6 +1214,8 @@ def runtime_run_latest_by_ref(root: str | Path, ref: str, *, dry_run: bool = Tru
     """
     ref = validate_name(ref, "ref")
     os_root = expand_path(root)
+    if _queue_mode(os_root) == EXECUTION_FABRIC_MODE:
+        return _runtime_run_latest_by_ref_fabric(os_root, ref, dry_run=dry_run)
     queue_path = _runtime_path(os_root, RUN_QUEUE)
     queue = _queue(os_root)
     items = queue.setdefault("items", [])
@@ -1140,12 +1248,79 @@ def runtime_run_latest_by_ref(root: str | Path, ref: str, *, dry_run: bool = Tru
         item["skipped_reason"] = f"superseded by latest queued {ref} item {latest_id}"
         item["updated_at"] = now
     if superseded:
-        queue["run_queue"] = items
-        _write_queue(queue_path, queue)
+        with queue_backend_mutation_guard(os_root, FILESYSTEM_MODE):
+            queue["run_queue"] = items
+            _write_queue(queue_path, queue)
 
     result = runtime_run_next(os_root, dry_run=False, item_id=latest_id)
     result["ref"] = ref
     result["superseded_count"] = len(superseded)
+    return result
+
+
+def _runtime_run_latest_by_ref_fabric(root: Path, ref: str, *, dry_run: bool) -> dict[str, Any]:
+    conn = state_db.connect(state_db.default_db_path(root))
+    try:
+        rows = conn.execute(
+            "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+            (ref,),
+        ).fetchall()
+        candidates = [
+            _runtime_item_from_state(item)
+            for row in rows
+            if (item := state_queue.get(conn, str(row["id"]))) is not None
+        ]
+    finally:
+        conn.close()
+    if not candidates:
+        return {"root": str(root), "status": "idle", "dry_run": dry_run, "ref": ref, "message": "no queued runtime work for ref"}
+    candidates.sort(key=_queue_item_time)
+    latest = candidates[-1]
+    superseded = candidates[:-1]
+    if dry_run:
+        return {
+            "root": str(root),
+            "status": "would-run",
+            "dry_run": True,
+            "ref": ref,
+            "queue_item": latest,
+            "superseded_count": len(superseded),
+            "external_effect": "none",
+        }
+    superseded_count = 0
+    with queue_backend_mutation_guard(root, EXECUTION_FABRIC_MODE):
+        conn = state_db.connect(state_db.default_db_path(root))
+        try:
+            with state_db.transaction(conn):
+                rows = conn.execute(
+                    "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+                    (ref,),
+                ).fetchall()
+                if not rows:
+                    return {
+                        "root": str(root),
+                        "status": "idle",
+                        "dry_run": False,
+                        "ref": ref,
+                        "message": "no queued runtime work for ref",
+                    }
+                latest_id = str(rows[-1]["id"])
+                now_value = _now()
+                for row in rows[:-1]:
+                    cursor = conn.execute(
+                        """
+                        UPDATE run_queue
+                        SET status = 'skipped', finished_at = ?, updated_at = ?
+                        WHERE id = ? AND status = 'queued'
+                        """,
+                        (now_value, now_value, str(row["id"])),
+                    )
+                    superseded_count += cursor.rowcount
+        finally:
+            conn.close()
+    result = runtime_run_next(root, dry_run=False, item_id=latest_id)
+    result["ref"] = ref
+    result["superseded_count"] = superseded_count
     return result
 
 
@@ -1832,6 +2007,14 @@ def _run_quiet_run_script(root: Path, command: str) -> dict[str, Any] | None:
 
 def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
     os_root = expand_path(root)
+    mode = _queue_mode(os_root)
+    if mode == EXECUTION_FABRIC_MODE:
+        return _runtime_run_next_execution_fabric(os_root, dry_run=dry_run, item_id=item_id)
+    return _runtime_run_next_filesystem(os_root, dry_run=dry_run, item_id=item_id)
+
+
+def _runtime_run_next_filesystem(root: Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
+    os_root = root
     registry = _registry(os_root)
     queue_path = _runtime_path(os_root, RUN_QUEUE)
     queue = _queue(os_root)
@@ -1861,11 +2044,12 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
             "external_effect": "none",
         }
         if not dry_run:
-            item["status"] = "blocked"
-            item["blocked_reason"] = blocker
-            item["updated_at"] = _now()
-            queue["run_queue"] = items
-            _write_queue(queue_path, queue)
+            item = _persist_filesystem_item_fields(
+                os_root,
+                queue_path,
+                str(item.get("id")),
+                {"status": "blocked", "blocked_reason": blocker, "updated_at": _now()},
+            )
         return result
 
     run_id = f"{_stamp()}-{_digest(str(item.get('id')), 8)}-dispatch"
@@ -1883,12 +2067,17 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
     started_at = _now()
     relative_log_path = str(log_path.relative_to(os_root))
     timeout_seconds = _dispatch_timeout_seconds(item)
-    item["status"] = "running"
-    item["started_at"] = started_at
-    item["dispatch_log"] = relative_log_path
-    item["updated_at"] = started_at
-    queue["run_queue"] = items
-    _write_queue(queue_path, queue)
+    item = _persist_filesystem_item_fields(
+        os_root,
+        queue_path,
+        str(item.get("id")),
+        {
+            "status": "running",
+            "started_at": started_at,
+            "dispatch_log": relative_log_path,
+            "updated_at": started_at,
+        },
+    )
 
     execution = _run_local_script(os_root, str(item.get("command")), timeout_seconds=timeout_seconds)
     finished_at = _now()
@@ -1909,30 +2098,17 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
         "external_effect": external_effect,
     }
     _write_yaml(log_path, log)
-    # Re-read the queue before the terminal write: the dispatched command may
-    # have appended items to run-queue.yml while running in-process (e.g. the
-    # self-improvement lane queuing an implementation worker). Writing the
-    # stale pre-execution snapshot back would silently drop those appends.
-    queue = _queue(os_root)
-    items = queue.setdefault("items", [])
-    fresh = next((candidate for candidate in items if candidate.get("id") == item.get("id")), None)
-    if fresh is None:
-        items.append(item)
-    else:
-        item = fresh
-    item["status"] = status
-    item["started_at"] = started_at
-    item["finished_at"] = finished_at
-    item["dispatch_log"] = relative_log_path
-    item["updated_at"] = finished_at
-    item["external_effect"] = external_effect
-    item.setdefault("evidence", []).append({"type": "dispatch_log", "path": relative_log_path})
-    if status == "failed":
-        item["error"] = "; ".join(execution["errors"]) or "runtime dispatch failed"
-    else:
-        item.pop("error", None)
-    queue["run_queue"] = items
-    _write_queue(queue_path, queue)
+    item = _finalize_filesystem_dispatch(
+        os_root,
+        queue_path,
+        item,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        relative_log_path=relative_log_path,
+        external_effect=external_effect,
+        errors=execution["errors"],
+    )
     return {
         "root": str(os_root),
         "status": status,
@@ -1941,6 +2117,271 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
         "log": str(log_path),
         "external_effect": external_effect,
     }
+
+
+def _finalize_filesystem_dispatch(
+    os_root: Path,
+    queue_path: Path,
+    item: dict[str, Any],
+    *,
+    status: str,
+    started_at: str,
+    finished_at: str,
+    relative_log_path: str,
+    external_effect: str,
+    errors: list[str],
+) -> dict[str, Any]:
+    # The dispatched command may enqueue more work. Re-read and write while
+    # holding the same mode/mutation lock producers use so those appends cannot
+    # be lost between readback and terminal state persistence.
+    with queue_backend_mutation_guard(os_root, FILESYSTEM_MODE):
+        queue = _queue(os_root)
+        items = queue.setdefault("items", [])
+        fresh = next((candidate for candidate in items if candidate.get("id") == item.get("id")), None)
+        if fresh is None:
+            items.append(item)
+        else:
+            item = fresh
+        item["status"] = status
+        item["started_at"] = started_at
+        item["finished_at"] = finished_at
+        item["dispatch_log"] = relative_log_path
+        item["updated_at"] = finished_at
+        item["external_effect"] = external_effect
+        item.setdefault("evidence", []).append({"type": "dispatch_log", "path": relative_log_path})
+        if status == "failed":
+            item["error"] = "; ".join(errors) or "runtime dispatch failed"
+        else:
+            item.pop("error", None)
+        queue["run_queue"] = items
+        _write_queue(queue_path, queue)
+        return item
+
+
+def _persist_filesystem_item_fields(
+    os_root: Path,
+    queue_path: Path,
+    item_id: str,
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    with queue_backend_mutation_guard(os_root, FILESYSTEM_MODE):
+        queue = _queue(os_root)
+        items = queue.setdefault("items", [])
+        item = next((candidate for candidate in items if str(candidate.get("id")) == item_id), None)
+        if item is None:
+            raise ValueError(f"run queue item disappeared before mutation: {item_id}")
+        item.update(updates)
+        queue["run_queue"] = items
+        _write_queue(queue_path, queue)
+        return item
+
+
+def _runtime_run_next_execution_fabric(
+    os_root: Path,
+    *,
+    dry_run: bool,
+    item_id: str | None,
+) -> dict[str, Any]:
+    preparation = _prepare_execution_fabric_dispatch(os_root, dry_run=dry_run, item_id=item_id)
+    if "result" in preparation:
+        return preparation["result"]
+    item = preparation["item"]
+    worker_id = preparation["worker_id"]
+    worker_token = preparation["worker_token"]
+    lease_token = preparation["lease_token"]
+    timeout_seconds = preparation["timeout_seconds"]
+    log_path = preparation["log_path"]
+    queue_name = str(item.get("queue_name") or "default")
+    worker_pool = str(item.get("worker_pool") or "default")
+
+    started_at = _now()
+    execution = _run_local_script(os_root, str(item.get("command")), timeout_seconds=timeout_seconds)
+    finished_at = _now()
+    status = "done" if execution["supported"] and execution["ok"] else "failed"
+    external_effect = execution.get("external_effect") or (
+        "local script executed" if execution.get("ok") else "local script failed"
+    )
+    relative_log_path = str(log_path.relative_to(os_root))
+    log = {
+        "run_id": preparation["run_id"],
+        "kind": "runtime_dispatch",
+        "queue_backend": EXECUTION_FABRIC_MODE,
+        "queue_item_id": item.get("id"),
+        "queue_name": queue_name,
+        "worker_pool": worker_pool,
+        "worker_id": worker_id,
+        "status": status,
+        "approval_state": item.get("approval_state", "not_required"),
+        "dry_run": False,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "execution_target": item.get("execution_target"),
+        "command": execution["command"],
+        "evidence": execution,
+        "external_effect": external_effect,
+    }
+    _write_yaml(log_path, log)
+    conn = state_db.connect(state_db.default_db_path(os_root))
+    try:
+        completed = execution_fabric.complete_task(
+            conn,
+            str(item["id"]),
+            worker_id=worker_id,
+            worker_token=worker_token,
+            lease_token=lease_token,
+            status=status,
+            error="; ".join(execution["errors"]) or None,
+        )
+        payload = completed.get("payload") if isinstance(completed.get("payload"), dict) else {}
+        payload = dict(payload)
+        payload.update(
+            {
+                "dispatch_log": relative_log_path,
+                "external_effect": external_effect,
+                "evidence": [
+                    *(payload.get("evidence") or []),
+                    {"type": "dispatch_log", "path": relative_log_path},
+                ],
+            }
+        )
+        with state_db.transaction(conn):
+            conn.execute(
+                "UPDATE run_queue SET payload_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(payload, sort_keys=True), finished_at, str(item["id"])),
+            )
+        final_state = state_queue.get(conn, str(item["id"])) or completed
+    finally:
+        conn.close()
+    return {
+        "root": str(os_root),
+        "status": status,
+        "dry_run": False,
+        "queue_item": _runtime_item_from_state(final_state),
+        "log": str(log_path),
+        "queue_backend": EXECUTION_FABRIC_MODE,
+        "external_effect": external_effect,
+    }
+
+
+def _prepare_execution_fabric_dispatch(
+    os_root: Path,
+    *,
+    dry_run: bool,
+    item_id: str | None,
+) -> dict[str, Any]:
+    registry = _registry(os_root)
+    with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
+        conn = state_db.connect(state_db.default_db_path(os_root))
+        try:
+            execution_fabric.recover_expired_leases(conn)
+            if item_id:
+                candidate_state = state_queue.get(conn, item_id)
+            else:
+                now_value = state_db.utc_now_iso()
+                row = conn.execute(
+                    """
+                    SELECT id FROM run_queue
+                    WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
+                    ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
+                    LIMIT 1
+                    """,
+                    (now_value,),
+                ).fetchone()
+                candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
+            if candidate_state is None:
+                return {"result": {"root": str(os_root), "status": "idle", "dry_run": dry_run, "message": "no queued runtime work"}}
+            item = _runtime_item_from_state(candidate_state)
+            if item.get("status") not in {"queued", "approval-needed"}:
+                return {
+                    "result": {
+                        "root": str(os_root),
+                        "status": "already-claimed",
+                        "dry_run": dry_run,
+                        "queue_item": item,
+                        "queue_backend": EXECUTION_FABRIC_MODE,
+                        "external_effect": "none",
+                    }
+                }
+            if item.get("status") == "approval-needed":
+                return {
+                    "result": {
+                        "root": str(os_root),
+                        "status": "approval-needed",
+                        "dry_run": dry_run,
+                        "queue_item": item,
+                        "blocked_reason": "approval is required before dispatch",
+                        "external_effect": "none",
+                    }
+                }
+            blocker = _dispatch_blocker(item, registry)
+            if blocker:
+                if not dry_run:
+                    state_queue.update_status(conn, str(item["id"]), "blocked", blocked_reason=blocker)
+                return {
+                    "result": {
+                        "root": str(os_root),
+                        "status": "blocked",
+                        "dry_run": dry_run,
+                        "queue_item": item,
+                        "blocked_reason": blocker,
+                        "external_effect": "none",
+                    }
+                }
+            run_id = f"{_stamp()}-{_digest(str(item.get('id')), 8)}-dispatch"
+            log_path = _runtime_path(os_root, RUNTIME_SETUP_RUN_DIR) / run_id / "run-log.yml"
+            if dry_run:
+                return {
+                    "result": {
+                        "root": str(os_root),
+                        "status": "would-run",
+                        "dry_run": True,
+                        "queue_item": item,
+                        "log": str(log_path),
+                        "queue_backend": EXECUTION_FABRIC_MODE,
+                        "external_effect": "none",
+                    }
+                }
+            queue_name = str(item.get("queue_name") or "default")
+            worker_pool = str(item.get("worker_pool") or "default")
+            worker_id = f"runtime-{os.uname().nodename}-{os.getpid()}"
+            timeout_seconds = _dispatch_timeout_seconds(item)
+            worker = execution_fabric.register_worker(
+                conn,
+                worker_id,
+                pool_name=worker_pool,
+                capacity=1,
+                lease_seconds=timeout_seconds + 60,
+                metadata={"dispatcher": "agentic-os runtime", "queue": queue_name},
+            )
+            claimed = execution_fabric.claim_next(
+                conn,
+                worker_id=worker_id,
+                worker_token=str(worker["lease_token"]),
+                item_id=str(item["id"]),
+                lease_seconds=timeout_seconds + 60,
+            )
+            if claimed is None:
+                return {
+                    "result": {
+                        "root": str(os_root),
+                        "status": "at-capacity",
+                        "dry_run": False,
+                        "queue_item": item,
+                        "queue_backend": EXECUTION_FABRIC_MODE,
+                        "external_effect": "none; work remains queued",
+                    }
+                }
+            return {
+                "item": _runtime_item_from_state(claimed),
+                "worker_id": worker_id,
+                "worker_token": str(worker["lease_token"]),
+                "lease_token": str(claimed["lease_token"]),
+                "timeout_seconds": timeout_seconds,
+                "run_id": run_id,
+                "log_path": log_path,
+            }
+        finally:
+            conn.close()
 
 
 def integration_list(root: str | Path) -> dict[str, Any]:
@@ -2098,6 +2539,17 @@ def run_queue_prune(
             raise ValueError(f"{name} must be non-negative")
 
     os_root = expand_path(root)
+    if _queue_mode(os_root) == EXECUTION_FABRIC_MODE:
+        with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
+            return _run_queue_prune_execution_fabric(
+                os_root,
+                dry_run=dry_run,
+                active_max_age_hours=active_max_age_hours,
+                terminal_max_age_days=terminal_max_age_days,
+                failed_max_age_days=failed_max_age_days,
+                skipped_max_age_days=skipped_max_age_days,
+                archive=archive,
+            )
     queue_path = _runtime_path(os_root, RUN_QUEUE)
     raw_queue = _load_yaml(queue_path, DEFAULT_RUN_QUEUE)
     queue = _normalized_queue(raw_queue)
@@ -2157,37 +2609,114 @@ def run_queue_prune(
     }
     if dry_run:
         return result
-
-    if archive and pruned:
-        _write_yaml(
-            log_path,
-            {
-                "run_id": run_id,
-                "kind": "run_queue_prune",
-                "status": "pruned",
-                "created_at": _now(),
-                "retention": result["retention"],
-                "counts": result["counts"],
-                "status_counts_before": result["status_counts_before"],
-                "status_counts_after": result["status_counts_after"],
-                "pruned_counts_by_status": result["pruned_counts_by_status"],
-                "pruned_counts_by_reason": result["pruned_counts_by_reason"],
-                "pruned_items": pruned,
-            },
-        )
-    queue["items"] = kept
-    queue["run_queue"] = kept
-    _write_queue(queue_path, queue)
-    removed_backups = []
-    for entry in stale_backups:
-        path = Path(str(entry["path"]))
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            continue
-        removed_backups.append(str(path))
-    result["stale_backup_files"]["removed"] = removed_backups
+    with queue_backend_mutation_guard(os_root, FILESYSTEM_MODE):
+        if archive and pruned:
+            _write_yaml(
+                log_path,
+                {
+                    "run_id": run_id,
+                    "kind": "run_queue_prune",
+                    "status": "pruned",
+                    "created_at": _now(),
+                    "retention": result["retention"],
+                    "counts": result["counts"],
+                    "status_counts_before": result["status_counts_before"],
+                    "status_counts_after": result["status_counts_after"],
+                    "pruned_counts_by_status": result["pruned_counts_by_status"],
+                    "pruned_counts_by_reason": result["pruned_counts_by_reason"],
+                    "pruned_items": pruned,
+                },
+            )
+        queue["items"] = kept
+        queue["run_queue"] = kept
+        _write_queue(queue_path, queue)
+        removed_backups = []
+        for entry in stale_backups:
+            path = Path(str(entry["path"]))
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            removed_backups.append(str(path))
+        result["stale_backup_files"]["removed"] = removed_backups
     return result
+
+
+def _run_queue_prune_execution_fabric(
+    os_root: Path,
+    *,
+    dry_run: bool,
+    active_max_age_hours: int,
+    terminal_max_age_days: int,
+    failed_max_age_days: int,
+    skipped_max_age_days: int,
+    archive: bool,
+) -> dict[str, Any]:
+    db_path = state_db.default_db_path(os_root)
+    conn = state_db.connect(db_path)
+    now = datetime.now(timezone.utc)
+    try:
+        execution_fabric.recover_expired_leases(conn, now=state_db.utc_now_iso())
+        rows = conn.execute("SELECT id FROM run_queue ORDER BY created_at, id").fetchall()
+        items = [
+            _runtime_item_from_state(item)
+            for row in rows
+            if (item := state_queue.get(conn, str(row["id"]))) is not None
+        ]
+        pruned: list[dict[str, Any]] = []
+        reasons: Counter[str] = Counter()
+        for item in items:
+            reason = _run_queue_prune_reason(
+                item,
+                now,
+                active_max_age_hours=active_max_age_hours,
+                terminal_max_age_days=terminal_max_age_days,
+                failed_max_age_days=failed_max_age_days,
+                skipped_max_age_days=skipped_max_age_days,
+            )
+            if reason:
+                copy = deepcopy(item)
+                copy["prune_reason"] = reason
+                pruned.append(copy)
+                reasons[reason] += 1
+        run_id = f"{_stamp()}-{_digest(str(db_path), 8)}-run-queue-prune"
+        log_path = _runtime_path(os_root, RUN_QUEUE_PRUNE_LOG_DIR) / f"{run_id}.yml"
+        result = {
+            "root": str(os_root),
+            "status": "would-prune" if dry_run and pruned else ("pruned" if pruned else "idle"),
+            "dry_run": dry_run,
+            "queue_backend": EXECUTION_FABRIC_MODE,
+            "run_queue": str(db_path),
+            "counts": {"before": len(items), "after": len(items) - len(pruned), "pruned": len(pruned)},
+            "status_counts_before": _queue_status_counts(items),
+            "pruned_counts_by_status": _queue_status_counts(pruned),
+            "pruned_counts_by_reason": dict(reasons),
+            "sample_pruned_ids": [str(item.get("id") or "<unknown>") for item in pruned[:10]],
+            "archive_log": str(log_path) if archive and pruned else None,
+            "external_effect": "none" if dry_run else "transactional execution queue rows pruned",
+        }
+        if dry_run:
+            return result
+        if archive and pruned:
+            _write_yaml(
+                log_path,
+                {
+                    "run_id": run_id,
+                    "kind": "run_queue_prune",
+                    "queue_backend": EXECUTION_FABRIC_MODE,
+                    "status": "pruned",
+                    "created_at": _now(),
+                    "counts": result["counts"],
+                    "pruned_counts_by_status": result["pruned_counts_by_status"],
+                    "pruned_counts_by_reason": result["pruned_counts_by_reason"],
+                    "pruned_items": pruned,
+                },
+            )
+        with state_db.transaction(conn):
+            conn.executemany("DELETE FROM run_queue WHERE id = ?", [(str(item["id"]),) for item in pruned])
+        return result
+    finally:
+        conn.close()
 
 
 def _queue_label(item: dict[str, Any]) -> str:

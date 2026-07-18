@@ -1,0 +1,34 @@
+schema_version: 1
+enabled: false
+admission:
+  global_max_running: 6
+  reserved_interactive_slots: 1
+queues:
+  - id: codex
+    enabled: false
+    worker_pool: codex_workers
+    accepted_task_types:
+      - llm.codex
+    priority: 50
+    concurrency:
+      max_running: 2
+      max_queued: 100
+  - id: claude
+    enabled: false
+    worker_pool: claude_workers
+    accepted_task_types:
+      - llm.claude
+    priority: 50
+    concurrency:
+      max_running: 2
+      max_queued: 100
+  - id: non_llm
+    enabled: false
+    worker_pool: non_llm_workers
+    accepted_task_types:
+      - process
+      - script
+    priority: 40
+    concurrency:
+      max_running: 4
+      max_queued: 500

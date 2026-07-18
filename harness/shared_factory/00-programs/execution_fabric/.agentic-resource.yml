@@ -1,0 +1,9 @@
+kind: program
+id: execution_fabric
+display_name: Execution Fabric
+status: inactive
+icon: "🧵"
+settings:
+  enabled: false
+  runtime:
+    queue_mode: filesystem

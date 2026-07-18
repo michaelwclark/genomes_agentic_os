@@ -32,6 +32,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-doctor.md`](os-doctor.md) | Diagnose installed OS structure and subsystem health. |
 | [`os-end-chat.md`](os-end-chat.md) | Finalize a substantial task with receipts and next action. |
 | [`os-event.md`](os-event.md) | Append, inspect, or replay durable OS events. |
+| [`os-execution-fabric.md`](os-execution-fabric.md) | Inspect or validate the optional named-queue and bounded worker-pool program. |
 | [`os-groom-spec.md`](os-groom-spec.md) | Turn a rough Spec into implementation-ready work. |
 | [`os-gui.md`](os-gui.md) | Open the local Agentic OS Command Center desktop application. |
 | [`os-heartbeat.md`](os-heartbeat.md) | Operate runtime heartbeat definitions and checks. |

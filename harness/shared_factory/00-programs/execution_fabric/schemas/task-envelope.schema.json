@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-os.local/schemas/execution-fabric-task-envelope-v1.json",
+  "title": "Execution Fabric task envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "idempotency_key", "queue", "task_type", "producer", "priority", "submitted_at", "payload_ref", "retry_policy"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 510},
+    "queue": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "task_type": {"type": "string", "minLength": 1},
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["automation", "workflow", "program", "manual_session", "system"]},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+    "submitted_at": {"type": "string", "format": "date-time"},
+    "payload_ref": {"type": "string", "minLength": 1},
+    "approval_ref": {"type": ["string", "null"]},
+    "deadline_at": {"type": ["string", "null"], "format": "date-time"},
+    "retry_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts"],
+      "properties": {
+        "max_attempts": {"type": "integer", "minimum": 1},
+        "backoff_seconds": {"type": "integer", "minimum": 0}
+      }
+    },
+    "labels": {"type": "object", "additionalProperties": {"type": "string"}}
+  }
+}

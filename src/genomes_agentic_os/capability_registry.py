@@ -102,6 +102,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-create-instance-program.md",
         },
         {
+            "id": "execution-fabric",
+            "command": "/execution-fabric",
+            "description": "Inspect, design, or validate the optional named-queue and bounded worker-pool program.",
+            "source": "harness/commands/os-execution-fabric.md",
+        },
+        {
             "id": "orchestrate",
             "command": "/orchestrate",
             "description": "Plan, decompose, delegate, verify, and merge feature work.",
@@ -483,6 +489,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Program Builder",
             "description": "Create or refine OSProgram and InstanceOSProgram context bundles.",
             "source": "harness/skills/program-builder/SKILL.md",
+        },
+        {
+            "id": "execution-fabric",
+            "name": "Execution Fabric",
+            "description": "Inspect, design, and validate optional named queues and bounded worker pools while preserving the filesystem queue default.",
+            "source": "harness/skills/execution-fabric/SKILL.md",
         },
         {
             "id": "status-report",

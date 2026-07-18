@@ -16,3 +16,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [08 - Losmon Replacement Validation (Removed)](08-losmon-replacement-validation.md) | Why the LOSMon-specific validation command was removed and how to assemble the same validation from project, workflow, automation, and run-log surfaces. |
 | [09 - Future Ideas Intake](09-future-ideas-intake.md) | How OS, domain, and customer ideas are captured into durable runtime files. |
 | [10 - Notion Control Plane Bootstrap](10-notion-control-plane-bootstrap.md) | How to plan and apply the guarded Notion control-plane bootstrap manifest. |
+| [18 - Execution Fabric](18-execution-fabric.md) | How the optional named-queue and worker-pool program installs safely, selects one queue writer, and uses transactional leases and admission. |
