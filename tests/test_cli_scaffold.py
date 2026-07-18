@@ -63,14 +63,14 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "ROUTER.md",
         "RULES.md",
         "TOOLS.md",
-        "archive",
+        "domains",
         "harness",
         "personal",
         "work",
     }
 
-    for domain in ("personal", "work", "archive"):
-        domain_root = root / domain
+    for domain in ("personal", "work"):
+        domain_root = root / "domains" / domain
         assert domain_root.is_dir()
         assert (domain_root / "config.toml").is_file()
         assert (domain_root / "ROUTER.md").is_file()
@@ -91,7 +91,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "04-automations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations").is_dir()
-        assert (domain_root / "05-knowledge" / "source-map.md").is_file()
+        assert not (domain_root / "05-knowledge").exists()
         assert (domain_root / "06-runs-and-logs" / "runs").is_dir()
         assert (domain_root / "06-runs-and-logs" / "runs" / "README.md").is_file()
         assert (domain_root / "06-runs-and-logs" / "failures" / "README.md").is_file()
@@ -322,7 +322,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "toolsmith-reviewer" / "SKILL.md").is_file()
-    assert not (root / "domains").exists()
+    assert (root / "domains").is_dir()
     assert not (root / "lenders").exists()
     assert not validate_root(root).errors
 
@@ -883,7 +883,7 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
         "ROUTER.md",
         "RULES.md",
         "TOOLS.md",
-        "archive",
+        "domains",
         "harness",
         "los",
         "personal",

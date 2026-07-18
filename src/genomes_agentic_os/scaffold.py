@@ -30,7 +30,6 @@ from .mcp_catalog import mcp_tools_markdown
 DEFAULT_DOMAINS = (
     "personal",
     "work",
-    "archive",
 )
 
 ROOT_MARKER_FILENAME = ".agentic_root"
@@ -231,11 +230,7 @@ INBOX_FILES = (
     "triage.md",
 )
 
-KNOWLEDGE_FILES = (
-    "source-map.md",
-    "glossary.md",
-    "memory-policy.md",
-)
+KNOWLEDGE_FILES: tuple[str, ...] = ()
 
 METRIC_FILES = (
     "baselines.md",
@@ -249,7 +244,6 @@ DOMAIN_DIRECTORIES = (
     "02-projects",
     "03-workflows",
     "04-automations",
-    "05-knowledge",
     "06-runs-and-logs",
     "06-runs-and-logs/runs",
     "06-runs-and-logs/failures",
@@ -341,7 +335,10 @@ def domain_path(root: str | Path, domain: str) -> Path:
         return shared_factory_path(root)
     os_root = expand_path(root)
     conventional = os_root / "domains" / normalized
-    return conventional if conventional.exists() else os_root / normalized
+    legacy = os_root / normalized
+    if conventional.exists() or ((os_root / "domains").is_dir() and not legacy.exists()):
+        return conventional
+    return legacy
 
 
 def installed_domain_names(root: str | Path) -> list[str]:
@@ -1032,7 +1029,8 @@ After choosing a domain or narrower layer, change to that directory and read its
 - Put execution records in `<domain>/06-runs-and-logs/runs/`.
 - Use `harness/shared_factory` for reusable templates, schemas, and cross-domain operating patterns.
 - Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read `harness/shared_factory/05-knowledge/host-tool-registry.<host>.yml` when it exists.
-- Use `archive` only for inactive or historical material.
+- Close or park inactive work in canonical state; use an owning domain's
+  `08-archive/` only for retained historical material.
 
 ## Standard Lanes
 
@@ -1408,15 +1406,15 @@ See `00-control-plane/approval-rules.md`.
 
 ## Common Workflows
 
-Workflows live under `03-workflows/<lane>/<workflow>/`.
+Workflow definitions live in `lib/workflows/domains/{domain}/`.
 
 ## Active Automations
 
-Automations live under `04-automations/<lane>/<automation>/`.
+Automation definitions live in `lib/automations/domains/{domain}/`; mutable runtime remains under the domain runtime surface.
 
 ## Source Map
 
-See `05-knowledge/source-map.md`.
+Query `lib/registry/objects.json` for domain reference objects.
 
 ## Current Risks
 
@@ -1436,15 +1434,15 @@ Classify the request into one of this domain's operating lanes, then choose the 
 
 | Work Type | Path |
 | --- | --- |
-| Idea spec or rough idea capture | `01-inbox/<idea-slug>.md` |
+| Idea or rough request | Jira/Linear intake plus `agentic-os work upsert` |
 | Raw capture | `01-inbox/raw-ideas.md` |
 | Triage notes | `01-inbox/triage.md` |
 | Domain context | `CONTEXT.md` |
 | Domain references | `REFERENCES.md` |
-| Active project | `02-projects/<project>/` |
-| Workflow spec | `03-workflows/<lane>/<workflow>/workflow.md` |
-| Automation spec | `04-automations/<lane>/<automation>/automation.md` |
-| Knowledge | `05-knowledge/` |
+| Active project | `domains/{domain}/projects/<project>/` |
+| Workflow definition | `lib/workflows/domains/{domain}/<workflow>/` |
+| Automation definition | `lib/automations/domains/{domain}/<automation>/` |
+| Reference | `lib/references/domains/{domain}/<reference>/` |
 | Run log | `06-runs-and-logs/runs/<run-id>/run-log.md` |
 | Failure record | `06-runs-and-logs/failures/` |
 | Metrics | `07-metrics/` |
@@ -1453,13 +1451,13 @@ Classify the request into one of this domain's operating lanes, then choose the 
 ## Routing Rules
 
 - Read `AGENTS.md`, then `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`.
-- If the prompt says `add an idea`, `capture an idea`, `idea for`, `rough idea`, or similar, write the idea to `01-inbox/` first. Do not route it directly to `02-projects`, `03-workflows`, `04-automations`, Jira, or a code repository unless the user explicitly asks for that escalation.
+- If the prompt says `add an idea`, `capture an idea`, `idea for`, or similar, use the configured Jira/Linear intake and reconcile a queued work row; do not create a stateful filesystem spec.
 - Treat ideas as pre-routing inputs. A systems idea is different from a code feature, Jira implementation task, or active project.
 - If a project, workflow, automation, or run-log directory narrows the route, change there and repeat the local context-file load before acting.
-- Read `00-control-plane/routing-rules.md` before creating a new workflow or automation.
+- Read `lib/registry/objects.json` before creating or selecting a workflow or automation.
 - Read `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `REFERENCES.md` before doing domain-specific work.
-- Use `03-workflows` when judgment, context assembly, or approval gates are central.
-- Use `04-automations` when a trigger can safely run a repeatable action with declared permissions.
+- Use `agentic-os library create workflow` when judgment, context assembly, or approval gates are central.
+- Use `agentic-os library create automation` when a trigger can safely run a repeatable action with declared permissions.
 - Use `shared_factory` when a pattern should be reused by multiple domains.
 
 ## Context Loading
@@ -1467,8 +1465,8 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Need | Load | Skip By Default |
 | --- | --- | --- |
 | Understand the room | `CONTEXT.md`, `domain.yml` | Other domains |
-| Find source truth | `REFERENCES.md`, `05-knowledge/source-map.md` | Full private docs unless needed |
-| Resume active work | `00-control-plane/active-work.md`, matching project status | Unrelated project folders |
+| Find source truth | matching reference object from `lib/registry/objects.json` | Full private docs unless needed |
+| Resume active work | `active-now.json`, then `agentic-os work show` | Unrelated project folders |
 | Run a workflow | Matching workflow `quick-reference.md`, `context-pack.md`, `runbook.md` | Automation logs |
 | Review an automation | Matching automation spec, permissions, tests, logs | Workflow internals outside the linked process |
 
@@ -1493,27 +1491,25 @@ This file teaches agents how work inside `{domain}` should be understood before 
 ## Inputs
 
 - Raw requests, notes, tickets, messages, or ideas.
-- Existing project state under `02-projects/`.
-- Workflow and automation specs under `03-workflows/` and `04-automations/`.
-- Source systems listed in `REFERENCES.md` and `05-knowledge/source-map.md`.
+- Existing project state under `domains/{domain}/projects/`.
+- Workflow and automation definitions selected from `lib/registry/objects.json`.
+- Source systems listed in `REFERENCES.md` and registered reference objects.
 
 ## Process
 
 1. Read `ROUTER.md`, this file, `RULES.md`, `TOOLS.md`, and the matching row in `## What To Load`.
-2. Check `00-control-plane/active-work.md` before creating new work.
+2. Check `harness/shared_factory/00-control-plane/active-now.json` before creating new work.
 3. Reuse an existing project, workflow, automation, or run log when one fits.
 4. Read only the references required for the routed task.
 5. Record validation, next action, and durable learning before ending.
-6. When a new idea, workflow opportunity, automation state, project feature, bug fix, or research thread appears, update `00-control-plane/state-index.md` and `MEMORY.md`.
+6. Reconcile new work with `agentic-os work` and reusable definitions with `agentic-os library`.
 
 ## Output Folders
 
 - `00-control-plane/` - routing, approvals, active work, and decisions.
 - `01-inbox/` - untriaged capture and routing notes.
-- `02-projects/` - project-specific state, source maps, status, and artifacts.
-- `03-workflows/` - repeatable judgment-heavy processes.
-- `04-automations/` - triggerable processes with declared permissions and logs.
-- `05-knowledge/` - source maps, glossary, memory policy, and reference material.
+- `projects/` - conventional alias for project packets, source maps, status, and artifacts.
+- `03-workflows/`, `04-automations/`, `05-knowledge/` - legacy compatibility/runtime paths; reusable definitions live in `lib`.
 - `06-runs-and-logs/` - execution records, failures, and activity history.
 - `07-metrics/` - baselines and scorecards.
 - `08-archive/` - inactive or historical material.
@@ -1524,9 +1520,9 @@ This file teaches agents how work inside `{domain}` should be understood before 
 | --- | --- | --- | --- | --- |
 | Raw capture | `01-inbox/raw-ideas.md` | `REFERENCES.md` | workflow internals | `01-inbox/raw-ideas.md` |
 | Route work | `ROUTER.md`, `00-control-plane/routing-rules.md` | `00-control-plane/active-work.md` | unrelated domain folders | `01-inbox/triage.md` or target object |
-| Project work | `02-projects/<project>/status.md`, `source-map.md` | linked repo, linked Notion/Jira | unrelated projects | `02-projects/<project>/` |
-| Workflow run | `03-workflows/<lane>/<workflow>/quick-reference.md`, `context-pack.md` | runbook, examples, source maps | automations unless the workflow says so | `06-runs-and-logs/runs/` |
-| Automation review | `04-automations/<lane>/<automation>/automation.md`, `permissions.md` | tests, logs, failure modes | unrelated workflows | `04-automations/<lane>/<automation>/` |
+| Project work | active work row, `projects/<project>/status.md` | linked repo, linked tracker | unrelated projects | stable project packet |
+| Workflow run | selected library workflow entrypoint | runbook, examples, references | unrelated objects | `06-runs-and-logs/runs/` |
+| Automation review | selected library automation entrypoint | runtime receipts and failure evidence | unrelated objects | owning runtime path |
 
 ## Tools And Skills
 
@@ -2053,6 +2049,7 @@ def ensure_root_files(
 ) -> None:
     domains_list = tuple(domains) if domains else DEFAULT_DOMAINS
     ensure_dir(root, result)
+    ensure_dir(root / "domains", result)
     write_root_marker(root, result, projects_source)
     ensure_dir(harness_path(root), result)
     ensure_visible_capability_surface(root, result)
@@ -2087,6 +2084,12 @@ def create_domain_structure(
     domain = validate_name(domain, "domain")
     domain_root = domain_path(os_root, domain)
     ensure_dir(domain_root, result)
+    conventional_parent = os_root / "domains"
+    if domain_root.parent == conventional_parent:
+        compatibility_alias = os_root / domain
+        if not compatibility_alias.exists() and not compatibility_alias.is_symlink():
+            compatibility_alias.symlink_to(Path("domains") / domain, target_is_directory=True)
+            result.created.append(compatibility_alias)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
     router = domain_router(domain)
     write_file_once(domain_root / "ROUTER.md", router, result)
@@ -2129,9 +2132,6 @@ def create_domain_structure(
         ensure_dir(domain_root / "04-automations" / lane, result)
         write_file_once(domain_root / "03-workflows" / lane / "README.md", workflow_lane_readme(domain, lane), result)
         write_file_once(domain_root / "04-automations" / lane / "README.md", automation_lane_readme(domain, lane), result)
-
-    for filename in KNOWLEDGE_FILES:
-        write_file_once(domain_root / "05-knowledge" / filename, knowledge_file_content(domain, filename), result)
 
     write_file_once(
         domain_root / "06-runs-and-logs" / "activity-log.md",
@@ -3211,7 +3211,10 @@ def ensure_project_operating_surface(
         project_root / "CONTEXT.md",
         project_context(domain, project, remotes=remotes),
         result,
-        replace_markers=("Describe the local room, source systems, routing hints",),
+        replace_markers=(
+            "Describe the local room, source systems, and routing hints",
+            "Describe the local room, source systems, routing hints",
+        ),
     )
     write_project_file(
         project_root / "RULES.md",
@@ -3465,7 +3468,10 @@ def link_project_remote(
         project_root / "CONTEXT.md",
         project_context(domain, project, remotes=all_remotes),
         result,
-        replace_markers=("Describe the local room, source systems, routing hints",),
+        replace_markers=(
+            "Describe the local room, source systems, and routing hints",
+            "Describe the local room, source systems, routing hints",
+        ),
     )
     return result
 
