@@ -72,17 +72,25 @@ RUNTIME_PARTS = {
     "SPECS",
     "__pycache__",
     "artifacts",
+    "archive",
     "backups",
+    "blockers",
+    "build",
     "cache",
+    "coverage",
     "logs",
     "node_modules",
     "output",
     "outputs",
+    "raw",
     "receipts",
+    "reports",
     "run-logs",
     "runs",
     "state",
     "tenant_config_snapshots",
+    "temp",
+    "tmp",
     "worker-runs",
     "worktrees",
 }
@@ -1130,7 +1138,10 @@ def _definition_ignore(directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
         path = Path(directory) / name
-        if _is_runtime_directory_name(name) or _is_secret_name(name):
+        backup_file = bool(
+            re.search(r"(?:\.bak(?:[-.]|$)|\.backup(?:[-.]|$)|\.orig$|\.rej$)", name)
+        )
+        if _is_runtime_directory_name(name) or backup_file or _is_secret_name(name):
             ignored.add(name)
         elif path.is_file() and path.suffix.lower() in IGNORED_FILE_SUFFIXES:
             ignored.add(name)
