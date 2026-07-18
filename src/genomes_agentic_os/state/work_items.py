@@ -473,7 +473,9 @@ def legacy_import_plan(root: str | Path) -> dict[str, Any]:
             for packet in sorted(
                 path
                 for path in lane_root.iterdir()
-                if path.is_dir() and not path.name.startswith(".")
+                if path.is_dir()
+                and not path.name.startswith(".")
+                and not path.name.endswith(".artifacts")
             ):
                 resolved = packet.resolve()
                 if resolved in seen_paths:
