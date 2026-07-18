@@ -66,7 +66,10 @@ REGISTRY_SOURCES = (
 SKIP_PARTS = {
     ".git",
     ".venv",
+    "domains",
+    "lib",
     "node_modules",
+    "runtime",
     "worktrees",
     "worker-runs",
     "artifacts",
