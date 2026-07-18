@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from .runtime_backend import runtime_queue_items
+
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .config_ops import CONFIG_FILENAME
 from .context_compaction import check_context_contracts
@@ -852,25 +854,9 @@ def _runtime_invocation_ids(root: Path) -> set[str]:
                 if isinstance(rule, dict) and rule.get("id"):
                     ids.add(str(rule["id"]))
 
-    run_queue_path = control / "run-queue.yml"
-    if run_queue_path.is_file():
-        try:
-            with run_queue_path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    stripped = line.lstrip()
-                    if not line[:1].isspace() or not stripped.startswith("ref:"):
-                        continue
-                    raw_value = stripped.removeprefix("ref:").strip()
-                    if not raw_value:
-                        continue
-                    try:
-                        value = yaml.safe_load(raw_value)
-                    except yaml.YAMLError:
-                        continue
-                    if isinstance(value, (str, int, float)):
-                        ids.add(str(value))
-        except OSError:
-            pass
+    for item in runtime_queue_items(root):
+        if item.get("ref") is not None:
+            ids.add(str(item["ref"]))
 
     return ids
 

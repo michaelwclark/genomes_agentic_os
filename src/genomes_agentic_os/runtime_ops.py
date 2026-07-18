@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -12,6 +13,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -23,7 +25,10 @@ from .runtime_backend import (
     EXECUTION_FABRIC_MODE,
     FILESYSTEM_MODE,
     effective_queue_mode,
+    ensure_execution_fabric_catalog,
     queue_backend_mutation_guard,
+    resolve_execution_route,
+    runtime_queue_items,
 )
 from .scaffold import expand_path, install_docs, validate_name
 from .self_improvement import (
@@ -61,12 +66,31 @@ RUNTIME_REQUIRED_TARGETS = {
     "notion_api",
 }
 REQUIRED_INTEGRATIONS = {"orgo", "composio", "agentmail", "granola", "notion"}
-RUN_QUEUE_STATES = ("dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped")
+RUN_QUEUE_STATES = (
+    "dry-run",
+    "queued",
+    "approval-needed",
+    "running",
+    "blocked",
+    "done",
+    "failed",
+    "skipped",
+    "cancelled",
+    "dead-letter",
+)
 APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expired", "blocked")
-TERMINAL_RUN_QUEUE_STATES = {"dry-run", "blocked", "done", "failed", "skipped"}
+TERMINAL_RUN_QUEUE_STATES = {
+    "dry-run",
+    "blocked",
+    "done",
+    "failed",
+    "skipped",
+    "cancelled",
+    "dead-letter",
+}
 ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
-SAFE_DISPATCH_TARGETS = {"script"}
+SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
@@ -514,19 +538,14 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
         {
             "id": "queue_worker_health_report",
             "display_name": "Queue and worker health report",
-            "enabled": False,
+            "enabled": True,
             "cadence": "hourly",
             "timezone": "America/Chicago",
             "execution_target": "script",
             "supervisor_priority": True,
-            "command": "agentic-os runtime health-report --root <root> --apply-notion",
+            "command": "agentic-os runtime health-report --root <root> --apply-remediation --notify",
             "outputs": ["harness/shared_factory/06-runs-and-logs/runtime-health/"],
-            "external_effect": "replace one verified Genome's Notion automation summary page",
-            "notion_update": {
-                "workspace": "Genome's Notion",
-                "mode": "replace_latest",
-                "requires_verified_workspace": True,
-            },
+            "external_effect": "write local health receipts; queue bounded self-heal work and notify only when unhealthy",
             "next_due_at": None,
             "last_queued_at": None,
         },
@@ -853,6 +872,7 @@ def _append_execution_fabric_item(root: Path, item: dict[str, Any]) -> tuple[Pat
     db_path = state_db.default_db_path(root)
     conn = state_db.connect(db_path)
     try:
+        ensure_execution_fabric_catalog(root, conn)
         idempotency_key = item.get("idempotency_key")
         existing = None
         if item.get("id"):
@@ -867,8 +887,9 @@ def _append_execution_fabric_item(root: Path, item: dict[str, Any]) -> tuple[Pat
         if existing is not None:
             return db_path, _runtime_item_from_state(existing), False
 
-        queue_name = str(item.get("queue_name") or "default")
-        worker_pool = str(item.get("worker_pool") or "default")
+        route = resolve_execution_route(root, item)
+        queue_name = route["queue_name"]
+        worker_pool = route["worker_pool"]
         payload = {key: value for key, value in item.items() if key not in _STATE_QUEUE_CORE_FIELDS}
         written = execution_fabric.enqueue_task(
             conn,
@@ -927,6 +948,7 @@ def _append_queue_item_to_queue(queue: dict[str, Any], item: dict[str, Any]) -> 
 
 
 def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str, Any], bool]:
+    item = _prepare_queue_item(root, item)
     mode = _queue_mode(root)
     with queue_backend_mutation_guard(root, mode):
         if mode == EXECUTION_FABRIC_MODE:
@@ -936,6 +958,149 @@ def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str
         written, created = _append_queue_item_to_queue(queue, item)
         _write_queue(path, queue)
         return path, written, created
+
+
+def _prepare_queue_item(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    prepared = _infer_provider_worker(root, deepcopy(item))
+    prepared = _materialize_quiet_run_timeout(prepared)
+    prepared = _materialize_watcher_timeout(root, prepared)
+    return _materialize_provider_worker(root, prepared)
+
+
+def _provider_from_text(text: str) -> str | None:
+    executable = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    lowered = executable.lower()
+    if re.search(r"\bcodex\s+exec\b", lowered) or '"$codex" exec' in lowered:
+        return "codex_harness"
+    if re.search(r"\bagentic-harness-run\b[^\n]*--harness\s+(?:gpt|codex)\b", lowered):
+        return "codex_harness"
+    if re.search(r"\bclaude\s+(?:-p|--print)\b", lowered):
+        return "claude_harness"
+    if re.search(r"\bagentic-harness-run\b[^\n]*--harness\s+claude\b", lowered):
+        return "claude_harness"
+    return None
+
+
+def _command_script_path(root: Path, command: str) -> Path | None:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if "--" in parts and any(Path(token).name == "agentic-os-quiet-run" for token in parts[:2]):
+        parts = parts[parts.index("--") + 1 :]
+    while parts and Path(parts[0]).name in {"bash", "sh", "zsh"}:
+        parts = parts[1:]
+        while parts and parts[0].startswith("-"):
+            parts = parts[1:]
+    if not parts or Path(parts[0]).name in {"python", "python3"}:
+        return None
+    candidate = Path(parts[0]).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _infer_provider_worker(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    """Classify legacy shell-wrapped harness work before named-queue routing."""
+    if str(item.get("execution_target") or "script") not in {"", "script"}:
+        return item
+    command = str(item.get("command") or "")
+    inferred = _provider_from_text(command)
+    if inferred is None and (script_path := _command_script_path(root, command)) is not None:
+        try:
+            inferred = _provider_from_text(script_path.read_text(encoding="utf-8")[:65536])
+        except (OSError, UnicodeDecodeError):
+            inferred = None
+    if inferred:
+        item["execution_target"] = inferred
+        item["provider_inferred_from_command"] = True
+    return item
+
+
+def _materialize_provider_worker(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    """Turn an admitted harness task into a bounded, non-interactive worker command."""
+    target = str(item.get("execution_target") or "")
+    if target not in {"codex_harness", "claude_harness"}:
+        return item
+    item.setdefault("task_type", "llm.codex" if target == "codex_harness" else "llm.claude")
+    item.setdefault("timeout_seconds", 1800)
+    if item.get("command"):
+        return item
+    prompt_payload = {
+        key: value
+        for key, value in item.items()
+        if key not in {"command", "lease_owner", "lease_until", "lease_token"}
+    }
+    prompt = (
+        "Execute this admitted Agentic OS queue task. Start by reading the installed root routing contracts, "
+        "follow the referenced workflow/program/automation, preserve idempotency, and write durable local receipts. "
+        "Do not perform production, credential, customer-visible, or other approval-gated changes without the "
+        "existing approval contract. If the task is underspecified, produce a blocker-grade receipt.\n\n"
+        + json.dumps(prompt_payload, indent=2, sort_keys=True)
+    )
+    if target == "codex_harness":
+        item["command"] = (
+            f"codex exec --cd {shlex.quote(str(root))} --skip-git-repo-check "
+            f"--ephemeral --json {shlex.quote(prompt)}"
+        )
+    else:
+        item["command"] = (
+            f"claude --print --output-format json --no-session-persistence {shlex.quote(prompt)}"
+        )
+    item["worker_materialized"] = True
+    return item
+
+
+def _materialize_quiet_run_timeout(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep a fabric lease alive through an explicitly bounded quiet run."""
+    runtime_policy = item.get("runtime_policy")
+    if item.get("timeout_seconds") or (
+        isinstance(runtime_policy, dict) and runtime_policy.get("timeout_seconds")
+    ):
+        return item
+    try:
+        parts = shlex.split(str(item.get("command") or ""))
+    except ValueError:
+        return item
+    if not parts or Path(parts[0]).name != "agentic-os-quiet-run" or "start" not in parts:
+        return item
+    try:
+        timeout_index = parts.index("--timeout-minutes")
+        timeout_minutes = int(parts[timeout_index + 1])
+    except (ValueError, IndexError):
+        return item
+    if timeout_minutes > 0:
+        item["timeout_seconds"] = timeout_minutes * 60 + 60
+    return item
+
+
+def _materialize_watcher_timeout(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    """Carry legacy detached watcher workers inside the outer fabric lease."""
+    runtime_policy = item.get("runtime_policy")
+    if item.get("timeout_seconds") or (
+        isinstance(runtime_policy, dict) and runtime_policy.get("timeout_seconds")
+    ):
+        return item
+    parsed = _parse_registered_watcher_script(root, str(item.get("command") or ""))
+    if not isinstance(parsed, list):
+        return item
+    config_path = Path(parsed[1]).parent.parent / "watcher.yml"
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        worker_timeout = int(config.get("harness_run_timeout_sec") or 0)
+        grace = int(config.get("harness_run_outer_grace_sec") or 0)
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return item
+    if worker_timeout > 0:
+        item["timeout_seconds"] = worker_timeout + grace + 60
+    return item
 
 
 def append_run_queue_item(root: str | Path, item: dict[str, Any]) -> dict[str, Any]:
@@ -961,7 +1126,35 @@ def runtime_init(root: str | Path) -> dict[str, Any]:
     _seed_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), DEFAULT_RUNTIME_REGISTRY, result)
     _seed_yaml(_runtime_path(os_root, INTEGRATION_REGISTRY), DEFAULT_INTEGRATION_REGISTRY, result)
     _seed_yaml(_runtime_path(os_root, RUN_QUEUE), DEFAULT_RUN_QUEUE, result)
+    result["runtime_defaults"] = reconcile_runtime_defaults(os_root)
     return result
+
+
+def reconcile_runtime_defaults(root: str | Path) -> dict[str, Any]:
+    """Apply required safety schedules to existing registries during upgrades."""
+    os_root = expand_path(root)
+    path = _runtime_path(os_root, RUNTIME_REGISTRY)
+    if not path.is_file():
+        return {"changed": False, "reason": "runtime_registry_missing"}
+    registry = _load_yaml(path, DEFAULT_RUNTIME_REGISTRY)
+    schedules = registry.setdefault("schedules", [])
+    default = deepcopy(_items_by_id(DEFAULT_RUNTIME_REGISTRY["schedules"])["queue_worker_health_report"])
+    current = _items_by_id(schedules).get("queue_worker_health_report")
+    changed = False
+    if current is None:
+        schedules.append(default)
+        changed = True
+    else:
+        for key in ("enabled", "cadence", "timezone", "execution_target", "supervisor_priority", "command", "outputs", "external_effect"):
+            if current.get(key) != default.get(key):
+                current[key] = deepcopy(default.get(key))
+                changed = True
+        if current.pop("notion_update", None) is not None:
+            changed = True
+    if changed:
+        registry["updated_at"] = _now()
+        _write_yaml(path, registry)
+    return {"changed": changed, "runtime_registry": str(path), "schedule": "queue_worker_health_report"}
 
 
 def heartbeat_list(root: str | Path) -> dict[str, Any]:
@@ -1139,7 +1332,12 @@ def _schedule_run_due_locked(os_root: Path, *, dry_run: bool, mode: str) -> dict
             "log": str(log_path.relative_to(os_root)),
             "evidence": [{"type": "run_log", "path": str(log_path.relative_to(os_root))}],
             "blocked_reason": gate.get("blocked_reason"),
+            "priority": 100
+            if schedule.get("supervisor_priority")
+            or (isinstance(schedule.get("supervisor"), dict) and schedule["supervisor"].get("priority_dispatch"))
+            else 0,
         }
+        item = _prepare_queue_item(os_root, item)
         if mode == EXECUTION_FABRIC_MODE:
             queue_path, written_item, created = _append_execution_fabric_item(os_root, item)
         else:
@@ -1256,6 +1454,93 @@ def runtime_run_latest_by_ref(root: str | Path, ref: str, *, dry_run: bool = Tru
     result["ref"] = ref
     result["superseded_count"] = len(superseded)
     return result
+
+
+def runtime_prepare_priority_ref(root: str | Path, ref: str, *, dry_run: bool = True) -> dict[str, Any]:
+    """Supersede duplicate priority work without serially blocking a fabric tick."""
+    ref = validate_name(ref, "ref")
+    os_root = expand_path(root)
+    if _queue_mode(os_root) != EXECUTION_FABRIC_MODE:
+        return runtime_run_latest_by_ref(os_root, ref, dry_run=dry_run)
+
+    conn = state_db.connect(state_db.default_db_path(os_root))
+    try:
+        rows = conn.execute(
+            "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+            (ref,),
+        ).fetchall()
+        candidates = [
+            _runtime_item_from_state(item)
+            for row in rows
+            if (item := state_queue.get(conn, str(row["id"]))) is not None
+        ]
+    finally:
+        conn.close()
+    if not candidates:
+        return {
+            "root": str(os_root),
+            "status": "idle",
+            "dry_run": dry_run,
+            "ref": ref,
+            "message": "no queued runtime work for ref",
+        }
+    latest = candidates[-1]
+    if dry_run:
+        return {
+            "root": str(os_root),
+            "status": "would-prioritize",
+            "dry_run": True,
+            "ref": ref,
+            "queue_item": latest,
+            "superseded_count": len(candidates) - 1,
+            "external_effect": "none",
+        }
+
+    superseded_count = 0
+    with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
+        conn = state_db.connect(state_db.default_db_path(os_root))
+        try:
+            with state_db.transaction(conn):
+                rows = conn.execute(
+                    "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+                    (ref,),
+                ).fetchall()
+                if not rows:
+                    return {
+                        "root": str(os_root),
+                        "status": "idle",
+                        "dry_run": False,
+                        "ref": ref,
+                        "message": "no queued runtime work for ref",
+                    }
+                latest_id = str(rows[-1]["id"])
+                now_value = _now()
+                for row in rows[:-1]:
+                    cursor = conn.execute(
+                        """
+                        UPDATE run_queue
+                        SET status = 'skipped', finished_at = ?, updated_at = ?
+                        WHERE id = ? AND status = 'queued'
+                        """,
+                        (now_value, now_value, str(row["id"])),
+                    )
+                    superseded_count += cursor.rowcount
+                conn.execute(
+                    "UPDATE run_queue SET priority = MAX(priority, 100), updated_at = ? WHERE id = ? AND status = 'queued'",
+                    (now_value, latest_id),
+                )
+            latest_state = state_queue.get(conn, latest_id)
+        finally:
+            conn.close()
+    return {
+        "root": str(os_root),
+        "status": "prioritized",
+        "dry_run": False,
+        "ref": ref,
+        "queue_item": _runtime_item_from_state(latest_state) if latest_state else {"id": latest_id},
+        "superseded_count": superseded_count,
+        "external_effect": "queue priority updated; dispatch remains bounded by the execution fabric",
+    }
 
 
 def _runtime_run_latest_by_ref_fabric(root: Path, ref: str, *, dry_run: bool) -> dict[str, Any]:
@@ -1500,7 +1785,7 @@ def _run_local_script(
     watcher_script_result = _run_registered_watcher_script(root, normalized, timeout_seconds=timeout_seconds)
     if watcher_script_result is not None:
         return watcher_script_result
-    quiet_run_result = _run_quiet_run_script(root, normalized)
+    quiet_run_result = _run_quiet_run_script(root, normalized, timeout_seconds=timeout_seconds)
     if quiet_run_result is not None:
         return quiet_run_result
     _si_morning_persist_forms = {
@@ -1740,6 +2025,8 @@ def _local_script_dispatch_preflight(root: Path, command: str) -> str | None:
         f"agentic-os automation-control run --root {str(root)} --apply",
         f"agentic-os runtime health-report --root {root} --apply-notion",
         f"agentic-os runtime health-report --root {str(root)} --apply-notion",
+        f"agentic-os runtime health-report --root {root} --apply-remediation --notify",
+        f"agentic-os runtime health-report --root {str(root)} --apply-remediation --notify",
     }
     if normalized in supported_exact:
         return None
@@ -1937,6 +2224,39 @@ def _run_registered_watcher_script(
             "errors": [repr(exc)],
             "warnings": [],
         }
+    worker_state_path = Path(parsed[1]).parent.parent / "worker.json"
+    worker_state: dict[str, Any] = {}
+    deadline = time.monotonic() + timeout_seconds
+    while worker_state_path.is_file():
+        try:
+            loaded = json.loads(worker_state_path.read_text(encoding="utf-8"))
+            worker_state = loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            worker_state = {}
+        pid = worker_state.get("pid")
+        if not isinstance(pid, int) or pid <= 1:
+            break
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            pass
+        if time.monotonic() >= deadline:
+            try:
+                os.killpg(pid, 15)
+            except (OSError, ProcessLookupError):
+                pass
+            return {
+                "supported": True,
+                "ok": False,
+                "command": command,
+                "errors": [f"watcher worker did not finish within {timeout_seconds}s"],
+                "warnings": [],
+                "timed_out": True,
+                "worker_state": str(worker_state_path),
+            }
+        time.sleep(0.2)
     return {
         "supported": True,
         "ok": completed.returncode == 0,
@@ -1947,10 +2267,17 @@ def _run_registered_watcher_script(
         "stdout": completed.stdout.strip(),
         "stderr": completed.stderr.strip(),
         "exit_code": completed.returncode,
+        "worker_state": str(worker_state_path) if worker_state else None,
+        "worker_pid": worker_state.get("pid"),
     }
 
 
-def _run_quiet_run_script(root: Path, command: str) -> dict[str, Any] | None:
+def _run_quiet_run_script(
+    root: Path,
+    command: str,
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any] | None:
     try:
         parts = shlex.split(command)
     except ValueError as exc:
@@ -1993,7 +2320,7 @@ def _run_quiet_run_script(root: Path, command: str) -> dict[str, Any] | None:
             "errors": [repr(exc)],
             "warnings": [],
         }
-    return {
+    result: dict[str, Any] = {
         "supported": True,
         "ok": completed.returncode == 0,
         "command": command,
@@ -2003,6 +2330,53 @@ def _run_quiet_run_script(root: Path, command: str) -> dict[str, Any] | None:
         "stderr": completed.stderr.strip(),
         "exit_code": completed.returncode,
     }
+    state_line = next((line for line in completed.stdout.splitlines() if line.startswith("state=")), None)
+    if completed.returncode != 0 or state_line is None:
+        return result
+
+    state_path = Path(state_line.removeprefix("state=")).expanduser()
+    deadline = time.monotonic() + timeout_seconds
+    state: dict[str, Any] = {}
+    terminal = {"success", "failure", "timeout", "error", "stale"}
+    while time.monotonic() < deadline:
+        try:
+            loaded = json.loads(state_path.read_text(encoding="utf-8"))
+            state = loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            state = {}
+        if str(state.get("status") or "") in terminal:
+            break
+        time.sleep(0.2)
+    else:
+        pid = state.get("pid")
+        if isinstance(pid, int) and pid > 1:
+            try:
+                os.killpg(pid, 15)
+            except (OSError, ProcessLookupError):
+                pass
+        result.update(
+            {
+                "ok": False,
+                "timed_out": True,
+                "timeout_seconds": timeout_seconds,
+                "errors": [f"quiet run did not reach a terminal state within {timeout_seconds}s"],
+            }
+        )
+        return result
+
+    quiet_status = str(state.get("status") or "unknown")
+    ok = quiet_status == "success"
+    result.update(
+        {
+            "ok": ok,
+            "quiet_run_state": str(state_path),
+            "quiet_run_status": quiet_status,
+            "quiet_run_exit_code": state.get("exit_code"),
+            "errors": [] if ok else [str(state.get("error") or f"quiet run finished with status {quiet_status}")],
+            "external_effect": "quiet run completed" if ok else "quiet run failed",
+        }
+    )
+    return result
 
 
 def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
@@ -2011,6 +2385,102 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
     if mode == EXECUTION_FABRIC_MODE:
         return _runtime_run_next_execution_fabric(os_root, dry_run=dry_run, item_id=item_id)
     return _runtime_run_next_filesystem(os_root, dry_run=dry_run, item_id=item_id)
+
+
+def runtime_run_batch(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    max_tasks: int | None = None,
+) -> dict[str, Any]:
+    """Dispatch one bounded concurrent batch when the execution fabric is active.
+
+    Filesystem mode intentionally preserves the legacy one-item-per-tick
+    behavior. The execution fabric claims each task before starting any worker
+    thread, so SQLite admission control remains authoritative for global,
+    provider, queue, and worker-pool limits.
+    """
+    os_root = expand_path(root)
+    if _queue_mode(os_root) != EXECUTION_FABRIC_MODE:
+        result = runtime_run_next(os_root, dry_run=dry_run)
+        return {
+            "root": str(os_root),
+            "status": "batch-complete" if result.get("status") not in {"idle", "at-capacity"} else result.get("status"),
+            "dry_run": dry_run,
+            "dispatched_count": int(result.get("status") not in {"idle", "at-capacity"}),
+            "results": [result],
+            "queue_backend": FILESYSTEM_MODE,
+        }
+
+    conn = state_db.connect(state_db.default_db_path(os_root))
+    try:
+        configured_limit = conn.execute(
+            "SELECT max_concurrency FROM execution_limits WHERE scope = 'global' AND key = '*'"
+        ).fetchone()
+        batch_limit = int(configured_limit["max_concurrency"]) if configured_limit is not None else 1
+        if max_tasks is not None:
+            batch_limit = min(batch_limit, max(1, int(max_tasks)))
+        now_value = state_db.utc_now_iso()
+        candidate_ids = [
+            str(row["id"])
+            for row in conn.execute(
+                """
+                SELECT id FROM run_queue
+                WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
+                ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
+                """,
+                (now_value,),
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+    preparations: list[dict[str, Any]] = []
+    immediate_results: list[dict[str, Any]] = []
+    for candidate_id in candidate_ids:
+        if len(preparations) >= batch_limit:
+            break
+        preparation = _prepare_execution_fabric_dispatch(
+            os_root,
+            dry_run=dry_run,
+            item_id=candidate_id,
+        )
+        if "result" in preparation:
+            result = preparation["result"]
+            if result.get("status") not in {"at-capacity", "already-claimed"}:
+                immediate_results.append(result)
+            continue
+        preparations.append(preparation)
+
+    if dry_run:
+        previews = immediate_results[:batch_limit]
+        return {
+            "root": str(os_root),
+            "status": "would-run" if previews else "idle",
+            "dry_run": True,
+            "dispatched_count": len(previews),
+            "results": previews,
+            "queue_backend": EXECUTION_FABRIC_MODE,
+        }
+
+    completed: list[dict[str, Any]] = []
+    if preparations:
+        with ThreadPoolExecutor(max_workers=len(preparations), thread_name_prefix="execution-fabric") as pool:
+            completed = list(
+                pool.map(
+                    lambda preparation: _execute_prepared_execution_fabric_dispatch(os_root, preparation),
+                    preparations,
+                )
+            )
+    results = [*immediate_results, *completed]
+    return {
+        "root": str(os_root),
+        "status": "batch-complete" if results else "idle",
+        "dry_run": False,
+        "dispatched_count": len(completed),
+        "results": results,
+        "queue_backend": EXECUTION_FABRIC_MODE,
+    }
 
 
 def _runtime_run_next_filesystem(root: Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
@@ -2185,6 +2655,13 @@ def _runtime_run_next_execution_fabric(
     preparation = _prepare_execution_fabric_dispatch(os_root, dry_run=dry_run, item_id=item_id)
     if "result" in preparation:
         return preparation["result"]
+    return _execute_prepared_execution_fabric_dispatch(os_root, preparation)
+
+
+def _execute_prepared_execution_fabric_dispatch(
+    os_root: Path,
+    preparation: dict[str, Any],
+) -> dict[str, Any]:
     item = preparation["item"]
     worker_id = preparation["worker_id"]
     worker_token = preparation["worker_token"]
@@ -2250,6 +2727,12 @@ def _runtime_run_next_execution_fabric(
                 (json.dumps(payload, sort_keys=True), finished_at, str(item["id"])),
             )
         final_state = state_queue.get(conn, str(item["id"])) or completed
+        execution_fabric.retire_worker(
+            conn,
+            worker_id,
+            worker_token=worker_token,
+            now=finished_at,
+        )
     finally:
         conn.close()
     return {
@@ -2343,7 +2826,7 @@ def _prepare_execution_fabric_dispatch(
                 }
             queue_name = str(item.get("queue_name") or "default")
             worker_pool = str(item.get("worker_pool") or "default")
-            worker_id = f"runtime-{os.uname().nodename}-{os.getpid()}"
+            worker_id = f"runtime-{os.uname().nodename}-{os.getpid()}-{_digest(str(item['id']), 10)}"
             timeout_seconds = _dispatch_timeout_seconds(item)
             worker = execution_fabric.register_worker(
                 conn,
@@ -2361,6 +2844,11 @@ def _prepare_execution_fabric_dispatch(
                 lease_seconds=timeout_seconds + 60,
             )
             if claimed is None:
+                execution_fabric.retire_worker(
+                    conn,
+                    worker_id,
+                    worker_token=str(worker["lease_token"]),
+                )
                 return {
                     "result": {
                         "root": str(os_root),
@@ -3056,6 +3544,10 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
         findings.extend(_credential_findings(integration_path, integration))
     raw_queue = _load_yaml(queue_path, DEFAULT_RUN_QUEUE)
     queue = _normalized_queue(raw_queue)
+    if _queue_mode(os_root) == EXECUTION_FABRIC_MODE:
+        items = runtime_queue_items(os_root)
+        raw_queue = {**deepcopy(DEFAULT_RUN_QUEUE), "items": items, "run_queue": items}
+        queue = _normalized_queue(raw_queue)
     queue_states = set(queue.get("states") or [])
     missing_states = sorted(set(RUN_QUEUE_STATES) - queue_states)
     for state in missing_states:
@@ -3125,7 +3617,8 @@ def build_runtime_tracking_plan(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
     runtime_registry = _load_yaml(_runtime_path(os_root, RUNTIME_REGISTRY), DEFAULT_RUNTIME_REGISTRY)
     integration_registry = _load_yaml(_runtime_path(os_root, INTEGRATION_REGISTRY), DEFAULT_INTEGRATION_REGISTRY)
-    queue = _queue(os_root)
+    queue_items_all = runtime_queue_items(os_root)
+    queue = {**deepcopy(DEFAULT_RUN_QUEUE), "items": queue_items_all, "run_queue": queue_items_all}
     queue_items = _runtime_tracking_queue_items(queue)
     records = []
     for target in runtime_registry.get("execution_targets") or []:

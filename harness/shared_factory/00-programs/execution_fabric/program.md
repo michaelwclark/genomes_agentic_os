@@ -32,7 +32,10 @@ producers consume the Agentic OS queue contract rather than a vendor API.
 
 ## Activation gate
 
-Before `execution_fabric` can be enabled, the implementation must prove atomic
-claims, idempotent enqueue, bounded global/provider/queue concurrency, leases and
-recovery, retry budgets, dead letters, interactive capacity reservation,
-observability, migration rollback, and producer compatibility.
+Before `execution_fabric` is enabled, run the guarded queue-mode preflight. The
+implementation enforces atomic claims, idempotent enqueue, bounded
+global/provider/queue concurrency, leases and recovery, retry budgets, dead
+letters, authoritative backend reads, health observability, self-heal routing,
+system notifications, concurrent supervisor batches, interactive capacity
+reservation, detached-child lease retention, and rollback blockers for
+unprojected work.

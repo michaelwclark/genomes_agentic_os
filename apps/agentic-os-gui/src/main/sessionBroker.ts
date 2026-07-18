@@ -148,10 +148,18 @@ export class SessionBroker {
     return this.leasesById.size;
   }
 
-  send(request: BrokerTurnRequest, emit: Emit, onCompleted?: () => void | Promise<void>): SendTurnResult {
+  send(
+    request: BrokerTurnRequest,
+    emit: Emit,
+    onCompleted?: () => void | Promise<void>,
+    maxConcurrent = 1,
+  ): SendTurnResult {
     const key = `${request.harness}:${request.conversationId}`;
     if (this.leasesByKey.has(key)) {
       return { accepted: false, message: "A turn is already running for this conversation." };
+    }
+    if (this.activeCount >= Math.max(1, maxConcurrent)) {
+      return { accepted: false, message: `Interactive capacity is full (${this.activeCount}/${Math.max(1, maxConcurrent)}). Wait for the active turn to finish.` };
     }
     const fallbackCommand = fallbackFor(request);
     const { args, executable } = brokerCommand(request);

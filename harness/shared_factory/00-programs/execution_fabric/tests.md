@@ -8,3 +8,19 @@
 - Update preserves operator-modified program configuration.
 - First-class resource refresh discovers the program and its configuration.
 - Full installed-root validation remains green.
+- Codex, Claude, and non-LLM work resolve to distinct bounded queues.
+- One supervisor tick runs a bounded concurrent batch while preserving one
+  interactive slot and all provider/queue/pool limits.
+- Priority schedules supersede stale duplicates, receive queue priority, and
+  join the concurrent batch instead of serially blocking the tick.
+- Legacy shell-wrapped Codex/Claude commands route to the matching provider,
+  while comments alone cannot trigger provider inference.
+- Detached quiet runs and watcher-owned workers hold their fabric lease until
+  terminal state and inherit their declared timeout budget.
+- Authoritative readers ignore stale inactive-backend projections.
+- Queue admission rejects work at `max_queued`.
+- Command Center exposes backend-neutral queue and worker health.
+- An unhealthy report creates one idempotent Codex self-heal task and one
+  deduplicated governed notification; the Codex repair remains directly leased
+  for its entire run.
+- The interim executor delegates only to the canonical supervisor.

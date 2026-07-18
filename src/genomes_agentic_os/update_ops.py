@@ -752,6 +752,11 @@ def update_apply(
     ensure_visible_capability_surface(os_root, result)
     ensure_update_metadata(os_root, result)
     result.extend(install_docs(os_root))
+    from .runtime_ops import reconcile_runtime_defaults
+
+    runtime_defaults = reconcile_runtime_defaults(os_root)
+    if runtime_defaults.get("changed"):
+        result.updated.append(Path(str(runtime_defaults["runtime_registry"])))
     project_repair = repair_project_operating_surfaces(os_root)
     result.extend(project_repair)
     status = {

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+import threading
+import time
 
 import pytest
 import yaml
@@ -13,6 +15,7 @@ from genomes_agentic_os.runtime_backend import (
     plan_queue_mode,
     queue_mode_status,
     rollback_queue_mode,
+    runtime_queue_items,
 )
 from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.state import db
@@ -73,15 +76,20 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
     assert applied["queue_mode"] == "execution_fabric"
     assert applied["mode_source"] == "explicit"
     assert applied["import_receipt"]["processed"] == 1
-    assert applied["metrics"]["queue_count"] == 1
-    assert applied["metrics"]["worker_pool_count"] == 1
+    assert applied["metrics"]["queue_count"] == 3
+    assert applied["metrics"]["worker_pool_count"] == 3
+    assert applied["metrics"]["global_max_running"] == 6
+    assert applied["metrics"]["reserved_interactive_slots"] == 1
+    assert applied["metrics"]["background_max_running"] == 5
 
     conn = db.connect(db.default_db_path(root))
     try:
         assert db.schema_version(conn) == 2
         assert conn.execute("SELECT COUNT(*) FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM execution_queues WHERE name = 'default'").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM worker_pools WHERE name = 'default'").fetchone()[0] == 1
+        assert {row[0] for row in conn.execute("SELECT name FROM execution_queues")} == {"codex", "claude", "non_llm"}
+        assert {row[0] for row in conn.execute("SELECT name FROM worker_pools")} == {"codex_workers", "claude_workers", "non_llm_workers"}
+        assert conn.execute("SELECT queue_name FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == "non_llm"
+        assert conn.execute("SELECT max_concurrency FROM execution_limits WHERE scope = 'global' AND key = '*'").fetchone()[0] == 5
     finally:
         conn.close()
 
@@ -98,8 +106,8 @@ def test_active_lease_blocks_mode_switch_and_rollback(tmp_path: Path) -> None:
     apply_queue_mode(root, "execution_fabric", dry_run=False)
     conn = db.connect(db.default_db_path(root))
     try:
-        worker = fabric.register_worker(conn, "worker-a", pool_name="default")
-        fabric.enqueue_task(conn, queue_name="default", worker_pool="default", kind="manual")
+        worker = fabric.register_worker(conn, "worker-a", pool_name="non_llm_workers")
+        fabric.enqueue_task(conn, queue_name="non_llm", worker_pool="non_llm_workers", kind="manual")
         assert fabric.claim_next(conn, worker_id="worker-a", worker_token=worker["lease_token"]) is not None
     finally:
         conn.close()
@@ -128,7 +136,7 @@ def test_rollback_blocks_unprojected_queued_fabric_work(tmp_path: Path) -> None:
     apply_queue_mode(root, "execution_fabric", dry_run=False)
     conn = db.connect(db.default_db_path(root))
     try:
-        fabric.enqueue_task(conn, queue_name="default", worker_pool="default", kind="manual")
+        fabric.enqueue_task(conn, queue_name="non_llm", worker_pool="non_llm_workers", kind="manual")
     finally:
         conn.close()
 
@@ -463,6 +471,7 @@ def test_runtime_dispatch_claims_and_completes_in_execution_fabric(
     assert result["queue_item"]["status"] == "done"
     assert result["queue_item"]["lease_owner"] is None
     assert result["queue_item"]["dispatch_log"].endswith("run-log.yml")
+    assert queue_mode_status(root)["metrics"]["live_worker_count"] == 0
 
 
 def test_run_latest_does_not_skip_work_claimed_during_snapshot_race(
@@ -522,3 +531,286 @@ def test_run_latest_does_not_skip_work_claimed_during_snapshot_race(
         conn.close()
     assert older is not None and older["status"] == "running"
     assert result["superseded_count"] == 0
+
+
+def test_priority_fabric_work_is_deduplicated_without_serial_dispatch(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    for item_id, created_at in (
+        ("priority-old", "2026-01-01T00:00:00Z"),
+        ("priority-latest", "2026-01-01T00:01:00Z"),
+    ):
+        runtime_ops.append_run_queue_item(
+            root,
+            {
+                "id": item_id,
+                "kind": "schedule",
+                "ref": "priority_job",
+                "status": "queued",
+                "approval_state": "not_required",
+                "execution_target": "script",
+                "command": "true",
+                "created_at": created_at,
+            },
+        )
+
+    result = runtime_ops.runtime_prepare_priority_ref(root, "priority_job", dry_run=False)
+    items = {item["id"]: item for item in runtime_queue_items(root)}
+
+    assert result["status"] == "prioritized"
+    assert result["superseded_count"] == 1
+    assert items["priority-old"]["status"] == "skipped"
+    assert items["priority-latest"]["status"] == "queued"
+    assert items["priority-latest"]["priority"] == 100
+
+
+def test_all_runtime_task_classes_route_to_managed_named_queues(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    for item_id, target, task_type in (
+        ("codex-task", "codex_harness", None),
+        ("claude-task", "claude_harness", None),
+        ("script-task", "script", "script"),
+    ):
+        runtime_ops.append_run_queue_item(
+            root,
+            {
+                "id": item_id,
+                "kind": "manual",
+                "status": "queued",
+                "approval_state": "not_required",
+                "execution_target": target,
+                "task_type": task_type,
+                "command": "true",
+            },
+        )
+
+    routes = {item["id"]: (item["queue_name"], item["worker_pool"]) for item in runtime_queue_items(root)}
+    assert routes["codex-task"] == ("codex", "codex_workers")
+    assert routes["claude-task"] == ("claude", "claude_workers")
+    assert routes["script-task"] == ("non_llm", "non_llm_workers")
+
+
+def test_execution_mode_readers_ignore_stale_filesystem_projection(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    yaml_queue = root / "harness/shared_factory/00-control-plane/run-queue.yml"
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    loaded = yaml.safe_load(yaml_queue.read_text(encoding="utf-8"))
+    loaded["items"] = [{"id": "stale-only", "status": "queued"}]
+    loaded["run_queue"] = loaded["items"]
+    yaml_queue.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+
+    assert "stale-only" not in {item["id"] for item in runtime_queue_items(root)}
+
+
+def test_named_queue_rejects_work_at_configured_depth_limit(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        fabric.configure_queue(conn, "non_llm", max_concurrency=4, metadata={"max_queued": 1})
+        with pytest.raises(fabric.ExecutionFabricError, match="reached max_queued=1"):
+            fabric.enqueue_task(conn, queue_name="non_llm", worker_pool="non_llm_workers", kind="manual")
+    finally:
+        conn.close()
+
+
+def test_harness_queue_items_materialize_bounded_provider_workers(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [
+        {"id": "codex_harness", "status": "active"},
+        {"id": "claude_harness", "status": "active"},
+    ]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    codex = runtime_ops.append_run_queue_item(
+        root,
+        {"id": "provider-codex", "kind": "workflow", "status": "queued", "approval_state": "not_required", "execution_target": "codex_harness"},
+    )["queue_item"]
+    claude = runtime_ops.append_run_queue_item(
+        root,
+        {"id": "provider-claude", "kind": "workflow", "status": "queued", "approval_state": "not_required", "execution_target": "claude_harness"},
+    )["queue_item"]
+
+    assert codex["queue_name"] == "codex"
+    assert codex["worker_materialized"] is True
+    assert codex["command"].startswith("codex exec --cd")
+    assert "--ephemeral --json" in codex["command"]
+    assert claude["queue_name"] == "claude"
+    assert claude["command"].startswith("claude --print --output-format json --no-session-persistence")
+    assert runtime_ops.runtime_run_next(root, dry_run=True, item_id="provider-codex")["status"] == "would-run"
+
+
+def test_runtime_batch_runs_named_pools_concurrently_with_reserved_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [
+        {"id": "script", "status": "active"},
+        {"id": "codex_harness", "status": "active"},
+        {"id": "claude_harness", "status": "active"},
+    ]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    for item_id, execution_target in (
+        ("batch-codex-1", "codex_harness"),
+        ("batch-codex-2", "codex_harness"),
+        ("batch-claude-1", "claude_harness"),
+        ("batch-claude-2", "claude_harness"),
+        ("batch-script-1", "script"),
+        ("batch-script-2", "script"),
+    ):
+        runtime_ops.append_run_queue_item(
+            root,
+            {
+                "id": item_id,
+                "kind": "manual",
+                "status": "queued",
+                "approval_state": "not_required",
+                "execution_target": execution_target,
+                "command": "true",
+            },
+        )
+
+    lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    def _bounded_probe(_root: Path, command: str, **_kwargs):
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.1)
+        with lock:
+            active -= 1
+        return {
+            "supported": True,
+            "ok": True,
+            "command": command,
+            "errors": [],
+            "warnings": [],
+            "external_effect": "concurrency probe",
+        }
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", _bounded_probe)
+    result = runtime_ops.runtime_run_batch(root, dry_run=False)
+
+    assert result["status"] == "batch-complete"
+    assert result["dispatched_count"] == 5
+    assert maximum_active == 5
+    queued = [item for item in runtime_queue_items(root) if item["status"] == "queued"]
+    assert [item["id"] for item in queued] == ["batch-script-2"]
+
+
+def test_quiet_run_timeout_extends_execution_fabric_lease_budget(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    queued = runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "bounded-quiet-run",
+            "kind": "schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": "harness/bin/agentic-os-quiet-run start --timeout-minutes 20 -- /bin/true",
+        },
+    )["queue_item"]
+
+    assert queued["timeout_seconds"] == 1260
+
+
+def test_registered_watcher_timeout_extends_execution_fabric_lease_budget(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    watcher = root / "watchers/notion_work_intake"
+    script = watcher / "scripts/watch.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("print('ok')\n", encoding="utf-8")
+    (watcher / "watcher.yml").write_text(
+        "id: notion_work_intake\nharness_run_timeout_sec: 7200\nharness_run_outer_grace_sec: 30\n",
+        encoding="utf-8",
+    )
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    queued = runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "bounded-watcher",
+            "kind": "schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": f"python3 {script} --once",
+        },
+    )["queue_item"]
+
+    assert queued["timeout_seconds"] == 7290
+
+
+def test_legacy_shell_wrapped_llm_work_routes_to_provider_pool(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    wrapper = root / "automations/run-codex-worker.sh"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(
+        "#!/usr/bin/env bash\nexec codex exec --skip-git-repo-check 'do the work'\n",
+        encoding="utf-8",
+    )
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    queued = runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "legacy-codex-wrapper",
+            "kind": "schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": (
+                "harness/bin/agentic-os-quiet-run start --timeout-minutes 20 -- "
+                f"{wrapper}"
+            ),
+        },
+    )["queue_item"]
+
+    assert queued["execution_target"] == "codex_harness"
+    assert queued["task_type"] == "llm.codex"
+    assert queued["queue_name"] == "codex"
+    assert queued["worker_pool"] == "codex_workers"
+    assert queued["timeout_seconds"] == 1260
+    assert queued["provider_inferred_from_command"] is True
+
+
+def test_provider_inference_ignores_shell_comments(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    wrapper = root / "automations/deterministic.sh"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(
+        "#!/usr/bin/env bash\n# This worker must not invoke codex exec.\nexec /bin/true\n",
+        encoding="utf-8",
+    )
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    queued = runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "deterministic-wrapper",
+            "kind": "schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": str(wrapper),
+        },
+    )["queue_item"]
+
+    assert queued["queue_name"] == "non_llm"
+    assert queued["worker_pool"] == "non_llm_workers"
+    assert queued.get("provider_inferred_from_command") is None

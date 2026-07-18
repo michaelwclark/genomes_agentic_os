@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,7 @@ from .claude_sessions import (
 )
 from .codex_sessions import codex_transcript_result_for_id, collect_codex_conversations
 from .conversation_index import build_navigation, utc_now
+from .runtime_backend import queue_mode_status, runtime_queue_items
 
 
 SCHEMA_VERSION = "agentic-os-gui/v1"
@@ -70,6 +71,101 @@ def _project_conversation(item: dict[str, Any]) -> dict[str, Any]:
     return {field: item[field] for field in CONVERSATION_FIELDS if field in item and item[field] not in (None, "")}
 
 
+def _runtime_snapshot(root: Path) -> dict[str, Any]:
+    try:
+        backend = queue_mode_status(root)
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "queue_mode": "unknown",
+            "queue_depth": 0,
+            "running": 0,
+            "failed": 0,
+            "dead_letter": 0,
+            "active_workers": 0,
+            "unhealthy_workers": 0,
+            "stale_queued": 0,
+            "expired_running_leases": 0,
+            "reserved_interactive_slots": 1,
+            "queues": [],
+            "worker_pools": [],
+            "reason": f"{type(exc).__name__}: {exc}",
+        }
+    metrics = backend["metrics"]
+    statuses: dict[str, int] = {}
+    for queue in metrics.get("queues") or []:
+        for name, count in (queue.get("statuses") or {}).items():
+            statuses[str(name)] = statuses.get(str(name), 0) + int(count)
+    dead_letter = int(statuses.get("dead-letter", 0))
+    failed = int(statuses.get("failed", 0))
+    unhealthy = int(metrics.get("unhealthy_worker_count") or 0)
+    queue_depth = int(statuses.get("queued", 0)) + int(statuses.get("approval-needed", 0))
+    now = datetime.now(timezone.utc)
+
+    def parsed(value: object) -> datetime | None:
+        if not value:
+            return None
+        try:
+            result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return result.replace(tzinfo=timezone.utc) if result.tzinfo is None else result.astimezone(timezone.utc)
+
+    items = runtime_queue_items(root)
+    recent_failed = sum(
+        1
+        for item in items
+        if item.get("status") == "failed"
+        and (finished := parsed(item.get("finished_at") or item.get("updated_at"))) is not None
+        and now - finished <= timedelta(hours=1)
+    )
+    stale_queued = sum(
+        1
+        for item in items
+        if item.get("status") == "queued"
+        and (created := parsed(item.get("due_at") or item.get("created_at"))) is not None
+        and now - created > timedelta(hours=24)
+    )
+    expired_running = sum(
+        1
+        for item in items
+        if item.get("status") == "running"
+        and (lease := parsed(item.get("lease_until"))) is not None
+        and lease < now
+    )
+    saturated = any(
+        int(queue.get("max_queued") or 0)
+        and (
+            int((queue.get("statuses") or {}).get("queued", 0))
+            + int((queue.get("statuses") or {}).get("approval-needed", 0))
+        )
+        >= int(queue["max_queued"]) * 0.8
+        for queue in metrics.get("queues") or []
+    )
+    status = (
+        "critical"
+        if dead_letter or stale_queued or expired_running
+        else "degraded"
+        if recent_failed or unhealthy or saturated
+        else "healthy"
+    )
+    return {
+        "status": status,
+        "queue_mode": backend["queue_mode"],
+        "queue_depth": queue_depth,
+        "running": int(statuses.get("running", 0)),
+        "failed": failed,
+        "dead_letter": dead_letter,
+        "active_workers": int(metrics.get("live_worker_count") or 0),
+        "unhealthy_workers": unhealthy,
+        "stale_queued": stale_queued,
+        "expired_running_leases": expired_running,
+        "reserved_interactive_slots": int(metrics.get("reserved_interactive_slots") or 1),
+        "queues": metrics.get("queues") or [],
+        "worker_pools": metrics.get("worker_pools") or [],
+    }
+
+
 def build_gui_snapshot(
     root: str | Path,
     *,
@@ -88,6 +184,7 @@ def build_gui_snapshot(
     )
     conversations = [_project_conversation(item) for item in [*codex, *claude]]
     conversations.sort(key=lambda item: (bool(item.get("pinned")), str(item.get("updated_at") or "")), reverse=True)
+    runtime = _runtime_snapshot(os_root)
 
     diagnostics: list[dict[str, str]] = []
     resolved_codex_home = Path(codex_home).expanduser() if codex_home else Path.home() / ".codex"
@@ -111,6 +208,8 @@ def build_gui_snapshot(
         diagnostics.append(
             {"severity": "info", "message": "Claude Code transcripts are unavailable.", "source": str(resolved_claude_home)}
         )
+    if runtime["status"] == "unavailable":
+        diagnostics.append({"severity": "warning", "message": "Runtime queue health is unavailable.", "source": runtime.get("reason", "runtime")})
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -124,6 +223,7 @@ def build_gui_snapshot(
             "unrouted": sum(not item.get("domain") or not item.get("project") for item in conversations),
         },
         "navigation": build_navigation(os_root, conversations),
+        "runtime": runtime,
         "conversations": conversations,
         "diagnostics": diagnostics,
     }

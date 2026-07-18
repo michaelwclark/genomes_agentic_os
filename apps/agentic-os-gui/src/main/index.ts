@@ -197,7 +197,8 @@ function registerIpc(store: OperatorStateStore): void {
   });
   ipcMain.handle(IPC.sendTurn, async (_event, raw: unknown) => {
     const requested = validateSendTurn(raw);
-    const conversation = await bridge.conversation(requested.conversationId);
+    const currentSnapshot = await bridge.snapshot();
+    const conversation = currentSnapshot.conversations.find((item) => item.id === requested.conversationId);
     if (!conversation || conversation.harness !== requested.harness) throw new Error("conversation harness mismatch");
     const emit = (streamEvent: StreamEvent) => mainWindow?.webContents.send(IPC.streamEvent, streamEvent);
     if (process.env.AOS_GUI_FIXTURE === "1") return fixtureTurn(conversation.id, emit);
@@ -245,7 +246,7 @@ function registerIpc(store: OperatorStateStore): void {
         bridge.invalidate();
         sendSnapshot(await bridge.snapshot(true));
       }
-    });
+    }, currentSnapshot.runtime.reserved_interactive_slots);
     return result;
   });
   ipcMain.handle(IPC.cancelTurn, (_event, leaseId: unknown) => {

@@ -6,6 +6,19 @@ export const fixtureSnapshot: GuiSnapshot = {
   schema_version: "agentic-os-gui/v1",
   generated_at: FIXTURE_NOW,
   root: "/Users/operator/agentic_os",
+  runtime: {
+    status: "healthy",
+    queue_mode: "execution_fabric",
+    queue_depth: 3,
+    running: 2,
+    failed: 0,
+    dead_letter: 0,
+    active_workers: 2,
+    unhealthy_workers: 0,
+    reserved_interactive_slots: 1,
+    queues: [],
+    worker_pools: [],
+  },
   navigation: {
     domains: [
       {

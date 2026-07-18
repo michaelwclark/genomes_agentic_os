@@ -99,11 +99,29 @@ export interface Diagnostic {
   source?: string;
 }
 
+export interface RuntimeHealth {
+  status: "healthy" | "degraded" | "critical" | "unavailable";
+  queue_mode: string;
+  queue_depth: number;
+  running: number;
+  failed: number;
+  dead_letter: number;
+  active_workers: number;
+  unhealthy_workers: number;
+  stale_queued?: number;
+  expired_running_leases?: number;
+  reserved_interactive_slots: number;
+  queues: Array<Record<string, unknown>>;
+  worker_pools: Array<Record<string, unknown>>;
+  reason?: string;
+}
+
 export interface GuiSnapshot {
   schema_version: string;
   generated_at: string;
   root: string;
   navigation: { domains: DomainScope[] };
+  runtime: RuntimeHealth;
   conversations: ConversationSummary[];
   diagnostics: Diagnostic[];
 }

@@ -18,7 +18,9 @@ from typing import Any
 import yaml
 
 from .automation_ops import check_automation
+from .runtime_backend import effective_queue_mode, runtime_queue_items
 from .scaffold import expand_path, installed_domain_names, shared_factory_path
+from .state import db as state_db
 
 
 API_VERSION = "operator-resource-query/v1"
@@ -989,18 +991,16 @@ def _automation_resources(
     registry = _load_structured(
         root, root / RUNTIME_REGISTRY, diagnostics, source="runtime_registry"
     )
-    queue = _load_structured(
-        root,
-        root / RUN_QUEUE,
-        diagnostics,
-        source="run_queue",
-        max_bytes=MAX_RUNTIME_BYTES,
-    )
     tracking = _load_structured(
         root, root / AUTOMATION_TRACKING, diagnostics, source="automation_tracking"
     )
     schedules = _items(registry.get("schedules"))
-    runs = _items(queue.get("items") or queue.get("run_queue"))
+    runs = runtime_queue_items(root)
+    run_queue_source = (
+        str(state_db.default_db_path(root).relative_to(root))
+        if effective_queue_mode(root) == "execution_fabric"
+        else str(RUN_QUEUE)
+    )
     tracking_rows = (
         tracking.get("automations")
         if isinstance(tracking.get("automations"), dict)
@@ -1124,7 +1124,7 @@ def _automation_resources(
                         "updated_at": item.get("updated_at"),
                         "log": item.get("log") or item.get("dispatch_log"),
                         "error": item.get("error") or item.get("blocked_reason"),
-                        "source_path": str(RUN_QUEUE),
+                        "source_path": run_queue_source,
                     }
                     for item in joined_runs[:20]
                 ],
@@ -1247,7 +1247,7 @@ def _automation_resources(
                         "updated_at": item.get("updated_at"),
                         "log": item.get("log") or item.get("dispatch_log"),
                         "error": item.get("error") or item.get("blocked_reason"),
-                        "source_path": str(RUN_QUEUE),
+                        "source_path": run_queue_source,
                     }
                     for item in joined_runs[:20]
                 ],

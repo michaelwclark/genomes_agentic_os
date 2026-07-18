@@ -18,7 +18,8 @@ from typing import Any, Callable
 import yaml
 
 from .automation_ops import check_automation
-from .runtime_ops import RUNTIME_REGISTRY, RUN_QUEUE, append_run_queue_item
+from .runtime_backend import runtime_queue_items
+from .runtime_ops import RUNTIME_REGISTRY, append_run_queue_item
 from .scaffold import (
     PROGRAM_FILES,
     create_automation,
@@ -398,14 +399,9 @@ def schedule_set_enabled(root: str | Path, schedule_id: str, *, enabled: bool, d
 
 
 def _active_queue_refs(root: Path, schedule_id: str) -> list[dict[str, Any]]:
-    queue_path = root / RUN_QUEUE
-    if not queue_path.is_file():
-        return []
-    queue = _load_yaml(queue_path)
-    items = queue.get("items") if isinstance(queue.get("items"), list) else queue.get("run_queue") or []
     return [
         deepcopy(item)
-        for item in items
+        for item in runtime_queue_items(root)
         if isinstance(item, dict)
         and item.get("kind") == "schedule"
         and item.get("ref") == schedule_id

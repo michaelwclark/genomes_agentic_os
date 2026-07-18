@@ -9,6 +9,8 @@ import jsonschema
 import yaml
 
 from genomes_agentic_os.gui_snapshot import SCHEMA_VERSION, build_gui_snapshot, build_transcript_snapshot
+from genomes_agentic_os.runtime_backend import apply_queue_mode
+from genomes_agentic_os.runtime_ops import append_run_queue_item, runtime_init
 
 
 NOW = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
@@ -262,6 +264,34 @@ def test_snapshot_joins_native_open_sets_and_validates_schema(tmp_path: Path) ->
     assert domain["name"] == "LOS"
     assert domain["projects"][0]["name"] == "LOS Django"
     assert domain["projects"][0]["domain"] == "los"
+
+
+def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path: Path) -> None:
+    fixture = make_gui_fixture(tmp_path)
+    runtime_init(fixture["root"])
+    apply_queue_mode(fixture["root"], "execution_fabric", dry_run=False)
+    append_run_queue_item(
+        fixture["root"],
+        {
+            "id": "gui-codex",
+            "kind": "manual",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "codex_harness",
+        },
+    )
+    snapshot = build_gui_snapshot(
+        fixture["root"],
+        codex_home=fixture["codex_home"],
+        claude_home=fixture["claude_home"],
+        claude_desktop_root=fixture["claude_desktop"],
+        now=NOW,
+    )
+
+    assert snapshot["runtime"]["status"] == "healthy"
+    assert snapshot["runtime"]["queue_mode"] == "execution_fabric"
+    assert snapshot["runtime"]["queue_depth"] == 1
+    assert {queue["queue_name"] for queue in snapshot["runtime"]["queues"]} == {"codex", "claude", "non_llm"}
 
 
 def test_transcripts_return_only_visible_user_and_assistant_text(tmp_path: Path) -> None:

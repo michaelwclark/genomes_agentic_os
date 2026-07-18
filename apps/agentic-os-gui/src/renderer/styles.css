@@ -46,6 +46,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .list-header h1 { margin: 5px 0 0; font-size: 21px; letter-spacing: -.025em; }
 .eyebrow { color: #7f8b9b; font-size: 10px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
 .refresh-time { margin-top: 2px; padding: 4px 7px; border: 1px solid #285547; border-radius: 999px; color: #77dbba; background: #10241e; font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.runtime-health-strip { margin: 0 16px 12px; padding: 10px 11px; border: 1px solid #29483e; border-radius: 10px; background: #101b19; }
+.runtime-health-strip > div { display: flex; align-items: center; gap: 6px; text-transform: capitalize; }
+.runtime-health-strip strong { font-size: 11px; }
+.runtime-health-strip small { margin-left: auto; color: var(--muted); font-size: 8px; text-transform: uppercase; }
+.runtime-health-dot { width: 7px; height: 7px; border-radius: 50%; background: #55d5a9; box-shadow: 0 0 8px #55d5a980; }
+.runtime-health-strip[data-status="degraded"] { border-color: #6b592d; background: #211b10; }
+.runtime-health-strip[data-status="degraded"] .runtime-health-dot { background: #edc568; box-shadow: 0 0 8px #edc56880; }
+.runtime-health-strip[data-status="critical"] { border-color: #713b38; background: #241413; }
+.runtime-health-strip[data-status="critical"] .runtime-health-dot { background: #ff8075; box-shadow: 0 0 8px #ff807580; }
+.runtime-health-strip[data-status="unavailable"] { border-color: #3c4653; background: #151a21; }
+.runtime-health-strip[data-status="unavailable"] .runtime-health-dot { background: #7d8998; box-shadow: none; }
+.runtime-health-strip dl { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin: 9px 0 0; }
+.runtime-health-strip dl div { display: flex; flex-direction: column; padding: 5px 6px; border-radius: 6px; background: #0b1110aa; }
+.runtime-health-strip dt { color: var(--muted); font-size: 7px; text-transform: uppercase; }
+.runtime-health-strip dd { margin: 2px 0 0; font-size: 12px; font-weight: 750; }
 .search-box { display: flex; align-items: center; gap: 8px; margin: 0 16px 14px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: #151a23; color: var(--muted); }
 .search-box input { width: 100%; border: 0; outline: 0; color: #e8edf4; background: transparent; font-size: 12px; }
 .conversation-scroll { flex: 1; overflow: auto; padding: 0 8px 18px; }

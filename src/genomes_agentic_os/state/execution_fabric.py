@@ -251,7 +251,7 @@ def enqueue_task(
     with transaction(conn):
         route = conn.execute(
             """
-            SELECT q.enabled AS queue_enabled, p.enabled AS pool_enabled
+            SELECT q.enabled AS queue_enabled, p.enabled AS pool_enabled, q.metadata_json
             FROM execution_queues q
             JOIN worker_pools p ON p.queue_name = q.name
             WHERE q.name = ? AND p.name = ?
@@ -262,6 +262,15 @@ def enqueue_task(
             raise ExecutionFabricError(f"worker pool {worker_pool!r} does not serve queue {queue_name!r}")
         if not route["queue_enabled"] or not route["pool_enabled"]:
             raise ExecutionFabricError("execution queue or worker pool is disabled")
+        metadata = json.loads(route["metadata_json"] or "{}")
+        max_queued = int(metadata.get("max_queued") or 0)
+        if max_queued:
+            queued = conn.execute(
+                "SELECT COUNT(*) FROM run_queue WHERE queue_name = ? AND status IN ('queued', 'approval-needed')",
+                (queue_name,),
+            ).fetchone()[0]
+            if queued >= max_queued:
+                raise ExecutionFabricError(f"execution queue {queue_name!r} reached max_queued={max_queued}")
         return state_queue.enqueue(
             conn,
             queue_name=queue_name,
@@ -423,6 +432,33 @@ def _release_worker(conn: sqlite3.Connection, worker_id: str | None, now: str) -
         "UPDATE execution_workers SET active_tasks = ?, updated_at = ? WHERE id = ?",
         (active, now, worker_id),
     )
+
+
+def retire_worker(
+    conn: sqlite3.Connection,
+    worker_id: str,
+    *,
+    worker_token: str,
+    now: str | None = None,
+) -> bool:
+    """Mark an ephemeral dispatcher offline once it owns no running tasks."""
+    now_value = now or utc_now_iso()
+    with transaction(conn):
+        running = conn.execute(
+            "SELECT COUNT(*) FROM run_queue WHERE status = 'running' AND lease_owner = ?",
+            (worker_id,),
+        ).fetchone()[0]
+        if running:
+            return False
+        cursor = conn.execute(
+            """
+            UPDATE execution_workers
+            SET status = 'offline', active_tasks = 0, lease_until = ?, updated_at = ?
+            WHERE id = ? AND lease_token = ?
+            """,
+            (now_value, now_value, worker_id, worker_token),
+        )
+    return cursor.rowcount == 1
 
 
 def complete_task(

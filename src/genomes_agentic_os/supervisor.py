@@ -32,9 +32,9 @@ from .runtime_ops import (
     heartbeat_list,
     heartbeat_run,
     runtime_doctor,
+    runtime_prepare_priority_ref,
     runtime_priority_dispatch_refs,
-    runtime_run_latest_by_ref,
-    runtime_run_next,
+    runtime_run_batch,
     schedule_run_due,
 )
 from .source_watch import run_due_watch_sources
@@ -89,7 +89,7 @@ def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     def _priority_run_queue() -> dict[str, Any]:
         dispatched: list[dict[str, Any]] = []
         for ref in runtime_priority_dispatch_refs(root):
-            result = runtime_run_latest_by_ref(root, ref, dry_run=dry_run)
+            result = runtime_prepare_priority_ref(root, ref, dry_run=dry_run)
             dispatched.append({"ref": ref, "result": _summarize(result)})
         return {"ok": True, "dispatched": dispatched}
 
@@ -98,7 +98,7 @@ def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     _run("watch_sources", lambda: run_due_watch_sources(root, dry_run=dry_run))
     _run("events", lambda: process_due(root, dry_run=dry_run))
     _run("priority_run_queue", _priority_run_queue)
-    _run("run_queue", lambda: runtime_run_next(root, dry_run=dry_run))
+    _run("run_queue", lambda: runtime_run_batch(root, dry_run=dry_run))
 
     # Health is read-only — collected every tick, never gates mutation.
     try:

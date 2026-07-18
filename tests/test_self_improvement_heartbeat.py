@@ -696,7 +696,10 @@ def test_process_actions_queues_checked_grooming_page(tmp_path: Path) -> None:
     queued = result["queued"][0]
     assert queued["kind"] == "self_improvement_action"
     assert queued["work_type"] == "self_improvement_groom"
-    assert "agentic-os-quiet-run start" in queued["command"]
+    assert queued["execution_target"] == "codex_harness"
+    assert queued["worker_materialized"] is True
+    assert queued["command"].startswith("codex exec --cd")
+    assert "--ephemeral --json" in queued["command"]
     queue_path = _shared_factory(root) / "00-control-plane" / "run-queue.yml"
     queue = yaml.safe_load(queue_path.read_text(encoding="utf-8"))
     assert queue["run_queue"][0]["id"] == queued["id"]

@@ -6,7 +6,13 @@ import argparse
 import json
 
 from ..cli_help import AosHelpFormatter, env_epilog
-from ..runtime_health import build_runtime_health, project_runtime_health, write_runtime_health
+from ..runtime_health import (
+    build_runtime_health,
+    notify_runtime_health,
+    project_runtime_health,
+    queue_runtime_self_heal,
+    write_runtime_health,
+)
 from ..resource_actions import (
     schedule_create_governed,
     schedule_delete,
@@ -92,7 +98,13 @@ def handle_runtime_doctor(args: argparse.Namespace) -> int:
 def handle_runtime_health_report(args: argparse.Namespace) -> int:
     report = build_runtime_health(args.root)
     paths = write_runtime_health(args.root, report)
-    result = {"report": report, "paths": paths, "notion": {"applied": False}}
+    result = {
+        "report": report,
+        "paths": paths,
+        "remediation": queue_runtime_self_heal(args.root, report, paths) if args.apply_remediation else {"queued": False},
+        "notification": notify_runtime_health(args.root, report) if args.notify else {"sent": False},
+        "notion": {"applied": False},
+    }
     if args.apply_notion:
         projection = project_runtime_health(args.root, report, paths, automation_id=args.automation_id)
         result["notion"] = {"applied": projection["ok"], **projection}
@@ -297,6 +309,12 @@ def register(subparsers) -> None:
     runtime_health_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_health_parser.add_argument(
         "--apply-notion", action="store_true", help="Replace the verified Notion summary page."
+    )
+    runtime_health_parser.add_argument(
+        "--apply-remediation", action="store_true", help="Queue an idempotent Codex self-heal task when unhealthy."
+    )
+    runtime_health_parser.add_argument(
+        "--notify", action="store_true", help="Send a governed local system notification when unhealthy."
     )
     runtime_health_parser.add_argument("--automation-id", default="queue-worker-health")
     runtime_health_parser.set_defaults(handler=handle_runtime_health_report)

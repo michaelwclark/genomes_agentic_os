@@ -51,6 +51,12 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     generated_at: native.generated_at || new Date().toISOString(),
     root: native.root || root,
     navigation: { domains },
+    runtime: native.runtime ?? {
+      status: "unavailable", queue_mode: "unknown", queue_depth: 0, running: 0,
+      failed: 0, dead_letter: 0, active_workers: 0, unhealthy_workers: 0,
+      reserved_interactive_slots: 1,
+      queues: [], worker_pools: [],
+    },
     conversations: conversations.filter((conversation) => !launchedByOwnedId.has(`${conversation.harness}:${conversation.id}`)).map((conversation) => {
       const override = state.routeOverrides[conversation.id];
       const overlayPinned = pins.has(`${conversation.harness}:${conversation.id}`);

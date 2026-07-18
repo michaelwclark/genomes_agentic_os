@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import time
 
 import pytest
 import yaml
 
 from genomes_agentic_os import runtime_ops, supervisor
 from genomes_agentic_os.cli import main
+from genomes_agentic_os.runtime_backend import apply_queue_mode, runtime_queue_items
 from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref, runtime_run_next
 from genomes_agentic_os.supervisor import supervise_tick
 
@@ -42,6 +44,40 @@ def test_supervise_apply_runs_the_tick(tmp_path: Path) -> None:
     assert report["dry_run"] is False
     assert report["ok"] is True
     assert main(["runtime", "supervise", "--root", str(root), "--apply"]) == 0
+
+
+def test_schedule_producer_materializes_provider_route_before_fabric_enqueue(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    wrapper = root / "automations/run-codex.sh"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/usr/bin/env bash\nexec codex exec 'scheduled work'\n", encoding="utf-8")
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["schedules"].append(
+        {
+            "id": "provider_schedule",
+            "display_name": "Provider schedule",
+            "enabled": True,
+            "cadence": "hourly",
+            "timezone": "America/Chicago",
+            "execution_target": "script",
+            "supervisor_priority": True,
+            "command": str(wrapper),
+            "next_due_at": "2000-01-01T00:00:00Z",
+            "last_queued_at": None,
+        }
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    result = runtime_ops.schedule_run_due(root, dry_run=False)
+    queued = next(item for item in runtime_queue_items(root) if item.get("ref") == "provider_schedule")
+
+    assert result["status"] == "queued"
+    assert queued["queue_name"] == "codex"
+    assert queued["worker_pool"] == "codex_workers"
+    assert queued["priority"] == 100
+    assert queued["provider_inferred_from_command"] is True
 
 
 def test_runtime_dispatches_watch_source_poll_command(tmp_path: Path, capsys) -> None:
@@ -147,6 +183,40 @@ def test_runtime_dispatches_registered_watcher_script(tmp_path: Path, capsys) ->
     assert dispatch_log["evidence"]["stdout"] == "watcher-ran"
 
 
+def test_registered_watcher_detached_worker_remains_inside_dispatch_capacity(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    watcher_dir = root / "watchers/notion_work_intake"
+    script = watcher_dir / "scripts/watch.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "\n".join(
+            [
+                "import json, subprocess",
+                "from pathlib import Path",
+                "worker = subprocess.Popen(['/bin/sleep', '0.4'], start_new_session=True)",
+                f"Path({str(watcher_dir / 'worker.json')!r}).write_text(json.dumps({{'pid': worker.pid}}))",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (watcher_dir / "watcher.yml").write_text(
+        "id: notion_work_intake\nharness_run_timeout_sec: 5\nharness_run_outer_grace_sec: 1\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+
+    result = runtime_ops._run_registered_watcher_script(
+        root,
+        f"python3 {script} --once",
+        timeout_seconds=5,
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["worker_pid"]
+    assert time.monotonic() - started >= 0.35
+
+
 def test_runtime_dispatches_general_python_script(tmp_path: Path, capsys) -> None:
     root = _fresh_root(tmp_path)
     script = root / "scripts" / "write_runtime_marker.py"
@@ -249,6 +319,23 @@ def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> N
     dispatched = yaml.safe_load(capsys.readouterr().out)
     assert dispatched["status"] == "done"
     assert dispatched["queue_item"]["status"] == "done"
+
+
+def test_runtime_dispatch_holds_capacity_until_quiet_run_finishes(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    quiet_run = root / "harness/bin/agentic-os-quiet-run"
+    started = time.monotonic()
+
+    result = runtime_ops._run_quiet_run_script(
+        root,
+        f"{quiet_run} start --artifact-dir {root / 'logs'} --timeout-minutes 1 -- /bin/sleep 0.4",
+        timeout_seconds=10,
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["quiet_run_status"] == "success"
+    assert time.monotonic() - started >= 0.35
 
 
 def test_runtime_dispatch_adds_user_local_bin_to_quiet_run_path(

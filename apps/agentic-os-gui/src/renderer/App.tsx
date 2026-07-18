@@ -179,6 +179,7 @@ export function App() {
         selectedId={selectedId}
         query={query}
         generatedAt={snapshot.generated_at}
+        runtime={snapshot.runtime}
         onQuery={setQuery}
         onSelect={(id) => openTab(id)}
         onPin={(conversation, pinned) => void pin(conversation, pinned)}
