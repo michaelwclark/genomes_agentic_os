@@ -369,6 +369,35 @@ def test_project_work_item_validation_reports_invalid_yaml_without_crashing(
     assert any("invalid work item metadata" in error for error in result.errors)
 
 
+def test_project_work_item_validation_ignores_sidecar_artifact_directories(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "personal/02-projects/demo"
+    lane = project_root / "work-items/01-intake"
+    lane.mkdir(parents=True)
+    (lane / "example.md").write_text("---\nstatus: ready\n---\n", encoding="utf-8")
+    (lane / "example.artifacts").mkdir()
+
+    result = ValidationResult(root=tmp_path)
+    validate_module.validate_project_work_items(project_root, result)
+
+    assert not any("example.artifacts" in error for error in result.errors)
+
+
+def test_structured_control_scan_prunes_mutable_runtime(tmp_path: Path) -> None:
+    runtime_json = tmp_path / "runtime/artifacts/concatenated.json"
+    runtime_json.parent.mkdir(parents=True)
+    runtime_json.write_text("{}\n{}\n", encoding="utf-8")
+    control_json = tmp_path / "harness/registries/control.json"
+    control_json.parent.mkdir(parents=True)
+    control_json.write_text("{}\n", encoding="utf-8")
+
+    json_paths, _ = validate_module._iter_structured_control_files(tmp_path)
+
+    assert control_json in json_paths
+    assert runtime_json not in json_paths
+
+
 def test_invocation_validation_snapshots_registry_and_runtime_state_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1316,6 +1316,7 @@ GENERATED_DATA_DIR_NAMES = {
     "logs",
     "node_modules",
     "remote",
+    "runtime",
     "runs",
     "snapshots",
     "worker-runs",

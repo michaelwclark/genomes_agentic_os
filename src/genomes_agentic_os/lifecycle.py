@@ -721,8 +721,17 @@ def local_work_item_candidates(work_items_root: Path) -> list[Path]:
     candidates: list[Path] = []
     for child in sorted(work_items_root.iterdir()):
         if child.name in WORK_ITEM_LANES and child.is_dir():
-            candidates.extend(sorted(item for item in child.iterdir() if item.is_dir() or item.suffix == ".md"))
+            candidates.extend(
+                sorted(
+                    item
+                    for item in child.iterdir()
+                    if (item.is_dir() or item.suffix == ".md")
+                    and not item.name.endswith(".artifacts")
+                )
+            )
         elif child.is_dir() and child.name not in {".logs", "logs"}:
+            if child.name.endswith(".artifacts"):
+                continue
             candidates.append(child)
         elif child.suffix == ".md":
             candidates.append(child)
