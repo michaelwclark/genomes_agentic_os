@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_naming import dated_name, load_artifact_naming_policy
 from .scaffold import (
     ScaffoldResult,
     append_control_signal,
@@ -177,11 +178,12 @@ def iter_work_item_roots(project_root: Path) -> list[Path]:
 
 
 def find_work_item_root(project_root: Path, work_item: str) -> Path | None:
+    requested = str(work_item)
     slug = slugify_work_id(work_item)
     for candidate in iter_work_item_roots(project_root):
         metadata = load_work_item_metadata(candidate)
         identifiers = {candidate.name, str(metadata.get("id") or ""), str(metadata.get("slug") or "")}
-        if slug in identifiers:
+        if requested in identifiers or slug in identifiers or any(identifier.endswith(f"-{slug}") for identifier in identifiers):
             return candidate
     return None
 
@@ -311,7 +313,18 @@ def create_project_work_item(
     if state not in WORK_ITEM_STATES:
         raise ValueError(f"state must be one of {', '.join(WORK_ITEM_STATES)}: {state!r}")
     work_item = slugify_work_id(work_item or title)
-    work_root = work_item_root_for(project_root, work_item, state)
+    existing = find_work_item_root(project_root, work_item)
+    if existing is not None:
+        work_item = existing.name
+        work_root = existing
+    else:
+        work_item = dated_name(
+            work_item,
+            when=datetime.now(timezone.utc),
+            policy=load_artifact_naming_policy(root),
+            scope="work_items",
+        )
+        work_root = project_work_items_root(project_root) / lane_for_state(state) / work_item
     timestamp = utc_timestamp()
     result = ScaffoldResult()
     for lane in WORK_ITEM_LANES:

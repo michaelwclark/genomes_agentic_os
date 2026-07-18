@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_naming import dated_name, load_artifact_naming_policy
 from .scaffold import (
     ScaffoldResult,
     append_control_signal,
@@ -112,7 +113,7 @@ ACTIVE_CONTAINER_WORK_ITEM_STATES = {"specified", "ready", "building", "validati
 TERMINAL_WORK_ITEM_STATES = {"finished", "documented", "archived"}
 COMPLETION_INFERENCE_DECISIONS = ("finish-ready", "needs-thread-finalizer", "manual-review", "keep-active")
 
-WORK_ITEM_INDEX_RE = re.compile(r"^(?P<index>\d{3})[_-](?P<slug>.+)$")
+WORK_ITEM_INDEX_RE = re.compile(r"^(?:[A-Za-z0-9]{4,12}[-_])?(?P<index>\d{3})[_-](?P<slug>.+)$")
 
 WORK_ITEM_MATCH_STOPWORDS = {
     "a",
@@ -633,6 +634,12 @@ def create_project_work_item(
         raise ValueError(f"project not found: {domain}/{project}")
 
     work_id = indexed_work_id(project_root, work_id or title)
+    work_id = dated_name(
+        work_id,
+        when=datetime.now(timezone.utc),
+        policy=load_artifact_naming_policy(os_root),
+        scope="work_items",
+    )
     work_root = work_items_root(project_root)
     work_item_root = work_item_path(project_root, work_id, status, item_format=item_format)
     result = ScaffoldResult()

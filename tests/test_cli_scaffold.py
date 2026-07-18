@@ -39,6 +39,14 @@ def domain_root(root: Path, domain: str) -> Path:
     return root / "domains" / domain
 
 
+def dated_child(parent: Path, legacy_name: str) -> Path:
+    return next(parent.glob(f"??????-{legacy_name}"))
+
+
+def expected_dated_name(legacy_name: str) -> str:
+    return f"{datetime.now(timezone.utc).strftime('%m%d%y')}-{legacy_name}"
+
+
 def limit_self_improvement_evidence_to_runs(root: Path) -> None:
     config_path = shared_factory(root) / "00-control-plane" / "self-improvement.yml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -2075,20 +2083,19 @@ def test_project_worktree_add_registers_visible_link_and_routes_from_target(tmp_
     )
 
     project_root = root / "los" / "02-projects" / "linked_project"
-    link_path = project_root / "worktrees" / "launch_feature"
+    link_path = dated_child(project_root / "worktrees", "launch_feature")
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert link_path.is_symlink()
     assert link_path.resolve() == worktree.resolve()
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
-    assert index["worktrees"] == [
-        {
-            "id": "launch_feature",
-            "path": str(worktree.resolve()),
-            "link": "worktrees/launch_feature",
-            "status": "active",
-            "link_policy": "symlink_to_external_worktree",
-        }
-    ]
+    assert len(index["worktrees"]) == 1
+    assert index["worktrees"][0] == {
+        "id": link_path.name,
+        "path": str(worktree.resolve()),
+        "link": f"worktrees/{link_path.name}",
+        "status": "active",
+        "link_policy": "symlink_to_external_worktree",
+    }
     config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
     assert config["worktrees"]["registered"] == index["worktrees"]
     assert config["worktrees"]["link_policy"] == "symlink_to_external_worktree"
@@ -2347,7 +2354,7 @@ def test_project_worktree_mixed_policies_keep_symlink_config_default(tmp_path: P
     policies = {entry["id"]: entry["link_policy"] for entry in config["worktrees"]["registered"]}
     assert policies == {
         "feature_x": "in_place_worktree",
-        "external_feature": "symlink_to_external_worktree",
+        expected_dated_name("external_feature"): "symlink_to_external_worktree",
     }
     assert validate_root(root).ok
 
@@ -2367,8 +2374,9 @@ def _fake_worktree_git_runner(
             return SimpleNamespace(returncode=0 if branch_exists else 1, stdout="", stderr="")
         if fail_add:
             return SimpleNamespace(returncode=128, stdout="", stderr="fatal: bad object HEAD")
-        destination.mkdir(parents=True, exist_ok=True)
-        (destination / ".git").write_text("gitdir: /elsewhere/.git/worktrees/feature_x\n", encoding="utf-8")
+        actual_destination = next(Path(value) for value in args if "/worktrees/" in value)
+        actual_destination.mkdir(parents=True, exist_ok=True)
+        (actual_destination / ".git").write_text("gitdir: /elsewhere/.git/worktrees/feature_x\n", encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     return _runner
@@ -2394,6 +2402,8 @@ def test_project_worktree_create_checks_out_new_branch_in_place(tmp_path: Path) 
     )
 
     assert calls[0] == ["git", "-C", str(repo.resolve()), "rev-parse", "--verify", "--quiet", "refs/heads/feature-x"]
+    destination = Path(calls[1][-1])
+    assert destination.name == expected_dated_name("feature_x")
     assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", "-b", "feature-x", str(destination)]
     assert destination.is_dir()
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
@@ -2421,6 +2431,8 @@ def test_project_worktree_create_reuses_existing_branch(tmp_path: Path) -> None:
         runner=_fake_worktree_git_runner(calls, destination, branch_exists=True),
     )
 
+    destination = Path(calls[1][-2])
+    assert destination.name == expected_dated_name("feature_x")
     assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", str(destination), "feature-x"]
 
 
@@ -2454,7 +2466,7 @@ def test_project_worktree_create_rejects_existing_destination(tmp_path: Path) ->
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    destination = root / "los" / "02-projects" / "inplace_project" / "worktrees" / "feature_x"
+    destination = root / "los" / "02-projects" / "inplace_project" / "worktrees" / expected_dated_name("feature_x")
     destination.mkdir(parents=True)
 
     with pytest.raises(ValueError, match="already exists"):
@@ -2514,7 +2526,7 @@ def test_project_worktree_create_cli_runs_real_git(tmp_path: Path) -> None:
     )
 
     project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
-    checkout = project_root / "worktrees" / "feat-63-demo"
+    checkout = dated_child(project_root / "worktrees", "feat-63-demo")
     assert checkout.is_dir()
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert not checkout.is_symlink()
@@ -2527,7 +2539,7 @@ def test_project_worktree_create_cli_runs_real_git(tmp_path: Path) -> None:
     ).stdout.strip()
     assert branch == "feat/63-demo"
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
-    assert index["worktrees"][0]["id"] == "feat-63-demo"
+    assert index["worktrees"][0]["id"] == checkout.name
     config = yaml.safe_load((project_root / "config" / "worktrees.yml").read_text(encoding="utf-8"))
     assert config["worktrees"]["link_policy"] == "in_place_worktree"
     result = validate_root(root)
@@ -2552,11 +2564,13 @@ def test_project_worktree_create_derives_name_from_branch(tmp_path: Path) -> Non
         runner=_fake_worktree_git_runner(calls, destination),
     )
 
+    destination = Path(calls[1][-1])
+    assert destination.name == expected_dated_name("feat-63-remote-ssh")
     assert calls[1] == ["git", "-C", str(repo.resolve()), "worktree", "add", "-b", "feat/63-remote-ssh", str(destination)]
     assert destination.is_dir()
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
-    assert index["worktrees"][0]["id"] == "feat-63-remote-ssh"
-    assert index["worktrees"][0]["link"] == "worktrees/feat-63-remote-ssh"
+    assert index["worktrees"][0]["id"] == destination.name
+    assert index["worktrees"][0]["link"] == f"worktrees/{destination.name}"
     assert validate_root(root).ok
 
 
@@ -2569,9 +2583,10 @@ def test_project_worktree_add_accepts_branch_like_names(tmp_path: Path) -> None:
 
     assert main([*add, "feat-63-remote-ssh", "--path", str(external), "--root", str(root)]) == 0
     project_root = root / "los" / "02-projects" / "inplace_project"
-    assert (project_root / "worktrees" / "feat-63-remote-ssh").is_symlink()
+    link = dated_child(project_root / "worktrees", "feat-63-remote-ssh")
+    assert link.is_symlink()
     index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
-    assert index["worktrees"][0]["id"] == "feat-63-remote-ssh"
+    assert index["worktrees"][0]["id"] == link.name
     assert validate_root(root).ok
 
     # slashes and uppercase still rejected — a worktree name is a single directory
@@ -4085,13 +4100,9 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
         encoding="utf-8"
     )
     assert "Customer-safe deploy brief" in project_status
-    work_item = (
-        domain_root(root, "los")
-        / "02-projects"
-        / "losmon_replacement"
-        / "work-items"
-        / "01-intake"
-        / "001_customer_safe_deploy_brief.md"
+    work_item = dated_child(
+        domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "01-intake",
+        "001_customer_safe_deploy_brief.md",
     )
     assert work_item.is_file()
     assert result["work_item"] == str(work_item)
@@ -4119,13 +4130,9 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         )
         == 0
     )
-    work_item = (
-        domain_root(root, "los")
-        / "02-projects"
-        / "losmon_replacement"
-        / "work-items"
-        / "01-intake"
-        / "001_build_logger.md"
+    work_item = dated_child(
+        domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "01-intake",
+        "001_build_logger.md",
     )
     assert work_item.is_file()
 
@@ -4157,13 +4164,9 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         )
         == 0
     )
-    intake_packet = (
-        domain_root(root, "los")
-        / "02-projects"
-        / "losmon_replacement"
-        / "work-items"
-        / "01-intake"
-        / "002_duel_expanded_idea"
+    intake_packet = dated_child(
+        domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "01-intake",
+        "002_duel_expanded_idea",
     )
     assert (intake_packet / "work.yml").is_file()
     assert (intake_packet / "SPEC.md").is_file()
@@ -4197,7 +4200,10 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         )
         == 0
     )
-    active_work_item = domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "02-active" / "003_active_build"
+    active_work_item = dated_child(
+        domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "02-active",
+        "003_active_build",
+    )
     assert (active_work_item / "work.yml").is_file()
     assert (active_work_item / "logs" / "conversations").is_dir()
     assert main(["validate", "--root", str(root)]) == 0
@@ -4217,7 +4223,7 @@ def test_compat_work_lifecycle_helpers_use_lane_paths(tmp_path: Path) -> None:
         state="building",
     )
     project_root = domain_root(root, "los") / "02-projects" / "losmon_replacement"
-    active = project_root / "work-items" / "02-active" / "legacy_packet"
+    active = dated_child(project_root / "work-items" / "02-active", "legacy_packet")
     assert created["path"] == str(active)
     assert (active / "work.yml").is_file()
     assert not (project_root / "work-items" / "legacy_packet").exists()
@@ -4233,7 +4239,7 @@ def test_compat_work_lifecycle_helpers_use_lane_paths(tmp_path: Path) -> None:
         state="documented",
         note="Close the compatibility packet.",
     )
-    complete = project_root / "work-items" / "03-complete" / "legacy_packet"
+    complete = project_root / "work-items" / "03-complete" / active.name
     assert promoted["path"] == str(complete)
     assert complete.is_dir()
     assert not active.exists()
@@ -4283,13 +4289,9 @@ def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> 
         )
         == 0
     )
-    work_item = (
-        domain_root(root, "los")
-        / "02-projects"
-        / "losmon_replacement"
-        / "work-items"
-        / "01-intake"
-        / "001_build_logger.md"
+    work_item = dated_child(
+        domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "01-intake",
+        "001_build_logger.md",
     )
     transcript = tmp_path / "session.jsonl"
     secret = "sk-" + "a" * 30
@@ -4307,10 +4309,11 @@ def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> 
     )
     assert proc.returncode == 0
     assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "Stop"
-    log_dir = work_item.parent / "001_build_logger.logs" / "conversations"
+    log_dir = work_item.with_suffix(".logs") / "conversations"
     tool_md = next(log_dir.glob("*_tool_calls.md"))
     tool_jsonl = next(log_dir.glob("*_tool_calls.jsonl"))
     raw_log = next(path for path in log_dir.glob("*.jsonl") if not path.name.endswith("_tool_calls.jsonl"))
+    assert re.match(r"^\d{6}-001_build_logger", raw_log.name)
     assert "[REDACTED]" in tool_md.read_text(encoding="utf-8")
     assert secret not in tool_md.read_text(encoding="utf-8")
     assert secret not in tool_jsonl.read_text(encoding="utf-8")
@@ -4340,7 +4343,10 @@ def test_conversation_auto_log_hook_routes_linked_repo_to_active_work_item(tmp_p
         )
         == 0
     )
-    work_item = root / "los" / "02-projects" / "los_app" / "work-items" / "01-intake" / "001_build_logger.md"
+    work_item = dated_child(
+        root / "los" / "02-projects" / "los_app" / "work-items" / "01-intake",
+        "001_build_logger.md",
+    )
 
     proc = subprocess.run(
         [sys.executable, "harness/hooks/conversation-auto-log.py"],
@@ -4351,7 +4357,7 @@ def test_conversation_auto_log_hook_routes_linked_repo_to_active_work_item(tmp_p
         env={**os.environ, "AGENTIC_OS_ROOT": str(root)},
     )
     assert proc.returncode == 0
-    log_dir = work_item.parent / "001_build_logger.logs" / "conversations"
+    log_dir = work_item.with_suffix(".logs") / "conversations"
     assert next(log_dir.glob("*linked_repo*"), None) is None
     assert list(log_dir.glob("*001_build_logger*.jsonl"))
 

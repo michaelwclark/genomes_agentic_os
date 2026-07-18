@@ -29,6 +29,34 @@ def slugify(value: str) -> str:
     return cleaned[:48] or "quiet-run"
 
 
+def naming_root(path: Path) -> Path:
+    for candidate in (path, *path.parents):
+        if (candidate / ".agentic_root").is_file():
+            return candidate
+    return ROOT
+
+
+def generated_run_id(async_root: Path, label: str) -> str:
+    enabled = True
+    date_format = "%m%d%y"
+    separator = "-"
+    try:
+        import yaml
+
+        config = naming_root(async_root) / "harness" / "config" / "artifact-naming.yml"
+        data = yaml.safe_load(config.read_text(encoding="utf-8")) if config.is_file() else {}
+        date_prefix = (data or {}).get("artifact_naming", {}).get("date_prefix", {})
+        enabled = bool(date_prefix.get("enabled", True))
+        date_format = str(date_prefix.get("format", date_format))
+        separator = str(date_prefix.get("separator", separator))
+        enabled = enabled and bool((date_prefix.get("scopes") or {}).get("async_runs", True))
+    except Exception:
+        pass
+    started = dt.datetime.now(dt.timezone.utc)
+    base = f"{started.strftime('%H%M%S')}-{slugify(label)}"
+    return f"{started.strftime(date_format)}{separator}{base}" if enabled else base
+
+
 def write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -91,7 +119,7 @@ def start(args: argparse.Namespace) -> int:
 
     async_root = resolve_async_root(args.artifact_dir)
     label = args.label or command[0]
-    run_id = args.run_id or f"{dt.datetime.now().strftime('%Y%m%dT%H%M%S')}-{slugify(label)}"
+    run_id = args.run_id or generated_run_id(async_root, label)
     run_dir = async_root / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
 

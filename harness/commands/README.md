@@ -14,6 +14,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-auto-add-feature.md`](os-auto-add-feature.md) | Legacy feature alias for automatic Spec intake. |
 | [`os-auto-add-spec.md`](os-auto-add-spec.md) | Persist a long OS-shaping request as a Spec packet. |
 | [`os-automation-control.md`](os-automation-control.md) | Inspect or operate the guarded automation control loop. |
+| [`os-artifact-naming.md`](os-artifact-naming.md) | Configure and transactionally migrate date-prefixed durable entity names. |
 | [`os-capture-plan.md`](os-capture-plan.md) | Capture future work into canonical project work-items. |
 | [`os-chain.md`](os-chain.md) | Define, inspect, or test event-chain rules. |
 | [`os-claude-desktop-bridge.md`](os-claude-desktop-bridge.md) | Build or audit the optional Claude Desktop custom-skill and instruction package. |

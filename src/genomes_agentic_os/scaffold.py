@@ -13,6 +13,12 @@ import subprocess
 
 import yaml
 
+from .artifact_naming import (
+    CONFIG_RELATIVE_PATH,
+    dated_name,
+    load_artifact_naming_policy,
+    render_default_artifact_naming_config,
+)
 from .capability_registry import (
     HARNESS_DIRECTORY,
     REGISTRY_FILES,
@@ -36,7 +42,7 @@ ROOT_MARKER_FILENAME = ".agentic_root"
 SHARED_FACTORY_DOMAIN = "shared_factory"
 # Backward-compatible default for the deprecated --projects-source flag.
 DEFAULT_PROJECTS_SOURCE = "~/projects"
-SOURCE_PACKAGE_VERSION = "0.1.0"
+SOURCE_PACKAGE_VERSION = "0.1.1"
 DEFAULT_UPDATE_CHANNEL = "stable"
 DEFAULT_UPDATE_POLICY = "operator_approved"
 
@@ -1998,10 +2004,13 @@ Each folder records one workflow, automation, or skill execution.
 ## Run Folder Format
 
 ```text
-<run-id>/
+MMDDYY-<time>-<run-id>/
   run-log.md
   artifacts/
 ```
+
+The prefix is controlled by `harness/config/artifact-naming.yml`; `MMDDYY-`
+is the default.
 
 ## Required Run Evidence
 
@@ -2052,6 +2061,7 @@ def ensure_root_files(
     ensure_dir(root / "domains", result)
     write_root_marker(root, result, projects_source)
     ensure_dir(harness_path(root), result)
+    write_file_once(root / CONFIG_RELATIVE_PATH, render_default_artifact_naming_config(), result)
     ensure_visible_capability_surface(root, result)
     ensure_schemas_dir(root, result)
     ensure_report_engine_contract(root, result)
@@ -3582,10 +3592,19 @@ def register_project_worktree(
     if not target.is_dir():
         raise ValueError(f"worktree path must be an existing directory: {target}")
 
-    result = onboard_project(os_root, domain, project)
-    link_path = project_root / "worktrees" / name
     worktrees_root = (project_root / "worktrees").resolve()
     in_place = target.is_relative_to(worktrees_root)
+    # Existing in-place checkouts are renamed only by the transactional
+    # migration command because git metadata must move with the directory.
+    if not in_place:
+        name = dated_name(
+            name,
+            when=datetime.now(timezone.utc),
+            policy=load_artifact_naming_policy(os_root),
+            scope="worktrees",
+        )
+    result = onboard_project(os_root, domain, project)
+    link_path = project_root / "worktrees" / name
     if in_place:
         if target != worktrees_root / name:
             raise ValueError(f"in-place worktree path must be the worktrees/{name} directory itself: {target}")
@@ -3641,8 +3660,14 @@ def create_project_worktree(
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
-    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
     os_root = expand_path(root)
+    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
+    name = dated_name(
+        name,
+        when=datetime.now(timezone.utc),
+        policy=load_artifact_naming_policy(os_root),
+        scope="worktrees",
+    )
     project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
         raise ValueError(f"project not found: {domain}/{project}")
@@ -4338,9 +4363,14 @@ def create_run_log(root: str | Path, domain: str, workflow_or_automation: str) -
     domain = normalize_domain(domain)
     workflow_or_automation = validate_name(workflow_or_automation, "workflow_or_automation")
     result = create_domain(root, domain)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"{timestamp}-{domain}-{workflow_or_automation}"
-    iso_timestamp = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(timezone.utc)
+    run_id = dated_name(
+        f"{started_at.strftime('%H%M%SZ')}-{domain}-{workflow_or_automation}",
+        when=started_at,
+        policy=load_artifact_naming_policy(root),
+        scope="run_logs",
+    )
+    iso_timestamp = started_at.isoformat()
     template = template_source_dir() / "workflow" / "run-log.md"
     content = render_template(
         template.read_text(encoding="utf-8"),

@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_naming import CONFIG_RELATIVE_PATH, load_artifact_naming_policy
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .config_ops import CONFIG_FILENAME
 from .context_compaction import check_context_contracts
@@ -1579,6 +1580,13 @@ def validate_root(root: str | Path) -> ValidationResult:
     harness_root = harness_path(os_root)
     for filename in HARNESS_ROOT_FILES:
         require_file(harness_root / filename, result)
+    naming_config = os_root / CONFIG_RELATIVE_PATH
+    require_file(naming_config, result)
+    if naming_config.is_file():
+        try:
+            load_artifact_naming_policy(os_root)
+        except ValueError as exc:
+            result.errors.append(f"invalid artifact naming config: {naming_config}: {exc}")
     validate_claude_adapter(harness_root / "CLAUDE.md", result)
     warn_legacy_agent(harness_root / "AGENT.md", result)
 

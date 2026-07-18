@@ -7,7 +7,7 @@
   "required": ["schema_version", "id", "definition_id", "status", "started_at", "completed_at", "duration_ms", "source_completeness", "source_evidence", "errors", "artifact_ids", "projection_evidence", "trigger"],
   "properties": {
     "schema_version": {"const": 1},
-    "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
     "definition_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
     "status": {"enum": ["success", "partial", "error"]},
     "started_at": {"type": "string", "format": "date-time"},

@@ -86,6 +86,38 @@ def slugify(value: str) -> str:
     return slug or "conversation"
 
 
+def conversation_artifact_stem(root: Path, value: str) -> str:
+    enabled = True
+    date_format = "%m%d%y"
+    separator = "-"
+    try:
+        import yaml
+
+        config_path = root / "harness" / "config" / "artifact-naming.yml"
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        date_prefix = (data or {}).get("artifact_naming", {}).get("date_prefix", {})
+        enabled = bool(date_prefix.get("enabled", True))
+        date_format = str(date_prefix.get("format", date_format))
+        separator = str(date_prefix.get("separator", separator))
+        enabled = enabled and bool((date_prefix.get("scopes") or {}).get("conversation_logs", True))
+    except Exception:
+        # Stop hooks are best-effort; malformed config is reported by
+        # `agentic-os validate` and must not block transcript capture.
+        pass
+    unprefixed = value
+    sample_length = len(datetime(2026, 7, 18, tzinfo=timezone.utc).strftime(date_format))
+    if len(unprefixed) > sample_length and unprefixed[sample_length : sample_length + len(separator)] == separator:
+        try:
+            datetime.strptime(unprefixed[:sample_length], date_format)
+            unprefixed = unprefixed[sample_length + len(separator) :]
+        except ValueError:
+            pass
+    slug = slugify(unprefixed)
+    if not enabled:
+        return slug
+    return f"{datetime.now(timezone.utc).strftime(date_format)}{separator}{slug}"
+
+
 def yaml_scalar(path: Path, key: str) -> str:
     if not path.is_file():
         return ""
@@ -270,7 +302,7 @@ def main() -> int:
         log_dir, slug = route_log_dir(root, cwd, payload)
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        date_slug = datetime.now(timezone.utc).strftime("%Y_%m_%d") + f"_{slugify(slug)}"
+        date_slug = conversation_artifact_stem(root, slug)
         transcript_value = payload_value(payload, "transcript_path", "transcriptPath")
         transcript = Path(transcript_value).expanduser() if transcript_value else None
         raw_target = log_dir / f"{date_slug}.jsonl"

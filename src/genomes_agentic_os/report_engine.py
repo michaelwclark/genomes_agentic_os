@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterable, Mapping
 from jsonschema import Draft202012Validator, FormatChecker
 import yaml
 
+from .artifact_naming import dated_name, load_artifact_naming_policy
 from .report_registry import collect_reports
 from .resource_actions import API_VERSION as ACTION_API_VERSION
 from .scaffold import expand_path, repo_root, validate_name
@@ -372,7 +373,12 @@ def query_report_resources(
 
 
 def get_report_resource(root: str | Path, resource_kind: str, resource_id: str) -> dict[str, Any]:
-    resource_id = validate_name(resource_id, "resource_id")
+    if resource_kind == "definition":
+        resource_id = validate_name(resource_id, "resource_id")
+    elif not resource_id or not all(
+        character.islower() or character.isdigit() or character in "-_" for character in resource_id
+    ):
+        raise ValueError(f"invalid report resource id: {resource_id!r}")
     os_root = expand_path(root)
     definitions = {
         str(item.get("id")): item
@@ -817,8 +823,15 @@ def run_report_now(
     complete_count = sum(1 for item in source_evidence if item["status"] == "complete")
     completeness = complete_count / len(source_evidence) if source_evidence else 0.0
     status = _overall_status(source_evidence, errors, bool(definition["health_policy"]["partial_is_error"]))
-    run_id = validate_name(f"{report_id}_{started.strftime('%Y%m%dT%H%M%S%fZ').lower()}", "run_id")
-    artifact_id = validate_name(f"{run_id}_artifact", "artifact_id")
+    run_id = dated_name(
+        f"{report_id}-{started.strftime('%H%M%S%fZ').lower()}",
+        when=started,
+        policy=load_artifact_naming_policy(os_root),
+        scope="report_runs",
+    )
+    if not run_id or not all(character.islower() or character.isdigit() or character in "-_" for character in run_id):
+        raise ValueError(f"invalid report run id: {run_id!r}")
+    artifact_id = f"{run_id}_artifact"
     sections = _build_sections(definition, values, source_evidence)
     provisional = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,

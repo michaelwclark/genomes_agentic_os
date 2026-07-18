@@ -95,6 +95,11 @@ then use `agentic-os work show/list` for detail. Mutate lifecycle state,
 attention, resume context, source identity, and verification timestamps through
 `agentic-os work`; do not infer or change state by moving packet folders.
 
+Top-level durable entity names follow `harness/config/artifact-naming.yml`.
+Generators apply the configured date prefix; use `agentic-os naming migrate`
+for existing work items, registered worktrees, conversations, and run entities.
+Do not rename stable internal contract files such as `work.yml` or `run-log.md`.
+
 ## Bug Intake
 
 Use `/add-bug` for missed enforcement, broken routing, logging gaps, or product

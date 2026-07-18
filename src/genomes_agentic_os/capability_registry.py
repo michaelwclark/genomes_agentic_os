@@ -450,6 +450,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-library.md",
         },
         {
+            "id": "artifact-naming",
+            "command": "agentic-os naming",
+            "description": "Inspect, migrate, and restore configurable date-prefixed durable entity names.",
+            "source": "harness/commands/os-artifact-naming.md",
+        },
+        {
             "id": "work-state",
             "command": "agentic-os work",
             "description": "Read and mutate canonical lifecycle, attention, resume context, and active work state.",
@@ -460,6 +466,12 @@ def command_entries() -> list[dict[str, str]]:
 
 def skill_entries() -> list[dict[str, str]]:
     return [
+        {
+            "id": "artifact-naming",
+            "name": "Artifact Naming",
+            "description": "Inspect, migrate, or restore configurable date-prefixed durable Agentic OS entity names.",
+            "source": "harness/skills/artifact-naming/SKILL.md",
+        },
         {
             "id": "project-domain-investigate",
             "name": "Project Domain Investigate",

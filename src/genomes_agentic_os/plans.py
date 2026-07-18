@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from .lifecycle import create_project_work_item, indexed_work_id, work_item_path
+from .lifecycle import create_project_work_item, indexed_work_id
 from .scaffold import (
     append_control_signal,
     append_domain_memory,
@@ -115,8 +115,7 @@ def capture_plan(
         signal_section, signal_status, signal_notes = classify_control_signal(title, summary, project=True)
         project_root = domain_root / "02-projects" / project
         work_id = indexed_work_id(project_root, title)
-        work_item_target = work_item_path(project_root, work_id, "captured")
-        create_project_work_item(
+        creation = create_project_work_item(
             os_root,
             domain,
             project,
@@ -124,6 +123,11 @@ def capture_plan(
             summary=summary,
             status="captured",
             work_id=work_id,
+        )
+        work_item_target = next(
+            path
+            for path in (*creation.created, *creation.skipped)
+            if path.parent.name == "01-intake" and path.name.endswith(f"{work_id}.md")
         )
         target = work_item_target
         relative_target = target.relative_to(project_root)
