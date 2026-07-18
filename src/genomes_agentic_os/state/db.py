@@ -28,7 +28,13 @@ MEMORY_DB_PATH = ":memory:"
 # mirroring the existing "<domain>/00-control-plane/<file>.yml" convention.
 STATE_DB_RELATIVE = Path("00-control-plane") / "state.db"
 
-SCHEMA_TABLES: tuple[str, ...] = ("events", "run_queue", "cursors")
+SCHEMA_TABLES: tuple[str, ...] = (
+    "events",
+    "run_queue",
+    "cursors",
+    "work_items",
+    "work_item_history",
+)
 
 
 class StateDbError(RuntimeError):
@@ -176,6 +182,72 @@ CREATE TABLE IF NOT EXISTS cursors (
     ),
     (
         2,
+        "canonical work-item state and attention tracking",
+        """
+CREATE TABLE IF NOT EXISTS work_items (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'captured', 'triaged', 'specified', 'ready', 'building',
+            'validating', 'blocked', 'finished', 'documented', 'archived'
+        )
+    ),
+    attention TEXT NOT NULL DEFAULT 'queued' CHECK (
+        attention IN ('active', 'queued', 'parked', 'closed')
+    ),
+    domain TEXT,
+    project TEXT,
+    source_system TEXT,
+    source_key TEXT,
+    source_url TEXT,
+    owner TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    packet_path TEXT,
+    worktree_path TEXT,
+    branch TEXT,
+    context_summary TEXT NOT NULL DEFAULT '',
+    blocked_reason TEXT,
+    previous_state TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_verified_at TEXT,
+    closed_at TEXT,
+    UNIQUE(source_system, source_key)
+);
+CREATE INDEX IF NOT EXISTS idx_work_items_attention_state
+    ON work_items(attention, state, priority DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_items_domain_project
+    ON work_items(domain, project, attention, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_items_source
+    ON work_items(source_system, source_key);
+
+CREATE TABLE IF NOT EXISTS work_item_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    changed_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    from_state TEXT,
+    to_state TEXT NOT NULL,
+    from_attention TEXT,
+    to_attention TEXT NOT NULL,
+    summary TEXT,
+    receipt_ref TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_work_item_history_item_changed
+    ON work_item_history(work_item_id, changed_at DESC);
+
+CREATE VIEW IF NOT EXISTS active_now AS
+SELECT *
+FROM work_items
+WHERE attention = 'active'
+  AND state NOT IN ('finished', 'documented', 'archived');
+""",
+    ),
+    (
+        3,
         "execution-fabric named queues and worker pools",
         """
 ALTER TABLE run_queue ADD COLUMN queue_name TEXT NOT NULL DEFAULT 'default';

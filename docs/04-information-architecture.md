@@ -10,12 +10,27 @@
 
 ---
 
+## Layout-v2 compatibility note
+
+Current installs use `domains/<domain>/projects/<project>/` as the conventional
+address and a separately versioned `lib/` for reusable object definitions.
+Mutable work truth lives in SQLite, not in a filesystem lane. The numbered
+domain layout documented below remains a supported compatibility/install shape
+while writers and older installs migrate; `domains/<domain>` and `projects`
+aliases let old and new routes resolve the same room without moving registered
+Git worktrees.
+
+See [29 · Versioned Installed Object Library](29-versioned-object-library.md)
+and `harness/rules/work-lifecycle-standard.md` for the binding layout-v2
+contracts.
+
 ## The idea
 
 The installed OS is **domain-first**. The top level is not `workflows/` or
 `automations/`; those are lanes inside each domain. Every domain owns its own
-policy, context files, projects, and run history. The filesystem is the source of
-truth — Notion mirrors it, agents read it, but nothing is invented at runtime.
+policy, context files, projects, and run history. Object manifests and SQLite
+state are the authoritative stores; filesystem rooms remain the routing and
+artifact surface.
 
 The hierarchy has three levels:
 

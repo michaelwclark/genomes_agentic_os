@@ -7,9 +7,9 @@
   "required": ["schema_version", "id", "definition_id", "run_id", "created_at", "status", "title", "summary", "sections", "source_completeness", "errors", "content_sha256"],
   "properties": {
     "schema_version": {"const": 1},
-    "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
     "definition_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
-    "run_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "run_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
     "created_at": {"type": "string", "format": "date-time"},
     "status": {"enum": ["success", "partial", "error"]},
     "title": {"type": "string"}, "summary": {"type": "string"},

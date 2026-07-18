@@ -10,7 +10,7 @@ project:
   domain: los
   project_id: los_app_los_django
   repo_root: /Users/genome/projects/los/app/los-app-los-django
-  worktree: /Users/genome/agentic_os/los/02-projects/los_app_los_django/worktrees/ykf
+  worktree: /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/worktrees/ykf
   base_branch: origin/develop
   branch: feature/FLYWL-0000-update-node-version
 quality_gates:
@@ -21,7 +21,7 @@ quality_gates:
   copilot_clean: pending
   merge_policy: pending
 artifacts:
-  work_item: /Users/genome/agentic_os/los/02-projects/los_app_los_django/work-items/02-active/043_flywl_0000_update_node_version
+  work_item: /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/043_flywl_0000_update_node_version
   quality_gates: artifacts/quality-gates.md
   source_file: .github/workflows/pytest-fast.yml
   pr_url: https://github.com/thesummitgrp/los-app-los-django/pull/25442

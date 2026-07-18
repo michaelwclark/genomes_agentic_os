@@ -15,6 +15,14 @@ def work_item_root(root: Path) -> Path:
     return next(path for path in active_root.iterdir() if path.is_dir())
 
 
+def named_work_item(project_root: Path, lane: str, legacy_name: str) -> Path:
+    return next((project_root / "work-items" / lane).glob(f"??????-{legacy_name}"))
+
+
+def dated_artifact(parent: Path, legacy_name: str) -> Path:
+    return next(parent.glob(f"??????-{legacy_name}"))
+
+
 def create_project_with_work_item(root: Path) -> Path:
     assert main(["init", "--target", str(root)]) == 0
     assert main(["project", "create", "shared_factory", "genomes_agentic_os", "--root", str(root)]) == 0
@@ -83,7 +91,7 @@ def test_thread_end_writes_work_item_closeout(tmp_path: Path) -> None:
         == 0
     )
 
-    closeout_root = work_root / "artifacts" / "thread-closeouts" / "unit_closeout"
+    closeout_root = dated_artifact(work_root / "artifacts" / "thread-closeouts", "unit_closeout")
     assert (closeout_root / "thread.yml").is_file()
     assert (closeout_root / "thread-closeout.yml").is_file()
     assert (closeout_root / "closeout.md").is_file()
@@ -92,7 +100,7 @@ def test_thread_end_writes_work_item_closeout(tmp_path: Path) -> None:
     assert (closeout_root / "notion-sync.md").is_file()
 
     payload = yaml.safe_load((closeout_root / "thread-closeout.yml").read_text(encoding="utf-8"))
-    assert payload["thread"]["id"] == "unit_closeout"
+    assert payload["thread"]["id"] == closeout_root.name
     assert payload["thread"]["closeout_mode"] == "artifact-closeout"
     assert payload["closeout"]["final_state"] == "finalized"
     assert payload["notion_sync"]["status"] == "skipped"
@@ -124,12 +132,15 @@ def test_thread_end_without_work_item_writes_run_log_closeout(tmp_path: Path) ->
         == 0
     )
 
-    run_root = root / "harness" / "shared_factory" / "06-runs-and-logs" / "runs" / "run_closeout"
+    run_root = dated_artifact(
+        root / "harness" / "shared_factory" / "06-runs-and-logs" / "runs",
+        "run_closeout",
+    )
     assert (run_root / "run-log.md").is_file()
     assert (run_root / "thread-closeout.yml").is_file()
     assert (run_root / "closeout.md").is_file()
     payload = yaml.safe_load((run_root / "thread-closeout.yml").read_text(encoding="utf-8"))
-    assert payload["thread"]["id"] == "run_closeout"
+    assert payload["thread"]["id"] == run_root.name
 
 
 def test_thread_archive_refuses_unresolved_next_action(tmp_path: Path, capsys) -> None:
@@ -186,7 +197,7 @@ def test_stale_finalize_is_dry_run_then_apply(tmp_path: Path, capsys) -> None:
     dry_run = yaml.safe_load(capsys.readouterr().out)
     assert dry_run["mode"] == "dry-run"
     assert dry_run["candidate_count"] == 1
-    assert not list((work_root / "artifacts" / "thread-closeouts").glob("stale_*"))
+    assert not list((work_root / "artifacts" / "thread-closeouts").glob("??????-stale_*"))
 
     assert (
         main(
@@ -209,7 +220,7 @@ def test_stale_finalize_is_dry_run_then_apply(tmp_path: Path, capsys) -> None:
     applied = yaml.safe_load(capsys.readouterr().out)
     assert applied["mode"] == "apply"
     assert len(applied["applied"]) == 1
-    assert list((work_root / "artifacts" / "thread-closeouts").glob("stale_*"))
+    assert list((work_root / "artifacts" / "thread-closeouts").glob("??????-stale_*"))
 
 
 def test_runtime_dispatches_stale_thread_finalizer(tmp_path: Path, capsys) -> None:
@@ -235,7 +246,7 @@ def test_runtime_dispatches_stale_thread_finalizer(tmp_path: Path, capsys) -> No
     dispatched = yaml.safe_load(capsys.readouterr().out)
     assert dispatched["status"] == "done"
     assert dispatched["queue_item"]["status"] == "done"
-    assert list((work_root / "artifacts" / "thread-closeouts").glob("stale_*"))
+    assert list((work_root / "artifacts" / "thread-closeouts").glob("??????-stale_*"))
 
 
 def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tmp_path: Path, capsys) -> None:
@@ -291,7 +302,8 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
         == 0
     )
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
-    lingering = project_root / "work-items" / "02-active" / "001_lingering_done"
+    lingering = named_work_item(project_root, "02-active", "001_lingering_done")
+    still_active = named_work_item(project_root, "02-active", "002_still_active")
     metadata_path = lingering / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["status"] = "documented"
@@ -352,15 +364,15 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
         == 0
     )
     applied = yaml.safe_load(capsys.readouterr().out)
-    completed = project_root / "work-items" / "03-complete" / "001_lingering_done"
+    completed = project_root / "work-items" / "03-complete" / lingering.name
     assert applied["mode"] == "apply"
     assert applied["candidate_count"] == 1
     assert completed.is_dir()
     assert not lingering.exists()
-    assert "work-items/03-complete/001_lingering_done" in (
+    assert f"work-items/03-complete/{lingering.name}" in (
         root / "harness" / "shared_factory" / "00-control-plane" / "active-work.md"
     ).read_text(encoding="utf-8")
-    active_worklog = project_root / "work-items" / "02-active" / "002_still_active" / "WORKLOG.md"
+    active_worklog = still_active / "WORKLOG.md"
     active_worklog_marker = datetime(2026, 6, 16, tzinfo=timezone.utc).timestamp()
     for path in active_worklog.parent.rglob("*"):
         if path.is_file():
@@ -374,7 +386,7 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     capsys.readouterr()
 
     active_index = yaml.safe_load((root / "00-control-plane" / "active" / "index.yml").read_text(encoding="utf-8"))
-    assert [item["id"] for item in active_index["work_items"]] == ["002_still_active"]
+    assert [item["id"] for item in active_index["work_items"]] == [still_active.name]
     assert active_index["work_items"][0]["created_at"]
     assert active_index["work_items"][0]["last_modified_at"] == "2026-06-16T00:00:00Z"
     assert {item["id"] for item in active_index["automations"]} == {"test_auto automation", "shared_auto automation"}
@@ -383,7 +395,7 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     assert (root / "00-control-plane" / "active" / "worktrees" / ".metadata_never_index").is_file()
     active_link = Path(active_index["work_items"][0]["link"])
     assert active_link.is_symlink()
-    assert active_link.resolve() == (project_root / "work-items" / "02-active" / "002_still_active")
+    assert active_link.resolve() == still_active
 
 
 def test_infer_complete_reports_needs_thread_finalizer_without_writing(tmp_path: Path, capsys) -> None:
@@ -416,7 +428,7 @@ def test_infer_complete_reports_needs_thread_finalizer_without_writing(tmp_path:
     )
     capsys.readouterr()
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
-    item = project_root / "work-items" / "02-active" / "001_merged_without_closeout"
+    item = named_work_item(project_root, "02-active", "001_merged_without_closeout")
     metadata_path = item / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["pull_request"] = {"state": "merged"}
@@ -478,7 +490,8 @@ def test_infer_complete_keeps_recent_conversation_active(tmp_path: Path, capsys)
         == 0
     )
     capsys.readouterr()
-    item = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os" / "work-items" / "02-active" / "001_recent_conversation"
+    project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
+    item = named_work_item(project_root, "02-active", "001_recent_conversation")
     metadata_path = item / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["pull_request"] = {"state": "merged"}
@@ -541,7 +554,7 @@ def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, ca
     )
     capsys.readouterr()
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
-    item = project_root / "work-items" / "02-active" / "001_ready_to_finish"
+    item = named_work_item(project_root, "02-active", "001_ready_to_finish")
     metadata_path = item / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["pull_request"] = {"state": "merged"}
@@ -571,7 +584,7 @@ def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, ca
         == 0
     )
     result = yaml.safe_load(capsys.readouterr().out)
-    completed = project_root / "work-items" / "03-complete" / "001_ready_to_finish"
+    completed = project_root / "work-items" / "03-complete" / item.name
     assert result["mode"] == "apply"
     assert result["decision_counts"]["finish-ready"] == 1
     assert result["applied"][0]["marked_status"] == "finished"
@@ -844,8 +857,8 @@ def test_thread_end_succeeds_despite_readiness_findings(tmp_path: Path) -> None:
     # Gate is advisory — closeout must not abort.
     assert exit_code == 0, "closeout must succeed even when readiness findings exist"
 
-    closeout_root = work_root / "artifacts" / "thread-closeouts" / "readiness_gate_test"
+    closeout_root = dated_artifact(work_root / "artifacts" / "thread-closeouts", "readiness_gate_test")
     assert (closeout_root / "thread-closeout.yml").is_file()
 
     payload = yaml.safe_load((closeout_root / "thread-closeout.yml").read_text(encoding="utf-8"))
-    assert payload["thread"]["id"] == "readiness_gate_test"
+    assert payload["thread"]["id"] == closeout_root.name

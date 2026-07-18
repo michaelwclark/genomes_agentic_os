@@ -96,6 +96,12 @@ schemas/                  JSON schemas for stricter validation.
 harness/                  Source-of-truth harness assets an install copies in:
                           commands, skills, hooks, registries, rules, and the
                           shared_factory knowledge base.
+lib/                      Installed-only, separately versioned object library
+                          created by agentic-os library; private definitions do
+                          not live in this generic source repository.
+state.db + active-now     Installed mutable work truth: lifecycle state,
+                          explicit attention, transition history, and compact
+                          active context via agentic-os work.
 operating-manual/         The operator/agent manual copied into an installed
                           OS's shared_factory knowledge lane.
 installers/               Installer and scaffold planning notes and scripts.

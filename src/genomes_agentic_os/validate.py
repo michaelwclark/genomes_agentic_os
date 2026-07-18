@@ -7,12 +7,13 @@ import datetime
 import json
 import os
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 import yaml
 
 from .runtime_backend import runtime_queue_items
-
+from .artifact_naming import CONFIG_RELATIVE_PATH, load_artifact_naming_policy
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
 from .config_ops import CONFIG_FILENAME
 from .context_compaction import check_context_contracts
@@ -68,7 +69,6 @@ HARNESS_ROOT_FILES = (
 )
 
 LEGACY_ROOT_FOLDERS = (
-    "domains",
     "workflows",
     "automations",
     "inbox",
@@ -371,7 +371,7 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / "config" / filename, result)
     if (project_root / "SPECS").exists():
         result.warnings.append(
-            f"legacy project bucket present; migrate Specs into work-items/: {project_root / 'SPECS'}"
+            f"legacy project bucket present; verify Jira/Linear truth before removal: {project_root / 'SPECS'}"
         )
     require_file(project_root / "ideas" / "README.md", result)
     require_file(project_root / "ideas" / "raw-ideas.md", result)
@@ -379,8 +379,11 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / "WORKLOGS" / "README.md", result)
     elif (project_root / "worklogs").is_dir():
         require_file(project_root / "worklogs" / "README.md", result)
-    for lane in WORK_ITEM_LANES:
-        require_dir(project_root / "work-items" / lane, result)
+    lifecycle_path = project_root / "config" / "work-lifecycle.yml"
+    lifecycle = load_control_yaml(lifecycle_path, result).get("work_lifecycle") or {}
+    if lifecycle.get("source_of_truth") != "state_db":
+        for lane in WORK_ITEM_LANES:
+            require_dir(project_root / "work-items" / lane, result)
     require_file(project_root / "worktrees" / "README.md", result)
     require_file(project_root / "worktrees" / "index.yml", result)
     validate_project_worktrees(project_root, result)
@@ -592,7 +595,12 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
                 result.errors.append(f"conversation log contains token-shaped value: {log_file}")
 
 
-def validate_domain(domain_root: Path, result: ValidationResult) -> None:
+def validate_domain(
+    domain_root: Path,
+    result: ValidationResult,
+    *,
+    layout_v2: bool = False,
+) -> None:
     require_dir(domain_root, result)
     require_file(domain_root / CONFIG_FILENAME, result)
     require_file(domain_root / "README.md", result)
@@ -608,7 +616,12 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     validate_claude_adapter(domain_root / "CLAUDE.md", result)
     warn_legacy_agent(domain_root / "AGENT.md", result)
 
-    for directory in DOMAIN_DIRECTORIES:
+    required_directories = (
+        directory
+        for directory in DOMAIN_DIRECTORIES
+        if not (layout_v2 and directory == "05-knowledge")
+    )
+    for directory in required_directories:
         require_dir(domain_root / directory, result)
 
     for filename in CONTROL_PLANE_FILES:
@@ -627,8 +640,9 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
         require_file(domain_root / "03-workflows" / lane / "README.md", result)
         require_file(domain_root / "04-automations" / lane / "README.md", result)
 
-    for filename in KNOWLEDGE_FILES:
-        require_file(domain_root / "05-knowledge" / filename, result)
+    if not layout_v2:
+        for filename in KNOWLEDGE_FILES:
+            require_file(domain_root / "05-knowledge" / filename, result)
 
     require_file(domain_root / "06-runs-and-logs" / "activity-log.md", result)
     require_file(domain_root / "06-runs-and-logs" / "runs" / "README.md", result)
@@ -911,8 +925,18 @@ def _has_registered_invocation(
 
 
 def validate_workflow_automation_invocations(root: Path, result: ValidationResult) -> None:
-    workflow_specs = sorted(root.glob("*/03-workflows/*/*/workflow.md"))
-    automation_specs = sorted(root.glob("*/04-automations/*/*/automation.md"))
+    workflow_specs = sorted(
+        {
+            *root.glob("*/03-workflows/*/*/workflow.md"),
+            *root.glob("domains/*/03-workflows/*/*/workflow.md"),
+        }
+    )
+    automation_specs = sorted(
+        {
+            *root.glob("*/04-automations/*/*/automation.md"),
+            *root.glob("domains/*/04-automations/*/*/automation.md"),
+        }
+    )
     command_sources = _registry_sources(root, "commands", "commands")
     skill_sources = _registry_sources(root, "skills", "skills")
     command_ids = _registry_ids(root, "commands", "commands")
@@ -982,6 +1006,18 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
         )
         excluded = {}
 
+    def canonical_tracking_path(value: str) -> str:
+        candidate = Path(value)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.relative_to(root)
+            except ValueError:
+                return value.rstrip("/")
+        parts = candidate.parts
+        if parts and parts[0] != "domains" and (root / "domains" / parts[0]).exists():
+            candidate = Path("domains") / candidate
+        return candidate.as_posix().rstrip("/")
+
     represented_ids: set[str] = set()
     represented_paths: set[str] = set()
     for section_name, entries in (
@@ -998,7 +1034,7 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
                 continue
             cwd = str(entry.get("cwd") or "").strip()
             if cwd and cwd != ".":
-                represented_paths.add(cwd.rstrip("/"))
+                represented_paths.add(canonical_tracking_path(cwd))
             if (
                 section_name == "automations"
                 and not entry.get("page_id")
@@ -1009,11 +1045,25 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
                     f"or external_projection_blocker: {tracking_path}"
                 )
 
-    for automation_md in sorted(root.glob("*/04-automations/*/*/automation.md")):
+    automation_candidates = {
+        *root.glob("*/04-automations/*/*/automation.md"),
+        *root.glob("domains/*/04-automations/*/*/automation.md"),
+    }
+    automation_specs: dict[str, Path] = {}
+    for candidate in sorted(automation_candidates):
+        key = str(candidate.resolve())
+        relative = candidate.relative_to(root)
+        current = automation_specs.get(key)
+        if current is None or relative.parts[0] == "domains":
+            automation_specs[key] = candidate
+    for automation_md in sorted(automation_specs.values()):
         automation_root = automation_md.parent
         automation_id = automation_root.name
         automation_path = automation_root.relative_to(root).as_posix()
-        if automation_id in represented_ids or automation_path in represented_paths:
+        if (
+            automation_id in represented_ids
+            or canonical_tracking_path(automation_path) in represented_paths
+        ):
             continue
         result.errors.append(
             "automation folder missing automation-run-tracking representation "
@@ -1288,6 +1338,7 @@ GENERATED_DATA_DIR_NAMES = {
     "logs",
     "node_modules",
     "remote",
+    "runtime",
     "runs",
     "snapshots",
     "worker-runs",
@@ -1514,6 +1565,13 @@ def validate_root(root: str | Path) -> ValidationResult:
     harness_root = harness_path(os_root)
     for filename in HARNESS_ROOT_FILES:
         require_file(harness_root / filename, result)
+    naming_config = os_root / CONFIG_RELATIVE_PATH
+    require_file(naming_config, result)
+    if naming_config.is_file():
+        try:
+            load_artifact_naming_policy(os_root)
+        except ValueError as exc:
+            result.errors.append(f"invalid artifact naming config: {naming_config}: {exc}")
     validate_claude_adapter(harness_root / "CLAUDE.md", result)
     warn_legacy_agent(harness_root / "AGENT.md", result)
 
@@ -1533,6 +1591,8 @@ def validate_root(root: str | Path) -> ValidationResult:
     validate_workflow_automation_invocations(os_root, result)
     validate_automation_projection_registry(os_root, result)
     validate_registered_hooks(os_root, result)
+    validate_object_library(os_root, result)
+    validate_work_state(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)
     context_check = check_context_contracts(os_root)
@@ -1552,8 +1612,9 @@ def validate_root(root: str | Path) -> ValidationResult:
     # has no domains at all, which keeps missing-domain errors for broken or
     # half-created roots.
     domains_to_validate = profile_domains or installed_domain_names(os_root) or list(DEFAULT_DOMAINS)
+    layout_v2 = (os_root / "lib").is_dir()
     for domain in domains_to_validate:
-        validate_domain(domain_path(os_root, domain), result)
+        validate_domain(domain_path(os_root, domain), result, layout_v2=layout_v2)
     if not profile_domains:
         validate_domain(shared_factory_path(os_root), result)
 
@@ -1594,6 +1655,66 @@ def validate_root(root: str | Path) -> ValidationResult:
         result.warnings.append(finding["message"])
 
     return result
+
+
+def validate_object_library(root: Path, result: ValidationResult) -> None:
+    """Validate lib/ only when an install has opted into layout v2."""
+
+    if not (root / "lib").exists():
+        return
+    from .library import library_doctor
+
+    doctor = library_doctor(root)
+    for diagnostic in doctor.get("diagnostics") or []:
+        if not isinstance(diagnostic, dict):
+            continue
+        detail = diagnostic.get("message") or diagnostic.get("path") or ""
+        message = f"object library {diagnostic.get('code', 'invalid')}: {detail}".rstrip()
+        if diagnostic.get("severity") == "error":
+            result.errors.append(message)
+        else:
+            result.warnings.append(message)
+
+
+def validate_work_state(root: Path, result: ValidationResult) -> None:
+    """Validate canonical work truth only after active-now opt-in."""
+
+    projection_path = root / "harness/shared_factory/00-control-plane/active-now.json"
+    if not projection_path.is_file():
+        return
+    db_path = root / "harness/shared_factory/00-control-plane/state.db"
+    if not db_path.is_file():
+        result.errors.append(f"active work projection exists without state database: {db_path}")
+        return
+    try:
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        result.errors.append(f"invalid active work projection: {projection_path}: {exc}")
+        return
+    try:
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        version = connection.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+        ).fetchone()[0]
+        rows = connection.execute(
+            "SELECT id FROM active_now ORDER BY priority DESC, updated_at DESC, id"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        result.errors.append(f"invalid canonical work state: {db_path}: {exc}")
+        return
+    finally:
+        if "connection" in locals():
+            connection.close()
+    if not integrity or integrity[0] != "ok":
+        result.errors.append(f"canonical work state integrity failed: {db_path}")
+    if int(version) < 2:
+        result.errors.append(f"canonical work state schema is older than v2: {db_path}")
+    projected_ids = [str(item.get("id")) for item in projection.get("items") or []]
+    database_ids = [str(row["id"]) for row in rows]
+    if projected_ids != database_ids or projection.get("active_count") != len(database_ids):
+        result.errors.append(f"active work projection is stale: {projection_path}")
 
 
 def profile_domain_names(root: Path) -> list[str]:

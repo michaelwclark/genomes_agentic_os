@@ -107,6 +107,8 @@ def managed_context_targets(root: str | Path) -> list[Path]:
     os_root = expand_path(root)
     targets: set[Path] = set()
     patterns = (
+        "domains/*/03-workflows/*/*",
+        "domains/*/04-automations/*/*",
         "*/03-workflows/*/*",
         "*/04-automations/*/*",
         "harness/shared_factory/03-workflows/*/*",
@@ -115,7 +117,12 @@ def managed_context_targets(root: str | Path) -> list[Path]:
     for pattern in patterns:
         for path in os_root.glob(pattern):
             if path.is_dir() and not path.is_symlink():
-                targets.add(path)
+                resolved = path.resolve()
+                try:
+                    resolved.relative_to(os_root.resolve())
+                except ValueError:
+                    continue
+                targets.add(resolved)
     return sorted(targets)
 
 

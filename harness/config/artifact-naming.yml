@@ -1,0 +1,14 @@
+artifact_naming:
+  date_prefix:
+    enabled: true
+    format: '%m%d%y'
+    separator: '-'
+    scopes:
+      work_items: true
+      worktrees: true
+      conversation_logs: true
+      async_runs: true
+      run_logs: true
+      report_runs: true
+      development_runs: true
+      thread_closeouts: true

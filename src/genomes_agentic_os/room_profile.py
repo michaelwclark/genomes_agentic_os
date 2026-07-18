@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_naming import CONFIG_RELATIVE_PATH, render_default_artifact_naming_config
 from .scaffold import (
     DEFAULT_PROJECTS_SOURCE,
     ScaffoldResult,
@@ -220,6 +221,7 @@ def install_profile_os(
     result = ScaffoldResult()
     root.mkdir(parents=True, exist_ok=True)
     write_root_marker(root, result, projects_source)
+    write_file_once(root / CONFIG_RELATIVE_PATH, render_default_artifact_naming_config(), result)
     ensure_visible_capability_surface(root, result)
     ensure_update_metadata(root, result)
     ensure_customer_update_contract(root, result)

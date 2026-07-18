@@ -63,7 +63,11 @@ def managed_repair(root: Path) -> list[str]:
 
 def workflow_findings(root: Path) -> list[DoctorFinding]:
     findings = []
-    for workflow in sorted(root.glob("*/03-workflows/*/*/workflow.md")):
+    workflows = {
+        *root.glob("*/03-workflows/*/*/workflow.md"),
+        *root.glob("domains/*/03-workflows/*/*/workflow.md"),
+    }
+    for workflow in sorted(workflows):
         domain = workflow.parents[3].name
         lane = workflow.parent.parent.name
         name = workflow.parent.name
@@ -75,7 +79,11 @@ def workflow_findings(root: Path) -> list[DoctorFinding]:
 
 def automation_findings(root: Path) -> list[DoctorFinding]:
     findings = []
-    for automation in sorted(root.glob("*/04-automations/*/*/automation.md")):
+    automations = {
+        *root.glob("*/04-automations/*/*/automation.md"),
+        *root.glob("domains/*/04-automations/*/*/automation.md"),
+    }
+    for automation in sorted(automations):
         domain = automation.parents[3].name
         lane = automation.parent.parent.name
         name = automation.parent.name
@@ -88,7 +96,11 @@ def automation_findings(root: Path) -> list[DoctorFinding]:
 
 def active_work_findings(root: Path) -> list[DoctorFinding]:
     findings = []
-    for active_work in sorted(root.glob("*/00-control-plane/active-work.md")):
+    active_work_files = {
+        *root.glob("*/00-control-plane/active-work.md"),
+        *root.glob("domains/*/00-control-plane/active-work.md"),
+    }
+    for active_work in sorted(active_work_files):
         for line in active_work.read_text(encoding="utf-8").splitlines():
             if line.startswith("| `") and ("Define next action" in line or "|  |" in line):
                 findings.append(DoctorFinding("fix-soon", active_work, "active work row is missing a concrete next action"))
@@ -97,7 +109,12 @@ def active_work_findings(root: Path) -> list[DoctorFinding]:
 
 def project_findings(root: Path) -> list[DoctorFinding]:
     findings = []
-    for project_dir in sorted(root.glob("*/02-projects/*")):
+    project_dirs = {
+        *root.glob("*/02-projects/*"),
+        *root.glob("domains/*/02-projects/*"),
+        *root.glob("domains/*/projects/*"),
+    }
+    for project_dir in sorted(project_dirs):
         if not project_dir.is_dir():
             continue
         for filename in ("project.yml", "status.md", "source-map.md"):
@@ -109,7 +126,11 @@ def project_findings(root: Path) -> list[DoctorFinding]:
 
 def run_log_findings(root: Path) -> list[DoctorFinding]:
     findings = []
-    for run_log in sorted(root.glob("*/06-runs-and-logs/runs/*/run-log.md")):
+    run_logs = {
+        *root.glob("*/06-runs-and-logs/runs/*/run-log.md"),
+        *root.glob("domains/*/06-runs-and-logs/runs/*/run-log.md"),
+    }
+    for run_log in sorted(run_logs):
         content = run_log.read_text(encoding="utf-8")
         status = table_field(content, "Status")
         if status in {"", "running", "draft"} and "## Closeout" not in content:

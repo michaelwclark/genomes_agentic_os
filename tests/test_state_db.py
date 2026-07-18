@@ -10,8 +10,14 @@ from genomes_agentic_os.state import db
 def test_memory_connect_creates_current_schema() -> None:
     conn = db.connect(":memory:")
     try:
-        assert db.schema_version(conn) == 2
-        assert db.table_counts(conn) == {"events": 0, "run_queue": 0, "cursors": 0}
+        assert db.schema_version(conn) == 3
+        assert db.table_counts(conn) == {
+            "events": 0,
+            "run_queue": 0,
+            "cursors": 0,
+            "work_items": 0,
+            "work_item_history": 0,
+        }
     finally:
         conn.close()
 
@@ -57,8 +63,14 @@ def test_reopening_file_db_is_idempotent(tmp_path: Path) -> None:
 
     conn2 = db.connect(db_path)
     try:
-        assert db.schema_version(conn2) == 2
-        assert db.table_counts(conn2) == {"events": 0, "run_queue": 0, "cursors": 0}
+        assert db.schema_version(conn2) == 3
+        assert db.table_counts(conn2) == {
+            "events": 0,
+            "run_queue": 0,
+            "cursors": 0,
+            "work_items": 0,
+            "work_item_history": 0,
+        }
     finally:
         conn2.close()
 
@@ -68,10 +80,10 @@ def test_ensure_schema_is_idempotent_on_same_connection() -> None:
     try:
         version_before = db.ensure_schema(conn)
         version_after = db.ensure_schema(conn)
-        assert version_before == version_after == 2
+        assert version_before == version_after == 3
         # One schema_version row per migration ever applied, not one per call.
         row_count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-        assert row_count == 2
+        assert row_count == 3
     finally:
         conn.close()
 

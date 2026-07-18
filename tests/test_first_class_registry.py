@@ -167,9 +167,17 @@ def test_refresh_discovers_installed_inactive_execution_fabric(tmp_path: Path) -
     assert resource["scope"] == {"domain": None, "project": None}
 
 
-def test_refresh_excludes_templates_artifacts_and_worktrees(tmp_path: Path) -> None:
+def test_refresh_excludes_generated_definition_and_runtime_trees(tmp_path: Path) -> None:
     root = _root(tmp_path)
-    for excluded in ("templates", "artifacts", "worktrees", "logs"):
+    for excluded in (
+        "templates",
+        "artifacts",
+        "worktrees",
+        "logs",
+        "domains",
+        "lib",
+        "runtime",
+    ):
         _write(root / f"work/{excluded}/bad/workflow.md", "# Workflow: Must not load\n")
     payload = refresh_first_class_registry(root)
     sources = {item["source"] for item in payload["resources"]}

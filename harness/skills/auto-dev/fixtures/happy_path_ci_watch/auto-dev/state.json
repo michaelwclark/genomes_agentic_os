@@ -21,7 +21,7 @@
     "repo_path": "/Users/genome/projects/los/app/los-app-los-django",
     "base_branch": "origin/develop",
     "branch": "feature/FLYWL-0000-update-node-version",
-    "worktree": "/Users/genome/agentic_os/los/02-projects/los_app_los_django/worktrees/ykf",
+    "worktree": "/Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/worktrees/ykf",
     "test_cmd": null,
     "merge_policy": "never_auto",
     "finishing_required": true,

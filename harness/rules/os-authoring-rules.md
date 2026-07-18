@@ -74,6 +74,32 @@ Update `program.md`, `components.yml`, `context-pack.md`, `crud.md`,
 behavior, ownership, routing, validation, external projection, schedule, or
 linked component list changes.
 
+## Versioned Installed Object Library
+
+When an installed root contains lib/registry/objects.json, treat that compact
+registry as the first read surface for programs, workflows, automations,
+commands, skills, hooks, rules, references, templates, and toolkits.
+
+- Each object.yml manifest is canonical for mutation.
+- Generated files under lib/registry are canonical read projections and must
+  not be edited directly.
+- Use agentic-os library refresh --apply after changing an object.
+- Use agentic-os library doctor before committing or projecting adapters.
+- Put mutable logs, runs, state, caches, receipts, artifacts, secrets, and
+  worktrees under runtime, never in the versioned object definition.
+- During migration, legacy paths are compatibility aliases. New definitions and
+  normal writes target lib.
+
+Work state is not a library object. Read `active-now.json` before broad context,
+then use `agentic-os work show/list` for detail. Mutate lifecycle state,
+attention, resume context, source identity, and verification timestamps through
+`agentic-os work`; do not infer or change state by moving packet folders.
+
+Top-level durable entity names follow `harness/config/artifact-naming.yml`.
+Generators apply the configured date prefix; use `agentic-os naming migrate`
+for existing work items, registered worktrees, conversations, and run entities.
+Do not rename stable internal contract files such as `work.yml` or `run-log.md`.
+
 ## Bug Intake
 
 Use `/add-bug` for missed enforcement, broken routing, logging gaps, or product

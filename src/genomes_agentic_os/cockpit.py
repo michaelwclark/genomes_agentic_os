@@ -108,7 +108,7 @@ def _project_from_path(path: Path, root: Path) -> tuple[str, str, str]:
         parts = path.resolve(strict=False).relative_to(root.resolve(strict=False)).parts
     except ValueError:
         return "", "", ""
-    domain = parts[0] if parts else ""
+    domain = parts[1] if len(parts) > 1 and parts[0] == "domains" else (parts[0] if parts else "")
     project = ""
     work_item = ""
     if "02-projects" in parts:
@@ -125,14 +125,20 @@ def _project_from_path(path: Path, root: Path) -> tuple[str, str, str]:
 def _project_route_index(root: Path) -> list[tuple[Path, str, str]]:
     """Map installed project/link targets back to their OS domain and project."""
     routes: dict[str, tuple[Path, str, str]] = {}
-    for project_root in root.glob("*/02-projects/*"):
+    project_roots = {
+        *root.glob("*/02-projects/*"),
+        *root.glob("domains/*/02-projects/*"),
+        *root.glob("domains/*/projects/*"),
+    }
+    for project_root in project_roots:
         if not project_root.is_dir():
             continue
         try:
             relative = project_root.relative_to(root)
         except ValueError:
             continue
-        domain, project = relative.parts[0], project_root.name
+        domain = relative.parts[1] if relative.parts[0] == "domains" else relative.parts[0]
+        project = project_root.name
         candidates = [project_root, project_root / "src"]
         worktrees = project_root / "worktrees"
         if worktrees.is_dir():
@@ -179,7 +185,13 @@ def _bounded_recent(paths: Iterable[Path], limit: int) -> list[Path]:
 
 
 def _work_item_paths(root: Path) -> list[Path]:
-    return sorted(root.glob("*/02-projects/*/work-items/*/*/work.yml"))
+    return sorted(
+        {
+            *root.glob("*/02-projects/*/work-items/*/*/work.yml"),
+            *root.glob("domains/*/02-projects/*/work-items/*/*/work.yml"),
+            *root.glob("domains/*/projects/*/work-items/*/*/work.yml"),
+        }
+    )
 
 
 def collect_work_items(root: str | Path, *, max_items: int = 1_000) -> list[dict[str, Any]]:
@@ -489,7 +501,12 @@ def collect_hygiene(
                     "suggested_command": f"agentic-os project work-item finalize-lingering {item.get('domain')} {item.get('project')} --root {os_root}",
                 }
             )
-    for link in os_root.glob("*/02-projects/*/worktrees/*"):
+    worktree_links = {
+        *os_root.glob("*/02-projects/*/worktrees/*"),
+        *os_root.glob("domains/*/02-projects/*/worktrees/*"),
+        *os_root.glob("domains/*/projects/*/worktrees/*"),
+    }
+    for link in worktree_links:
         if not link.is_symlink():
             continue
         try:

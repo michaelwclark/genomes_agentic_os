@@ -259,7 +259,7 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
 
     conn = db.connect(db.default_db_path(root))
     try:
-        assert db.schema_version(conn) == 2
+        assert db.schema_version(conn) == 3
         assert conn.execute("SELECT COUNT(*) FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == 1
         assert {row[0] for row in conn.execute("SELECT name FROM execution_queues")} == {"codex", "claude", "non_llm"}
         assert {row[0] for row in conn.execute("SELECT name FROM worker_pools")} == {"codex_workers", "claude_workers", "non_llm_workers"}

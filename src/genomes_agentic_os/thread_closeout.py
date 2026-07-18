@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_naming import dated_name, load_artifact_naming_policy
 from .lifecycle import (
     ACTIVE_WORK_ITEM_STATES,
     WorkItemRecord,
@@ -45,13 +46,22 @@ def format_thread_closeout_result(result: dict[str, Any]) -> str:
     return yaml.safe_dump(result, sort_keys=False).strip()
 
 
-def safe_thread_id(value: str | None) -> str:
+def safe_thread_id(value: str | None, *, root: str | Path | None = None) -> str:
+    started_at = datetime.now(timezone.utc)
     if value:
         text = re.sub(r"[^a-zA-Z0-9_.-]+", "_", value).strip("._-")
         if text:
-            return text
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{stamp}_thread_closeout"
+            base = text
+        else:
+            base = f"{started_at.strftime('%H%M%SZ')}-thread-closeout"
+    else:
+        base = f"{started_at.strftime('%H%M%SZ')}-thread-closeout"
+    return dated_name(
+        base,
+        when=started_at,
+        policy=load_artifact_naming_policy(root or Path("~/agentic_os").expanduser()),
+        scope="thread_closeouts",
+    )
 
 
 def path_for_display(path: Path) -> str:
@@ -106,6 +116,8 @@ def root_project_dirs(root: Path, *, domain: str | None = None, project: str | N
 
     seen: set[str] = set()
     projects_roots = list(root.glob("*/02-projects"))
+    projects_roots.extend(root.glob("domains/*/projects"))
+    projects_roots.extend(root.glob("domains/*/02-projects"))
     projects_roots.append(root / "harness" / "shared_factory" / "02-projects")
     for projects_root in sorted(projects_roots):
         if not projects_root.is_dir():
@@ -672,7 +684,7 @@ def close_thread(
         raise ValueError("archive refused: unresolved --next-action requires --allow-blocked-archive")
 
     os_root = expand_path(root)
-    resolved_thread_id = safe_thread_id(thread_id)
+    resolved_thread_id = safe_thread_id(thread_id, root=root)
     timestamp = now_iso()
     target = resolve_target(
         os_root,

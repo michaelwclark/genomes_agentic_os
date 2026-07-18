@@ -45,6 +45,9 @@ from . import rules
 from . import operator_resources
 from . import first_class_registry
 from . import develop
+from . import library
+from . import work
+from . import naming
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -83,6 +86,9 @@ COMMAND_MODULES = [
     operator_resources,
     first_class_registry,
     develop,
+    library,
+    work,
+    naming,
 ]
 
 
@@ -98,6 +104,8 @@ def build_parser(prog: str = "agentic-os") -> argparse.ArgumentParser:
                 ("AGENTIC_OS_ROOT", "Installed OS root (used as --root default when set). Default: ~/agentic_os."),
             ],
             config_files=[
+                ("~/agentic_os/lib/registry/objects.json", "Compact canonical installed object registry."),
+                ("~/agentic_os/harness/shared_factory/00-control-plane/active-now.json", "Compact active-work context projection."),
                 ("~/agentic_os/harness/registries/", "Central registries (automations, skills, commands, etc.)."),
                 ("~/agentic_os/harness/shared_factory/", "Shared factory outputs (metrics, run logs, etc.)."),
                 ("~/agentic_os/config/hosts.yml", "SSH host registry read by project remote commands."),

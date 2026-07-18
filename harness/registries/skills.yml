@@ -1,4 +1,8 @@
 skills:
+- id: artifact-naming
+  name: Artifact Naming
+  description: Inspect, migrate, or restore configurable date-prefixed durable Agentic OS entity names.
+  source: harness/skills/artifact-naming/SKILL.md
 - id: agentic-os-operating-contract
   name: Agentic OS Operating Contract
   description: Apply the shared Agentic OS routing, context, tool-use, workflow, automation, and closeout contract across Claude and Codex.

@@ -10,6 +10,7 @@ import sys
 import traceback
 from typing import Any
 
+from .artifact_naming import dated_name, load_artifact_naming_policy, split_date_prefix
 from .lifecycle import (
     TOKEN_SHAPED_VALUE_RE,
     contains_token_shaped_value,
@@ -26,8 +27,9 @@ from .scaffold import domain_path, expand_path
 _HOOK_LOG_RELATIVE = Path("harness") / "logs" / "hooks" / "hook-failures.jsonl"
 
 
-def utc_date_slug() -> str:
-    return datetime.now(timezone.utc).strftime("%Y_%m_%d")
+def utc_date_slug(root: Path | None = None) -> str:
+    policy = load_artifact_naming_policy(root or Path("~/agentic_os").expanduser())
+    return policy.prefix_for(datetime.now(timezone.utc))
 
 
 def utc_iso_now() -> str:
@@ -125,9 +127,16 @@ def write_jsonl(path: Path, rows: list[Any]) -> None:
     path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
 
 
-def write_tool_call_markdown(path: Path, *, source: Path | None, tool_calls: list[dict[str, Any]], redacted: bool) -> None:
+def write_tool_call_markdown(
+    path: Path,
+    *,
+    source: Path | None,
+    tool_calls: list[dict[str, Any]],
+    redacted: bool,
+    root: Path | None = None,
+) -> None:
     lines = [
-        f"# Tool Calls: {utc_date_slug()}",
+        f"# Tool Calls: {utc_date_slug(root)}",
         "",
         "| Field | Value |",
         "| --- | --- |",
@@ -203,8 +212,15 @@ def conversation_log_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         transcript_path = (cwd / transcript_path).resolve()
 
     destination, slug_source = destination_for_payload(root, cwd, transcript_path, payload)
-    slug = slugify_work_id(slug_source)
-    base = f"{utc_date_slug()}_{slug}"
+    policy = load_artifact_naming_policy(root)
+    _existing_prefix, unprefixed_source = split_date_prefix(Path(slug_source).stem, policy)
+    slug = slugify_work_id(unprefixed_source)
+    base = dated_name(
+        slug,
+        when=datetime.now(timezone.utc),
+        policy=policy,
+        scope="conversation_logs",
+    )
     raw_path = destination / f"{base}.jsonl"
     tool_jsonl_path = destination / f"{base}_tool_calls.jsonl"
     tool_md_path = destination / f"{base}_tool_calls.md"
@@ -220,7 +236,7 @@ def conversation_log_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for row in rows:
         collect_tool_calls(row, found=tool_calls)
     write_jsonl(tool_jsonl_path, tool_calls)
-    write_tool_call_markdown(tool_md_path, source=transcript_path, tool_calls=tool_calls, redacted=redacted)
+    write_tool_call_markdown(tool_md_path, source=transcript_path, tool_calls=tool_calls, redacted=redacted, root=root)
 
     return {
         "ok": True,

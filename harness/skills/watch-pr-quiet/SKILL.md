@@ -26,7 +26,7 @@ For LOS work, prefer the Agentic OS work item artifact folder:
 python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr 12345 \
   --repo thesummitgrp/los-app-los-django \
-  --output-dir /Users/genome/agentic_os/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/pr-watch \
+  --output-dir /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/pr-watch \
   --timeout-minutes 90 \
   --interval-minutes 5
 ```

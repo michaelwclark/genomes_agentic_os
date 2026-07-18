@@ -55,8 +55,14 @@ def test_init_creates_schema_at_explicit_db_path(tmp_path: Path, capsys: pytest.
     assert rc == 0
     assert db_path.is_file()
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema_version"] == 2
-    assert payload["table_counts"] == {"events": 0, "run_queue": 0, "cursors": 0}
+    assert payload["schema_version"] == 3
+    assert payload["table_counts"] == {
+        "events": 0,
+        "run_queue": 0,
+        "cursors": 0,
+        "work_items": 0,
+        "work_item_history": 0,
+    }
 
 
 def test_status_reports_counts_after_writes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

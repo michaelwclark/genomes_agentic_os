@@ -57,7 +57,7 @@ Example ledger:
 
 ```text
 FLYWL-1234 Something Cool | branch feature/FLYWL-1234-something-cool | 4 agents
-Artifacts: /Users/genome/agentic_os/los/02-projects/los_app_los_django/work-items/02-active/001_flywl_1234_something_cool/artifacts/
+Artifacts: /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/001_flywl_1234_something_cool/artifacts/
 - Plan locked; agents 1-4 dispatched
 - Agent 1 accepted: API behavior (receipt: agent-returns/agent-1.md)
 - Agent 3 rejected: tests asserted internals; re-dispatched (receipt: agent-returns/agent-3.md)
@@ -77,7 +77,7 @@ or task>: <short title>" --summary "<one-line task summary>"`. Use the work
 item `WORKLOG.md` for human-readable progress and its `artifacts/` directory for
 raw evidence. If a project-level human summary is useful outside the packet,
 write it under
-`/Users/genome/agentic_os/los/02-projects/los_app_los_django/worklogs/` using
+`/Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/worklogs/` using
 the same ticket or task slug. Set `AGENTIC_OS_ACTIVE_WORK_ITEM=<absolute
 work-item path>` before starting long-running commands or subagents.
 
@@ -90,7 +90,7 @@ worktree plus Docker/OrbStack runtime are safe to delete. Cleanup automation
 must not silently remove a worktree while `REOPEN.md` is present.
 
 ```text
-/Users/genome/agentic_os/los/02-projects/los_app_los_django/work-items/02-active/<id>/
+/Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/<id>/
   work.yml
   artifacts/
     orchestration.md
@@ -310,7 +310,7 @@ FLYWL-1234 blocked.
 - Blocker: <specific blocker>
 - Last good state: <branch/sha/artifact>
 - Resume from: <exact command or next action>
-- Detail: /Users/genome/agentic_os/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/orchestration.md
+- Detail: /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/orchestration.md
 ```
 
 ## LOS Bindings
