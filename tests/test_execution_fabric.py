@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 from pathlib import Path
 import threading
 import time
@@ -17,7 +18,8 @@ from genomes_agentic_os.runtime_backend import (
     rollback_queue_mode,
     runtime_queue_items,
 )
-from genomes_agentic_os import runtime_ops
+from genomes_agentic_os import runtime_ops, runtime_snapshot
+from genomes_agentic_os.runtime_snapshot import build_runtime_snapshot, format_runtime_snapshot, write_runtime_snapshot
 from genomes_agentic_os.state import db
 from genomes_agentic_os.state import execution_fabric as fabric
 from genomes_agentic_os.state import queue as state_queue
@@ -67,6 +69,179 @@ def test_missing_selector_defaults_to_filesystem_and_dry_run_is_read_only(tmp_pa
     assert plan["applied"] is False
     assert registry.read_text(encoding="utf-8") == before
     assert not Path(plan["state_db"]).exists()
+
+
+def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    filesystem = build_runtime_snapshot(root, task_limit=10)
+
+    assert filesystem["queue_mode"] == "filesystem"
+    assert filesystem["summary"]["queued"] == 1
+    assert filesystem["queues"][0]["queue_name"] == "filesystem"
+    assert filesystem["queues"][0]["depth"] == 1
+    assert filesystem["tasks"][0]["queue_name"] == "filesystem"
+    assert not (root / "harness/shared_factory/00-control-plane/.runtime-queue-mode.lock").exists()
+
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "snapshot-codex",
+            "kind": "manual",
+            "status": "queued",
+            "execution_target": "codex_harness",
+            "command": "secret command must not be projected",
+        },
+    )
+    conn = db.connect(db.default_db_path(root))
+    try:
+        conn.execute(
+            "UPDATE run_queue SET error = ? WHERE id = ?",
+            ("provider rejected sk-abcdefghijklmnopqrstuvwxyz", "snapshot-codex"),
+        )
+        fabric.register_worker(conn, "snapshot-worker", pool_name="codex_workers")
+    finally:
+        conn.close()
+
+    snapshot = build_runtime_snapshot(root, queue_name="codex", statuses=["queued"], task_limit=10)
+
+    assert snapshot["queue_mode"] == "execution_fabric"
+    assert {queue["queue_name"] for queue in snapshot["queues"]} == {"codex", "claude", "non_llm"}
+    assert snapshot["filters"]["matching_tasks"] == 1
+    assert snapshot["tasks"][0]["id"] == "snapshot-codex"
+    assert "command" not in snapshot["tasks"][0]
+    assert "ref" not in snapshot["tasks"][0]
+    assert "error" not in snapshot["tasks"][0]
+    assert "blocked_reason" not in snapshot["tasks"][0]
+    assert snapshot["workers"][0]["id"] == "snapshot-worker"
+    assert "lease_token" not in snapshot["workers"][0]
+    assert "QUEUES" in format_runtime_snapshot(snapshot)
+    assert "snapshot-codex" in format_runtime_snapshot(snapshot)
+
+
+def test_fabric_snapshot_uses_one_sqlite_read_transaction_during_concurrent_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    runtime_ops.append_run_queue_item(
+        root,
+        {"id": "snapshot-race", "kind": "manual", "status": "queued", "execution_target": "codex_harness"},
+    )
+    wrote = False
+
+    def write_after_task_read(stage: str) -> None:
+        nonlocal wrote
+        if stage != "fabric_tasks" or wrote:
+            return
+        wrote = True
+        conn = db.connect(db.default_db_path(root))
+        try:
+            conn.execute(
+                "UPDATE run_queue SET status = 'done', updated_at = '2026-07-18T12:00:00Z' WHERE id = 'snapshot-race'"
+            )
+        finally:
+            conn.close()
+
+    monkeypatch.setattr(runtime_snapshot, "_snapshot_read_hook", write_after_task_read)
+    snapshot = build_runtime_snapshot(root, task_limit=None)
+
+    task = next(item for item in snapshot["tasks"] if item["id"] == "snapshot-race")
+    queue = next(item for item in snapshot["queues"] if item["queue_name"] == "codex")
+    assert snapshot["consistency"] == "sqlite_read_transaction"
+    assert task["status"] == "queued"
+    assert queue["statuses"]["queued"] == sum(
+        item["status"] == "queued" and item["queue_name"] == "codex" for item in snapshot["tasks"]
+    )
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert conn.execute("SELECT status FROM run_queue WHERE id = 'snapshot-race'").fetchone()[0] == "done"
+    finally:
+        conn.close()
+
+
+def test_snapshot_receipt_writes_use_unique_atomic_siblings(tmp_path: Path) -> None:
+    target = tmp_path / "same-receipt.json"
+    errors: list[Exception] = []
+
+    def writer(index: int) -> None:
+        try:
+            write_runtime_snapshot(target, {"writer": index})
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(index,)) for index in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert json.loads(target.read_text(encoding="utf-8"))["writer"] in range(12)
+    assert list(tmp_path.glob(".same-receipt.json.*.tmp")) == []
+
+
+def test_fabric_snapshot_projects_only_the_sql_limited_task_sample(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        for index in range(75):
+            fabric.enqueue_task(
+                conn,
+                queue_name="codex",
+                worker_pool="codex_workers",
+                kind="sample",
+                id=f"sample-{index:03d}",
+            )
+    finally:
+        conn.close()
+    projected = 0
+    original = runtime_snapshot._project_task
+
+    def count_projection(item: dict[str, object], *, queue_mode: str) -> dict[str, object]:
+        nonlocal projected
+        projected += 1
+        return original(item, queue_mode=queue_mode)
+
+    monkeypatch.setattr(runtime_snapshot, "_project_task", count_projection)
+    snapshot = build_runtime_snapshot(root, queue_name="codex", statuses=["queued"], task_limit=5)
+
+    assert snapshot["summary"]["total_records"] == 76
+    assert snapshot["filters"]["matching_tasks"] == 75
+    assert snapshot["filters"]["displayed_tasks"] == 5
+    assert projected == 5
+
+
+def test_cli_runtime_snapshot_supports_filters_json_and_receipt(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _root(tmp_path)
+    receipt = tmp_path / "runtime-snapshot.json"
+
+    assert main(
+        [
+            "runtime",
+            "snapshot",
+            "--root",
+            str(root),
+            "--status",
+            "queued",
+            "--limit",
+            "1",
+            "--output",
+            str(receipt),
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["schema_version"] == "agentic-os-runtime-snapshot/v1"
+    assert result["filters"]["displayed_tasks"] == 1
+    assert result["receipt_path"] == str(receipt)
+    assert json.loads(receipt.read_text(encoding="utf-8"))["captured_at"] == result["captured_at"]
 
 
 def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ConversationSummary, RuntimeHealth } from "../../shared/contracts";
 import { compactAge, modelColor } from "../../shared/presentation";
+import { ExecutionFabricView } from "./ExecutionFabricView";
 
 interface Props {
   conversations: ConversationSummary[];
@@ -11,9 +12,50 @@ interface Props {
   onQuery(value: string): void;
   onSelect(id: string): void;
   onPin(conversation: ConversationSummary, pinned: boolean): void;
+  onRefreshRuntime(): Promise<void>;
+  runtimeRefreshing: boolean;
 }
 
-export function ConversationList({ conversations, selectedId, query, generatedAt, runtime, onQuery, onSelect, onPin }: Props) {
+export function wrappedDialogFocusIndex(activeIndex: number, count: number, shift: boolean): number | undefined {
+  if (count < 1) return undefined;
+  if (shift && activeIndex === 0) return count - 1;
+  if (!shift && activeIndex === count - 1) return 0;
+  return undefined;
+}
+
+export function ConversationList({ conversations, selectedId, query, generatedAt, runtime, onQuery, onSelect, onPin, onRefreshRuntime, runtimeRefreshing }: Props) {
+  const [runtimeOpen, setRuntimeOpen] = useState(false);
+  const detailsButton = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!runtimeOpen) return undefined;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const focusable = () => Array.from(dialog.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []);
+    focusable()[0]?.focus();
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setRuntimeOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const targets = focusable();
+      if (!targets.length) return;
+      const activeIndex = targets.findIndex((target) => target === document.activeElement);
+      const nextIndex = wrappedDialogFocusIndex(activeIndex, targets.length, event.shiftKey);
+      if (nextIndex !== undefined) {
+        event.preventDefault();
+        targets[nextIndex].focus();
+      }
+    };
+    window.addEventListener("keydown", containFocus);
+    return () => {
+      window.removeEventListener("keydown", containFocus);
+      (previousFocus ?? detailsButton.current)?.focus();
+    };
+  }, [runtimeOpen]);
   return (
     <section className="conversation-list-panel" aria-label="Active conversations">
       <header className="list-header">
@@ -32,6 +74,7 @@ export function ConversationList({ conversations, selectedId, query, generatedAt
           <div><dt>Interactive</dt><dd>{runtime.reserved_interactive_slots}</dd></div>
           <div><dt>Failed</dt><dd>{runtime.failed + runtime.dead_letter}</dd></div>
         </dl>
+        <button ref={detailsButton} type="button" className="runtime-detail-button" onClick={() => setRuntimeOpen(true)}>Details</button>
       </section>
       <label className="search-box">
         <span aria-hidden="true">⌕</span>
@@ -84,6 +127,10 @@ export function ConversationList({ conversations, selectedId, query, generatedAt
           );
         })}
       </div>
+      {runtimeOpen && <div ref={dialog} className="fabric-overlay" role="dialog" aria-modal="true" aria-label="Execution Fabric operations">
+        <button type="button" className="fabric-close" onClick={() => setRuntimeOpen(false)} aria-label="Close Execution Fabric view">×</button>
+        <ExecutionFabricView runtime={runtime} onRefresh={onRefreshRuntime} refreshing={runtimeRefreshing} />
+      </div>}
     </section>
   );
 }

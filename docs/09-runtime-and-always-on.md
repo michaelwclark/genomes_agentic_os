@@ -163,6 +163,24 @@ Apply and rollback are dry-run-first. A switch is rejected while active leases
 exist. Rollback to `filesystem` is also rejected when nonterminal fabric tasks
 have no YAML projection, preventing a silent loss of queued work.
 
+### `agentic-os runtime snapshot`
+
+Capture one read-only operator view from whichever queue backend is selected:
+
+```bash
+agentic-os runtime snapshot --root ~/agentic_os
+agentic-os runtime snapshot --queue codex --status queued --json --root ~/agentic_os
+agentic-os runtime snapshot --all --output runtime-snapshot.json --root ~/agentic_os
+```
+
+The default terminal view includes queue depth, running and failed work, worker
+pool utilization, and the latest 50 safe task rows. Fabric totals and rows come
+from one SQLite read transaction; filesystem totals and rows come from one YAML
+parse. Repeat `--status` to combine
+filters. `--json` exposes the versioned machine contract; `--output` writes the
+same payload atomically. Raw execution payloads, prompts, commands, references,
+free-form failure text, and lease tokens are never included.
+
 ### `agentic-os run-queue prune`
 
 Prune stale run queue history from `run-queue.yml` and archive the removed items

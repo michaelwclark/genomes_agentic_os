@@ -8,7 +8,9 @@
 4. Run `agentic-os runtime queue-mode plan execution_fabric --root <root>`.
 5. Activate only with `agentic-os runtime queue-mode apply execution_fabric --root <root> --apply`.
 6. Verify the `codex`, `claude`, and `non_llm` queues and worker pools in
-   `agentic-os runtime queue-mode status --root <root>` and Command Center.
+   `agentic-os runtime snapshot --root <root>` and Command Center. Use
+   `--queue codex --status queued`, `--json`, or `--output <receipt.json>` for
+   focused and durable evidence.
 7. Run one supervisor tick with representative Codex, Claude, non-LLM,
    quiet-run, and registered-watcher work. Confirm no more than five background
    leases run, provider caps hold, and the interactive reserve remains one.

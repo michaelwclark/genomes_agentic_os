@@ -20,6 +20,13 @@
 - Authoritative readers ignore stale inactive-backend projections.
 - Queue admission rejects work at `max_queued`.
 - Command Center exposes backend-neutral queue and worker health.
+- The runtime snapshot CLI renders readable and deterministic JSON views,
+  supports queue/status/limit filters, writes atomic receipts, and never exposes
+  raw execution payloads, references, free-form failure text, or lease tokens.
+- Concurrent writers cannot split snapshot totals from task/worker rows, and
+  concurrent receipt writers use unique atomic sibling files.
+- Command Center uses the same snapshot contract for detailed named-queue,
+  worker-pool, worker, and explicitly sample-scoped filtered task views.
 - An unhealthy report creates one idempotent Codex self-heal task and one
   deduplicated governed notification; the Codex repair remains directly leased
   for its entire run.

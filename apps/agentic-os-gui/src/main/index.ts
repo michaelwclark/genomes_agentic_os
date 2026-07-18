@@ -181,7 +181,7 @@ function registerIpc(store: OperatorStateStore): void {
     displayName: configuredDisplayName(),
     operatorLabel: configuredOperatorLabel(),
   }));
-  ipcMain.handle(IPC.snapshot, () => bridge.snapshot());
+  ipcMain.handle(IPC.snapshot, () => bridge.snapshot(true));
   ipcMain.handle(IPC.transcript, (_event, conversationId: unknown) => {
     if (!isConversationId(conversationId)) throw new Error("invalid conversation id");
     return bridge.transcript(conversationId);

@@ -42,7 +42,7 @@
     },
     "runtime": {
       "type": "object",
-      "required": ["status", "queue_mode", "queue_depth", "running", "failed", "dead_letter", "active_workers", "unhealthy_workers", "reserved_interactive_slots", "queues", "worker_pools"],
+      "required": ["status", "queue_mode", "queue_depth", "running", "failed", "dead_letter", "active_workers", "unhealthy_workers", "reserved_interactive_slots"],
       "properties": {
         "status": {"enum": ["healthy", "degraded", "critical", "unavailable"]},
         "queue_mode": {"type": "string"},
@@ -57,6 +57,12 @@
         "reserved_interactive_slots": {"type": "integer", "minimum": 1},
         "queues": {"type": "array"},
         "worker_pools": {"type": "array"},
+        "workers": {"type": "array"},
+        "tasks": {"type": "array"},
+        "task_count": {"type": "integer", "minimum": 0},
+        "task_sample_count": {"type": "integer", "minimum": 0},
+        "task_sample_limit": {"type": "integer", "minimum": 1},
+        "captured_at": {"type": "string", "format": "date-time"},
         "reason": {"type": "string"}
       },
       "additionalProperties": false

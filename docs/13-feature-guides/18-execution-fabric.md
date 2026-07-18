@@ -1,5 +1,23 @@
 # 18 · Execution Fabric
 
+Capture the selected backend at one moment without mutating it:
+
+```bash
+agentic-os runtime snapshot --root ~/agentic_os
+agentic-os runtime snapshot --queue codex --status queued --json --root ~/agentic_os
+agentic-os runtime snapshot --output runtime-snapshot.json --root ~/agentic_os
+```
+
+The snapshot contains aggregate status, named queues, worker pools, safe worker
+metadata, and a bounded task sample. Command Center consumes the same contract
+for its interactive Execution Fabric detail view. Fabric reads use one SQLite
+read transaction and filesystem reads use one parsed YAML document, so totals
+and rows describe the same instant. Raw task payloads, commands, prompts,
+references, free-form failure text, and lease tokens are intentionally not
+projected. Command Center labels its latest-200 task sample and applies filters
+only to that sample; the CLI supports queue/status filtering and `--all` when
+an exhaustive receipt is required.
+
 Execution Fabric is an optional shared OSProgram for named queues and bounded
 worker pools. It is installed into every Agentic OS root, but presence never
 activates it:

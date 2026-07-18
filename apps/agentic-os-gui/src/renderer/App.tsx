@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationSummary, ConversationTranscript, GuiSnapshot, StreamEvent, UiConfig } from "../shared/contracts";
 import { filterConversations, isActiveConversation, isArchivedConversation } from "../shared/presentation";
 import { ConversationList } from "./components/ConversationList";
@@ -24,19 +24,37 @@ export function App() {
   const [streamEvents, setStreamEvents] = useState<StreamEvent[]>([]);
   const [leaseId, setLeaseId] = useState<string>();
   const [fatalError, setFatalError] = useState<string>();
+  const [snapshotRefreshing, setSnapshotRefreshing] = useState(false);
   const [navVisible, setNavVisible] = useState(true);
   const [metadataVisible, setMetadataVisible] = useState(true);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>();
   const [paletteQuery, setPaletteQuery] = useState("");
   const nextTabKey = useRef(1);
+  const snapshotRequest = useRef(0);
 
   const selectedId = tabs.find((tab) => tab.key === selectedTabKey)?.conversationId;
+  const refreshSnapshot = useCallback(async () => {
+    const request = ++snapshotRequest.current;
+    setSnapshotRefreshing(true);
+    try {
+      const next = await window.agenticOS.getSnapshot();
+      if (request === snapshotRequest.current) setSnapshot(next);
+    } catch (error) {
+      if (request === snapshotRequest.current) setFatalError(String(error));
+    } finally {
+      if (request === snapshotRequest.current) setSnapshotRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    void window.agenticOS.getSnapshot().then(setSnapshot).catch((error) => setFatalError(String(error)));
+    void refreshSnapshot();
     void window.agenticOS.getUiConfig().then(setUiConfig).catch(() => undefined);
-    return window.agenticOS.onSnapshotChanged(setSnapshot);
-  }, []);
+    return window.agenticOS.onSnapshotChanged((next) => {
+      snapshotRequest.current += 1;
+      setSnapshotRefreshing(false);
+      setSnapshot(next);
+    });
+  }, [refreshSnapshot]);
   useEffect(() => window.agenticOS.onStreamEvent((event) => {
     setStreamEvents((current) => [...current.slice(-499), event]);
     if (event.kind === "completed" || event.kind === "error") {
@@ -183,6 +201,8 @@ export function App() {
         onQuery={setQuery}
         onSelect={(id) => openTab(id)}
         onPin={(conversation, pinned) => void pin(conversation, pinned)}
+        onRefreshRuntime={refreshSnapshot}
+        runtimeRefreshing={snapshotRefreshing}
       />
       <section className="workspace" aria-label="Conversation workspace">
         <div className="workspace-tabs" role="tablist" aria-label="Open conversations">

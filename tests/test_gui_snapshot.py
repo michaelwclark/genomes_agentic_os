@@ -292,6 +292,11 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["queue_mode"] == "execution_fabric"
     assert snapshot["runtime"]["queue_depth"] == 1
     assert {queue["queue_name"] for queue in snapshot["runtime"]["queues"]} == {"codex", "claude", "non_llm"}
+    assert snapshot["runtime"]["task_count"] == 1
+    assert snapshot["runtime"]["tasks"][0]["id"] == "gui-codex"
+    assert snapshot["runtime"]["tasks"][0]["queue_name"] == "codex"
+    assert snapshot["runtime"]["captured_at"]
+    assert snapshot["runtime"]["workers"] == []
 
 
 def test_transcripts_return_only_visible_user_and_assistant_text(tmp_path: Path) -> None:

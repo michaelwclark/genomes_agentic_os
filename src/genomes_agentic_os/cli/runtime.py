@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from ..cli_help import AosHelpFormatter, env_epilog
 from ..runtime_health import (
@@ -42,6 +43,7 @@ from ..runtime_ops import (
     runtime_run_next,
     schedule_run_due,
 )
+from ..runtime_snapshot import build_runtime_snapshot, format_runtime_snapshot, write_runtime_snapshot
 from ..supervisor import format_supervise_result, supervise_tick
 
 from ._shared import DEFAULT_ROOT
@@ -53,6 +55,13 @@ def _print_structured(result: dict, *, json_output: bool = False) -> None:
 
 def _add_json_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def _add_safe_mutation_mode(parser: argparse.ArgumentParser) -> None:
@@ -110,6 +119,22 @@ def handle_runtime_health_report(args: argparse.Namespace) -> int:
         result["notion"] = {"applied": projection["ok"], **projection}
     print(format_runtime_result(result))
     return 0 if not args.apply_notion or result["notion"]["applied"] else 1
+
+
+def handle_runtime_snapshot(args: argparse.Namespace) -> int:
+    snapshot = build_runtime_snapshot(
+        args.root,
+        queue_name=args.queue,
+        statuses=args.status,
+        task_limit=None if args.all else args.limit,
+    )
+    if args.output:
+        snapshot["receipt_path"] = str(Path(args.output).expanduser().resolve())
+        write_runtime_snapshot(snapshot["receipt_path"], snapshot)
+    print(json.dumps(snapshot, sort_keys=True) if args.json else format_runtime_snapshot(snapshot))
+    if args.output and not args.json:
+        print(f"\nReceipt: {snapshot['receipt_path']}")
+    return 0
 
 
 def handle_runtime_run_next(args: argparse.Namespace) -> int:
@@ -272,9 +297,9 @@ def register(subparsers) -> None:
     """Register the runtime / heartbeat / schedule / run-queue / integration command group."""
     runtime_parser = subparsers.add_parser(
         "runtime",
-        help="Manage file-backed runtime state.",
+        help="Inspect and operate the selected runtime backend.",
         description=(
-            "Manage the file-backed runtime surface: registries, run queue, heartbeats, schedules, integrations, and sources. "
+            "Inspect and operate the runtime surface: registries, selected queue backend, workers, heartbeats, schedules, integrations, and sources. "
             "All mutating subcommands default to --dry-run; pass --apply to write changes. "
             "'runtime supervise' runs a full supervisor tick across all subsystems at once."
         ),
@@ -290,6 +315,7 @@ def register(subparsers) -> None:
             examples=[
                 ("agentic-os runtime init", "Create runtime registries and log folders."),
                 ("agentic-os runtime doctor", "Check runtime registry health."),
+                ("agentic-os runtime snapshot", "Capture queue, worker, and task state at one moment."),
                 ("agentic-os runtime supervise --apply", "Run a full supervisor tick across all subsystems."),
                 ("agentic-os runtime run-next --apply", "Dispatch the next safe queued item."),
             ],
@@ -318,6 +344,25 @@ def register(subparsers) -> None:
     )
     runtime_health_parser.add_argument("--automation-id", default="queue-worker-health")
     runtime_health_parser.set_defaults(handler=handle_runtime_health_report)
+    runtime_snapshot_parser = runtime_subparsers.add_parser(
+        "snapshot",
+        help="Capture a point-in-time queue, worker, and task snapshot from the selected backend.",
+    )
+    runtime_snapshot_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_snapshot_parser.add_argument("--queue", help="Restrict task rows to one named queue.")
+    runtime_snapshot_parser.add_argument(
+        "--status",
+        action="append",
+        default=[],
+        choices=("dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped", "cancelled", "dead-letter"),
+        help="Restrict task rows to a status; repeat to include multiple statuses.",
+    )
+    runtime_snapshot_limit = runtime_snapshot_parser.add_mutually_exclusive_group()
+    runtime_snapshot_limit.add_argument("--limit", type=_positive_int, default=50, help="Maximum task rows to include (default: 50).")
+    runtime_snapshot_limit.add_argument("--all", action="store_true", help="Include every matching task row.")
+    runtime_snapshot_parser.add_argument("--output", help="Atomically write the complete snapshot JSON to this path.")
+    _add_json_arg(runtime_snapshot_parser)
+    runtime_snapshot_parser.set_defaults(handler=handle_runtime_snapshot)
     runtime_run_next_parser = runtime_subparsers.add_parser("run-next", help="Dispatch the next safe queued runtime item.")
     runtime_run_next_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_run_next_parser.add_argument("--item-id", help="Specific queue item id to inspect or dispatch.")

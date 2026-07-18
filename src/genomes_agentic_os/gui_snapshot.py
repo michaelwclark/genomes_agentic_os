@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,7 @@ from .claude_sessions import (
 )
 from .codex_sessions import codex_transcript_result_for_id, collect_codex_conversations
 from .conversation_index import build_navigation, utc_now
-from .runtime_backend import queue_mode_status, runtime_queue_items
+from .runtime_snapshot import build_runtime_snapshot
 
 
 SCHEMA_VERSION = "agentic-os-gui/v1"
@@ -73,7 +73,7 @@ def _project_conversation(item: dict[str, Any]) -> dict[str, Any]:
 
 def _runtime_snapshot(root: Path) -> dict[str, Any]:
     try:
-        backend = queue_mode_status(root)
+        snapshot = build_runtime_snapshot(root, task_limit=200)
     except Exception as exc:
         return {
             "status": "unavailable",
@@ -89,80 +89,35 @@ def _runtime_snapshot(root: Path) -> dict[str, Any]:
             "reserved_interactive_slots": 1,
             "queues": [],
             "worker_pools": [],
+            "workers": [],
+            "tasks": [],
+            "task_count": 0,
+            "task_sample_count": 0,
+            "task_sample_limit": 200,
+            "captured_at": _generated_at(),
             "reason": f"{type(exc).__name__}: {exc}",
         }
-    metrics = backend["metrics"]
-    statuses: dict[str, int] = {}
-    for queue in metrics.get("queues") or []:
-        for name, count in (queue.get("statuses") or {}).items():
-            statuses[str(name)] = statuses.get(str(name), 0) + int(count)
-    dead_letter = int(statuses.get("dead-letter", 0))
-    failed = int(statuses.get("failed", 0))
-    unhealthy = int(metrics.get("unhealthy_worker_count") or 0)
-    queue_depth = int(statuses.get("queued", 0)) + int(statuses.get("approval-needed", 0))
-    now = datetime.now(timezone.utc)
-
-    def parsed(value: object) -> datetime | None:
-        if not value:
-            return None
-        try:
-            result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        return result.replace(tzinfo=timezone.utc) if result.tzinfo is None else result.astimezone(timezone.utc)
-
-    items = runtime_queue_items(root)
-    recent_failed = sum(
-        1
-        for item in items
-        if item.get("status") == "failed"
-        and (finished := parsed(item.get("finished_at") or item.get("updated_at"))) is not None
-        and now - finished <= timedelta(hours=1)
-    )
-    stale_queued = sum(
-        1
-        for item in items
-        if item.get("status") == "queued"
-        and (created := parsed(item.get("due_at") or item.get("created_at"))) is not None
-        and now - created > timedelta(hours=24)
-    )
-    expired_running = sum(
-        1
-        for item in items
-        if item.get("status") == "running"
-        and (lease := parsed(item.get("lease_until"))) is not None
-        and lease < now
-    )
-    saturated = any(
-        int(queue.get("max_queued") or 0)
-        and (
-            int((queue.get("statuses") or {}).get("queued", 0))
-            + int((queue.get("statuses") or {}).get("approval-needed", 0))
-        )
-        >= int(queue["max_queued"]) * 0.8
-        for queue in metrics.get("queues") or []
-    )
-    status = (
-        "critical"
-        if dead_letter or stale_queued or expired_running
-        else "degraded"
-        if recent_failed or unhealthy or saturated
-        else "healthy"
-    )
+    summary = snapshot["summary"]
     return {
-        "status": status,
-        "queue_mode": backend["queue_mode"],
-        "queue_depth": queue_depth,
-        "running": int(statuses.get("running", 0)),
-        "failed": failed,
-        "dead_letter": dead_letter,
-        "active_workers": int(metrics.get("live_worker_count") or 0),
-        "unhealthy_workers": unhealthy,
-        "stale_queued": stale_queued,
-        "expired_running_leases": expired_running,
-        "reserved_interactive_slots": int(metrics.get("reserved_interactive_slots") or 1),
-        "queues": metrics.get("queues") or [],
-        "worker_pools": metrics.get("worker_pools") or [],
+        "status": snapshot["health"],
+        "queue_mode": snapshot["queue_mode"],
+        "queue_depth": int(summary["queued"]) + int(summary["approval_needed"]),
+        "running": int(summary["running"]),
+        "failed": int(summary["failed"]),
+        "dead_letter": int(summary["dead_letter"]),
+        "active_workers": int(summary["active_workers"]),
+        "unhealthy_workers": int(summary["unhealthy_workers"]),
+        "stale_queued": int(summary["stale_queued"]),
+        "expired_running_leases": int(summary["expired_running_leases"]),
+        "reserved_interactive_slots": max(1, int(summary["reserved_interactive_slots"])),
+        "queues": snapshot["queues"],
+        "worker_pools": snapshot["worker_pools"],
+        "workers": snapshot["workers"],
+        "tasks": snapshot["tasks"],
+        "task_count": int(summary["total_records"]),
+        "task_sample_count": len(snapshot["tasks"]),
+        "task_sample_limit": 200,
+        "captured_at": snapshot["captured_at"],
     }
 
 

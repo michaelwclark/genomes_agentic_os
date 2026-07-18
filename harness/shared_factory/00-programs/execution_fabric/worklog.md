@@ -16,3 +16,11 @@
 - Command Center and the local cockpit now show queue/worker health.
 - Hourly health enforcement creates idempotent Codex self-heal work and governed
   local notifications for degraded or critical incidents.
+- Added a backend-neutral point-in-time runtime snapshot command and an expanded
+  Command Center Execution Fabric view with named queue depth, pool utilization,
+  registered workers, task filters, and a safe task-detail drawer.
+- Opposing review hardened the operator contract: one read transaction/document
+  now backs each snapshot, free-form task details stay outside the renderer,
+  receipt writers use unique temporary siblings, legacy GUI v1 snapshots remain
+  valid, refreshes are single-flight/sequenced, and modal focus is contained and
+  restored.
