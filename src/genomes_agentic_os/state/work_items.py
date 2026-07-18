@@ -507,6 +507,12 @@ def legacy_import_plan(root: str | Path) -> dict[str, Any]:
                         "source_key": packet.relative_to(os_root).as_posix(),
                         "packet_path": packet.relative_to(os_root).as_posix(),
                         "context_summary": _legacy_summary(packet),
+                        "blocked_reason": (
+                            "Legacy active index recorded this item as blocked; "
+                            "the blocker receipt requires verification."
+                            if item_state == "blocked"
+                            else None
+                        ),
                         "metadata": {
                             "legacy_lane": lane,
                             "migration_digest": digest,

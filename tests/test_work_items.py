@@ -106,6 +106,25 @@ def test_legacy_active_index_observation_imports_as_parked(tmp_path: Path) -> No
     assert plan["items"][0]["attention"] == "parked"
 
 
+def test_legacy_blocked_item_gets_a_verification_reason(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    packet = root / "los/02-projects/django/work-items/02-active/001_example"
+    packet.mkdir(parents=True)
+    index = root / "00-control-plane/active/index.yml"
+    index.parent.mkdir(parents=True)
+    index.write_text(
+        "work_items:\n"
+        f"  - target: {packet}\n"
+        "    status: blocked\n",
+        encoding="utf-8",
+    )
+
+    plan = work_items.legacy_import_plan(root)
+
+    assert plan["items"][0]["state"] == "blocked"
+    assert "requires verification" in plan["items"][0]["blocked_reason"]
+
+
 def test_work_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = tmp_path / "os"
     root.mkdir()
