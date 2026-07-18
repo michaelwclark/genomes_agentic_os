@@ -915,7 +915,11 @@ def discover_config_tree_targets(root: str | Path) -> list[ConfigTreeTarget]:
         ConfigTreeTarget(agentic_root, "agentic_os_root", ".agentic_root harness layer"),
     ]
     if root_path.exists():
-        domain_roots = {domain_config_path.parent for domain_config_path in root_path.glob("*/domain.yml")}
+        domain_roots = {
+            domain_config_path.parent
+            for pattern in ("*/domain.yml", "domains/*/domain.yml")
+            for domain_config_path in root_path.glob(pattern)
+        }
         shared_factory_root = harness_root / "shared_factory"
         if (shared_factory_root / "domain.yml").is_file():
             domain_roots.add(shared_factory_root)

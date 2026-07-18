@@ -244,10 +244,16 @@ def build_project_routes(root: str | Path) -> list[dict[str, Any]]:
     """Build longest-path-first domain/project routes from installed project roots."""
     os_root = Path(root).expanduser().resolve(strict=False)
     routes: dict[str, dict[str, Any]] = {}
-    for project_root in sorted(os_root.glob("*/02-projects/*")):
+    project_roots = {
+        *os_root.glob("*/02-projects/*"),
+        *os_root.glob("domains/*/02-projects/*"),
+        *os_root.glob("domains/*/projects/*"),
+    }
+    for project_root in sorted(project_roots):
         if not project_root.is_dir():
             continue
-        domain = project_root.relative_to(os_root).parts[0]
+        relative_parts = project_root.relative_to(os_root).parts
+        domain = relative_parts[1] if relative_parts[0] == "domains" else relative_parts[0]
         project = project_root.name
         metadata = _read_yaml(project_root / "project.yml")
         title = human_title(metadata.get("title"), metadata.get("name"), project.replace("_", " ").title())
@@ -297,7 +303,12 @@ def build_work_item_routes(root: str | Path) -> list[dict[str, Any]]:
     """Index Jira/PR evidence already captured in installed project work items."""
     os_root = Path(root).expanduser().resolve(strict=False)
     items: list[dict[str, Any]] = []
-    for work_yml in os_root.glob("*/02-projects/*/work-items/*/*/work.yml"):
+    work_items = {
+        *os_root.glob("*/02-projects/*/work-items/*/*/work.yml"),
+        *os_root.glob("domains/*/02-projects/*/work-items/*/*/work.yml"),
+        *os_root.glob("domains/*/projects/*/work-items/*/*/work.yml"),
+    }
+    for work_yml in work_items:
         try:
             relative = work_yml.relative_to(os_root)
         except ValueError:
@@ -305,6 +316,10 @@ def build_work_item_routes(root: str | Path) -> list[dict[str, Any]]:
         parts = relative.parts
         if len(parts) < 7:
             continue
+        if parts[0] == "domains":
+            domain, project = parts[1], parts[3]
+        else:
+            domain, project = parts[0], parts[2]
         item_root = work_yml.parent
         text_parts: list[str] = []
         for path in (work_yml, item_root / "SPEC.md", item_root / "NEXT.md", item_root / "SUMMARY.md"):
@@ -315,8 +330,8 @@ def build_work_item_routes(root: str | Path) -> list[dict[str, Any]]:
         references = extract_references(text_parts)
         items.append(
             {
-                "domain": parts[0],
-                "project": parts[2],
+                "domain": domain,
+                "project": project,
                 "work_item": item_root.name,
                 "jira_keys": {item["key"] for item in references["jira"]},
                 "pr_urls": {item["url"].lower() for item in references["pull_requests"]},

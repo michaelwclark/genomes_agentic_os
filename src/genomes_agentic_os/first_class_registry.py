@@ -728,7 +728,12 @@ def _registry_entries(
     root: Path, generated_at: str, diagnostics: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     sources = list(REGISTRY_SOURCES)
-    for path in root.glob("*/02-projects/*/config/resource-registries/*.yml"):
+    resource_registries = {
+        *root.glob("*/02-projects/*/config/resource-registries/*.yml"),
+        *root.glob("domains/*/02-projects/*/config/resource-registries/*.yml"),
+        *root.glob("domains/*/projects/*/config/resource-registries/*.yml"),
+    }
+    for path in resource_registries:
         key = path.stem
         kind = key[:-1] if key.endswith("s") else key
         if kind in RESOURCE_KINDS:

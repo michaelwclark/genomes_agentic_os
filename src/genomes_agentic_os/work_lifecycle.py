@@ -493,7 +493,12 @@ def promote_project_work_item(
 def project_work_item_records(root: str | Path) -> list[dict[str, Any]]:
     os_root = expand_path(root)
     records: list[dict[str, Any]] = []
-    for project_yml in sorted(os_root.glob("*/02-projects/*/project.yml")):
+    project_manifests = {
+        *os_root.glob("*/02-projects/*/project.yml"),
+        *os_root.glob("domains/*/02-projects/*/project.yml"),
+        *os_root.glob("domains/*/projects/*/project.yml"),
+    }
+    for project_yml in sorted(project_manifests):
         project_root = project_yml.parent
         project_data = load_yaml(project_yml)
         domain = str(project_data.get("domain") or project_yml.parents[2].name)

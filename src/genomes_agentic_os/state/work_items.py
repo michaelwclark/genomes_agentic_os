@@ -538,6 +538,7 @@ def legacy_import_plan(root: str | Path) -> dict[str, Any]:
     project_roots = [
         *os_root.glob("*/02-projects/*"),
         *os_root.glob("domains/*/projects/*"),
+        *os_root.glob("domains/*/02-projects/*"),
     ]
     for project_root in sorted(set(project_roots)):
         work_root = project_root / "work-items"

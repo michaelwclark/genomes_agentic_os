@@ -352,6 +352,38 @@ def test_validate_accepts_explicit_automation_run_tracking_exclusion(tmp_path: P
     )
 
 
+def test_validate_accepts_conventional_domain_automation_tracking_path(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    automation_root = root / "domains/los/04-automations/engineering/example_auto"
+    automation_root.mkdir(parents=True)
+    (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
+    )
+    tracking_path.parent.mkdir(parents=True)
+    tracking_path.write_text(
+        yaml.safe_dump(
+            {
+                "automations": {
+                    "example-auto": {
+                        "name": "Example Auto",
+                        "cwd": "domains/los/04-automations/engineering/example_auto",
+                        "external_projection_blocker": "Test fixture.",
+                    }
+                },
+                "excluded_automations": {},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = ValidationResult(root=root)
+    validate_automation_projection_registry(root, result)
+
+    assert not result.errors
+
+
 def test_project_work_item_validation_reports_invalid_yaml_without_crashing(
     tmp_path: Path,
 ) -> None:

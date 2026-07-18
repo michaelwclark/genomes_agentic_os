@@ -939,8 +939,18 @@ def _has_registered_invocation(
 
 
 def validate_workflow_automation_invocations(root: Path, result: ValidationResult) -> None:
-    workflow_specs = sorted(root.glob("*/03-workflows/*/*/workflow.md"))
-    automation_specs = sorted(root.glob("*/04-automations/*/*/automation.md"))
+    workflow_specs = sorted(
+        {
+            *root.glob("*/03-workflows/*/*/workflow.md"),
+            *root.glob("domains/*/03-workflows/*/*/workflow.md"),
+        }
+    )
+    automation_specs = sorted(
+        {
+            *root.glob("*/04-automations/*/*/automation.md"),
+            *root.glob("domains/*/04-automations/*/*/automation.md"),
+        }
+    )
     command_sources = _registry_sources(root, "commands", "commands")
     skill_sources = _registry_sources(root, "skills", "skills")
     command_ids = _registry_ids(root, "commands", "commands")
@@ -1037,7 +1047,11 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
                     f"or external_projection_blocker: {tracking_path}"
                 )
 
-    for automation_md in sorted(root.glob("*/04-automations/*/*/automation.md")):
+    automation_specs = {
+        *root.glob("*/04-automations/*/*/automation.md"),
+        *root.glob("domains/*/04-automations/*/*/automation.md"),
+    }
+    for automation_md in sorted(automation_specs):
         automation_root = automation_md.parent
         automation_id = automation_root.name
         automation_path = automation_root.relative_to(root).as_posix()
