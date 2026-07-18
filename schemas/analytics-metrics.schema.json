@@ -15,10 +15,11 @@
         "required": ["id", "name", "summary", "category", "unit", "default_window", "enabled", "visualization"],
         "properties": {
           "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$" },
+          "metric_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.]*$" },
           "name": { "type": "string", "minLength": 1, "maxLength": 120 },
           "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
           "category": {
-            "enum": ["runtime", "conversations", "usage", "execution", "reliability", "delivery", "custom"]
+            "enum": ["runtime", "conversations", "usage", "execution", "reliability", "delivery", "engineering", "custom"]
           },
           "unit": { "enum": ["items", "seconds", "count", "tokens", "percent", "bytes", "custom"] },
           "default_window": { "enum": ["1h", "6h", "24h", "7d", "30d", "90d"] },

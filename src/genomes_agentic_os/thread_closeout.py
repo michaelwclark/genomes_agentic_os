@@ -106,6 +106,8 @@ def root_project_dirs(root: Path, *, domain: str | None = None, project: str | N
 
     seen: set[str] = set()
     projects_roots = list(root.glob("*/02-projects"))
+    projects_roots.extend(root.glob("domains/*/projects"))
+    projects_roots.extend(root.glob("domains/*/02-projects"))
     projects_roots.append(root / "harness" / "shared_factory" / "02-projects")
     for projects_root in sorted(projects_roots):
         if not projects_root.is_dir():

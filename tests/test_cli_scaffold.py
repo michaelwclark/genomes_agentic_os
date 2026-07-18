@@ -35,6 +35,10 @@ def shared_factory(root: Path) -> Path:
     return harness(root) / "shared_factory"
 
 
+def domain_root(root: Path, domain: str) -> Path:
+    return root / "domains" / domain
+
+
 def limit_self_improvement_evidence_to_runs(root: Path) -> None:
     config_path = shared_factory(root) / "00-control-plane" / "self-improvement.yml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -63,14 +67,14 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "ROUTER.md",
         "RULES.md",
         "TOOLS.md",
-        "archive",
+        "domains",
         "harness",
         "personal",
         "work",
     }
 
-    for domain in ("personal", "work", "archive"):
-        domain_root = root / domain
+    for domain in ("personal", "work"):
+        domain_root = root / "domains" / domain
         assert domain_root.is_dir()
         assert (domain_root / "config.toml").is_file()
         assert (domain_root / "ROUTER.md").is_file()
@@ -91,7 +95,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "04-automations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations").is_dir()
-        assert (domain_root / "05-knowledge" / "source-map.md").is_file()
+        assert not (domain_root / "05-knowledge").exists()
         assert (domain_root / "06-runs-and-logs" / "runs").is_dir()
         assert (domain_root / "06-runs-and-logs" / "runs" / "README.md").is_file()
         assert (domain_root / "06-runs-and-logs" / "failures" / "README.md").is_file()
@@ -322,7 +326,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "skills" / "source-watcher" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "event-graph-operator" / "SKILL.md").is_file()
     assert (shared_factory(root) / "05-knowledge" / "skills" / "toolsmith-reviewer" / "SKILL.md").is_file()
-    assert not (root / "domains").exists()
+    assert (root / "domains").is_dir()
     assert not (root / "lenders").exists()
     assert not validate_root(root).errors
 
@@ -883,7 +887,7 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
         "ROUTER.md",
         "RULES.md",
         "TOOLS.md",
-        "archive",
+        "domains",
         "harness",
         "los",
         "personal",
@@ -895,9 +899,9 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
     assert sidecar_path(harness(root)).is_file()
     assert (shared_factory(root) / "domain.yml").is_file()
     assert (legacy_project / "work-items").is_dir()
-    assert (legacy_project / "work-items" / "01-intake").is_dir()
-    assert (legacy_project / "work-items" / "02-active").is_dir()
-    assert (legacy_project / "work-items" / "03-complete").is_dir()
+    assert not (legacy_project / "work-items" / "01-intake").exists()
+    assert not (legacy_project / "work-items" / "02-active").exists()
+    assert not (legacy_project / "work-items" / "03-complete").exists()
     assert (legacy_project / "config" / "work-lifecycle.yml").is_file()
     assert not (root / "shared_factory").exists()
     assert not (root / "PROFILE.md").exists()
@@ -1665,30 +1669,30 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
 
     assert main(["domain", "create", "client_delivery", "--root", str(root)]) == 0
 
-    domain_root = root / "client_delivery"
-    assert (domain_root / "README.md").is_file()
-    assert (domain_root / "ROUTER.md").is_file()
-    assert (domain_root / "AGENTS.md").is_file()
-    assert (domain_root / "CLAUDE.md").is_file()
-    assert (domain_root / "CONTEXT.md").is_file()
-    assert (domain_root / "RULES.md").is_file()
-    assert (domain_root / "TOOLS.md").is_file()
-    assert not (domain_root / "AGENT.md").exists()
-    assert (domain_root / "REFERENCES.md").is_file()
-    domain_config = (domain_root / "domain.yml").read_text(encoding="utf-8")
+    created_domain = domain_root(root, "client_delivery")
+    assert (created_domain / "README.md").is_file()
+    assert (created_domain / "ROUTER.md").is_file()
+    assert (created_domain / "AGENTS.md").is_file()
+    assert (created_domain / "CLAUDE.md").is_file()
+    assert (created_domain / "CONTEXT.md").is_file()
+    assert (created_domain / "RULES.md").is_file()
+    assert (created_domain / "TOOLS.md").is_file()
+    assert not (created_domain / "AGENT.md").exists()
+    assert (created_domain / "REFERENCES.md").is_file()
+    domain_config = (created_domain / "domain.yml").read_text(encoding="utf-8")
     assert domain_config.startswith("id: client_delivery")
     assert "programs: 00-programs" in domain_config
     assert "context_loading:" in domain_config
-    assert (domain_root / "00-programs" / "README.md").is_file()
-    assert (domain_root / "00-control-plane" / "active-work.md").is_file()
-    assert (domain_root / "00-control-plane" / "approval-rules.md").is_file()
-    assert (domain_root / "01-inbox" / "raw-ideas.md").is_file()
-    assert (domain_root / "02-projects" / "README.md").is_file()
-    assert (domain_root / "03-workflows" / "engineering").is_dir()
-    assert (domain_root / "04-automations" / "support").is_dir()
-    assert (domain_root / "05-knowledge" / "memory-policy.md").is_file()
-    assert (domain_root / "06-runs-and-logs" / "activity-log.md").is_file()
-    assert (domain_root / "07-metrics" / "scorecards.md").is_file()
+    assert (created_domain / "00-programs" / "README.md").is_file()
+    assert (created_domain / "00-control-plane" / "active-work.md").is_file()
+    assert (created_domain / "00-control-plane" / "approval-rules.md").is_file()
+    assert (created_domain / "01-inbox" / "raw-ideas.md").is_file()
+    assert (created_domain / "02-projects" / "README.md").is_file()
+    assert (created_domain / "03-workflows" / "engineering").is_dir()
+    assert (created_domain / "04-automations" / "support").is_dir()
+    assert not (created_domain / "05-knowledge").exists()
+    assert (created_domain / "06-runs-and-logs" / "activity-log.md").is_file()
+    assert (created_domain / "07-metrics" / "scorecards.md").is_file()
 
 
 def test_workflow_automation_run_log_and_validate(tmp_path: Path) -> None:
@@ -1895,9 +1899,10 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert not (project_root / "SPECS").exists()
     assert (project_root / "worklogs" / "README.md").is_file()
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
-    assert (project_root / "work-items" / "01-intake").is_dir()
-    assert (project_root / "work-items" / "02-active").is_dir()
-    assert (project_root / "work-items" / "03-complete").is_dir()
+    assert (project_root / "work-items").is_dir()
+    assert not (project_root / "work-items" / "01-intake").exists()
+    assert not (project_root / "work-items" / "02-active").exists()
+    assert not (project_root / "work-items" / "03-complete").exists()
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert (project_root / "worktrees" / "index.yml").is_file()
     for filename in PROJECT_CONFIG_FILES:
@@ -1915,11 +1920,11 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert "config/*.yml" in agents
     assert "worktrees/index.yml" in agents
     output_artifacts = yaml.safe_load((project_root / "config" / "output-artifacts.yml").read_text(encoding="utf-8"))
-    assert output_artifacts["output_artifacts"]["feature_root"] == "work-items/02-active/{ticket_or_slug}/artifacts"
-    assert output_artifacts["output_artifacts"]["spec_root"] == "work-items/01-intake/{ticket_or_slug}"
+    assert output_artifacts["output_artifacts"]["feature_root"] == "work-items/{ticket_or_slug}/artifacts"
+    assert output_artifacts["output_artifacts"]["spec_root"] == "external_tracker"
     assert output_artifacts["output_artifacts"]["worklog_root"] == "worklogs/{ticket_or_slug}"
     work_lifecycle = yaml.safe_load((project_root / "config" / "work-lifecycle.yml").read_text(encoding="utf-8"))
-    assert work_lifecycle["work_lifecycle"]["lanes"] == {
+    assert work_lifecycle["work_lifecycle"]["legacy_import_lanes"] == {
         "intake": "01-intake",
         "active": "02-active",
         "complete": "03-complete",
@@ -2100,7 +2105,7 @@ def test_context_build_project_infers_domain_from_project_directory(
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "context_project", "--root", str(root)]) == 0
     capsys.readouterr()
-    project_root = root / "los" / "02-projects" / "context_project"
+    project_root = domain_root(root, "los") / "02-projects" / "context_project"
 
     monkeypatch.chdir(project_root)
     assert main(["context", "build", "--project", "context_project", "--root", str(root)]) == 0
@@ -2131,7 +2136,7 @@ def test_context_build_selects_legacy_work_item_markdown_by_ticket(
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "legacy_packet_project", "--root", str(root)]) == 0
     capsys.readouterr()
-    project_root = root / "los" / "02-projects" / "legacy_packet_project"
+    project_root = domain_root(root, "los") / "02-projects" / "legacy_packet_project"
     work_item_root = project_root / "work-items" / "02-active" / "001_flywl_1404_login_button"
     work_item_root.mkdir(parents=True)
     (work_item_root / "work-item.md").write_text(
@@ -2233,7 +2238,7 @@ def test_validate_accepts_in_place_project_worktrees(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
 
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     checkout = project_root / "worktrees" / "feature_x"
     (checkout / "app").mkdir(parents=True)
     # a real checkout has a .git pointer and may contain fixtures that are not
@@ -2268,7 +2273,7 @@ def test_validate_accepts_in_place_project_worktrees(tmp_path: Path) -> None:
 def test_project_worktree_add_in_place_registers_without_symlink(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     checkout = project_root / "worktrees" / "feature_x"
     checkout.mkdir(parents=True)
     (checkout / ".git").write_text("gitdir: /elsewhere/.git/worktrees/feature_x\n", encoding="utf-8")
@@ -2313,7 +2318,7 @@ def test_project_worktree_add_in_place_registers_without_symlink(tmp_path: Path)
 def test_project_worktree_add_in_place_rejects_paths_not_at_worktree_name(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     nested = project_root / "worktrees" / "feature_x" / "app"
     nested.mkdir(parents=True)
     add = ["project", "worktree", "add", "los", "inplace_project"]
@@ -2374,7 +2379,7 @@ def test_project_worktree_create_checks_out_new_branch_in_place(tmp_path: Path) 
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     destination = project_root / "worktrees" / "feature_x"
     calls: list[list[str]] = []
 
@@ -2403,7 +2408,7 @@ def test_project_worktree_create_reuses_existing_branch(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    destination = root / "los" / "02-projects" / "inplace_project" / "worktrees" / "feature_x"
+    destination = domain_root(root, "los") / "02-projects" / "inplace_project" / "worktrees" / "feature_x"
     calls: list[list[str]] = []
 
     create_project_worktree(
@@ -2424,7 +2429,7 @@ def test_project_worktree_create_surfaces_git_failures(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     destination = project_root / "worktrees" / "feature_x"
     calls: list[list[str]] = []
 
@@ -2508,7 +2513,7 @@ def test_project_worktree_create_cli_runs_real_git(tmp_path: Path) -> None:
         == 0
     )
 
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     checkout = project_root / "worktrees" / "feat-63-demo"
     assert checkout.is_dir()
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
@@ -2534,7 +2539,7 @@ def test_project_worktree_create_derives_name_from_branch(tmp_path: Path) -> Non
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main(["project", "create", "los", "inplace_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "inplace_project"
+    project_root = domain_root(root, "los") / "02-projects" / "inplace_project"
     destination = project_root / "worktrees" / "feat-63-remote-ssh"
     calls: list[list[str]] = []
 
@@ -2650,9 +2655,9 @@ def test_idea_capture_routes_to_domain_inbox_even_from_linked_project_repo(tmp_p
     assert packet["object_type"] == "inbox"
     assert packet["target_path"].endswith("los/01-inbox")
     assert not packet["target_path"].endswith("02-projects/los_app")
-    assert str(root / "los" / "01-inbox" / "raw-ideas.md") in packet["sources_to_load"]
-    assert str(root / "los" / "00-control-plane" / "state-index.md") in packet["sources_to_load"]
-    assert str(root / "los" / "MEMORY.md") in packet["sources_to_load"]
+    assert str(domain_root(root, "los") / "01-inbox" / "raw-ideas.md") in packet["sources_to_load"]
+    assert str(domain_root(root, "los") / "00-control-plane" / "state-index.md") in packet["sources_to_load"]
+    assert str(domain_root(root, "los") / "MEMORY.md") in packet["sources_to_load"]
 
 
 def test_plan_capture_updates_inbox_control_plane_and_memory(tmp_path: Path, capsys) -> None:
@@ -2781,8 +2786,8 @@ def test_context_build_returns_exact_project_sources(tmp_path: Path, capsys) -> 
     assert str(shared_factory(root) / "05-knowledge" / "references" / "source-priority.md") in packet[
         "sources_to_load"
     ]
-    assert str(root / "los" / "ROUTER.md") in packet["sources_to_load"]
-    assert str(root / "los" / "02-projects" / "losmon_replacement" / "project.yml") in packet["sources_to_load"]
+    assert str(domain_root(root, "los") / "ROUTER.md") in packet["sources_to_load"]
+    assert str(domain_root(root, "los") / "02-projects" / "losmon_replacement" / "project.yml") in packet["sources_to_load"]
 
 
 def test_context_build_loads_project_manifest_repository_contracts(tmp_path: Path, capsys) -> None:
@@ -2807,7 +2812,7 @@ def test_context_build_loads_project_manifest_repository_contracts(tmp_path: Pat
         )
         == 0
     )
-    project_root = root / "work" / "02-projects" / "command_center"
+    project_root = domain_root(root, "work") / "02-projects" / "command_center"
     (project_root / "context-contract.yml").write_text(
         yaml.safe_dump(
             {
@@ -2853,7 +2858,7 @@ def test_here_detects_os_path_and_linked_project_repo(tmp_path: Path, monkeypatc
     repo.mkdir()
 
     assert main(["project", "create", "los", "losmon_replacement", "--repo", str(repo), "--root", str(root)]) == 0
-    monkeypatch.chdir(root / "los")
+    monkeypatch.chdir(domain_root(root, "los"))
     assert main(["here", "route", "Summarize active work", "--root", str(root)]) == 0
     packet = yaml.safe_load(capsys.readouterr().out)
     assert packet["domain"] == "los"
@@ -4050,7 +4055,7 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
         )
         == 0
     )
-    raw_ideas = (root / "los" / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
+    raw_ideas = (domain_root(root, "los") / "01-inbox" / "raw-ideas.md").read_text(encoding="utf-8")
     assert "CI failure clustering" in raw_ideas
     capsys.readouterr()
 
@@ -4076,13 +4081,12 @@ def test_plan_capture_routes_os_domain_and_project_ideas(tmp_path: Path, capsys)
         == 0
     )
     result = yaml.safe_load(capsys.readouterr().out)
-    project_status = (root / "los" / "02-projects" / "losmon_replacement" / "status.md").read_text(
+    project_status = (domain_root(root, "los") / "02-projects" / "losmon_replacement" / "status.md").read_text(
         encoding="utf-8"
     )
     assert "Customer-safe deploy brief" in project_status
     work_item = (
-        root
-        / "los"
+        domain_root(root, "los")
         / "02-projects"
         / "losmon_replacement"
         / "work-items"
@@ -4116,8 +4120,7 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         == 0
     )
     work_item = (
-        root
-        / "los"
+        domain_root(root, "los")
         / "02-projects"
         / "losmon_replacement"
         / "work-items"
@@ -4155,8 +4158,7 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         == 0
     )
     intake_packet = (
-        root
-        / "los"
+        domain_root(root, "los")
         / "02-projects"
         / "losmon_replacement"
         / "work-items"
@@ -4195,7 +4197,7 @@ def test_project_work_item_create_and_route_lifecycle_context(tmp_path: Path, ca
         )
         == 0
     )
-    active_work_item = root / "los" / "02-projects" / "losmon_replacement" / "work-items" / "02-active" / "003_active_build"
+    active_work_item = domain_root(root, "los") / "02-projects" / "losmon_replacement" / "work-items" / "02-active" / "003_active_build"
     assert (active_work_item / "work.yml").is_file()
     assert (active_work_item / "logs" / "conversations").is_dir()
     assert main(["validate", "--root", str(root)]) == 0
@@ -4214,7 +4216,7 @@ def test_compat_work_lifecycle_helpers_use_lane_paths(tmp_path: Path) -> None:
         summary="Exercise compatibility lifecycle helpers.",
         state="building",
     )
-    project_root = root / "los" / "02-projects" / "losmon_replacement"
+    project_root = domain_root(root, "los") / "02-projects" / "losmon_replacement"
     active = project_root / "work-items" / "02-active" / "legacy_packet"
     assert created["path"] == str(active)
     assert (active / "work.yml").is_file()
@@ -4282,8 +4284,7 @@ def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> 
         == 0
     )
     work_item = (
-        root
-        / "los"
+        domain_root(root, "los")
         / "02-projects"
         / "losmon_replacement"
         / "work-items"
@@ -4384,7 +4385,7 @@ def test_workflow_check_reports_readiness_findings(tmp_path: Path, capsys) -> No
     assert severities <= {"blocker", "fix-soon", "cleanup", "observation"}
     assert "fix-soon" in severities
 
-    runbook = root / "los" / "03-workflows" / "engineering" / "feature_dev" / "runbook.md"
+    runbook = domain_root(root, "los") / "03-workflows" / "engineering" / "feature_dev" / "runbook.md"
     runbook.write_text(runbook.read_text(encoding="utf-8").replace("## After Running", "## Finish"), encoding="utf-8")
 
     assert main(["workflow", "check", "los", "engineering", "feature_dev", "--root", str(root)]) == 0

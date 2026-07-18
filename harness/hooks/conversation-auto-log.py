@@ -131,6 +131,7 @@ def work_item_log_destination(work_item: Path) -> tuple[Path, str]:
 
 def linked_project_for_cwd(root: Path, cwd: Path) -> Path | None:
     project_globs = [
+        (root / "domains").glob("*/02-projects/*"),
         root.glob("*/02-projects/*"),
         (root / "harness" / "shared_factory" / "02-projects").glob("*"),
     ]
@@ -176,17 +177,21 @@ def route_log_dir(root: Path, cwd: Path, payload: dict[str, Any]) -> tuple[Path,
         return shared / "06-runs-and-logs" / "conversations", "shared_factory"
     if parts and parts[0] == "harness":
         return root / "harness" / "logs" / "conversations", "harness"
+    domain_base = root
+    if len(parts) >= 2 and parts[0] == "domains":
+        domain_base = root / "domains"
+        parts = parts[1:]
     if len(parts) >= 6 and parts[1] == "02-projects" and parts[3] == "work-items" and parts[4] in WORK_ITEM_LANES:
-        lane_item = root / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4] / parts[5]
+        lane_item = domain_base / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4] / parts[5]
         return work_item_log_destination(lane_item)
     if len(parts) >= 5 and parts[1] == "02-projects" and parts[3] == "work-items":
-        work_item = root / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4]
+        work_item = domain_base / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4]
         return work_item_log_destination(work_item)
     if len(parts) >= 3 and parts[1] == "02-projects":
-        project = root / parts[0] / "02-projects" / parts[2]
+        project = domain_base / parts[0] / "02-projects" / parts[2]
         return project / "logs" / "conversations", parts[2]
     if parts:
-        return root / parts[0] / "06-runs-and-logs" / "conversations", parts[0]
+        return domain_base / parts[0] / "06-runs-and-logs" / "conversations", parts[0]
 
     linked_project = linked_project_for_cwd(root, cwd)
     if linked_project:

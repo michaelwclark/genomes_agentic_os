@@ -206,10 +206,12 @@ def detect_from_cwd(root: Path, cwd: Path) -> dict[str, str]:
                 context["lane"] = relative.parts[3]
                 context["workflow"] = relative.parts[4]
             return context
-        domain = relative.parts[0]
+        parts = relative.parts
+        if len(parts) >= 2 and parts[0] == "domains":
+            parts = parts[1:]
+        domain = parts[0]
         if domain in existing_domains(root):
             context = {"domain": domain}
-            parts = relative.parts
             if len(parts) >= 3 and parts[1] == "02-projects":
                 context["project"] = parts[2]
             if len(parts) >= 4 and parts[1] == "03-workflows":
@@ -369,9 +371,14 @@ def build_context(
         domain_root / "ROUTER.md",
         domain_root / "CONTEXT.md",
         domain_root / "REFERENCES.md",
-        domain_root / "00-control-plane" / "active-work.md",
-        domain_root / "05-knowledge" / "memory-policy.md",
+        domain_root / "MEMORY.md",
     ]
+    for optional_source in (
+        shared_factory_path(os_root, "00-control-plane", "active-now.json"),
+        os_root / "lib" / "registry" / "objects.json",
+    ):
+        if optional_source.is_file():
+            sources.append(optional_source)
     target = domain_root
     object_type = "domain"
     known_gaps: list[str] = []

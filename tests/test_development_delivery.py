@@ -32,7 +32,7 @@ def _git(*args: str, cwd: Path | None = None) -> str:
 
 def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
-    project = root / "acme" / "02-projects" / "app"
+    project = root / "domains" / "acme" / "02-projects" / "app"
     profile = {
         "version": 1,
         "enabled": True,

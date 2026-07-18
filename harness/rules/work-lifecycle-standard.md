@@ -9,9 +9,9 @@ Last updated: 2026-07-07.
 ## 1. The Four Phases
 
 Work items move through four phases. The **canonical state names** below are the
-only names that may appear in `work-lifecycle.yml`, SPEC.md frontmatter `state:`
-fields, and resolver/tool output. Do not use synonyms, abbreviations, or status
-labels from external surfaces — those map *onto* canonical states (see §3).
+only values stored in the SQLite work-item registry or emitted by resolvers.
+Filesystem folders, SPEC frontmatter, Jira, Linear, and other external surfaces
+are observations or projections, not state truth.
 
 ### Phase 1 — Capture
 
@@ -56,31 +56,25 @@ first.
 
 ---
 
-## 1a. Work-Item Artifact Destination (canonical location)
+## 1a. Canonical Work State And Stable Artifact Destination
 
-The phases above describe *state*. This section is the binding rule for *where*
-the work-item and its packet artifacts physically live — the gap that most often
-misfires when an agent is running with its `cwd` inside a linked code repository.
+The SQLite database at
+`harness/shared_factory/00-control-plane/state.db` is authoritative for both
+lifecycle `state` and attention (`active`, `queued`, `parked`, or `closed`). Read
+`active-now.json` first for compact context and query the database for detail.
+Never infer active work by counting folders or checking Jira, Linear, branches,
+or worktrees.
 
-**Canonical location.** For any project that has an Agentic OS room
-(`<domain>/02-projects/<project>/`), the single source of truth for a work item
-and its lifecycle/handoff packet is the OS room:
+Packet paths are stable and do not change when state changes:
 
 ```
-<OS_ROOT>/<domain>/02-projects/<project>/work-items/<lane>/<index>_<slug>/
+<OS_ROOT>/domains/<domain>/projects/<project>/work-items/<work-item-id>/
 ```
 
-where `<lane>` follows the state → lane mapping in §3
-(`01-intake`, `02-active`, `03-complete`). Resolve the exact path with:
-
-```bash
-agentic-os doc-config plan --root ~/agentic_os \
-  --domain <domain> --project <project> --work-item <index>_<slug>
-```
-
-The `filesystem` field it returns is the destination. This holds **even when the
-agent's `cwd` is the code clone, a worktree, or a subagent sandbox** — the code
-repo's location must never redirect where the canonical packet is written.
+Legacy `01-intake`, `02-active`, and `03-complete` folders are import and
+compatibility surfaces only. Do not move a packet between them to express
+state. During layout-v2 migration, their contents remain readable until every
+writer uses `agentic-os work` and stable packet paths.
 
 **Packet artifacts** that belong in the OS work item (not the code repo):
 `PROMPT-PACK.md`, `WORKLOG.md`, `JIRA.md`, `PR.md`, `QA_HANDOFF.md`, `SPEC.md`,
@@ -120,7 +114,7 @@ Items at `specified` without `--allow-specified` exit 2 and print:
 State is 'specified' (groom-phase complete, not yet promoted to ready).
 Options:
   1. Add --allow-specified to start anyway.
-  2. Promote the packet to state: ready in SPEC.md and filesystem lane, then re-run.
+  2. Promote the registry row to state: ready with agentic-os work set, then re-run.
 ```
 
 Items at terminal close states (`finished`, `documented`, `archived`) exit 2
@@ -128,24 +122,24 @@ with a note that the item is closed.
 
 ---
 
-## 3. Surface Mapping Table
+## 3. State And Attention Mapping Table
 
 One row per canonical state. External surface values shown are the **closest
 current label** — they are not renames (Notion DB options are not renamed tonight;
 that rename is follow-up work).
 
-| Canonical state | Filesystem lane | Work Intake DB status | Linear state | auto-dev runner state |
-|---|---|---|---|---|
-| `captured` | `01-intake` | `inbox` | Backlog | — (pre-run) |
-| `triaged` | `01-intake` | `triaged` | Backlog | — (pre-run) |
-| `specified` | `02-active` | `spec-ready` | Backlog or Todo | — (pre-run; `--allow-specified` unlocks) |
-| `ready` | `02-active` | `queued` | Todo | `discovered` |
-| `building` | `02-active` | `in-progress` | In Progress | `implementing` |
-| `validating` | `02-active` | `in-progress` | In Review | `pr_open` / `ci_watch` / `copilot_watch` |
-| `blocked` | `02-active` | `blocked` | Blocked | `blocked` |
-| `finished` | `03-complete` | `done` | Done | `merged` |
-| `documented` | `03-complete` | `done` | Done | `merged` |
-| `archived` | `03-complete` | `dropped` | Cancelled | `abandoned` |
+| Canonical state | Default attention | Legacy lane | Work Intake status | Linear state | Runner state |
+|---|---|---|---|---|---|
+| `captured` | `queued` | `01-intake` | `inbox` | Backlog | — |
+| `triaged` | `queued` | `01-intake` | `triaged` | Backlog | — |
+| `specified` | `queued` | `02-active` | `spec-ready` | Backlog/Todo | — |
+| `ready` | `queued` | `02-active` | `queued` | Todo | `discovered` |
+| `building` | `active` or `parked` | `02-active` | `in-progress` | In Progress | `implementing` |
+| `validating` | `active` or `parked` | `02-active` | `in-progress` | In Review | `pr_open` / watches |
+| `blocked` | `active` or `parked` | `02-active` | `blocked` | Blocked | `blocked` |
+| `finished` | `closed` | `03-complete` | `done` | Done | `merged` |
+| `documented` | `closed` | `03-complete` | `done` | Done | `merged` |
+| `archived` | `closed` | `03-complete` | `dropped` | Cancelled | `abandoned` |
 
 **Row count: 10.** (One per canonical state.)
 
@@ -166,8 +160,9 @@ that rename is follow-up work).
 ## 4. Conformance Rule
 
 Every project's `config/work-lifecycle.yml` **must** use the 10 canonical state
-names above in its `states:` list and `lane_state_map:`. The losmon project
-already conforms. When adding a new project:
+names and four attention values above. A lane mapping may remain only as a
+legacy importer mapping; it must not control current state or packet movement.
+When adding or upgrading a project:
 
 ```yaml
 work_lifecycle:
@@ -182,11 +177,15 @@ work_lifecycle:
     - documented
     - blocked
     - archived
-  lane_state_map:
-    01-intake: [captured, triaged]
-    02-active: [specified, ready, building, validating, blocked]
-    03-complete: [finished, documented, archived]
+  attention_states: [active, queued, parked, closed]
+  state_source: harness/shared_factory/00-control-plane/state.db
+  active_projection: harness/shared_factory/00-control-plane/active-now.json
 ```
+
+Use `agentic-os work upsert` for intake and reconciliation, `agentic-os work
+set` for state or attention changes, and `agentic-os work active-now` before
+loading broad project context. Active items require a resume summary; blocked
+items require a blocker reason or receipt.
 
 ---
 

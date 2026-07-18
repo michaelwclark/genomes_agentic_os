@@ -101,3 +101,27 @@ def test_work_item_evidence_routes_shared_root_and_sets_work_item(tmp_path: Path
     assert routed["project"] == "los_app_los_django"
     assert routed["work_item"] == "041_retry_fix"
     assert routed["route_source"] == "work_item_reference"
+
+
+def test_conventional_domain_project_and_work_item_routes(tmp_path: Path) -> None:
+    from genomes_agentic_os.conversation_index import build_work_item_routes
+
+    root = tmp_path / "agentic_os"
+    project = root / "domains/los/02-projects/los_app_los_django"
+    repo = tmp_path / "projects/los-django"
+    repo.mkdir(parents=True)
+    project.mkdir(parents=True)
+    (project / "src").symlink_to(repo)
+    (project / "project.yml").write_text("title: LOS Django\n", encoding="utf-8")
+    item = project / "work-items/02-active/041_retry_fix"
+    item.mkdir(parents=True)
+    (item / "work.yml").write_text("id: 041_retry_fix\n", encoding="utf-8")
+    (item / "SPEC.md").write_text("Track FLYWL-2044.\n", encoding="utf-8")
+
+    routes = build_project_routes(root)
+    assert routes[0]["domain"] == "los"
+    assert routes[0]["project"] == "los_app_los_django"
+
+    work_items = build_work_item_routes(root)
+    assert work_items[0]["domain"] == "los"
+    assert work_items[0]["project"] == "los_app_los_django"
