@@ -177,6 +177,12 @@ def test_legacy_migration_uses_compact_registry_and_excludes_runtime(tmp_path: P
     (source / "workflow.md").write_text("# Example\n\nMigrated workflow.\n", encoding="utf-8")
     (source / "runs").mkdir()
     (source / "runs/result.log").write_text("runtime", encoding="utf-8")
+    (source / ".features").mkdir()
+    (source / ".features/state.json").write_text("{}", encoding="utf-8")
+    (source / "tenant_config_snapshots").mkdir()
+    (source / "tenant_config_snapshots/customer.json").write_text("{}", encoding="utf-8")
+    (source / "tenant_config_toolkit_outputs").mkdir()
+    (source / "tenant_config_toolkit_outputs/result.json").write_text("{}", encoding="utf-8")
     registry = root / "harness/registries/first-class-resources.json"
     registry.parent.mkdir(parents=True)
     registry.write_text(
@@ -208,10 +214,16 @@ def test_legacy_migration_uses_compact_registry_and_excludes_runtime(tmp_path: P
     target = root / "lib/workflows/domains/los/example"
     assert (target / "workflow.md").is_file()
     assert not (target / "runs").exists()
+    assert not (target / ".features").exists()
+    assert not (target / "tenant_config_snapshots").exists()
+    assert not (target / "tenant_config_toolkit_outputs").exists()
     manifest = yaml.safe_load((target / "object.yml").read_text(encoding="utf-8"))
     assert manifest["aliases"] == ["los/03-workflows/engineering/example"]
     assert manifest["runtime"]["legacy_roots"] == [
-        "los/03-workflows/engineering/example/runs"
+        "los/03-workflows/engineering/example/.features",
+        "los/03-workflows/engineering/example/runs",
+        "los/03-workflows/engineering/example/tenant_config_snapshots",
+        "los/03-workflows/engineering/example/tenant_config_toolkit_outputs",
     ]
 
 

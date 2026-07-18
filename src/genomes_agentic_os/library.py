@@ -66,7 +66,10 @@ OBJECT_STATES = {"active", "disabled", "deprecated", "archived"}
 SCOPE_LEVELS = {"root", "domain", "project"}
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 RUNTIME_PARTS = {
+    ".features",
+    ".git",
     ".venv",
+    "SPECS",
     "__pycache__",
     "artifacts",
     "backups",
@@ -79,6 +82,7 @@ RUNTIME_PARTS = {
     "run-logs",
     "runs",
     "state",
+    "tenant_config_snapshots",
     "worker-runs",
     "worktrees",
 }
@@ -950,7 +954,7 @@ def legacy_migration_plan(root: str | Path) -> dict[str, Any]:
                 [
                     path.relative_to(os_root).as_posix()
                     for path in sorted(source.iterdir())
-                    if path.is_dir() and path.name in RUNTIME_PARTS
+                    if path.is_dir() and _is_runtime_directory_name(path.name)
                 ]
                 if source.is_dir()
                 else []
@@ -1116,11 +1120,17 @@ def _is_secret_name(name: str) -> bool:
     return any(pattern.search(name) for pattern in SECRET_FILE_PATTERNS)
 
 
+def _is_runtime_directory_name(name: str) -> bool:
+    return name in RUNTIME_PARTS or name.lower().endswith(
+        ("_outputs", "-outputs", "_snapshots", "-snapshots")
+    )
+
+
 def _definition_ignore(directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
         path = Path(directory) / name
-        if name in RUNTIME_PARTS or _is_secret_name(name):
+        if _is_runtime_directory_name(name) or _is_secret_name(name):
             ignored.add(name)
         elif path.is_file() and path.suffix.lower() in IGNORED_FILE_SUFFIXES:
             ignored.add(name)
