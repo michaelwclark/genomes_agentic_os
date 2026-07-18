@@ -1936,7 +1936,7 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
     index: dict[str, Any] = {
         "generated_at": now_iso(),
         "source_of_truth": (
-            "state.db work_items and project worktree registries"
+            "state.db active work_items and their verified worktree references"
             if state_backed
             else "filesystem work-items and project worktree registries"
         ),
@@ -1945,6 +1945,7 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
         "automations": [],
     }
     state_items_by_project: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    active_state_items: list[dict[str, Any]] = []
     if state_backed:
         from .state import work_items as work_items_state
         from .state.db import connect as connect_state
@@ -1955,8 +1956,40 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
             for item in work_items_state.query(connection, attention="active", limit=10000):
                 key = (str(item.get("domain") or ""), str(item.get("project") or ""))
                 state_items_by_project.setdefault(key, []).append(item)
+                active_state_items.append(item)
         finally:
             connection.close()
+        linked_worktree_paths: set[Path] = set()
+        for item in active_state_items:
+            worktree_value = str(item.get("worktree_path") or "").strip()
+            if not worktree_value:
+                continue
+            worktree = Path(worktree_value).expanduser()
+            if not worktree.is_absolute():
+                worktree = os_root / worktree
+            worktree = worktree.resolve()
+            if not worktree.is_dir() or worktree in linked_worktree_paths:
+                continue
+            linked_worktree_paths.add(worktree)
+            item_domain = str(item.get("domain") or "root")
+            item_project = str(item.get("project") or "root")
+            link = worktree_links / safe_link_name(
+                item_domain,
+                item_project,
+                str(item["id"]),
+            )
+            create_link(link, worktree)
+            index["worktrees"].append(
+                {
+                    "domain": item_domain,
+                    "project": item_project,
+                    "id": item["id"],
+                    **active_index_timestamps(worktree, recursive=False),
+                    "link": str(link),
+                    "target": str(worktree),
+                    "source_work_item": item["id"],
+                }
+            )
     for project_root in root_project_dirs(os_root, domain=domain, project=project):
         record_domain = project_domain(project_root)
         if state_backed:
@@ -2032,20 +2065,23 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
                             "target": str(legacy),
                         }
                     )
-        for entry in active_worktree_entries(project_root):
-            link = worktree_links / safe_link_name(record_domain, project_root.name, entry["id"])
-            create_link(link, Path(entry["path"]))
-            index["worktrees"].append(
-                {
-                    "domain": record_domain,
-                    "project": project_root.name,
-                    "id": entry["id"],
-                    "created_at": entry["created_at"],
-                    "last_modified_at": entry["last_modified_at"],
-                    "link": str(link),
-                    "target": entry["path"],
-                }
-            )
+        if not state_backed:
+            for entry in active_worktree_entries(project_root):
+                link = worktree_links / safe_link_name(
+                    record_domain, project_root.name, entry["id"]
+                )
+                create_link(link, Path(entry["path"]))
+                index["worktrees"].append(
+                    {
+                        "domain": record_domain,
+                        "project": project_root.name,
+                        "id": entry["id"],
+                        "created_at": entry["created_at"],
+                        "last_modified_at": entry["last_modified_at"],
+                        "link": str(link),
+                        "target": entry["path"],
+                    }
+                )
     if domain is None and project is None:
         for entry in active_automation_entries(os_root):
             target = Path(entry["path"])

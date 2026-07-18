@@ -158,6 +158,17 @@ def test_global_active_container_uses_state_after_projection_opt_in(tmp_path: Pa
     project = root / "los/02-projects/django"
     packet = project / "work-items/02-active/001_example"
     packet.mkdir(parents=True)
+    active_worktree = tmp_path / "active-worktree"
+    active_worktree.mkdir()
+    unrelated_worktree = project / "worktrees/unrelated"
+    unrelated_worktree.mkdir(parents=True)
+    (project / "worktrees/index.yml").write_text(
+        "worktrees:\n"
+        "  - id: unrelated\n"
+        f"    path: {unrelated_worktree}\n"
+        "    status: active\n",
+        encoding="utf-8",
+    )
     (root / "los/domain.yml").write_text("name: los\n", encoding="utf-8")
     conn = db.connect(db.default_db_path(root))
     try:
@@ -170,6 +181,7 @@ def test_global_active_container_uses_state_after_projection_opt_in(tmp_path: Pa
             domain="los",
             project="django",
             packet_path=packet.relative_to(root).as_posix(),
+            worktree_path=str(active_worktree),
             context_summary="Only this verified row is active.",
             verified=True,
         )
@@ -179,9 +191,12 @@ def test_global_active_container_uses_state_after_projection_opt_in(tmp_path: Pa
 
     result = sync_active_container(root)
     assert result["work_items"] == 1
+    assert result["worktrees"] == 1
     index = (root / "00-control-plane/active/index.yml").read_text(encoding="utf-8")
-    assert "state.db work_items" in index
+    assert "state.db active work_items" in index
     assert "Only this verified row is active." in index
+    assert str(active_worktree) in index
+    assert str(unrelated_worktree) not in index
 
 
 def test_validate_work_state_detects_stale_projection(tmp_path: Path) -> None:
