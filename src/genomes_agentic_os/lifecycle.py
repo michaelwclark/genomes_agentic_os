@@ -210,7 +210,11 @@ def root_project_dirs(root: Path, *, domain: str | None = None, project: str | N
     roots: list[Path] = []
     if domain:
         domain_root = domain_path(root, normalize_domain(domain))
-        projects_root = domain_root / "02-projects"
+        projects_root = (
+            domain_root / "projects"
+            if (domain_root / "projects").is_dir()
+            else domain_root / "02-projects"
+        )
         if project:
             candidate = projects_root / validate_name(project, "project")
             if candidate.is_dir():
@@ -221,6 +225,8 @@ def root_project_dirs(root: Path, *, domain: str | None = None, project: str | N
 
     seen: set[str] = set()
     projects_roots = list(root.glob("*/02-projects"))
+    projects_roots.extend(root.glob("domains/*/projects"))
+    projects_roots.extend(root.glob("domains/*/02-projects"))
     projects_roots.append(root / "harness" / "shared_factory" / "02-projects")
     for projects_root in sorted(projects_roots):
         if not projects_root.is_dir():
@@ -1049,6 +1055,8 @@ def project_domain(project_root: Path) -> str:
     ):
         return "shared_factory"
     if project_root.parent.name == "02-projects":
+        return project_root.parent.parent.name
+    if project_root.parent.name == "projects" and project_root.parent.parent.parent.name == "domains":
         return project_root.parent.parent.name
     metadata = load_yaml_mapping(project_root / "project.yml")
     return str(metadata.get("domain") or project_root.parent.parent.name)
@@ -1921,52 +1929,109 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
         reset_managed_category(category)
     ensure_spotlight_never_index(worktree_links, ScaffoldResult())
 
+    state_projection = (
+        os_root / "harness" / "shared_factory" / "00-control-plane" / "active-now.json"
+    )
+    state_backed = state_projection.is_file()
     index: dict[str, Any] = {
         "generated_at": now_iso(),
-        "source_of_truth": "filesystem work-items and project worktree registries",
+        "source_of_truth": (
+            "state.db work_items and project worktree registries"
+            if state_backed
+            else "filesystem work-items and project worktree registries"
+        ),
         "work_items": [],
         "worktrees": [],
         "automations": [],
     }
+    state_items_by_project: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    if state_backed:
+        from .state import work_items as work_items_state
+        from .state.db import connect as connect_state
+        from .state.db import default_db_path
+
+        connection = connect_state(default_db_path(os_root))
+        try:
+            for item in work_items_state.query(connection, attention="active", limit=10000):
+                key = (str(item.get("domain") or ""), str(item.get("project") or ""))
+                state_items_by_project.setdefault(key, []).append(item)
+        finally:
+            connection.close()
     for project_root in root_project_dirs(os_root, domain=domain, project=project):
         record_domain = project_domain(project_root)
-        linked_work_item_paths: set[Path] = set()
-        for record in local_project_work_items(project_root):
-            if record.status not in ACTIVE_CONTAINER_WORK_ITEM_STATES or current_lane(record) != "02-active":
-                continue
-            link = work_item_links / safe_link_name(record_domain, project_root.name, record.path.name)
-            create_link(link, record.path)
-            linked_work_item_paths.add(record.path.resolve())
-            index["work_items"].append(
-                {
-                    "domain": record_domain,
-                    "project": project_root.name,
-                    "id": record.slug,
-                    "status": record.status,
-                    "created_at": record_created_at(record),
-                    "last_modified_at": record_modified_at(record),
-                    "link": str(link),
-                    "target": str(record.path),
-                }
-            )
-        active_lane = work_items_root(project_root) / "02-active"
-        if active_lane.is_dir():
-            for legacy in sorted(item for item in active_lane.iterdir() if item.is_dir() or item.suffix == ".md"):
-                if legacy.resolve() in linked_work_item_paths:
-                    continue
-                link = work_item_links / safe_link_name(record_domain, project_root.name, legacy.name)
-                create_link(link, legacy)
+        if state_backed:
+            for item in state_items_by_project.get((record_domain, project_root.name), []):
+                packet_value = str(item.get("packet_path") or "")
+                packet = (os_root / packet_value).resolve() if packet_value else None
+                link = None
+                if packet and packet.exists():
+                    link = work_item_links / safe_link_name(
+                        record_domain,
+                        project_root.name,
+                        str(item["id"]),
+                    )
+                    create_link(link, packet)
                 index["work_items"].append(
                     {
                         "domain": record_domain,
                         "project": project_root.name,
-                        "id": legacy.stem,
-                        "status": "legacy-active",
-                        **active_index_timestamps(legacy, recursive=True),
-                        "link": str(link),
-                        "target": str(legacy),
+                        "id": item["id"],
+                        "status": item["state"],
+                        "attention": item["attention"],
+                        "context_summary": item["context_summary"],
+                        "last_verified_at": item.get("last_verified_at"),
+                        "link": str(link) if link else None,
+                        "target": str(packet) if packet else None,
                     }
                 )
+        else:
+            linked_work_item_paths: set[Path] = set()
+            for record in local_project_work_items(project_root):
+                if record.status not in ACTIVE_CONTAINER_WORK_ITEM_STATES or current_lane(record) != "02-active":
+                    continue
+                link = work_item_links / safe_link_name(
+                    record_domain,
+                    project_root.name,
+                    record.path.name,
+                )
+                create_link(link, record.path)
+                linked_work_item_paths.add(record.path.resolve())
+                index["work_items"].append(
+                    {
+                        "domain": record_domain,
+                        "project": project_root.name,
+                        "id": record.slug,
+                        "status": record.status,
+                        "created_at": record_created_at(record),
+                        "last_modified_at": record_modified_at(record),
+                        "link": str(link),
+                        "target": str(record.path),
+                    }
+                )
+            active_lane = work_items_root(project_root) / "02-active"
+            if active_lane.is_dir():
+                for legacy in sorted(
+                    item for item in active_lane.iterdir() if item.is_dir() or item.suffix == ".md"
+                ):
+                    if legacy.resolve() in linked_work_item_paths:
+                        continue
+                    link = work_item_links / safe_link_name(
+                        record_domain,
+                        project_root.name,
+                        legacy.name,
+                    )
+                    create_link(link, legacy)
+                    index["work_items"].append(
+                        {
+                            "domain": record_domain,
+                            "project": project_root.name,
+                            "id": legacy.stem,
+                            "status": "legacy-active",
+                            **active_index_timestamps(legacy, recursive=True),
+                            "link": str(link),
+                            "target": str(legacy),
+                        }
+                    )
         for entry in active_worktree_entries(project_root):
             link = worktree_links / safe_link_name(record_domain, project_root.name, entry["id"])
             create_link(link, Path(entry["path"]))
@@ -1992,8 +2057,12 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
     readme.write_text(
         "# Global Active Work\n\n"
         "This folder is generated by `agentic-os project work-item sync-active`.\n"
-        "Symlinks point to active filesystem work items, active project worktrees, and active automations.\n"
-        "Do not edit generated links by hand; update the source work item, worktree registry, or active-work file, then resync.\n",
+        + (
+            "Work-item truth comes from state.db attention=active; symlinks are disposable projections.\n"
+            if state_backed
+            else "Work-item truth is still using the legacy filesystem compatibility scan.\n"
+        )
+        + "Do not edit generated links by hand; update canonical state or the owning registry, then resync.\n",
         encoding="utf-8",
     )
     index_path = container / "index.yml"

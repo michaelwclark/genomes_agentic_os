@@ -443,6 +443,18 @@ def command_entries() -> list[dict[str, str]]:
             "description": "Use the host tool registry before non-trivial host work.",
             "source": "harness/commands/system-tool-registry.md",
         },
+        {
+            "id": "object-library",
+            "command": "agentic-os library",
+            "description": "Read, create, migrate, refresh, and validate the versioned installed object library.",
+            "source": "harness/commands/os-library.md",
+        },
+        {
+            "id": "work-state",
+            "command": "agentic-os work",
+            "description": "Read and mutate canonical lifecycle, attention, resume context, and active work state.",
+            "source": "harness/commands/os-work-state.md",
+        },
     ]
 
 

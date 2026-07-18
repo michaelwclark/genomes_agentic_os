@@ -222,7 +222,13 @@ def test_import_all_is_idempotent_across_two_runs(fixture_root: Path, conn: sqli
     assert second["cursors"]["written"] == 3  # same 3 rows upserted again, not duplicated
 
     counts_after_second = db.table_counts(conn)
-    assert counts_after_first == counts_after_second == {"events": 2, "run_queue": 2, "cursors": 3}
+    assert counts_after_first == counts_after_second == {
+        "events": 2,
+        "run_queue": 2,
+        "cursors": 3,
+        "work_items": 0,
+        "work_item_history": 0,
+    }
 
 
 def test_import_all_respects_source_filter(fixture_root: Path, conn: sqlite3.Connection) -> None:
@@ -230,7 +236,13 @@ def test_import_all_respects_source_filter(fixture_root: Path, conn: sqlite3.Con
     assert "events" in result
     assert "run_queue" not in result
     assert "cursors" not in result
-    assert db.table_counts(conn) == {"events": 2, "run_queue": 0, "cursors": 0}
+    assert db.table_counts(conn) == {
+        "events": 2,
+        "run_queue": 0,
+        "cursors": 0,
+        "work_items": 0,
+        "work_item_history": 0,
+    }
 
 
 def test_verify_import_reports_ok_when_synced(fixture_root: Path, conn: sqlite3.Connection) -> None:

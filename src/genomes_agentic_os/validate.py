@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 import yaml
@@ -66,7 +67,6 @@ HARNESS_ROOT_FILES = (
 )
 
 LEGACY_ROOT_FOLDERS = (
-    "domains",
     "workflows",
     "automations",
     "inbox",
@@ -590,7 +590,12 @@ def validate_project_work_items(project_root: Path, result: ValidationResult) ->
                 result.errors.append(f"conversation log contains token-shaped value: {log_file}")
 
 
-def validate_domain(domain_root: Path, result: ValidationResult) -> None:
+def validate_domain(
+    domain_root: Path,
+    result: ValidationResult,
+    *,
+    layout_v2: bool = False,
+) -> None:
     require_dir(domain_root, result)
     require_file(domain_root / CONFIG_FILENAME, result)
     require_file(domain_root / "README.md", result)
@@ -606,7 +611,12 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
     validate_claude_adapter(domain_root / "CLAUDE.md", result)
     warn_legacy_agent(domain_root / "AGENT.md", result)
 
-    for directory in DOMAIN_DIRECTORIES:
+    required_directories = (
+        directory
+        for directory in DOMAIN_DIRECTORIES
+        if not (layout_v2 and directory == "05-knowledge")
+    )
+    for directory in required_directories:
         require_dir(domain_root / directory, result)
 
     for filename in CONTROL_PLANE_FILES:
@@ -625,8 +635,9 @@ def validate_domain(domain_root: Path, result: ValidationResult) -> None:
         require_file(domain_root / "03-workflows" / lane / "README.md", result)
         require_file(domain_root / "04-automations" / lane / "README.md", result)
 
-    for filename in KNOWLEDGE_FILES:
-        require_file(domain_root / "05-knowledge" / filename, result)
+    if not layout_v2:
+        for filename in KNOWLEDGE_FILES:
+            require_file(domain_root / "05-knowledge" / filename, result)
 
     require_file(domain_root / "06-runs-and-logs" / "activity-log.md", result)
     require_file(domain_root / "06-runs-and-logs" / "runs" / "README.md", result)
@@ -1547,6 +1558,8 @@ def validate_root(root: str | Path) -> ValidationResult:
     validate_workflow_automation_invocations(os_root, result)
     validate_automation_projection_registry(os_root, result)
     validate_registered_hooks(os_root, result)
+    validate_object_library(os_root, result)
+    validate_work_state(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)
     context_check = check_context_contracts(os_root)
@@ -1566,8 +1579,9 @@ def validate_root(root: str | Path) -> ValidationResult:
     # has no domains at all, which keeps missing-domain errors for broken or
     # half-created roots.
     domains_to_validate = profile_domains or installed_domain_names(os_root) or list(DEFAULT_DOMAINS)
+    layout_v2 = (os_root / "lib").is_dir()
     for domain in domains_to_validate:
-        validate_domain(domain_path(os_root, domain), result)
+        validate_domain(domain_path(os_root, domain), result, layout_v2=layout_v2)
     if not profile_domains:
         validate_domain(shared_factory_path(os_root), result)
 
@@ -1608,6 +1622,66 @@ def validate_root(root: str | Path) -> ValidationResult:
         result.warnings.append(finding["message"])
 
     return result
+
+
+def validate_object_library(root: Path, result: ValidationResult) -> None:
+    """Validate lib/ only when an install has opted into layout v2."""
+
+    if not (root / "lib").exists():
+        return
+    from .library import library_doctor
+
+    doctor = library_doctor(root)
+    for diagnostic in doctor.get("diagnostics") or []:
+        if not isinstance(diagnostic, dict):
+            continue
+        detail = diagnostic.get("message") or diagnostic.get("path") or ""
+        message = f"object library {diagnostic.get('code', 'invalid')}: {detail}".rstrip()
+        if diagnostic.get("severity") == "error":
+            result.errors.append(message)
+        else:
+            result.warnings.append(message)
+
+
+def validate_work_state(root: Path, result: ValidationResult) -> None:
+    """Validate canonical work truth only after active-now opt-in."""
+
+    projection_path = root / "harness/shared_factory/00-control-plane/active-now.json"
+    if not projection_path.is_file():
+        return
+    db_path = root / "harness/shared_factory/00-control-plane/state.db"
+    if not db_path.is_file():
+        result.errors.append(f"active work projection exists without state database: {db_path}")
+        return
+    try:
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        result.errors.append(f"invalid active work projection: {projection_path}: {exc}")
+        return
+    try:
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        version = connection.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+        ).fetchone()[0]
+        rows = connection.execute(
+            "SELECT id FROM active_now ORDER BY priority DESC, updated_at DESC, id"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        result.errors.append(f"invalid canonical work state: {db_path}: {exc}")
+        return
+    finally:
+        if "connection" in locals():
+            connection.close()
+    if not integrity or integrity[0] != "ok":
+        result.errors.append(f"canonical work state integrity failed: {db_path}")
+    if int(version) < 2:
+        result.errors.append(f"canonical work state schema is older than v2: {db_path}")
+    projected_ids = [str(item.get("id")) for item in projection.get("items") or []]
+    database_ids = [str(row["id"]) for row in rows]
+    if projected_ids != database_ids or projection.get("active_count") != len(database_ids):
+        result.errors.append(f"active work projection is stale: {projection_path}")
 
 
 def profile_domain_names(root: Path) -> list[str]:

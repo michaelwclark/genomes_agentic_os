@@ -339,7 +339,9 @@ def domain_path(root: str | Path, domain: str) -> Path:
     normalized = normalize_domain(domain)
     if normalized == SHARED_FACTORY_DOMAIN:
         return shared_factory_path(root)
-    return expand_path(root) / normalized
+    os_root = expand_path(root)
+    conventional = os_root / "domains" / normalized
+    return conventional if conventional.exists() else os_root / normalized
 
 
 def installed_domain_names(root: str | Path) -> list[str]:
@@ -354,11 +356,19 @@ def installed_domain_names(root: str | Path) -> list[str]:
     os_root = expand_path(root)
     if not os_root.is_dir():
         return []
-    return sorted(
-        path.name
+    candidates = [
+        path
         for path in os_root.iterdir()
         if path.is_dir() and (path / "domain.yml").is_file()
-    )
+    ]
+    domains_root = os_root / "domains"
+    if domains_root.is_dir():
+        candidates.extend(
+            path
+            for path in domains_root.iterdir()
+            if path.is_dir() and (path / "domain.yml").is_file()
+        )
+    return sorted({path.name for path in candidates})
 
 
 def validate_name(value: str, label: str = "name") -> str:
