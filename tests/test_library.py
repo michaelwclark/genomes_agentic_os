@@ -215,6 +215,41 @@ def test_legacy_migration_uses_compact_registry_and_excludes_runtime(tmp_path: P
     ]
 
 
+def test_legacy_migration_preserves_registered_empty_object_for_review(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    source = root / "harness/shared_factory/05-knowledge/templates/thread-lifecycle"
+    source.mkdir(parents=True)
+    registry = root / "harness/registries/first-class-resources.json"
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        json.dumps(
+            {
+                "resources": [
+                    {
+                        "kind": "template",
+                        "native_id": "template:thread-lifecycle",
+                        "source": source.relative_to(root).as_posix(),
+                        "title": "Thread Lifecycle",
+                        "summary": "Registered placeholder.",
+                        "scope": {"domain": None, "project": None},
+                        "tags": ["template"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    init_library(root, dry_run=False)
+
+    applied = apply_legacy_migration(root, dry_run=False)
+
+    assert applied["copied"] == 1
+    target = root / "lib/templates/root/thread-lifecycle"
+    assert "had no definition files" in (target / "README.md").read_text(encoding="utf-8")
+    manifest = yaml.safe_load((target / "object.yml").read_text(encoding="utf-8"))
+    assert manifest["entrypoint"] == "README.md"
+
+
 def test_domain_references_preserve_same_stem_different_extensions(tmp_path: Path) -> None:
     root = _root(tmp_path)
     registry = root / "harness/registries/first-class-resources.json"

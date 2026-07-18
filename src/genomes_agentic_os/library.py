@@ -1180,6 +1180,21 @@ def apply_legacy_migration(root: str | Path, *, dry_run: bool = True) -> dict[st
             source_name = source.name
         else:
             raise LibraryError(f"migration source is missing: {item['object_id']}")
+        definition_files = [
+            path
+            for path in target.rglob("*")
+            if path.is_file() and path.name != MANIFEST_NAME
+        ]
+        if not definition_files:
+            source_label = item.get("source") or "the legacy registry"
+            (target / "README.md").write_text(
+                f"# {item['title']}\n\n"
+                f"{item['description']}\n\n"
+                "This registered object had no definition files at migration time. "
+                f"Its identity is preserved from `{source_label}` so it can be "
+                "reviewed, implemented, disabled, or archived explicitly.\n",
+                encoding="utf-8",
+            )
         entrypoint = _entrypoint(item["kind"], target, source_name)
         title, description = _first_heading(target / entrypoint, item["id"])
         manifest = {
