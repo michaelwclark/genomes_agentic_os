@@ -470,7 +470,11 @@ def legacy_import_plan(root: str | Path) -> dict[str, Any]:
             lane_root = work_root / lane
             if not lane_root.is_dir():
                 continue
-            for packet in sorted(path for path in lane_root.iterdir() if path.is_dir()):
+            for packet in sorted(
+                path
+                for path in lane_root.iterdir()
+                if path.is_dir() and not path.name.startswith(".")
+            ):
                 resolved = packet.resolve()
                 if resolved in seen_paths:
                     continue

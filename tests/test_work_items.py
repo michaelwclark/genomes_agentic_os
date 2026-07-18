@@ -72,6 +72,7 @@ def test_legacy_import_is_conservative_and_idempotent(tmp_path: Path) -> None:
     packet = root / "los/02-projects/django/work-items/02-active/001_example"
     packet.mkdir(parents=True)
     (packet / "NEXT.md").write_text("# Next\n\nVerify the migration.\n", encoding="utf-8")
+    (packet.parent / ".artifacts").mkdir()
     plan = work_items.legacy_import_plan(root)
     assert plan["candidate_count"] == 1
     assert plan["items"][0]["attention"] == "queued"
