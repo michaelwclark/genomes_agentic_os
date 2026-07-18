@@ -34,6 +34,7 @@ TOOL_KEYS = {
 }
 
 WORK_ITEM_LANES = {"01-intake", "02-active", "03-complete"}
+MAX_ROUTING_TEXT_BYTES = 400_000
 
 
 def emit() -> None:
@@ -161,9 +162,144 @@ def work_item_log_destination(work_item: Path) -> tuple[Path, str]:
     return work_item / "logs" / "conversations", work_item.name
 
 
+def tail_text(path: Path, max_bytes: int = MAX_ROUTING_TEXT_BYTES) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > max_bytes:
+                handle.seek(size - max_bytes)
+            return handle.read(max_bytes).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def work_item_metadata_path(work_item: Path) -> Path | None:
+    if work_item.is_file():
+        return work_item
+    metadata = work_item / "work.yml"
+    return metadata if metadata.is_file() else None
+
+
+def iter_work_items(root: Path) -> list[Path]:
+    projects = [
+        (root / "domains").glob("*/projects/*"),
+        (root / "domains").glob("*/02-projects/*"),
+        root.glob("*/projects/*"),
+        root.glob("*/02-projects/*"),
+        (root / "harness" / "shared_factory" / "02-projects").glob("*"),
+    ]
+    seen: set[Path] = set()
+    items: list[Path] = []
+    for project_glob in projects:
+        for project_dir in project_glob:
+            work_items = project_dir / "work-items"
+            if not work_items.is_dir():
+                continue
+            candidates = []
+            candidates.extend(work_items.glob("*/work.yml"))
+            candidates.extend(work_items.glob("*.md"))
+            for lane in WORK_ITEM_LANES:
+                candidates.extend((work_items / lane).glob("*/work.yml"))
+                candidates.extend((work_items / lane).glob("*.md"))
+            for metadata in candidates:
+                item = metadata if metadata.suffix == ".md" else metadata.parent
+                try:
+                    resolved = item.resolve()
+                except OSError:
+                    continue
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                items.append(item)
+    return items
+
+
+def work_item_aliases(root: Path, work_item: Path) -> set[str]:
+    aliases = {work_item.name}
+    try:
+        resolved = work_item.resolve()
+        aliases.add(str(resolved))
+        aliases.add(str(resolved.relative_to(root.resolve())))
+    except (OSError, ValueError):
+        pass
+    if work_item.is_file():
+        aliases.add(work_item.stem)
+
+    metadata = work_item_metadata_path(work_item)
+    if metadata:
+        for key in ("id", "title"):
+            value = yaml_scalar(metadata, key)
+            if value:
+                aliases.add(value)
+                aliases.add(slugify(value))
+                aliases.add(slugify(value).replace("_", "-"))
+    return {alias for alias in aliases if len(alias) >= 8}
+
+
+def explicit_work_item(root: Path, payload: dict[str, Any]) -> Path | None:
+    explicit_values = [
+        os.environ.get("AGENTIC_OS_ACTIVE_WORK_ITEM", ""),
+        os.environ.get("AOS_ACTIVE_WORK_ITEM", ""),
+    ]
+    explicit_values.extend(
+        payload_value(
+            payload,
+            "active_work_item",
+            "activeWorkItem",
+            "work_item",
+            "workItem",
+            "work_item_path",
+            "workItemPath",
+        ).splitlines()
+    )
+    for value in explicit_values:
+        if not value:
+            continue
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def discussed_work_item(root: Path, payload: dict[str, Any], transcript: Path | None) -> Path | None:
+    explicit = explicit_work_item(root, payload)
+    if explicit:
+        return explicit
+
+    text_parts = [json.dumps(payload, sort_keys=True)]
+    if transcript:
+        text_parts.append(tail_text(transcript))
+    routing_text = "\n".join(text_parts).lower()
+    if not routing_text.strip():
+        return None
+
+    scored: list[tuple[int, str, Path]] = []
+    for item in iter_work_items(root):
+        score = 0
+        for alias in work_item_aliases(root, item):
+            normalized = alias.lower()
+            if normalized in routing_text:
+                score += 5 if "/" in normalized or "\\" in normalized else 2
+        if score:
+            scored.append((score, str(item), item))
+
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    if len(scored) == 1 or scored[0][0] > scored[1][0]:
+        return scored[0][2]
+    return None
+
+
 def linked_project_for_cwd(root: Path, cwd: Path) -> Path | None:
     project_globs = [
+        (root / "domains").glob("*/projects/*"),
         (root / "domains").glob("*/02-projects/*"),
+        root.glob("*/projects/*"),
         root.glob("*/02-projects/*"),
         (root / "harness" / "shared_factory" / "02-projects").glob("*"),
     ]
@@ -188,7 +324,12 @@ def linked_project_for_cwd(root: Path, cwd: Path) -> Path | None:
     return None
 
 
-def route_log_dir(root: Path, cwd: Path, payload: dict[str, Any]) -> tuple[Path, str]:
+def route_log_dir(
+    root: Path,
+    cwd: Path,
+    payload: dict[str, Any],
+    transcript: Path | None = None,
+) -> tuple[Path, str]:
     try:
         relative = cwd.resolve().relative_to(root.resolve())
     except ValueError:
@@ -205,6 +346,9 @@ def route_log_dir(root: Path, cwd: Path, payload: dict[str, Any]) -> tuple[Path,
             if len(parts) >= 6 and parts[4] == "work-items":
                 work_item = project / "work-items" / parts[5]
                 return work_item_log_destination(work_item)
+            discussed = discussed_work_item(root, payload, transcript)
+            if discussed:
+                return work_item_log_destination(discussed)
             return project / "logs" / "conversations", parts[3]
         return shared / "06-runs-and-logs" / "conversations", "shared_factory"
     if parts and parts[0] == "harness":
@@ -213,14 +357,22 @@ def route_log_dir(root: Path, cwd: Path, payload: dict[str, Any]) -> tuple[Path,
     if len(parts) >= 2 and parts[0] == "domains":
         domain_base = root / "domains"
         parts = parts[1:]
-    if len(parts) >= 6 and parts[1] == "02-projects" and parts[3] == "work-items" and parts[4] in WORK_ITEM_LANES:
-        lane_item = domain_base / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4] / parts[5]
+    if (
+        len(parts) >= 6
+        and parts[1] in {"02-projects", "projects"}
+        and parts[3] == "work-items"
+        and parts[4] in WORK_ITEM_LANES
+    ):
+        lane_item = domain_base / parts[0] / parts[1] / parts[2] / "work-items" / parts[4] / parts[5]
         return work_item_log_destination(lane_item)
-    if len(parts) >= 5 and parts[1] == "02-projects" and parts[3] == "work-items":
-        work_item = domain_base / parts[0] / "02-projects" / parts[2] / "work-items" / parts[4]
+    if len(parts) >= 5 and parts[1] in {"02-projects", "projects"} and parts[3] == "work-items":
+        work_item = domain_base / parts[0] / parts[1] / parts[2] / "work-items" / parts[4]
         return work_item_log_destination(work_item)
-    if len(parts) >= 3 and parts[1] == "02-projects":
-        project = domain_base / parts[0] / "02-projects" / parts[2]
+    discussed = discussed_work_item(root, payload, transcript)
+    if discussed:
+        return work_item_log_destination(discussed)
+    if len(parts) >= 3 and parts[1] in {"02-projects", "projects"}:
+        project = domain_base / parts[0] / parts[1] / parts[2]
         return project / "logs" / "conversations", parts[2]
     if parts:
         return domain_base / parts[0] / "06-runs-and-logs" / "conversations", parts[0]
@@ -299,12 +451,12 @@ def main() -> int:
         cwd_value = payload_value(payload, "cwd") or os.getcwd()
         cwd = Path(cwd_value).expanduser().resolve()
         root = agentic_root(cwd)
-        log_dir, slug = route_log_dir(root, cwd, payload)
+        transcript_value = payload_value(payload, "transcript_path", "transcriptPath")
+        transcript = Path(transcript_value).expanduser() if transcript_value else None
+        log_dir, slug = route_log_dir(root, cwd, payload, transcript)
         log_dir.mkdir(parents=True, exist_ok=True)
 
         date_slug = conversation_artifact_stem(root, slug)
-        transcript_value = payload_value(payload, "transcript_path", "transcriptPath")
-        transcript = Path(transcript_value).expanduser() if transcript_value else None
         raw_target = log_dir / f"{date_slug}.jsonl"
         tool_jsonl = log_dir / f"{date_slug}_tool_calls.jsonl"
         tool_md = log_dir / f"{date_slug}_tool_calls.md"

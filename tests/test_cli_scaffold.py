@@ -4362,6 +4362,56 @@ def test_conversation_auto_log_hook_routes_linked_repo_to_active_work_item(tmp_p
     assert list(log_dir.glob("*001_build_logger*.jsonl"))
 
 
+def test_conversation_auto_log_hook_routes_explicit_work_item_without_losing_date_policy(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert main(["project", "create", "los", "los_app", "--repo", str(repo), "--root", str(root)]) == 0
+    for title in ("Build Logger", "Second Active Item"):
+        assert (
+            main(
+                [
+                    "project",
+                    "work-item",
+                    "create",
+                    "los",
+                    "los_app",
+                    "--title",
+                    title,
+                    "--summary",
+                    "Route this conversation.",
+                    "--root",
+                    str(root),
+                ]
+            )
+            == 0
+        )
+    work_item = dated_child(
+        domain_root(root, "los") / "02-projects" / "los_app" / "work-items" / "01-intake",
+        "001_build_logger.md",
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "harness/hooks/conversation-auto-log.py"],
+        input=json.dumps(
+            {
+                "cwd": str(repo),
+                "session_id": "explicit-work-item",
+                "active_work_item": str(work_item),
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "AGENTIC_OS_ROOT": str(root)},
+    )
+    assert proc.returncode == 0
+    log_dir = work_item.with_suffix(".logs") / "conversations"
+    raw_logs = [path for path in log_dir.glob("*.jsonl") if not path.name.endswith("_tool_calls.jsonl")]
+    assert len(raw_logs) == 1
+    assert re.match(r"^\d{6}-001_build_logger", raw_logs[0].name)
+
+
 def test_conversation_auto_log_hook_routes_harness_surface_to_harness_logs(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     cwd = root / "harness" / "hooks"
