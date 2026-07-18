@@ -6,6 +6,38 @@ export const fixtureSnapshot: GuiSnapshot = {
   schema_version: "agentic-os-gui/v1",
   generated_at: FIXTURE_NOW,
   root: "/Users/operator/agentic_os",
+  runtime: {
+    status: "healthy",
+    queue_mode: "execution_fabric",
+    queue_depth: 3,
+    running: 2,
+    failed: 0,
+    dead_letter: 0,
+    active_workers: 2,
+    unhealthy_workers: 0,
+    reserved_interactive_slots: 1,
+    max_interactive_running: 1,
+    queues: [
+      { queue_name: "codex", statuses: { queued: 2, running: 1 }, total: 3, depth: 2, running: 1, failed: 0, dead_letter: 0, max_concurrency: 2, max_queued: 100, enabled: true },
+      { queue_name: "claude", statuses: { queued: 1 }, total: 1, depth: 1, running: 0, failed: 0, dead_letter: 0, max_concurrency: 2, max_queued: 100, enabled: true },
+      { queue_name: "non_llm", statuses: { running: 1 }, total: 1, depth: 0, running: 1, failed: 0, dead_letter: 0, max_concurrency: 4, max_queued: 500, enabled: true },
+    ],
+    worker_pools: [
+      { name: "codex_workers", queue_name: "codex", provider: "codex", max_workers: 2, max_concurrency: 2, worker_count: 1, live_workers: 1, active_tasks: 1, unhealthy_workers: 0 },
+      { name: "non_llm_workers", queue_name: "non_llm", provider: "non_llm", max_workers: 4, max_concurrency: 4, worker_count: 1, live_workers: 1, active_tasks: 1, unhealthy_workers: 0 },
+    ],
+    workers: [
+      { id: "codex-worker-1", pool_name: "codex_workers", queue_name: "codex", provider: "codex", status: "online", capacity: 1, active_tasks: 1, heartbeat_at: FIXTURE_NOW, lease_until: "2026-07-13T18:30:00Z", updated_at: FIXTURE_NOW },
+    ],
+    tasks: [
+      { id: "task-codex-1", kind: "review", status: "running", queue_name: "codex", worker_pool: "codex_workers", execution_target: "codex_harness", attempts: 1, lease_owner: "codex-worker-1", lease_until: "2026-07-13T18:30:00Z", updated_at: FIXTURE_NOW },
+      { id: "task-claude-1", kind: "review", status: "queued", queue_name: "claude", worker_pool: "claude_workers", execution_target: "claude_harness", attempts: 0, updated_at: FIXTURE_NOW },
+    ],
+    task_count: 5,
+    task_sample_count: 2,
+    task_sample_limit: 200,
+    captured_at: FIXTURE_NOW,
+  },
   navigation: {
     domains: [
       {

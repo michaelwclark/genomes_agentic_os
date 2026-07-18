@@ -27,20 +27,33 @@ from .db import days_ago_iso, parse_iso, row_to_dict, transaction, utc_now_iso
 
 # Matches the "states"/"approval_states" vocabulary declared in the real
 # run-queue.yml (and in event_graph.default_run_queue()).
-VALID_STATUSES = ("dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped")
+VALID_STATUSES = (
+    "dry-run",
+    "queued",
+    "approval-needed",
+    "running",
+    "blocked",
+    "done",
+    "failed",
+    "skipped",
+    "cancelled",
+    "dead-letter",
+)
 VALID_APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expired", "blocked")
 
-TERMINAL_STATUSES = ("done", "failed", "skipped")
+TERMINAL_STATUSES = ("done", "failed", "skipped", "cancelled", "dead-letter")
 
 _INSERT_SQL = """
 INSERT INTO run_queue (
     id, kind, ref, status, approval_state, priority, idempotency_key, execution_target,
     dry_run, created_at, updated_at, due_at, started_at, finished_at, attempts,
-    lease_owner, lease_until, blocked_reason, error, payload_json
+    lease_owner, lease_until, blocked_reason, error, payload_json, queue_name,
+    worker_pool, max_attempts, dead_letter_queue, lease_token
 ) VALUES (
     :id, :kind, :ref, :status, :approval_state, :priority, :idempotency_key, :execution_target,
     :dry_run, :created_at, :updated_at, :due_at, :started_at, :finished_at, :attempts,
-    :lease_owner, :lease_until, :blocked_reason, :error, :payload_json
+    :lease_owner, :lease_until, :blocked_reason, :error, :payload_json, :queue_name,
+    :worker_pool, :max_attempts, :dead_letter_queue, :lease_token
 )
 """
 
@@ -73,11 +86,19 @@ def enqueue(
     due_at: str | None = None,
     payload: dict[str, Any] | list[Any] | None = None,
     created_at: str | None = None,
+    queue_name: str = "default",
+    worker_pool: str = "default",
+    max_attempts: int = 3,
+    dead_letter_queue: str | None = None,
 ) -> dict[str, Any]:
     if status not in VALID_STATUSES:
         raise StateQueueError(f"invalid status: {status!r} (expected one of {VALID_STATUSES})")
     if approval_state not in VALID_APPROVAL_STATES:
         raise StateQueueError(f"invalid approval_state: {approval_state!r} (expected one of {VALID_APPROVAL_STATES})")
+    if not queue_name or not worker_pool:
+        raise StateQueueError("queue_name and worker_pool must be non-empty")
+    if max_attempts < 1:
+        raise StateQueueError("max_attempts must be at least 1")
     now_value = utc_now_iso()
     row = {
         "id": id or f"queue_{uuid.uuid4().hex[:12]}",
@@ -100,6 +121,11 @@ def enqueue(
         "blocked_reason": None,
         "error": None,
         "payload_json": json.dumps(payload if payload is not None else {}, sort_keys=True),
+        "queue_name": queue_name,
+        "worker_pool": worker_pool,
+        "max_attempts": max_attempts,
+        "dead_letter_queue": dead_letter_queue,
+        "lease_token": None,
     }
     try:
         conn.execute(_INSERT_SQL, row)
@@ -167,6 +193,7 @@ def claim_next(
     lease_until = (parse_iso(now_value) + timedelta(seconds=lease_seconds)).replace(microsecond=0).isoformat().replace(
         "+00:00", "Z"
     )
+    lease_token = uuid.uuid4().hex
     with transaction(conn):
         row = conn.execute(
             f"""
@@ -185,11 +212,11 @@ def claim_next(
         conn.execute(
             """
             UPDATE run_queue
-            SET status = 'running', lease_owner = ?, lease_until = ?, attempts = attempts + 1,
+            SET status = 'running', lease_owner = ?, lease_until = ?, lease_token = ?, attempts = attempts + 1,
                 started_at = COALESCE(started_at, ?), updated_at = ?
             WHERE id = ?
             """,
-            (worker_id, lease_until, now_value, now_value, item_id),
+            (worker_id, lease_until, lease_token, now_value, now_value, item_id),
         )
         return _decode(conn.execute("SELECT * FROM run_queue WHERE id = ?", (item_id,)).fetchone())
 
@@ -209,7 +236,7 @@ def complete(
         """
         UPDATE run_queue
         SET status = ?, error = COALESCE(?, error), finished_at = ?, lease_owner = NULL,
-            lease_until = NULL, updated_at = ?
+            lease_until = NULL, lease_token = NULL, updated_at = ?
         WHERE id = ?
         """,
         (status, error, now_value, now_value, item_id),
@@ -225,6 +252,8 @@ def query(
     *,
     status: str | None = None,
     kind: str | None = None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
@@ -236,6 +265,12 @@ def query(
     if kind is not None:
         clauses.append("kind = ?")
         params.append(kind)
+    if queue_name is not None:
+        clauses.append("queue_name = ?")
+        params.append(queue_name)
+    if worker_pool is not None:
+        clauses.append("worker_pool = ?")
+        params.append(worker_pool)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = conn.execute(
         f"SELECT * FROM run_queue {where} ORDER BY priority DESC, created_at ASC LIMIT ? OFFSET ?",
@@ -244,7 +279,14 @@ def query(
     return [_decode(row) for row in rows]  # type: ignore[misc]
 
 
-def count(conn: sqlite3.Connection, *, status: str | None = None, kind: str | None = None) -> int:
+def count(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    kind: str | None = None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
+) -> int:
     clauses: list[str] = []
     params: list[Any] = []
     if status is not None:
@@ -253,6 +295,12 @@ def count(conn: sqlite3.Connection, *, status: str | None = None, kind: str | No
     if kind is not None:
         clauses.append("kind = ?")
         params.append(kind)
+    if queue_name is not None:
+        clauses.append("queue_name = ?")
+        params.append(queue_name)
+    if worker_pool is not None:
+        clauses.append("worker_pool = ?")
+        params.append(worker_pool)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     row = conn.execute(f"SELECT COUNT(*) FROM run_queue {where}", params).fetchone()
     return int(row[0])

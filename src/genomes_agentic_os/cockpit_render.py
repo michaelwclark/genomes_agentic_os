@@ -14,6 +14,7 @@ _TABS = (
     "Reviews",
     "Reports",
     "Automations",
+    "Runtime",
     "Sources",
     "Hosts",
     "Hygiene",
@@ -197,10 +198,11 @@ def render_cockpit_html(snapshot: dict[str, Any]) -> str:
       today: 'The signals most likely to need attention now.', work: 'Routed work items and their next actions.',
       conversations: 'Captured Claude and Codex conversation metadata.', reviews: 'Pull requests and review activity found in OS evidence.',
       reports: 'Layered summaries with canonical evidence paths.', automations: 'Declared programs, workflows, schedules, and latest receipts.',
+      runtime: 'Authoritative named-queue depth, admission limits, worker capacity, and health.',
       sources: 'Configured watches, observed usage, and proposed coverage.', hosts: 'Declared hosts and last-known health receipts.',
       hygiene: 'Read-only findings with guarded follow-up commands.'
     }};
-    const sectionMap = {{ work:'work_items', conversations:'conversations', reviews:'reviews', reports:'reports', automations:'automations', hosts:'hosts', hygiene:'hygiene' }};
+    const sectionMap = {{ work:'work_items', conversations:'conversations', reviews:'reviews', reports:'reports', automations:'automations', runtime:'runtime', hosts:'hosts', hygiene:'hygiene' }};
     const list = value => Array.isArray(value) ? value : [];
     const text = value => value === null || value === undefined ? '' : typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : JSON.stringify(value);
     const titleCase = value => String(value || '').replace(/[_-]+/g, ' ').replace(/\\b\\w/g, letter => letter.toUpperCase());
@@ -215,11 +217,12 @@ def render_cockpit_html(snapshot: dict[str, Any]) -> str:
     function sectionItems(tab) {{
       if (tab === 'sources') return sourceItems();
       if (tab === 'today') {{
+        const runtime = list(snapshot.runtime).filter(item => tone(normalizedStatus(item)) !== 'good').slice(0, 6);
         const urgent = list(snapshot.hygiene).filter(item => tone(normalizedStatus(item)) !== 'good').slice(0, 6);
         const work = list(snapshot.work_items).filter(item => !/finished|archived|complete|dropped/.test(normalizedStatus(item))).slice(0, 6);
         const reviews = list(snapshot.reviews).filter(item => !/merged|closed|complete/.test(normalizedStatus(item))).slice(0, 4);
         const reports = list(snapshot.reports).slice(0, 3);
-        return [...urgent.map(item => Object.assign({{today_group:'Needs attention'}}, item)), ...work.map(item => Object.assign({{today_group:'Active work'}}, item)), ...reviews.map(item => Object.assign({{today_group:'Reviews'}}, item)), ...reports.map(item => Object.assign({{today_group:'Recent reports'}}, item))];
+        return [...runtime.map(item => Object.assign({{today_group:'Runtime health'}}, item)), ...urgent.map(item => Object.assign({{today_group:'Needs attention'}}, item)), ...work.map(item => Object.assign({{today_group:'Active work'}}, item)), ...reviews.map(item => Object.assign({{today_group:'Reviews'}}, item)), ...reports.map(item => Object.assign({{today_group:'Recent reports'}}, item))];
       }}
       return list(snapshot[sectionMap[tab]]);
     }}
@@ -244,7 +247,7 @@ def render_cockpit_html(snapshot: dict[str, Any]) -> str:
       const activeWork = list(snapshot.work_items).filter(item => !/finished|archived|complete|dropped/.test(normalizedStatus(item))).length;
       const attention = list(snapshot.hygiene).filter(item => tone(normalizedStatus(item)) !== 'good').length;
       const openReviews = list(snapshot.reviews).filter(item => !/merged|closed|complete/.test(normalizedStatus(item))).length;
-      metrics.append(metric('Active work', activeWork), metric('Open reviews', openReviews), metric('Needs attention', attention), metric('Observed sources', list((snapshot.sources || {{}}).observed).length));
+      metrics.append(metric('Active work', activeWork), metric('Open reviews', openReviews), metric('Queue depth', (snapshot.summary || {{}}).queue_depth || 0), metric('Active workers', (snapshot.summary || {{}}).active_workers || 0), metric('Runtime health', (snapshot.summary || {{}}).runtime_health || 'unknown'), metric('Needs attention', attention));
       return metrics;
     }}
     function cardTitle(item) {{ return item.title || item.name || item.summary || item.id || 'Untitled item'; }}

@@ -8,6 +8,7 @@ import { OperatorStateStore } from "./operatorState";
 import { SessionBroker } from "./sessionBroker";
 import { WatchCoordinator } from "./watch";
 import { IPC, type ConversationSummary, type GuiSnapshot, type StreamEvent } from "../shared/contracts";
+import { interactiveConcurrencyLimit } from "../shared/presentation";
 import {
   isAllowedExternalUrl,
   isConversationId,
@@ -181,7 +182,7 @@ function registerIpc(store: OperatorStateStore): void {
     displayName: configuredDisplayName(),
     operatorLabel: configuredOperatorLabel(),
   }));
-  ipcMain.handle(IPC.snapshot, () => bridge.snapshot());
+  ipcMain.handle(IPC.snapshot, () => bridge.snapshot(true));
   ipcMain.handle(IPC.transcript, (_event, conversationId: unknown) => {
     if (!isConversationId(conversationId)) throw new Error("invalid conversation id");
     return bridge.transcript(conversationId);
@@ -197,7 +198,8 @@ function registerIpc(store: OperatorStateStore): void {
   });
   ipcMain.handle(IPC.sendTurn, async (_event, raw: unknown) => {
     const requested = validateSendTurn(raw);
-    const conversation = await bridge.conversation(requested.conversationId);
+    const currentSnapshot = await bridge.snapshot();
+    const conversation = currentSnapshot.conversations.find((item) => item.id === requested.conversationId);
     if (!conversation || conversation.harness !== requested.harness) throw new Error("conversation harness mismatch");
     const emit = (streamEvent: StreamEvent) => mainWindow?.webContents.send(IPC.streamEvent, streamEvent);
     if (process.env.AOS_GUI_FIXTURE === "1") return fixtureTurn(conversation.id, emit);
@@ -245,7 +247,7 @@ function registerIpc(store: OperatorStateStore): void {
         bridge.invalidate();
         sendSnapshot(await bridge.snapshot(true));
       }
-    });
+    }, interactiveConcurrencyLimit(currentSnapshot.runtime));
     return result;
   });
   ipcMain.handle(IPC.cancelTurn, (_event, leaseId: unknown) => {

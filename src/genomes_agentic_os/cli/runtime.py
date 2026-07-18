@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from ..cli_help import AosHelpFormatter, env_epilog
-from ..runtime_health import build_runtime_health, project_runtime_health, write_runtime_health
+from ..runtime_health import (
+    build_runtime_health,
+    notify_runtime_health,
+    project_runtime_health,
+    queue_runtime_self_heal,
+    write_runtime_health,
+)
 from ..resource_actions import (
     schedule_create_governed,
     schedule_delete,
@@ -15,6 +22,13 @@ from ..resource_actions import (
     schedule_queue_now,
     schedule_set_enabled,
     schedule_update,
+)
+from ..runtime_backend import (
+    apply_queue_mode,
+    plan_queue_mode,
+    plan_queue_mode_rollback,
+    queue_mode_status,
+    rollback_queue_mode,
 )
 from ..runtime_ops import (
     format_runtime_result,
@@ -29,6 +43,7 @@ from ..runtime_ops import (
     runtime_run_next,
     schedule_run_due,
 )
+from ..runtime_snapshot import build_runtime_snapshot, format_runtime_snapshot, write_runtime_snapshot
 from ..supervisor import format_supervise_result, supervise_tick
 
 from ._shared import DEFAULT_ROOT
@@ -40,6 +55,13 @@ def _print_structured(result: dict, *, json_output: bool = False) -> None:
 
 def _add_json_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def _add_safe_mutation_mode(parser: argparse.ArgumentParser) -> None:
@@ -85,7 +107,13 @@ def handle_runtime_doctor(args: argparse.Namespace) -> int:
 def handle_runtime_health_report(args: argparse.Namespace) -> int:
     report = build_runtime_health(args.root)
     paths = write_runtime_health(args.root, report)
-    result = {"report": report, "paths": paths, "notion": {"applied": False}}
+    result = {
+        "report": report,
+        "paths": paths,
+        "remediation": queue_runtime_self_heal(args.root, report, paths) if args.apply_remediation else {"queued": False},
+        "notification": notify_runtime_health(args.root, report) if args.notify else {"sent": False},
+        "notion": {"applied": False},
+    }
     if args.apply_notion:
         projection = project_runtime_health(args.root, report, paths, automation_id=args.automation_id)
         result["notion"] = {"applied": projection["ok"], **projection}
@@ -93,10 +121,53 @@ def handle_runtime_health_report(args: argparse.Namespace) -> int:
     return 0 if not args.apply_notion or result["notion"]["applied"] else 1
 
 
+def handle_runtime_snapshot(args: argparse.Namespace) -> int:
+    snapshot = build_runtime_snapshot(
+        args.root,
+        queue_name=args.queue,
+        statuses=args.status,
+        task_limit=None if args.all else args.limit,
+    )
+    if args.output:
+        snapshot["receipt_path"] = str(Path(args.output).expanduser().resolve())
+        write_runtime_snapshot(snapshot["receipt_path"], snapshot)
+    print(json.dumps(snapshot, sort_keys=True) if args.json else format_runtime_snapshot(snapshot))
+    if args.output and not args.json:
+        print(f"\nReceipt: {snapshot['receipt_path']}")
+    return 0
+
+
 def handle_runtime_run_next(args: argparse.Namespace) -> int:
     result = runtime_run_next(args.root, dry_run=not args.apply, item_id=args.item_id)
     print(format_runtime_result(result))
     return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
+
+
+def handle_queue_mode_status(args: argparse.Namespace) -> int:
+    _print_structured(queue_mode_status(args.root), json_output=args.json)
+    return 0
+
+
+def handle_queue_mode_plan(args: argparse.Namespace) -> int:
+    result = plan_queue_mode(args.root, args.target_mode)
+    _print_structured(result, json_output=args.json)
+    return 0 if result["ready"] else 1
+
+
+def handle_queue_mode_apply(args: argparse.Namespace) -> int:
+    result = apply_queue_mode(args.root, args.target_mode, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("ready", True) else 1
+
+
+def handle_queue_mode_rollback(args: argparse.Namespace) -> int:
+    result = (
+        rollback_queue_mode(args.root, dry_run=False)
+        if args.apply
+        else plan_queue_mode_rollback(args.root) | {"dry_run": True, "applied": False}
+    )
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("ready", True) else 1
 
 
 def handle_run_queue_prune(args: argparse.Namespace) -> int:
@@ -226,9 +297,9 @@ def register(subparsers) -> None:
     """Register the runtime / heartbeat / schedule / run-queue / integration command group."""
     runtime_parser = subparsers.add_parser(
         "runtime",
-        help="Manage file-backed runtime state.",
+        help="Inspect and operate the selected runtime backend.",
         description=(
-            "Manage the file-backed runtime surface: registries, run queue, heartbeats, schedules, integrations, and sources. "
+            "Inspect and operate the runtime surface: registries, selected queue backend, workers, heartbeats, schedules, integrations, and sources. "
             "All mutating subcommands default to --dry-run; pass --apply to write changes. "
             "'runtime supervise' runs a full supervisor tick across all subsystems at once."
         ),
@@ -244,6 +315,7 @@ def register(subparsers) -> None:
             examples=[
                 ("agentic-os runtime init", "Create runtime registries and log folders."),
                 ("agentic-os runtime doctor", "Check runtime registry health."),
+                ("agentic-os runtime snapshot", "Capture queue, worker, and task state at one moment."),
                 ("agentic-os runtime supervise --apply", "Run a full supervisor tick across all subsystems."),
                 ("agentic-os runtime run-next --apply", "Dispatch the next safe queued item."),
             ],
@@ -264,8 +336,33 @@ def register(subparsers) -> None:
     runtime_health_parser.add_argument(
         "--apply-notion", action="store_true", help="Replace the verified Notion summary page."
     )
+    runtime_health_parser.add_argument(
+        "--apply-remediation", action="store_true", help="Queue an idempotent Codex self-heal task when unhealthy."
+    )
+    runtime_health_parser.add_argument(
+        "--notify", action="store_true", help="Send a governed local system notification when unhealthy."
+    )
     runtime_health_parser.add_argument("--automation-id", default="queue-worker-health")
     runtime_health_parser.set_defaults(handler=handle_runtime_health_report)
+    runtime_snapshot_parser = runtime_subparsers.add_parser(
+        "snapshot",
+        help="Capture a point-in-time queue, worker, and task snapshot from the selected backend.",
+    )
+    runtime_snapshot_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_snapshot_parser.add_argument("--queue", help="Restrict task rows to one named queue.")
+    runtime_snapshot_parser.add_argument(
+        "--status",
+        action="append",
+        default=[],
+        choices=("dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped", "cancelled", "dead-letter"),
+        help="Restrict task rows to a status; repeat to include multiple statuses.",
+    )
+    runtime_snapshot_limit = runtime_snapshot_parser.add_mutually_exclusive_group()
+    runtime_snapshot_limit.add_argument("--limit", type=_positive_int, default=50, help="Maximum task rows to include (default: 50).")
+    runtime_snapshot_limit.add_argument("--all", action="store_true", help="Include every matching task row.")
+    runtime_snapshot_parser.add_argument("--output", help="Atomically write the complete snapshot JSON to this path.")
+    _add_json_arg(runtime_snapshot_parser)
+    runtime_snapshot_parser.set_defaults(handler=handle_runtime_snapshot)
     runtime_run_next_parser = runtime_subparsers.add_parser("run-next", help="Dispatch the next safe queued runtime item.")
     runtime_run_next_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     runtime_run_next_parser.add_argument("--item-id", help="Specific queue item id to inspect or dispatch.")
@@ -273,6 +370,37 @@ def register(subparsers) -> None:
     runtime_run_next_mode.add_argument("--dry-run", action="store_true", default=True)
     runtime_run_next_mode.add_argument("--apply", action="store_true")
     runtime_run_next_parser.set_defaults(handler=handle_runtime_run_next)
+    queue_mode_parser = runtime_subparsers.add_parser(
+        "queue-mode",
+        help="Read, plan, apply, or roll back the runtime queue backend selector.",
+    )
+    queue_mode_subparsers = queue_mode_parser.add_subparsers(dest="queue_mode_command", required=True)
+    queue_mode_status_parser = queue_mode_subparsers.add_parser("status", help="Read the effective queue mode.")
+    queue_mode_status_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(queue_mode_status_parser)
+    queue_mode_status_parser.set_defaults(handler=handle_queue_mode_status)
+    queue_mode_plan_parser = queue_mode_subparsers.add_parser("plan", help="Preflight a queue-mode switch.")
+    queue_mode_plan_parser.add_argument("target_mode", choices=("filesystem", "execution_fabric"))
+    queue_mode_plan_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(queue_mode_plan_parser)
+    queue_mode_plan_parser.set_defaults(handler=handle_queue_mode_plan)
+    queue_mode_apply_parser = queue_mode_subparsers.add_parser(
+        "apply",
+        help="Plan by default; pass --apply to persist a preflighted queue-mode switch.",
+    )
+    queue_mode_apply_parser.add_argument("target_mode", choices=("filesystem", "execution_fabric"))
+    queue_mode_apply_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(queue_mode_apply_parser)
+    _add_json_arg(queue_mode_apply_parser)
+    queue_mode_apply_parser.set_defaults(handler=handle_queue_mode_apply)
+    queue_mode_rollback_parser = queue_mode_subparsers.add_parser(
+        "rollback",
+        help="Plan by default; pass --apply to restore the previous queue mode.",
+    )
+    queue_mode_rollback_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(queue_mode_rollback_parser)
+    _add_json_arg(queue_mode_rollback_parser)
+    queue_mode_rollback_parser.set_defaults(handler=handle_queue_mode_rollback)
     runtime_prune_parser = runtime_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
     _add_run_queue_prune_args(runtime_prune_parser)
     runtime_prune_parser.set_defaults(handler=handle_run_queue_prune)

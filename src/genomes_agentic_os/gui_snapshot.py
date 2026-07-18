@@ -14,6 +14,7 @@ from .claude_sessions import (
 )
 from .codex_sessions import codex_transcript_result_for_id, collect_codex_conversations
 from .conversation_index import build_navigation, utc_now
+from .runtime_snapshot import build_runtime_snapshot
 
 
 SCHEMA_VERSION = "agentic-os-gui/v1"
@@ -70,6 +71,58 @@ def _project_conversation(item: dict[str, Any]) -> dict[str, Any]:
     return {field: item[field] for field in CONVERSATION_FIELDS if field in item and item[field] not in (None, "")}
 
 
+def _runtime_snapshot(root: Path) -> dict[str, Any]:
+    try:
+        snapshot = build_runtime_snapshot(root, task_limit=200)
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "queue_mode": "unknown",
+            "queue_depth": 0,
+            "running": 0,
+            "failed": 0,
+            "dead_letter": 0,
+            "active_workers": 0,
+            "unhealthy_workers": 0,
+            "stale_queued": 0,
+            "expired_running_leases": 0,
+            "reserved_interactive_slots": 1,
+            "max_interactive_running": 1,
+            "queues": [],
+            "worker_pools": [],
+            "workers": [],
+            "tasks": [],
+            "task_count": 0,
+            "task_sample_count": 0,
+            "task_sample_limit": 200,
+            "captured_at": _generated_at(),
+            "reason": f"{type(exc).__name__}: {exc}",
+        }
+    summary = snapshot["summary"]
+    return {
+        "status": snapshot["health"],
+        "queue_mode": snapshot["queue_mode"],
+        "queue_depth": int(summary["queued"]) + int(summary["approval_needed"]),
+        "running": int(summary["running"]),
+        "failed": int(summary["failed"]),
+        "dead_letter": int(summary["dead_letter"]),
+        "active_workers": int(summary["active_workers"]),
+        "unhealthy_workers": int(summary["unhealthy_workers"]),
+        "stale_queued": int(summary["stale_queued"]),
+        "expired_running_leases": int(summary["expired_running_leases"]),
+        "reserved_interactive_slots": max(1, int(summary["reserved_interactive_slots"])),
+        "max_interactive_running": max(1, int(summary["max_interactive_running"])),
+        "queues": snapshot["queues"],
+        "worker_pools": snapshot["worker_pools"],
+        "workers": snapshot["workers"],
+        "tasks": snapshot["tasks"],
+        "task_count": int(summary["total_records"]),
+        "task_sample_count": len(snapshot["tasks"]),
+        "task_sample_limit": 200,
+        "captured_at": snapshot["captured_at"],
+    }
+
+
 def build_gui_snapshot(
     root: str | Path,
     *,
@@ -88,6 +141,7 @@ def build_gui_snapshot(
     )
     conversations = [_project_conversation(item) for item in [*codex, *claude]]
     conversations.sort(key=lambda item: (bool(item.get("pinned")), str(item.get("updated_at") or "")), reverse=True)
+    runtime = _runtime_snapshot(os_root)
 
     diagnostics: list[dict[str, str]] = []
     resolved_codex_home = Path(codex_home).expanduser() if codex_home else Path.home() / ".codex"
@@ -111,6 +165,8 @@ def build_gui_snapshot(
         diagnostics.append(
             {"severity": "info", "message": "Claude Code transcripts are unavailable.", "source": str(resolved_claude_home)}
         )
+    if runtime["status"] == "unavailable":
+        diagnostics.append({"severity": "warning", "message": "Runtime queue health is unavailable.", "source": runtime.get("reason", "runtime")})
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -124,6 +180,7 @@ def build_gui_snapshot(
             "unrouted": sum(not item.get("domain") or not item.get("project") for item in conversations),
         },
         "navigation": build_navigation(os_root, conversations),
+        "runtime": runtime,
         "conversations": conversations,
         "diagnostics": diagnostics,
     }

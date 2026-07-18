@@ -3,8 +3,8 @@
 Coverage:
 - ``auto_implement`` is disabled by default: nothing is implemented even when a
   proposal's class matches the toggle map.
-- Enabled lane with a true class toggle writes the auto_dev worker prompt +
-  script, appends a run-queue item, records the durable intake-ledger entry,
+- Enabled lane with a true class toggle writes the auto_dev worker prompt,
+  appends a directly leased run-queue item, records the durable intake-ledger entry,
   and creates a toggle-ledger entry (status queued).
 - A false/absent class toggle keeps the proposal un-implemented.
 - ``auto_implement.max_per_night`` caps the lane independently of auto_approve.
@@ -21,7 +21,6 @@ Coverage:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -162,12 +161,12 @@ def test_enabled_class_true_queues_worker_ledger_and_toggle(tmp_path: Path) -> N
     row = result["implemented"][0]
     assert row["proposal_id"] == proposal_id
     assert row["target"] == "doctor-check-draft"
-    # Worker prompt + script are on disk and the script is executable.
+    # The durable prompt remains on disk; execution is a directly leased Codex
+    # worker rather than a detached shell script.
     prompt_path = root / row["prompt"]
-    script_path = root / row["script"]
     assert prompt_path.is_file()
-    assert script_path.is_file()
-    assert os.access(script_path, os.X_OK)
+    assert row["execution_target"] == "codex_harness"
+    assert "script" not in row
     # The prompt instructs artifact registration into the toggle ledger.
     prompt_text = prompt_path.read_text(encoding="utf-8")
     assert si.SI_TOGGLES_PATH in prompt_text

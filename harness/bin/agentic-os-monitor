@@ -16,7 +16,7 @@ ENVIRONMENT
 FILES (read, never written)
   harness/registries/hosts-routing.yml
   harness/registries/health-monitor.yml
-  harness/shared_factory/00-control-plane/run-queue.yml        (line-scan, no YAML parse)
+  runtime.queue_mode selected backend (transactional metrics; YAML fallback)
   harness/shared_factory/00-control-plane/runtime-registry.yml
   harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
   harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl
@@ -56,6 +56,8 @@ DAEMON_RE = re.compile(r'app-server|--serve|agentic-os-monitor|codex_server', re
 DEFAULT_THRESHOLDS = {
     "queue_failed_max":   {"value": 1500, "level": "warn"},
     "queue_queued_max":   {"value": 4000, "level": "warn"},
+    "queue_dead_letter_max": {"value": 0, "level": "critical"},
+    "worker_unhealthy_max": {"value": 0, "level": "warn"},
     "cpu_pct_max":        {"value": 90,   "level": "warn"},
     "disk_pct_max":       {"value": 90,   "level": "warn"},
     "host_unreachable":   {"value": True, "level": "warn"},
@@ -102,6 +104,28 @@ def scan_queue(os_root: Path) -> dict[str, Any]:
     now = time.time()
     if now - _queue_cache_ts < QUEUE_CACHE_SEC and _queue_cache:
         return _queue_cache
+    try:
+        from genomes_agentic_os.runtime_backend import queue_mode_status
+
+        backend = queue_mode_status(os_root)
+        metrics = backend["metrics"]
+        counts: dict[str, int] = collections.Counter()  # type: ignore[assignment]
+        for queue in metrics.get("queues") or []:
+            counts.update(queue.get("statuses") or {})
+        result = {
+            "mode": backend["queue_mode"],
+            "total": sum(counts.values()),
+            "counts": dict(counts),
+            "queues": metrics.get("queues") or [],
+            "worker_pools": metrics.get("worker_pools") or [],
+            "unhealthy_workers": int(metrics.get("unhealthy_worker_count") or 0),
+            "error": None,
+        }
+        _queue_cache = result
+        _queue_cache_ts = now
+        return result
+    except Exception:
+        pass
     path = os_root / "harness" / "shared_factory" / "00-control-plane" / "run-queue.yml"
     counts: dict[str, int] = collections.Counter()  # type: ignore[assignment]
     total = 0
@@ -596,6 +620,24 @@ def run_health_checks(
         check("queue_queued", queued, limit, level,
               f"Queue: {queued} queued items",
               f"{queued} queued (threshold {limit})")
+
+    dead_letter = queue.get("counts", {}).get("dead-letter", 0)
+    thr = thresholds.get("queue_dead_letter_max", DEFAULT_THRESHOLDS["queue_dead_letter_max"])
+    limit = thr["value"] if isinstance(thr, dict) else thr
+    level = thr["level"] if isinstance(thr, dict) else "critical"
+    if dead_letter > limit:
+        check("queue_dead_letter", dead_letter, limit, level,
+              f"Queue: {dead_letter} dead-letter tasks",
+              f"{dead_letter} dead-letter tasks require intervention")
+
+    unhealthy_workers = int(queue.get("unhealthy_workers") or 0)
+    thr = thresholds.get("worker_unhealthy_max", DEFAULT_THRESHOLDS["worker_unhealthy_max"])
+    limit = thr["value"] if isinstance(thr, dict) else thr
+    level = thr["level"] if isinstance(thr, dict) else "warn"
+    if unhealthy_workers > limit:
+        check("worker_unhealthy", unhealthy_workers, limit, level,
+              f"Workers: {unhealthy_workers} unhealthy",
+              f"{unhealthy_workers} workers are offline or lease-expired")
 
     # Per-host vitals
     for host, v in vitals.items():
@@ -1093,7 +1135,7 @@ ENVIRONMENT
 FILES (read-only)
   harness/registries/hosts-routing.yml
   harness/registries/health-monitor.yml
-  harness/shared_factory/00-control-plane/run-queue.yml
+  runtime.queue_mode selected queue backend (run-queue.yml is fallback only)
   harness/shared_factory/00-control-plane/runtime-registry.yml
   harness/shared_factory/06-runs-and-logs/harness-runs/runs.jsonl
   harness/shared_factory/06-runs-and-logs/alerts/alerts.jsonl

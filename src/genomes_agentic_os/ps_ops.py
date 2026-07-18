@@ -17,7 +17,8 @@ from .lifecycle import (
     local_project_work_items,
     root_project_dirs,
 )
-from .runtime_ops import RUN_QUEUE, RUNTIME_REGISTRY, _is_due, _normalized_queue
+from .runtime_backend import runtime_queue_items
+from .runtime_ops import RUNTIME_REGISTRY, _is_due
 from .scaffold import expand_path
 from .thread_closeout import DEFAULT_STALE_DAYS, stale_candidates
 
@@ -176,9 +177,8 @@ def _row(
 
 
 def _queue_rows(root: Path, mode: str) -> list[dict[str, Any]]:
-    queue = _normalized_queue(_read_yaml(root / RUN_QUEUE))
     raw_rows: list[dict[str, Any]] = []
-    for item in _items(queue.get("items")):
+    for item in runtime_queue_items(root):
         status = str(item.get("status") or "unknown")
         if mode == "now" and status not in NOW_QUEUE_STATUSES:
             continue

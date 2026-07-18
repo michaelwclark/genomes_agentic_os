@@ -23,6 +23,11 @@ skills:
   name: Program Builder
   description: Create or refine OSProgram and InstanceOSProgram context bundles.
   source: harness/skills/program-builder/SKILL.md
+- id: execution-fabric
+  name: Execution Fabric
+  description: Inspect, design, and validate optional named queues and bounded worker
+    pools while preserving the filesystem queue default.
+  source: harness/skills/execution-fabric/SKILL.md
 - id: status-report
   name: Status Report
   description: Generate recent-work Agentic OS status reports with filesystem and

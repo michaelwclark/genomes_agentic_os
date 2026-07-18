@@ -26,6 +26,14 @@ thresholds:
     value: 4000
     level: warn
 
+  queue_dead_letter_max:
+    value: 0
+    level: critical
+
+  worker_unhealthy_max:
+    value: 0
+    level: warn
+
   # ---- Host vitals --------------------------------------------------------
 
   # 1-minute load average ceiling per host.

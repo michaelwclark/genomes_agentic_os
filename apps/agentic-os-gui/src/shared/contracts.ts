@@ -99,11 +99,91 @@ export interface Diagnostic {
   source?: string;
 }
 
+export interface RuntimeQueue {
+  queue_name: string;
+  statuses: Record<string, number>;
+  total: number;
+  depth: number;
+  running: number;
+  failed: number;
+  dead_letter: number;
+  max_concurrency?: number;
+  max_queued?: number;
+  enabled?: boolean;
+}
+
+export interface RuntimeWorkerPool {
+  name: string;
+  queue_name: string;
+  provider: string;
+  max_workers: number;
+  max_concurrency: number;
+  worker_count: number;
+  live_workers: number;
+  active_tasks: number;
+  unhealthy_workers: number;
+}
+
+export interface RuntimeWorker {
+  id: string;
+  pool_name: string;
+  queue_name: string;
+  provider: string;
+  status: string;
+  capacity: number;
+  active_tasks: number;
+  heartbeat_at?: string;
+  lease_until?: string;
+  updated_at?: string;
+}
+
+export interface RuntimeTask {
+  id: string;
+  kind?: string;
+  status: string;
+  queue_name: string;
+  worker_pool: string;
+  priority?: number;
+  execution_target?: string;
+  attempts?: number;
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  lease_owner?: string;
+  lease_until?: string;
+}
+
+export interface RuntimeHealth {
+  status: "healthy" | "degraded" | "critical" | "unavailable";
+  queue_mode: string;
+  queue_depth: number;
+  running: number;
+  failed: number;
+  dead_letter: number;
+  active_workers: number;
+  unhealthy_workers: number;
+  stale_queued?: number;
+  expired_running_leases?: number;
+  reserved_interactive_slots: number;
+  max_interactive_running: number;
+  queues: RuntimeQueue[];
+  worker_pools: RuntimeWorkerPool[];
+  workers: RuntimeWorker[];
+  tasks: RuntimeTask[];
+  task_count: number;
+  task_sample_count: number;
+  task_sample_limit: number;
+  captured_at: string;
+  reason?: string;
+}
+
 export interface GuiSnapshot {
   schema_version: string;
   generated_at: string;
   root: string;
   navigation: { domains: DomainScope[] };
+  runtime: RuntimeHealth;
   conversations: ConversationSummary[];
   diagnostics: Diagnostic[];
 }

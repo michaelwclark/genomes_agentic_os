@@ -114,9 +114,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 # Numbered, idempotent migrations. Each entry is (version, description, sql).
-# Every DDL statement uses IF NOT EXISTS so re-applying an already-applied
-# migration (or racing another process) is a safe no-op; the schema_version
-# row is still the authoritative "have I run this" gate.
+# Migrations run under BEGIN IMMEDIATE and re-read schema_version after taking
+# the write lock, so concurrent process startup cannot apply the same ALTER
+# twice. CREATE statements also use IF NOT EXISTS for repair-friendly replay.
 _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (
         1,
@@ -246,23 +246,86 @@ WHERE attention = 'active'
   AND state NOT IN ('finished', 'documented', 'archived');
 """,
     ),
+    (
+        3,
+        "execution-fabric named queues and worker pools",
+        """
+ALTER TABLE run_queue ADD COLUMN queue_name TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE run_queue ADD COLUMN worker_pool TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE run_queue ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE run_queue ADD COLUMN dead_letter_queue TEXT;
+ALTER TABLE run_queue ADD COLUMN lease_token TEXT;
+CREATE INDEX IF NOT EXISTS idx_run_queue_named_claim
+    ON run_queue(queue_name, worker_pool, status, priority, due_at);
+
+CREATE TABLE IF NOT EXISTS execution_queues (
+    name TEXT PRIMARY KEY,
+    max_concurrency INTEGER NOT NULL CHECK(max_concurrency > 0),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worker_pools (
+    name TEXT PRIMARY KEY,
+    queue_name TEXT NOT NULL REFERENCES execution_queues(name),
+    max_workers INTEGER NOT NULL CHECK(max_workers > 0),
+    max_concurrency INTEGER NOT NULL CHECK(max_concurrency > 0),
+    provider TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_worker_pools_queue_name ON worker_pools(queue_name);
+
+CREATE TABLE IF NOT EXISTS execution_limits (
+    scope TEXT NOT NULL CHECK(scope IN ('global', 'provider')),
+    key TEXT NOT NULL,
+    max_concurrency INTEGER NOT NULL CHECK(max_concurrency > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(scope, key)
+);
+
+CREATE TABLE IF NOT EXISTS execution_workers (
+    id TEXT PRIMARY KEY,
+    pool_name TEXT NOT NULL REFERENCES worker_pools(name),
+    status TEXT NOT NULL DEFAULT 'online',
+    capacity INTEGER NOT NULL DEFAULT 1 CHECK(capacity > 0),
+    active_tasks INTEGER NOT NULL DEFAULT 0 CHECK(active_tasks >= 0),
+    heartbeat_at TEXT NOT NULL,
+    lease_until TEXT NOT NULL,
+    lease_token TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_execution_workers_pool_status
+    ON execution_workers(pool_name, status, lease_until);
+""",
+    ),
 )
 
 
 def ensure_schema(conn: sqlite3.Connection) -> int:
     """Create/upgrade the schema to the latest known version. Returns the resulting version."""
     conn.execute(_SCHEMA_VERSION_TABLE_SQL)
-    current = schema_version(conn)
     for version, description, sql in _MIGRATIONS:
-        if version <= current:
-            continue
-        conn.executescript(sql)
-        conn.execute(
-            "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
-            (version, description, utc_now_iso()),
-        )
-        current = version
-    return current
+        with transaction(conn):
+            current = schema_version(conn)
+            if version <= current:
+                continue
+            for statement in sql.split(";"):
+                statement = statement.strip()
+                if statement:
+                    conn.execute(statement)
+            conn.execute(
+                "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
+                (version, description, utc_now_iso()),
+            )
+    return schema_version(conn)
 
 
 def schema_version(conn: sqlite3.Connection) -> int:

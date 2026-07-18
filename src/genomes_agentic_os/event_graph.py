@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from .runtime_backend import runtime_queue_items
 from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
 
@@ -501,8 +502,7 @@ def replay_event(root: str | Path, event_id_value: str, *, dry_run: bool = True)
 
 def summarize_events(root: str | Path, *, limit: int = 20) -> dict[str, Any]:
     os_root = ensure_event_state(root)
-    queue = load_yaml(os_root / RUN_QUEUE) or default_run_queue()
-    items = queue.get("items") or queue.get("run_queue") or []
+    items = runtime_queue_items(os_root)
     pending = [
         item
         for item in items

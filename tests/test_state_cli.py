@@ -55,7 +55,7 @@ def test_init_creates_schema_at_explicit_db_path(tmp_path: Path, capsys: pytest.
     assert rc == 0
     assert db_path.is_file()
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["table_counts"] == {
         "events": 0,
         "run_queue": 0,

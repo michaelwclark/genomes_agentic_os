@@ -1,9 +1,10 @@
-"""Queue and worker-loop health reports for the file-backed runtime."""
+"""Backend-neutral queue and worker health, remediation, and notifications."""
 
 from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,9 @@ from typing import Any, Callable
 
 import yaml
 
+from .runtime_backend import queue_mode_status, runtime_queue_items
+
 RUNTIME_REGISTRY = "harness/shared_factory/00-control-plane/runtime-registry.yml"
-RUN_QUEUE = "harness/shared_factory/00-control-plane/run-queue.yml"
 REPORT_ROOT = "harness/shared_factory/06-runs-and-logs/runtime-health"
 SUPERVISOR_LOG = "harness/shared_factory/06-runs-and-logs/supervisor.out.log"
 SUPERVISOR_LABEL = "com.genome.agentic-os.supervisor"
@@ -40,6 +42,17 @@ def _age_hours(value: object, now: datetime) -> float | None:
 
 def _ref(item: dict[str, Any]) -> str:
     return str(item.get("ref") or item.get("schedule_id") or item.get("work_type") or "unknown")
+
+
+def _running_is_stale(item: dict[str, Any], now: datetime) -> bool:
+    age = _age_hours(item.get("started_at") or item.get("updated_at"), now)
+    if age is None:
+        return False
+    try:
+        timeout_hours = max(0.0, float(item.get("timeout_seconds") or 0) / 3600)
+    except (TypeError, ValueError):
+        timeout_hours = 0.0
+    return age > max(1.0, timeout_hours + 0.25)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -110,9 +123,9 @@ def build_runtime_health(
     os_root = Path(root).expanduser().resolve()
     checked_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     registry = _load_yaml(os_root / RUNTIME_REGISTRY)
-    queue = _load_yaml(os_root / RUN_QUEUE)
-    items = queue.get("items") or queue.get("run_queue") or []
-    items = [item for item in items if isinstance(item, dict)]
+    items = runtime_queue_items(os_root)
+    mode_status = queue_mode_status(os_root)
+    fabric_metrics = mode_status["metrics"]
     statuses = Counter(str(item.get("status") or "unknown") for item in items)
     queued = [item for item in items if item.get("status") == "queued"]
     running = [item for item in items if item.get("status") == "running"]
@@ -122,10 +135,11 @@ def build_runtime_health(
         if (age := _age_hours(item.get("due_at") or item.get("created_at"), checked_at)) is not None
     ]
     stale_queued = sum(age > 24 for age in queued_ages)
-    stale_running = sum(
+    stale_running = sum(_running_is_stale(item, checked_at) for item in running)
+    expired_running = sum(
         1
         for item in running
-        if ((age := _age_hours(item.get("started_at") or item.get("updated_at"), checked_at)) is not None and age > 1)
+        if (lease_until := _parse_time(item.get("lease_until"))) is not None and lease_until < checked_at
     )
     recent_terminal = [
         item
@@ -154,7 +168,10 @@ def build_runtime_health(
         findings.append(supervisor["reason"])
     if stale_running:
         severity = "critical"
-        findings.append(f"{stale_running} worker dispatches have been running for more than 1 hour")
+        findings.append(f"{stale_running} worker dispatches exceeded their configured runtime budget")
+    if expired_running:
+        severity = "critical"
+        findings.append(f"{expired_running} running tasks have expired worker leases")
     if stale_queued:
         severity = "critical"
         findings.append(f"{stale_queued} queued items are older than 24 hours")
@@ -164,19 +181,38 @@ def build_runtime_health(
     if recent_statuses.get("failed", 0) > recent_statuses.get("done", 0) and recent_statuses.get("failed", 0):
         severity = "degraded" if severity == "healthy" else severity
         findings.append("dispatch failures exceeded successful dispatches in the last hour")
+    dead_letters = int(fabric_metrics.get("dead_letter_count") or statuses.get("dead-letter", 0))
+    unhealthy_workers = int(fabric_metrics.get("unhealthy_worker_count") or 0)
+    if dead_letters:
+        severity = "critical"
+        findings.append(f"{dead_letters} tasks are in dead-letter state")
+    if unhealthy_workers:
+        severity = "critical" if running else ("degraded" if severity == "healthy" else severity)
+        findings.append(f"{unhealthy_workers} execution workers are offline or lease-expired")
+    for named_queue in fabric_metrics.get("queues") or []:
+        named_statuses = named_queue.get("statuses") or {}
+        named_depth = int(named_statuses.get("queued", 0)) + int(named_statuses.get("approval-needed", 0))
+        max_queued = int(named_queue.get("max_queued") or 0)
+        if max_queued and named_depth >= max_queued:
+            severity = "critical"
+            findings.append(f"queue {named_queue['queue_name']} reached its admission limit ({named_depth}/{max_queued})")
+        elif max_queued and named_depth >= max_queued * 0.8:
+            severity = "degraded" if severity == "healthy" else severity
+            findings.append(f"queue {named_queue['queue_name']} is above 80% capacity ({named_depth}/{max_queued})")
     if not findings:
         findings.append("queue depth, dispatch activity, and supervisor freshness are within thresholds")
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "checked_at": checked_at.isoformat().replace("+00:00", "Z"),
         "root": str(os_root),
         "status": severity,
         "technology": {
-            "queue": "file-backed YAML ledger",
+            "queue": "transactional named queues" if mode_status["queue_mode"] == "execution_fabric" else "file-backed YAML ledger",
             "scheduler": "Python Agentic OS runtime",
             "supervisor": "macOS LaunchAgent",
             "workers": "bounded per-job subprocesses",
             "external_broker": False,
+            "queue_mode": mode_status["queue_mode"],
         },
         "queue": {
             "total_records": len(items),
@@ -185,13 +221,20 @@ def build_runtime_health(
             "stale_queued_over_24h": stale_queued,
             "oldest_queued_age_hours": round(max(queued_ages), 3) if queued_ages else 0.0,
             "top_backlogs": [{"ref": ref, "queued": count} for ref, count in backlog_refs.most_common(10)],
+            "named_queues": fabric_metrics.get("queues", []),
+            "dead_letter": dead_letters,
         },
         "workers": {
             "running": len(running),
-            "stale_running_over_1h": stale_running,
+            "stale_running_over_budget": stale_running,
+            "expired_running_leases": expired_running,
             "completed_last_hour": recent_statuses.get("done", 0),
             "failed_last_hour": recent_statuses.get("failed", 0),
             "supervisor": supervisor,
+            "pools": fabric_metrics.get("worker_pools", []),
+            "registered": int(fabric_metrics.get("worker_count") or 0),
+            "live": int(fabric_metrics.get("live_worker_count") or 0),
+            "unhealthy": unhealthy_workers,
         },
         "schedules": {"enabled": len(enabled), "priority": len(priority)},
         "findings": findings,
@@ -235,7 +278,7 @@ def render_runtime_health(report: dict[str, Any]) -> str:
             "",
             "## Runtime Technology",
             "",
-            "The runtime uses a YAML queue, a Python scheduler/dispatcher, a macOS LaunchAgent, and per-job subprocess workers. It does not use Redis or Celery.",
+            f"The selected queue backend is `{report['technology']['queue_mode']}`. The scheduler and dispatcher remain local and brokerless.",
             "",
         ]
     )
@@ -269,6 +312,98 @@ def write_runtime_health(root: str | Path, report: dict[str, Any]) -> dict[str, 
     for key in ("markdown", "latest_markdown"):
         _atomic_write(paths[key], markdown)
     return {key: str(path) for key, path in paths.items()}
+
+
+def _incident_fingerprint(report: dict[str, Any]) -> str:
+    findings = [re.sub(r"\b\d+(?:\.\d+)?\b", "#", str(item)) for item in report.get("findings") or []]
+    material = json.dumps(
+        {"status": report.get("status"), "findings": findings, "queue_mode": report.get("technology", {}).get("queue_mode")},
+        sort_keys=True,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _incident_window(report: dict[str, Any]) -> str:
+    checked = _parse_time(report.get("checked_at")) or datetime.now(timezone.utc)
+    return checked.strftime("%Y%m%dT%H")
+
+
+def queue_runtime_self_heal(root: str | Path, report: dict[str, Any], paths: dict[str, str]) -> dict[str, Any]:
+    """Queue one bounded Codex diagnosis per distinct unhealthy incident."""
+    if report.get("status") not in {"degraded", "critical"}:
+        return {"queued": False, "reason": "healthy"}
+    os_root = Path(root).expanduser().resolve()
+    fingerprint = _incident_fingerprint(report)
+    incident_key = f"{fingerprint}-{_incident_window(report)}"
+    action_root = os_root / REPORT_ROOT / "self-heal" / fingerprint
+    prompt_path = action_root / "prompt.md"
+    prompt = f"""# Agentic OS runtime self-heal
+
+Diagnose and safely repair the local queue/worker incident described in `{paths['latest_json']}`.
+
+Constraints:
+- Treat runtime.queue_mode as authoritative; never mutate the inactive backend.
+- Prefer bounded local repairs, preserve queued work, and produce test/receipt evidence.
+- Do not mutate production systems, external services, Jira, Notion, Slack, or GitHub.
+- If safe repair is not possible, write a blocker-grade local receipt and stop.
+
+Incident fingerprint: `{fingerprint}`
+"""
+    _atomic_write(prompt_path, prompt)
+    from .runtime_ops import append_run_queue_item
+
+    result = append_run_queue_item(
+        os_root,
+        {
+            "id": f"queue_runtime_health_self_heal_{incident_key}",
+            "kind": "runtime_self_heal",
+            "ref": "queue_worker_health_report",
+            "status": "queued",
+            "approval_state": "not_required",
+            "priority": 100 if report.get("status") == "critical" else 80,
+            "idempotency_key": f"runtime-health-self-heal:{incident_key}",
+            "execution_target": "codex_harness",
+            "task_type": "llm.codex",
+            "queue_name": "codex",
+            "worker_pool": "codex_workers",
+            "instructions": prompt,
+            "prompt_path": str(prompt_path.relative_to(os_root)),
+            "incident_fingerprint": fingerprint,
+            "evidence": [{"type": "runtime_health", "path": paths["latest_json"]}],
+        },
+    )
+    return {"queued": bool(result["created"]), "fingerprint": fingerprint, "incident_window": _incident_window(report), **result}
+
+
+def notify_runtime_health(
+    root: str | Path,
+    report: dict[str, Any],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    if report.get("status") not in {"degraded", "critical"}:
+        return {"sent": False, "reason": "healthy"}
+    os_root = Path(root).expanduser().resolve()
+    fingerprint = _incident_fingerprint(report)
+    try:
+        completed = runner(
+            [
+                str(os_root / "harness/bin/agentic-os-notify"),
+                "--source", "runtime.execution_fabric.health",
+                "--level", "critical" if report.get("status") == "critical" else "warning",
+                "--title", f"Agentic OS runtime {report.get('status')}",
+                "--message", "; ".join(str(item) for item in report.get("findings") or [])[:500],
+                "--dedupe-key", f"runtime-health-{fingerprint}",
+            ],
+            cwd=os_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"sent": False, "error": f"{type(exc).__name__}: {exc}", "fingerprint": fingerprint}
+    return {"sent": completed.returncode == 0, "returncode": completed.returncode, "fingerprint": fingerprint}
 
 
 def project_runtime_health(

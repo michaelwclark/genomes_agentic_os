@@ -39,6 +39,7 @@ def sample_snapshot() -> dict:
         "reviews": [{"id": "pr-42", "title": "PR #42", "status": "review_requested"}],
         "reports": [{"id": "daily", "title": "Daily lead report", "summary": "Three items need attention."}],
         "automations": [],
+        "runtime": [{"id": "runtime-queue-codex", "title": "Queue: codex", "summary": "2 waiting.", "status": "healthy"}],
         "sources": {
             "configured": [{"id": "github", "title": "GitHub", "status": "configured"}],
             "observed": [],
@@ -64,6 +65,7 @@ def test_render_is_self_contained_accessible_and_has_all_sections() -> None:
         "Reviews",
         "Reports",
         "Automations",
+        "Runtime",
         "Sources",
         "Hosts",
         "Hygiene",
@@ -93,7 +95,7 @@ def test_render_embeds_snapshot_and_escapes_script_terminators() -> None:
 
 def test_render_has_search_filters_drawer_and_empty_states() -> None:
     snapshot = sample_snapshot()
-    for key in ("work_items", "conversations", "reviews", "reports", "automations", "hosts", "hygiene"):
+    for key in ("work_items", "conversations", "reviews", "reports", "automations", "runtime", "hosts", "hygiene"):
         snapshot[key] = []
     snapshot["sources"] = {}
 

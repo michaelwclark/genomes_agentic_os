@@ -733,6 +733,30 @@ Check runtime registry health.
 
 Exits 1 if not ok, 0 if ok.
 
+---
+
+### `runtime snapshot`
+
+Capture one read-only queue, worker-pool, worker, and safe task snapshot from
+the selected filesystem or Execution Fabric backend.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `--root` | No | Installed OS root path |
+| `--queue NAME` | No | Restrict task rows to one named queue |
+| `--status STATUS` | No | Restrict task rows by status; repeatable |
+| `--limit N` | No | Maximum task rows (default 50) |
+| `--all` | No | Include every matching task row instead of a bounded sample |
+| `--json` | No | Print the versioned JSON contract |
+| `--output PATH` | No | Atomically write the JSON receipt |
+
+```bash
+agentic-os runtime snapshot --root /tmp/aos-ref
+agentic-os runtime snapshot --queue codex --status queued --limit 100 --json --root /tmp/aos-ref
+```
+
+Status: covered by runtime snapshot contract tests.
+
 ```bash
 agentic-os runtime doctor --root /tmp/aos-ref
 ```

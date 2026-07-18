@@ -42,7 +42,6 @@ DEFINITION_FILE = ".agentic-workflow.yml"
 INSTANCE_FILE = ".agentic-workflow-instance.yml"
 VERSION_ROOT = Path("harness/shared_factory/00-control-plane/workflow-engine/versions")
 EVIDENCE_ROOT = Path("harness/shared_factory/06-runs-and-logs/workflow-engine")
-RUN_QUEUE = Path("harness/shared_factory/00-control-plane/run-queue.yml")
 MAX_DEFINITION_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 2 * 1024 * 1024
 MAX_QUERY_LIMIT = 500
@@ -1075,8 +1074,6 @@ def workflow_run_now(
     result.update({"status": "planned" if dry_run else status, "run": run, "queue_item": queue_item, "dispatch_performed": False, "external_effects": "local queue request only; no dispatch performed", "readback": {"ok": True, "run": None, "queue_item": None} if dry_run else None})
     if dry_run:
         return result
-    if not (os_root / RUN_QUEUE).is_file():
-        raise ValueError("runtime queue is missing; run agentic-os runtime init first")
     queued = append_run_queue_item(os_root, queue_item)
     run.update(
         {

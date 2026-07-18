@@ -68,3 +68,9 @@ sources:
     enabled: true
     min_level: warning
     sound: null
+  runtime.execution_fabric.health:
+    enabled: true
+    min_level: warning
+    cooldown_seconds: 1800
+    max_deliveries_per_hour: 4
+    sound: Basso

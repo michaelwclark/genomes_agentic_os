@@ -127,4 +127,22 @@ describe("provider broker commands", () => {
     expect(child.killedWith).toEqual(["SIGTERM", "SIGKILL"]);
     expect(broker.activeCount).toBe(0);
   });
+
+  it("bounds concurrent manual turns to the reserved interactive capacity", () => {
+    const first = new FakeChild();
+    const children = [first, new FakeChild()];
+    const broker = new SessionBroker((() => children.shift() as unknown as ChildProcessWithoutNullStreams) as unknown as typeof spawn);
+    expect(broker.send(request({ conversationId: "one" }), () => undefined, undefined, 1).accepted).toBe(true);
+    const blocked = broker.send(request({ conversationId: "two" }), () => undefined, undefined, 1);
+    expect(blocked.accepted).toBe(false);
+    expect(blocked.message).toContain("Interactive capacity is full");
+    first.emit("close", 0);
+  });
+
+  it("preserves legacy cross-conversation concurrency when no fabric cap is supplied", () => {
+    const children = [new FakeChild(), new FakeChild()];
+    const broker = new SessionBroker((() => children.shift() as unknown as ChildProcessWithoutNullStreams) as unknown as typeof spawn);
+    expect(broker.send(request({ conversationId: "legacy-one" }), () => undefined).accepted).toBe(true);
+    expect(broker.send(request({ conversationId: "legacy-two" }), () => undefined).accepted).toBe(true);
+  });
 });

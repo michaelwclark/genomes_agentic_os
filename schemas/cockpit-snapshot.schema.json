@@ -13,6 +13,7 @@
     "reviews",
     "reports",
     "automations",
+    "runtime",
     "sources",
     "hosts",
     "hygiene",
@@ -28,6 +29,7 @@
     "reviews": {"type": "array", "items": {"$ref": "#/$defs/item"}},
     "reports": {"type": "array", "items": {"$ref": "#/$defs/item"}},
     "automations": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "runtime": {"type": "array", "items": {"$ref": "#/$defs/item"}},
     "sources": {
       "type": "object",
       "required": ["configured", "observed", "suggestions"],

@@ -1,7 +1,7 @@
 # 09 · Runtime & Always-On
 
-> **Purpose:** understand the Agentic OS runtime surface (file-backed registries,
-> heartbeats, schedules, integrations, a run queue) and how to make it **tick on a
+> **Purpose:** understand the Agentic OS runtime surface (registries,
+> heartbeats, schedules, integrations, a selectable queue backend) and how to make it **tick on a
 > cadence**. There is no bespoke daemon — an external scheduler calls one
 > auditable tick command (`runtime supervise`), installed by a small script.
 >
@@ -20,24 +20,27 @@
 
 ## The idea
 
-The Agentic OS runtime layer manages four file-backed registries that describe
-*what should happen* on a cadence:
+The Agentic OS runtime layer manages registries that describe *what should
+happen* on a cadence. The compatibility queue remains file-backed; the optional
+Execution Fabric moves queue mutation and claiming into the local transactional
+state plane while leaving the other runtime registries file-backed:
 
 | Registry | File | What it holds |
 | --- | --- | --- |
 | Runtime registry | `shared_factory/00-control-plane/runtime-registry.yml` | Heartbeats, schedules, execution targets |
 | Integration registry | `shared_factory/00-control-plane/integration-registry.yml` | Integration contracts, credentials, approval gates |
-| Run queue | `shared_factory/00-control-plane/run-queue.yml` | Queued, approval-needed, and dispatched items |
+| Run queue | `shared_factory/00-control-plane/run-queue.yml` in `filesystem` mode; `shared_factory/00-control-plane/state.db` in `execution_fabric` mode | Queued, approval-needed, leased, and dispatched items |
 | Heartbeat logs | `shared_factory/06-runs-and-logs/heartbeats/` | Per-run log files written by `heartbeat run` |
 
 `automation-control.yml` is the source-aware gate for expensive schedules. A
 cheap controller tick probes the source first, then enqueues the expensive target
 only when actionable source rows exist and configured capacity is available.
 
-These files are the source of truth. Every CLI command reads and writes them
-directly — there is no in-memory state, no database, no network call at the
-registry layer. This is the MWP philosophy applied to operations: the filesystem
-*is* the runtime state.
+`runtime.queue_mode` in `runtime-registry.yml` selects exactly one queue writer.
+Missing configuration means `filesystem`, preserving existing installs. The
+`execution_fabric` selection uses WAL-mode SQLite, atomic claims, worker leases,
+and queue/pool capacity. It does not add a network dependency. See
+[18 - Execution Fabric](13-feature-guides/18-execution-fabric.md).
 
 ### How it ticks: on-demand by default, schedulable via the supervisor
 
@@ -143,6 +146,40 @@ selected item is blocked or failed.
 | `--item-id` | — | Inspect or dispatch a specific queue item ID. |
 | `--dry-run` | — | Preview only (default). |
 | `--apply` | — | Actually dispatch the next item. |
+
+### `agentic-os runtime queue-mode`
+
+Read, preflight, apply, or roll back the authoritative queue writer:
+
+```bash
+agentic-os runtime queue-mode status --root ~/agentic_os
+agentic-os runtime queue-mode plan execution_fabric --root ~/agentic_os
+agentic-os runtime queue-mode apply execution_fabric --root ~/agentic_os
+agentic-os runtime queue-mode apply execution_fabric --root ~/agentic_os --apply
+agentic-os runtime queue-mode rollback --root ~/agentic_os
+```
+
+Apply and rollback are dry-run-first. A switch is rejected while active leases
+exist. Rollback to `filesystem` is also rejected when nonterminal fabric tasks
+have no YAML projection, preventing a silent loss of queued work.
+
+### `agentic-os runtime snapshot`
+
+Capture one read-only operator view from whichever queue backend is selected:
+
+```bash
+agentic-os runtime snapshot --root ~/agentic_os
+agentic-os runtime snapshot --queue codex --status queued --json --root ~/agentic_os
+agentic-os runtime snapshot --all --output runtime-snapshot.json --root ~/agentic_os
+```
+
+The default terminal view includes queue depth, running and failed work, worker
+pool utilization, and the latest 50 safe task rows. Fabric totals and rows come
+from one SQLite read transaction; filesystem totals and rows come from one YAML
+parse. Repeat `--status` to combine
+filters. `--json` exposes the versioned machine contract; `--output` writes the
+same payload atomically. Raw execution payloads, prompts, commands, references,
+free-form failure text, and lease tokens are never included.
 
 ### `agentic-os run-queue prune`
 

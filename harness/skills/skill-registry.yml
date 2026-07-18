@@ -230,6 +230,19 @@ skills:
     purpose: >
       Operate file-backed runtime heartbeats, schedules, execution targets, run
       queues, and guarded Notion runtime tracking.
+  - id: execution-fabric
+    title: Execution Fabric
+    source_path: harness/skills/execution-fabric
+    installed_path: shared_factory/05-knowledge/skills/execution-fabric
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Inspect, design, and validate the optional named-queue and bounded
+      worker-pool program while preserving the filesystem queue default.
   - id: integration-setup
     title: Integration Setup
     source_path: harness/skills/integration-setup

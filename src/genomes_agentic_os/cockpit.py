@@ -18,6 +18,7 @@ import webbrowser
 import yaml
 
 from .report_registry import collect_reports
+from .runtime_backend import queue_mode_status
 from .source_observation import build_source_observation_snapshot
 
 
@@ -437,6 +438,39 @@ def collect_hosts(root: str | Path) -> list[dict[str, Any]]:
     return [hosts[key] for key in sorted(hosts)]
 
 
+def collect_runtime(root: str | Path) -> list[dict[str, Any]]:
+    """Project backend-neutral queue and worker metrics without subprocesses."""
+    backend = queue_mode_status(root)
+    metrics = backend["metrics"]
+    cards: list[dict[str, Any]] = []
+    for queue in metrics.get("queues") or []:
+        statuses = queue.get("statuses") or {}
+        queued = int(statuses.get("queued", 0)) + int(statuses.get("approval-needed", 0))
+        failed = int(statuses.get("failed", 0)) + int(statuses.get("dead-letter", 0))
+        health = "critical" if statuses.get("dead-letter") else "degraded" if failed else "healthy"
+        cards.append({
+            "id": f"runtime-queue-{queue['queue_name']}",
+            "title": f"Queue: {queue['queue_name']}",
+            "summary": f"{queued} waiting, {int(statuses.get('running', 0))} running, {failed} failed/dead-letter.",
+            "status": health,
+            "kind": "execution_queue",
+            "queue_mode": backend["queue_mode"],
+            **queue,
+            "tags": ["runtime", "queue", backend["queue_mode"]],
+        })
+    for pool in metrics.get("worker_pools") or []:
+        cards.append({
+            "id": f"runtime-pool-{pool['name']}",
+            "title": f"Worker pool: {pool['name']}",
+            "summary": f"{int(pool.get('live_workers') or 0)} live, {int(pool.get('active_tasks') or 0)} active of {int(pool.get('max_concurrency') or 0)} task slots.",
+            "status": "degraded" if int(pool.get("unhealthy_workers") or 0) else "healthy",
+            "kind": "worker_pool",
+            **pool,
+            "tags": ["runtime", "workers", str(pool.get("provider") or "local")],
+        })
+    return cards
+
+
 def collect_hygiene(
     root: str | Path,
     work_items: list[dict[str, Any]],
@@ -605,6 +639,7 @@ def build_cockpit_snapshot(
     reviews = collect("reviews", lambda: collect_reviews(work_items, conversations), [])
     reports = collect("reports", lambda: collect_reports(os_root, now=now, max_files=max_files), [])
     automations = collect("automations", lambda: collect_automations(os_root), [])
+    runtime = collect("runtime", lambda: collect_runtime(os_root), [])
     sources = collect(
         "sources",
         lambda: build_source_observation_snapshot(os_root, now=now, max_files=max_files),
@@ -642,6 +677,14 @@ def build_cockpit_snapshot(
             "reviews": len(reviews),
             "reports": len(reports),
             "automations": len(automations),
+            "queue_depth": sum(
+                int((item.get("statuses") or {}).get("queued", 0))
+                + int((item.get("statuses") or {}).get("approval-needed", 0))
+                for item in runtime
+                if item.get("kind") == "execution_queue"
+            ),
+            "active_workers": sum(int(item.get("live_workers") or 0) for item in runtime if item.get("kind") == "worker_pool"),
+            "runtime_health": "critical" if any(item.get("status") == "critical" for item in runtime) else "degraded" if any(item.get("status") == "degraded" for item in runtime) else "healthy",
             "source_suggestions": len(source_payload["suggestions"]),
             "hosts": len(hosts),
             "hygiene_findings": len(hygiene),
@@ -651,6 +694,7 @@ def build_cockpit_snapshot(
         "reviews": reviews,
         "reports": reports,
         "automations": automations,
+        "runtime": runtime,
         "sources": source_payload,
         "hosts": hosts,
         "hygiene": hygiene,

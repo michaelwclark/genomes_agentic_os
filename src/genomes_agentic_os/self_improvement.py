@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import tempfile
 from typing import Any
 
@@ -20,6 +19,7 @@ import yaml
 from .config_ops import install_config
 from . import notion_api
 from .lifecycle import TOKEN_SHAPED_VALUE_RE
+from .runtime_backend import patch_runtime_queue_item, runtime_queue_items
 from .scaffold import expand_path
 from .validate import validate_root
 
@@ -838,48 +838,7 @@ def _latest_run_record(root: Path, config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_queue_items(root: Path) -> list[dict[str, Any]]:
-    queue = _read_yaml_if_present(root / RUN_QUEUE_PATH)
-    items = queue.get("items")
-    run_queue = queue.get("run_queue")
-    if not isinstance(items, list):
-        items = run_queue if isinstance(run_queue, list) else []
-    if not isinstance(run_queue, list):
-        run_queue = items
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in [*items, *run_queue]:
-        if not isinstance(item, dict):
-            continue
-        key = str(item.get("idempotency_key") or item.get("id") or len(merged))
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(item)
-    return merged
-
-
-def _load_run_queue(root: Path) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
-    queue_path = root / RUN_QUEUE_PATH
-    queue = _read_yaml_if_present(queue_path)
-    items = queue.get("items")
-    run_queue = queue.get("run_queue")
-    if not isinstance(items, list):
-        items = run_queue if isinstance(run_queue, list) else []
-    if not isinstance(run_queue, list):
-        run_queue = items
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in [*items, *run_queue]:
-        if not isinstance(item, dict):
-            continue
-        key = str(item.get("idempotency_key") or item.get("id") or len(merged))
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(item)
-    queue["items"] = merged
-    queue["run_queue"] = merged
-    return queue_path, queue, merged
+    return runtime_queue_items(root)
 
 
 def _queue_item_reason(item: dict[str, Any], latest_run: dict[str, Any], now: datetime) -> str | None:
@@ -939,7 +898,7 @@ def reconcile_self_improvement_queue(
 ) -> dict[str, Any]:
     os_root = expand_path(root)
     config = _load_yaml(os_root / CONFIG_PATH)
-    queue_path, queue, items = _load_run_queue(os_root)
+    items = runtime_queue_items(os_root)
     latest = latest_run or _latest_run_record(os_root, config)
     latest_completed = _parse_time(latest.get("completed_at"))
     result: dict[str, Any] = {
@@ -979,26 +938,22 @@ def reconcile_self_improvement_queue(
         result["reconciled"].append(row)
         if dry_run:
             continue
-        item["status"] = "done"
-        item["finished_at"] = latest.get("completed_at")
-        item["updated_at"] = _now()
-        item["reconcile_reason"] = reason
-        item["covered_by_run_id"] = latest.get("run_id")
-        item.setdefault("evidence", []).append(
+        evidence = list(item.get("evidence") or [])
+        evidence.append({"type": "self_improvement_run", "run_id": latest.get("run_id"), "path": latest.get("path")})
+        patch_runtime_queue_item(
+            os_root,
+            str(item["id"]),
             {
-                "type": "self_improvement_run",
-                "run_id": latest.get("run_id"),
-                "path": latest.get("path"),
-            }
+                "status": "done",
+                "finished_at": latest.get("completed_at"),
+                "updated_at": _now(),
+                "reconcile_reason": reason,
+                "covered_by_run_id": latest.get("run_id"),
+                "evidence": evidence,
+            },
         )
         changed = True
 
-    if changed:
-        queue["items"] = items
-        queue["run_queue"] = items
-        queue["updated_at"] = _now()
-        _assert_safe_payload(yaml.safe_dump(queue, sort_keys=False))
-        queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
     result["changed"] = changed
     return result
 
@@ -2120,29 +2075,16 @@ def _write_action_worker(root: Path, proposal: dict[str, Any], *, action_type: s
     proposal_id = str(proposal.get("proposal_id") or "unknown")
     action_root = _ensure_safe_dir(root, _resolve_root_relative(root, ACTION_OUTPUT_ROOT))
     prompts_dir = _safe_descendant(root, action_root, "prompts")
-    scripts_dir = _safe_descendant(root, action_root, "scripts")
     _ensure_safe_dir(root, prompts_dir)
-    _ensure_safe_dir(root, scripts_dir)
     stamp = _stamp()
     basename = _action_slug(f"{stamp}-{action_type}-{proposal_id}-{page_id[:8]}")
     prompt_path = _safe_child(root, prompts_dir, f"{basename}.md")
-    script_path = _safe_child(root, scripts_dir, f"{basename}.sh")
-    _atomic_write_text(root, prompt_path, _action_prompt(proposal, action_type=action_type, page_id=page_id))
-    script = f"""#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT={shlex.quote(str(root))}
-PROMPT={shlex.quote(str(prompt_path))}
-
-cd "$ROOT"
-exec codex exec -p automation_guard --cd "$ROOT" --skip-git-repo-check "$(cat "$PROMPT")"
-"""
-    _atomic_write_text(root, script_path, script)
-    script_path.chmod(0o755)
+    instructions = _action_prompt(proposal, action_type=action_type, page_id=page_id)
+    _atomic_write_text(root, prompt_path, instructions)
     return {
         "prompt": str(prompt_path.relative_to(root)),
-        "script": str(script_path.relative_to(root)),
         "action_root": str(action_root),
+        "instructions": instructions,
     }
 
 
@@ -2156,15 +2098,6 @@ def _action_queue_item(
 ) -> dict[str, Any]:
     proposal_id = str(proposal.get("proposal_id") or "unknown")
     queue_id = f"queue_self_improvement_{_digest(f'{page_id}:{proposal_id}:{action_type}', 12)}"
-    label = f"self-improvement-{action_type}-{proposal_id}"
-    command = (
-        f"harness/bin/agentic-os-quiet-run start "
-        f"--artifact-dir {shlex.quote(worker['action_root'])} "
-        f"--label {shlex.quote(label)} "
-        f"--timeout-minutes 720 "
-        f"--work-dir {shlex.quote(str(root))} "
-        f"-- {shlex.quote(str(root / worker['script']))}"
-    )
     return {
         "id": queue_id,
         "kind": "self_improvement_action",
@@ -2173,10 +2106,13 @@ def _action_queue_item(
         "approval_state": "not_required",
         "dry_run": False,
         "idempotency_key": f"self-improvement-action:{page_id}:{proposal_id}:{action_type}",
-        "execution_target": "script",
+        "execution_target": "codex_harness",
+        "task_type": "llm.codex",
+        "queue_name": "codex",
+        "worker_pool": "codex_workers",
         "work_type": f"self_improvement_{action_type}",
         "route_to": SELF_IMPROVEMENT_WORK_ITEM,
-        "command": command,
+        "instructions": worker["instructions"],
         "evidence": [
             {"type": "notion_page", "page_id": page_id},
             {"type": "proposal", "proposal_id": proposal_id},
@@ -3671,7 +3607,7 @@ def nightly_apply_self_improvement(
                     "target": target,
                     "queue_id": item["id"],
                     "prompt": worker["prompt"],
-                    "script": worker["script"],
+                    "execution_target": item["execution_target"],
                 }
             )
 

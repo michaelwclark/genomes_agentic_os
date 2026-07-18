@@ -13,6 +13,10 @@ subparsers with one import and one call.
 
 from __future__ import annotations
 
-from .cli import register_state_cli
+def register_state_cli(subparsers):
+    """Register lazily so state-library imports do not load the full CLI graph."""
+    from .cli import register_state_cli as register
+
+    return register(subparsers)
 
 __all__ = ["register_state_cli"]

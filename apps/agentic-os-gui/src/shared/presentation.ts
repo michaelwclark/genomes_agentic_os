@@ -1,4 +1,8 @@
-import type { ConversationFilter, ConversationSummary, ModelTier, Provider, ReasoningEffort } from "./contracts";
+import type { ConversationFilter, ConversationSummary, ModelTier, Provider, ReasoningEffort, RuntimeHealth } from "./contracts";
+
+export function interactiveConcurrencyLimit(runtime: RuntimeHealth): number | undefined {
+  return runtime.queue_mode === "execution_fabric" ? Math.max(1, runtime.max_interactive_running) : undefined;
+}
 
 export function compactAge(iso: string, nowMs = Date.now()): string {
   const timestamp = Date.parse(iso);

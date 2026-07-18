@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator
 
 from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.cli import main
@@ -360,6 +361,106 @@ def test_spec_grooming_program_installs_contract(tmp_path: Path) -> None:
     assert "ORIGINAL_INTENT.md" in skill
     assert "Compatibility adapter" in legacy_skill
     assert "/groom-spec" in command
+
+
+def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    program_root = shared_factory(root) / "00-programs" / "execution_fabric"
+    config = (program_root / "config.toml").read_text(encoding="utf-8")
+    components = yaml.safe_load((program_root / "components.yml").read_text(encoding="utf-8"))
+    commands = yaml.safe_load(
+        (harness(root) / "registries" / "commands.yml").read_text(encoding="utf-8")
+    )
+    skills = yaml.safe_load(
+        (harness(root) / "registries" / "skills.yml").read_text(encoding="utf-8")
+    )
+
+    assert (program_root / "program.md").is_file()
+    assert (program_root / "RULES.md").is_file()
+    assert "enabled = false" in config
+    assert 'queue_mode = "filesystem"' in config
+    assert components["status"] == "inactive"
+    assert components["configuration"]["defaults"] == {
+        "enabled": False,
+        "runtime": {"queue_mode": "filesystem"},
+    }
+    queue_catalog = yaml.safe_load(
+        (program_root / "config" / "queues.yml").read_text(encoding="utf-8")
+    )
+    worker_pools = yaml.safe_load(
+        (program_root / "config" / "worker-pools.yml").read_text(encoding="utf-8")
+    )
+    queue_schema = json.loads(
+        (program_root / "schemas" / "queue-config.schema.json").read_text(encoding="utf-8")
+    )
+    pool_schema = json.loads(
+        (program_root / "schemas" / "worker-pool.schema.json").read_text(encoding="utf-8")
+    )
+    envelope_schema = json.loads(
+        (program_root / "schemas" / "task-envelope.schema.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator.check_schema(queue_schema)
+    Draft202012Validator.check_schema(pool_schema)
+    Draft202012Validator.check_schema(envelope_schema)
+    Draft202012Validator(queue_schema).validate(queue_catalog)
+    Draft202012Validator(pool_schema).validate(worker_pools)
+    Draft202012Validator(envelope_schema).validate(
+        {
+            "schema_version": 1,
+            "task_id": "task-1",
+            "idempotency_key": "automation:daily:2026-07-18",
+            "queue": "codex",
+            "task_type": "llm.codex",
+            "producer": {"kind": "automation", "id": "daily"},
+            "priority": 50,
+            "submitted_at": "2026-07-18T12:00:00Z",
+            "payload_ref": "harness/shared_factory/06-runs-and-logs/tasks/task-1/input.json",
+            "retry_policy": {"max_attempts": 3, "backoff_seconds": 30},
+        }
+    )
+    assert queue_catalog["enabled"] is False
+    assert {queue["id"] for queue in queue_catalog["queues"]} == {
+        "codex",
+        "claude",
+        "non_llm",
+    }
+    assert worker_pools["enabled"] is False
+    assert {pool["provider"] for pool in worker_pools["worker_pools"]} == {
+        "codex",
+        "claude",
+        "non_llm",
+    }
+    assert "execution-fabric" in {entry["id"] for entry in commands["commands"]}
+    assert "execution-fabric" in {entry["id"] for entry in skills["skills"]}
+    assert not validate_root(root).errors
+
+
+def test_update_preserves_local_execution_fabric_config_and_repairs_missing_files(
+    tmp_path: Path, capsys
+) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    capsys.readouterr()
+    program_root = shared_factory(root) / "00-programs" / "execution_fabric"
+    config_path = program_root / "config.toml"
+    local_config = (
+        "enabled = true\nprofile_version = 1\noperator_note = \"local\"\n\n"
+        "[runtime]\nqueue_mode = \"execution_fabric\"\n"
+    )
+    config_path.write_text(local_config, encoding="utf-8")
+    (program_root / "runbook.md").unlink()
+
+    assert main(["update", "plan", "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert main(["update", "apply", "--root", str(root)]) == 0
+    capsys.readouterr()
+
+    assert config_path.read_text(encoding="utf-8") == local_config
+    assert (program_root / "runbook.md").is_file()
 
 
 def test_validate_requires_self_improvement_surface(tmp_path: Path) -> None:
