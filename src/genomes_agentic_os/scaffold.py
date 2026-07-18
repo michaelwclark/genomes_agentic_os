@@ -2455,22 +2455,22 @@ def project_agents(domain: str, project: str, remotes: list[dict[str, str]] | No
 
 This file is the harness-neutral entrypoint for this Agentic OS layer.
 
-This is the project-local entrypoint for `{domain}/02-projects/{project}`.
+This is the project-local entrypoint for `domains/{domain}/projects/{project}`.
 
 ## Required Loop
 
 1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `project.yml`, and `config/*.yml`.
-2. Decide whether the request belongs in project state, `work-items/`, `src/`, a registered worktree, or `artifacts/`.
+2. Read `harness/shared_factory/00-control-plane/active-now.json`; use `agentic-os work show` when this project has an active row.
 3. If source work is required, use `src/` for the canonical checkout or `worktrees/<name>` for an active branch-specific checkout.
 4. Follow local `RULES.md` and tool boundaries before touching source files.
-5. For lifecycle work, read the matching `work-items/<lane>/<id>` object and the state-specific files before editing.
-6. Record project-known ideas in `work-items/01-intake/`, active work in `work-items/02-active/`, complete work in `work-items/03-complete/`, outputs in `artifacts/`, and execution evidence in the domain run log.
+5. For lifecycle work, update the SQLite row through `agentic-os work`; packet paths stay stable across state changes.
+6. Keep specifications in Jira or Linear, reusable definitions in `lib`, outputs in `artifacts/`, and execution evidence in the domain run log.
 
 ## Source Priority
 
 - `project.yml` and `source-map.md` identify the project and canonical sources.
-- `config/work-lifecycle.yml` declares lifecycle lanes and naming rules.
-- `config/output-artifacts.yml` declares feature artifact roots such as `work-items/02-active/{{ticket_or_slug}}/artifacts`.
+- `state.db` is authoritative for lifecycle state and attention; `config/work-lifecycle.yml` declares compatibility mappings and naming rules.
+- `config/output-artifacts.yml` declares project artifact roots.
 - Source repository `features/` and `.features/` folders are mirrors/artifact locations unless project config explicitly assigns lifecycle ownership there.
 - `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
 {remote_section}
@@ -2484,13 +2484,13 @@ Route project work to the narrowest local surface before acting.
 
 | Request Type | Route |
 | --- | --- |
-| New project-known idea, product thought, rough note | `work-items/01-intake/<index>_<slug>.md` |
+| New project-known idea, product thought, rough note | External Jira/Linear intake plus `agentic-os work upsert` |
 | Domain-level idea without a known project | `<domain>/01-inbox/raw-ideas.md` |
-| Lifecycle work item | `work-items/01-intake/`, `work-items/02-active/`, or `work-items/03-complete/` based on state |
-| Expanded idea packet from duel/spec work | `work-items/01-intake/<index>_<slug>/` until promoted |
+| Lifecycle work item | `agentic-os work show/set`; packet location does not encode state |
+| Expanded implementation packet | stable `work-items/<work-item-id>/` packet linked from the registry row |
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
-| Feature implementation | OS `work-items/02-active/<index>_<slug>/` for lifecycle state, then `src/` or a registered `worktrees/<name>` link for source edits |
+| Feature implementation | active registry row, stable packet, then `src/` or the row's verified worktree |
 | Feature artifact or generated output | `artifacts/` or configured source artifact root |
 | Durable decision | `decisions.md` |
 
@@ -2523,9 +2523,9 @@ def project_context(domain: str, project: str, remotes: list[dict[str, str]] | N
         remote_section = "\n".join(lines)
     return f"""# Context: {project}
 
-Describe the local room, source systems, routing hints for `{domain}/02-projects/{project}`.
+Describe the local room, source systems, and routing hints for `domains/{domain}/projects/{project}`.
 
-This project layer is the operating surface for `{domain}/02-projects/{project}`.
+This project layer is the operating surface for `domains/{domain}/projects/{project}`.
 It connects project state, source links, worktrees, ideas, output artifacts, and local rules.
 
 ## Load Order
@@ -2534,14 +2534,14 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 2. `source-map.md`
 3. `config/project-profile.yml`
 4. `config/workflows.yml`, `config/output-artifacts.yml`, and `config/validation.yml`
-5. `config/work-lifecycle.yml` and the matching lane object under `work-items/` when lifecycle work is active
+5. the matching SQLite work row and stable packet when lifecycle work is active
 6. `worktrees/index.yml` when source work may use a branch checkout
 
 ## Markdown vs YAML
 
 - Markdown files explain intent, decisions, source maps, and human-readable context.
 - YAML files under `config/` are for parsed defaults, paths, validation commands, MCP boundaries, and tool declarations.
-- Use Markdown with YAML front matter for hybrid specs, ideas, and ticket drafts when both narrative and machine-readable metadata are needed.
+- Use Jira or Linear for specification truth. Local Markdown is bounded execution evidence or resume context, not a second spec state machine.
 {remote_section}
 """
 
@@ -2567,18 +2567,17 @@ def project_rules(domain: str, project: str, remotes: list[dict[str, str]] | Non
     ssh_section = _ssh_namespace_rule_section(remotes)
     return f"""# Rules: {project}
 
-These rules apply to `{domain}/02-projects/{project}` unless a narrower source
+These rules apply to `domains/{domain}/projects/{project}` unless a narrower source
 checkout or feature artifact defines a stricter rule.
 
 ## Operating Rules
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `work-items/01-intake/` for future work and proposed Specs. `ideas/` is a compatibility index, not the lifecycle source of truth.
+- Use Jira or Linear for future work and specification truth. `ideas/` and numbered lane folders are compatibility indexes.
 - Use `WORKLOGS/` or `worklogs/` for human-readable work history; lowercase `logs/` is reserved for raw system output and transcripts.
-- Keep exactly one canonical work object per spec. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
-- Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
-- Treat OS `work-items/` as the lifecycle source of truth. Source repo `features/` or `.features/` folders are mirrors/artifact locations unless `config/work-lifecycle.yml` explicitly says otherwise.
+- Keep one stable packet per work item and one canonical SQLite row. Use `agentic-os work` for lifecycle/attention changes; never move packets to express state.
+- Treat source repo `features/`, `.features/`, and legacy lane folders as mirrors or artifact locations, never lifecycle truth.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
 {ssh_section}
@@ -2588,7 +2587,7 @@ checkout or feature artifact defines a stricter rule.
 def project_tools(domain: str, project: str) -> str:
     return f"""# Tools: {project}
 
-This registry names project-local capabilities for `{domain}/02-projects/{project}`.
+This registry names project-local capabilities for `domains/{domain}/projects/{project}`.
 
 ## Commands
 
@@ -2598,15 +2597,16 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
 | `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | `--remove-files` deletes merged-PR checkouts unless `REOPEN.md` is present. |
-| `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
+| `agentic-os work upsert` | Capture or reconcile a tracker-backed project work item. | Writes canonical SQLite state; use a stable packet path when local evidence is needed. |
+| `agentic-os work show/set` | Read or change lifecycle, attention, context, blockers, and verification. | Folder movement is not a state transition. |
 | `agentic-os project work-item repair` | Backfill missing lifecycle packet files and log folders on legacy or partial work items. | Use before full validation when a `work-item.md`-only packet blocks the OS. |
 | `agentic-os project work-item infer-complete` | Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity. | Use before `finalize-lingering`; stale-only work stays active. |
-| `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and update the global active symlink container. | Use after thread closeout or stale-finalization leaves finished/documented packets under `02-active/`. |
-| `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view from active work items, worktrees, and automations. | Use after changing active work, worktree registry entries, or automation active-work rows. |
+| `agentic-os project work-item finalize-lingering` | Legacy compatibility cleanup for pre-registry lane packets. | Do not use it as the normal state transition path. |
+| `agentic-os project work-item sync-active` | Rebuild disposable active links from SQLite-active rows and their verified worktrees. | Use after canonical work-state changes. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
-| `/add-spec` | Capture future work through doc-config and project work-item intake. | Primary command for proposed features/specs. |
-| `/auto-add-spec` | Create or update a spec packet for long OS-shaping requests. | Use before implementation continues. |
+| `/add-spec` | Compatibility intake that must land specification truth in Jira or Linear. | Do not create a filesystem source of truth. |
+| `/auto-add-spec` | Compatibility intake that must land specification truth in Jira or Linear. | Do not create a filesystem source of truth. |
 | `/new-feature` | Deprecated alias for `/add-spec`. | Compatibility only. |
 | `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Compatibility only. |
 
@@ -2619,9 +2619,8 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `config/` | Parsed project defaults and tool/workflow configuration. |
 | `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
 | `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
-| `work-items/01-intake/` | Canonical future-work and Spec intake, defaulting to `001_spec_slug.md`; expanded packets keep the same index as `001_spec_slug/`. |
-| `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
-| `work-items/03-complete/` | Finished, documented, or archived work packets. |
+| `work-items/<work-item-id>/` | Stable packet for bounded local evidence and resume context. |
+| `work-items/01-intake/`, `02-active/`, `03-complete/` | Legacy import/read surfaces only; state lives in SQLite. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
 
 ## Composio Tool Routes
