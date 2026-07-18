@@ -4308,7 +4308,7 @@ def test_conversation_auto_log_hook_writes_redacted_sidecars(tmp_path: Path) -> 
         check=False,
     )
     assert proc.returncode == 0
-    assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "Stop"
+    assert json.loads(proc.stdout) == {}
     log_dir = work_item.with_suffix(".logs") / "conversations"
     tool_md = next(log_dir.glob("*_tool_calls.md"))
     tool_jsonl = next(log_dir.glob("*_tool_calls.jsonl"))
@@ -4426,7 +4426,7 @@ def test_conversation_auto_log_hook_routes_harness_surface_to_harness_logs(tmp_p
         env={**os.environ, "AGENTIC_OS_ROOT": str(root)},
     )
     assert proc.returncode == 0
-    assert json.loads(proc.stdout)["hookSpecificOutput"]["hookEventName"] == "Stop"
+    assert json.loads(proc.stdout) == {}
     assert list((root / "harness" / "logs" / "conversations").glob("*harness*.jsonl"))
 
 

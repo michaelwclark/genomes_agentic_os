@@ -38,7 +38,9 @@ MAX_ROUTING_TEXT_BYTES = 400_000
 
 
 def emit() -> None:
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ""}}))
+    # An empty JSON object is accepted by both Claude and Codex Stop-hook
+    # transports; harness-specific output envelopes are not cross-compatible.
+    print(json.dumps({}))
 
 
 def log_line(message: str) -> None:
