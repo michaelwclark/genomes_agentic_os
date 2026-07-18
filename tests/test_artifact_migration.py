@@ -146,6 +146,10 @@ def test_migration_respects_disabled_policy(tmp_path: Path) -> None:
 
 def test_restore_reverses_names_references_and_state(tmp_path: Path) -> None:
     root, packet = _legacy_root(tmp_path)
+    readonly = packet / "artifacts/pr-branch-work/repo/.git/objects/aa/object"
+    readonly.parent.mkdir(parents=True)
+    readonly.write_text("immutable fixture\n", encoding="utf-8")
+    readonly.chmod(0o444)
     result = apply_artifact_naming_plan(root, backup_dir=tmp_path / "backup")
 
     restored = restore_artifact_naming_migration(result["receipt_path"], apply=True)
@@ -153,6 +157,7 @@ def test_restore_reverses_names_references_and_state(tmp_path: Path) -> None:
     assert restored["restored"] is True
     assert packet.is_dir()
     assert (packet / "logs/conversations/2026_01_02_old_item.jsonl").is_file()
+    assert readonly.read_text(encoding="utf-8") == "immutable fixture\n"
     assert "001_old_item" in (packet / "work.yml").read_text(encoding="utf-8")
     conn = db.connect(db.default_db_path(root))
     try:
@@ -352,6 +357,19 @@ def test_linked_worktree_with_submodule_is_renamed_and_repaired(tmp_path: Path) 
         ],
         check=True,
     )
+    submodule_git_file = checkout / "module/.git"
+    original_gitdir = submodule_git_file.read_text(encoding="utf-8").strip().split(":", 1)[1].strip()
+    if Path(original_gitdir).is_absolute():
+        stale_gitdir = f"/stale-prefix{original_gitdir}"
+    else:
+        stale_gitdir = f"../stale-prefix/{original_gitdir}"
+    submodule_git_file.write_text(f"gitdir: {stale_gitdir}\n", encoding="utf-8")
+    assert subprocess.run(
+        ["git", "-C", str(checkout / "module"), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).returncode != 0
     (worktrees / "index.yml").write_text(
         yaml.safe_dump(
             {
