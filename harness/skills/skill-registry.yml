@@ -19,6 +19,19 @@ harness_targets:
     runtime_dir: ~/.claude/skills
     install_mode: copy
 skills:
+  - id: artifact-naming
+    title: Artifact Naming
+    source_path: harness/skills/artifact-naming
+    installed_path: shared_factory/05-knowledge/skills/artifact-naming
+    harness_targets:
+      - codex
+      - claude
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Apply or migrate the configurable date prefix for top-level durable
+      Agentic OS entity names while preserving stable internal filenames.
   - id: notification-operator
     title: Notification Operator
     source_path: harness/skills/notification-operator

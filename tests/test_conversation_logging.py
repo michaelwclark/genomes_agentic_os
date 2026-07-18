@@ -240,7 +240,7 @@ class TestTempRootSmoke:
 
         # Step 2: create a project under the 'personal' domain
         create_project(root, "personal", "test_smoke_project")
-        project_root = root / "personal" / "02-projects" / "test_smoke_project"
+        project_root = root / "domains" / "personal" / "02-projects" / "test_smoke_project"
         assert project_root.is_dir()
         assert (project_root / "project.yml").is_file()
 

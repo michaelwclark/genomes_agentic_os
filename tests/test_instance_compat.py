@@ -34,21 +34,21 @@ def test_arbitrary_domain_names_validate_and_update_additively(tmp_path: Path, c
 
     # Scaffold with operator-chosen names instead of the built-in defaults.
     assert main(["init", "--target", str(root), "--domains", "alpha_client,beta_ops"]) == 0
-    assert _top_level(root) == {"alpha_client", "beta_ops", "harness"}
+    assert _top_level(root) == {"alpha_client", "beta_ops", "domains", "harness"}
     assert validate_root(root).ok
     assert main(["validate", "--root", str(root)]) == 0
 
     # Adding one more arbitrary domain stays additive: no default domains
     # appear alongside the operator's set.
     assert main(["domain", "create", "gamma_labs", "--root", str(root)]) == 0
-    assert _top_level(root) == {"alpha_client", "beta_ops", "gamma_labs", "harness"}
+    assert _top_level(root) == {"alpha_client", "beta_ops", "gamma_labs", "domains", "harness"}
 
     # The additive update path succeeds and leaves the domain set alone.
     assert main(["update", "plan", "--root", str(root)]) == 0
     capsys.readouterr()
     assert main(["update", "apply", "--root", str(root)]) == 0
     capsys.readouterr()
-    assert _top_level(root) == {"alpha_client", "beta_ops", "gamma_labs", "harness"}
+    assert _top_level(root) == {"alpha_client", "beta_ops", "gamma_labs", "domains", "harness"}
     assert validate_root(root).ok
 
 
@@ -62,7 +62,7 @@ def test_legacy_personal_domain_names_keep_working_as_data(tmp_path: Path, capsy
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root), "--domains", "personal,clarks_consulting,los,archive"]) == 0
-    assert _top_level(root) == {"personal", "clarks_consulting", "los", "archive", "harness"}
+    assert _top_level(root) == {"personal", "clarks_consulting", "los", "archive", "domains", "harness"}
     assert validate_root(root).ok
 
     assert main(["update", "plan", "--root", str(root)]) == 0
@@ -72,5 +72,5 @@ def test_legacy_personal_domain_names_keep_working_as_data(tmp_path: Path, capsy
 
     # Update stayed additive: the legacy names survive and the neutral
     # defaults were NOT planted next to them.
-    assert _top_level(root) == {"personal", "clarks_consulting", "los", "archive", "harness"}
+    assert _top_level(root) == {"personal", "clarks_consulting", "los", "archive", "domains", "harness"}
     assert validate_root(root).ok

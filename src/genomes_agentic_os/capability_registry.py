@@ -443,11 +443,35 @@ def command_entries() -> list[dict[str, str]]:
             "description": "Use the host tool registry before non-trivial host work.",
             "source": "harness/commands/system-tool-registry.md",
         },
+        {
+            "id": "object-library",
+            "command": "agentic-os library",
+            "description": "Read, create, migrate, refresh, and validate the versioned installed object library.",
+            "source": "harness/commands/os-library.md",
+        },
+        {
+            "id": "artifact-naming",
+            "command": "agentic-os naming",
+            "description": "Inspect, migrate, and restore configurable date-prefixed durable entity names.",
+            "source": "harness/commands/os-artifact-naming.md",
+        },
+        {
+            "id": "work-state",
+            "command": "agentic-os work",
+            "description": "Read and mutate canonical lifecycle, attention, resume context, and active work state.",
+            "source": "harness/commands/os-work-state.md",
+        },
     ]
 
 
 def skill_entries() -> list[dict[str, str]]:
     return [
+        {
+            "id": "artifact-naming",
+            "name": "Artifact Naming",
+            "description": "Inspect, migrate, or restore configurable date-prefixed durable Agentic OS entity names.",
+            "source": "harness/skills/artifact-naming/SKILL.md",
+        },
         {
             "id": "project-domain-investigate",
             "name": "Project Domain Investigate",

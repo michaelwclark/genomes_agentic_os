@@ -13,6 +13,12 @@ import subprocess
 
 import yaml
 
+from .artifact_naming import (
+    CONFIG_RELATIVE_PATH,
+    dated_name,
+    load_artifact_naming_policy,
+    render_default_artifact_naming_config,
+)
 from .capability_registry import (
     HARNESS_DIRECTORY,
     REGISTRY_FILES,
@@ -30,14 +36,13 @@ from .mcp_catalog import mcp_tools_markdown
 DEFAULT_DOMAINS = (
     "personal",
     "work",
-    "archive",
 )
 
 ROOT_MARKER_FILENAME = ".agentic_root"
 SHARED_FACTORY_DOMAIN = "shared_factory"
 # Backward-compatible default for the deprecated --projects-source flag.
 DEFAULT_PROJECTS_SOURCE = "~/projects"
-SOURCE_PACKAGE_VERSION = "0.1.0"
+SOURCE_PACKAGE_VERSION = "0.1.1"
 DEFAULT_UPDATE_CHANNEL = "stable"
 DEFAULT_UPDATE_POLICY = "operator_approved"
 
@@ -231,11 +236,7 @@ INBOX_FILES = (
     "triage.md",
 )
 
-KNOWLEDGE_FILES = (
-    "source-map.md",
-    "glossary.md",
-    "memory-policy.md",
-)
+KNOWLEDGE_FILES: tuple[str, ...] = ()
 
 METRIC_FILES = (
     "baselines.md",
@@ -249,7 +250,6 @@ DOMAIN_DIRECTORIES = (
     "02-projects",
     "03-workflows",
     "04-automations",
-    "05-knowledge",
     "06-runs-and-logs",
     "06-runs-and-logs/runs",
     "06-runs-and-logs/failures",
@@ -339,7 +339,12 @@ def domain_path(root: str | Path, domain: str) -> Path:
     normalized = normalize_domain(domain)
     if normalized == SHARED_FACTORY_DOMAIN:
         return shared_factory_path(root)
-    return expand_path(root) / normalized
+    os_root = expand_path(root)
+    conventional = os_root / "domains" / normalized
+    legacy = os_root / normalized
+    if conventional.exists() or ((os_root / "domains").is_dir() and not legacy.exists()):
+        return conventional
+    return legacy
 
 
 def installed_domain_names(root: str | Path) -> list[str]:
@@ -354,11 +359,19 @@ def installed_domain_names(root: str | Path) -> list[str]:
     os_root = expand_path(root)
     if not os_root.is_dir():
         return []
-    return sorted(
-        path.name
+    candidates = [
+        path
         for path in os_root.iterdir()
         if path.is_dir() and (path / "domain.yml").is_file()
-    )
+    ]
+    domains_root = os_root / "domains"
+    if domains_root.is_dir():
+        candidates.extend(
+            path
+            for path in domains_root.iterdir()
+            if path.is_dir() and (path / "domain.yml").is_file()
+        )
+    return sorted({path.name for path in candidates})
 
 
 def validate_name(value: str, label: str = "name") -> str:
@@ -1022,7 +1035,8 @@ After choosing a domain or narrower layer, change to that directory and read its
 - Put execution records in `<domain>/06-runs-and-logs/runs/`.
 - Use `harness/shared_factory` for reusable templates, schemas, and cross-domain operating patterns.
 - Before non-trivial shell, terminal, package-manager, runtime, or cleanup work, read `harness/shared_factory/05-knowledge/host-tool-registry.<host>.yml` when it exists.
-- Use `archive` only for inactive or historical material.
+- Close or park inactive work in canonical state; use an owning domain's
+  `08-archive/` only for retained historical material.
 
 ## Standard Lanes
 
@@ -1398,15 +1412,15 @@ See `00-control-plane/approval-rules.md`.
 
 ## Common Workflows
 
-Workflows live under `03-workflows/<lane>/<workflow>/`.
+Workflow definitions live in `lib/workflows/domains/{domain}/`.
 
 ## Active Automations
 
-Automations live under `04-automations/<lane>/<automation>/`.
+Automation definitions live in `lib/automations/domains/{domain}/`; mutable runtime remains under the domain runtime surface.
 
 ## Source Map
 
-See `05-knowledge/source-map.md`.
+Query `lib/registry/objects.json` for domain reference objects.
 
 ## Current Risks
 
@@ -1426,15 +1440,15 @@ Classify the request into one of this domain's operating lanes, then choose the 
 
 | Work Type | Path |
 | --- | --- |
-| Idea spec or rough idea capture | `01-inbox/<idea-slug>.md` |
+| Idea or rough request | Jira/Linear intake plus `agentic-os work upsert` |
 | Raw capture | `01-inbox/raw-ideas.md` |
 | Triage notes | `01-inbox/triage.md` |
 | Domain context | `CONTEXT.md` |
 | Domain references | `REFERENCES.md` |
-| Active project | `02-projects/<project>/` |
-| Workflow spec | `03-workflows/<lane>/<workflow>/workflow.md` |
-| Automation spec | `04-automations/<lane>/<automation>/automation.md` |
-| Knowledge | `05-knowledge/` |
+| Active project | `domains/{domain}/projects/<project>/` |
+| Workflow definition | `lib/workflows/domains/{domain}/<workflow>/` |
+| Automation definition | `lib/automations/domains/{domain}/<automation>/` |
+| Reference | `lib/references/domains/{domain}/<reference>/` |
 | Run log | `06-runs-and-logs/runs/<run-id>/run-log.md` |
 | Failure record | `06-runs-and-logs/failures/` |
 | Metrics | `07-metrics/` |
@@ -1443,13 +1457,13 @@ Classify the request into one of this domain's operating lanes, then choose the 
 ## Routing Rules
 
 - Read `AGENTS.md`, then `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`.
-- If the prompt says `add an idea`, `capture an idea`, `idea for`, `rough idea`, or similar, write the idea to `01-inbox/` first. Do not route it directly to `02-projects`, `03-workflows`, `04-automations`, Jira, or a code repository unless the user explicitly asks for that escalation.
+- If the prompt says `add an idea`, `capture an idea`, `idea for`, or similar, use the configured Jira/Linear intake and reconcile a queued work row; do not create a stateful filesystem spec.
 - Treat ideas as pre-routing inputs. A systems idea is different from a code feature, Jira implementation task, or active project.
 - If a project, workflow, automation, or run-log directory narrows the route, change there and repeat the local context-file load before acting.
-- Read `00-control-plane/routing-rules.md` before creating a new workflow or automation.
+- Read `lib/registry/objects.json` before creating or selecting a workflow or automation.
 - Read `CONTEXT.md`, `RULES.md`, `TOOLS.md`, and `REFERENCES.md` before doing domain-specific work.
-- Use `03-workflows` when judgment, context assembly, or approval gates are central.
-- Use `04-automations` when a trigger can safely run a repeatable action with declared permissions.
+- Use `agentic-os library create workflow` when judgment, context assembly, or approval gates are central.
+- Use `agentic-os library create automation` when a trigger can safely run a repeatable action with declared permissions.
 - Use `shared_factory` when a pattern should be reused by multiple domains.
 
 ## Context Loading
@@ -1457,8 +1471,8 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Need | Load | Skip By Default |
 | --- | --- | --- |
 | Understand the room | `CONTEXT.md`, `domain.yml` | Other domains |
-| Find source truth | `REFERENCES.md`, `05-knowledge/source-map.md` | Full private docs unless needed |
-| Resume active work | `00-control-plane/active-work.md`, matching project status | Unrelated project folders |
+| Find source truth | matching reference object from `lib/registry/objects.json` | Full private docs unless needed |
+| Resume active work | `active-now.json`, then `agentic-os work show` | Unrelated project folders |
 | Run a workflow | Matching workflow `quick-reference.md`, `context-pack.md`, `runbook.md` | Automation logs |
 | Review an automation | Matching automation spec, permissions, tests, logs | Workflow internals outside the linked process |
 
@@ -1483,27 +1497,25 @@ This file teaches agents how work inside `{domain}` should be understood before 
 ## Inputs
 
 - Raw requests, notes, tickets, messages, or ideas.
-- Existing project state under `02-projects/`.
-- Workflow and automation specs under `03-workflows/` and `04-automations/`.
-- Source systems listed in `REFERENCES.md` and `05-knowledge/source-map.md`.
+- Existing project state under `domains/{domain}/projects/`.
+- Workflow and automation definitions selected from `lib/registry/objects.json`.
+- Source systems listed in `REFERENCES.md` and registered reference objects.
 
 ## Process
 
 1. Read `ROUTER.md`, this file, `RULES.md`, `TOOLS.md`, and the matching row in `## What To Load`.
-2. Check `00-control-plane/active-work.md` before creating new work.
+2. Check `harness/shared_factory/00-control-plane/active-now.json` before creating new work.
 3. Reuse an existing project, workflow, automation, or run log when one fits.
 4. Read only the references required for the routed task.
 5. Record validation, next action, and durable learning before ending.
-6. When a new idea, workflow opportunity, automation state, project feature, bug fix, or research thread appears, update `00-control-plane/state-index.md` and `MEMORY.md`.
+6. Reconcile new work with `agentic-os work` and reusable definitions with `agentic-os library`.
 
 ## Output Folders
 
 - `00-control-plane/` - routing, approvals, active work, and decisions.
 - `01-inbox/` - untriaged capture and routing notes.
-- `02-projects/` - project-specific state, source maps, status, and artifacts.
-- `03-workflows/` - repeatable judgment-heavy processes.
-- `04-automations/` - triggerable processes with declared permissions and logs.
-- `05-knowledge/` - source maps, glossary, memory policy, and reference material.
+- `projects/` - conventional alias for project packets, source maps, status, and artifacts.
+- `03-workflows/`, `04-automations/`, `05-knowledge/` - legacy compatibility/runtime paths; reusable definitions live in `lib`.
 - `06-runs-and-logs/` - execution records, failures, and activity history.
 - `07-metrics/` - baselines and scorecards.
 - `08-archive/` - inactive or historical material.
@@ -1514,9 +1526,9 @@ This file teaches agents how work inside `{domain}` should be understood before 
 | --- | --- | --- | --- | --- |
 | Raw capture | `01-inbox/raw-ideas.md` | `REFERENCES.md` | workflow internals | `01-inbox/raw-ideas.md` |
 | Route work | `ROUTER.md`, `00-control-plane/routing-rules.md` | `00-control-plane/active-work.md` | unrelated domain folders | `01-inbox/triage.md` or target object |
-| Project work | `02-projects/<project>/status.md`, `source-map.md` | linked repo, linked Notion/Jira | unrelated projects | `02-projects/<project>/` |
-| Workflow run | `03-workflows/<lane>/<workflow>/quick-reference.md`, `context-pack.md` | runbook, examples, source maps | automations unless the workflow says so | `06-runs-and-logs/runs/` |
-| Automation review | `04-automations/<lane>/<automation>/automation.md`, `permissions.md` | tests, logs, failure modes | unrelated workflows | `04-automations/<lane>/<automation>/` |
+| Project work | active work row, `projects/<project>/status.md` | linked repo, linked tracker | unrelated projects | stable project packet |
+| Workflow run | selected library workflow entrypoint | runbook, examples, references | unrelated objects | `06-runs-and-logs/runs/` |
+| Automation review | selected library automation entrypoint | runtime receipts and failure evidence | unrelated objects | owning runtime path |
 
 ## Tools And Skills
 
@@ -1992,10 +2004,13 @@ Each folder records one workflow, automation, or skill execution.
 ## Run Folder Format
 
 ```text
-<run-id>/
+MMDDYY-<time>-<run-id>/
   run-log.md
   artifacts/
 ```
+
+The prefix is controlled by `harness/config/artifact-naming.yml`; `MMDDYY-`
+is the default.
 
 ## Required Run Evidence
 
@@ -2043,8 +2058,10 @@ def ensure_root_files(
 ) -> None:
     domains_list = tuple(domains) if domains else DEFAULT_DOMAINS
     ensure_dir(root, result)
+    ensure_dir(root / "domains", result)
     write_root_marker(root, result, projects_source)
     ensure_dir(harness_path(root), result)
+    write_file_once(root / CONFIG_RELATIVE_PATH, render_default_artifact_naming_config(), result)
     ensure_visible_capability_surface(root, result)
     ensure_schemas_dir(root, result)
     ensure_report_engine_contract(root, result)
@@ -2077,6 +2094,12 @@ def create_domain_structure(
     domain = validate_name(domain, "domain")
     domain_root = domain_path(os_root, domain)
     ensure_dir(domain_root, result)
+    conventional_parent = os_root / "domains"
+    if domain_root.parent == conventional_parent:
+        compatibility_alias = os_root / domain
+        if not compatibility_alias.exists() and not compatibility_alias.is_symlink():
+            compatibility_alias.symlink_to(Path("domains") / domain, target_is_directory=True)
+            result.created.append(compatibility_alias)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
     router = domain_router(domain)
     write_file_once(domain_root / "ROUTER.md", router, result)
@@ -2119,9 +2142,6 @@ def create_domain_structure(
         ensure_dir(domain_root / "04-automations" / lane, result)
         write_file_once(domain_root / "03-workflows" / lane / "README.md", workflow_lane_readme(domain, lane), result)
         write_file_once(domain_root / "04-automations" / lane / "README.md", automation_lane_readme(domain, lane), result)
-
-    for filename in KNOWLEDGE_FILES:
-        write_file_once(domain_root / "05-knowledge" / filename, knowledge_file_content(domain, filename), result)
 
     write_file_once(
         domain_root / "06-runs-and-logs" / "activity-log.md",
@@ -2333,10 +2353,13 @@ routing:
 
 work_lifecycle:
   enabled: true
-  source_of_truth: agentic_os
+  source_of_truth: state_db
+  state_db: harness/shared_factory/00-control-plane/state.db
+  active_projection: harness/shared_factory/00-control-plane/active-now.json
   work_items_root: work-items
+  packet_policy: stable
   default_state: captured
-  lanes:
+  legacy_import_lanes:
     intake: 01-intake
     active: 02-active
     complete: 03-complete
@@ -2357,10 +2380,10 @@ work_lifecycle:
     include_tool_call_markdown: true
     redaction_policy: strict
   spec_destination:
-    type: local
-    path: work-items/02-active
+    type: external_tracker
   external_tracker:
-    type: none
+    type: configured_jira_or_linear
+    required: true
 """
 
 
@@ -2445,22 +2468,22 @@ def project_agents(domain: str, project: str, remotes: list[dict[str, str]] | No
 
 This file is the harness-neutral entrypoint for this Agentic OS layer.
 
-This is the project-local entrypoint for `{domain}/02-projects/{project}`.
+This is the project-local entrypoint for `domains/{domain}/projects/{project}`.
 
 ## Required Loop
 
 1. Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `project.yml`, and `config/*.yml`.
-2. Decide whether the request belongs in project state, `work-items/`, `src/`, a registered worktree, or `artifacts/`.
+2. Read `harness/shared_factory/00-control-plane/active-now.json`; use `agentic-os work show` when this project has an active row.
 3. If source work is required, use `src/` for the canonical checkout or `worktrees/<name>` for an active branch-specific checkout.
 4. Follow local `RULES.md` and tool boundaries before touching source files.
-5. For lifecycle work, read the matching `work-items/<lane>/<id>` object and the state-specific files before editing.
-6. Record project-known ideas in `work-items/01-intake/`, active work in `work-items/02-active/`, complete work in `work-items/03-complete/`, outputs in `artifacts/`, and execution evidence in the domain run log.
+5. For lifecycle work, update the SQLite row through `agentic-os work`; packet paths stay stable across state changes.
+6. Keep specifications in Jira or Linear, reusable definitions in `lib`, outputs in `artifacts/`, and execution evidence in the domain run log.
 
 ## Source Priority
 
 - `project.yml` and `source-map.md` identify the project and canonical sources.
-- `config/work-lifecycle.yml` declares lifecycle lanes and naming rules.
-- `config/output-artifacts.yml` declares feature artifact roots such as `work-items/02-active/{{ticket_or_slug}}/artifacts`.
+- `state.db` is authoritative for lifecycle state and attention; `config/work-lifecycle.yml` declares compatibility mappings and naming rules.
+- `config/output-artifacts.yml` declares project artifact roots.
 - Source repository `features/` and `.features/` folders are mirrors/artifact locations unless project config explicitly assigns lifecycle ownership there.
 - `worktrees/index.yml` lists visible worktrees and their real filesystem targets.
 {remote_section}
@@ -2474,13 +2497,13 @@ Route project work to the narrowest local surface before acting.
 
 | Request Type | Route |
 | --- | --- |
-| New project-known idea, product thought, rough note | `work-items/01-intake/<index>_<slug>.md` |
+| New project-known idea, product thought, rough note | External Jira/Linear intake plus `agentic-os work upsert` |
 | Domain-level idea without a known project | `<domain>/01-inbox/raw-ideas.md` |
-| Lifecycle work item | `work-items/01-intake/`, `work-items/02-active/`, or `work-items/03-complete/` based on state |
-| Expanded idea packet from duel/spec work | `work-items/01-intake/<index>_<slug>/` until promoted |
+| Lifecycle work item | `agentic-os work show/set`; packet location does not encode state |
+| Expanded implementation packet | stable `work-items/<work-item-id>/` packet linked from the registry row |
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
-| Feature implementation | OS `work-items/02-active/<index>_<slug>/` for lifecycle state, then `src/` or a registered `worktrees/<name>` link for source edits |
+| Feature implementation | active registry row, stable packet, then `src/` or the row's verified worktree |
 | Feature artifact or generated output | `artifacts/` or configured source artifact root |
 | Durable decision | `decisions.md` |
 
@@ -2513,9 +2536,9 @@ def project_context(domain: str, project: str, remotes: list[dict[str, str]] | N
         remote_section = "\n".join(lines)
     return f"""# Context: {project}
 
-Describe the local room, source systems, routing hints for `{domain}/02-projects/{project}`.
+Describe the local room, source systems, and routing hints for `domains/{domain}/projects/{project}`.
 
-This project layer is the operating surface for `{domain}/02-projects/{project}`.
+This project layer is the operating surface for `domains/{domain}/projects/{project}`.
 It connects project state, source links, worktrees, ideas, output artifacts, and local rules.
 
 ## Load Order
@@ -2524,14 +2547,14 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 2. `source-map.md`
 3. `config/project-profile.yml`
 4. `config/workflows.yml`, `config/output-artifacts.yml`, and `config/validation.yml`
-5. `config/work-lifecycle.yml` and the matching lane object under `work-items/` when lifecycle work is active
+5. the matching SQLite work row and stable packet when lifecycle work is active
 6. `worktrees/index.yml` when source work may use a branch checkout
 
 ## Markdown vs YAML
 
 - Markdown files explain intent, decisions, source maps, and human-readable context.
 - YAML files under `config/` are for parsed defaults, paths, validation commands, MCP boundaries, and tool declarations.
-- Use Markdown with YAML front matter for hybrid specs, ideas, and ticket drafts when both narrative and machine-readable metadata are needed.
+- Use Jira or Linear for specification truth. Local Markdown is bounded execution evidence or resume context, not a second spec state machine.
 {remote_section}
 """
 
@@ -2557,18 +2580,17 @@ def project_rules(domain: str, project: str, remotes: list[dict[str, str]] | Non
     ssh_section = _ssh_namespace_rule_section(remotes)
     return f"""# Rules: {project}
 
-These rules apply to `{domain}/02-projects/{project}` unless a narrower source
+These rules apply to `domains/{domain}/projects/{project}` unless a narrower source
 checkout or feature artifact defines a stricter rule.
 
 ## Operating Rules
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
-- Use `work-items/01-intake/` for future work and proposed Specs. `ideas/` is a compatibility index, not the lifecycle source of truth.
+- Use Jira or Linear for future work and specification truth. `ideas/` and numbered lane folders are compatibility indexes.
 - Use `WORKLOGS/` or `worklogs/` for human-readable work history; lowercase `logs/` is reserved for raw system output and transcripts.
-- Keep exactly one canonical work object per spec. Move or promote that object through `01-intake`, `02-active`, and `03-complete` instead of copying it into competing lifecycle folders.
-- Use increasing indexes for work items: `001_idea_slug.md` for default intake, `001_idea_slug/` for expanded intake or active packets, and `001_01_subtask_slug.md` for generated subtasks.
-- Treat OS `work-items/` as the lifecycle source of truth. Source repo `features/` or `.features/` folders are mirrors/artifact locations unless `config/work-lifecycle.yml` explicitly says otherwise.
+- Keep one stable packet per work item and one canonical SQLite row. Use `agentic-os work` for lifecycle/attention changes; never move packets to express state.
+- Treat source repo `features/`, `.features/`, and legacy lane folders as mirrors or artifact locations, never lifecycle truth.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
 {ssh_section}
@@ -2578,7 +2600,7 @@ checkout or feature artifact defines a stricter rule.
 def project_tools(domain: str, project: str) -> str:
     return f"""# Tools: {project}
 
-This registry names project-local capabilities for `{domain}/02-projects/{project}`.
+This registry names project-local capabilities for `domains/{domain}/projects/{project}`.
 
 ## Commands
 
@@ -2588,15 +2610,16 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
 | `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | `--remove-files` deletes merged-PR checkouts unless `REOPEN.md` is present. |
-| `agentic-os project work-item create` | Capture a project-known idea or create a lifecycle packet. | Defaults to `work-items/01-intake/<index>_<slug>.md`; use `--format packet` when intake needs multiple files. |
+| `agentic-os work upsert` | Capture or reconcile a tracker-backed project work item. | Writes canonical SQLite state; use a stable packet path when local evidence is needed. |
+| `agentic-os work show/set` | Read or change lifecycle, attention, context, blockers, and verification. | Folder movement is not a state transition. |
 | `agentic-os project work-item repair` | Backfill missing lifecycle packet files and log folders on legacy or partial work items. | Use before full validation when a `work-item.md`-only packet blocks the OS. |
 | `agentic-os project work-item infer-complete` | Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity. | Use before `finalize-lingering`; stale-only work stays active. |
-| `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and update the global active symlink container. | Use after thread closeout or stale-finalization leaves finished/documented packets under `02-active/`. |
-| `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view from active work items, worktrees, and automations. | Use after changing active work, worktree registry entries, or automation active-work rows. |
+| `agentic-os project work-item finalize-lingering` | Legacy compatibility cleanup for pre-registry lane packets. | Do not use it as the normal state transition path. |
+| `agentic-os project work-item sync-active` | Rebuild disposable active links from SQLite-active rows and their verified worktrees. | Use after canonical work-state changes. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
-| `/add-spec` | Capture future work through doc-config and project work-item intake. | Primary command for proposed features/specs. |
-| `/auto-add-spec` | Create or update a spec packet for long OS-shaping requests. | Use before implementation continues. |
+| `/add-spec` | Compatibility intake that must land specification truth in Jira or Linear. | Do not create a filesystem source of truth. |
+| `/auto-add-spec` | Compatibility intake that must land specification truth in Jira or Linear. | Do not create a filesystem source of truth. |
 | `/new-feature` | Deprecated alias for `/add-spec`. | Compatibility only. |
 | `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Compatibility only. |
 
@@ -2609,9 +2632,8 @@ This registry names project-local capabilities for `{domain}/02-projects/{projec
 | `config/` | Parsed project defaults and tool/workflow configuration. |
 | `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
 | `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
-| `work-items/01-intake/` | Canonical future-work and Spec intake, defaulting to `001_spec_slug.md`; expanded packets keep the same index as `001_spec_slug/`. |
-| `work-items/02-active/` | Specified, ready, building, validating, or blocked work packets. |
-| `work-items/03-complete/` | Finished, documented, or archived work packets. |
+| `work-items/<work-item-id>/` | Stable packet for bounded local evidence and resume context. |
+| `work-items/01-intake/`, `02-active/`, `03-complete/` | Legacy import/read surfaces only; state lives in SQLite. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
 
 ## Composio Tool Routes
@@ -2658,9 +2680,9 @@ def project_config_file_content(
                     "lane": lane_value,
                     "entrypoint": "AGENTS.md",
                     "canonical_source": "src",
-                    "specs": "work-items",
+                    "specs": "external_tracker",
                     "worklogs": "worklogs",
-                    "ideas": "work-items/01-intake",
+                    "ideas": "external_tracker",
                     "artifacts": "artifacts",
                 }
             },
@@ -2671,7 +2693,7 @@ def project_config_file_content(
             {
                 "version": 1,
                 "enabled": True,
-                "tracker": {"primary": "filesystem"},
+                "tracker": {"primary": "state_db", "spec_source": "jira_or_linear"},
                 "repository": {"root": repo or "", "base_branch": "main"},
                 "worktrees": {
                     "directory": "worktrees",
@@ -2717,11 +2739,14 @@ def project_config_file_content(
             {
                 "work_lifecycle": {
                     "enabled": True,
-                    "source_of_truth": "agentic_os",
+                    "source_of_truth": "state_db",
+                    "state_db": "harness/shared_factory/00-control-plane/state.db",
+                    "active_projection": "harness/shared_factory/00-control-plane/active-now.json",
                     "work_items_root": "work-items",
                     "worklogs_root": "worklogs",
+                    "packet_policy": "stable",
                     "default_state": "captured",
-                    "lanes": {
+                    "legacy_import_lanes": {
                         "intake": "01-intake",
                         "active": "02-active",
                         "complete": "03-complete",
@@ -2760,11 +2785,11 @@ def project_config_file_content(
                         "redaction_policy": "strict",
                     },
                     "spec_destination": {
-                        "type": "local",
-                        "path": "work-items/02-active",
+                        "type": "external_tracker",
                     },
                     "external_tracker": {
-                        "type": "none",
+                        "type": "configured_jira_or_linear",
+                        "required": True,
                     },
                 }
             },
@@ -2801,15 +2826,15 @@ def project_config_file_content(
         return yaml.safe_dump(
             {
                 "output_artifacts": {
-                    "feature_root": "work-items/02-active/{ticket_or_slug}/artifacts",
-                    "spec_root": "work-items/01-intake/{ticket_or_slug}",
+                    "feature_root": "work-items/{ticket_or_slug}/artifacts",
+                    "spec_root": "external_tracker",
                     "worklog_root": "worklogs/{ticket_or_slug}",
                     "project_artifacts": "artifacts",
                     "run_logs": "../../06-runs-and-logs/runs",
                     "front_matter": True,
                     "source_repo_feature_root": "src/features/{ticket_or_slug}",
                     "legacy_source_feature_root": "src/.features/{ticket_or_slug}",
-                    "source_of_truth": "agentic_os",
+                    "source_of_truth": "state_db",
                 }
             },
             sort_keys=False,
@@ -2900,18 +2925,19 @@ def worktrees_index(project: str) -> str:
 def ideas_readme(project: str) -> str:
     return f"""# Ideas: {project}
 
-Project-known ideas now start in `work-items/01-intake/`.
+Project-known ideas start in the configured Jira or Linear tracker and are
+reconciled into canonical SQLite work state.
 
-This folder is a compatibility index for older tools and should point to the
-canonical work item instead of becoming a separate idea backlog.
+This folder is a compatibility index for older tools. Do not create a separate
+filesystem backlog here.
 """
 
 
 def ideas_raw(project: str) -> str:
     return f"""# Raw Ideas: {project}
 
-Project-known ideas should be captured as `work-items/01-intake/NNN_slug.md`.
-Use this table only as a compatibility index.
+Project-known ideas should be captured in Jira or Linear, then reconciled with
+`agentic-os work upsert`. Use this table only as a compatibility index.
 
 | Date | Source | Idea | Next Step |
 | --- | --- | --- | --- |
@@ -3182,8 +3208,6 @@ def ensure_project_operating_surface(
     ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
-    for lane_name in ("01-intake", "02-active", "03-complete"):
-        ensure_dir(project_root / "work-items" / lane_name, result)
     ensure_dir(project_root / "worktrees", result)
     ensure_spotlight_never_index(project_root / "worktrees", result)
     write_project_file(
@@ -3202,7 +3226,10 @@ def ensure_project_operating_surface(
         project_root / "CONTEXT.md",
         project_context(domain, project, remotes=remotes),
         result,
-        replace_markers=("Describe the local room, source systems, routing hints",),
+        replace_markers=(
+            "Describe the local room, source systems, and routing hints",
+            "Describe the local room, source systems, routing hints",
+        ),
     )
     write_project_file(
         project_root / "RULES.md",
@@ -3456,7 +3483,10 @@ def link_project_remote(
         project_root / "CONTEXT.md",
         project_context(domain, project, remotes=all_remotes),
         result,
-        replace_markers=("Describe the local room, source systems, routing hints",),
+        replace_markers=(
+            "Describe the local room, source systems, and routing hints",
+            "Describe the local room, source systems, routing hints",
+        ),
     )
     return result
 
@@ -3562,10 +3592,19 @@ def register_project_worktree(
     if not target.is_dir():
         raise ValueError(f"worktree path must be an existing directory: {target}")
 
-    result = onboard_project(os_root, domain, project)
-    link_path = project_root / "worktrees" / name
     worktrees_root = (project_root / "worktrees").resolve()
     in_place = target.is_relative_to(worktrees_root)
+    # Existing in-place checkouts are renamed only by the transactional
+    # migration command because git metadata must move with the directory.
+    if not in_place:
+        name = dated_name(
+            name,
+            when=datetime.now(timezone.utc),
+            policy=load_artifact_naming_policy(os_root),
+            scope="worktrees",
+        )
+    result = onboard_project(os_root, domain, project)
+    link_path = project_root / "worktrees" / name
     if in_place:
         if target != worktrees_root / name:
             raise ValueError(f"in-place worktree path must be the worktrees/{name} directory itself: {target}")
@@ -3621,8 +3660,14 @@ def create_project_worktree(
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
-    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
     os_root = expand_path(root)
+    name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
+    name = dated_name(
+        name,
+        when=datetime.now(timezone.utc),
+        policy=load_artifact_naming_policy(os_root),
+        scope="worktrees",
+    )
     project_root = domain_path(os_root, domain) / "02-projects" / project
     if not (project_root / "project.yml").is_file():
         raise ValueError(f"project not found: {domain}/{project}")
@@ -4318,9 +4363,14 @@ def create_run_log(root: str | Path, domain: str, workflow_or_automation: str) -
     domain = normalize_domain(domain)
     workflow_or_automation = validate_name(workflow_or_automation, "workflow_or_automation")
     result = create_domain(root, domain)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"{timestamp}-{domain}-{workflow_or_automation}"
-    iso_timestamp = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(timezone.utc)
+    run_id = dated_name(
+        f"{started_at.strftime('%H%M%SZ')}-{domain}-{workflow_or_automation}",
+        when=started_at,
+        policy=load_artifact_naming_policy(root),
+        scope="run_logs",
+    )
+    iso_timestamp = started_at.isoformat()
     template = template_source_dir() / "workflow" / "run-log.md"
     content = render_template(
         template.read_text(encoding="utf-8"),

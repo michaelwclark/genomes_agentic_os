@@ -94,10 +94,17 @@ def notion_id_for(record_key: str) -> str:
 
 def domain_dirs(root: Path) -> list[Path]:
     domains = [path for path in root.iterdir() if path.is_dir() and (path / "domain.yml").is_file()]
+    domains_root = root / "domains"
+    if domains_root.is_dir():
+        domains.extend(
+            path
+            for path in domains_root.iterdir()
+            if path.is_dir() and (path / "domain.yml").is_file()
+        )
     shared = shared_factory_path(root)
     if (shared / "domain.yml").is_file():
         domains.append(shared)
-    return sorted(domains)
+    return sorted({path.resolve(): path for path in domains}.values())
 
 
 def discover_sync_objects(root: str | Path) -> list[SyncObject]:
@@ -453,7 +460,11 @@ def bootstrap_id(name: str) -> str:
 
 def build_bootstrap_plan(root: str | Path, *, parent_page_id: str | None = None) -> dict[str, Any]:
     os_root = expand_path(root)
-    recent_runs = [str(path) for path in sorted(os_root.glob("*/06-runs-and-logs/runs/*/run-log.md"))[-5:]]
+    run_logs = {
+        *os_root.glob("*/06-runs-and-logs/runs/*/run-log.md"),
+        *os_root.glob("domains/*/06-runs-and-logs/runs/*/run-log.md"),
+    }
+    recent_runs = [str(path) for path in sorted(run_logs)[-5:]]
     databases = [
         {"name": name, "purpose": purpose, "action": "create-or-update", "local_id": bootstrap_id(name)}
         for name, purpose in CONTROL_PLANE_DATABASES

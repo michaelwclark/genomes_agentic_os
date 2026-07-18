@@ -14,6 +14,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-auto-add-feature.md`](os-auto-add-feature.md) | Legacy feature alias for automatic Spec intake. |
 | [`os-auto-add-spec.md`](os-auto-add-spec.md) | Persist a long OS-shaping request as a Spec packet. |
 | [`os-automation-control.md`](os-automation-control.md) | Inspect or operate the guarded automation control loop. |
+| [`os-artifact-naming.md`](os-artifact-naming.md) | Configure and transactionally migrate date-prefixed durable entity names. |
 | [`os-capture-plan.md`](os-capture-plan.md) | Capture future work into canonical project work-items. |
 | [`os-chain.md`](os-chain.md) | Define, inspect, or test event-chain rules. |
 | [`os-claude-desktop-bridge.md`](os-claude-desktop-bridge.md) | Build or audit the optional Claude Desktop custom-skill and instruction package. |
@@ -36,6 +37,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-gui.md`](os-gui.md) | Open the local Agentic OS Command Center desktop application. |
 | [`os-heartbeat.md`](os-heartbeat.md) | Operate runtime heartbeat definitions and checks. |
 | [`os-integration-setup.md`](os-integration-setup.md) | Prepare or diagnose an external integration. |
+| [`os-library.md`](os-library.md) | Create, migrate, inspect, and validate the versioned object library. |
 | [`os-new-feature.md`](os-new-feature.md) | Legacy alias for canonical Spec intake. |
 | [`os-notify.md`](os-notify.md) | Send one governed local macOS notification for an operator-actionable condition. |
 | [`os-notion-org.md`](os-notion-org.md) | Audit or reconcile the verified Notion organization. |
@@ -53,6 +55,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-sync-notion.md`](os-sync-notion.md) | Plan or run verified Notion projection sync. |
 | [`os-update.md`](os-update.md) | Plan, apply, inspect, or roll back an OS update. |
 | [`os-watch-source.md`](os-watch-source.md) | Configure and poll connected source watchers. |
+| [`os-work-state.md`](os-work-state.md) | Maintain SQLite-backed canonical work state and the bounded active-now projection. |
 | [`system-tool-registry.md`](system-tool-registry.md) | Inspect or update host-safe tool declarations. |
 
 When adding or removing a command, update this table and the owning registry or

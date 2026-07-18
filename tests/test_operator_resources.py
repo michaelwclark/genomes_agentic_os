@@ -324,6 +324,30 @@ def test_automation_keeps_identities_distinct_and_projects_unhealthy_health(
     )
 
 
+def test_operator_resources_discover_conventional_domain_layout(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    automation = _automation(root)
+    _program_instance(root, "demo_instance", definition_id="demo")
+    conventional = root / "domains/work"
+    conventional.parent.mkdir(parents=True)
+    (root / "work").rename(conventional)
+
+    automations = query_operator_resources(root, "automation")
+    programs = query_operator_resources(root, "program")
+
+    assert any(
+        row["definition"]["path"]
+        == "domains/work/04-automations/engineering/daily_sync"
+        for row in automations["resources"]
+        if row.get("definition")
+    )
+    assert any(
+        row.get("instance", {}).get("path")
+        == "domains/work/00-programs/demo_instance"
+        for row in programs["resources"]
+    )
+
+
 def test_automation_degraded_health_and_placement_denial(tmp_path: Path) -> None:
     root = _root(tmp_path)
     automation = _automation(root, harness="claude")

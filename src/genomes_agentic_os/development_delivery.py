@@ -21,6 +21,7 @@ import uuid
 
 import yaml
 
+from .artifact_naming import dated_name, load_artifact_naming_policy
 from .lifecycle import create_project_work_item
 from .scaffold import domain_path, expand_path, normalize_domain, register_project_worktree, validate_name
 
@@ -446,6 +447,12 @@ def create_isolated_worktree(
     repo = expand_path(str(repository["root"]))
     base = str(repository["base_branch"])
     name = f"{_slug(ticket)}-{_slug(title)}"[:72].rstrip("-")
+    name = dated_name(
+        name,
+        when=datetime.now(timezone.utc),
+        policy=load_artifact_naming_policy(os_root),
+        scope="worktrees",
+    )
     destination = project_path / str(worktrees.get("directory") or "worktrees") / name
     branch = _task_branch(str(worktrees.get("branch_template") or "feature/{ticket}-{slug}"), ticket, _slug(title))
     fetched = runner(["git", "-C", str(repo), "fetch", "origin", base])
@@ -520,7 +527,13 @@ def start_development_run(
         raise DevelopmentDeliveryError("at least one tracker ticket is required")
     profile, source = load_development_profile(root, domain, project)
     project_path = project_root(root, domain, project)
-    run_id = run_id or f"dev-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:6]}"
+    started_at = datetime.now(timezone.utc)
+    run_id = run_id or dated_name(
+        f"dev-{started_at.strftime('%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
+        when=started_at,
+        policy=load_artifact_naming_policy(root),
+        scope="development_runs",
+    )
     run_dir = project_path / "state" / "development-runs" / run_id
     requested_titles = {ticket: (titles or {}).get(ticket) or f"Implement {ticket}" for ticket in dict.fromkeys(tickets)}
     plan = {
