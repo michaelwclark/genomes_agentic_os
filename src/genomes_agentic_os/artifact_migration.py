@@ -134,6 +134,14 @@ def _initialized_submodule_paths(path: Path) -> list[Path]:
         match = re.match(r"^[ +U][0-9a-f]+\s+(.+?)(?:\s+\(|$)", line)
         if match and (path / match.group(1) / ".git").is_file():
             result.append(Path(match.group(1)))
+    # A worktree may already contain stale relative submodule gitdir pointers,
+    # which makes `git submodule status` fail before it can report anything.
+    # The initialized checkout remains detectable from its nested .git files.
+    for current, dirs, files in os.walk(path, followlinks=False):
+        dirs[:] = [name for name in dirs if name not in SKIP_DIRS]
+        current_path = Path(current)
+        if current_path != path and ".git" in files and (current_path / ".git").is_file():
+            result.append(current_path.relative_to(path))
     return sorted(set(result))
 
 
@@ -403,6 +411,19 @@ def create_migration_backup(root: Path, backup_dir: Path, plan: dict[str, Any]) 
     return archive
 
 
+def extract_migration_backup(archive: Path, root: Path) -> None:
+    """Restore a trusted migration archive over operator-owned read-only files."""
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar:
+            member_path = Path(member.name)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise ValueError(f"unsafe backup member path: {member.name}")
+            destination = root / member_path
+            if destination.exists() and destination.is_file() and not destination.is_symlink():
+                destination.chmod(destination.stat().st_mode | 0o200)
+            tar.extract(member, root)
+
+
 def _perform_move(move: dict[str, str]) -> None:
     source = Path(move["source"])
     destination = Path(move["destination"])
@@ -449,6 +470,13 @@ def _repair_moved_worktree(repository: Path, worktree: Path, submodules: list[Pa
         text=True,
         check=True,
     )
+    worktree_git_file = worktree / ".git"
+    worktree_match = re.match(r"gitdir:\s*(.+)", worktree_git_file.read_text(encoding="utf-8").strip())
+    if not worktree_match:
+        raise ValueError(f"invalid worktree gitdir file: {worktree_git_file}")
+    worktree_git_dir = Path(worktree_match.group(1))
+    if not worktree_git_dir.is_absolute():
+        worktree_git_dir = (worktree / worktree_git_dir).resolve()
     for relative in submodules:
         submodule_root = worktree / relative
         git_file = submodule_root / ".git"
@@ -458,6 +486,15 @@ def _repair_moved_worktree(repository: Path, worktree: Path, submodules: list[Pa
         git_dir = Path(match.group(1))
         if not git_dir.is_absolute():
             git_dir = (submodule_root / git_dir).resolve()
+        if not git_dir.is_dir():
+            normalized = match.group(1).replace("\\", "/")
+            marker = f"/.git/worktrees/{worktree_git_dir.name}/"
+            if marker not in normalized:
+                raise FileNotFoundError(f"cannot recover stale submodule gitdir: {git_file}")
+            git_dir = worktree_git_dir / normalized.split(marker, 1)[1]
+        if not git_dir.is_dir():
+            raise FileNotFoundError(f"submodule gitdir is missing: {git_dir}")
+        git_file.write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
         subprocess.run(
             ["git", "config", "--file", str(git_dir / "config"), "core.worktree", str(submodule_root.resolve())],
             capture_output=True,
@@ -730,8 +767,7 @@ def apply_artifact_naming_plan(
             conn.close()
     except Exception:
         _reverse_moves(completed)
-        with tarfile.open(archive, "r:gz") as tar:
-            tar.extractall(os_root)
+        extract_migration_backup(archive, os_root)
         raise
 
     receipt_time = datetime.now(timezone.utc)
@@ -765,6 +801,5 @@ def restore_artifact_naming_migration(receipt_path: str | Path, *, apply: bool =
     root = Path(receipt["root"])
     _reverse_moves(receipt.get("moves", []))
     archive = Path(receipt["backup_archive"])
-    with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(root)
+    extract_migration_backup(archive, root)
     return {"apply": True, "restored": True, "root": str(root), "backup_archive": str(archive)}
