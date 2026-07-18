@@ -369,7 +369,7 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / "config" / filename, result)
     if (project_root / "SPECS").exists():
         result.warnings.append(
-            f"legacy project bucket present; migrate Specs into work-items/: {project_root / 'SPECS'}"
+            f"legacy project bucket present; verify Jira/Linear truth before removal: {project_root / 'SPECS'}"
         )
     require_file(project_root / "ideas" / "README.md", result)
     require_file(project_root / "ideas" / "raw-ideas.md", result)
@@ -377,8 +377,11 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
         require_file(project_root / "WORKLOGS" / "README.md", result)
     elif (project_root / "worklogs").is_dir():
         require_file(project_root / "worklogs" / "README.md", result)
-    for lane in WORK_ITEM_LANES:
-        require_dir(project_root / "work-items" / lane, result)
+    lifecycle_path = project_root / "config" / "work-lifecycle.yml"
+    lifecycle = load_control_yaml(lifecycle_path, result).get("work_lifecycle") or {}
+    if lifecycle.get("source_of_truth") != "state_db":
+        for lane in WORK_ITEM_LANES:
+            require_dir(project_root / "work-items" / lane, result)
     require_file(project_root / "worktrees" / "README.md", result)
     require_file(project_root / "worktrees" / "index.yml", result)
     validate_project_worktrees(project_root, result)

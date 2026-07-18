@@ -88,11 +88,11 @@ def test_context_cli_explain_check_and_plan_receipts(tmp_path: Path, capsys) -> 
     assert explained["ok"] is True
     assert explained["legacy_fallback"] is False
     assert explained["read_first"]
-    workflow_root = root / "acme/03-workflows/engineering/ship"
+    workflow_root = root / "domains/acme/03-workflows/engineering/ship"
     assert (workflow_root / "context-contract.yml").is_file()
     for copied_contract in ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
         assert not (workflow_root / copied_contract).exists()
-    assert any(item["path"].endswith("acme/RULES.md") for item in explained["read_first"])
+    assert any(item["path"].endswith("domains/acme/RULES.md") for item in explained["read_first"])
 
     legacy_words = sum(
         len(prompt_file_template(policy_for_layer("workflow_or_task"), filename).split())
@@ -107,7 +107,7 @@ def test_context_cli_explain_check_and_plan_receipts(tmp_path: Path, capsys) -> 
     assert main(["context", "check", "--root", str(root)]) == 0
     checked = yaml.safe_load(capsys.readouterr().out)
     assert checked["manifests"] == 2
-    automation_root = root / "acme/04-automations/engineering/watch_ship"
+    automation_root = root / "domains/acme/04-automations/engineering/watch_ship"
     assert (automation_root / "context-contract.yml").is_file()
     for copied_contract in ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
         assert not (automation_root / copied_contract).exists()
@@ -119,7 +119,7 @@ def test_context_cli_explain_check_and_plan_receipts(tmp_path: Path, capsys) -> 
             assert not (object_root / copied_contract).exists()
     for object_root in (workflow_root, automation_root):
         for copied_contract in ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):
-            shutil.copyfile(root / "acme" / copied_contract, object_root / copied_contract)
+            shutil.copyfile(root / "domains" / "acme" / copied_contract, object_root / copied_contract)
 
     receipts = tmp_path / "receipts"
     assert main(

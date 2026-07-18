@@ -2343,10 +2343,13 @@ routing:
 
 work_lifecycle:
   enabled: true
-  source_of_truth: agentic_os
+  source_of_truth: state_db
+  state_db: harness/shared_factory/00-control-plane/state.db
+  active_projection: harness/shared_factory/00-control-plane/active-now.json
   work_items_root: work-items
+  packet_policy: stable
   default_state: captured
-  lanes:
+  legacy_import_lanes:
     intake: 01-intake
     active: 02-active
     complete: 03-complete
@@ -2367,10 +2370,10 @@ work_lifecycle:
     include_tool_call_markdown: true
     redaction_policy: strict
   spec_destination:
-    type: local
-    path: work-items/02-active
+    type: external_tracker
   external_tracker:
-    type: none
+    type: configured_jira_or_linear
+    required: true
 """
 
 
@@ -2667,9 +2670,9 @@ def project_config_file_content(
                     "lane": lane_value,
                     "entrypoint": "AGENTS.md",
                     "canonical_source": "src",
-                    "specs": "work-items",
+                    "specs": "external_tracker",
                     "worklogs": "worklogs",
-                    "ideas": "work-items/01-intake",
+                    "ideas": "external_tracker",
                     "artifacts": "artifacts",
                 }
             },
@@ -2680,7 +2683,7 @@ def project_config_file_content(
             {
                 "version": 1,
                 "enabled": True,
-                "tracker": {"primary": "filesystem"},
+                "tracker": {"primary": "state_db", "spec_source": "jira_or_linear"},
                 "repository": {"root": repo or "", "base_branch": "main"},
                 "worktrees": {
                     "directory": "worktrees",
@@ -2726,11 +2729,14 @@ def project_config_file_content(
             {
                 "work_lifecycle": {
                     "enabled": True,
-                    "source_of_truth": "agentic_os",
+                    "source_of_truth": "state_db",
+                    "state_db": "harness/shared_factory/00-control-plane/state.db",
+                    "active_projection": "harness/shared_factory/00-control-plane/active-now.json",
                     "work_items_root": "work-items",
                     "worklogs_root": "worklogs",
+                    "packet_policy": "stable",
                     "default_state": "captured",
-                    "lanes": {
+                    "legacy_import_lanes": {
                         "intake": "01-intake",
                         "active": "02-active",
                         "complete": "03-complete",
@@ -2769,11 +2775,11 @@ def project_config_file_content(
                         "redaction_policy": "strict",
                     },
                     "spec_destination": {
-                        "type": "local",
-                        "path": "work-items/02-active",
+                        "type": "external_tracker",
                     },
                     "external_tracker": {
-                        "type": "none",
+                        "type": "configured_jira_or_linear",
+                        "required": True,
                     },
                 }
             },
@@ -2810,15 +2816,15 @@ def project_config_file_content(
         return yaml.safe_dump(
             {
                 "output_artifacts": {
-                    "feature_root": "work-items/02-active/{ticket_or_slug}/artifacts",
-                    "spec_root": "work-items/01-intake/{ticket_or_slug}",
+                    "feature_root": "work-items/{ticket_or_slug}/artifacts",
+                    "spec_root": "external_tracker",
                     "worklog_root": "worklogs/{ticket_or_slug}",
                     "project_artifacts": "artifacts",
                     "run_logs": "../../06-runs-and-logs/runs",
                     "front_matter": True,
                     "source_repo_feature_root": "src/features/{ticket_or_slug}",
                     "legacy_source_feature_root": "src/.features/{ticket_or_slug}",
-                    "source_of_truth": "agentic_os",
+                    "source_of_truth": "state_db",
                 }
             },
             sort_keys=False,
@@ -2909,18 +2915,19 @@ def worktrees_index(project: str) -> str:
 def ideas_readme(project: str) -> str:
     return f"""# Ideas: {project}
 
-Project-known ideas now start in `work-items/01-intake/`.
+Project-known ideas start in the configured Jira or Linear tracker and are
+reconciled into canonical SQLite work state.
 
-This folder is a compatibility index for older tools and should point to the
-canonical work item instead of becoming a separate idea backlog.
+This folder is a compatibility index for older tools. Do not create a separate
+filesystem backlog here.
 """
 
 
 def ideas_raw(project: str) -> str:
     return f"""# Raw Ideas: {project}
 
-Project-known ideas should be captured as `work-items/01-intake/NNN_slug.md`.
-Use this table only as a compatibility index.
+Project-known ideas should be captured in Jira or Linear, then reconciled with
+`agentic-os work upsert`. Use this table only as a compatibility index.
 
 | Date | Source | Idea | Next Step |
 | --- | --- | --- | --- |
@@ -3191,8 +3198,6 @@ def ensure_project_operating_surface(
     ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
-    for lane_name in ("01-intake", "02-active", "03-complete"):
-        ensure_dir(project_root / "work-items" / lane_name, result)
     ensure_dir(project_root / "worktrees", result)
     ensure_spotlight_never_index(project_root / "worktrees", result)
     write_project_file(
