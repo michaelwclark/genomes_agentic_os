@@ -1909,6 +1909,17 @@ def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | N
         "external_effect": external_effect,
     }
     _write_yaml(log_path, log)
+    # Re-read the queue before the terminal write: the dispatched command may
+    # have appended items to run-queue.yml while running in-process (e.g. the
+    # self-improvement lane queuing an implementation worker). Writing the
+    # stale pre-execution snapshot back would silently drop those appends.
+    queue = _queue(os_root)
+    items = queue.setdefault("items", [])
+    fresh = next((candidate for candidate in items if candidate.get("id") == item.get("id")), None)
+    if fresh is None:
+        items.append(item)
+    else:
+        item = fresh
     item["status"] = status
     item["started_at"] = started_at
     item["finished_at"] = finished_at

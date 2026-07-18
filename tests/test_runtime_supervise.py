@@ -630,3 +630,52 @@ def test_registered_watcher_script_honors_item_timeout(tmp_path: Path) -> None:
     assert dispatch_log["evidence"]["timed_out"] is True
     assert dispatch_log["evidence"]["timeout_seconds"] == 1
     assert "timed out after 1s" in dispatch_log["evidence"]["errors"][0]
+
+
+def test_run_next_preserves_items_appended_during_in_process_execution(tmp_path: Path, monkeypatch) -> None:
+    """A dispatched command that appends queue items mid-execution must not
+    have those appends clobbered by the dispatcher's terminal queue write."""
+    root = _fresh_root(tmp_path)
+    runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "queue_dispatch_me",
+            "kind": "schedule",
+            "ref": "race_probe",
+            "status": "queued",
+            "approval_state": "not_required",
+            "dry_run": False,
+            "idempotency_key": "race-probe:1",
+            "execution_target": "script",
+            "command": f"agentic-os validate --root {root}",
+        },
+    )
+
+    def _appending_run_local_script(os_root, command, **kwargs):
+        runtime_ops.append_run_queue_item(
+            os_root,
+            {
+                "id": "queue_appended_mid_flight",
+                "kind": "self_improvement_action",
+                "ref": "si-race",
+                "status": "queued",
+                "approval_state": "not_required",
+                "dry_run": False,
+                "idempotency_key": "self-improvement-action:race",
+                "execution_target": "script",
+                "command": "echo noop",
+            },
+        )
+        return {"supported": True, "ok": True, "command": command, "errors": [], "warnings": [], "external_effect": "probe"}
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", _appending_run_local_script)
+    outcome = runtime_run_next(root, dry_run=False, item_id="queue_dispatch_me")
+    assert outcome["status"] == "done"
+
+    queue = yaml.safe_load(
+        (root / "harness/shared_factory/00-control-plane/run-queue.yml").read_text(encoding="utf-8")
+    )
+    by_id = {item.get("id"): item for item in queue.get("items") or []}
+    assert by_id["queue_dispatch_me"]["status"] == "done"
+    assert "queue_appended_mid_flight" in by_id, "mid-flight append was clobbered by the terminal queue write"
+    assert by_id["queue_appended_mid_flight"]["status"] == "queued"
