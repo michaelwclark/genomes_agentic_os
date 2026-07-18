@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 
 from .automation_ops import check_automation
-from .scaffold import expand_path, installed_domain_names, shared_factory_path
+from .scaffold import domain_path, expand_path, installed_domain_names, shared_factory_path
 
 
 API_VERSION = "operator-resource-query/v1"
@@ -485,7 +485,7 @@ def _program_dirs(root: Path) -> tuple[list[Path], list[tuple[str, Path]]]:
     )
     instances: list[tuple[str, Path]] = []
     for domain in installed_domain_names(root):
-        collection = root / domain / "00-programs"
+        collection = domain_path(root, domain) / "00-programs"
         if not collection.is_dir():
             continue
         instances.extend(
@@ -756,7 +756,9 @@ def _automation_dirs(root: Path) -> list[tuple[str, str, Path]]:
         domain_names.append("shared_factory")
     for domain in sorted(set(domain_names)):
         domain_root = (
-            shared_factory_path(root) if domain == "shared_factory" else root / domain
+            shared_factory_path(root)
+            if domain == "shared_factory"
+            else domain_path(root, domain)
         )
         collection = domain_root / "04-automations"
         if not collection.is_dir():
@@ -813,7 +815,9 @@ def _automation_config(
     config_fields: dict[str, Any] = {}
     config_paths: list[str] = []
     domain_root = (
-        shared_factory_path(root) if domain == "shared_factory" else root / domain
+        shared_factory_path(root)
+        if domain == "shared_factory"
+        else domain_path(root, domain)
     )
     shared = domain_root / "04-automations" / lane / "_shared"
     candidates: list[Path] = []

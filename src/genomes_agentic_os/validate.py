@@ -1020,6 +1020,18 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
         )
         excluded = {}
 
+    def canonical_tracking_path(value: str) -> str:
+        candidate = Path(value)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.relative_to(root)
+            except ValueError:
+                return value.rstrip("/")
+        parts = candidate.parts
+        if parts and parts[0] != "domains" and (root / "domains" / parts[0]).exists():
+            candidate = Path("domains") / candidate
+        return candidate.as_posix().rstrip("/")
+
     represented_ids: set[str] = set()
     represented_paths: set[str] = set()
     for section_name, entries in (
@@ -1036,7 +1048,7 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
                 continue
             cwd = str(entry.get("cwd") or "").strip()
             if cwd and cwd != ".":
-                represented_paths.add(cwd.rstrip("/"))
+                represented_paths.add(canonical_tracking_path(cwd))
             if (
                 section_name == "automations"
                 and not entry.get("page_id")
@@ -1047,15 +1059,25 @@ def validate_automation_projection_registry(root: Path, result: ValidationResult
                     f"or external_projection_blocker: {tracking_path}"
                 )
 
-    automation_specs = {
+    automation_candidates = {
         *root.glob("*/04-automations/*/*/automation.md"),
         *root.glob("domains/*/04-automations/*/*/automation.md"),
     }
-    for automation_md in sorted(automation_specs):
+    automation_specs: dict[str, Path] = {}
+    for candidate in sorted(automation_candidates):
+        key = str(candidate.resolve())
+        relative = candidate.relative_to(root)
+        current = automation_specs.get(key)
+        if current is None or relative.parts[0] == "domains":
+            automation_specs[key] = candidate
+    for automation_md in sorted(automation_specs.values()):
         automation_root = automation_md.parent
         automation_id = automation_root.name
         automation_path = automation_root.relative_to(root).as_posix()
-        if automation_id in represented_ids or automation_path in represented_paths:
+        if (
+            automation_id in represented_ids
+            or canonical_tracking_path(automation_path) in represented_paths
+        ):
             continue
         result.errors.append(
             "automation folder missing automation-run-tracking representation "

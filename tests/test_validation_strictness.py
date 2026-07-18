@@ -384,6 +384,42 @@ def test_validate_accepts_conventional_domain_automation_tracking_path(tmp_path:
     assert not result.errors
 
 
+def test_validate_treats_legacy_and_conventional_domain_aliases_as_equivalent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "agentic_os"
+    automation_root = root / "cashtree/04-automations/distribution/example_auto"
+    automation_root.mkdir(parents=True)
+    (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
+    (root / "domains").mkdir()
+    (root / "domains/cashtree").symlink_to(root / "cashtree", target_is_directory=True)
+    tracking_path = (
+        root / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
+    )
+    tracking_path.parent.mkdir(parents=True)
+    tracking_path.write_text(
+        yaml.safe_dump(
+            {
+                "automations": {},
+                "excluded_automations": {
+                    "example-auto": {
+                        "name": "Example Auto",
+                        "cwd": "cashtree/04-automations/distribution/example_auto",
+                        "reason": "Migration compatibility fixture.",
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = ValidationResult(root=root)
+    validate_automation_projection_registry(root, result)
+
+    assert not result.errors
+
+
 def test_project_work_item_validation_reports_invalid_yaml_without_crashing(
     tmp_path: Path,
 ) -> None:

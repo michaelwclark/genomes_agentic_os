@@ -29,6 +29,7 @@ from .scaffold import (
     automation_scaffold_content,
     claude_adapter,
     create_domain_structure,
+    domain_path,
     ensure_customer_update_contract,
     ensure_dir,
     ensure_schemas_dir,
@@ -637,13 +638,13 @@ def parse_bundle_item(item: Any, default_domain: str) -> tuple[str, str, str]:
 def create_customer_domain(root: Path, domain: str) -> CustomerResult:
     result = CustomerResult()
     create_domain_structure(root, domain, result, public_customer_tools=True)
-    ensure_customer_codex_layer(root / domain, "domain_or_lane", result)
+    ensure_customer_codex_layer(domain_path(root, domain), "domain_or_lane", result)
     return result
 
 
 def create_customer_workflow(root: Path, domain: str, lane: str, name: str) -> CustomerResult:
     result = create_customer_domain(root, domain)
-    workflow_root = root / domain / "03-workflows" / lane / name
+    workflow_root = domain_path(root, domain) / "03-workflows" / lane / name
     ensure_dir(workflow_root, result)
     ensure_dir(workflow_root / "examples", result)
     ensure_dir(workflow_root / "runs", result)
@@ -657,7 +658,7 @@ def create_customer_workflow(root: Path, domain: str, lane: str, name: str) -> C
 
 def create_customer_automation(root: Path, domain: str, lane: str, name: str) -> CustomerResult:
     result = create_customer_domain(root, domain)
-    automation_root = root / domain / "04-automations" / lane / name
+    automation_root = domain_path(root, domain) / "04-automations" / lane / name
     ensure_dir(automation_root, result)
     ensure_dir(automation_root / "logs", result)
     write_file_once(automation_root / "logs" / "README.md", automation_logs_readme(domain, lane, name), result)
@@ -781,7 +782,7 @@ def customer_validate(root: str | Path) -> dict[str, Any]:
             profile_warnings.append("customer.default_automations is empty")
         domain_result = ValidationResult(root=os_root)
         for domain in customer["approved_domains"]:
-            validate_domain(os_root / domain, domain_result)
+            validate_domain(domain_path(os_root, domain), domain_result)
         core_errors.extend(domain_result.errors)
         profile_warnings.extend(domain_result.warnings)
     profile_warnings.extend(private_term_warnings(os_root))
@@ -810,7 +811,7 @@ def scaffold_customer_brief(
     if not template_path.is_file():
         raise ValueError(f"client-automation-brief template is missing: {template_path}")
 
-    intake_dir = os_root / domain / "01-intake"
+    intake_dir = domain_path(os_root, domain) / "01-intake"
     intake_dir.mkdir(parents=True, exist_ok=True)
 
     brief_path = intake_dir / f"{name}-brief.md"
