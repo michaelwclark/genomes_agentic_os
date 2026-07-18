@@ -9,7 +9,9 @@ All producers use `append_run_queue_item`; all operator readers use the selected
 tasks, failures/dead letters, live workers, unhealthy workers, named queues,
 and worker pools. The supervisor claims a bounded concurrent batch: five
 background slots from six total, with one slot reserved for interactive Command
-Center work. Codex and Claude are capped at two each; non-LLM work is capped at
+Center work. `max_interactive_running` explicitly caps Command Center turns
+only in Execution Fabric mode, preserving legacy filesystem concurrency. Codex
+and Claude are capped at two each; non-LLM work is capped at
 four. Legacy shell-wrapped provider work is classified before routing, and
 detached quiet-run/watcher children retain the outer lease until they finish.
 Priority schedules are deduplicated and raised within the same batch instead of

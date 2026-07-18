@@ -14,7 +14,8 @@
       "required": ["global_max_running", "reserved_interactive_slots"],
       "properties": {
         "global_max_running": {"type": "integer", "minimum": 1},
-        "reserved_interactive_slots": {"type": "integer", "minimum": 0}
+        "reserved_interactive_slots": {"type": "integer", "minimum": 0},
+        "max_interactive_running": {"type": "integer", "minimum": 1}
       }
     },
     "queues": {

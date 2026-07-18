@@ -3,6 +3,7 @@ enabled: false
 admission:
   global_max_running: 6
   reserved_interactive_slots: 1
+  max_interactive_running: 1
 queues:
   - id: codex
     enabled: false

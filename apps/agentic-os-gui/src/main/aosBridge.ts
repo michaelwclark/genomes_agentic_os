@@ -48,6 +48,7 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     status: "unavailable" as const, queue_mode: "unknown", queue_depth: 0, running: 0,
     failed: 0, dead_letter: 0, active_workers: 0, unhealthy_workers: 0,
     reserved_interactive_slots: 1,
+    max_interactive_running: 1,
     queues: [], worker_pools: [], workers: [], tasks: [], task_count: 0,
     task_sample_count: 0, task_sample_limit: 200,
     captured_at: generatedAt,
@@ -73,6 +74,7 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     task_sample_count: Number.isInteger(native.runtime.task_sample_count) ? native.runtime.task_sample_count : (Array.isArray(native.runtime.tasks) ? native.runtime.tasks.length : 0),
     task_sample_limit: Number.isInteger(native.runtime.task_sample_limit) ? native.runtime.task_sample_limit : 200,
     captured_at: native.runtime.captured_at || generatedAt,
+    max_interactive_running: Number.isInteger(native.runtime.max_interactive_running) ? native.runtime.max_interactive_running : 1,
   } : fallbackRuntime;
   const launchedByOwnedId = new Map(
     Object.values(state.launchedSessions).map((session) => [`${session.harness}:${session.sessionId}`, session]),

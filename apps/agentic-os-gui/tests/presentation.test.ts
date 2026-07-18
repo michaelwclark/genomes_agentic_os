@@ -3,6 +3,7 @@ import {
   compactAge,
   filterConversations,
   formatMessageDate,
+  interactiveConcurrencyLimit,
   isActiveConversation,
   modelColor,
 } from "../src/shared/presentation";
@@ -48,5 +49,10 @@ describe("conversation presentation", () => {
   it("formats transcript timestamps for hover labels", () => {
     expect(formatMessageDate("2026-07-13T18:05:00Z")).toMatch(/^13\/07 \d{2}:\d{2} (am|pm)$/);
     expect(formatMessageDate()).toBe("Time unavailable");
+  });
+
+  it("caps interactive turns only when Execution Fabric is selected", () => {
+    expect(interactiveConcurrencyLimit(fixtureSnapshot.runtime)).toBe(1);
+    expect(interactiveConcurrencyLimit({ ...fixtureSnapshot.runtime, queue_mode: "filesystem" })).toBeUndefined();
   });
 });

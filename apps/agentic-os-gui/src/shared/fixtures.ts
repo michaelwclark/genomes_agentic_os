@@ -16,6 +16,7 @@ export const fixtureSnapshot: GuiSnapshot = {
     active_workers: 2,
     unhealthy_workers: 0,
     reserved_interactive_slots: 1,
+    max_interactive_running: 1,
     queues: [
       { queue_name: "codex", statuses: { queued: 2, running: 1 }, total: 3, depth: 2, running: 1, failed: 0, dead_letter: 0, max_concurrency: 2, max_queued: 100, enabled: true },
       { queue_name: "claude", statuses: { queued: 1 }, total: 1, depth: 1, running: 0, failed: 0, dead_letter: 0, max_concurrency: 2, max_queued: 100, enabled: true },

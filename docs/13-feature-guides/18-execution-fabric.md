@@ -80,6 +80,10 @@ must satisfy all of these limits before it changes a task from `queued` to
 - individual worker capacity and live worker lease;
 - task due time and task lease availability.
 
+`admission.max_interactive_running` separately caps native Command Center turns
+only while `execution_fabric` is selected. Filesystem mode retains the legacy
+uncapped cross-conversation behavior.
+
 At capacity, the task remains queued. Heartbeats extend worker and task leases.
 Expired work is requeued until its attempt budget is exhausted, then moves to a
 dead-letter state or configured dead-letter queue. Completion, retry,

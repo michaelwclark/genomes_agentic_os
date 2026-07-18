@@ -166,6 +166,7 @@ export interface RuntimeHealth {
   stale_queued?: number;
   expired_running_leases?: number;
   reserved_interactive_slots: number;
+  max_interactive_running: number;
   queues: RuntimeQueue[];
   worker_pools: RuntimeWorkerPool[];
   workers: RuntimeWorker[];

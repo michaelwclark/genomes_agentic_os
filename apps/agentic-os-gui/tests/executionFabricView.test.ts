@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { wrappedDialogFocusIndex } from "../src/renderer/components/ConversationList";
+import { snapshotFailureIsFatal } from "../src/renderer/App";
 import { ExecutionFabricView, filterRuntimeTasks, taskSampleSummary } from "../src/renderer/components/ExecutionFabricView";
 import { fixtureSnapshot } from "../src/shared/fixtures";
 
@@ -24,6 +25,13 @@ describe("Execution Fabric renderer behavior", () => {
     expect(wrappedDialogFocusIndex(0, 4, true)).toBe(3);
     expect(wrappedDialogFocusIndex(3, 4, false)).toBe(0);
     expect(wrappedDialogFocusIndex(1, 4, false)).toBeUndefined();
+    expect(wrappedDialogFocusIndex(-1, 4, false)).toBe(0);
+    expect(wrappedDialogFocusIndex(-1, 4, true)).toBe(3);
+  });
+
+  it("keeps refresh failures non-fatal once a good snapshot exists", () => {
+    expect(snapshotFailureIsFatal(false)).toBe(true);
+    expect(snapshotFailureIsFatal(true)).toBe(false);
   });
 
   it("renders accessible sampled filtering and a disabled refresh state", () => {
@@ -36,5 +44,8 @@ describe("Execution Fabric renderer behavior", () => {
     expect(markup).toContain("latest 2-task sample");
     expect(markup).toContain("Refreshing…");
     expect(markup).toContain("disabled");
+    expect(markup).toContain('value="blocked"');
+    expect(markup).toContain('value="skipped"');
+    expect(markup).toContain('value="dry-run"');
   });
 });

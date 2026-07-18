@@ -100,9 +100,11 @@ def _admission_metrics(root: Path) -> dict[str, int]:
         admission = {}
     global_max = int(admission.get("global_max_running") or 1)
     reserved = int(admission.get("reserved_interactive_slots") or 0)
+    max_interactive = int(admission.get("max_interactive_running") or max(1, reserved))
     return {
         "global_max_running": global_max,
         "reserved_interactive_slots": reserved,
+        "max_interactive_running": max_interactive,
         "background_max_running": max(1, global_max - reserved),
     }
 
@@ -432,6 +434,7 @@ def build_runtime_snapshot(
             "global_max_running": int(metrics.get("global_max_running") or 0),
             "background_max_running": int(metrics.get("background_max_running") or 0),
             "reserved_interactive_slots": int(metrics.get("reserved_interactive_slots") or 0),
+            "max_interactive_running": int(metrics.get("max_interactive_running") or 1),
         },
         "filters": {
             "queue_name": queue_name,

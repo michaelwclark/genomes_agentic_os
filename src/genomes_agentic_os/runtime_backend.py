@@ -140,6 +140,7 @@ def _configure_execution_fabric(root: str | Path, conn: sqlite3.Connection) -> d
     admission = queues_config.get("admission") or {}
     global_max = int(admission.get("global_max_running") or 1)
     reserved = int(admission.get("reserved_interactive_slots") or 0)
+    max_interactive = int(admission.get("max_interactive_running") or max(1, reserved))
     background_max = max(1, global_max - reserved)
     execution_fabric.configure_limit(conn, scope="global", key="*", max_concurrency=background_max)
     return {
@@ -147,6 +148,7 @@ def _configure_execution_fabric(root: str | Path, conn: sqlite3.Connection) -> d
         "worker_pools": configured_pools,
         "global_max_running": global_max,
         "reserved_interactive_slots": reserved,
+        "max_interactive_running": max_interactive,
         "background_max_running": background_max,
     }
 
@@ -369,12 +371,15 @@ def _queue_metrics_readonly(root: str | Path, mode: str) -> dict[str, Any]:
         admission = queue_config.get("admission") or {}
         global_max_running = int(admission.get("global_max_running") or 1)
         reserved_interactive_slots = int(admission.get("reserved_interactive_slots") or 0)
+        max_interactive_running = int(admission.get("max_interactive_running") or max(1, reserved_interactive_slots))
     except RuntimeBackendError:
         global_max_running = 1
         reserved_interactive_slots = 0
+        max_interactive_running = 1
     admission_metrics = {
         "global_max_running": global_max_running,
         "reserved_interactive_slots": reserved_interactive_slots,
+        "max_interactive_running": max_interactive_running,
         "background_max_running": max(1, global_max_running - reserved_interactive_slots),
     }
     if mode == FILESYSTEM_MODE:

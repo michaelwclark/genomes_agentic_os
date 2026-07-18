@@ -8,6 +8,7 @@ import { OperatorStateStore } from "./operatorState";
 import { SessionBroker } from "./sessionBroker";
 import { WatchCoordinator } from "./watch";
 import { IPC, type ConversationSummary, type GuiSnapshot, type StreamEvent } from "../shared/contracts";
+import { interactiveConcurrencyLimit } from "../shared/presentation";
 import {
   isAllowedExternalUrl,
   isConversationId,
@@ -246,7 +247,7 @@ function registerIpc(store: OperatorStateStore): void {
         bridge.invalidate();
         sendSnapshot(await bridge.snapshot(true));
       }
-    }, currentSnapshot.runtime.reserved_interactive_slots);
+    }, interactiveConcurrencyLimit(currentSnapshot.runtime));
     return result;
   });
   ipcMain.handle(IPC.cancelTurn, (_event, leaseId: unknown) => {

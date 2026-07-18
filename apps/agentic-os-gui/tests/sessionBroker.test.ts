@@ -138,4 +138,11 @@ describe("provider broker commands", () => {
     expect(blocked.message).toContain("Interactive capacity is full");
     first.emit("close", 0);
   });
+
+  it("preserves legacy cross-conversation concurrency when no fabric cap is supplied", () => {
+    const children = [new FakeChild(), new FakeChild()];
+    const broker = new SessionBroker((() => children.shift() as unknown as ChildProcessWithoutNullStreams) as unknown as typeof spawn);
+    expect(broker.send(request({ conversationId: "legacy-one" }), () => undefined).accepted).toBe(true);
+    expect(broker.send(request({ conversationId: "legacy-two" }), () => undefined).accepted).toBe(true);
+  });
 });

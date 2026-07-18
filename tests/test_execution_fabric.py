@@ -255,6 +255,7 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
     assert applied["metrics"]["worker_pool_count"] == 3
     assert applied["metrics"]["global_max_running"] == 6
     assert applied["metrics"]["reserved_interactive_slots"] == 1
+    assert applied["metrics"]["max_interactive_running"] == 1
     assert applied["metrics"]["background_max_running"] == 5
 
     conn = db.connect(db.default_db_path(root))

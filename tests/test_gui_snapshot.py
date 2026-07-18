@@ -266,6 +266,21 @@ def test_snapshot_joins_native_open_sets_and_validates_schema(tmp_path: Path) ->
     assert domain["projects"][0]["domain"] == "los"
 
 
+def test_gui_v1_schema_still_accepts_legacy_snapshot_without_runtime(tmp_path: Path) -> None:
+    fixture = make_gui_fixture(tmp_path)
+    snapshot = build_gui_snapshot(
+        fixture["root"],
+        codex_home=fixture["codex_home"],
+        claude_home=fixture["claude_home"],
+        claude_desktop_root=fixture["claude_desktop"],
+        now=NOW,
+    )
+    snapshot.pop("runtime")
+    schema = json.loads((Path(__file__).parents[1] / "schemas" / "gui-snapshot.schema.json").read_text(encoding="utf-8"))
+
+    jsonschema.validate(snapshot, schema)
+
+
 def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path: Path) -> None:
     fixture = make_gui_fixture(tmp_path)
     runtime_init(fixture["root"])
@@ -296,6 +311,7 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["tasks"][0]["id"] == "gui-codex"
     assert snapshot["runtime"]["tasks"][0]["queue_name"] == "codex"
     assert snapshot["runtime"]["captured_at"]
+    assert snapshot["runtime"]["max_interactive_running"] == 1
     assert snapshot["runtime"]["workers"] == []
 
 

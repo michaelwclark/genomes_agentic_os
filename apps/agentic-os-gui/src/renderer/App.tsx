@@ -12,6 +12,10 @@ interface WorkspaceTab {
 
 type PaletteMode = "commands" | "search";
 
+export function snapshotFailureIsFatal(hasSnapshot: boolean): boolean {
+  return !hasSnapshot;
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<GuiSnapshot>();
   const [uiConfig, setUiConfig] = useState<UiConfig>({ displayName: "Command Center", operatorLabel: "Operator" });
@@ -24,6 +28,7 @@ export function App() {
   const [streamEvents, setStreamEvents] = useState<StreamEvent[]>([]);
   const [leaseId, setLeaseId] = useState<string>();
   const [fatalError, setFatalError] = useState<string>();
+  const [snapshotRefreshFailed, setSnapshotRefreshFailed] = useState(false);
   const [snapshotRefreshing, setSnapshotRefreshing] = useState(false);
   const [navVisible, setNavVisible] = useState(true);
   const [metadataVisible, setMetadataVisible] = useState(true);
@@ -31,6 +36,7 @@ export function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const nextTabKey = useRef(1);
   const snapshotRequest = useRef(0);
+  const snapshotRef = useRef<GuiSnapshot | undefined>(undefined);
 
   const selectedId = tabs.find((tab) => tab.key === selectedTabKey)?.conversationId;
   const refreshSnapshot = useCallback(async () => {
@@ -38,9 +44,17 @@ export function App() {
     setSnapshotRefreshing(true);
     try {
       const next = await window.agenticOS.getSnapshot();
-      if (request === snapshotRequest.current) setSnapshot(next);
+      if (request === snapshotRequest.current) {
+        snapshotRef.current = next;
+        setFatalError(undefined);
+        setSnapshotRefreshFailed(false);
+        setSnapshot(next);
+      }
     } catch (error) {
-      if (request === snapshotRequest.current) setFatalError(String(error));
+      if (request === snapshotRequest.current) {
+        if (snapshotFailureIsFatal(Boolean(snapshotRef.current))) setFatalError(String(error));
+        else setSnapshotRefreshFailed(true);
+      }
     } finally {
       if (request === snapshotRequest.current) setSnapshotRefreshing(false);
     }
@@ -51,6 +65,9 @@ export function App() {
     void window.agenticOS.getUiConfig().then(setUiConfig).catch(() => undefined);
     return window.agenticOS.onSnapshotChanged((next) => {
       snapshotRequest.current += 1;
+      snapshotRef.current = next;
+      setFatalError(undefined);
+      setSnapshotRefreshFailed(false);
       setSnapshotRefreshing(false);
       setSnapshot(next);
     });
@@ -186,11 +203,12 @@ export function App() {
     { label: "Open Archive", shortcut: "", run: () => setScope({ view: "archive" }) },
   ].filter((command) => command.label.toLocaleLowerCase().includes(paletteQuery.toLocaleLowerCase()));
 
-  if (fatalError) return <div className="fatal"><strong>Command Center could not start</strong><span>{fatalError}</span><code>AOS_GUI_FIXTURE=1 pnpm dev</code></div>;
+  if (fatalError && !snapshot) return <div className="fatal"><strong>Command Center could not start</strong><span>{fatalError}</span><code>AOS_GUI_FIXTURE=1 pnpm dev</code></div>;
   if (!snapshot) return <div className="boot"><span className="boot-mark">AOS</span><strong>Loading the local operating system…</strong></div>;
 
   return (
     <div className="app-shell" data-nav-visible={navVisible}>
+      {snapshotRefreshFailed && <div className="snapshot-warning" role="status">Snapshot refresh failed. Showing the last known state.</div>}
       {navVisible && <ScopeTree displayName={uiConfig.displayName} domains={snapshot.navigation.domains} selected={scope} counts={counts} onSelect={(next) => { setScope(next); setQuery(""); }} />}
       <ConversationList
         conversations={conversations}

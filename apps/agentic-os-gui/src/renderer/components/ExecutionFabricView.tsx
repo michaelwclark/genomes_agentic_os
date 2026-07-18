@@ -8,7 +8,7 @@ interface ExecutionFabricViewProps {
 }
 
 const taskLabel = (task: RuntimeTask) => task.id;
-const statuses = ["all", "queued", "approval-needed", "running", "failed", "dead-letter", "done", "cancelled"];
+const statuses = ["all", "dry-run", "queued", "approval-needed", "running", "blocked", "done", "failed", "skipped", "cancelled", "dead-letter"];
 
 export function filterRuntimeTasks(tasks: RuntimeTask[], queue: string, status: string, query: string): RuntimeTask[] {
   return tasks.filter((task) => {

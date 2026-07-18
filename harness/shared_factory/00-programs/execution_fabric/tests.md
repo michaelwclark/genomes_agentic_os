@@ -27,6 +27,8 @@
   concurrent receipt writers use unique atomic sibling files.
 - Command Center uses the same snapshot contract for detailed named-queue,
   worker-pool, worker, and explicitly sample-scoped filtered task views.
+- The explicit interactive cap applies only in Execution Fabric mode;
+  filesystem mode preserves legacy cross-conversation concurrency.
 - An unhealthy report creates one idempotent Codex self-heal task and one
   deduplicated governed notification; the Codex repair remains directly leased
   for its entire run.

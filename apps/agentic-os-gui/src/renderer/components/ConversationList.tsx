@@ -18,6 +18,7 @@ interface Props {
 
 export function wrappedDialogFocusIndex(activeIndex: number, count: number, shift: boolean): number | undefined {
   if (count < 1) return undefined;
+  if (activeIndex < 0) return shift ? count - 1 : 0;
   if (shift && activeIndex === 0) return count - 1;
   if (!shift && activeIndex === count - 1) return 0;
   return undefined;
@@ -71,7 +72,7 @@ export function ConversationList({ conversations, selectedId, query, generatedAt
           <div><dt>Queued</dt><dd>{runtime.queue_depth}</dd></div>
           <div><dt>Running</dt><dd>{runtime.running}</dd></div>
           <div><dt>Workers</dt><dd>{runtime.active_workers}</dd></div>
-          <div><dt>Interactive</dt><dd>{runtime.reserved_interactive_slots}</dd></div>
+          <div><dt>Interactive max</dt><dd>{runtime.queue_mode === "execution_fabric" ? runtime.max_interactive_running : "legacy"}</dd></div>
           <div><dt>Failed</dt><dd>{runtime.failed + runtime.dead_letter}</dd></div>
         </dl>
         <button ref={detailsButton} type="button" className="runtime-detail-button" onClick={() => setRuntimeOpen(true)}>Details</button>

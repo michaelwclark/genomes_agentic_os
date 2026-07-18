@@ -9,7 +9,6 @@
     "root",
     "summary",
     "navigation",
-    "runtime",
     "conversations",
     "diagnostics"
   ],
@@ -55,6 +54,7 @@
         "stale_queued": {"type": "integer", "minimum": 0},
         "expired_running_leases": {"type": "integer", "minimum": 0},
         "reserved_interactive_slots": {"type": "integer", "minimum": 1},
+        "max_interactive_running": {"type": "integer", "minimum": 1},
         "queues": {"type": "array"},
         "worker_pools": {"type": "array"},
         "workers": {"type": "array"},
