@@ -153,6 +153,79 @@ def test_work_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert (root / work_items.ACTIVE_NOW_RELATIVE).is_file()
 
 
+def test_work_path_prefix_migration_is_dry_run_then_atomic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    conn = db.connect(db.default_db_path(root))
+    try:
+        work_items.upsert(
+            conn,
+            item_id="los:django:one",
+            title="One",
+            domain="los",
+            project="django",
+            source_system="legacy-filesystem",
+            source_key="los/02-projects/django/work-items/01-intake/one",
+            packet_path="los/02-projects/django/work-items/01-intake/one",
+        )
+        work_items.upsert(
+            conn,
+            item_id="personal:one",
+            title="Personal",
+            domain="personal",
+            source_system="local-registry",
+            source_key="personal/one",
+        )
+    finally:
+        conn.close()
+
+    args = [
+        "work",
+        "migrate-path-prefix",
+        "--root",
+        str(root),
+        "--from-prefix",
+        "los/",
+        "--to-prefix",
+        "domains/los/",
+        "--domain",
+        "los",
+    ]
+    assert main(args) == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["dry_run"] is True
+    assert planned["item_count"] == 1
+    assert planned["field_count"] == 2
+
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert work_items.get(conn, "los:django:one")["packet_path"].startswith("los/")
+    finally:
+        conn.close()
+
+    assert main([*args, "--apply", "--receipt", "receipt://domain-move"]) == 0
+    migrated = json.loads(capsys.readouterr().out)
+    assert migrated["status"] == "migrated"
+    assert migrated["projection"]["active_count"] == 0
+
+    conn = db.connect(db.default_db_path(root))
+    try:
+        item = work_items.get(conn, "los:django:one")
+        assert item["source_key"].startswith("domains/los/")
+        assert item["packet_path"].startswith("domains/los/")
+        assert work_items.get(conn, "personal:one")["source_key"] == "personal/one"
+        history = conn.execute(
+            "SELECT metadata_json FROM work_item_history "
+            "WHERE work_item_id = ? ORDER BY id DESC LIMIT 1",
+            ("los:django:one",),
+        ).fetchone()
+        assert "path_prefix_migration" in json.loads(history[0])
+    finally:
+        conn.close()
+
+
 def test_global_active_container_uses_state_after_projection_opt_in(tmp_path: Path) -> None:
     root = tmp_path / "os"
     project = root / "los/02-projects/django"

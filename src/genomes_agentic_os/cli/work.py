@@ -136,6 +136,27 @@ def handle_import_legacy(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_migrate_path_prefix(args: argparse.Namespace) -> int:
+    root, db_path = _paths(args)
+    conn = connect(db_path)
+    try:
+        result = work_items.migrate_path_prefix(
+            conn,
+            from_prefix=args.from_prefix,
+            to_prefix=args.to_prefix,
+            domain=args.domain,
+            dry_run=not args.apply,
+            actor=args.actor,
+            receipt_ref=args.receipt,
+        )
+        if args.apply:
+            result["projection"] = work_items.write_active_projection(conn, root)
+    finally:
+        conn.close()
+    _print(result)
+    return 0
+
+
 def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", default="~/agentic_os")
     parser.add_argument("--db")
@@ -214,3 +235,16 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _common(import_parser)
     import_parser.add_argument("--apply", action="store_true")
     import_parser.set_defaults(handler=handle_import_legacy)
+
+    migrate_parser = commands.add_parser(
+        "migrate-path-prefix",
+        help="Plan or atomically migrate path prefixes in canonical work state.",
+    )
+    _common(migrate_parser)
+    migrate_parser.add_argument("--from-prefix", required=True)
+    migrate_parser.add_argument("--to-prefix", required=True)
+    migrate_parser.add_argument("--domain")
+    migrate_parser.add_argument("--actor", default="agentic-os")
+    migrate_parser.add_argument("--receipt")
+    migrate_parser.add_argument("--apply", action="store_true")
+    migrate_parser.set_defaults(handler=handle_migrate_path_prefix)

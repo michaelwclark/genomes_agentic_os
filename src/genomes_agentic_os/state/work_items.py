@@ -359,6 +359,92 @@ def query(
     return [_row(row) or {} for row in rows]
 
 
+def migrate_path_prefix(
+    conn: sqlite3.Connection,
+    *,
+    from_prefix: str,
+    to_prefix: str,
+    domain: str | None = None,
+    dry_run: bool = True,
+    actor: str = "agentic-os",
+    receipt_ref: str | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Plan or atomically migrate canonical path-bearing work-item fields."""
+
+    old_prefix = str(from_prefix or "").strip()
+    new_prefix = str(to_prefix or "").strip()
+    if not old_prefix or not new_prefix:
+        raise WorkItemError("both path prefixes are required")
+    if old_prefix == new_prefix:
+        raise WorkItemError("path prefixes must differ")
+    normalized_domain = _identifier(domain, "domain") if domain else None
+    rows = query(conn, domain=normalized_domain, limit=1_000_000)
+    changes: list[dict[str, Any]] = []
+    path_fields = ("source_key", "packet_path", "worktree_path")
+    for item in rows:
+        field_changes: dict[str, dict[str, str]] = {}
+        for field in path_fields:
+            current = item.get(field)
+            if not isinstance(current, str) or not current.startswith(old_prefix):
+                continue
+            field_changes[field] = {
+                "from": current,
+                "to": f"{new_prefix}{current[len(old_prefix):]}",
+            }
+        if field_changes:
+            changes.append({"id": item["id"], "fields": field_changes})
+
+    result = {
+        "api_version": "agentic-os-work-path-migration/v1",
+        "status": "planned" if dry_run else "migrated",
+        "dry_run": dry_run,
+        "from_prefix": old_prefix,
+        "to_prefix": new_prefix,
+        "domain": normalized_domain,
+        "item_count": len(changes),
+        "field_count": sum(len(change["fields"]) for change in changes),
+        "changes": changes,
+    }
+    if dry_run or not changes:
+        return result
+
+    timestamp = now or utc_now_iso()
+    with transaction(conn):
+        for change in changes:
+            assignments = ", ".join(
+                f"{field} = ?" for field in change["fields"]
+            )
+            values = [details["to"] for details in change["fields"].values()]
+            conn.execute(
+                f"UPDATE work_items SET {assignments}, updated_at = ? WHERE id = ?",
+                (*values, timestamp, change["id"]),
+            )
+            current = get(conn, change["id"]) or {}
+            conn.execute(
+                """
+                INSERT INTO work_item_history (
+                    work_item_id, changed_at, actor, from_state, to_state,
+                    from_attention, to_attention, summary, receipt_ref,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    change["id"],
+                    timestamp,
+                    actor,
+                    current.get("state"),
+                    current.get("state"),
+                    current.get("attention"),
+                    current.get("attention"),
+                    f"Migrated path prefix {old_prefix!r} to {new_prefix!r}.",
+                    _optional(receipt_ref),
+                    _json_mapping({"path_prefix_migration": change["fields"]}),
+                ),
+            )
+    return result
+
+
 def active_now(conn: sqlite3.Connection, *, stale_hours: int = 72) -> dict[str, Any]:
     rows = conn.execute(
         "SELECT * FROM active_now ORDER BY priority DESC, updated_at DESC, id"
