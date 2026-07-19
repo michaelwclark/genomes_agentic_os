@@ -375,7 +375,15 @@ agentic-os project src acme launch --root ~/agentic_os
 Both forms write `acme/02-projects/launch/src`; they do not create a root-level
 `~/agentic_os/projects` link.
 
-To make an active branch checkout visible from the project folder:
+For a code project in any domain, create a dated isolated worktree from the
+repository configured in `config/development.yml`:
+
+```bash
+agentic-os project worktree create acme launch --root ~/agentic_os --branch feature/launch-dashboard
+```
+
+The project can override the physical directory and date-prefix behavior in
+that same file. To make an existing checkout visible from the project folder:
 
 ```bash
 agentic-os project worktree add acme launch feature_123 --root ~/agentic_os --path ~/worktrees/launch-feature-123

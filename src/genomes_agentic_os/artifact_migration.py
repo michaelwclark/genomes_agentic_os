@@ -32,7 +32,7 @@ from .long_running import (
     atomic_json as _atomic_json,
     utc_now as _utc_now,
 )
-from .scaffold import expand_path
+from .scaffold import expand_path, load_project_code_settings, project_worktree_naming_policy
 from .state import work_items as state_work_items
 from .state.db import connect, default_db_path
 
@@ -252,6 +252,12 @@ def build_artifact_naming_plan(root: str | Path) -> dict[str, Any]:
 
         worktree_root = project / "worktrees"
         if worktree_root.is_dir():
+            worktree_policy = project_worktree_naming_policy(
+                os_root,
+                load_project_code_settings(project),
+            )
+            if not worktree_policy.enabled_for("worktrees"):
+                continue
             index_data: dict[str, Any] = {}
             index_path = worktree_root / "index.yml"
             if index_path.is_file():
@@ -269,7 +275,7 @@ def build_artifact_naming_plan(root: str | Path) -> dict[str, Any]:
                     "closed.yml",
                 } or checkout.name.startswith("."):
                     continue
-                if has_date_prefix(checkout.name, policy):
+                if has_date_prefix(checkout.name, worktree_policy):
                     continue
                 entry = registered.get(checkout.name, {})
                 when = parse_timestamp(
@@ -279,7 +285,7 @@ def build_artifact_naming_plan(root: str | Path) -> dict[str, Any]:
                     dated_name(
                         checkout.name,
                         when=when,
-                        policy=policy,
+                        policy=worktree_policy,
                         scope="worktrees",
                         force=True,
                     )

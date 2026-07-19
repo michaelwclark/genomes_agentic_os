@@ -376,7 +376,7 @@ def register(subparsers) -> None:
     project_worktree_add.add_argument("--force", action="store_true", help="Replace an existing worktree symlink that points elsewhere.")
     project_worktree_add.set_defaults(handler=handle_project_worktree_add)
     project_worktree_create = project_worktree_subparsers.add_parser(
-        "create", help="Create an in-place git worktree under the project worktrees directory and register it."
+        "create", help="Create a git worktree using the project's code settings and register it."
     )
     project_worktree_create.add_argument("domain")
     project_worktree_create.add_argument("project")
@@ -386,7 +386,10 @@ def register(subparsers) -> None:
         default=None,
         help="Worktree directory name; defaults to the branch name with slashes replaced by hyphens.",
     )
-    project_worktree_create.add_argument("--repo", required=True, help="Existing local git repository to create the worktree from.")
+    project_worktree_create.add_argument(
+        "--repo",
+        help="Existing local git repository; defaults to config/development.yml repository.root.",
+    )
     project_worktree_create.add_argument("--branch", required=True, help="Branch to check out; created from HEAD when it does not exist.")
     project_worktree_create.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_create.set_defaults(handler=handle_project_worktree_create)

@@ -92,7 +92,7 @@ path you type after `agentic-os`; the description is verbatim from `--help`.
 | `project worktree` | Manage visible project worktree links. |
 | `project worktree add` | Register a project-visible worktree. |
 | `project worktree cleanup-closed` | Close registered worktrees whose cached Jira status or PR state is terminal. |
-| `project worktree create` | Create an in-place git worktree under the project worktrees directory and register it. |
+| `project worktree create` | Create and register a git worktree using `config/development.yml`; the configured repository, directory, and inherited date-prefix policy apply in every domain. |
 
 ### Specs — `cli/spec.py`
 

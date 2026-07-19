@@ -23,7 +23,15 @@ import yaml
 
 from .artifact_naming import dated_name, load_artifact_naming_policy
 from .lifecycle import create_project_work_item
-from .scaffold import domain_path, expand_path, normalize_domain, register_project_worktree, validate_name
+from .scaffold import (
+    domain_path,
+    expand_path,
+    normalize_domain,
+    project_worktree_naming_policy,
+    project_worktree_root,
+    register_project_worktree,
+    validate_name,
+)
 
 
 PROFILE_VERSION = 1
@@ -123,7 +131,11 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
             "enabled": True,
             "tracker": {"primary": "filesystem"},
             "repository": {"root": sources.get("repo"), "base_branch": "main"},
-            "worktrees": {"directory": "worktrees", "branch_template": "feature/{ticket}-{slug}"},
+            "worktrees": {
+                "directory": "worktrees",
+                "branch_template": "feature/{ticket}-{slug}",
+                "date_prefix": "inherit",
+            },
             "work_items": {"active_status": "building"},
             "validation": {
                 "commands": [],
@@ -168,6 +180,7 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
         "worktrees": {
             "directory": "worktrees",
             "branch_template": branch_template,
+            "date_prefix": "inherit",
         },
         "work_items": {"active_status": "building"},
         "validation": {
@@ -214,6 +227,12 @@ def validate_profile(profile: Mapping[str, Any]) -> list[str]:
     if not isinstance(validation.get("commands", []), list):
         errors.append("validation.commands must be a list")
     worktrees = profile.get("worktrees") if isinstance(profile.get("worktrees"), Mapping) else {}
+    date_prefix = worktrees.get("date_prefix", "inherit")
+    if date_prefix != "inherit" and not isinstance(date_prefix, bool):
+        errors.append("worktrees.date_prefix must be 'inherit', true, or false")
+    directory = worktrees.get("directory")
+    if not isinstance(directory, str) or not directory.strip():
+        errors.append("worktrees.directory must be a non-empty path")
     template = str(worktrees.get("branch_template") or "")
     try:
         template.format(ticket="ticket", slug="slug")
@@ -450,10 +469,10 @@ def create_isolated_worktree(
     name = dated_name(
         name,
         when=datetime.now(timezone.utc),
-        policy=load_artifact_naming_policy(os_root),
+        policy=project_worktree_naming_policy(os_root, {"worktrees": dict(worktrees)}),
         scope="worktrees",
     )
-    destination = project_path / str(worktrees.get("directory") or "worktrees") / name
+    destination = project_worktree_root(project_path, {"worktrees": dict(worktrees)}) / name
     branch = _task_branch(str(worktrees.get("branch_template") or "feature/{ticket}-{slug}"), ticket, _slug(title))
     fetched = runner(["git", "-C", str(repo), "fetch", "origin", base])
     if fetched.returncode != 0:

@@ -113,7 +113,8 @@ request string — useful when you already know the target.
 
 `here context build` can also route from a linked project source checkout or a
 registered worktree target. Canonical repositories come from
-`project.yml:sources.repo`; branch checkouts come from
+`config/development.yml:repository.root` with `project.yml:sources.repo` as a
+compatibility fallback; branch checkouts come from
 `worktrees/index.yml`, maintained by `agentic-os project worktree add`.
 
 ---

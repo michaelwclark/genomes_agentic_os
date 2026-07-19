@@ -215,7 +215,10 @@ around a repository. It is the local control surface for that project:
 ```
 
 Use `agentic-os project onboard <domain> <project>` to repair this surface for
-an existing project. Use `agentic-os project worktree add <domain> <project>
+an existing project. For code projects in any domain,
+`config/development.yml` is the canonical repository/worktree settings file and
+`agentic-os project worktree create <domain> <project> --branch <branch>` uses
+its defaults. Use `agentic-os project worktree add <domain> <project>
 <name> --path <path>` to make a branch checkout visible without moving it into
 the OS.
 

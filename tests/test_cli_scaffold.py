@@ -2020,6 +2020,7 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert development["repository"]["root"] == str(repo)
     assert development["worktrees"]["directory"] == "worktrees"
     assert development["worktrees"]["branch_template"] == "feature/{ticket}-{slug}"
+    assert development["worktrees"]["date_prefix"] == "inherit"
     assert development["merge"]["policy"] == "never_auto"
     assert (project_root / "config.toml").is_file()
     assert (project_root / "AGENTS.md").is_file()
@@ -2098,6 +2099,8 @@ def test_project_link_source_adds_src_and_repo_metadata(tmp_path: Path) -> None:
     assert (project_root / "src").resolve() == repo.resolve()
     assert f"repo: {repo}" in (project_root / "project.yml").read_text(encoding="utf-8")
     assert f"| Repo | {repo} |" in (project_root / "source-map.md").read_text(encoding="utf-8")
+    code_settings = yaml.safe_load((project_root / "config" / "development.yml").read_text(encoding="utf-8"))
+    assert code_settings["repository"]["root"] == str(repo)
     assert validate_root(root).ok
 
 
@@ -2145,13 +2148,23 @@ def test_project_onboard_repairs_project_config_ideas_and_worktrees(tmp_path: Pa
 
     assert main(["project", "create", "los", "repairable_project", "--root", str(root)]) == 0
     project_root = root / "los" / "02-projects" / "repairable_project"
+    repo = tmp_path / "repairable-source"
+    repo.mkdir()
+    (project_root / "src").symlink_to(repo, target_is_directory=True)
     (project_root / "config" / "tools.yml").unlink()
+    development_path = project_root / "config" / "development.yml"
+    development = yaml.safe_load(development_path.read_text(encoding="utf-8"))
+    development["worktrees"].pop("date_prefix")
+    development_path.write_text(yaml.safe_dump(development, sort_keys=False), encoding="utf-8")
     (project_root / "ideas" / "raw-ideas.md").unlink()
     (project_root / "worktrees" / "index.yml").unlink()
 
     assert main(["project", "onboard", "los", "repairable_project", "--root", str(root)]) == 0
 
     assert (project_root / "config" / "tools.yml").is_file()
+    repaired_development = yaml.safe_load(development_path.read_text(encoding="utf-8"))
+    assert repaired_development["worktrees"]["date_prefix"] == "inherit"
+    assert repaired_development["repository"]["root"] == str(repo.resolve())
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert (project_root / "worktrees" / "index.yml").is_file()
@@ -2645,6 +2658,114 @@ def test_project_worktree_create_cli_runs_real_git(tmp_path: Path) -> None:
     assert config["worktrees"]["link_policy"] == "in_place_worktree"
     result = validate_root(root)
     assert result.ok, result.errors
+
+
+def test_project_worktree_create_uses_code_settings_in_any_domain(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+            "-q",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    assert main(["project", "create", "cashtree", "web_app", "--repo", str(repo), "--root", str(root)]) == 0
+
+    assert (
+        main(
+            [
+                "project",
+                "worktree",
+                "create",
+                "cashtree",
+                "web_app",
+                "--branch",
+                "feature/cashflow-dashboard",
+                "--root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+
+    project_root = domain_root(root, "cashtree") / "02-projects" / "web_app"
+    checkout = dated_child(project_root / "worktrees", "feature-cashflow-dashboard")
+    assert checkout.is_dir()
+    assert not checkout.is_symlink()
+    assert validate_root(root).ok
+
+
+def test_project_worktree_code_settings_override_directory_and_date_prefix(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+            "-q",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    assert main(["project", "create", "personal", "notes_app", "--repo", str(repo), "--root", str(root)]) == 0
+    project_root = domain_root(root, "personal") / "02-projects" / "notes_app"
+    settings_path = project_root / "config" / "development.yml"
+    settings = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    external_root = tmp_path / "personal-code-worktrees"
+    settings["worktrees"]["directory"] = str(external_root)
+    settings["worktrees"]["date_prefix"] = False
+    settings_path.write_text(yaml.safe_dump(settings, sort_keys=False), encoding="utf-8")
+
+    create_project_worktree(root, "personal", "notes_app", repo=None, branch="feature/plain-name")
+
+    checkout = external_root / "feature-plain-name"
+    visible = project_root / "worktrees" / "feature-plain-name"
+    assert checkout.is_dir()
+    assert visible.is_symlink()
+    assert visible.resolve() == checkout.resolve()
+    index = yaml.safe_load((project_root / "worktrees" / "index.yml").read_text(encoding="utf-8"))
+    assert index["worktrees"][0]["link_policy"] == "symlink_to_external_worktree"
+    assert validate_root(root).ok
+
+
+def test_validate_rejects_invalid_project_worktree_date_prefix_override(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "clarks_consulting", "site", "--root", str(root)]) == 0
+    project_root = domain_root(root, "clarks_consulting") / "02-projects" / "site"
+    settings_path = project_root / "config" / "development.yml"
+    settings = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    settings["worktrees"]["date_prefix"] = "sometimes"
+    settings_path.write_text(yaml.safe_dump(settings, sort_keys=False), encoding="utf-8")
+
+    result = validate_root(root)
+
+    assert not result.ok
+    assert any("worktrees.date_prefix" in error for error in result.errors)
 
 
 def test_project_worktree_create_derives_name_from_branch(tmp_path: Path) -> None:

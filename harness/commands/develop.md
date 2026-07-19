@@ -13,7 +13,9 @@ agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 agentic-os develop status <run-dir>
 ```
 
-Project behavior comes from `config/development.yml`. The program contract and
+Project behavior comes from `config/development.yml`, the canonical code
+settings file for projects in every domain. Repository, base branch, worktree
+directory, branch template, and date-prefix inheritance are configured there. The program contract and
 five complete workflow specifications live in
 `harness/shared_factory/00-programs/development_delivery/` and
 `harness/shared_factory/04-workflows/development_delivery/`.

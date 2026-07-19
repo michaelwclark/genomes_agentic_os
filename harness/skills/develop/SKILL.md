@@ -10,7 +10,9 @@ input is one ticket or a bounded list.
 
 ## Start
 
-1. Read the routed project contract and `config/development.yml`.
+1. Read the routed project contract and `config/development.yml`, the canonical
+   code settings file for projects in every domain. Worktree names inherit the
+   OS date-prefix policy unless `worktrees.date_prefix` overrides it.
 2. Read `harness/shared_factory/00-programs/development_delivery/program.md` and
    `components.yml`.
 3. Start or resume with:
@@ -25,8 +27,9 @@ agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 
 ## Non-negotiable gates
 
-- One active work item and one task-owned worktree under configured project
-  `worktrees/` per ticket; never implement in the shared checkout.
+- One active work item and one task-owned worktree under the directory configured
+  by `worktrees.directory` per ticket; every worktree must remain visible through
+  the project `worktrees/` registry. Never implement in the shared checkout.
 - Verify the tracker claim and grooming/context decision before coding.
 - Document non-obvious invariants, failure behavior, and recovery decisions in
   code and the work item.

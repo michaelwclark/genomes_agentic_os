@@ -290,6 +290,45 @@ def test_migration_respects_disabled_policy(tmp_path: Path) -> None:
     assert build_artifact_naming_plan(root)["move_count"] == 0
 
 
+def test_migration_respects_project_worktree_date_prefix_override(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    (root / "harness/config").mkdir(parents=True)
+    (root / "harness/config/artifact-naming.yml").write_text(
+        render_default_artifact_naming_config(), encoding="utf-8"
+    )
+    disabled = root / "domains/acme/projects/disabled_app"
+    inherited = root / "domains/acme/projects/inherited_app"
+    for project, override in ((disabled, False), (inherited, "inherit")):
+        (project / "config").mkdir(parents=True)
+        (project / "config/development.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "enabled": True,
+                    "repository": {"root": "", "base_branch": "main"},
+                    "worktrees": {
+                        "directory": "worktrees",
+                        "branch_template": "feature/{ticket}-{slug}",
+                        "date_prefix": override,
+                    },
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        checkout = project / "worktrees/feature-x"
+        checkout.mkdir(parents=True)
+        (project / "worktrees/index.yml").write_text(
+            yaml.safe_dump({"project": project.name, "worktrees": []}),
+            encoding="utf-8",
+        )
+
+    plan = build_artifact_naming_plan(root)
+
+    worktree_moves = [move for move in plan["moves"] if move["kind"] == "worktree"]
+    assert len(worktree_moves) == 1
+    assert worktree_moves[0]["source"] == str(inherited / "worktrees/feature-x")
+
+
 def test_restore_reverses_names_references_and_state(tmp_path: Path) -> None:
     root, packet = _legacy_root(tmp_path)
     readonly = packet / "artifacts/pr-branch-work/repo/.git/objects/aa/object"
