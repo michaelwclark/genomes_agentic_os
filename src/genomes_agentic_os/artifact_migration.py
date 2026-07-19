@@ -325,8 +325,10 @@ def build_artifact_naming_plan(root: str | Path) -> dict[str, Any]:
         sorted(conversation_roots) if policy.enabled_for("conversation_logs") else []
     ):
         for source_before_parent_move in sorted(conversation_root.iterdir()):
-            if not source_before_parent_move.is_file() or has_date_prefix(
-                source_before_parent_move.name, policy
+            if (
+                not source_before_parent_move.is_file()
+                or source_before_parent_move.name == "README.md"
+                or has_date_prefix(source_before_parent_move.name, policy)
             ):
                 continue
             when = legacy_date_from_name(

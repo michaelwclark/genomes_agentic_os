@@ -42,6 +42,9 @@ def _legacy_root(tmp_path: Path) -> tuple[Path, Path]:
         ),
         encoding="utf-8",
     )
+    (conversations / "README.md").write_text(
+        "# Conversation logs\n", encoding="utf-8"
+    )
     (conversations / "2026_01_02_old_item.jsonl").write_text("{}\n", encoding="utf-8")
     closeout = packet / "artifacts/thread-closeouts/stale_001_old_item_20260102T030405Z"
     closeout.mkdir(parents=True)
@@ -105,6 +108,7 @@ def test_migration_moves_entities_rewrites_registries_and_is_idempotent(
     assert plan["counts"]["work_item"] == 1
     assert plan["counts"]["worktree"] == 1
     assert plan["counts"]["conversation_log"] == 1
+    assert all(not move["source"].endswith("/logs/conversations/README.md") for move in plan["moves"])
     assert plan["counts"]["thread_closeout"] == 1
     assert plan["counts"]["async_run"] == 1
     assert plan["counts"]["run_log"] == 1
@@ -114,6 +118,7 @@ def test_migration_moves_entities_rewrites_registries_and_is_idempotent(
     migrated_packet = packet.with_name("010226-001_old_item")
     assert migrated_packet.is_dir()
     assert (migrated_packet / "logs/conversations/010226-old_item.jsonl").is_file()
+    assert (migrated_packet / "logs/conversations/README.md").is_file()
     assert (
         migrated_packet / "artifacts/thread-closeouts/010226-stale_001_old_item-030405Z"
     ).is_dir()
