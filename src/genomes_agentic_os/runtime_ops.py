@@ -2492,6 +2492,13 @@ def _run_quiet_run_script(
         return result
 
     state_path = Path(state_line.removeprefix("state=")).expanduser()
+    if not state_path.is_absolute():
+        # agentic-os-quiet-run reports paths relative to its working directory.
+        # Runtime dispatch always launches it from the installed OS root, so
+        # resolve the receipt from that same root instead of the supervisor's
+        # process cwd (LaunchAgents commonly start in "/").
+        state_path = root / state_path
+    state_path = state_path.resolve()
     deadline = time.monotonic() + timeout_seconds
     state: dict[str, Any] = {}
     terminal = {"success", "failure", "timeout", "error", "stale"}
