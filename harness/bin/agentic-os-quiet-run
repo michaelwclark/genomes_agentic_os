@@ -55,7 +55,7 @@ def main() -> None:
             [sys.executable, "-m", "genomes_agentic_os.cli", "long-run", *sys.argv[1:]],
         )
     configured = os.environ.get("AGENTIC_OS_CLI")
-    installed = Path("/Users/genome/.local/bin/agentic-os-source")
+    installed = Path.home() / ".local/bin/agentic-os-source"
     if configured:
         cli = Path(configured).expanduser()
     elif installed.is_file() and os.access(installed, os.X_OK):
