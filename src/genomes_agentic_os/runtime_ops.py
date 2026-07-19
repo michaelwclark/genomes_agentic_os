@@ -1678,9 +1678,32 @@ def _runtime_subprocess_env(root: Path) -> dict[str, str]:
     return env
 
 
+def _split_local_script_command(command: str) -> list[str]:
+    """Split a configured command while repairing an unquoted executable path.
+
+    Runtime queue commands predate argv-native storage and are persisted as
+    strings. An interpreter installed below a directory such as
+    ``Application Support`` is therefore split into multiple tokens when an
+    older producer omitted shell quoting. Recover only the leading executable
+    by joining path-like tokens until they identify an executable file; normal
+    command names and already quoted paths keep standard ``shlex`` behavior.
+    """
+    args = shlex.split(command)
+    if not args or (Path(args[0]).is_file() and os.access(args[0], os.X_OK)):
+        return args
+    stripped = command.lstrip()
+    if not stripped.startswith(("/", "./", "../")):
+        return args
+    for end in range(2, len(args) + 1):
+        candidate = " ".join(args[:end])
+        if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return [candidate, *args[end:]]
+    return args
+
+
 def _run_subprocess_script(root: Path, command: str, *, timeout_seconds: int) -> dict[str, Any]:
     try:
-        args = shlex.split(command)
+        args = _split_local_script_command(command)
     except ValueError as exc:
         return {
             "supported": True,
@@ -1801,7 +1824,7 @@ def _run_governed_subprocess_script(root: Path, command: str, *, timeout_seconds
     from .long_run import LongRunError, control_run, start_run, status_for_run
 
     try:
-        args = shlex.split(command)
+        args = _split_local_script_command(command)
     except ValueError as exc:
         return {
             "supported": True,
