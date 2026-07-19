@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
+import tarfile
 
+import pytest
 import yaml
 
+import genomes_agentic_os.artifact_migration as artifact_migration
 from genomes_agentic_os.artifact_migration import (
     apply_artifact_naming_plan,
+    build_artifact_migration_preflight,
     build_artifact_naming_plan,
     restore_artifact_naming_migration,
 )
@@ -43,7 +48,9 @@ def _legacy_root(tmp_path: Path) -> tuple[Path, Path]:
     (closeout / "closeout.md").write_text(f"packet: {packet}\n", encoding="utf-8")
     async_run = packet / "artifacts/async-runs/20260102T030405-old-tests"
     async_run.mkdir(parents=True)
-    (async_run / "state.json").write_text(json.dumps({"run_dir": str(async_run)}) + "\n", encoding="utf-8")
+    (async_run / "state.json").write_text(
+        json.dumps({"run_dir": str(async_run)}) + "\n", encoding="utf-8"
+    )
     worktree = project / "worktrees/old-checkout"
     worktree.mkdir(parents=True)
     (project / "worktrees/index.yml").write_text(
@@ -89,7 +96,9 @@ def _legacy_root(tmp_path: Path) -> tuple[Path, Path]:
     return root, packet
 
 
-def test_migration_moves_entities_rewrites_registries_and_is_idempotent(tmp_path: Path) -> None:
+def test_migration_moves_entities_rewrites_registries_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
     root, packet = _legacy_root(tmp_path)
     plan = build_artifact_naming_plan(root)
     assert plan["collisions"] == []
@@ -109,11 +118,15 @@ def test_migration_moves_entities_rewrites_registries_and_is_idempotent(tmp_path
         migrated_packet / "artifacts/thread-closeouts/010226-stale_001_old_item-030405Z"
     ).is_dir()
     assert (migrated_packet / "artifacts/async-runs/010226-030405-old-tests").is_dir()
-    assert (root / "domains/acme/06-runs-and-logs/runs/010226-030405Z-acme-example").is_dir()
+    assert (
+        root / "domains/acme/06-runs-and-logs/runs/010226-030405Z-acme-example"
+    ).is_dir()
     assert (backup / "mutable-state.tar.gz").is_file()
     assert Path(result["receipt_path"]).is_file()
 
-    registry = (root / "domains/acme/projects/app/worktrees/index.yml").read_text(encoding="utf-8")
+    registry = (root / "domains/acme/projects/app/worktrees/index.yml").read_text(
+        encoding="utf-8"
+    )
     assert "010226-old-checkout" in registry
     assert "old-checkout" in registry  # retained as part of the new readable name
     assert "010226-010226-" not in registry
@@ -131,6 +144,134 @@ def test_migration_moves_entities_rewrites_registries_and_is_idempotent(tmp_path
         conn.close()
 
     assert build_artifact_naming_plan(root)["move_count"] == 0
+
+
+def test_migration_preserves_immutable_history_and_bounds_reference_inventory(
+    tmp_path: Path,
+) -> None:
+    root, packet = _legacy_root(tmp_path)
+    historical = packet / "logs/conversations/2026_01_02_old_item.jsonl"
+    historical_content = f'{{"packet_path": "{packet}"}}\n' * 5_000
+    historical.write_text(historical_content, encoding="utf-8")
+    plan = build_artifact_naming_plan(root)
+
+    preflight = build_artifact_migration_preflight(root, plan)
+    result = apply_artifact_naming_plan(root, backup_dir=tmp_path / "history-backup")
+    migrated_packet = packet.with_name("010226-001_old_item")
+    migrated_history = migrated_packet / "logs/conversations/010226-old_item.jsonl"
+
+    assert preflight["replacement_token_count"] > 0
+    assert preflight["eligible_reference_bytes"] < len(
+        historical_content.encode("utf-8")
+    )
+    assert migrated_history.read_text(encoding="utf-8") == historical_content
+    assert str(migrated_packet.relative_to(root)) in (
+        migrated_packet / "work.yml"
+    ).read_text(encoding="utf-8")
+    assert result["post_run_invariants"] == {"move_count": 0, "collision_count": 0}
+
+
+def test_keyboard_interrupt_rolls_back_and_writes_terminal_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, packet = _legacy_root(tmp_path)
+
+    def interrupt(*_args: object, **_kwargs: object) -> list[str]:
+        raise KeyboardInterrupt("regression fixture")
+
+    monkeypatch.setattr(artifact_migration, "_rewrite_text_references", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="regression fixture"):
+        apply_artifact_naming_plan(root, backup_dir=tmp_path / "interrupt-backup")
+
+    assert packet.is_dir()
+    assert not packet.with_name("010226-001_old_item").exists()
+    receipts = list(
+        (root / "harness/shared_factory/06-runs-and-logs/migrations").glob(
+            "*/terminal-receipt.json"
+        )
+    )
+    assert len(receipts) == 1
+    terminal = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert terminal["status"] == "rolled_back"
+    assert terminal["rollback_status"] == "completed"
+    progress = json.loads(
+        (receipts[0].parent / "progress.json").read_text(encoding="utf-8")
+    )
+    assert progress["status"] == "rolled_back"
+    assert progress["phase"] == "terminal"
+
+
+def test_existing_recovery_archive_avoids_copying_immutable_move_sources(
+    tmp_path: Path,
+) -> None:
+    root, packet = _legacy_root(tmp_path)
+    recovery_archive = tmp_path / "existing-full-recovery.tar.gz"
+    recovery_manifest = tmp_path / "recovery-manifest.json"
+    recovery_manifest.write_text('{"fixture": true}\n', encoding="utf-8")
+    with tarfile.open(recovery_archive, "w:gz") as archive:
+        archive.add(recovery_manifest, arcname="migration-plan.json")
+
+    result = apply_artifact_naming_plan(
+        root,
+        backup_dir=tmp_path / "incremental-backup",
+        recovery_backup_archive=recovery_archive,
+    )
+    with tarfile.open(result["backup_archive"], "r:gz") as archive:
+        archived = set(archive.getnames())
+
+    assert result["recovery_backup_archive"] == str(recovery_archive)
+    assert result["preflight"]["move_sources_in_backup"] is False
+    assert (
+        result["preflight"]["recovery_backup"]["first_member"] == "migration-plan.json"
+    )
+    historical_prefix = str((packet / "logs/conversations").relative_to(root))
+    assert not any(name.startswith(historical_prefix) for name in archived)
+
+
+def test_live_mutation_lock_refusal_still_writes_terminal_receipt(
+    tmp_path: Path,
+) -> None:
+    root, _packet = _legacy_root(tmp_path)
+    lock = (
+        root
+        / "harness/shared_factory/00-control-plane/locks/artifact-date-prefix-migration.lock"
+    )
+    lock.parent.mkdir(parents=True)
+    lock.write_text(
+        json.dumps({"run_id": "live", "pid": os.getpid()}), encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="live PID"):
+        apply_artifact_naming_plan(root, backup_dir=tmp_path / "unused-backup")
+
+    receipts = list(
+        (root / "harness/shared_factory/06-runs-and-logs/migrations").glob(
+            "*/terminal-receipt.json"
+        )
+    )
+    assert len(receipts) == 1
+    terminal = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert terminal["status"] == "failed"
+    assert terminal["error_type"] == "RuntimeError"
+
+
+def test_fixed_string_matcher_handles_incident_scale_without_regex() -> None:
+    fixture_path = (
+        Path(__file__).parent / "fixtures/artifact_migration_unbounded_incident.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    replacements = [
+        (f"/legacy/path/{index}", f"/dated/path/{index}")
+        for index in range(fixture["replacement_tokens"])
+    ]
+    matcher, replace = artifact_migration._replacement_engine(replacements)
+
+    assert matcher is not None
+    assert not hasattr(matcher, "pattern")
+    assert (
+        replace("before /legacy/path/52343 after") == "before /dated/path/52343 after"
+    )
 
 
 def test_migration_respects_disabled_policy(tmp_path: Path) -> None:
@@ -177,14 +318,30 @@ def test_git_worktree_is_moved_through_git_metadata(tmp_path: Path) -> None:
     worktrees.mkdir(parents=True)
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
-    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test User"], check=True)
-    subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Test User"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"],
+        check=True,
+    )
     (repository / "README.md").write_text("fixture\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
-    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "fixture"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-qm", "fixture"], check=True
+    )
     checkout = worktrees / "old-checkout"
     subprocess.run(
-        ["git", "-C", str(repository), "worktree", "add", "-qb", "feature/test", str(checkout)],
+        [
+            "git",
+            "-C",
+            str(repository),
+            "worktree",
+            "add",
+            "-qb",
+            "feature/test",
+            str(checkout),
+        ],
         check=True,
     )
     (worktrees / "index.yml").write_text(
@@ -295,12 +452,15 @@ def test_standalone_clone_uses_filesystem_rename(tmp_path: Path) -> None:
     destination = worktrees / "010226-standalone-clone"
 
     assert destination.is_dir()
-    assert subprocess.run(
-        ["git", "-C", str(destination), "rev-parse", "--is-inside-work-tree"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip() == "true"
+    assert (
+        subprocess.run(
+            ["git", "-C", str(destination), "rev-parse", "--is-inside-work-tree"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == "true"
+    )
 
 
 def test_linked_worktree_with_submodule_is_renamed_and_repaired(tmp_path: Path) -> None:
@@ -313,15 +473,25 @@ def test_linked_worktree_with_submodule_is_renamed_and_repaired(tmp_path: Path) 
     worktrees.mkdir(parents=True)
     submodule = tmp_path / "submodule"
     subprocess.run(["git", "init", "-q", str(submodule)], check=True)
-    subprocess.run(["git", "-C", str(submodule), "config", "user.name", "Test User"], check=True)
-    subprocess.run(["git", "-C", str(submodule), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(
+        ["git", "-C", str(submodule), "config", "user.name", "Test User"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(submodule), "config", "user.email", "test@example.com"],
+        check=True,
+    )
     (submodule / "module.txt").write_text("module\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(submodule), "add", "module.txt"], check=True)
     subprocess.run(["git", "-C", str(submodule), "commit", "-qm", "module"], check=True)
     repository = tmp_path / "repository-with-submodule"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
-    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test User"], check=True)
-    subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Test User"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"],
+        check=True,
+    )
     subprocess.run(
         [
             "git",
@@ -337,10 +507,21 @@ def test_linked_worktree_with_submodule_is_renamed_and_repaired(tmp_path: Path) 
         ],
         check=True,
     )
-    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "fixture"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-qm", "fixture"], check=True
+    )
     checkout = worktrees / "submodule-worktree"
     subprocess.run(
-        ["git", "-C", str(repository), "worktree", "add", "-qb", "feature/submodule", str(checkout)],
+        [
+            "git",
+            "-C",
+            str(repository),
+            "worktree",
+            "add",
+            "-qb",
+            "feature/submodule",
+            str(checkout),
+        ],
         check=True,
     )
     subprocess.run(
@@ -358,18 +539,23 @@ def test_linked_worktree_with_submodule_is_renamed_and_repaired(tmp_path: Path) 
         check=True,
     )
     submodule_git_file = checkout / "module/.git"
-    original_gitdir = submodule_git_file.read_text(encoding="utf-8").strip().split(":", 1)[1].strip()
+    original_gitdir = (
+        submodule_git_file.read_text(encoding="utf-8").strip().split(":", 1)[1].strip()
+    )
     if Path(original_gitdir).is_absolute():
         stale_gitdir = f"/stale-prefix{original_gitdir}"
     else:
         stale_gitdir = f"../stale-prefix/{original_gitdir}"
     submodule_git_file.write_text(f"gitdir: {stale_gitdir}\n", encoding="utf-8")
-    assert subprocess.run(
-        ["git", "-C", str(checkout / "module"), "status", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).returncode != 0
+    assert (
+        subprocess.run(
+            ["git", "-C", str(checkout / "module"), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).returncode
+        != 0
+    )
     (worktrees / "index.yml").write_text(
         yaml.safe_dump(
             {
@@ -393,15 +579,21 @@ def test_linked_worktree_with_submodule_is_renamed_and_repaired(tmp_path: Path) 
     apply_artifact_naming_plan(root, backup_dir=tmp_path / "submodule-backup")
     destination = worktrees / "010226-submodule-worktree"
 
-    assert subprocess.run(
-        ["git", "-C", str(destination), "status", "--porcelain"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout == ""
-    assert subprocess.run(
-        ["git", "-C", str(destination / "module"), "status", "--porcelain"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout == ""
+    assert (
+        subprocess.run(
+            ["git", "-C", str(destination), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
+    assert (
+        subprocess.run(
+            ["git", "-C", str(destination / "module"), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )

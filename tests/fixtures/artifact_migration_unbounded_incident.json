@@ -1,0 +1,19 @@
+{
+  "schema": "artifact-migration-regression-fixture/v1",
+  "incident_date": "2026-07-18",
+  "replacement_tokens": 52344,
+  "eligible_files": 154422,
+  "eligible_bytes": 3500000000,
+  "symptoms": [
+    "single-core regex substitution remained active for hours",
+    "immutable historical output was included in reference rewriting",
+    "no semantic progress receipt existed",
+    "external termination left a partially applied migration without a terminal receipt"
+  ],
+  "required_regressions": [
+    "fixed-string matcher does not compile one alternation regex",
+    "historical output content is excluded from rewriting",
+    "preflight blocks unbounded reference and backup inventories",
+    "interruptions roll back and emit a terminal receipt"
+  ]
+}
