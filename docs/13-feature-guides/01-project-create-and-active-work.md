@@ -46,7 +46,13 @@ Repair an existing project layer:
 agentic-os project onboard <domain> <project> --root ~/agentic_os
 ```
 
-Register a visible branch worktree:
+Create a code worktree using the project settings (works in every domain):
+
+```bash
+agentic-os project worktree create <domain> <project> --root ~/agentic_os --branch <branch>
+```
+
+Register an already-existing visible branch worktree:
 
 ```bash
 agentic-os project worktree add <domain> <project> <name> --root ~/agentic_os --path <existing-worktree>

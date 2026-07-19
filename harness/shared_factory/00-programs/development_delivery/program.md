@@ -15,7 +15,10 @@ agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 
 Dry-run is the default. The project owns behavior through
 `config/development.yml`; legacy `project.yml dev_factory` is read only as a
-compatibility bridge.
+compatibility bridge. This is the canonical code settings contract for projects
+in every domain. `worktrees.date_prefix: inherit` is the default; `true` or
+`false` provides a project override while the physical checkout directory is
+controlled by `worktrees.directory`.
 
 ## Workflow map
 
@@ -34,7 +37,8 @@ stubs inside workflow folders.
 ## Safety boundaries
 
 - Never edit the shared checkout; fetch the configured base and create a task
-  worktree under the project `worktrees/` directory.
+  worktree under the configured directory. If that directory is external, keep
+  the checkout registered on the project's visible `worktrees/` surface.
 - Never treat a broken local environment as passing tests. Classify it as
   `environment_unavailable`, preserve evidence, and use PR CI only when policy
   permits.

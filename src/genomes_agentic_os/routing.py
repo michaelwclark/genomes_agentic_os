@@ -419,6 +419,7 @@ def build_context(
                 project_root / "source-map.md",
                 project_root / "decisions.md",
                 project_root / "config" / "project-profile.yml",
+                project_root / "config" / "development.yml",
                 project_root / "config" / "workflows.yml",
                 project_root / "config" / "work-lifecycle.yml",
                 project_root / "config" / "output-artifacts.yml",

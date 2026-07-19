@@ -353,6 +353,46 @@ def validate_project_worktrees(project_root: Path, result: ValidationResult) -> 
             result.warnings.append(f"project worktree target is missing: {target_path}")
 
 
+def validate_project_code_settings(project_root: Path, result: ValidationResult) -> None:
+    """Validate the project-wide code/worktree policy in development.yml."""
+    path = project_root / "config" / "development.yml"
+    data = load_control_yaml(path, result)
+    if not data:
+        return
+    if not isinstance(data.get("enabled", True), bool):
+        result.errors.append(f"project code setting enabled must be a boolean: {path}")
+    repository = data.get("repository")
+    if not isinstance(repository, dict):
+        result.errors.append(f"project code setting repository must be a mapping: {path}")
+    else:
+        root = repository.get("root", "")
+        if root is not None and not isinstance(root, str):
+            result.errors.append(f"project code setting repository.root must be a path string: {path}")
+        base_branch = repository.get("base_branch", "main")
+        if not isinstance(base_branch, str) or not base_branch.strip():
+            result.errors.append(f"project code setting repository.base_branch must be non-empty: {path}")
+    worktrees = data.get("worktrees")
+    if not isinstance(worktrees, dict):
+        result.errors.append(f"project code setting worktrees must be a mapping: {path}")
+        return
+    directory = worktrees.get("directory", "worktrees")
+    if not isinstance(directory, str) or not directory.strip():
+        result.errors.append(f"project code setting worktrees.directory must be a non-empty path: {path}")
+    date_prefix = worktrees.get("date_prefix", "inherit")
+    if date_prefix != "inherit" and not isinstance(date_prefix, bool):
+        result.errors.append(
+            f"project code setting worktrees.date_prefix must be 'inherit', true, or false: {path}"
+        )
+    branch_template = worktrees.get("branch_template", "feature/{ticket}-{slug}")
+    if not isinstance(branch_template, str):
+        result.errors.append(f"project code setting worktrees.branch_template must be a string: {path}")
+    else:
+        try:
+            branch_template.format(ticket="ticket", slug="slug")
+        except (KeyError, ValueError) as exc:
+            result.errors.append(f"invalid project code setting worktrees.branch_template in {path}: {exc}")
+
+
 def validate_project_layer(project_root: Path, result: ValidationResult) -> None:
     validate_agent_layer(project_root, result)
     for filename in ("README.md", "project.yml", "status.md", "source-map.md", "decisions.md"):
@@ -386,6 +426,7 @@ def validate_project_layer(project_root: Path, result: ValidationResult) -> None
             require_dir(project_root / "work-items" / lane, result)
     require_file(project_root / "worktrees" / "README.md", result)
     require_file(project_root / "worktrees" / "index.yml", result)
+    validate_project_code_settings(project_root, result)
     validate_project_worktrees(project_root, result)
     validate_project_work_items(project_root, result)
     # Load hosts registry for remote validation (best-effort; errors surfaced below).

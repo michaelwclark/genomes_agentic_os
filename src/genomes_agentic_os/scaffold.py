@@ -14,6 +14,7 @@ import subprocess
 import yaml
 
 from .artifact_naming import (
+    ArtifactNamingPolicy,
     CONFIG_RELATIVE_PATH,
     dated_name,
     load_artifact_naming_policy,
@@ -405,6 +406,85 @@ def worktree_name_from_branch(branch: str) -> str:
     if not name:
         raise ValueError(f"cannot derive a worktree name from branch: {branch!r}")
     return validate_worktree_name(name)
+
+
+def load_project_code_settings(project_root: Path) -> dict[str, object]:
+    """Load the project's canonical code settings from ``development.yml``.
+
+    ``config/development.yml`` remains the single project code/delivery
+    contract. Older projects that do not yet have the file inherit safe
+    defaults from ``project.yml`` rather than gaining another config source.
+    """
+    config_path = project_root / "config" / "development.yml"
+    data: dict[str, object] = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(loaded, dict):
+            raise ValueError(f"project code settings must be a mapping: {config_path}")
+        data = loaded
+    project_data: dict[str, object] = {}
+    project_path = project_root / "project.yml"
+    if project_path.is_file():
+        loaded_project = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded_project, dict):
+            project_data = loaded_project
+    sources = project_data.get("sources") if isinstance(project_data.get("sources"), dict) else {}
+    if "enabled" in data and not isinstance(data["enabled"], bool):
+        raise ValueError(f"project code setting enabled must be a boolean: {config_path}")
+    repository_value = data.get("repository")
+    if repository_value is not None and not isinstance(repository_value, dict):
+        raise ValueError(f"project code setting repository must be a mapping: {config_path}")
+    worktrees_value = data.get("worktrees")
+    if worktrees_value is not None and not isinstance(worktrees_value, dict):
+        raise ValueError(f"project code setting worktrees must be a mapping: {config_path}")
+    repository = repository_value or {}
+    worktrees = worktrees_value or {}
+    return {
+        "enabled": data.get("enabled", True),
+        "repository": {
+            "root": repository.get("root") or sources.get("repo") or "",
+            "base_branch": repository.get("base_branch") or "main",
+        },
+        "worktrees": {
+            "directory": worktrees.get("directory") or "worktrees",
+            "branch_template": worktrees.get("branch_template") or "feature/{ticket}-{slug}",
+            "date_prefix": worktrees.get("date_prefix", "inherit"),
+        },
+    }
+
+
+def project_worktree_root(project_root: Path, settings: dict[str, object] | None = None) -> Path:
+    code_settings = settings or load_project_code_settings(project_root)
+    worktrees = code_settings.get("worktrees") if isinstance(code_settings.get("worktrees"), dict) else {}
+    raw_directory = worktrees.get("directory") or "worktrees"
+    if not isinstance(raw_directory, str) or not raw_directory.strip():
+        raise ValueError("project code setting worktrees.directory must be a non-empty path")
+    directory = Path(raw_directory).expanduser()
+    if not directory.is_absolute():
+        directory = project_root / directory
+    return directory.resolve()
+
+
+def project_worktree_naming_policy(
+    os_root: str | Path,
+    settings: dict[str, object] | None = None,
+) -> ArtifactNamingPolicy:
+    """Resolve project worktree naming, inheriting the OS default by default."""
+    policy = load_artifact_naming_policy(os_root)
+    worktrees = settings.get("worktrees") if isinstance(settings, dict) and isinstance(settings.get("worktrees"), dict) else {}
+    override = worktrees.get("date_prefix", "inherit")
+    if override == "inherit" or override is None:
+        return policy
+    if not isinstance(override, bool):
+        raise ValueError("project code setting worktrees.date_prefix must be 'inherit', true, or false")
+    scopes = dict(policy.scopes)
+    scopes["worktrees"] = override
+    return ArtifactNamingPolicy(
+        enabled=True if override else policy.enabled,
+        date_format=policy.date_format,
+        separator=policy.separator,
+        scopes=scopes,
+    )
 
 
 def normalize_domain(value: str) -> str:
@@ -2492,6 +2572,8 @@ This is the project-local entrypoint for `domains/{domain}/projects/{project}`.
 ## Source Priority
 
 - `project.yml` and `source-map.md` identify the project and canonical sources.
+- `config/development.yml` is the canonical project code settings file; repository,
+  branch, worktree directory, and date-prefix overrides live there for every domain.
 - `state.db` is authoritative for lifecycle state and attention; `config/work-lifecycle.yml` declares compatibility mappings and naming rules.
 - `config/output-artifacts.yml` declares project artifact roots.
 - Source repository `features/` and `.features/` folders are mirrors/artifact locations unless project config explicitly assigns lifecycle ownership there.
@@ -2520,6 +2602,9 @@ Route project work to the narrowest local surface before acting.
 ## Worktree Rule
 
 Use `worktrees/index.yml` before assuming where active branch checkouts live.
+Create new code worktrees with `agentic-os project worktree create {domain} {project}
+--branch <branch>`; it reads `config/development.yml`, uses the project-visible
+`worktrees/` surface, and inherits the OS date-prefix policy by default.
 Register visible worktrees with `agentic-os project worktree add {domain} {project} <name> --path <path>`.
 """
 
@@ -2555,7 +2640,7 @@ It connects project state, source links, worktrees, ideas, output artifacts, and
 
 1. `project.yml`
 2. `source-map.md`
-3. `config/project-profile.yml`
+3. `config/project-profile.yml` and `config/development.yml` for code projects
 4. `config/workflows.yml`, `config/output-artifacts.yml`, and `config/validation.yml`
 5. the matching SQLite work row and stable packet when lifecycle work is active
 6. `worktrees/index.yml` when source work may use a branch checkout
@@ -2597,6 +2682,7 @@ checkout or feature artifact defines a stricter rule.
 
 - Do not move source repositories into the OS; keep `src` and `worktrees/*` as links unless the operator explicitly requests otherwise.
 - Preserve `project.yml`, `source-map.md`, `config/*.yml`, and `worktrees/index.yml` as the project control surface.
+- For code in any domain, create isolated worktrees through `agentic-os project worktree create`; `config/development.yml` owns the repository, worktree directory, branch template, and project date-prefix override.
 - Use Jira or Linear for future work and specification truth. `ideas/` and numbered lane folders are compatibility indexes.
 - Use `WORKLOGS/` or `worklogs/` for human-readable work history; lowercase `logs/` is reserved for raw system output and transcripts.
 - Keep one stable packet per work item and one canonical SQLite row. Use `agentic-os work` for lifecycle/attention changes; never move packets to express state.
@@ -2618,6 +2704,7 @@ This registry names project-local capabilities for `domains/{domain}/projects/{p
 | --- | --- | --- |
 | `agentic-os project src` | Create or repair the canonical `src` link. | The link stays scoped inside this project folder. |
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
+| `agentic-os project worktree create` | Create and register an isolated code worktree in any domain. | Reads `config/development.yml`; the global dated-name policy is inherited unless the project overrides it. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
 | `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | `--remove-files` deletes merged-PR checkouts unless `REOPEN.md` is present. |
 | `agentic-os work upsert` | Capture or reconcile a tracker-backed project work item. | Writes canonical SQLite state; use a stable packet path when local evidence is needed. |
@@ -2639,7 +2726,8 @@ This registry names project-local capabilities for `domains/{domain}/projects/{p
 | --- | --- |
 | `src/` | Canonical source checkout for this project. |
 | `worktrees/` | Visible links to active worktrees. |
-| `config/` | Parsed project defaults and tool/workflow configuration. |
+| `config/development.yml` | Canonical code settings: repository, base branch, worktree directory, branch template, and date-prefix inheritance or override. |
+| `config/` | Other parsed project defaults and tool/workflow configuration. |
 | `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
 | `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
 | `work-items/<work-item-id>/` | Stable packet for bounded local evidence and resume context. |
@@ -2708,6 +2796,7 @@ def project_config_file_content(
                 "worktrees": {
                     "directory": "worktrees",
                     "branch_template": "feature/{ticket}-{slug}",
+                    "date_prefix": "inherit",
                 },
                 "work_items": {"active_status": "building"},
                 "validation": {
@@ -2900,6 +2989,7 @@ def project_config_file_content(
                     "commands": [
                         "agentic-os project src",
                         "agentic-os project onboard",
+                        "agentic-os project worktree create",
                         "agentic-os project worktree add",
                         "agentic-os context build",
                         "agentic-os validate",
@@ -2911,12 +3001,56 @@ def project_config_file_content(
     raise ValueError(f"unknown project config file: {filename}")
 
 
+def ensure_project_code_settings_defaults(
+    project_root: Path,
+    result: ScaffoldResult,
+    *,
+    repo: str | None = None,
+) -> None:
+    """Add new code-setting defaults without replacing project-owned choices."""
+    path = project_root / "config" / "development.yml"
+    if not path.is_file():
+        return
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"project code settings must be a YAML mapping: {path}")
+    changed = False
+    repository = data.get("repository")
+    if not isinstance(repository, dict):
+        raise ValueError(f"project code setting repository must be a mapping: {path}")
+    if not repository.get("root"):
+        local_repo = local_repo_link_target(repo)
+        src = project_root / "src"
+        if local_repo is None and src.is_symlink() and src.resolve().is_dir():
+            local_repo = src.resolve()
+        if local_repo is not None:
+            repository["root"] = str(local_repo)
+            changed = True
+    worktrees = data.get("worktrees")
+    if not isinstance(worktrees, dict):
+        raise ValueError(f"project code setting worktrees must be a mapping: {path}")
+    if "date_prefix" not in worktrees:
+        worktrees["date_prefix"] = "inherit"
+        changed = True
+    if not changed:
+        return
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    result.updated.append(path)
+
+
 def worktrees_readme(project: str) -> str:
     return f"""# Worktrees: {project}
 
-This folder contains visible links to active project worktrees. The source
-checkouts stay where they already live; this folder makes them discoverable from
-the project operating surface.
+This folder is the canonical visible registry for active code worktrees in this
+project, regardless of domain. New worktrees default here and receive the OS
+date prefix. `config/development.yml` can override the physical directory and
+date-prefix inheritance; external checkouts still appear here as links.
+
+Create a worktree from the configured repository:
+
+```bash
+agentic-os project worktree create <domain> {project} --branch <branch>
+```
 
 Register a worktree:
 
@@ -3270,6 +3404,7 @@ def ensure_project_operating_surface(
             project_config_file_content(domain, project, status, lane, filename, repo=repo),
             result,
         )
+    ensure_project_code_settings_defaults(project_root, result, repo=repo)
     ensure_codex_config(project_root, "project", result)
     if remotes:
         ensure_project_remote_dirs(
@@ -3353,6 +3488,26 @@ def set_project_repo(project_root: Path, repo: str, result: ScaffoldResult) -> N
     result.updated.append(config)
 
 
+def set_project_code_repo(project_root: Path, repo: str, result: ScaffoldResult) -> None:
+    """Keep the canonical project code settings aligned with ``project src``."""
+    config = project_root / "config" / "development.yml"
+    if not config.is_file():
+        return
+    data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"project code settings must be a YAML mapping: {config}")
+    repository = data.get("repository")
+    if not isinstance(repository, dict):
+        repository = {}
+        data["repository"] = repository
+    if repository.get("root") == repo:
+        result.skipped.append(config)
+        return
+    repository["root"] = repo
+    config.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    result.updated.append(config)
+
+
 def link_project_source(
     root: str | Path,
     domain: str,
@@ -3377,6 +3532,7 @@ def link_project_source(
 
     ensure_project_source_link(project_root, repo, result, replace=force, fail_on_conflict=True)
     set_project_repo(project_root, repo, result)
+    set_project_code_repo(project_root, repo, result)
     append_project_source_refs(project_root / "source-map.md", repo, None, None, result)
     data = yaml.safe_load((project_root / "project.yml").read_text(encoding="utf-8")) or {}
     ensure_project_operating_surface(
@@ -3602,6 +3758,7 @@ def register_project_worktree(
     if not target.is_dir():
         raise ValueError(f"worktree path must be an existing directory: {target}")
 
+    code_settings = load_project_code_settings(project_root)
     worktrees_root = (project_root / "worktrees").resolve()
     in_place = target.is_relative_to(worktrees_root)
     # Existing in-place checkouts are renamed only by the transactional
@@ -3610,7 +3767,7 @@ def register_project_worktree(
         name = dated_name(
             name,
             when=datetime.now(timezone.utc),
-            policy=load_artifact_naming_policy(os_root),
+            policy=project_worktree_naming_policy(os_root, code_settings),
             scope="worktrees",
         )
     result = onboard_project(os_root, domain, project)
@@ -3664,27 +3821,37 @@ def create_project_worktree(
     project: str,
     name: str | None = None,
     *,
-    repo: str | Path,
+    repo: str | Path | None = None,
     branch: str,
     runner: object | None = None,
 ) -> ScaffoldResult:
     domain = normalize_domain(domain)
     project = validate_name(project, "project")
     os_root = expand_path(root)
+    project_root = domain_path(os_root, domain) / "02-projects" / project
+    if not (project_root / "project.yml").is_file():
+        raise ValueError(f"project not found: {domain}/{project}")
+    code_settings = load_project_code_settings(project_root)
+    if code_settings.get("enabled") is not True:
+        raise ValueError(f"project code is disabled in {project_root / 'config' / 'development.yml'}")
     name = worktree_name_from_branch(branch) if name is None else validate_worktree_name(name)
     name = dated_name(
         name,
         when=datetime.now(timezone.utc),
-        policy=load_artifact_naming_policy(os_root),
+        policy=project_worktree_naming_policy(os_root, code_settings),
         scope="worktrees",
     )
-    project_root = domain_path(os_root, domain) / "02-projects" / project
-    if not (project_root / "project.yml").is_file():
-        raise ValueError(f"project not found: {domain}/{project}")
-    repo_path = expand_path(repo)
+    repository = code_settings.get("repository") if isinstance(code_settings.get("repository"), dict) else {}
+    configured_repo = repository.get("root")
+    selected_repo = repo or configured_repo
+    if not selected_repo:
+        raise ValueError(
+            "worktree repo is required; pass --repo or set repository.root in config/development.yml"
+        )
+    repo_path = expand_path(selected_repo)
     if not repo_path.is_dir():
         raise ValueError(f"worktree repo must be an existing local directory: {repo_path}")
-    destination = project_root / "worktrees" / name
+    destination = project_worktree_root(project_root, code_settings) / name
     if destination.is_symlink() or destination.exists():
         raise ValueError(f"worktree destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)

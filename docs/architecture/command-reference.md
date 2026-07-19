@@ -232,6 +232,34 @@ Status: **OK** (rc 0)
 
 ---
 
+### `project worktree create`
+
+Create and register an isolated git worktree for a code project in any domain.
+The command reads the repository and worktree policy from
+`<project>/config/development.yml`; `--repo` is only needed as an explicit
+override. Worktree names inherit the root artifact naming policy by default.
+
+| Arg / Flag | Required | Description |
+|---|---|---|
+| `domain` | Yes | Domain slug |
+| `project` | Yes | Project slug |
+| `name` | No | Directory name; defaults to a normalized branch name |
+| `--branch` | Yes | Existing or new branch to check out |
+| `--repo` | No | Override the configured local repository |
+| `--root` | No | Installed OS root path |
+
+```bash
+agentic-os project worktree create acme launch \
+  --root /tmp/aos-ref --branch feature/launch-dashboard
+```
+
+`worktrees.directory` controls the physical location and
+`worktrees.date_prefix` accepts `inherit` (default), `true`, or `false`.
+External locations are linked back into the project's visible `worktrees/`
+registry.
+
+---
+
 ### `project worktree add`
 
 Register an existing local git worktree as a visible project link and routing target.
