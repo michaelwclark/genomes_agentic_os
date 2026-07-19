@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -9,6 +10,7 @@ import pytest
 
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.long_run import (
+    _sample_collateral,
     LongRunError,
     control_run,
     read_registry,
@@ -198,6 +200,19 @@ def test_watchdogs_stop_no_progress_and_resource_budget_violations(tmp_path: Pat
         (resource_dir / "terminal-receipt.json").read_text(encoding="utf-8")
     )
     assert float(resource_receipt["resource_peak"]["rss_mb"]) > 0
+
+
+def test_collateral_sampler_uses_exact_process_names_without_truncated_paths() -> None:
+    sleeper = subprocess.Popen(["/bin/sleep", "5"])
+    try:
+        rows = _sample_collateral(["sleep:9999:9999"])
+    finally:
+        sleeper.terminate()
+        sleeper.wait(timeout=5)
+
+    assert rows[0]["name"] == "sleep"
+    assert rows[0]["exceeded"] is False
+    assert rows[0]["rss_mb"] > 0
 
 
 def test_orphan_recovery_marks_stale_and_writes_terminal_receipt(tmp_path: Path) -> None:

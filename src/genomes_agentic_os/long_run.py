@@ -435,15 +435,22 @@ def _sample_collateral(specs: list[str]) -> list[dict[str, Any]]:
     for spec in specs:
         try:
             name, cpu_text, rss_text = spec.split(":", 2)
-            result = subprocess.run(
-                ["ps", "-axo", "comm=,%cpu=,rss="], text=True, capture_output=True, timeout=5, check=False
+            matches = subprocess.run(
+                ["pgrep", "-x", name], text=True, capture_output=True, timeout=5, check=False
             )
             cpu, rss = 0.0, 0.0
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 3 and Path(parts[0]).name == name:
-                    cpu += float(parts[-2])
-                    rss += float(parts[-1]) / 1024
+            for pid in matches.stdout.split():
+                sample = subprocess.run(
+                    ["ps", "-o", "%cpu=,rss=", "-p", pid],
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+                parts = sample.stdout.split()
+                if len(parts) >= 2:
+                    cpu += float(parts[0])
+                    rss += float(parts[1]) / 1024
             rows.append(
                 {
                     "name": name,
