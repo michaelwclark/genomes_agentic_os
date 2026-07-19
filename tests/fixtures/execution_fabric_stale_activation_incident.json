@@ -1,0 +1,18 @@
+{
+  "schema": "agentic-os-regression-fixture/v1",
+  "incident": "execution-fabric-stale-state-activation",
+  "observed_at": "2026-07-19T09:38:28Z",
+  "filesystem_authority": {
+    "total": 1968,
+    "queued": 2
+  },
+  "sqlite_projection": {
+    "total": 12985,
+    "queued": 1821,
+    "stale_nonterminal": 1819,
+    "active_leases": 0,
+    "workers": 0
+  },
+  "immediate_mitigation": "restored the filesystem selector without deleting historical database rows",
+  "required_regression": "activation refuses stale nonterminal database rows until an archived filesystem-authoritative reconciliation succeeds"
+}

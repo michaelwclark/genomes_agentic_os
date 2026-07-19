@@ -18,7 +18,7 @@ Executable wrappers owned by the installed Agentic OS harness.
 | `agentic-os-jira` | Jira helper for an Atlassian Jira site; prefers OAuth, falls back to API token. |
 | `agentic-os-memory-analytics` | Read-only memory-analytics viewer; runs the report on the configured analytics host via SSH. |
 | `agentic-os-notify` | Deliver governed macOS notifications; records delivery/suppression history, enforces cooldowns, and prunes history after 48 hours by default. |
-| `agentic-os-quiet-run` | Start and monitor long-running commands detached from the terminal. |
+| `agentic-os-quiet-run` | Compatibility launcher for `agentic-os long-run`, the universal governed long-running control plane. |
 | `agentic-os-status-report` | Generate durable OS status report artifacts (markdown, Notion draft, gap analysis). |
 | `register-codex-skills` | Sync Agentic OS skill adapters to Codex launcher metadata. |
 | `register-harness-skills` | Register harness skills into the OS skill registry. |

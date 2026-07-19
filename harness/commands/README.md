@@ -45,7 +45,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-operator-resource.md`](os-operator-resource.md) | Query typed read-only Program and Automation operator projections. |
 | [`os-resource-registry.md`](os-resource-registry.md) | Refresh or read the atomic first-class resource snapshot used by Command Center. |
 | [`os-ps.md`](os-ps.md) | Show Agentic OS process and runtime state. |
-| [`os-quiet-run.md`](os-quiet-run.md) | Run long commands with artifact-backed status. |
+| [`os-quiet-run.md`](os-quiet-run.md) | Govern every process expected over two minutes with central state, budgets, controls, recovery, and receipts. |
 | [`os-route.md`](os-route.md) | Resolve a request to the narrowest OS room. |
 | [`os-run-build-runner.md`](os-run-build-runner.md) | Execute a resumable, board-backed build queue. |
 | [`os-run-log.md`](os-run-log.md) | Create or close a durable run log. |

@@ -69,6 +69,19 @@ SQLite schema, writes the selector atomically, and reads it back. Producers and
 `runtime run-next` then use only the selected backend. A shared advisory lock
 serializes queue mutation with mode changes.
 
+If activation finds historical nonterminal SQLite rows that are missing from or
+status-drifted against YAML, it refuses the switch. Reconcile from filesystem
+mode before trying again:
+
+```bash
+agentic-os runtime queue-mode reconcile --root ~/agentic_os
+agentic-os runtime queue-mode reconcile --root ~/agentic_os --apply
+```
+
+Reconcile is dry-run-first. Apply archives the exact affected rows, cancels only
+missing stale nonterminal rows, aligns status drift to filesystem authority,
+clears their leases, and writes a terminal receipt. It never deletes history.
+
 ## Admission and recovery
 
 The SQLite substrate uses WAL mode and `BEGIN IMMEDIATE` transactions. A claim

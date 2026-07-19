@@ -38,8 +38,20 @@ def test_supervise_dry_run_reports_every_step(tmp_path: Path) -> None:
     assert main(["runtime", "supervise", "--root", str(root)]) == 0
 
 
-def test_supervise_apply_runs_the_tick(tmp_path: Path) -> None:
+def test_supervise_apply_runs_the_tick(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _fresh_root(tmp_path)
+    monkeypatch.setattr(
+        runtime_ops,
+        "_run_local_script",
+        lambda _root, command, **_kwargs: {
+            "supported": True,
+            "ok": True,
+            "command": command,
+            "errors": [],
+            "warnings": [],
+            "external_effect": "stubbed local test dispatch",
+        },
+    )
     report = supervise_tick(root, dry_run=False)
     assert report["dry_run"] is False
     assert report["ok"] is True
@@ -277,6 +289,21 @@ def test_runtime_dispatches_general_python_script(tmp_path: Path, capsys) -> Non
     assert dispatch_log["evidence"]["returncode"] == 0
     assert dispatch_log["evidence"]["stdout"] == "marker-written\n"
     assert dispatch_log["external_effect"] == "local script executed"
+
+
+def test_runtime_dispatch_over_two_minutes_uses_central_long_running_contract(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    command = f"{sys.executable} -c \"print('governed-dispatch')\""
+
+    result = runtime_ops._run_local_script(root, command, timeout_seconds=121)
+
+    assert result["ok"] is True
+    assert result["governed_status"] == "success"
+    assert Path(result["governed_run"]).is_dir()
+    assert Path(result["terminal_receipt"]).is_file()
+    registry = root / "harness/shared_factory/00-control-plane/long-running-runs.json"
+    assert registry.is_file()
+    assert "governed-dispatch" in result["stdout"]
 
 
 def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> None:

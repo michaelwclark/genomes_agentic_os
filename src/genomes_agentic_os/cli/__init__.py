@@ -48,6 +48,7 @@ from . import develop
 from . import library
 from . import work
 from . import naming
+from . import long_run
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -89,6 +90,7 @@ COMMAND_MODULES = [
     library,
     work,
     naming,
+    long_run,
 ]
 
 

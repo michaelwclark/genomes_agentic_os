@@ -1,0 +1,14 @@
+{
+  "schema": "agentic-os-regression-fixture/v1",
+  "incident": "uncontrolled-long-running-artifact-migration",
+  "observed_at": "2026-07-18T23:46:10Z",
+  "failure_modes": [
+    "no semantic item or byte progress",
+    "no bounded durable log",
+    "no reliable pause resume or cancel control",
+    "no no-progress watchdog",
+    "no resource or collateral-process budget",
+    "restart safety depended on manual inspection"
+  ],
+  "required_regression": "every operation expected to exceed two minutes uses the central long-running registry and emits a terminal receipt"
+}

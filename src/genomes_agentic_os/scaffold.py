@@ -2210,6 +2210,11 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
     result.extend(mirror_visible_capability_assets(os_root))
+    copy_file(
+        harness_source_dir() / "config" / "long-running-execution.yml",
+        harness_path(os_root, "config", "long-running-execution.yml"),
+        result,
+    )
     ensure_capability_registries(os_root, result)
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)

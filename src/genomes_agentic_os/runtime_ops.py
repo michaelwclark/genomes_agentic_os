@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -92,6 +93,7 @@ ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
+LONG_RUNNING_THRESHOLD_SECONDS = 120
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
 DEFAULT_RUN_QUEUE_TERMINAL_MAX_AGE_DAYS = 2
@@ -1665,6 +1667,9 @@ def _runtime_subprocess_env(root: Path) -> dict[str, str]:
     """
     env = os.environ.copy()
     env.setdefault("AGENTIC_OS_ROOT", str(root))
+    sibling_cli = Path(sys.executable).parent / "agentic-os"
+    if sibling_cli.is_file() and os.access(sibling_cli, os.X_OK):
+        env.setdefault("AGENTIC_OS_CLI", str(sibling_cli))
     user_local_bin = str(Path.home() / ".local" / "bin")
     path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
     if user_local_bin not in path_entries:
@@ -1758,6 +1763,133 @@ def _run_subprocess_script(root: Path, command: str, *, timeout_seconds: int) ->
         "stderr": _trim_dispatch_output(completed.stderr),
         "errors": [] if ok else [f"local script exited {completed.returncode}"],
         "warnings": [],
+        "external_effect": "local script executed" if ok else "local script failed",
+    }
+
+
+def _long_running_threshold_seconds(root: Path) -> int:
+    path = root / "harness/config/long-running-execution.yml"
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        config = (loaded or {}).get("long_running_execution") or {}
+        return max(1, int(config.get("threshold_seconds") or LONG_RUNNING_THRESHOLD_SECONDS))
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return LONG_RUNNING_THRESHOLD_SECONDS
+
+
+def _governed_output(run_dir: Path) -> str:
+    current = run_dir / "output.log"
+    rotated = sorted(
+        (
+            path
+            for path in run_dir.glob("output.log.*")
+            if path.name.removeprefix("output.log.").isdigit()
+        ),
+        key=lambda path: int(path.name.rsplit(".", 1)[-1]),
+        reverse=True,
+    )
+    chunks: list[str] = []
+    for path in [*rotated, current]:
+        try:
+            chunks.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return _trim_dispatch_output("".join(chunks))
+
+
+def _run_governed_subprocess_script(root: Path, command: str, *, timeout_seconds: int) -> dict[str, Any]:
+    from .long_run import LongRunError, control_run, start_run, status_for_run
+
+    try:
+        args = shlex.split(command)
+    except ValueError as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": [f"invalid local script command: {exc}"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+    if not args:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "errors": ["local script command is empty"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+    try:
+        state = start_run(
+            root,
+            command=args,
+            label=f"runtime dispatch {Path(args[0]).name}",
+            kind="command",
+            work_dir=str(root),
+            budgets={
+                "wall_clock_minutes": max(timeout_seconds / 60, 1 / 60),
+                "no_progress_minutes": min(15, max(timeout_seconds / 60, 1 / 60)),
+            },
+            environment_overrides={
+                "AGENTIC_OS_ROOT": str(root),
+                "PATH": _runtime_subprocess_env(root)["PATH"],
+            },
+        )
+    except (LongRunError, OSError, ValueError) as exc:
+        return {
+            "supported": True,
+            "ok": False,
+            "command": command,
+            "args": args,
+            "cwd": str(root),
+            "errors": [f"governed local script failed to start: {exc}"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        }
+
+    run_dir = Path(state["run_dir"])
+    deadline = time.monotonic() + timeout_seconds + 30
+    terminal = {
+        "success",
+        "failure",
+        "timeout",
+        "no-progress-timeout",
+        "resource-budget-exceeded",
+        "cancelled",
+        "interrupted",
+        "error",
+        "stale",
+    }
+    while time.monotonic() < deadline:
+        state = status_for_run(run_dir)
+        if state.get("status") in terminal:
+            break
+        time.sleep(0.2)
+    else:
+        try:
+            control_run(run_dir, "cancel")
+        except LongRunError:
+            pass
+        state = status_for_run(run_dir)
+
+    status = str(state.get("status") or "unknown")
+    ok = status == "success"
+    return {
+        "supported": True,
+        "ok": ok,
+        "command": command,
+        "args": args,
+        "cwd": str(root),
+        "returncode": state.get("exit_code"),
+        "timeout_seconds": timeout_seconds,
+        "stdout": _governed_output(run_dir),
+        "stderr": "",
+        "errors": [] if ok else [str(state.get("terminal_reason") or f"governed local script finished {status}")],
+        "warnings": [],
+        "governed_run": str(run_dir),
+        "governed_status": status,
+        "terminal_receipt": state.get("terminal_receipt"),
         "external_effect": "local script executed" if ok else "local script failed",
     }
 
@@ -1984,6 +2116,8 @@ def _run_local_script(
                 "events_count": len(result.get("events") or []),
                 "trigger_actions_count": len(result.get("trigger_actions") or []),
             }
+    if timeout_seconds > _long_running_threshold_seconds(root):
+        return _run_governed_subprocess_script(root, normalized, timeout_seconds=timeout_seconds)
     return _run_subprocess_script(root, normalized, timeout_seconds=timeout_seconds)
 
 

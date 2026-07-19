@@ -32,6 +32,7 @@ For a recovery continuation, pass the already-verified full backup with
 `--recovery-backup-archive`; the new transaction then copies only mutable
 references and records both backups. `--allow-high-risk` is an explicit
 operator override, not a normal migration step. Run applies through
-`agentic-os-quiet-run` with a wall-clock timeout.
+`agentic-os long-run start --kind migration` with preflight, checkpoint,
+mutation-lock, progress, wall-clock, no-progress, and post-run invariant flags.
 
 Configuration: `harness/config/artifact-naming.yml`.

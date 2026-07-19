@@ -95,8 +95,9 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Run long commands, tests, Docker setup, PR checks, and watchers through
-      artifact-backed async state instead of chat polling.
+      Govern any process expected over two minutes through a central registry,
+      bounded logs and resources, progress watchdogs, pause/resume/cancel,
+      orphan recovery, post-run invariants, and terminal receipts.
   - id: add-env
     title: Add Env
     source_path: harness/skills/add-env

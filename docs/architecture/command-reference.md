@@ -1978,6 +1978,29 @@ mappings live in AgenticOSGui application support state.
 
 ---
 
+## 15. Universal long-running execution: `long-run`
+
+`long-run start` governs any process expected to exceed two minutes. It
+creates a central registry row and per-run receipts, bounds logs and resources,
+enforces wall-clock/no-progress watchdogs, and returns immediately.
+
+```bash
+agentic-os long-run start --kind test --label "full suite" -- pytest -q
+agentic-os long-run list --root ~/agentic_os --active
+agentic-os long-run pause --run-dir <run-dir>
+agentic-os long-run resume --run-dir <run-dir>
+agentic-os long-run cancel --run-dir <run-dir>
+agentic-os long-run recover --root ~/agentic_os --mark-stale
+```
+
+Mutating kinds require `--checkpoint-strategy` plus `--mutation-lock` or a
+`--post-run-check`. Import, export, backfill, cleanup, and migration also
+require a `--preflight-check` that records complexity and performance evidence.
+Use `--progress-file` for semantic phase/item/file/byte progress.
+`agentic-os-quiet-run` is a compatibility launcher for this same command.
+
+---
+
 ## Validation Summary
 
 | Status | Count | Notes |

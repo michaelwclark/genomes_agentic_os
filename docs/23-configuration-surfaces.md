@@ -147,6 +147,7 @@ Located at `~/agentic_os/harness/shared_factory/00-control-plane/`. These files 
 | `routing-rules.md` | Manual | Domain and project routing rules for the OS navigator. |
 | `approval-rules.md` | Manual | Approval gate rules for gated automation steps. |
 | `managed-templates.yml` | `agentic-os docs` | Managed documentation template registry. |
+| `../../config/long-running-execution.yml` | `agentic-os long-run` | Two-minute qualification threshold, run budgets, collateral ceilings, high-risk requirements, and terminal artifact contract. |
 
 `agentic-os docs upkeep` reads the live control-plane
 `documentation-upkeep.yml` first. If that file is missing, it falls back to the

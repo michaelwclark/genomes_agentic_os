@@ -71,6 +71,8 @@ export function ConversationList({ conversations, selectedId, query, generatedAt
         <dl>
           <div><dt>Queued</dt><dd>{runtime.queue_depth}</dd></div>
           <div><dt>Running</dt><dd>{runtime.running}</dd></div>
+          <div><dt>Long runs</dt><dd>{runtime.long_running_active ?? 0}</dd></div>
+          <div><dt>Safety attention</dt><dd>{runtime.long_running_attention ?? 0}</dd></div>
           <div><dt>Workers</dt><dd>{runtime.active_workers}</dd></div>
           <div><dt>Interactive max</dt><dd>{runtime.queue_mode === "execution_fabric" ? runtime.max_interactive_running : "legacy"}</dd></div>
           <div><dt>Failed</dt><dd>{runtime.failed + runtime.dead_letter}</dd></div>
