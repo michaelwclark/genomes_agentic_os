@@ -23,7 +23,7 @@ NOW = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
 
 def _root(tmp_path: Path) -> Path:
     root = tmp_path / "agentic_os"
-    item = root / "clarks_consulting" / "02-projects" / "genomes_agentic_os" / "work-items" / "02-active" / "040_demo"
+    item = root / "domains" / "clarks_consulting" / "02-projects" / "genomes_agentic_os" / "work-items" / "02-active" / "040_demo"
     conversations = item / "logs" / "conversations"
     conversations.mkdir(parents=True)
     (item / "work.yml").write_text(
@@ -104,7 +104,7 @@ def test_hygiene_only_proposes_existing_guarded_commands(tmp_path: Path) -> None
 
     broken = next(item for item in findings if item["kind"] == "worktree")
     assert "cleanup-closed" in broken["suggested_command"]
-    assert (root / "clarks_consulting" / "02-projects" / "genomes_agentic_os" / "worktrees" / "stale-demo").is_symlink()
+    assert (root / "domains" / "clarks_consulting" / "02-projects" / "genomes_agentic_os" / "worktrees" / "stale-demo").is_symlink()
 
 
 def test_bundle_and_cli_build_offline_artifacts(tmp_path: Path, capsys) -> None:

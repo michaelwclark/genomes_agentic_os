@@ -304,7 +304,7 @@ def test_validate_requires_automation_run_tracking_representation(tmp_path: Path
         ),
         encoding="utf-8",
     )
-    automation_root = root / "personal/04-automations/personal_admin/example_auto"
+    automation_root = root / "domains/personal/04-automations/personal_admin/example_auto"
     automation_root.mkdir(parents=True)
     (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
 
@@ -319,7 +319,7 @@ def test_validate_requires_automation_run_tracking_representation(tmp_path: Path
 
 def test_validate_accepts_explicit_automation_run_tracking_exclusion(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
-    automation_root = root / "personal/04-automations/personal_admin/example_auto"
+    automation_root = root / "domains/personal/04-automations/personal_admin/example_auto"
     automation_root.mkdir(parents=True)
     (automation_root / "automation.md").write_text("# Example\n", encoding="utf-8")
     tracking_path = (
@@ -687,9 +687,9 @@ def test_validate_root_skips_generated_json_artifacts(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     _init_root(root)
     generated_paths = [
-        root / "personal" / "04-automations" / "personal_admin" / "example" / "runs" / "bad.json",
+        root / "domains" / "personal" / "04-automations" / "personal_admin" / "example" / "runs" / "bad.json",
         root / "harness" / "shared_factory" / "06-runs-and-logs" / "runs" / "bad.json",
-        root / "los" / "02-projects" / "los_app" / "work-items" / "03-complete" / "done" / "artifacts" / "bad.json",
+        root / "domains" / "los" / "02-projects" / "los_app" / "work-items" / "03-complete" / "done" / "artifacts" / "bad.json",
     ]
     for path in generated_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -716,7 +716,7 @@ def test_validate_root_still_reports_invalid_control_json(tmp_path: Path) -> Non
 def test_validate_root_missing_worktree_link_is_warning(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "stale_worktree_project", "--root", str(root)]) == 0
-    project_root = root / "los" / "02-projects" / "stale_worktree_project"
+    project_root = root / "domains" / "los" / "02-projects" / "stale_worktree_project"
     index_path = project_root / "worktrees" / "index.yml"
     index = yaml.safe_load(index_path.read_text(encoding="utf-8"))
     index["worktrees"] = [
@@ -738,7 +738,7 @@ def test_validate_root_missing_worktree_link_is_warning(tmp_path: Path) -> None:
 def test_validate_root_terminal_packet_gaps_are_warnings(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["project", "create", "los", "packet_history_project", "--root", str(root)]) == 0
-    packet = root / "los" / "02-projects" / "packet_history_project" / "work-items" / "03-complete" / "001_done"
+    packet = root / "domains" / "los" / "02-projects" / "packet_history_project" / "work-items" / "03-complete" / "001_done"
     (packet / "artifacts").mkdir(parents=True)
     (packet / "logs" / "conversations").mkdir(parents=True)
     (packet / "work.yml").write_text(

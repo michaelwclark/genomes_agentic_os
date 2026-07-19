@@ -298,6 +298,7 @@ class LocalResourceStore:
 
     def _spec_paths(self) -> list[Path]:
         patterns = (
+            "domains/*/02-projects/*/work-items/*/*/work.yml",
             "*/02-projects/*/work-items/*/*/work.yml",
             "harness/*/02-projects/*/work-items/*/*/work.yml",
         )
@@ -406,7 +407,11 @@ class LocalResourceStore:
 
     def _state_db_paths(self) -> list[Path]:
         paths: set[Path] = set()
-        for pattern in ("*/00-control-plane/state.db", "harness/*/00-control-plane/state.db"):
+        for pattern in (
+            "domains/*/00-control-plane/state.db",
+            "*/00-control-plane/state.db",
+            "harness/*/00-control-plane/state.db",
+        ):
             for path in self.root.glob(pattern):
                 if path.is_file() and _within(self.root, path):
                     paths.add(path)

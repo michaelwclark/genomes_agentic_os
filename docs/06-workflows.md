@@ -21,7 +21,7 @@ produce, and how to hand off cleanly.
 Workflows live at:
 
 ```
-<root>/<domain>/03-workflows/<lane>/<workflow_name>/
+<root>/domains/<domain>/03-workflows/<lane>/<workflow_name>/
 ```
 
 All three slug segments — `domain`, `lane`, and `workflow_name` — must be
@@ -88,7 +88,7 @@ agentic-os workflow create acme engineering launch_blog --root ~/agentic_os
 | `name` | Yes | Workflow slug (`snake_case`) |
 | `--root` | No | Installed OS root. Defaults to `~/agentic_os`. |
 
-This creates `<root>/<domain>/03-workflows/<lane>/<name>/` and writes all 13
+This creates `<root>/domains/<domain>/03-workflows/<lane>/<name>/` and writes all 13
 required files with placeholder content rendered from the templates in
 `templates/workflow/`.
 

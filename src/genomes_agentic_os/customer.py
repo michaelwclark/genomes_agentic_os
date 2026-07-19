@@ -686,6 +686,7 @@ def customer_init(customer_slug: str, profile_path: str | Path, target: str | Pa
     root = expand_path(target)
     result = CustomerResult()
     root.mkdir(parents=True, exist_ok=True)
+    ensure_dir(root / "domains", result)
     write_root_marker(root, result)
     ensure_public_customer_capability_surface(root, result)
     ensure_schemas_dir(root, result)
@@ -712,6 +713,7 @@ def customer_update(customer_slug: str, root: str | Path) -> dict[str, Any]:
         raise ValueError(f"customer.yml is missing: {profile_path}")
     profile = normalize_profile(customer_slug, yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {})
     result = CustomerResult()
+    ensure_dir(os_root / "domains", result)
     write_root_marker(os_root, result)
     ensure_public_customer_capability_surface(os_root, result)
     ensure_schemas_dir(os_root, result)
@@ -796,7 +798,7 @@ def scaffold_customer_brief(
 ) -> dict[str, Any]:
     """Instantiate a client-automation-brief template instance in a customer install.
 
-    Places a named brief instance under ``<root>/<domain>/01-intake/<name>-brief.md``
+    Places a named brief instance under ``<root>/domains/<domain>/01-intake/<name>-brief.md``
     (the intake lane is where new automation candidates live).  Refuses to
     overwrite an existing file — each brief is write-once so operators can
     accumulate edits safely.

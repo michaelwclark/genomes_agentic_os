@@ -30,8 +30,8 @@ def _root(tmp_path: Path) -> Path:
     _write(root / ".agentic_root", "agentic-os\n")
     _write(root / "harness/rules/os-authoring-rules.md", "# OS Authoring Rules\n")
     for domain in ("work", "archive"):
-        _write(root / domain / "CONTEXT.md", f"# {domain}\n")
-        _yaml(root / domain / "domain.yml", {"id": domain, "name": domain})
+        _write(root / "domains" / domain / "CONTEXT.md", f"# {domain}\n")
+        _yaml(root / "domains" / domain / "domain.yml", {"id": domain, "name": domain})
     return root
 
 
@@ -73,7 +73,7 @@ def _program_instance(
     definition_id: str,
     icon: str | None = None,
 ) -> Path:
-    path = root / "work/00-programs" / name
+    path = root / "domains/work/00-programs" / name
     _write(
         path / "program.md",
         f"# InstanceOSProgram: {name}\n\n## Status\n\n- Status: active\n\n## Purpose\n\nInstalled demo.\n",
@@ -96,7 +96,7 @@ def _program_instance(
 def _automation(
     root: Path, name: str = "daily_sync", *, harness: str = "agentic_os"
 ) -> Path:
-    path = root / "work/04-automations/engineering" / name
+    path = root / "domains/work/04-automations/engineering" / name
     _write(
         path / "automation.md",
         f"""# Automation: {name}
@@ -328,9 +328,6 @@ def test_operator_resources_discover_conventional_domain_layout(tmp_path: Path) 
     root = _root(tmp_path)
     automation = _automation(root)
     _program_instance(root, "demo_instance", definition_id="demo")
-    conventional = root / "domains/work"
-    conventional.parent.mkdir(parents=True)
-    (root / "work").rename(conventional)
 
     automations = query_operator_resources(root, "automation")
     programs = query_operator_resources(root, "program")

@@ -156,14 +156,14 @@ def test_update_archive_restore_and_rollback_are_dry_run_first(tmp_path: Path, c
         (
             "domain",
             ("--scope", "domain", "--domain", "work"),
-            "work/00-control-plane/resource-registries/rules.yml",
-            "work/00-control-plane/registry-resources/rule/domain_rule.md",
+            "domains/work/00-control-plane/resource-registries/rules.yml",
+            "domains/work/00-control-plane/registry-resources/rule/domain_rule.md",
         ),
         (
             "project",
             ("--scope", "project", "--domain", "work", "--project", "demo_project"),
-            "work/02-projects/demo_project/config/resource-registries/rules.yml",
-            "work/02-projects/demo_project/config/registry-resources/rule/project_rule.md",
+            "domains/work/02-projects/demo_project/config/resource-registries/rules.yml",
+            "domains/work/02-projects/demo_project/config/registry-resources/rule/project_rule.md",
         ),
     ],
 )

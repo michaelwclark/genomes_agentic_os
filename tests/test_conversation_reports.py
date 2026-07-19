@@ -19,7 +19,7 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
 
 def test_conversation_report_scan_clusters_and_writes_artifacts(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
-    project = root / "clarks_consulting" / "02-projects" / "genomes_agentic_os"
+    project = root / "domains" / "clarks_consulting" / "02-projects" / "genomes_agentic_os"
     work_item = project / "work-items" / "02-active" / "030_linear_tracker_config_drift"
     logs = work_item / "logs" / "conversations"
     work_item.mkdir(parents=True)

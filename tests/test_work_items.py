@@ -69,7 +69,7 @@ def test_upsert_transition_history_and_active_projection(tmp_path: Path) -> None
 
 def test_legacy_import_is_conservative_and_idempotent(tmp_path: Path) -> None:
     root = tmp_path / "os"
-    packet = root / "los/02-projects/django/work-items/02-active/001_example"
+    packet = root / "domains/los/02-projects/django/work-items/02-active/001_example"
     packet.mkdir(parents=True)
     (packet / "NEXT.md").write_text("# Next\n\nVerify the migration.\n", encoding="utf-8")
     (packet.parent / ".artifacts").mkdir()
@@ -91,7 +91,7 @@ def test_legacy_import_is_conservative_and_idempotent(tmp_path: Path) -> None:
 
 def test_legacy_active_index_observation_imports_as_parked(tmp_path: Path) -> None:
     root = tmp_path / "os"
-    packet = root / "los/02-projects/django/work-items/02-active/001_example"
+    packet = root / "domains/los/02-projects/django/work-items/02-active/001_example"
     packet.mkdir(parents=True)
     index = root / "00-control-plane/active/index.yml"
     index.parent.mkdir(parents=True)
@@ -108,7 +108,7 @@ def test_legacy_active_index_observation_imports_as_parked(tmp_path: Path) -> No
 
 def test_legacy_blocked_item_gets_a_verification_reason(tmp_path: Path) -> None:
     root = tmp_path / "os"
-    packet = root / "los/02-projects/django/work-items/02-active/001_example"
+    packet = root / "domains/los/02-projects/django/work-items/02-active/001_example"
     packet.mkdir(parents=True)
     index = root / "00-control-plane/active/index.yml"
     index.parent.mkdir(parents=True)
@@ -228,7 +228,7 @@ def test_work_path_prefix_migration_is_dry_run_then_atomic(
 
 def test_global_active_container_uses_state_after_projection_opt_in(tmp_path: Path) -> None:
     root = tmp_path / "os"
-    project = root / "los/02-projects/django"
+    project = root / "domains/los/02-projects/django"
     packet = project / "work-items/02-active/001_example"
     packet.mkdir(parents=True)
     active_worktree = tmp_path / "active-worktree"
@@ -242,7 +242,7 @@ def test_global_active_container_uses_state_after_projection_opt_in(tmp_path: Pa
         "    status: active\n",
         encoding="utf-8",
     )
-    (root / "los/domain.yml").write_text("name: los\n", encoding="utf-8")
+    (root / "domains/los/domain.yml").write_text("name: los\n", encoding="utf-8")
     conn = db.connect(db.default_db_path(root))
     try:
         work_items.upsert(

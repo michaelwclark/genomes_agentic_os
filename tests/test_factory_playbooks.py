@@ -400,11 +400,11 @@ class TestBriefScaffold:
         assert path.name == "invoice_sync-brief.md"
 
     def test_brief_scaffold_file_location(self, tmp_path: Path) -> None:
-        """Brief goes in <root>/<domain>/01-intake/<name>-brief.md."""
+        """Brief goes in <root>/domains/<domain>/01-intake/<name>-brief.md."""
         root = self._setup_customer(tmp_path)
         result = scaffold_customer_brief(root, "operations", "invoice_sync")
         path = Path(result["path"])
-        assert path.parent == root / "operations" / "01-intake"
+        assert path.parent == root / "domains" / "operations" / "01-intake"
 
     def test_brief_scaffold_contains_required_sections(self, tmp_path: Path) -> None:
         """The scaffolded brief must contain all required template sections."""

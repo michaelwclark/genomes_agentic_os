@@ -347,7 +347,7 @@ def domain_path(root: str | Path, domain: str) -> Path:
     os_root = expand_path(root)
     conventional = os_root / "domains" / normalized
     legacy = os_root / normalized
-    if conventional.exists() or ((os_root / "domains").is_dir() and not legacy.exists()):
+    if conventional.exists() or (os_root / "domains").is_dir():
         return conventional
     return legacy
 
@@ -2179,12 +2179,6 @@ def create_domain_structure(
     domain = validate_name(domain, "domain")
     domain_root = domain_path(os_root, domain)
     ensure_dir(domain_root, result)
-    conventional_parent = os_root / "domains"
-    if domain_root.parent == conventional_parent:
-        compatibility_alias = os_root / domain
-        if not compatibility_alias.exists() and not compatibility_alias.is_symlink():
-            compatibility_alias.symlink_to(Path("domains") / domain, target_is_directory=True)
-            result.created.append(compatibility_alias)
     write_file_once(domain_root / "README.md", domain_readme(domain), result)
     router = domain_router(domain)
     write_file_once(domain_root / "ROUTER.md", router, result)

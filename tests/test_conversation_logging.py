@@ -391,7 +391,7 @@ class TestLOSPolicyJiraFixture:
         root = _make_os_root(tmp_path)
         # Create a project that mirrors the LOS Django pattern
         create_project(root, "los", "los_app_los_django")
-        project_root = root / "los" / "02-projects" / "los_app_los_django"
+        project_root = root / "domains" / "los" / "02-projects" / "los_app_los_django"
 
         # Write a work-lifecycle.yml that routes specified items to Jira.
         # Keys are at the top level (not nested under 'work_lifecycle:') —

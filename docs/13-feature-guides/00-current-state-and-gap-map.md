@@ -32,7 +32,7 @@ canonical lifecycle surface for this source package. Project lifecycle assets
 live under:
 
 ```text
-~/agentic_os/work/02-projects/genomes_agentic_os/
+~/agentic_os/domains/work/02-projects/genomes_agentic_os/
 ```
 
 Do not recreate source-root lifecycle folders for this package. Record new

@@ -18,7 +18,7 @@ def _write(path: Path, text: str) -> Path:
 def test_collect_reports_discovers_canonical_surfaces_and_extracts_contract(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     work_item = _write(
-        root / "clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/040_cockpit/SUMMARY.md",
+        root / "domains/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/040_cockpit/SUMMARY.md",
         """---
 status: validating
 severity: warning
@@ -80,14 +80,14 @@ The cockpit projection is ready for focused verification. A second sentence stay
 def test_collect_reports_prunes_sources_worktrees_caches_raw_logs_and_non_report_artifacts(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     included = _write(
-        root / "los/02-projects/los_app/reports/leadership/2026-07-13.md",
+        root / "domains/los/02-projects/los_app/reports/leadership/2026-07-13.md",
         "# Leadership update\n\nThe sprint remains on track.\n",
     )
     excluded = [
-        root / "los/02-projects/los_app/worktrees/feature/reports/fake.md",
-        root / "los/02-projects/los_app/src/reports/fake.md",
-        root / "los/02-projects/los_app/node_modules/pkg/reports/fake.md",
-        root / "los/02-projects/los_app/work-items/02-active/001/artifacts/screenshot.png",
+        root / "domains/los/02-projects/los_app/worktrees/feature/reports/fake.md",
+        root / "domains/los/02-projects/los_app/src/reports/fake.md",
+        root / "domains/los/02-projects/los_app/node_modules/pkg/reports/fake.md",
+        root / "domains/los/02-projects/los_app/work-items/02-active/001/artifacts/screenshot.png",
         root / "watchers/slack_ingest/reports/raw.log",
         root / "watchers/slack_ingest/logs/events.jsonl",
         root / "watchers/slack_ingest/reports/README.md",

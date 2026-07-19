@@ -110,7 +110,7 @@ may also be stricter than ideal for short or ambiguous requests (Gap I).
 2. **`cd` into the domain folder** and use `here route` — the router infers
    context from the working directory's `.agentic_root` marker:
    ```bash
-   cd ~/agentic_os/acme
+   cd ~/agentic_os/domains/acme
    agentic-os here route "update the launch project"
    ```
 

@@ -94,7 +94,7 @@ def test_project_doc_config_override_can_disable_any_search_method(tmp_path: Pat
         )
         == 0
     )
-    override_path = root / "work" / "02-projects" / "genomes_agentic_os" / "config" / "doc-config.yml"
+    override_path = root / "domains" / "work" / "02-projects" / "genomes_agentic_os" / "config" / "doc-config.yml"
     config = yaml.safe_load(override_path.read_text(encoding="utf-8"))
     config["search_methods"]["ripgrep"]["enabled"] = False
     config["search_methods"]["context_mode"]["enabled"] = False

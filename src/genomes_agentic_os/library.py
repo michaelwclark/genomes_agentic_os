@@ -1066,7 +1066,11 @@ def legacy_migration_plan(root: str | Path) -> dict[str, Any]:
                 "description": f"Migrated Agentic OS {kind}.",
                 "tags": [kind],
             }
-    for domain_root in sorted(os_root.iterdir()):
+    domain_roots = {
+        *os_root.glob("*/"),
+        *os_root.glob("domains/*/"),
+    }
+    for domain_root in sorted(domain_roots):
         knowledge_root = domain_root / "05-knowledge"
         if (
             domain_root.name == "archive"
