@@ -99,6 +99,11 @@ Top-level durable entity names follow `harness/config/artifact-naming.yml`.
 Generators apply the configured date prefix; use `agentic-os naming migrate`
 for existing work items, registered worktrees, conversations, and run entities.
 Do not rename stable internal contract files such as `work.yml` or `run-log.md`.
+Migration apply requires a green bounded preflight, quiet-runner wall-clock
+budget, durable semantic progress, a mutation lock, move journal, terminal
+receipt, and rollback-capable signal handling. Historical output content is
+immutable; migrations may rename its containing artifact but must not rewrite
+the evidence inside it.
 
 ## Bug Intake
 
