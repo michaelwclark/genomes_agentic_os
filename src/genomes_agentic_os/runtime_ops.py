@@ -2440,6 +2440,8 @@ def _run_quiet_run_script(
     *,
     timeout_seconds: int,
 ) -> dict[str, Any] | None:
+    from .long_run import TERMINAL_STATUSES
+
     try:
         parts = shlex.split(command)
     except ValueError as exc:
@@ -2506,7 +2508,7 @@ def _run_quiet_run_script(
     state_path = state_path.resolve()
     deadline = time.monotonic() + timeout_seconds
     state: dict[str, Any] = {}
-    terminal = {"success", "failure", "timeout", "error", "stale"}
+    terminal = TERMINAL_STATUSES
     while time.monotonic() < deadline:
         try:
             loaded = json.loads(state_path.read_text(encoding="utf-8"))
