@@ -425,6 +425,44 @@ def test_runtime_dispatch_resolves_relative_quiet_run_state_from_os_root(
     assert result["quiet_run_state"] == str(state_path.resolve())
 
 
+def test_runtime_dispatch_treats_resource_budget_exceeded_as_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fresh_root(tmp_path)
+    quiet_run = root / "harness/bin/agentic-os-quiet-run"
+    state_path = root / "logs/async-runs/resource-budget/state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        '{"status":"resource-budget-exceeded","exit_code":null,'
+        '"terminal_reason":"resource-budget-watchdog-fired"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runtime_ops.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=f"state={state_path}\n",
+            stderr="",
+        ),
+    )
+
+    started = time.monotonic()
+    result = runtime_ops._run_quiet_run_script(
+        root,
+        f"{quiet_run} start --artifact-dir logs -- /bin/false",
+        timeout_seconds=1,
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["quiet_run_status"] == "resource-budget-exceeded"
+    assert result.get("timed_out") is not True
+    assert time.monotonic() - started < 0.5
+
+
 def test_runtime_dispatch_adds_user_local_bin_to_quiet_run_path(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
 ) -> None:
