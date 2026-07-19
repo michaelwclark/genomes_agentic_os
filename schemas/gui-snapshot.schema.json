@@ -62,6 +62,12 @@
         "task_count": {"type": "integer", "minimum": 0},
         "task_sample_count": {"type": "integer", "minimum": 0},
         "task_sample_limit": {"type": "integer", "minimum": 1},
+        "long_running_runs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/long_running_run"}
+        },
+        "long_running_active": {"type": "integer", "minimum": 0},
+        "long_running_attention": {"type": "integer", "minimum": 0},
         "captured_at": {"type": "string", "format": "date-time"},
         "reason": {"type": "string"}
       },
@@ -77,6 +83,40 @@
     }
   },
   "$defs": {
+    "long_running_run": {
+      "type": "object",
+      "required": ["id", "label", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "label": {"type": "string"},
+        "status": {"type": "string"},
+        "phase": {"type": "string"},
+        "created_at": {"type": "string"},
+        "started_at": {"type": ["string", "null"]},
+        "updated_at": {"type": "string"},
+        "finished_at": {"type": ["string", "null"]},
+        "last_progress_at": {"type": ["string", "null"]},
+        "pid": {"type": ["integer", "null"]},
+        "monitor_pid": {"type": ["integer", "null"]},
+        "run_dir": {"type": "string"},
+        "work_dir": {"type": "string"},
+        "exit_code": {"type": ["integer", "null"]},
+        "terminal_reason": {"type": ["string", "null"]},
+        "items_completed": {"type": "integer", "minimum": 0},
+        "items_total": {"type": "integer", "minimum": 0},
+        "files_completed": {"type": "integer", "minimum": 0},
+        "files_total": {"type": "integer", "minimum": 0},
+        "bytes_completed": {"type": "integer", "minimum": 0},
+        "bytes_total": {"type": "integer", "minimum": 0},
+        "output_bytes": {"type": "integer", "minimum": 0},
+        "log_rotations": {"type": "integer", "minimum": 0},
+        "checkpoint_strategy": {"type": "string"},
+        "mutation_lock": {"type": ["string", "null"]},
+        "terminal_receipt": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "domain": {
       "type": "object",
       "required": ["id", "name", "conversation_count", "projects"],

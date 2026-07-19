@@ -15,6 +15,7 @@ from .claude_sessions import (
 from .codex_sessions import codex_transcript_result_for_id, collect_codex_conversations
 from .conversation_index import build_navigation, utc_now
 from .runtime_snapshot import build_runtime_snapshot
+from .long_run import ACTIVE_STATUSES, list_runs
 
 
 SCHEMA_VERSION = "agentic-os-gui/v1"
@@ -73,6 +74,16 @@ def _project_conversation(item: dict[str, Any]) -> dict[str, Any]:
 
 def _runtime_snapshot(root: Path) -> dict[str, Any]:
     try:
+        long_running_rows = list_runs(root, limit=100)["runs"]
+    except Exception:
+        long_running_rows = []
+    long_running_active = [row for row in long_running_rows if row.get("status") in ACTIVE_STATUSES]
+    long_running_attention = [
+        row
+        for row in long_running_rows
+        if row.get("status") in {"paused", "no-progress-timeout", "resource-budget-exceeded", "stale"}
+    ]
+    try:
         snapshot = build_runtime_snapshot(root, task_limit=200)
     except Exception as exc:
         return {
@@ -95,6 +106,9 @@ def _runtime_snapshot(root: Path) -> dict[str, Any]:
             "task_count": 0,
             "task_sample_count": 0,
             "task_sample_limit": 200,
+            "long_running_runs": long_running_rows,
+            "long_running_active": len(long_running_active),
+            "long_running_attention": len(long_running_attention),
             "captured_at": _generated_at(),
             "reason": f"{type(exc).__name__}: {exc}",
         }
@@ -119,6 +133,9 @@ def _runtime_snapshot(root: Path) -> dict[str, Any]:
         "task_count": int(summary["total_records"]),
         "task_sample_count": len(snapshot["tasks"]),
         "task_sample_limit": 200,
+        "long_running_runs": long_running_rows,
+        "long_running_active": len(long_running_active),
+        "long_running_attention": len(long_running_attention),
         "captured_at": snapshot["captured_at"],
     }
 

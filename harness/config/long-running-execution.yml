@@ -1,0 +1,41 @@
+schema_version: 1
+long_running_execution:
+  enabled: true
+  threshold_seconds: 120
+  require_governed_runner: true
+  central_registry: harness/shared_factory/00-control-plane/long-running-runs.json
+  run_root: harness/shared_factory/06-runs-and-logs/async-runs
+  budgets:
+    wall_clock_minutes: 60
+    no_progress_minutes: 15
+    max_log_mb: 25
+    log_rotations: 4
+    max_cpu_percent: 400
+    max_rss_mb: 4096
+    resource_violation_samples: 3
+    sample_seconds: 2
+  collateral_processes:
+    - fseventsd:250:20480
+  mutating_kinds:
+    - install
+    - sync
+    - import
+    - export
+    - backfill
+    - cleanup
+    - deployment
+    - migration
+  high_risk_kinds:
+    - import
+    - export
+    - backfill
+    - cleanup
+    - migration
+  required_high_risk_preflight_evidence:
+    - complexity
+    - performance
+  required_terminal_artifacts:
+    - state.json
+    - events.jsonl
+    - terminal-receipt.json
+    - summary.md

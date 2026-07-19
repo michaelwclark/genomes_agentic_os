@@ -829,7 +829,7 @@ def test_adaptive_routing_observation_report_schedule_is_idempotent_and_dispatch
             "external_effect": "stubbed; no external call",
         }
 
-    monkeypatch.setattr(runtime_ops, "_run_subprocess_script", fake_subprocess_script)
+    monkeypatch.setattr(runtime_ops, "_run_governed_subprocess_script", fake_subprocess_script)
     assert main(
         ["runtime", "run-next", "--root", str(root), "--item-id", queued_item["id"], "--apply"]
     ) == 0

@@ -17,3 +17,4 @@ a fresh human or agent can operate the OS without reading prior chat history.
 | [09 - Future Ideas Intake](09-future-ideas-intake.md) | How OS, domain, and customer ideas are captured into durable runtime files. |
 | [10 - Notion Control Plane Bootstrap](10-notion-control-plane-bootstrap.md) | How to plan and apply the guarded Notion control-plane bootstrap manifest. |
 | [18 - Execution Fabric](18-execution-fabric.md) | How the optional named-queue and worker-pool program installs safely, selects one queue writer, and uses transactional leases and admission. |
+| [19 - Universal Long-Running Execution Safety](19-long-running-execution-safety.md) | How every process expected over two minutes gets central state, budgets, controls, recovery, and terminal receipts. |

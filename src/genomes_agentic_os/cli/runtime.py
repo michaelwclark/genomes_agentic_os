@@ -28,6 +28,7 @@ from ..runtime_backend import (
     plan_queue_mode,
     plan_queue_mode_rollback,
     queue_mode_status,
+    reconcile_execution_state,
     rollback_queue_mode,
 )
 from ..runtime_ops import (
@@ -166,6 +167,12 @@ def handle_queue_mode_rollback(args: argparse.Namespace) -> int:
         if args.apply
         else plan_queue_mode_rollback(args.root) | {"dry_run": True, "applied": False}
     )
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("ready", True) else 1
+
+
+def handle_queue_mode_reconcile(args: argparse.Namespace) -> int:
+    result = reconcile_execution_state(args.root, dry_run=not args.apply)
     _print_structured(result, json_output=args.json)
     return 0 if result.get("ready", True) else 1
 
@@ -401,6 +408,14 @@ def register(subparsers) -> None:
     _add_safe_mutation_mode(queue_mode_rollback_parser)
     _add_json_arg(queue_mode_rollback_parser)
     queue_mode_rollback_parser.set_defaults(handler=handle_queue_mode_rollback)
+    queue_mode_reconcile_parser = queue_mode_subparsers.add_parser(
+        "reconcile",
+        help="Archive and reconcile stale SQLite task state to the authoritative filesystem queue.",
+    )
+    queue_mode_reconcile_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(queue_mode_reconcile_parser)
+    _add_json_arg(queue_mode_reconcile_parser)
+    queue_mode_reconcile_parser.set_defaults(handler=handle_queue_mode_reconcile)
     runtime_prune_parser = runtime_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
     _add_run_queue_prune_args(runtime_prune_parser)
     runtime_prune_parser.set_defaults(handler=handle_run_queue_prune)

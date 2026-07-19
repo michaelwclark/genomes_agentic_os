@@ -43,6 +43,29 @@ rules, hooks, or project worktrees.
 12. Do not ship undocumented OS-level behavior. Every new OS-level feature must
    document ownership, context routing, validation, and projection updates.
 
+## Long-Running Execution Safety
+
+- Any command, test, build, install, scan, sync, import, export, backfill,
+  cleanup, watcher, deployment, or migration expected to exceed two minutes
+  must use `agentic-os long-run` or a registered adapter to that same contract.
+- Direct background processes, unbounded foreground waits, raw `nohup`, and
+  chat polling are prohibited for qualifying work.
+- Every qualifying run must have a central registry row, phase and available
+  item/file/byte progress, bounded rotating logs, wall-clock and no-progress
+  budgets, CPU/RSS and relevant collateral-process ceilings, and an automatic
+  terminal receipt.
+- Mutating work requires an orphan-safe mutation lock or explicit post-run
+  invariant and a documented checkpoint/restart/rollback strategy.
+- Import, export, backfill, cleanup, and migration require a bounded complexity
+  and performance preflight before apply.
+- Pause, resume, and cancel must control the complete child process group. A
+  non-cooperative tool must declare how it restarts from receipts/checkpoints or
+  rolls back.
+- SIGINT and SIGTERM must leave terminal evidence; stale locks and orphaned
+  registry rows must be recoverable without deleting historical logs.
+- Command Center must expose active and safety-paused runs from the central
+  registry. CI must reject new long-running entrypoints that bypass this rule.
+
 ## Cross-Model Reviewer Transport
 
 - Run Anthropic-family finishing reviews through the installed `claude` CLI,

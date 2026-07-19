@@ -15,7 +15,9 @@ from genomes_agentic_os.runtime_backend import (
     RuntimeBackendError,
     apply_queue_mode,
     plan_queue_mode,
+    plan_execution_state_reconciliation,
     queue_mode_status,
+    reconcile_execution_state,
     rollback_queue_mode,
     runtime_queue_items,
 )
@@ -366,6 +368,87 @@ def test_rollback_blocks_status_drift_for_imported_tasks(tmp_path: Path) -> None
     plan = plan_queue_mode(root, "filesystem")
     assert plan["ready"] is False
     assert plan["filesystem_projection_blocker_sample"][0]["projection_issue"] == "status_drift"
+
+
+def test_activation_blocks_and_reconciles_stale_nonterminal_database_state(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    rollback_queue_mode(root, dry_run=False)
+
+    conn = db.connect(db.default_db_path(root))
+    try:
+        stale = fabric.enqueue_task(
+            conn,
+            queue_name="non_llm",
+            worker_pool="non_llm_workers",
+            kind="manual",
+        )
+    finally:
+        conn.close()
+
+    activation = plan_queue_mode(root, "execution_fabric")
+    assert activation["ready"] is False
+    assert activation["filesystem_projection_blocker_count"] == 1
+    assert activation["filesystem_projection_blocker_sample"][0]["id"] == stale["id"]
+    assert activation["filesystem_projection_blocker_sample"][0]["projection_issue"] == "missing_nonterminal_task"
+    with pytest.raises(RuntimeBackendError, match="cannot be safely activated"):
+        apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    dry_reconcile = plan_execution_state_reconciliation(root)
+    assert dry_reconcile["ready"] is True
+    assert dry_reconcile["reconciliation_count"] == 1
+    assert dry_reconcile["reconciliation_counts"] == {"missing_nonterminal_task": 1}
+
+    applied = reconcile_execution_state(root, dry_run=False)
+    assert applied["applied"] is True
+    assert applied["cancelled_missing_nonterminal"] == 1
+    receipt_path = Path(applied["receipt"])
+    assert receipt_path.is_file()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert Path(receipt["before"]).is_file()
+    assert Path(receipt["before"]).stat().st_mode & 0o777 == 0o600
+
+    conn = db.connect(db.default_db_path(root))
+    try:
+        row = conn.execute(
+            "SELECT status, blocked_reason FROM run_queue WHERE id = ?",
+            (stale["id"],),
+        ).fetchone()
+        assert tuple(row) == (
+            "cancelled",
+            "reconciled: absent from authoritative filesystem queue",
+        )
+    finally:
+        conn.close()
+
+    activation = plan_queue_mode(root, "execution_fabric")
+    assert activation["ready"] is True
+    switched = apply_queue_mode(root, "execution_fabric", dry_run=False)
+    assert switched["queue_mode"] == "execution_fabric"
+    assert sum(queue["statuses"].get("queued", 0) for queue in switched["metrics"]["queues"]) == 1
+
+
+def test_queue_mode_reconcile_cli_is_dry_run_first(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    rollback_queue_mode(root, dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        fabric.enqueue_task(conn, queue_name="non_llm", worker_pool="non_llm_workers", kind="manual")
+    finally:
+        conn.close()
+
+    assert main(["runtime", "queue-mode", "reconcile", "--root", str(root), "--json"]) == 0
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run["dry_run"] is True
+    assert dry_run["reconciliation_count"] == 1
+
+    assert main(
+        ["runtime", "queue-mode", "reconcile", "--root", str(root), "--apply", "--json"]
+    ) == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["applied"] is True
+    assert plan_queue_mode(root, "execution_fabric")["ready"] is True
 
 
 def test_named_queue_pool_and_worker_capacity_are_transactional() -> None:

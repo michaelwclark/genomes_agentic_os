@@ -154,14 +154,18 @@ Read, preflight, apply, or roll back the authoritative queue writer:
 ```bash
 agentic-os runtime queue-mode status --root ~/agentic_os
 agentic-os runtime queue-mode plan execution_fabric --root ~/agentic_os
+agentic-os runtime queue-mode reconcile --root ~/agentic_os
+agentic-os runtime queue-mode reconcile --root ~/agentic_os --apply
 agentic-os runtime queue-mode apply execution_fabric --root ~/agentic_os
 agentic-os runtime queue-mode apply execution_fabric --root ~/agentic_os --apply
 agentic-os runtime queue-mode rollback --root ~/agentic_os
 ```
 
-Apply and rollback are dry-run-first. A switch is rejected while active leases
-exist. Rollback to `filesystem` is also rejected when nonterminal fabric tasks
-have no YAML projection, preventing a silent loss of queued work.
+Apply, reconcile, and rollback are dry-run-first. A switch is rejected while
+active leases exist. Activation and rollback are also rejected when SQLite has
+nonterminal state that is absent from or disagrees with the authoritative YAML
+queue. Reconcile is allowed only in filesystem mode; it archives every affected
+row before cancelling missing stale work or aligning status drift.
 
 ### `agentic-os runtime snapshot`
 

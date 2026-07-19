@@ -131,6 +131,19 @@ adapter behavior, and compatibility commands.
 | `host list` | List registered hosts. |
 | `host routing` | Show cross-host routing policy and recent harness host receipts. |
 
+### Long-running execution — `cli/long_run.py`
+
+| Command | What it does |
+| --- | --- |
+| `long-run` | Govern commands expected to exceed two minutes. |
+| `long-run start` | Start one detached run with central state, budgets, watchdogs, and receipts. |
+| `long-run status` | Read one atomic run state. |
+| `long-run list` | Read the central durable run registry. |
+| `long-run pause` | Pause the complete child process group. |
+| `long-run resume` | Resume a paused process group. |
+| `long-run cancel` | Gracefully cancel, then force-stop after the configured grace period. |
+| `long-run recover` | Detect and optionally mark orphaned run state stale. |
+
 ### Automations — `cli/automation.py`
 
 | Command | What it does |

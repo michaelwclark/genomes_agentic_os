@@ -154,6 +154,26 @@ export interface RuntimeTask {
   lease_until?: string;
 }
 
+export interface LongRunningRun {
+  id: string;
+  kind?: string;
+  label: string;
+  status: string;
+  phase?: string;
+  created_at?: string;
+  updated_at?: string;
+  last_progress_at?: string;
+  run_dir?: string;
+  terminal_reason?: string;
+  items_completed?: number;
+  items_total?: number;
+  files_completed?: number;
+  files_total?: number;
+  bytes_completed?: number;
+  bytes_total?: number;
+  output_bytes?: number;
+}
+
 export interface RuntimeHealth {
   status: "healthy" | "degraded" | "critical" | "unavailable";
   queue_mode: string;
@@ -174,6 +194,9 @@ export interface RuntimeHealth {
   task_count: number;
   task_sample_count: number;
   task_sample_limit: number;
+  long_running_runs?: LongRunningRun[];
+  long_running_active?: number;
+  long_running_attention?: number;
   captured_at: string;
   reason?: string;
 }

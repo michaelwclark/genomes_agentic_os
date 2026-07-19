@@ -18,6 +18,7 @@ from uuid import uuid4
 import yaml
 
 from .scaffold import expand_path
+from .long_running import atomic_json
 from .state import db as state_db
 from .state import execution_fabric
 
@@ -33,6 +34,7 @@ QUEUE_MODES = (FILESYSTEM_MODE, EXECUTION_FABRIC_MODE)
 RUNTIME_REGISTRY = Path("harness/shared_factory/00-control-plane/runtime-registry.yml")
 RUN_QUEUE = Path("harness/shared_factory/00-control-plane/run-queue.yml")
 EXECUTION_FABRIC_CONFIG = Path("harness/shared_factory/00-programs/execution_fabric/config")
+QUEUE_RECONCILIATION_LOG = Path("harness/shared_factory/06-runs-and-logs/runtime-queue-reconciliation")
 
 
 class RuntimeBackendError(ValueError):
@@ -365,6 +367,142 @@ def _filesystem_projection_blockers(root: str | Path) -> list[dict[str, Any]]:
         conn.close()
 
 
+def plan_execution_state_reconciliation(root: str | Path) -> dict[str, Any]:
+    """Plan a filesystem-authoritative repair of stale nonterminal SQLite rows."""
+    status = queue_mode_status(root)
+    if status["queue_mode"] != FILESYSTEM_MODE:
+        raise RuntimeBackendError("execution-state reconciliation requires filesystem queue mode")
+    blockers = _filesystem_projection_blockers(root)
+    counts: dict[str, int] = {}
+    for row in blockers:
+        issue = str(row.get("projection_issue") or "unknown")
+        counts[issue] = counts.get(issue, 0) + 1
+    return {
+        **status,
+        "action": "runtime.queue-mode.reconcile",
+        "authoritative_mode": FILESYSTEM_MODE,
+        "dry_run": True,
+        "reconciliation_count": len(blockers),
+        "reconciliation_counts": counts,
+        "reconciliation_sample": blockers[:20],
+        "ready": status["active_lease_count"] == 0,
+        "blockers": []
+        if status["active_lease_count"] == 0
+        else [f"{status['active_lease_count']} active execution lease(s) must finish or expire"],
+    }
+
+
+def reconcile_execution_state(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
+    """Archive then reconcile stale fabric state to the authoritative YAML queue."""
+    plan = plan_execution_state_reconciliation(root)
+    if dry_run or not plan["reconciliation_count"]:
+        return {**plan, "dry_run": dry_run, "applied": False, "status": "unchanged" if not plan["reconciliation_count"] else "planned"}
+    if not plan["ready"]:
+        raise RuntimeBackendError("execution-state reconciliation blocked: " + "; ".join(plan["blockers"]))
+
+    os_root = expand_path(root)
+    path = Path(plan["runtime_registry"])
+    with _mode_lock(path):
+        plan = plan_execution_state_reconciliation(root)
+        if not plan["ready"]:
+            raise RuntimeBackendError("execution-state reconciliation blocked: " + "; ".join(plan["blockers"]))
+        issues = _filesystem_projection_blockers(root)
+        issue_by_id = {str(row["id"]): row for row in issues}
+        queue_path = os_root / RUN_QUEUE
+        loaded = yaml.safe_load(queue_path.read_text(encoding="utf-8")) if queue_path.is_file() else {}
+        filesystem_rows = (loaded or {}).get("items") or (loaded or {}).get("run_queue") or []
+        filesystem_statuses = {
+            str(row["id"]): str(row.get("status") or "unknown")
+            for row in filesystem_rows
+            if isinstance(row, dict) and row.get("id")
+        }
+
+        db_path = state_db.default_db_path(root)
+        conn = state_db.connect(db_path)
+        try:
+            archived_rows = [
+                dict(row)
+                for row in conn.execute("SELECT * FROM run_queue ORDER BY created_at, id").fetchall()
+                if str(row["id"]) in issue_by_id
+            ]
+            timestamp = datetime.now(timezone.utc).strftime("%m%d%y-%H%M%S")
+            receipt_dir = os_root / QUEUE_RECONCILIATION_LOG / f"{timestamp}-{os.getpid()}"
+            receipt_dir.mkdir(parents=True, exist_ok=False)
+            receipt_dir.chmod(0o700)
+            before_path = receipt_dir / "before.json"
+            atomic_json(
+                before_path,
+                {
+                    "schema": "agentic-os-runtime-queue-reconciliation-before/v1",
+                    "created_at": _now(),
+                    "authoritative_queue": str(queue_path),
+                    "state_db": str(db_path),
+                    "issues": issues,
+                    "rows": archived_rows,
+                },
+            )
+            before_path.chmod(0o600)
+            changed_at = _now()
+            cancelled = 0
+            aligned = 0
+            with state_db.transaction(conn):
+                for item_id, issue in issue_by_id.items():
+                    filesystem_status = filesystem_statuses.get(item_id)
+                    if filesystem_status is None:
+                        conn.execute(
+                            """
+                            UPDATE run_queue
+                            SET status = 'cancelled', updated_at = ?, finished_at = COALESCE(finished_at, ?),
+                                lease_owner = NULL, lease_until = NULL, lease_token = NULL,
+                                blocked_reason = 'reconciled: absent from authoritative filesystem queue'
+                            WHERE id = ?
+                            """,
+                            (changed_at, changed_at, item_id),
+                        )
+                        cancelled += 1
+                    else:
+                        terminal = filesystem_status in {"done", "failed", "skipped", "cancelled", "dead-letter"}
+                        conn.execute(
+                            """
+                            UPDATE run_queue
+                            SET status = ?, updated_at = ?, finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END,
+                                lease_owner = NULL, lease_until = NULL, lease_token = NULL,
+                                blocked_reason = CASE WHEN ? THEN NULL ELSE blocked_reason END
+                            WHERE id = ?
+                            """,
+                            (filesystem_status, changed_at, int(terminal), changed_at, int(filesystem_status != "blocked"), item_id),
+                        )
+                        aligned += 1
+        finally:
+            conn.close()
+
+        remaining = _filesystem_projection_blockers(root)
+        receipt_path = receipt_dir / "receipt.json"
+        receipt = {
+            "schema": "agentic-os-runtime-queue-reconciliation/v1",
+            "status": "completed" if not remaining else "failed",
+            "completed_at": _now(),
+            "before": str(before_path),
+            "reconciliation_count": len(issues),
+            "cancelled_missing_nonterminal": cancelled,
+            "aligned_status_drift": aligned,
+            "remaining_count": len(remaining),
+            "remaining_sample": remaining[:20],
+        }
+        atomic_json(receipt_path, receipt)
+        if remaining:
+            raise RuntimeBackendError(f"execution-state reconciliation left {len(remaining)} blocker(s); see {receipt_path}")
+        return {
+            **queue_mode_status(root),
+            "action": "runtime.queue-mode.reconcile",
+            "dry_run": False,
+            "applied": True,
+            "status": "completed",
+            "receipt": str(receipt_path),
+            **{key: receipt[key] for key in ("reconciliation_count", "cancelled_missing_nonterminal", "aligned_status_drift", "remaining_count")},
+        }
+
+
 def _queue_metrics_readonly(root: str | Path, mode: str) -> dict[str, Any]:
     try:
         queue_config, _ = _execution_fabric_catalog(root)
@@ -504,11 +642,16 @@ def plan_queue_mode(root: str | Path, target_mode: str) -> dict[str, Any]:
     )
     if filesystem_running:
         blockers.append(f"{len(filesystem_running)} filesystem dispatch(es) are still running")
-    projection_blockers = _filesystem_projection_blockers(root) if switching and target_mode == FILESYSTEM_MODE else []
+    projection_blockers = _filesystem_projection_blockers(root) if switching else []
     if projection_blockers:
-        blockers.append(
-            f"{len(projection_blockers)} execution-fabric task state(s) are not safely projected to the filesystem queue"
-        )
+        if target_mode == EXECUTION_FABRIC_MODE:
+            blockers.append(
+                f"{len(projection_blockers)} execution-fabric task state(s) cannot be safely activated from the filesystem queue"
+            )
+        else:
+            blockers.append(
+                f"{len(projection_blockers)} execution-fabric task state(s) are not safely projected to the filesystem queue"
+            )
     return {
         **status,
         "target_mode": target_mode,

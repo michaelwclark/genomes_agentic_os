@@ -82,8 +82,9 @@ skills:
   source: harness/skills/automation-qualifier/SKILL.md
 - id: quiet-async-runner
   name: Quiet Async Runner
-  description: Run long commands, tests, Docker setup, PR checks, and watchers through
-    artifact-backed async state instead of chat polling.
+  description: Govern any process expected over two minutes through a central registry,
+    bounded logs and resources, progress watchdogs, pause/resume/cancel, recovery,
+    and terminal receipts.
   source: harness/skills/quiet-async-runner/SKILL.md
 - id: add-env
   name: Add Env

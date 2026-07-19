@@ -194,7 +194,7 @@ def command_entries() -> list[dict[str, str]]:
         {
             "id": "quiet-run",
             "command": "harness/bin/agentic-os-quiet-run",
-            "description": "Start long-running local commands with artifact-backed async state instead of chat polling.",
+            "description": "Start and control long-running local commands through the central safety registry, bounded logs, watchdogs, and terminal receipts.",
             "source": "harness/commands/os-quiet-run.md",
         },
         {
