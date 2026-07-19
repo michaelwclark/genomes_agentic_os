@@ -1422,7 +1422,12 @@ def runtime_run_latest_by_ref(root: str | Path, ref: str, *, dry_run: bool = Tru
     candidates = [
         item
         for item in items
-        if isinstance(item, dict) and item.get("status") == "queued" and _queue_item_ref(item) == ref
+        if (
+            isinstance(item, dict)
+            and item.get("kind") == "schedule"
+            and item.get("status") == "queued"
+            and _queue_item_ref(item) == ref
+        )
     ]
     if not candidates:
         return {"root": str(os_root), "status": "idle", "dry_run": dry_run, "ref": ref, "message": "no queued runtime work for ref"}
@@ -1468,7 +1473,7 @@ def runtime_prepare_priority_ref(root: str | Path, ref: str, *, dry_run: bool = 
     conn = state_db.connect(state_db.default_db_path(os_root))
     try:
         rows = conn.execute(
-            "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+            "SELECT id FROM run_queue WHERE status = 'queued' AND kind = 'schedule' AND ref = ? ORDER BY created_at, id",
             (ref,),
         ).fetchall()
         candidates = [
@@ -1504,7 +1509,7 @@ def runtime_prepare_priority_ref(root: str | Path, ref: str, *, dry_run: bool = 
         try:
             with state_db.transaction(conn):
                 rows = conn.execute(
-                    "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+                    "SELECT id FROM run_queue WHERE status = 'queued' AND kind = 'schedule' AND ref = ? ORDER BY created_at, id",
                     (ref,),
                 ).fetchall()
                 if not rows:
@@ -1549,7 +1554,7 @@ def _runtime_run_latest_by_ref_fabric(root: Path, ref: str, *, dry_run: bool) ->
     conn = state_db.connect(state_db.default_db_path(root))
     try:
         rows = conn.execute(
-            "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+            "SELECT id FROM run_queue WHERE status = 'queued' AND kind = 'schedule' AND ref = ? ORDER BY created_at, id",
             (ref,),
         ).fetchall()
         candidates = [
@@ -1580,7 +1585,7 @@ def _runtime_run_latest_by_ref_fabric(root: Path, ref: str, *, dry_run: bool) ->
         try:
             with state_db.transaction(conn):
                 rows = conn.execute(
-                    "SELECT id FROM run_queue WHERE status = 'queued' AND ref = ? ORDER BY created_at, id",
+                    "SELECT id FROM run_queue WHERE status = 'queued' AND kind = 'schedule' AND ref = ? ORDER BY created_at, id",
                     (ref,),
                 ).fetchall()
                 if not rows:

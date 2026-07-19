@@ -155,6 +155,8 @@ def test_runtime_init_upgrades_required_health_enforcement_schedule(tmp_path: Pa
 def test_interim_executor_is_queue_only_compatibility_shim() -> None:
     script = (Path(__file__).parents[1] / "harness/bin/agentic-os-interim-executor").read_text(encoding="utf-8")
     assert '\"runtime\", \"supervise\"' in script
+    assert 'shutil.which("agentic-os")' in script
+    assert 'args.root / "harness/bin/agentic-os"' not in script
     assert "interim_execute" not in script
     assert "run_schedule" not in script
 

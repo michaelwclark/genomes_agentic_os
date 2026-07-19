@@ -11,11 +11,18 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
 SCRIPT_NAME = "agentic-os-interim-executor"
 DEFAULT_ROOT = Path(os.environ.get("AGENTIC_OS_ROOT", "/Users/genome/agentic_os"))
+DEFAULT_CLI = Path(
+    os.environ.get(
+        "AGENTIC_OS_CLI",
+        shutil.which("agentic-os") or Path.home() / ".local/bin/agentic-os",
+    )
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.only:
         parser.error("--only is no longer supported; use `agentic-os schedule queue-now ID --apply` so work enters the managed queue")
-    command = [str(args.root / "harness/bin/agentic-os"), "runtime", "supervise", "--root", str(args.root)]
+    command = [str(DEFAULT_CLI), "runtime", "supervise", "--root", str(args.root)]
     command.append("--dry-run" if args.dry_run else "--apply")
     completed = subprocess.run(command, cwd=args.root, check=False)
     return completed.returncode
