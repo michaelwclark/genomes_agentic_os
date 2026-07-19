@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -386,6 +387,42 @@ def test_runtime_dispatch_holds_capacity_until_quiet_run_finishes(tmp_path: Path
     assert result["ok"] is True
     assert result["quiet_run_status"] == "success"
     assert time.monotonic() - started >= 0.35
+
+
+def test_runtime_dispatch_resolves_relative_quiet_run_state_from_os_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fresh_root(tmp_path)
+    quiet_run = root / "harness/bin/agentic-os-quiet-run"
+    relative_state = Path("logs/async-runs/relative-state/state.json")
+    state_path = root / relative_state
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        '{"status":"failure","exit_code":2,"error":"command-exited"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runtime_ops.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=f"state={relative_state}\n",
+            stderr="",
+        ),
+    )
+
+    result = runtime_ops._run_quiet_run_script(
+        root,
+        f"{quiet_run} start --artifact-dir logs -- /bin/false",
+        timeout_seconds=1,
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["quiet_run_status"] == "failure"
+    assert result["quiet_run_state"] == str(state_path.resolve())
 
 
 def test_runtime_dispatch_adds_user_local_bin_to_quiet_run_path(
