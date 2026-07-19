@@ -238,6 +238,9 @@ def collect_work_items(root: str | Path, *, max_items: int = 1_000) -> list[dict
 def _conversation_paths(root: Path, max_files: int, *, include_harness_sessions: bool = True) -> list[Path]:
     paths: list[Path] = []
     patterns = (
+        "domains/*/02-projects/*/logs/conversations/*.jsonl",
+        "domains/*/02-projects/*/work-items/*/*/logs/conversations/*.jsonl",
+        "domains/*/06-runs-and-logs/conversations/*.jsonl",
         "*/02-projects/*/logs/conversations/*.jsonl",
         "*/02-projects/*/work-items/*/*/logs/conversations/*.jsonl",
         "*/06-runs-and-logs/conversations/*.jsonl",

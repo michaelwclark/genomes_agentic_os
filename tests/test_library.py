@@ -172,7 +172,7 @@ def test_definition_change_makes_registry_stale(tmp_path: Path) -> None:
 
 def test_legacy_migration_uses_compact_registry_and_excludes_runtime(tmp_path: Path) -> None:
     root = _root(tmp_path)
-    source = root / "los/03-workflows/engineering/example"
+    source = root / "domains/los/03-workflows/engineering/example"
     source.mkdir(parents=True)
     (source / "workflow.md").write_text("# Example\n\nMigrated workflow.\n", encoding="utf-8")
     (source / "runs").mkdir()
@@ -197,7 +197,7 @@ def test_legacy_migration_uses_compact_registry_and_excludes_runtime(tmp_path: P
                     {
                         "kind": "workflow_instance",
                         "native_id": "workflow_instance:los:example",
-                        "source": "los/03-workflows/engineering/example",
+                        "source": "domains/los/03-workflows/engineering/example",
                         "title": "Example",
                         "summary": "Migrated workflow.",
                         "scope": {"domain": "los", "project": None},
@@ -226,14 +226,14 @@ def test_legacy_migration_uses_compact_registry_and_excludes_runtime(tmp_path: P
     assert not (target / "raw").exists()
     assert not (target / "config.toml.bak-20260718").exists()
     manifest = yaml.safe_load((target / "object.yml").read_text(encoding="utf-8"))
-    assert manifest["aliases"] == ["los/03-workflows/engineering/example"]
+    assert manifest["aliases"] == ["domains/los/03-workflows/engineering/example"]
     assert manifest["runtime"]["legacy_roots"] == [
-        "los/03-workflows/engineering/example/.features",
-        "los/03-workflows/engineering/example/raw",
-        "los/03-workflows/engineering/example/reports",
-        "los/03-workflows/engineering/example/runs",
-        "los/03-workflows/engineering/example/tenant_config_snapshots",
-        "los/03-workflows/engineering/example/tenant_config_toolkit_outputs",
+        "domains/los/03-workflows/engineering/example/.features",
+        "domains/los/03-workflows/engineering/example/raw",
+        "domains/los/03-workflows/engineering/example/reports",
+        "domains/los/03-workflows/engineering/example/runs",
+        "domains/los/03-workflows/engineering/example/tenant_config_snapshots",
+        "domains/los/03-workflows/engineering/example/tenant_config_toolkit_outputs",
     ]
 
 
@@ -277,9 +277,9 @@ def test_domain_references_preserve_same_stem_different_extensions(tmp_path: Pat
     registry = root / "harness/registries/first-class-resources.json"
     registry.parent.mkdir(parents=True)
     registry.write_text('{"resources": []}\n', encoding="utf-8")
-    knowledge = root / "los/05-knowledge"
+    knowledge = root / "domains/los/05-knowledge"
     knowledge.mkdir(parents=True)
-    (root / "los/domain.yml").write_text("name: los\n", encoding="utf-8")
+    (root / "domains/los/domain.yml").write_text("name: los\n", encoding="utf-8")
     (knowledge / "team-identities.md").write_text("# Team identities\n", encoding="utf-8")
     (knowledge / "team-identities.yml").write_text("people: []\n", encoding="utf-8")
     plan = legacy_migration_plan(root)

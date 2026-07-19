@@ -60,7 +60,7 @@ agentic-os project worktree add <domain> <project> <name> --root ~/agentic_os --
 
 ## Files Created
 
-A project is written under `<root>/<domain>/02-projects/<project>/`:
+A project is written under `<root>/domains/<domain>/02-projects/<project>/`:
 
 ```text
 README.md

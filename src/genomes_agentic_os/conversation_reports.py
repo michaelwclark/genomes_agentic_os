@@ -275,7 +275,11 @@ def _interesting_row_text(row: Any) -> str:
 def _conversation_dirs(root: Path, *, project: str | None = None) -> list[Path]:
     dirs: list[Path] = []
     dirs.append(root / "harness" / "logs" / "conversations")
-    for domain_root in sorted(path for path in root.iterdir() if path.is_dir() and not path.name.startswith(".")):
+    domain_roots = {
+        *root.glob("*/"),
+        *root.glob("domains/*/"),
+    }
+    for domain_root in sorted(path for path in domain_roots if path.is_dir() and not path.name.startswith(".")):
         runs_dir = domain_root / "06-runs-and-logs" / "conversations"
         dirs.append(runs_dir)
         projects_root = domain_root / "02-projects"
@@ -340,7 +344,11 @@ def _read_title(path: Path) -> str:
 def build_work_item_index(root: str | Path, *, project: str | None = None) -> list[WorkItemRef]:
     os_root = expand_path(root)
     refs: list[WorkItemRef] = []
-    for domain_root in sorted(path for path in os_root.iterdir() if path.is_dir() and not path.name.startswith(".")):
+    domain_roots = {
+        *os_root.glob("*/"),
+        *os_root.glob("domains/*/"),
+    }
+    for domain_root in sorted(path for path in domain_roots if path.is_dir() and not path.name.startswith(".")):
         projects_root = domain_root / "02-projects"
         if not projects_root.is_dir():
             continue

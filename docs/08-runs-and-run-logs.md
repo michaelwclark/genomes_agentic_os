@@ -18,7 +18,7 @@ of agent work. Every run gets its own directory inside the domain's
 `06-runs-and-logs/runs/` folder:
 
 ```
-<root>/<domain>/06-runs-and-logs/runs/<timestamp>-<domain>-<slug>/
+<root>/domains/<domain>/06-runs-and-logs/runs/<timestamp>-<domain>-<slug>/
     run-log.md        ← primary audit record
     artifacts/        ← outputs produced during the run
 ```

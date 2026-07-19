@@ -14,7 +14,7 @@ def write(path: Path, content: str) -> Path:
 
 def test_resolve_inherits_parent_contracts_and_central_provider_routes(tmp_path: Path) -> None:
     root = tmp_path / "os"
-    domain = root / "acme"
+    domain = root / "domains" / "acme"
     target = domain / "03-workflows" / "engineering" / "ship_release"
     write(root / "AGENTS.md", "# Root agent\n")
     write(root / "RULES.md", "# Shared safe rule\n")

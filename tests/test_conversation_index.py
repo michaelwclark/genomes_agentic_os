@@ -20,7 +20,7 @@ NOW = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
 
 def _project(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "agentic_os"
-    project = root / "los" / "02-projects" / "los_app_los_django"
+    project = root / "domains" / "los" / "02-projects" / "los_app_los_django"
     repo = tmp_path / "projects" / "los-django"
     repo.mkdir(parents=True)
     project.mkdir(parents=True)

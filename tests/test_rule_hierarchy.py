@@ -21,9 +21,9 @@ def _registry(path: Path, rules: list[dict]) -> None:
 
 def _tree(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "agentic_os"
-    target = root / "acme" / "03-workflows" / "engineering" / "release_review"
+    target = root / "domains" / "acme" / "03-workflows" / "engineering" / "release_review"
     _write(root / "RULES.md", "# System rules\n\nProtect operator data.\n")
-    _write(root / "acme" / "RULES.md", "# Acme rules\n\nUse company review policy.\n")
+    _write(root / "domains" / "acme" / "RULES.md", "# Acme rules\n\nUse company review policy.\n")
     _write(target / "RULES.md", "# Release review rules\n\nVerify every release receipt.\n")
     _write(
         target / "context-contract.yml",
@@ -62,7 +62,7 @@ def _tree(tmp_path: Path) -> tuple[Path, Path]:
         ],
     )
     _registry(
-        root / "acme" / "00-control-plane" / "resource-registries" / "rules.yml",
+        root / "domains" / "acme" / "00-control-plane" / "resource-registries" / "rules.yml",
         [
             {
                 "id": "domain_guard",
@@ -103,7 +103,7 @@ def test_effective_projection_matches_context_sources_and_never_opens_registry_s
 
 def test_strictest_wins_then_narrower_scope_and_reports_exact_conflicts(tmp_path: Path) -> None:
     root, target = _tree(tmp_path)
-    project = root / "acme" / "02-projects" / "console"
+    project = root / "domains" / "acme" / "02-projects" / "console"
     workflow = project / "03-workflows" / "engineering" / "release_review"
     _write(project / "RULES.md", "# Project rules\n\nApply the project release gate.\n")
     _write(
@@ -161,7 +161,7 @@ def test_duplicate_and_partial_registry_diagnostics_do_not_collapse_projection(t
     data["rules"][1]["key"] = "system_note"
     data["rules"].append(duplicate)
     system_registry.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    domain_registry = root / "acme" / "00-control-plane" / "resource-registries" / "rules.yml"
+    domain_registry = root / "domains" / "acme" / "00-control-plane" / "resource-registries" / "rules.yml"
     domain_registry.write_text("rules: [unterminated", encoding="utf-8")
 
     result = effective_rules(root, target)

@@ -37,7 +37,7 @@ The hierarchy has three levels:
 | Level | Examples | Created by |
 | --- | --- | --- |
 | **OS root** | `~/agentic_os/` | `agentic-os init` |
-| **Domain** | `personal/`, `work/`, `archive/` | `init` (defaults) or `domain create` |
+| **Domain** | `domains/personal/`, `domains/work/`, `domains/archive/` | `init` (defaults) or `domain create` |
 | **Numbered lane** | `00-programs/`, `00-control-plane/` … `08-archive/` | created inside every domain |
 
 ---
@@ -59,16 +59,17 @@ Running `agentic-os init` (default target: `~/agentic_os`) produces:
     README.md
     registries/           ← capabilities.yml, commands.yml, skills.yml, …
     shared_factory/       ← shared patterns, templates, cross-domain knowledge (see 02 · Architecture)
-  personal/
-  work/
-  archive/
+  domains/              ← the only canonical parent for operator domains
+    personal/
+    work/
+    archive/
 ```
 
 The `.agentic_root` marker is how `here route` and `here context build` find the
 OS boundary — they walk up the directory tree until they hit it. The context
 files an agent actually reads (`AGENTS.md`, `ROUTER.md`, `CONTEXT.md`,
 `RULES.md`, `TOOLS.md`) live under `harness/`, not at the bare OS root —
-`harness/` is the managed OS brain, and `personal/`, `work/`, and `archive/`
+`harness/` is the managed OS brain, and `domains/personal/`, `domains/work/`, and `domains/archive/`
 are the three default domains a real operator routes work into.
 
 ---
@@ -253,41 +254,41 @@ front matter.
 Running `agentic-os domain create acme --root ~/agentic_os` produces (abbreviated):
 
 ```text
-created: ~/agentic_os/acme
-created: ~/agentic_os/acme/README.md
-created: ~/agentic_os/acme/ROUTER.md
-created: ~/agentic_os/acme/AGENTS.md
-created: ~/agentic_os/acme/CLAUDE.md
-created: ~/agentic_os/acme/CONTEXT.md
-created: ~/agentic_os/acme/RULES.md
-created: ~/agentic_os/acme/TOOLS.md
-created: ~/agentic_os/acme/REFERENCES.md
-created: ~/agentic_os/acme/domain.yml
-created: ~/agentic_os/acme/00-programs
-created: ~/agentic_os/acme/00-control-plane
-created: ~/agentic_os/acme/01-inbox
-created: ~/agentic_os/acme/02-projects
-created: ~/agentic_os/acme/03-workflows
-created: ~/agentic_os/acme/04-automations
-created: ~/agentic_os/acme/05-knowledge
-created: ~/agentic_os/acme/06-runs-and-logs
-created: ~/agentic_os/acme/06-runs-and-logs/runs
-created: ~/agentic_os/acme/06-runs-and-logs/failures
-created: ~/agentic_os/acme/07-metrics
-created: ~/agentic_os/acme/08-archive
-created: ~/agentic_os/acme/00-programs/README.md
-created: ~/agentic_os/acme/00-control-plane/active-work.md
-created: ~/agentic_os/acme/00-control-plane/decisions.md
-created: ~/agentic_os/acme/00-control-plane/routing-rules.md
-created: ~/agentic_os/acme/00-control-plane/approval-rules.md
-created: ~/agentic_os/acme/01-inbox/raw-ideas.md
-created: ~/agentic_os/acme/01-inbox/triage.md
-created: ~/agentic_os/acme/05-knowledge/source-map.md
-created: ~/agentic_os/acme/05-knowledge/glossary.md
-created: ~/agentic_os/acme/05-knowledge/memory-policy.md
-created: ~/agentic_os/acme/06-runs-and-logs/activity-log.md
-created: ~/agentic_os/acme/07-metrics/baselines.md
-created: ~/agentic_os/acme/07-metrics/scorecards.md
+created: ~/agentic_os/domains/acme
+created: ~/agentic_os/domains/acme/README.md
+created: ~/agentic_os/domains/acme/ROUTER.md
+created: ~/agentic_os/domains/acme/AGENTS.md
+created: ~/agentic_os/domains/acme/CLAUDE.md
+created: ~/agentic_os/domains/acme/CONTEXT.md
+created: ~/agentic_os/domains/acme/RULES.md
+created: ~/agentic_os/domains/acme/TOOLS.md
+created: ~/agentic_os/domains/acme/REFERENCES.md
+created: ~/agentic_os/domains/acme/domain.yml
+created: ~/agentic_os/domains/acme/00-programs
+created: ~/agentic_os/domains/acme/00-control-plane
+created: ~/agentic_os/domains/acme/01-inbox
+created: ~/agentic_os/domains/acme/02-projects
+created: ~/agentic_os/domains/acme/03-workflows
+created: ~/agentic_os/domains/acme/04-automations
+created: ~/agentic_os/domains/acme/05-knowledge
+created: ~/agentic_os/domains/acme/06-runs-and-logs
+created: ~/agentic_os/domains/acme/06-runs-and-logs/runs
+created: ~/agentic_os/domains/acme/06-runs-and-logs/failures
+created: ~/agentic_os/domains/acme/07-metrics
+created: ~/agentic_os/domains/acme/08-archive
+created: ~/agentic_os/domains/acme/00-programs/README.md
+created: ~/agentic_os/domains/acme/00-control-plane/active-work.md
+created: ~/agentic_os/domains/acme/00-control-plane/decisions.md
+created: ~/agentic_os/domains/acme/00-control-plane/routing-rules.md
+created: ~/agentic_os/domains/acme/00-control-plane/approval-rules.md
+created: ~/agentic_os/domains/acme/01-inbox/raw-ideas.md
+created: ~/agentic_os/domains/acme/01-inbox/triage.md
+created: ~/agentic_os/domains/acme/05-knowledge/source-map.md
+created: ~/agentic_os/domains/acme/05-knowledge/glossary.md
+created: ~/agentic_os/domains/acme/05-knowledge/memory-policy.md
+created: ~/agentic_os/domains/acme/06-runs-and-logs/activity-log.md
+created: ~/agentic_os/domains/acme/07-metrics/baselines.md
+created: ~/agentic_os/domains/acme/07-metrics/scorecards.md
 ```
 
 Exit code: **0**. Re-running is safe — existing files are not overwritten.

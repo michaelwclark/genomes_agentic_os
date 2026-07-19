@@ -24,12 +24,12 @@ CLAUDE_CLI_ID = "44444444-4444-4444-8444-444444444444"
 
 def make_gui_fixture(tmp_path: Path) -> dict[str, Path]:
     root = tmp_path / "agentic_os"
-    project = root / "los" / "02-projects" / "los_app_los_django"
+    project = root / "domains" / "los" / "02-projects" / "los_app_los_django"
     repo = tmp_path / "projects" / "los-django"
     repo.mkdir(parents=True)
     project.mkdir(parents=True)
     (project / "src").symlink_to(repo)
-    (root / "los" / "domain.yml").write_text("title: LOS\n", encoding="utf-8")
+    (root / "domains" / "los" / "domain.yml").write_text("title: LOS\n", encoding="utf-8")
     (project / "project.yml").write_text(
         yaml.safe_dump({"title": "LOS Django", "status": "active"}),
         encoding="utf-8",

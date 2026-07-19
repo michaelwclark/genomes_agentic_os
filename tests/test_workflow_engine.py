@@ -116,7 +116,7 @@ def test_legacy_workflow_projects_as_partial_without_fabricating_steps(tmp_path:
     root = _root(tmp_path)
     create_workflow(root, "work", "engineering", "legacy_review")
     create_workflow(root, "work", "engineering", "malformed_review")
-    (root / "work/03-workflows/engineering/malformed_review" / DEFINITION_FILE).write_text("steps: [\n", encoding="utf-8")
+    (root / "domains/work/03-workflows/engineering/malformed_review" / DEFINITION_FILE).write_text("steps: [\n", encoding="utf-8")
 
     result = query_workflow_resources(root, "definition", domain="work", lane="engineering")
     legacy = next(item for item in result["items"] if item["id"] == "legacy_review")
@@ -156,7 +156,7 @@ def test_validation_maps_invalid_order_dependency_and_cycle_to_steps(tmp_path: P
 def test_create_is_dry_run_first_and_reads_back_distinct_definition_identity(tmp_path: Path) -> None:
     root = _root(tmp_path)
     planned = create_workflow_definition(root, _definition())
-    workflow_root = root / "work/03-workflows/engineering/release_review"
+    workflow_root = root / "domains/work/03-workflows/engineering/release_review"
 
     assert planned["status"] == "planned"
     assert not workflow_root.exists()
@@ -213,7 +213,7 @@ def test_update_preserves_unknown_fields_rejects_loss_and_stale_bases(tmp_path: 
             lane="engineering",
         )
 
-    definition_path = root / "work/03-workflows/engineering/release_review" / DEFINITION_FILE
+    definition_path = root / "domains/work/03-workflows/engineering/release_review" / DEFINITION_FILE
     definition_path.write_text(definition_path.read_text() + "\nexternal_edit: true\n", encoding="utf-8")
     with pytest.raises(ValueError, match="stale workflow plan"):
         update_workflow_definition(
@@ -238,7 +238,7 @@ def test_publish_creates_immutable_version_and_separate_instance(tmp_path: Path)
     assert instance["resource_kind"] == "workflow_instance"
     assert version["id"] != instance["id"]
     assert instance["version_id"] == version["id"]
-    assert (root / "work/03-workflows/engineering/release_review" / INSTANCE_FILE).is_file()
+    assert (root / "domains/work/03-workflows/engineering/release_review" / INSTANCE_FILE).is_file()
 
     versions = query_workflow_resources(root, "version", workflow="release_review")["items"]
     instances = query_workflow_resources(root, "instance", workflow="release_review")["items"]
@@ -397,7 +397,7 @@ def test_publish_rollback_removes_new_version_and_instance_pointer(tmp_path: Pat
     _create(root)
     published = _publish(root)
     version_id = published["readback"]["version"]["id"]
-    instance_path = root / "work/03-workflows/engineering/release_review" / INSTANCE_FILE
+    instance_path = root / "domains/work/03-workflows/engineering/release_review" / INSTANCE_FILE
 
     assert instance_path.is_file()
     assert get_workflow_resource(root, "version", version_id)["resource"]["id"] == version_id

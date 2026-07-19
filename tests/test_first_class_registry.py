@@ -36,7 +36,7 @@ def _yaml(path: Path, value: object) -> None:
 def _root(tmp_path: Path) -> Path:
     root = tmp_path / "os"
     _write(root / ".agentic_root", "agentic-os\n")
-    _yaml(root / "work/domain.yml", {"id": "work", "name": "Work"})
+    _yaml(root / "domains/work/domain.yml", {"id": "work", "name": "Work"})
     _write(root / "harness/rules/os-authoring-rules.md", "# Rules\n")
     _yaml(
         root / "harness/registries/skills.yml",
@@ -84,11 +84,11 @@ def _root(tmp_path: Path) -> Path:
         "# Workflow: Review\n\n## Purpose\n\nReview changes safely.\n",
     )
     _write(
-        root / "work/02-projects/demo/RULES.md",
+        root / "domains/work/02-projects/demo/RULES.md",
         "# Demo rules\n\n## Purpose\n\nProject constraints.\n",
     )
     _yaml(
-        root / "work/02-projects/demo/config/resource-registries/skills.yml",
+        root / "domains/work/02-projects/demo/config/resource-registries/skills.yml",
         {
             "skills": [
                 {
@@ -285,7 +285,7 @@ def test_automation_evidence_refs_are_bounded_root_relative_and_honest(
     tmp_path: Path,
 ) -> None:
     root = _root(tmp_path)
-    automation = root / "work/04-automations/engineering/digest"
+    automation = root / "domains/work/04-automations/engineering/digest"
     _write(
         automation / "automation.md",
         "# Automation: Digest\n\n## Purpose\n\nBuild a digest.\n",
@@ -307,7 +307,7 @@ def test_automation_evidence_refs_are_bounded_root_relative_and_honest(
         "unavailable_code": None,
         "references": [
             {
-                "path": "work/04-automations/engineering/digest/logs",
+                "path": "domains/work/04-automations/engineering/digest/logs",
                 "kind": "directory",
                 "label": "Logs folder",
                 "source": "automation_definition",
@@ -321,8 +321,8 @@ def test_automation_evidence_refs_are_bounded_root_relative_and_honest(
         ref["path"] for ref in item["evidence"]["recent"]["references"]
     }
     assert recent_paths == {
-        "work/04-automations/engineering/digest/logs/latest.log",
-        "work/04-automations/engineering/digest/runs/receipt.json",
+        "domains/work/04-automations/engineering/digest/logs/latest.log",
+        "domains/work/04-automations/engineering/digest/runs/receipt.json",
     }
     assert all(
         not Path(ref["path"]).is_absolute() and ".." not in Path(ref["path"]).parts
@@ -335,7 +335,7 @@ def test_automation_evidence_rejects_absolute_traversal_and_symlink_escape(
     tmp_path: Path,
 ) -> None:
     root = _root(tmp_path)
-    automation = root / "work/04-automations/engineering/digest"
+    automation = root / "domains/work/04-automations/engineering/digest"
     _write(automation / "automation.md", "# Automation: Digest\n")
     outside = tmp_path / "outside"
     _write(outside / "secret.log", "secret\n")
@@ -409,7 +409,7 @@ def test_automation_without_evidence_has_deterministic_disabled_reasons(
 ) -> None:
     root = _root(tmp_path)
     _write(
-        root / "work/04-automations/engineering/digest/automation.md",
+        root / "domains/work/04-automations/engineering/digest/automation.md",
         "# Automation: Digest\n",
     )
 

@@ -84,7 +84,15 @@ def _project_scopes(root: str, domain: str | None, project: str | None):
     if domain:
         domains = [domain_path(os_root, normalize_domain(domain))]
     else:
-        domains = [path for path in os_root.iterdir() if path.is_dir() and (path / "02-projects").is_dir()] if os_root.is_dir() else []
+        domains = (
+            [
+                path
+                for path in {*os_root.glob("*/"), *os_root.glob("domains/*/")}
+                if path.is_dir() and (path / "02-projects").is_dir()
+            ]
+            if os_root.is_dir()
+            else []
+        )
     for domain_root in sorted(domains):
         projects_root = domain_root / "02-projects"
         if not projects_root.is_dir():

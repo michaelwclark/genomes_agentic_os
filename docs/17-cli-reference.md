@@ -544,9 +544,9 @@ agentic-os automation set-maturity acme support ticket_intake prepare \
 
 # Install a config layer for Codex, then verify it
 agentic-os config install-tree --root ~/agentic_os --dry-run
-agentic-os config install --layer domain_or_lane --root ~/agentic_os/acme --dry-run
-agentic-os config install --layer domain_or_lane --root ~/agentic_os/acme --apply --backup
-agentic-os config doctor --layer domain_or_lane --root ~/agentic_os/acme
+agentic-os config install --layer domain_or_lane --root ~/agentic_os/domains/acme --dry-run
+agentic-os config install --layer domain_or_lane --root ~/agentic_os/domains/acme --apply --backup
+agentic-os config doctor --layer domain_or_lane --root ~/agentic_os/domains/acme
 
 # Run what is due, all dry-run by default
 agentic-os schedule run-due --root ~/agentic_os

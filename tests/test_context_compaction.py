@@ -22,9 +22,9 @@ from genomes_agentic_os.context_compaction import (
 
 
 def make_target(root: Path, name: str) -> Path:
-    domain = root / "acme"
+    domain = root / "domains" / "acme"
     domain.mkdir(parents=True, exist_ok=True)
-    target = root / "acme" / "03-workflows" / "engineering" / name
+    target = root / "domains" / "acme" / "03-workflows" / "engineering" / name
     target.mkdir(parents=True)
     (target / "workflow.md").write_text(f"# {name}\n", encoding="utf-8")
     (target / "context-contract.yml").write_text(
@@ -47,7 +47,7 @@ def test_compaction_plan_is_deterministic_and_contains_exact_rollback(tmp_path: 
     first = make_target(root, "first")
     second = make_target(root, "second")
     duplicate = "# Generic router\n\nRoute to the parent.\n"
-    (root / "acme/ROUTER.md").write_text(duplicate, encoding="utf-8")
+    (root / "domains/acme/ROUTER.md").write_text(duplicate, encoding="utf-8")
     (first / "ROUTER.md").write_text(duplicate, encoding="utf-8")
     (second / "ROUTER.md").write_text(duplicate, encoding="utf-8")
 
@@ -253,7 +253,7 @@ def test_apply_refuses_stale_or_tampered_plan(tmp_path: Path) -> None:
 
 
 def legacy_automation(root: Path) -> Path:
-    target = root / "acme/04-automations/engineering/cleanup"
+    target = root / "domains/acme/04-automations/engineering/cleanup"
     target.mkdir(parents=True)
     (target / "AGENTS.md").write_text("# Automation agent\n", encoding="utf-8")
     (target / "MEMORY.md").write_text("# Durable memory\n", encoding="utf-8")
@@ -441,7 +441,7 @@ def test_promote_legacy_target_creates_manifest_and_lane_contracts(tmp_path: Pat
 def test_promote_legacy_batch_reuses_identical_lane_contracts(tmp_path: Path) -> None:
     root = tmp_path / "os"
     first = legacy_automation(root)
-    second = root / "acme/04-automations/engineering/archive"
+    second = root / "domains/acme/04-automations/engineering/archive"
     shutil.copytree(first, second)
     targets = [path.relative_to(root).as_posix() for path in (first, second)]
 
@@ -463,7 +463,7 @@ def test_promote_legacy_batch_reuses_identical_lane_contracts(tmp_path: Path) ->
 def test_promote_legacy_batch_blocks_different_lane_contracts(tmp_path: Path) -> None:
     root = tmp_path / "os"
     first = legacy_automation(root)
-    second = root / "acme/04-automations/engineering/archive"
+    second = root / "domains/acme/04-automations/engineering/archive"
     shutil.copytree(first, second)
     (second / "RULES.md").write_text("# Different safety contract\n", encoding="utf-8")
     targets = [path.relative_to(root).as_posix() for path in (first, second)]

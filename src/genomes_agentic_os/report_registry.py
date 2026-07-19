@@ -152,6 +152,13 @@ def _discovery_roots(root: Path) -> list[Path]:
         if projects.is_dir() and not projects.is_symlink():
             starts.add(projects)
 
+    domains_root = root / "domains"
+    if domains_root.is_dir() and not domains_root.is_symlink():
+        for domain_root in sorted(domains_root.iterdir(), key=lambda item: item.name):
+            projects = domain_root / "02-projects"
+            if domain_root.is_dir() and not domain_root.is_symlink() and projects.is_dir() and not projects.is_symlink():
+                starts.add(projects)
+
     shared = root / "harness" / "shared_factory"
     for relative in (
         "02-projects",

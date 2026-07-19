@@ -466,8 +466,10 @@ def build_navigation(root: str | Path, conversations: list[dict[str, Any]]) -> d
         key = (str(item.get("domain") or ""), str(item.get("project") or ""))
         counts[key] = counts.get(key, 0) + 1
 
+    domains_root = os_root / "domains"
+    domain_roots = sorted(domains_root.glob("*")) if domains_root.is_dir() else sorted(os_root.glob("*"))
     domains: list[dict[str, Any]] = []
-    for domain_root in sorted(os_root.glob("*")):
+    for domain_root in domain_roots:
         projects_root = domain_root / "02-projects"
         if not domain_root.is_dir() or not projects_root.is_dir():
             continue

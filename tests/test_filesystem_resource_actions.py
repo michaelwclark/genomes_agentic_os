@@ -305,7 +305,7 @@ def test_destination_and_backup_target_tampering_are_denied(tmp_path: Path, caps
     _init(root, capsys)
     outside = tmp_path / "outside"
     outside.mkdir()
-    escaped = root / "personal/04-automations/engineering/escaped_auto"
+    escaped = root / "domains/personal/04-automations/engineering/escaped_auto"
     escaped.symlink_to(outside, target_is_directory=True)
     assert main(
         [

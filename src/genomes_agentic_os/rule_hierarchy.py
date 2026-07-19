@@ -86,6 +86,8 @@ def _target_metadata(root: Path, target: Path) -> dict[str, str | None]:
     project: str | None = None
     if len(parts) >= 2 and parts[:2] == ("harness", "shared_factory"):
         domain = "shared_factory"
+    elif len(parts) >= 2 and parts[0] == "domains":
+        domain = parts[1]
     elif parts and parts[0] != "harness":
         domain = parts[0]
     if "02-projects" in parts:
@@ -119,6 +121,8 @@ def _scope_for_path(root: Path, path: Path) -> tuple[str, str]:
         if parts[:2] == ("harness", "shared_factory"):
             return "domain", "shared_factory"
         return "os", "harness"
+    if parts[0] == "domains" and len(parts) >= 2:
+        return "domain", parts[1]
     return "domain", parts[0]
 
 

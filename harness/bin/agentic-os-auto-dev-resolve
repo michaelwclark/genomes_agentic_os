@@ -116,7 +116,7 @@ def _find_root(explicit: str | None) -> Path:
 
 
 def _find_project(root: Path, project_id: str) -> Path | None:
-    """Search <root>/<domain>/02-projects/<project_id>/ across known domains.
+    """Search <root>/domains/<domain>/02-projects/<project_id>/ across known domains.
 
     Primary domains are checked first. harness/shared_factory is only checked
     when no primary domain match is found, since it is a factory/template layer

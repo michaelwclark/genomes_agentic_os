@@ -805,6 +805,8 @@ def validate_capability_registries(root: Path, result: ValidationResult) -> None
         registry_paths = [path] if path.is_file() else []
         if capability_type in {"command", "skill", "rule", "report"}:
             scoped_patterns = (
+                f"domains/*/00-control-plane/resource-registries/{collection}.yml",
+                f"domains/*/02-projects/*/config/resource-registries/{collection}.yml",
                 f"*/00-control-plane/resource-registries/{collection}.yml",
                 f"*/02-projects/*/config/resource-registries/{collection}.yml",
             )
@@ -1615,6 +1617,7 @@ def validate_root(root: str | Path) -> ValidationResult:
             result.errors.append(f"invalid artifact naming config: {naming_config}: {exc}")
     validate_claude_adapter(harness_root / "CLAUDE.md", result)
     warn_legacy_agent(harness_root / "AGENT.md", result)
+    validate_canonical_domain_layout(os_root, result)
 
     for directory in VISIBLE_CAPABILITY_DIRECTORIES:
         require_dir(os_root / directory, result)
@@ -1696,6 +1699,30 @@ def validate_root(root: str | Path) -> ValidationResult:
         result.warnings.append(finding["message"])
 
     return result
+
+
+def validate_canonical_domain_layout(root: Path, result: ValidationResult) -> None:
+    """Reject domain directories and aliases outside the canonical domains/ root."""
+
+    domains_root = root / "domains"
+    if not domains_root.is_dir():
+        return
+
+    for candidate in sorted(root.iterdir()):
+        if candidate.name == "domains":
+            continue
+        marker = candidate / "domain.yml"
+        is_domain_entry = marker.is_file()
+        is_domain_alias = False
+        if candidate.is_symlink():
+            target = Path(os.readlink(candidate))
+            is_domain_alias = target == Path("domains") / candidate.name
+        if not is_domain_entry and not is_domain_alias:
+            continue
+        result.errors.append(
+            "non-canonical root domain entry: "
+            f"{candidate}; move it to {domains_root / candidate.name} and remove the root alias"
+        )
 
 
 def validate_object_library(root: Path, result: ValidationResult) -> None:

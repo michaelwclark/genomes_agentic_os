@@ -21,6 +21,7 @@ from .scaffold import (
     DEFAULT_PROJECTS_SOURCE,
     SOURCE_PACKAGE_VERSION,
     ScaffoldResult,
+    domain_path,
     ensure_default_domains,
     installed_domain_names,
     ensure_project_operating_surface,
@@ -706,7 +707,9 @@ def repair_project_operating_surfaces(root: str | Path) -> ScaffoldResult:
     """Backfill lifecycle scaffolding for projects created by older installers."""
     os_root = expand_path(root)
     result = ScaffoldResult()
-    for domain_root in sorted(path for path in os_root.iterdir() if path.is_dir() and not path.name.startswith(".")):
+    domain_names = installed_domain_names(os_root)
+    for domain_name in domain_names:
+        domain_root = domain_path(os_root, domain_name)
         projects_root = domain_root / "02-projects"
         if not projects_root.is_dir():
             continue

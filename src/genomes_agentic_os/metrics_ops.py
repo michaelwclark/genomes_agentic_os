@@ -72,7 +72,11 @@ def _count_closed_runs(runs_dir: Path) -> tuple[int, int, int]:
 def _automation_maturity_counts(root: Path) -> dict[str, int]:
     """Walk domain 04-automations trees and count each maturity level."""
     counts: dict[str, int] = {}
-    for domain_dir in sorted(root.iterdir()):
+    domain_dirs = {
+        *root.glob("*/"),
+        *root.glob("domains/*/"),
+    }
+    for domain_dir in sorted(domain_dirs):
         if not domain_dir.is_dir() or domain_dir.name.startswith("."):
             continue
         automations_root = domain_dir / "04-automations"

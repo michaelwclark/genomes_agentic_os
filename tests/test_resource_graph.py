@@ -30,7 +30,7 @@ def _write_spec(
     body: str = "",
 ) -> Path:
     _mark_root(root)
-    item = root / domain / "02-projects" / project / "work-items" / lane / packet
+    item = root / "domains" / domain / "02-projects" / project / "work-items" / lane / packet
     item.mkdir(parents=True)
     (item / "work.yml").write_text(yaml.safe_dump(metadata, sort_keys=False), encoding="utf-8")
     (item / "SPEC.md").write_text(body, encoding="utf-8")

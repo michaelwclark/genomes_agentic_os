@@ -137,7 +137,7 @@ Create a domain scaffold (numbered sub-directories + context files).
 | `--root` | No | Installed OS root path |
 | `--include-legacy-agent` | No | Also create `AGENT.md` shims |
 
-Writes: `<root>/<name>/` tree with `README.md`, `ROUTER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `REFERENCES.md`, `domain.yml`, numbered subdirs 00–08.
+Writes: `<root>/domains/<name>/` tree with `README.md`, `ROUTER.md`, `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `REFERENCES.md`, `domain.yml`, numbered subdirs 00–08. Root-level domain directories and compatibility aliases are not created.
 
 ```bash
 agentic-os domain create acme --root /tmp/aos-ref
@@ -170,7 +170,7 @@ Create a project scaffold inside a domain.
 | `--status` | No (default: `active`) | One of: `active`, `waiting`, `blocked`, `done` |
 | `--lane` | No | Primary operating lane for this project |
 
-Writes: `<root>/<domain>/02-projects/<project>/` with `project.yml`, `status.md`, `decisions.md`, `source-map.md`, `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, `work-items/01-intake/`, `work-items/02-active/`, `work-items/03-complete/`, `worktrees/`, and `artifacts/`; creates `src` when `--repo` is a local path; updates domain `README.md` and `active-work.md`.
+Writes: `<root>/domains/<domain>/02-projects/<project>/` with `project.yml`, `status.md`, `decisions.md`, `source-map.md`, `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, `work-items/01-intake/`, `work-items/02-active/`, `work-items/03-complete/`, `worktrees/`, and `artifacts/`; creates `src` when `--repo` is a local path; updates domain `README.md` and `active-work.md`.
 
 ```bash
 agentic-os project create acme launch --root /tmp/aos-ref \
@@ -325,7 +325,7 @@ Create or repair a project-scoped `src` symlink to a local repository.
 | `--repo` | No | Local repository path; defaults to `project.yml` `sources.repo` |
 | `--force` | No | Replace an existing `src` symlink that points elsewhere |
 
-Writes: `<root>/<domain>/02-projects/<project>/src`, and updates `project.yml` plus `source-map.md` when `--repo` is supplied. Remote repository URLs are rejected because `src` must be a filesystem symlink.
+Writes: `<root>/domains/<domain>/02-projects/<project>/src`, and updates `project.yml` plus `source-map.md` when `--repo` is supplied. Remote repository URLs are rejected because `src` must be a filesystem symlink.
 
 ```bash
 agentic-os project link-source acme launch --root /tmp/aos-ref --repo /tmp/source-repo
@@ -485,7 +485,7 @@ Create a workflow scaffold inside a domain lane.
 | `name` | Yes | Workflow slug (snake_case) |
 | `--root` | No | Installed OS root path |
 
-Writes: `<root>/<domain>/03-workflows/<lane>/<name>/` with `workflow.md`, `alignment-questions.md`, `examples/`, `runs/`.
+Writes: `<root>/domains/<domain>/03-workflows/<lane>/<name>/` with `workflow.md`, `alignment-questions.md`, `examples/`, `runs/`.
 
 ```bash
 agentic-os workflow create acme engineering launch_blog --root /tmp/aos-ref
@@ -538,7 +538,7 @@ Create an automation scaffold inside a domain lane.
 | `name` | Yes | Automation slug (snake_case) |
 | `--root` | No | Installed OS root path |
 
-Writes: `<root>/<domain>/04-automations/<lane>/<name>/` scaffold.
+Writes: `<root>/domains/<domain>/04-automations/<lane>/<name>/` scaffold.
 
 ```bash
 agentic-os automation create acme support ticket_intake --root /tmp/aos-ref

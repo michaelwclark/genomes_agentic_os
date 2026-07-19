@@ -1907,6 +1907,7 @@ def active_automation_entries(root: Path) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     inactive = {"done", "finished", "documented", "archived", "inactive"}
     active_work_paths = list(root.glob("*/00-control-plane/active-work.md"))
+    active_work_paths.extend(root.glob("domains/*/00-control-plane/active-work.md"))
     shared_factory_active_work = root / "harness" / "shared_factory" / "00-control-plane" / "active-work.md"
     if shared_factory_active_work.is_file():
         active_work_paths.append(shared_factory_active_work)

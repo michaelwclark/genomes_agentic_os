@@ -91,7 +91,7 @@ def _make_project(
     """Create a domain + project and return the project root path."""
     assert main(["domain", "create", domain, "--root", str(root)]) == 0
     assert main(["project", "create", domain, project, "--root", str(root)]) == 0
-    project_root = root / domain / "02-projects" / project
+    project_root = root / "domains" / domain / "02-projects" / project
     if with_mount:
         # Write a project.yml with a remote that has a mount block
         project_yml = project_root / "project.yml"
@@ -126,7 +126,7 @@ def _make_project_without_mount(
     """Create a project with a remote but NO mount block (feature 63 baseline)."""
     assert main(["domain", "create", domain, "--root", str(root)]) == 0
     assert main(["project", "create", domain, project, "--root", str(root)]) == 0
-    project_root = root / domain / "02-projects" / project
+    project_root = root / "domains" / domain / "02-projects" / project
     project_yml = project_root / "project.yml"
     data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
     data.setdefault("sources", {})["remotes"] = [
@@ -514,7 +514,7 @@ class TestDoctorRemoteMounts:
     def test_error_on_ambiguous_namespaces(self, tmp_path: Path):
         root = _init_root(tmp_path)
         _make_project(root, with_mount=True)
-        project_root = root / "acme" / "02-projects" / "losmon"
+        project_root = root / "domains" / "acme" / "02-projects" / "losmon"
         project_yml = project_root / "project.yml"
         data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
         # Add a second remote with the same namespace

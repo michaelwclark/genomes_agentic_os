@@ -243,6 +243,11 @@ def _scope(relative_ref: str) -> tuple[str | None, str | None]:
         return None, None
     if parts[0] == "harness":
         return "shared_factory", None
+    if parts[0] == "domains" and len(parts) >= 2:
+        domain = parts[1]
+        if len(parts) >= 5 and parts[2] == "02-projects":
+            return domain, parts[3]
+        return domain, None
     domain = parts[0]
     if len(parts) >= 4 and parts[1] == "02-projects":
         return domain, parts[2]
