@@ -854,6 +854,54 @@ def test_priority_fabric_work_is_deduplicated_without_serial_dispatch(tmp_path: 
     assert items["priority-latest"]["priority"] == 100
 
 
+def test_priority_fabric_deduplication_preserves_self_heal_work(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    for item_id, created_at in (
+        ("priority-old", "2026-01-01T00:00:00Z"),
+        ("priority-latest", "2026-01-01T00:02:00Z"),
+    ):
+        runtime_ops.append_run_queue_item(
+            root,
+            {
+                "id": item_id,
+                "kind": "schedule",
+                "ref": "queue_worker_health_report",
+                "status": "queued",
+                "approval_state": "not_required",
+                "execution_target": "script",
+                "command": "true",
+                "created_at": created_at,
+            },
+        )
+    runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "runtime-self-heal",
+            "kind": "runtime_self_heal",
+            "ref": "queue_worker_health_report",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "codex_harness",
+            "command": "true",
+            "created_at": "2026-01-01T00:01:00Z",
+        },
+    )
+
+    result = runtime_ops.runtime_prepare_priority_ref(
+        root,
+        "queue_worker_health_report",
+        dry_run=False,
+    )
+    items = {item["id"]: item for item in runtime_queue_items(root)}
+
+    assert result["status"] == "prioritized"
+    assert result["superseded_count"] == 1
+    assert items["priority-old"]["status"] == "skipped"
+    assert items["priority-latest"]["status"] == "queued"
+    assert items["runtime-self-heal"]["status"] == "queued"
+
+
 def test_all_runtime_task_classes_route_to_managed_named_queues(tmp_path: Path) -> None:
     root = _root(tmp_path)
     apply_queue_mode(root, "execution_fabric", dry_run=False)

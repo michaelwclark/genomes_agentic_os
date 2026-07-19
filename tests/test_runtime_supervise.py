@@ -554,6 +554,17 @@ def test_runtime_dispatches_latest_priority_ref_and_skips_older_duplicates(tmp_p
             "execution_target": "script",
             "command": "agentic-os validate --root <root>",
         },
+        {
+            "id": "queue_pr_health_self_heal",
+            "kind": "runtime_self_heal",
+            "ref": "los_agentic_pr_health",
+            "status": "queued",
+            "approval_state": "not_required",
+            "created_at": "2026-06-30T10:05:00Z",
+            "idempotency_key": "test:pr-health:self-heal",
+            "execution_target": "codex_harness",
+            "command": "agentic-os validate --root <root>",
+        },
     ]
     queue["run_queue"] = queue["items"]
     queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
@@ -567,6 +578,7 @@ def test_runtime_dispatches_latest_priority_ref_and_skips_older_duplicates(tmp_p
     by_id = {item["id"]: item for item in queue_after["items"]}
     assert by_id["queue_old_pr_health"]["status"] == "skipped"
     assert by_id["queue_new_pr_health"]["status"] == "done"
+    assert by_id["queue_pr_health_self_heal"]["status"] == "queued"
 
 
 def test_runtime_doctor_reports_run_queue_health(tmp_path: Path) -> None:
