@@ -306,6 +306,22 @@ def test_runtime_dispatch_over_two_minutes_uses_central_long_running_contract(tm
     assert "governed-dispatch" in result["stdout"]
 
 
+def test_runtime_dispatch_repairs_unquoted_executable_path_with_spaces(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    interpreter = tmp_path / "runtime path with spaces" / "python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to(sys.executable)
+
+    result = runtime_ops._run_local_script(
+        root,
+        f"{interpreter} -c \"print('space-safe-dispatch')\"",
+        timeout_seconds=30,
+    )
+
+    assert result["ok"] is True
+    assert result["stdout"] == "space-safe-dispatch\n"
+
+
 def test_runtime_dispatches_quiet_run_start_command(tmp_path: Path, capsys) -> None:
     root = _fresh_root(tmp_path)
     quiet_run = root / "harness" / "bin" / "agentic-os-quiet-run"
