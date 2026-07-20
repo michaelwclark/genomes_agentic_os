@@ -1701,12 +1701,13 @@ def _execution_failure_class(execution: dict[str, Any]) -> dict[str, Any]:
     governed_status = str(execution.get("governed_status") or "").lower()
     if execution.get("timed_out") or governed_status in {"timeout", "no-progress-timeout", "stale"}:
         return {"retryable": True, "failure_class": "timeout"}
+    # Retry only from structured errors/stderr. Successful diagnostic text in
+    # stdout may legitimately mention HTTP statuses or past timeouts.
     evidence = "\n".join(
         str(value)
         for value in (
             *(execution.get("errors") or []),
             execution.get("stderr") or "",
-            execution.get("stdout") or "",
         )
         if value
     ).lower()

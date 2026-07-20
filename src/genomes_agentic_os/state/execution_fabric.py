@@ -16,10 +16,31 @@ class ExecutionFabricError(RuntimeError):
     """Raised when an execution-fabric invariant would be violated."""
 
 
+DEFAULT_RECOVERY_BACKOFF_SECONDS = 60
+MAX_RECOVERY_BACKOFF_SECONDS = 1800
+
+
 def _future_iso(now: str, seconds: int) -> str:
     if seconds < 1:
         raise ExecutionFabricError("lease_seconds must be at least 1")
     return (parse_iso(now) + timedelta(seconds=seconds)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _recovery_backoff_seconds(item: dict[str, Any]) -> int:
+    """Use the task's persisted retry policy for abandoned lease recovery."""
+    payload = item.get("payload")
+    if not isinstance(payload, dict):
+        try:
+            payload = json.loads(str(item.get("payload_json") or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+    retry_policy = payload.get("retry_policy") if isinstance(payload.get("retry_policy"), dict) else {}
+    try:
+        base = max(1, int(retry_policy.get("backoff_seconds", DEFAULT_RECOVERY_BACKOFF_SECONDS)))
+    except (TypeError, ValueError):
+        base = DEFAULT_RECOVERY_BACKOFF_SECONDS
+    attempt = max(1, int(item.get("attempts") or 1))
+    return min(MAX_RECOVERY_BACKOFF_SECONDS, base * (2 ** (attempt - 1)))
 
 
 def _decode_json_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -619,12 +640,15 @@ def recover_expired_leases(conn: sqlite3.Connection, *, now: str | None = None) 
                 if exhausted and item.get("dead_letter_queue")
                 else item["queue_name"]
             )
+            due_at = None if exhausted else _future_iso(now_value, _recovery_backoff_seconds(item))
+            finished_at = now_value if exhausted else None
             conn.execute(
                 """
                 UPDATE run_queue SET status = ?, queue_name = ?, lease_owner = NULL,
-                    lease_until = NULL, lease_token = NULL, updated_at = ? WHERE id = ?
+                    lease_until = NULL, lease_token = NULL, due_at = ?, finished_at = ?,
+                    updated_at = ? WHERE id = ?
                 """,
-                (status, queue_name, now_value, item["id"]),
+                (status, queue_name, due_at, finished_at, now_value, item["id"]),
             )
             (dead_lettered if exhausted else recovered).append(str(item["id"]))
         for worker_id in workers:

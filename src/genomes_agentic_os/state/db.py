@@ -452,6 +452,10 @@ CREATE INDEX IF NOT EXISTS idx_execution_workers_pool_status
 def ensure_schema(conn: sqlite3.Connection) -> int:
     """Create/upgrade the schema to the latest known version. Returns the resulting version."""
     conn.execute(_SCHEMA_VERSION_TABLE_SQL)
+    latest = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
+    current = schema_version(conn)
+    if current >= latest:
+        return current
     for version, description, sql in _MIGRATIONS:
         with transaction(conn):
             current = schema_version(conn)

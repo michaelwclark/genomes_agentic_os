@@ -584,11 +584,73 @@ def test_heartbeat_retry_dead_letter_and_cancel() -> None:
         recovery = fabric.recover_expired_leases(conn, now="2026-01-01T00:06:00Z")
         assert recovery["recovered"] == [recoverable["id"]]
         assert recovery["expired_workers"] == ["worker-a"]
+        recovered = state_queue.get(conn, recoverable["id"])
+        assert recovered is not None
+        assert recovered["due_at"] == "2026-01-01T00:07:00Z"
 
         waiting = fabric.enqueue_task(conn, queue_name="llm", worker_pool="codex", kind="manual")
         cancelled = fabric.cancel_task(conn, waiting["id"], reason="operator cancelled")
         assert cancelled["status"] == "cancelled"
         assert cancelled["error"] == "operator cancelled"
+    finally:
+        conn.close()
+
+
+def test_expired_lease_recovery_honors_backoff_and_dead_letters_exhausted_task() -> None:
+    conn = db.connect(":memory:")
+    try:
+        fabric.configure_queue(conn, "llm", max_concurrency=2)
+        fabric.configure_queue(conn, "dead", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "codex", queue_name="llm", max_workers=2, max_concurrency=2)
+        first_worker = fabric.register_worker(
+            conn, "worker-a", pool_name="codex", lease_seconds=60, now="2026-01-01T00:00:00Z"
+        )
+        delayed = fabric.enqueue_task(
+            conn,
+            queue_name="llm",
+            worker_pool="codex",
+            kind="manual",
+            max_attempts=3,
+            payload={"retry_policy": {"backoff_seconds": 15}},
+        )
+        assert fabric.claim_next(
+            conn,
+            worker_id="worker-a",
+            worker_token=first_worker["lease_token"],
+            lease_seconds=10,
+            now="2026-01-01T00:00:01Z",
+        ) is not None
+
+        second_worker = fabric.register_worker(
+            conn, "worker-b", pool_name="codex", lease_seconds=60, now="2026-01-01T00:00:02Z"
+        )
+        doomed = fabric.enqueue_task(
+            conn,
+            queue_name="llm",
+            worker_pool="codex",
+            kind="manual",
+            max_attempts=1,
+            dead_letter_queue="dead",
+        )
+        assert fabric.claim_next(
+            conn,
+            worker_id="worker-b",
+            worker_token=second_worker["lease_token"],
+            lease_seconds=10,
+            now="2026-01-01T00:00:02Z",
+            item_id=doomed["id"],
+        ) is not None
+
+        recovery = fabric.recover_expired_leases(conn, now="2026-01-01T00:00:20Z")
+        assert recovery["recovered"] == [delayed["id"]]
+        assert recovery["dead_lettered"] == [doomed["id"]]
+        recovered = state_queue.get(conn, delayed["id"])
+        dead = state_queue.get(conn, doomed["id"])
+        assert recovered is not None and recovered["due_at"] == "2026-01-01T00:00:35Z"
+        assert dead is not None
+        assert dead["status"] == "dead-letter"
+        assert dead["queue_name"] == "dead"
+        assert dead["finished_at"] == "2026-01-01T00:00:20Z"
     finally:
         conn.close()
 
@@ -644,14 +706,14 @@ def test_expired_and_stale_leases_are_fenced() -> None:
             conn,
             "worker-a",
             pool_name="codex",
-            lease_seconds=60,
+            lease_seconds=180,
             now="2026-01-01T00:00:22Z",
         )
         second_claim = fabric.claim_next(
             conn,
             worker_id="worker-a",
             worker_token=second_worker["lease_token"],
-            now="2026-01-01T00:00:23Z",
+            now="2026-01-01T00:01:21Z",
         )
         assert second_claim is not None
         assert second_claim["lease_token"] != first_claim["lease_token"]
@@ -662,7 +724,7 @@ def test_expired_and_stale_leases_are_fenced() -> None:
                 worker_id="worker-a",
                 worker_token=first_worker["lease_token"],
                 lease_token=second_claim["lease_token"],
-                now="2026-01-01T00:00:24Z",
+                now="2026-01-01T00:01:22Z",
             )
         with pytest.raises(fabric.ExecutionFabricError, match="active fenced lease"):
             fabric.complete_task(
@@ -671,7 +733,7 @@ def test_expired_and_stale_leases_are_fenced() -> None:
                 worker_id="worker-a",
                 worker_token=second_worker["lease_token"],
                 lease_token=first_claim["lease_token"],
-                now="2026-01-01T00:00:24Z",
+                now="2026-01-01T00:01:22Z",
             )
         completed = fabric.complete_task(
             conn,
@@ -679,7 +741,7 @@ def test_expired_and_stale_leases_are_fenced() -> None:
             worker_id="worker-a",
             worker_token=second_worker["lease_token"],
             lease_token=second_claim["lease_token"],
-            now="2026-01-01T00:00:24Z",
+            now="2026-01-01T00:01:22Z",
         )
         assert completed["status"] == "done"
     finally:
@@ -981,6 +1043,18 @@ def test_provider_usage_and_network_failures_are_retryable(evidence: str, failur
         {"ok": False, "errors": ["local script exited 1"], "stderr": evidence, "stdout": ""}
     )
     assert result == {"retryable": True, "failure_class": failure_class}
+
+
+def test_transient_words_in_stdout_do_not_make_a_failure_retryable() -> None:
+    result = runtime_ops._execution_failure_class(
+        {
+            "ok": False,
+            "errors": ["local script exited 1"],
+            "stderr": "",
+            "stdout": "processed historical 503 errors; previous request timed out",
+        }
+    )
+    assert result == {"retryable": False, "failure_class": "execution"}
 
 
 def test_run_latest_does_not_skip_work_claimed_during_snapshot_race(

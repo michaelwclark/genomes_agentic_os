@@ -137,6 +137,17 @@ def test_ensure_schema_is_idempotent_on_same_connection() -> None:
         conn.close()
 
 
+def test_current_schema_check_does_not_acquire_a_write_transaction() -> None:
+    conn = db.connect(":memory:")
+    statements: list[str] = []
+    try:
+        conn.set_trace_callback(statements.append)
+        assert db.ensure_schema(conn) == 3
+        assert not any(statement.startswith("BEGIN IMMEDIATE") for statement in statements)
+    finally:
+        conn.close()
+
+
 def test_resolve_os_root_with_explicit_root(tmp_path: Path) -> None:
     root = tmp_path / "some_os"
     assert db.resolve_os_root(str(root)) == root.resolve()
