@@ -177,13 +177,23 @@ agentic-os runtime snapshot --queue codex --status queued --json --root ~/agenti
 agentic-os runtime snapshot --all --output runtime-snapshot.json --root ~/agentic_os
 ```
 
-The default terminal view includes queue depth, running and failed work, worker
-pool utilization, and the latest 50 safe task rows. Fabric totals and rows come
+The default terminal view includes queue depth, running and recent failure work,
+worker-pool utilization, and a 50-row operational sample that prioritizes
+running and waiting tasks before terminal history. Fabric totals and rows come
 from one SQLite read transaction; filesystem totals and rows come from one YAML
 parse. Repeat `--status` to combine
 filters. `--json` exposes the versioned machine contract; `--output` writes the
 same payload atomically. Raw execution payloads, prompts, commands, references,
-free-form failure text, and lease tokens are never included.
+free-form failure text, and lease tokens are never included. A safe identifier
+reference may be projected as `display_name` so operator surfaces can present a
+readable workload name without exposing the raw reference field.
+
+Command Center separates current operation from retained history: it lists only
+live or unhealthy worker rows, gives running queue tasks and managed long runs a
+dedicated first-screen view, defaults task exploration to active states, and
+labels lifetime failure and inactive-worker counts as history. Historical rows
+remain in SQLite for audit and CLI inspection; hiding them in the default GUI
+does not delete or rewrite runtime state.
 
 ### `agentic-os run-queue prune`
 

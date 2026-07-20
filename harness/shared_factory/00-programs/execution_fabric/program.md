@@ -50,3 +50,12 @@ The supervisor also creates one daily online SQLite snapshot after validating
 it with `PRAGMA integrity_check`; seven valid snapshots are retained under the
 installed shared-factory run-log tree. Operators can request the same guarded
 operation with `agentic-os state backup --root <root> --apply`.
+
+## Operator projection
+
+Command Center is current-state-first. It shows running work explicitly,
+defaults the task explorer to active states, and projects only live or unhealthy
+worker rows. Lifetime task failures and retired ephemeral-worker registrations
+remain durable history, but are summarized and labeled as history rather than
+presented as current incidents. Canonical identifiers remain available in task
+detail while safe display names are humanized for the primary tables.

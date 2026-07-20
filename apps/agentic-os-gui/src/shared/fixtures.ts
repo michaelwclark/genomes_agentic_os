@@ -12,9 +12,12 @@ export const fixtureSnapshot: GuiSnapshot = {
     queue_depth: 3,
     running: 2,
     failed: 0,
+    recent_failures: 0,
     dead_letter: 0,
     active_workers: 2,
     unhealthy_workers: 0,
+    registered_workers: 2,
+    historical_worker_records: 0,
     retrying: 1,
     delayed_retries: 1,
     oldest_wait_seconds: 42,
@@ -32,9 +35,12 @@ export const fixtureSnapshot: GuiSnapshot = {
     workers: [
       { id: "codex-worker-1", pool_name: "codex_workers", queue_name: "codex", provider: "codex", status: "online", capacity: 1, active_tasks: 1, heartbeat_at: FIXTURE_NOW, lease_until: "2026-07-13T18:30:00Z", updated_at: FIXTURE_NOW },
     ],
+    running_tasks: [
+      { id: "task-codex-1", display_name: "agentic_os_gui_review", kind: "review", status: "running", queue_name: "codex", worker_pool: "codex_workers", execution_target: "codex_harness", attempts: 1, lease_owner: "codex-worker-1", lease_until: "2026-07-13T18:30:00Z", updated_at: FIXTURE_NOW },
+    ],
     tasks: [
-      { id: "task-codex-1", kind: "review", status: "running", queue_name: "codex", worker_pool: "codex_workers", execution_target: "codex_harness", attempts: 1, lease_owner: "codex-worker-1", lease_until: "2026-07-13T18:30:00Z", updated_at: FIXTURE_NOW },
-      { id: "task-claude-1", kind: "review", status: "queued", queue_name: "claude", worker_pool: "claude_workers", execution_target: "claude_harness", attempts: 0, updated_at: FIXTURE_NOW },
+      { id: "task-codex-1", display_name: "agentic_os_gui_review", kind: "review", status: "running", queue_name: "codex", worker_pool: "codex_workers", execution_target: "codex_harness", attempts: 1, lease_owner: "codex-worker-1", lease_until: "2026-07-13T18:30:00Z", updated_at: FIXTURE_NOW },
+      { id: "task-claude-1", display_name: "release_notes_review", kind: "review", status: "queued", queue_name: "claude", worker_pool: "claude_workers", execution_target: "claude_harness", attempts: 0, updated_at: FIXTURE_NOW },
     ],
     task_count: 5,
     task_sample_count: 2,

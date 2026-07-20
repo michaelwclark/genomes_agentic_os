@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -91,6 +92,7 @@ def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_p
         {
             "id": "snapshot-codex",
             "kind": "manual",
+            "ref": "self_improvement_action_watch",
             "status": "queued",
             "execution_target": "codex_harness",
             "command": "secret command must not be projected",
@@ -112,14 +114,92 @@ def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_p
     assert {queue["queue_name"] for queue in snapshot["queues"]} == {"codex", "claude", "non_llm"}
     assert snapshot["filters"]["matching_tasks"] == 1
     assert snapshot["tasks"][0]["id"] == "snapshot-codex"
+    assert snapshot["tasks"][0]["display_name"] == "self_improvement_action_watch"
     assert "command" not in snapshot["tasks"][0]
     assert "ref" not in snapshot["tasks"][0]
     assert "error" not in snapshot["tasks"][0]
     assert "blocked_reason" not in snapshot["tasks"][0]
     assert snapshot["workers"][0]["id"] == "snapshot-worker"
     assert "lease_token" not in snapshot["workers"][0]
+    assert "display_name" not in runtime_snapshot._project_task(
+        {"id": "secret-ref", "kind": "manual", "status": "queued", "ref": "sk_super_secret_value"},
+        queue_mode="execution_fabric",
+    )
     assert "QUEUES" in format_runtime_snapshot(snapshot)
     assert "snapshot-codex" in format_runtime_snapshot(snapshot)
+
+
+def test_runtime_snapshot_hides_inactive_worker_history_and_projects_running_work(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "queue-running",
+            "kind": "schedule",
+            "ref": "slack_ingest_watcher",
+            "status": "queued",
+            "execution_target": "script",
+        },
+    )
+    conn = db.connect(db.default_db_path(root))
+    try:
+        active = fabric.register_worker(
+            conn,
+            "runtime-bigmac.example-4242-active",
+            pool_name="non_llm_workers",
+            lease_seconds=600,
+            now="2026-07-19T11:55:00Z",
+        )
+        conn.execute(
+            """
+            UPDATE execution_workers SET active_tasks = 1 WHERE id = ?
+            """,
+            (active["id"],),
+        )
+        conn.execute(
+            """
+            UPDATE run_queue
+            SET status = 'running', started_at = ?, updated_at = ?, lease_owner = ?, lease_until = ?
+            WHERE id = 'queue-running'
+            """,
+            ("2026-07-19T11:56:00Z", "2026-07-19T11:56:00Z", active["id"], "2026-07-19T12:05:00Z"),
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_workers (
+                id, pool_name, status, capacity, active_tasks, heartbeat_at,
+                lease_until, lease_token, metadata_json, created_at, updated_at
+            ) VALUES (?, 'non_llm_workers', 'offline', 1, 0, ?, ?, ?, '{}', ?, ?)
+            """,
+            [
+                (
+                    f"runtime-bigmac.example-4000-{index:04d}",
+                    "2026-07-18T10:00:00Z",
+                    "2026-07-18T10:00:00Z",
+                    f"token-{index}",
+                    "2026-07-18T10:00:00Z",
+                    "2026-07-18T10:00:00Z",
+                )
+                for index in range(250)
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    snapshot = build_runtime_snapshot(
+        root,
+        task_limit=10,
+        now=datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert snapshot["summary"]["registered_workers"] == 251
+    assert snapshot["summary"]["active_workers"] == 1
+    assert snapshot["summary"]["historical_worker_records"] == 250
+    assert [worker["id"] for worker in snapshot["workers"]] == [active["id"]]
+    assert snapshot["running_tasks"][0]["id"] == "queue-running"
+    assert snapshot["running_tasks"][0]["display_name"] == "slack_ingest_watcher"
 
 
 def test_fabric_snapshot_rejects_missing_state_database(tmp_path: Path) -> None:

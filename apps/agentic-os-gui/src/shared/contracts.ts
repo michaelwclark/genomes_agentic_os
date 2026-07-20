@@ -141,6 +141,7 @@ export interface RuntimeWorker {
 
 export interface RuntimeTask {
   id: string;
+  display_name?: string;
   kind?: string;
   status: string;
   queue_name: string;
@@ -183,9 +184,12 @@ export interface RuntimeHealth {
   queue_depth: number;
   running: number;
   failed: number;
+  recent_failures: number;
   dead_letter: number;
   active_workers: number;
   unhealthy_workers: number;
+  registered_workers: number;
+  historical_worker_records: number;
   retrying: number;
   delayed_retries: number;
   oldest_wait_seconds: number;
@@ -196,6 +200,7 @@ export interface RuntimeHealth {
   queues: RuntimeQueue[];
   worker_pools: RuntimeWorkerPool[];
   workers: RuntimeWorker[];
+  running_tasks: RuntimeTask[];
   tasks: RuntimeTask[];
   task_count: number;
   task_sample_count: number;
