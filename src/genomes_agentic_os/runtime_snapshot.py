@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 from typing import Any, Iterable
@@ -44,6 +45,7 @@ TASK_FIELDS = (
     "lease_owner",
     "lease_until",
 )
+TASK_QUERY_FIELDS = (*TASK_FIELDS, "ref")
 WORKER_FIELDS = (
     "id",
     "pool_name",
@@ -82,6 +84,13 @@ def _snapshot_read_hook(stage: str) -> None:
 
 def _project_task(item: dict[str, Any], *, queue_mode: str) -> dict[str, Any]:
     projected = {field: item[field] for field in TASK_FIELDS if item.get(field) not in (None, "")}
+    ref = str(item.get("ref") or "")
+    if (
+        len(ref) <= 128
+        and re.fullmatch(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+", ref)
+        and not re.match(r"^(?:api_key|password|secret|sk|token)_", ref)
+    ):
+        projected["display_name"] = ref
     if queue_mode != EXECUTION_FABRIC_MODE:
         projected["queue_name"] = "filesystem"
         projected["worker_pool"] = "filesystem"
@@ -126,6 +135,7 @@ def _filesystem_backend_snapshot(root: Path) -> tuple[list[dict[str, Any]], list
         "worker_count": 0,
         "live_worker_count": 0,
         "unhealthy_worker_count": 0,
+        "running_tasks": [task for task in tasks if task.get("status") == "running"],
         "queues": [{"queue_name": "filesystem", "statuses": dict(statuses), "total": len(tasks)}],
         "worker_pools": [],
         **_admission_metrics(root),
@@ -182,13 +192,31 @@ def _fabric_backend_snapshot(
         task_parameters = [*parameters, *([] if task_limit is None else [task_limit])]
         task_rows = conn.execute(
             f"""
-            SELECT {', '.join(TASK_FIELDS)} FROM run_queue{predicate}
-            ORDER BY COALESCE(updated_at, created_at) DESC, id DESC{limit_clause}
+            SELECT {', '.join(TASK_QUERY_FIELDS)} FROM run_queue{predicate}
+            ORDER BY
+                CASE status
+                    WHEN 'running' THEN 0
+                    WHEN 'approval-needed' THEN 1
+                    WHEN 'queued' THEN 2
+                    WHEN 'blocked' THEN 3
+                    ELSE 4
+                END,
+                COALESCE(updated_at, created_at) DESC,
+                id DESC{limit_clause}
             """,
             task_parameters,
         ).fetchall()
         tasks = [dict(row) for row in task_rows]
         _snapshot_read_hook("fabric_tasks")
+
+        running_rows = conn.execute(
+            f"""
+            SELECT {', '.join(TASK_QUERY_FIELDS)} FROM run_queue
+            WHERE status = 'running'
+            ORDER BY COALESCE(started_at, updated_at, created_at) DESC, id DESC
+            LIMIT 100
+            """
+        ).fetchall()
 
         queue_map: dict[str, dict[str, Any]] = {}
         status_counts: Counter[str] = Counter()
@@ -255,9 +283,11 @@ def _fabric_backend_snapshot(
                        w.active_tasks, w.heartbeat_at, w.lease_until, w.created_at, w.updated_at
                 FROM execution_workers w
                 JOIN worker_pools p ON p.name = w.pool_name
+                WHERE (w.status = 'online' AND w.lease_until >= ?) OR w.active_tasks > 0
                 ORDER BY w.active_tasks DESC, w.updated_at DESC, w.id
-                LIMIT 200
-                """
+                LIMIT 50
+                """,
+                (captured_iso,),
             ).fetchall()
             workers = [
                 {field: row[field] for field in WORKER_FIELDS if row[field] not in (None, "")}
@@ -269,6 +299,7 @@ def _fabric_backend_snapshot(
             "worker_count": sum(int(row.get("worker_count") or 0) for row in pools),
             "live_worker_count": sum(int(row.get("live_workers") or 0) for row in pools),
             "unhealthy_worker_count": sum(int(row.get("unhealthy_workers") or 0) for row in pools),
+            "running_tasks": [dict(row) for row in running_rows],
             "queues": [queue_map[name] for name in sorted(queue_map)],
             "worker_pools": pools,
             **admission,
@@ -413,6 +444,11 @@ def build_runtime_snapshot(
 
     dead_letter = int(status_counts.get("dead-letter", 0))
     unhealthy_workers = int(metrics.get("unhealthy_worker_count") or 0)
+    registered_workers = int(metrics.get("worker_count") or 0)
+    running_tasks = [
+        _project_task(item, queue_mode=queue_mode)
+        for item in metrics.get("running_tasks") or []
+    ]
 
     queues: list[dict[str, Any]] = []
     for queue in metrics.get("queues") or []:
@@ -469,6 +505,11 @@ def build_runtime_snapshot(
             "expired_running_leases": expired_leases,
             "active_workers": int(metrics.get("live_worker_count") or 0),
             "unhealthy_workers": unhealthy_workers,
+            "registered_workers": registered_workers,
+            "historical_worker_records": max(
+                0,
+                registered_workers - int(metrics.get("live_worker_count") or 0) - unhealthy_workers,
+            ),
             "failed_last_hour": recent_failed,
             "retrying": retrying,
             "delayed_retries": delayed_retries,
@@ -487,6 +528,7 @@ def build_runtime_snapshot(
         "queues": queues,
         "worker_pools": [dict(pool) for pool in metrics.get("worker_pools") or []],
         "workers": workers,
+        "running_tasks": running_tasks,
         "tasks": displayed,
     }
 
@@ -499,20 +541,20 @@ def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
         f"Mode: {snapshot['queue_mode']}  Health: {snapshot['health']}",
         (
             f"Queued: {summary['queued'] + summary['approval_needed']}  Running: {summary['running']}  "
-            f"Workers: {summary['active_workers']}  Failed/dead: {summary['failed'] + summary['dead_letter']}  "
+            f"Workers: {summary['active_workers']}  Recent failed/dead: {summary['failed_last_hour']}/{summary['dead_letter']}  "
             f"Retrying: {summary['retrying']} ({summary['delayed_retries']} delayed)  "
             f"Oldest wait: {int(summary['oldest_wait_seconds'])}s"
         ),
         "",
         "QUEUES",
-        "NAME             DEPTH  RUNNING  RETRY  DELAY  FAILED  DEAD  LIMIT",
+        "NAME             DEPTH  RUNNING  RETRY  DELAY  DEAD  HISTORY  LIMIT",
     ]
     for queue in snapshot["queues"]:
         lines.append(
             f"{str(queue.get('queue_name') or '-')[:16]:16} "
             f"{int(queue.get('depth') or 0):5}  {int(queue.get('running') or 0):7}  "
             f"{int(queue.get('retrying') or 0):5}  {int(queue.get('delayed_retries') or 0):5}  "
-            f"{int(queue.get('failed') or 0):6}  {int(queue.get('dead_letter') or 0):4}  "
+            f"{int(queue.get('dead_letter') or 0):4}  {int(queue.get('failed') or 0):7}  "
             f"{int(queue.get('max_queued') or 0):5}"
         )
     if not snapshot["queues"]:

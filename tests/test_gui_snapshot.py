@@ -310,6 +310,9 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["queue_depth"] == 1
     assert snapshot["runtime"]["retrying"] == 0
     assert snapshot["runtime"]["delayed_retries"] == 0
+    assert snapshot["runtime"]["recent_failures"] == 0
+    assert snapshot["runtime"]["registered_workers"] == 0
+    assert snapshot["runtime"]["historical_worker_records"] == 0
     assert snapshot["runtime"]["oldest_wait_seconds"] >= 0
     assert {queue["queue_name"] for queue in snapshot["runtime"]["queues"]} == {"codex", "claude", "non_llm"}
     assert snapshot["runtime"]["task_count"] == 1
@@ -318,6 +321,7 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["captured_at"]
     assert snapshot["runtime"]["max_interactive_running"] == 1
     assert snapshot["runtime"]["workers"] == []
+    assert snapshot["runtime"]["running_tasks"] == []
 
 
 def test_command_center_snapshot_exposes_long_running_safety_state(tmp_path: Path) -> None:

@@ -49,6 +49,7 @@ describe("GUI-owned session snapshot overlay", () => {
   it("normalizes legacy aggregate-only runtime snapshots for the detailed view", () => {
     const {
       workers: _workers,
+      running_tasks: _runningTasks,
       tasks: _tasks,
       task_count: _taskCount,
       task_sample_count: _sampleCount,
@@ -57,6 +58,9 @@ describe("GUI-owned session snapshot overlay", () => {
       retrying: _retrying,
       delayed_retries: _delayedRetries,
       oldest_wait_seconds: _oldestWait,
+      recent_failures: _recentFailures,
+      registered_workers: _registeredWorkers,
+      historical_worker_records: _historicalWorkerRecords,
       ...legacyRuntime
     } = fixtureSnapshot.runtime;
     const legacyQueues = legacyRuntime.queues.map(({
@@ -77,12 +81,16 @@ describe("GUI-owned session snapshot overlay", () => {
 
     expect(snapshot.runtime.tasks).toEqual([]);
     expect(snapshot.runtime.workers).toEqual([]);
+    expect(snapshot.runtime.running_tasks).toEqual([]);
     expect(snapshot.runtime.task_count).toBe(0);
     expect(snapshot.runtime.task_sample_count).toBe(0);
     expect(snapshot.runtime.task_sample_limit).toBe(200);
     expect(snapshot.runtime.retrying).toBe(0);
     expect(snapshot.runtime.delayed_retries).toBe(0);
     expect(snapshot.runtime.oldest_wait_seconds).toBe(0);
+    expect(snapshot.runtime.recent_failures).toBe(0);
+    expect(snapshot.runtime.registered_workers).toBe(0);
+    expect(snapshot.runtime.historical_worker_records).toBe(0);
     expect(snapshot.runtime.queues.find((queue) => queue.queue_name === "codex")?.depth).toBe(2);
   });
 

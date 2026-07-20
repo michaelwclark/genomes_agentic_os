@@ -24,3 +24,7 @@
   receipt writers use unique temporary siblings, legacy GUI v1 snapshots remain
   valid, refreshes are single-flight/sequenced, and modal focus is contained and
   restored.
+- Command Center now separates operational state from retained history: running
+  work is explicit, task exploration defaults to active states, safe workload
+  identifiers receive readable labels, and only live or unhealthy workers are
+  projected as rows while retired ephemeral workers remain summarized history.

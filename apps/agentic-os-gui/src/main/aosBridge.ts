@@ -46,11 +46,12 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
   const generatedAt = native.generated_at || new Date().toISOString();
   const fallbackRuntime = {
     status: "unavailable" as const, queue_mode: "unknown", queue_depth: 0, running: 0,
-    failed: 0, dead_letter: 0, active_workers: 0, unhealthy_workers: 0,
+    failed: 0, recent_failures: 0, dead_letter: 0, active_workers: 0, unhealthy_workers: 0,
+    registered_workers: 0, historical_worker_records: 0,
     retrying: 0, delayed_retries: 0, oldest_wait_seconds: 0,
     reserved_interactive_slots: 1,
     max_interactive_running: 1,
-    queues: [], worker_pools: [], workers: [], tasks: [], task_count: 0,
+    queues: [], worker_pools: [], workers: [], running_tasks: [], tasks: [], task_count: 0,
     task_sample_count: 0, task_sample_limit: 200,
     captured_at: generatedAt,
   };
@@ -72,6 +73,9 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     }),
     worker_pools: Array.isArray(native.runtime.worker_pools) ? native.runtime.worker_pools : [],
     workers: Array.isArray(native.runtime.workers) ? native.runtime.workers : [],
+    running_tasks: Array.isArray(native.runtime.running_tasks)
+      ? native.runtime.running_tasks
+      : (Array.isArray(native.runtime.tasks) ? native.runtime.tasks.filter((task) => task.status === "running") : []),
     tasks: Array.isArray(native.runtime.tasks) ? native.runtime.tasks : [],
     task_count: Number.isInteger(native.runtime.task_count) ? native.runtime.task_count : 0,
     task_sample_count: Number.isInteger(native.runtime.task_sample_count) ? native.runtime.task_sample_count : (Array.isArray(native.runtime.tasks) ? native.runtime.tasks.length : 0),
@@ -81,6 +85,9 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     retrying: Number(native.runtime.retrying || 0),
     delayed_retries: Number(native.runtime.delayed_retries || 0),
     oldest_wait_seconds: Number(native.runtime.oldest_wait_seconds || 0),
+    recent_failures: Number(native.runtime.recent_failures || 0),
+    registered_workers: Number(native.runtime.registered_workers || 0),
+    historical_worker_records: Number(native.runtime.historical_worker_records || 0),
   } : fallbackRuntime;
   const launchedByOwnedId = new Map(
     Object.values(state.launchedSessions).map((session) => [`${session.harness}:${session.sessionId}`, session]),
