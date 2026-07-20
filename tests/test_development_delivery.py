@@ -18,6 +18,8 @@ from genomes_agentic_os.development_delivery import (
     create_isolated_worktree,
     load_development_profile,
     required_test_layers,
+    run_development_stage,
+    select_development_repository,
     validate_workflow_contracts,
 )
 from genomes_agentic_os.scaffold import create_project
@@ -107,6 +109,25 @@ def _state(tmp_path: Path, *, max_attempts: int = 3) -> TaskState:
     return TaskState(path)
 
 
+def _stage_receipt(tmp_path: Path, state: str, *, evidence: dict | None = None) -> str:
+    path = tmp_path / "stage-receipts" / f"{state}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "development-stage-evidence/v1",
+                "state": state,
+                "status": "verified",
+                "summary": f"Verified {state}",
+                "evidence": evidence or {"receipt": f"proof:{state}"},
+                "verified_at": "2026-07-19T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def test_profile_prefers_canonical_and_translates_legacy(tmp_path: Path) -> None:
     repo, _ = _repository(tmp_path)
     project = _project(tmp_path / "canonical", repo)
@@ -136,8 +157,105 @@ def test_profile_derives_safe_defaults_for_existing_project(tmp_path: Path) -> N
     assert profile["merge"]["policy"] == "never_auto"
 
 
-def test_transition_requires_receipt_is_forward_only_and_idempotent(tmp_path: Path) -> None:
+def test_multi_repository_profile_requires_and_receipts_explicit_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    selected_policy = project / "config/dev_standards-user-web/10_USER_WEB.md"
+    selected_policy.parent.mkdir(parents=True, exist_ok=True)
+    selected_policy.write_text("# User Web\n\nUse the selected web repository policy.\n", encoding="utf-8")
+    path = project / "config/development.yml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile["repository"] = {
+        "selection_required": True,
+        "catalog": [
+            {"id": "backend", "root": str(repo), "base_branch": "main"},
+            {
+                "id": "user_web",
+                "root": str(repo),
+                "base_branch": "main",
+                "profile_overrides": {
+                    "validation": {"commands": ["npm test"]},
+                    "policies": {
+                        "dev_standards": {"paths": ["config/dev_standards-user-web"]}
+                    },
+                },
+            },
+            {
+                "id": "invalid",
+                "root": str(repo),
+                "base_branch": "main",
+                "profile_overrides": {"validation": {"commands": "npm test"}},
+            },
+        ],
+    }
+    path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    loaded, _ = load_development_profile(root, "acme", "app")
+    with pytest.raises(DevelopmentDeliveryError, match="repository selection is required"):
+        select_development_repository(loaded, None)
+    selected = select_development_repository(loaded, "user_web")
+    assert selected["repository"]["id"] == "user_web"
+    assert selected["validation"]["commands"] == ["npm test"]
+
+    with pytest.raises(DevelopmentDeliveryError, match="invalid selected repository profile"):
+        delivery.start_development_run(
+            root, "acme", "app", ["CC-11"], repository_id="invalid", apply=False
+        )
+
+    with pytest.raises(DevelopmentDeliveryError, match="repository selection is required"):
+        delivery.start_development_run(root, "acme", "app", ["CC-12"], apply=False)
+    plan = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-12"],
+        repository_id="backend",
+        apply=False,
+    )
+    assert plan["repository"]["id"] == "backend"
+    assert main(
+        [
+            "develop",
+            "start",
+            "acme",
+            "app",
+            "CC-13",
+            "--repository",
+            "user_web",
+            "--root",
+            str(root),
+            "--json",
+        ]
+    ) == 0
+    user_web_plan = json.loads(capsys.readouterr().out)
+    assert user_web_plan["repository"]["id"] == "user_web"
+    assert user_web_plan["policy_sources"]["dev_standards"] == [
+        "domains/acme/02-projects/app/config/dev_standards-user-web/10_USER_WEB.md"
+    ]
+
+
+def test_transition_requires_receipt_is_forward_only_and_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     task = _state(tmp_path)
+    assert main(
+        [
+            "develop",
+            "transition",
+            str(task.path),
+            "--to",
+            "claimed",
+            "--receipt",
+            "untyped-string",
+            "--idempotency-key",
+            "unsafe",
+        ]
+    ) == 2
+    assert "direct lifecycle transitions are disabled" in capsys.readouterr().err
+    assert task.read()["state"] == "discovered"
     claimed = task.transition("claimed", receipt="tracker:CC-1", idempotency_key="claim")
     assert claimed["state"] == "claimed"
     replay = task.transition("claimed", receipt="tracker:CC-1", idempotency_key="claim")
@@ -146,6 +264,68 @@ def test_transition_requires_receipt_is_forward_only_and_idempotent(tmp_path: Pa
         task.transition("worktree_ready", receipt="worktree", idempotency_key="skip")
     with pytest.raises(DevelopmentDeliveryError, match="requires a receipt"):
         task.transition("groom_check", receipt="", idempotency_key="no-receipt")
+
+
+def test_manual_delivery_stages_require_each_receipt_and_are_idempotent(tmp_path: Path) -> None:
+    task = _state(tmp_path)
+    for state in ("claimed", "groom_check", "context_ready", "work_item_ready", "worktree_ready"):
+        task.transition(state, receipt=f"setup:{state}", idempotency_key=f"setup:{state}")
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    portfolio_path.write_text(
+        json.dumps(
+            {
+                "schema": "development-portfolio/v1",
+                "run_id": "run-1",
+                "state": "dispatching",
+                "tasks": [{"ticket": "CC-1", "state_ref": str(task.path)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    readiness_receipts = {"planned": _stage_receipt(tmp_path, "planned")}
+    ready = run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts=readiness_receipts,
+        idempotency_prefix="run:readiness",
+    )
+    assert ready["state"] == "planned"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "planned"
+    assert run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={},
+        idempotency_prefix="run:readiness",
+    )["state"] == "planned"
+    stale_portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    stale_portfolio["state"] = "dispatching"
+    portfolio_path.write_text(json.dumps(stale_portfolio), encoding="utf-8")
+    assert run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={},
+        idempotency_prefix="run:readiness",
+    )["state"] == "planned"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "planned"
+    with pytest.raises(DevelopmentDeliveryError, match="local_validation"):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={"implementing": _stage_receipt(tmp_path, "implementing")},
+            idempotency_prefix="run:implementation",
+        )
+    assert task.read()["state"] == "planned"
+    complete = run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(tmp_path, "implementing"),
+            "local_validation": _stage_receipt(tmp_path, "local_validation"),
+        },
+        idempotency_prefix="run:implementation",
+    )
+    assert complete["state"] == "local_validation"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "local_validation"
 
 
 def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: Path) -> None:
@@ -162,6 +342,9 @@ def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: 
     assert replay["attempts"]["provider_unavailable"] == 1
     recovered = task.recover(receipt="provider healthy", idempotency_key="recover-1")
     assert recovered["state"] == "claimed"
+    recovered_replay = task.recover(receipt="ignored replay", idempotency_key="recover-1")
+    assert recovered_replay == recovered
+    assert len(recovered_replay["receipts"]) == 2
     blocked = task.fail(
         kind="provider_unavailable", detail="timeout", receipt="logs/timeout-2", idempotency_key="fail-2"
     )

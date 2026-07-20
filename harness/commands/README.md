@@ -6,6 +6,13 @@ command document explains routing, inputs, safety gates, and output receipts.
 
 | Command document | Concise purpose |
 | --- | --- |
+| [`auto-dev-closeout.md`](auto-dev-closeout.md) | Manually run merge, deployment, reconciliation, and cleanup closeout. |
+| [`auto-dev-create-artifacts.md`](auto-dev-create-artifacts.md) | Resolve, render, validate, apply, and read back polymorphic artifacts. |
+| [`auto-dev-detective.md`](auto-dev-detective.md) | Run a version-first, evidence-receipted investigation or RCA. |
+| [`auto-dev-implementation.md`](auto-dev-implementation.md) | Manually run isolated implementation and local validation. |
+| [`auto-dev-readiness.md`](auto-dev-readiness.md) | Manually run context, policy, isolation, and planning readiness. |
+| [`auto-dev-release-propagation.md`](auto-dev-release-propagation.md) | Manually run release/backport/forward-port propagation. |
+| [`auto-dev-review-repair.md`](auto-dev-review-repair.md) | Manually run tests, opposing review, PR, CI, and repair convergence. |
 | [`composio-debug-bundle.md`](composio-debug-bundle.md) | Capture a sanitized Composio diagnostics bundle. |
 | [`develop.md`](develop.md) | Run one or many tracker-backed programming tasks through canonical delivery. |
 | [`project-domain-investigate.md`](project-domain-investigate.md) | Retrieve bounded, evidence-backed project domain context before development. |

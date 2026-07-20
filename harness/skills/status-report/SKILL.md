@@ -16,7 +16,7 @@ analysis across recent agent work.
    `output-contract.md`, `runbook.md`, and `progress.md`.
 3. Read the active work item when changing the workflow or reporting on this
    feature:
-   `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow`.
+   `/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow`.
 
 ## Inputs
 
@@ -83,13 +83,13 @@ Check for:
 Default full report:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/status-reports/<YYYY-MM-DD-HHMM>-status-report.md
+/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/worklogs/status-reports/<YYYY-MM-DD-HHMM>-status-report.md
 ```
 
 Default artifacts:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow/artifacts/status-reports/<run-id>/
+/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow/artifacts/status-reports/<run-id>/
 ```
 
 ## Safety
@@ -100,3 +100,10 @@ Default artifacts:
 - Do not create fallback Notion pages in any other workspace.
 - Do not mutate source, commit, push, open PRs, update Jira, send external
   messages, or perform cleanup unless explicitly requested.
+
+## Artifact Producer Contract
+
+This skill owns collection and synthesis. Render filesystem or Notion output
+through `$auto-dev-create-artifacts` with type `status` or `report`, then follow
+the configured approval and readback contract. Do not maintain a competing
+Notion/status format here.

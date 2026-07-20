@@ -2,13 +2,16 @@ backup_policy:
   enabled: true
   include:
     - .agentic_root
+    - lib/
     - harness/AGENTS.md
+    - harness/artifact-config/
     - harness/ROUTER.md
     - harness/CONTEXT.md
     - harness/RULES.md
     - harness/TOOLS.md
     - harness/bin/
     - harness/commands/
+    - harness/investigation-config/
     - harness/registries/
     - harness/reports/
     - harness/rules/

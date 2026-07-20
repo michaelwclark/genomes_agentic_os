@@ -32,6 +32,7 @@ from .config_ops import install_config
 from .composio_catalog import composio_tools_markdown
 from .hosts import load_hosts
 from .mcp_catalog import mcp_tools_markdown
+from . import __version__
 
 
 DEFAULT_DOMAINS = (
@@ -43,7 +44,7 @@ ROOT_MARKER_FILENAME = ".agentic_root"
 SHARED_FACTORY_DOMAIN = "shared_factory"
 # Backward-compatible default for the deprecated --projects-source flag.
 DEFAULT_PROJECTS_SOURCE = "~/projects"
-SOURCE_PACKAGE_VERSION = "0.1.1"
+SOURCE_PACKAGE_VERSION = __version__
 DEFAULT_UPDATE_CHANNEL = "stable"
 DEFAULT_UPDATE_POLICY = "operator_approved"
 
@@ -189,6 +190,10 @@ MANAGED_RUNTIME_FILES = (
 # not overwrite operator-owned changes.
 MANAGED_RESOURCE_TREES = (
     (
+        "harness/shared_factory/00-programs/auto_dev",
+        "lib/programs/root/auto-dev",
+    ),
+    (
         "harness/shared_factory/00-programs/execution_fabric",
         "harness/shared_factory/00-programs/execution_fabric",
     ),
@@ -203,6 +208,38 @@ MANAGED_RESOURCE_TREES = (
     (
         "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
         "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
+    ),
+    (
+        "harness/skills/auto-dev",
+        "lib/skills/root/auto-dev",
+    ),
+    (
+        "harness/skills/auto-dev-create-artifacts",
+        "lib/skills/root/auto-dev-create-artifacts",
+    ),
+    (
+        "harness/skills/auto-dev-detective",
+        "lib/skills/root/auto-dev-detective",
+    ),
+    (
+        "harness/skills/auto-dev-readiness",
+        "lib/skills/root/auto-dev-readiness",
+    ),
+    (
+        "harness/skills/auto-dev-implementation",
+        "lib/skills/root/auto-dev-implementation",
+    ),
+    (
+        "harness/skills/auto-dev-review-repair",
+        "lib/skills/root/auto-dev-review-repair",
+    ),
+    (
+        "harness/skills/auto-dev-release-propagation",
+        "lib/skills/root/auto-dev-release-propagation",
+    ),
+    (
+        "harness/skills/auto-dev-closeout",
+        "lib/skills/root/auto-dev-closeout",
     ),
 )
 
@@ -493,7 +530,13 @@ def normalize_domain(value: str) -> str:
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    source_checkout = Path(__file__).resolve().parents[2]
+    if all((source_checkout / name).is_dir() for name in ("harness", "templates", "schemas")):
+        return source_checkout
+    bundled = Path(__file__).resolve().parent / "_resources"
+    if bundled.is_dir():
+        return bundled
+    return source_checkout
 
 
 def template_source_dir() -> Path:
@@ -650,13 +693,16 @@ def backup_policy_payload() -> dict[str, object]:
             "enabled": True,
             "include": [
                 ".agentic_root",
+                "lib/",
                 "harness/AGENTS.md",
+                "harness/artifact-config/",
                 "harness/ROUTER.md",
                 "harness/CONTEXT.md",
                 "harness/RULES.md",
                 "harness/TOOLS.md",
                 "harness/bin/",
                 "harness/commands/",
+                "harness/investigation-config/",
                 "harness/registries/",
                 "harness/reports/",
                 "harness/rules/",
@@ -917,10 +963,17 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     )
 
 
-def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
+def copy_tree(
+    source: Path,
+    destination: Path,
+    *,
+    excluded: tuple[Path, ...] = (),
+) -> ScaffoldResult:
     result = ScaffoldResult()
     for item in sorted(source.rglob("*")):
         relative = item.relative_to(source)
+        if any(relative == prefix or prefix in relative.parents for prefix in excluded):
+            continue
         target = destination / relative
         if item.is_dir():
             ensure_dir(target, result)
@@ -944,6 +997,29 @@ def ensure_managed_resource_surfaces(root: Path, result: ScaffoldResult) -> None
         source_path = source_relative_path(source)
         if source_path.is_dir():
             result.extend(copy_tree(source_path, root / destination))
+
+
+def ensure_auto_dev_program_alias(root: Path, result: ScaffoldResult) -> None:
+    """Expose the canonical library program at its historical routed path."""
+
+    canonical = root / "lib" / "programs" / "root" / "auto-dev"
+    alias = shared_factory_path(root, "00-programs", "auto_dev")
+    if not canonical.is_dir():
+        return
+    if alias.is_symlink():
+        if alias.resolve() == canonical.resolve():
+            result.skipped.append(alias)
+        else:
+            result.skipped.append(alias)
+        return
+    if alias.exists():
+        # Existing operator-owned physical folders are never removed during an
+        # additive update. ``library migrate`` can reconcile them explicitly.
+        result.skipped.append(alias)
+        return
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    alias.symlink_to("../../../lib/programs/root/auto-dev", target_is_directory=True)
+    result.created.append(alias)
 
 
 def ensure_visible_capability_directories(root: Path, result: ScaffoldResult) -> None:
@@ -1007,6 +1083,7 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     harness_root = harness_source_dir()
     for directory in (
         "artifact-config",
+        "investigation-config",
         "bin",
         "commands",
         "skills",
@@ -1020,7 +1097,16 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     ):
         source = harness_root / directory
         if source.is_dir():
-            result.extend(copy_tree_missing(source, harness_path(root, directory)))
+            if directory == "shared_factory":
+                result.extend(
+                    copy_tree(
+                        source,
+                        harness_path(root, directory),
+                        excluded=(Path("00-programs/auto_dev"),),
+                    )
+                )
+            else:
+                result.extend(copy_tree_missing(source, harness_path(root, directory)))
     return result
 
 
@@ -1103,6 +1189,17 @@ After choosing a domain or narrower layer, change to that directory and read its
 {routing_rows}
 | `harness/shared_factory` | Shared OS templates, schemas, routers, reusable automations, runtime registries, cross-domain tools, and installed harness capabilities. | `harness/shared_factory/01-inbox/` |
 
+## SDLC Intent Routing
+
+| Intent | Canonical workflow |
+| --- | --- |
+| Bug, QA failure, ticket comment, log, alert, incident, suspected cause, or RCA | Auto-Dev Detective |
+| Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, report, or local artifact authoring | Auto-Dev Create Artifacts |
+| Implement, review, validate, release, deploy, or close out code | Auto-Dev over Development Delivery |
+
+Select these workflows by intent even when the user does not name Auto-Dev.
+Route to the domain/project before resolving its policy additions.
+
 ## Domain Classification
 
 - First identify the project, product, client, or life area named in the request.
@@ -1146,6 +1243,14 @@ This is the harness-neutral entry point for {scope}.
 4. Repeat the local read and routing loop until no narrower route applies.
 5. Act only after loading the final layer's context, rules, and tool registry.
 6. Record unclear routes, missing tools, and durable follow-up in the run log or closeout artifact.
+
+## Auto-Dev SDLC Routing
+
+Use Auto-Dev Detective for causal investigation, Auto-Dev Create Artifacts for
+governed provider output, and Auto-Dev over Development Delivery for coding
+through release. Invoke them by intent; the user does not need to remember the
+program name. Resolve root → domain → project → invocation Markdown policies
+before each workflow.
 
 ## Adaptive Observe Receipt
 
@@ -1234,6 +1339,9 @@ automations, projects, run logs, and archived material.
 | Shared template or skill work | `shared_factory/05-knowledge/` index files | relevant template, command, skill, or plan | active domain state |
 | Shell or runtime work | host tool registry under `shared_factory/05-knowledge/` | installed command docs | customer data |
 | Resume active domain work | routed domain `CONTEXT.md` and active work files | project status, workflow context pack, run logs | unrelated projects |
+| Investigate a signal | `investigation-config/`, then routed domain/project additions | deployed version and selected evidence adapters | unrelated product evidence |
+| Author an artifact | `artifact-config/`, then routed domain/project additions | provider target and readback tool | direct provider write before validation |
+| Deliver code | Auto-Dev program plus development/QA/gitflow policy planes | selected repository and deployed/release context | guessed repository or branch |
 
 ## Done Means
 
@@ -1269,6 +1377,14 @@ These root rules apply unless a narrower layer provides a stricter rule.
   worktrees, follow `harness/rules/os-authoring-rules.md`.
 - External source checkouts used for project work must be visible through the
   project `worktrees/` registry/link surface.
+
+## Auto-Dev Rules
+
+- Resolve and receipt root, domain, project, and invocation policy before SDLC execution.
+- Establish the affected environment's deployed version before causal code analysis.
+- Keep investigation facts, hypotheses, contradictions, gaps, and confidence distinct.
+- Pause and resume the same run for unavailable VPN, environment, provider, authentication, rate limit, or operator decision; do not create retry-failure storms.
+- Render and validate governed artifacts before approved external apply, then read back and receipt the provider result.
 
 ## Precedence
 
@@ -1307,6 +1423,9 @@ the source of truth by themselves.
 | `cockpit` | Build or open the local engineering cockpit over canonical OS state. | `shared_factory/05-knowledge/skills/cockpit/` |
 | `agentic-os-gui` | Open or build the domain/project-focused desktop conversation driver. | `shared_factory/05-knowledge/skills/agentic-os-gui/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
+| `auto-dev` | Run a code change through the canonical SDLC family. | `skills/auto-dev/SKILL.md` |
+| `auto-dev-create-artifacts` | Author a configured Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, report, or filesystem artifact. | `skills/auto-dev-create-artifacts/SKILL.md` |
+| `auto-dev-detective` | Investigate a bug, failed QA, log, incident, suspected cause, or RCA with versioned evidence. | `skills/auto-dev-detective/SKILL.md` |
 
 ## Commands
 
@@ -1323,6 +1442,11 @@ the source of truth by themselves.
 | `/auto-add-spec` | Create/update a spec packet for long OS-shaping requests. | Declared in `registries/commands.yml`. |
 | `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Declared in `registries/commands.yml`. |
 | `/orchestrate` | Decompose, delegate, verify, and merge feature work. | Declared in `registries/commands.yml`. |
+| `/auto-dev-create-artifacts` | Resolve, render, validate, apply, and read back a governed artifact. | External apply remains explicit. |
+| `/auto-dev-detective` | Run a deployed-version-aware, resumable evidence investigation. | Investigation stays read-only. |
+| `agentic-os artifacts` | Resolve, render, validate, apply, read back, or doctor artifact contracts. | Policies compose across root/domain/project/invocation. |
+| `agentic-os detective` | Resolve/start/status, record version/evidence, pause/resume, analyze/conclude/render, or doctor investigations. | Resume the same run after availability returns. |
+| `agentic-os develop` | Plan/start Development Delivery or explain dev/QA/gitflow policy. | Multi-repository projects require `--repository`. |
 | `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
 | `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
@@ -1345,6 +1469,7 @@ the source of truth by themselves.
 | --- | --- | --- |
 | `execution_fabric` | Design or validate optional named queues, bounded worker pools, and explicit migration from the filesystem queue. Installed inactive by default. | `harness/shared_factory/00-programs/execution_fabric/` |
 | `spec_grooming` | Turn rough ideas into implementation-ready specs while preserving original intent, discovering existing capability, and projecting to filesystem, tracker, and Notion surfaces. | `harness/shared_factory/00-programs/spec_grooming/` |
+| `auto_dev` | One polymorphic SDLC family for investigation, artifact authoring, implementation, review, release, deployment, and closeout. | `harness/shared_factory/00-programs/auto_dev/` |
 
 ## MCP Servers
 
@@ -1539,6 +1664,9 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Failure record | `06-runs-and-logs/failures/` |
 | Metrics | `07-metrics/` |
 | Archive | `08-archive/` |
+| Bug, failed QA, log, incident, or RCA | Auto-Dev Detective plus `investigation-config/` |
+| Jira, Linear, Notion, Confluence, GitHub, report, or RCA output | Auto-Dev Create Artifacts plus `artifact-config/` |
+| Code implementation through release | Auto-Dev plus the selected project development profile |
 
 ## Routing Rules
 
@@ -1561,6 +1689,8 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Resume active work | `active-now.json`, then `agentic-os work show` | Unrelated project folders |
 | Run a workflow | Matching workflow `quick-reference.md`, `context-pack.md`, `runbook.md` | Automation logs |
 | Review an automation | Matching automation spec, permissions, tests, logs | Workflow internals outside the linked process |
+| Investigate a signal | root/domain/project `investigation-config/` and deployed-version source | unrelated product evidence |
+| Author an artifact | root/domain/project `artifact-config/` and target provider tool | provider mutation before local validation |
 
 ## Approval Rules
 
@@ -1615,6 +1745,8 @@ This file teaches agents how work inside `{domain}` should be understood before 
 | Project work | active work row, `projects/<project>/status.md` | linked repo, linked tracker | unrelated projects | stable project packet |
 | Workflow run | selected library workflow entrypoint | runbook, examples, references | unrelated objects | `06-runs-and-logs/runs/` |
 | Automation review | selected library automation entrypoint | runtime receipts and failure evidence | unrelated objects | owning runtime path |
+| Investigation/RCA | Auto-Dev Detective and effective investigation policy | deployed version, selected sources | undeclared sources | routed investigation run |
+| Artifact authoring | Auto-Dev Create Artifacts and effective provider/type contract | verified provider target | copied formatting prompts | routed artifact receipts |
 
 ## Tools And Skills
 
@@ -1681,6 +1813,13 @@ workflow, or automation defines a stricter rule.
 - Preserve source links and validation evidence.
 - Keep secrets out of run logs, docs, prompts, and generated config.
 
+## Auto-Dev Rules
+
+- Add domain behavior through 1-N Markdown policy files; do not fork the shared workflow state machine.
+- Resolve deployed version before causal code claims and record evidence authority, freshness, and limitations.
+- Pause the same Detective run when a declared dependency is unavailable; resume only with availability evidence.
+- Validate and sanitize artifacts before approved external apply; verify target and read back the result.
+
 ## Precedence
 
 Narrower rules override these rules unless this file is stricter for safety,
@@ -1704,6 +1843,9 @@ libraries, and wrappers for `{domain}`.
 | `os-navigator` | Route domain work to the correct project, workflow, automation, or run log. | inherited from `harness/shared_factory` |
 | `workflow-builder` | Create or refine repeatable workflows. | inherited from `harness/shared_factory` |
 | `automation-qualifier` | Decide whether a repeatable process should become an automation. | inherited from `harness/shared_factory` |
+| `auto-dev` | Implement, review, release, deploy, and close out code through shared SDLC stages. | inherited from `harness/skills` |
+| `auto-dev-create-artifacts` | Author governed provider/type outputs with domain/project policy. | inherited from `harness/skills` |
+| `auto-dev-detective` | Investigate bugs, failed QA, logs, incidents, and RCA questions with versioned evidence. | inherited from `harness/skills` |
 
 ## Commands
 
@@ -1713,6 +1855,9 @@ libraries, and wrappers for `{domain}`.
 | `agentic-os workflow create` | Create a reusable workflow. | Use when the pattern should repeat. |
 | `agentic-os automation create` | Create a guarded automation spec. | Start in observe or prepare mode. |
 | `agentic-os validate` | Validate domain and root structure. | Run before handoff after structural changes. |
+| `agentic-os artifacts ...` | Resolve/render/validate/apply/readback/doctor artifact contracts. | External writes require target verification and approval. |
+| `agentic-os detective ...` | Resolve/start/status/version/evidence/pause/resume/analyze/conclude/render/doctor investigations. | Read-only and resumable. |
+| `agentic-os develop ...` | Plan/start code delivery or explain development policy. | Select a repository explicitly when the project catalog requires it. |
 
 ## MCP Servers
 
@@ -2350,6 +2495,16 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         )
     )
     ensure_managed_resource_surfaces(os_root, result)
+    # The package-owned Auto-Dev program is installed into the canonical
+    # object library above. Initialize and refresh that library here so every
+    # bootstrap path (init, domain/project creation, profile install, docs
+    # update) gets the same complete registry rather than a partial ``lib/``.
+    # Local import avoids the library module's import of ``expand_path`` while
+    # this module is loading.
+    from .library import init_library
+
+    init_library(os_root, dry_run=False)
+    ensure_auto_dev_program_alias(os_root, result)
     ensure_self_improvement_surface(os_root, result)
     return result
 

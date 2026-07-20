@@ -1,0 +1,16 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-create-artifacts
+title: Auto-Dev Create Artifacts
+description: >-
+  Resolve provider/type policy and render, validate, apply, and read back
+  governed artifacts.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, artifacts, sdlc]
+dependencies: []
+aliases: [harness/skills/auto-dev-create-artifacts/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-create-artifacts}
+validation: {commands: ["agentic-os artifacts doctor --root <root>"]}

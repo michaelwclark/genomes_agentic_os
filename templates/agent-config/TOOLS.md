@@ -9,6 +9,12 @@ List the visible capabilities intended for this layer.
 | `notification-operator` | A bounded local macOS alert is warranted and the agent needs the right severity, dedupe key, or source-registration guidance. | `harness/skills/notification-operator/SKILL.md` |
 | `auto-dev` | A tracker-backed code change should run through the canonical SDLC family. | `harness/skills/auto-dev/SKILL.md` |
 | `auto-dev-create-artifacts` | Any Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, PR, report, or filesystem artifact must follow effective provider/type contracts. | `harness/skills/auto-dev-create-artifacts/SKILL.md` |
+| `auto-dev-detective` | A bug, QA failure, ticket comment, log, alert, incident, suspected cause, or RCA question needs deployed-version-aware evidence and a resumable investigation. | `harness/skills/auto-dev-detective/SKILL.md` |
+| `auto-dev-readiness` | Manually resolve tracker truth, repository/base, policies, isolation, and implementation plan. | `harness/skills/auto-dev-readiness/SKILL.md` |
+| `auto-dev-implementation` | Manually implement and locally validate a planned task in isolation. | `harness/skills/auto-dev-implementation/SKILL.md` |
+| `auto-dev-review-repair` | Manually run tests, opposing review, PR creation, and quiet CI/review repair. | `harness/skills/auto-dev-review-repair/SKILL.md` |
+| `auto-dev-release-propagation` | Manually run configured release, hotfix, backport, or forward-port propagation. | `harness/skills/auto-dev-release-propagation/SKILL.md` |
+| `auto-dev-closeout` | Manually run guarded merge, deployment proof, provider reconciliation, cleanup, and closeout. | `harness/skills/auto-dev-closeout/SKILL.md` |
 
 ## Commands
 
@@ -16,8 +22,16 @@ List the visible capabilities intended for this layer.
 | --- | --- | --- |
 | `/notify` | A failed run, high-priority item, or other operator-actionable condition needs a governed local notification. | Uses `agentic-os-notify`; follow quiet hours, severity, source, dedupe, and anti-flood policy. |
 | `/auto-dev-create-artifacts` | Draft or write a configured artifact with native rendering and readback. | Resolve root/domain/project policy first; external apply is explicit. |
+| `/auto-dev-detective` | Investigate a signal or suspected cause with a version gate and evidence receipts. | Read-only; pause one run when VPN/provider access is unavailable. |
+| `/auto-dev-readiness` | Run context, policy, worktree, and plan readiness manually. | Records typed stage evidence. |
+| `/auto-dev-implementation` | Run isolated implementation and local validation manually. | Records typed stage evidence. |
+| `/auto-dev-review-repair` | Run tests, review, PR, CI, and repair convergence manually. | Records typed stage evidence. |
+| `/auto-dev-release-propagation` | Run release/backport/forward-port propagation manually. | Uses the effective gitflow topology. |
+| `/auto-dev-closeout` | Run merge, deployment verification, reconciliation, and cleanup manually. | Approval and exact readback remain mandatory. |
 | `agentic-os artifacts` | Inspect, render, validate, apply, read back, or doctor artifact contracts. | Local/dry-run until an explicit `apply --execute`; external providers use the registered tool handoff. |
+| `agentic-os detective` | Resolve/start/status, record version/evidence, pause/resume, analyze/conclude, render, or doctor investigations. | For environment work, `record-version` gates all other evidence. |
 | `agentic-os develop policy` | Explain the 1-N development, QA, or gitflow Markdown bundle for a project. | Adding a Markdown file affects the next run without code changes. |
+| `agentic-os develop stage` | Validate typed stage-evidence receipts and advance a Development Delivery run. | Records verified actions; it never performs provider or code actions itself. |
 
 ## MCP Servers
 

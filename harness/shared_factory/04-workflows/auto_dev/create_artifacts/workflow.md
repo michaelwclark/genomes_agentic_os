@@ -1,12 +1,18 @@
 # Create Artifacts
 
-![Create Artifacts flow](../../../../../docs/architecture/diagrams/auto-dev-create-artifacts.svg)
+![Create Artifacts flow](../../../00-programs/auto_dev/assets/auto-dev-create-artifacts.svg)
 
 ## What this does
 
-Turns verified evidence into a provider-native, audience-safe artifact by
+Turns verified evidence into a provider-adapter, audience-safe artifact by
 composing root, domain, project, and invocation Markdown contracts. Rendering
 is local; external mutation is a separately approved, read-back action.
+
+## Manual run
+
+Use `/auto-dev-create-artifacts` from chat. The deterministic surface is
+`agentic-os artifacts resolve|render|validate|apply|record-readback|doctor`.
+Equivalent artifact-authoring requests route here implicitly.
 
 ## Inputs
 
@@ -33,11 +39,13 @@ failure storm.
    root → domain → project → invocation.
 3. Normalize evidence and separate facts, inference, recommendations, gaps, and
    confidence.
-4. Render the configured provider-native shape and a Markdown inspection view.
-5. Validate required sections/evidence, safety, target policy, and native format.
+4. Render the configured provider-adapter payload and Markdown inspection view.
+5. Validate required evidence receipts, semantic assertions, sections, safety,
+   target policy, and adapter format.
 6. If only a draft was requested, return the draft plus receipts.
 7. For approved apply, re-verify target, invoke the filesystem or registered
-   provider adapter, fetch the result, compare hashes/fields, and record readback.
+   provider adapter, fetch normalized live content, compare hashes/fields, and
+   record the typed readback.
 
 ## Validations
 
@@ -46,7 +54,8 @@ failure storm.
 - Required content is present and allegations are not rendered as facts.
 - External text contains no secret, local path, private workspace link, raw
   customer data, or provider-prohibited content.
-- Target identity and provider-native rendering match after write.
+- Typed approval and target-verification receipts match the exact artifact.
+- Target identity and normalized provider content match after write.
 
 ## Success modes
 
@@ -72,7 +81,7 @@ Emit `artifact.contract.resolved`, `artifact.rendered`, `artifact.validated`,
 `artifact.apply.requested`, `artifact.provider.paused`,
 `artifact.readback.verified|failed`, and `artifact.completed`. Retain evidence,
 sources/hashes, effective contract, native payload, validation, provider action,
-external identity, and readback.
+  typed approval/target/readback receipts, external identity, and readback.
 
 ## Cleanup and handoff
 

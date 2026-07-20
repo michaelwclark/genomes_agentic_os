@@ -21,12 +21,19 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
 - Route before creating or changing artifacts.
 - Preserve source links, validation evidence, and next actions.
 - Do not store secrets in markdown, config files, logs, or memory.
-- Artifact-producing workflows must resolve `artifact-config` before rendering
-  and must validate, verify target, and read back any external write.
+- Artifact-producing workflows—including nested output from intake, Spec
+  Engine, Detective, Auto-Dev stages, review, release, reports, closeout,
+  program/workflow creation, and automations—must follow
+  `harness/rules/auto-dev-artifact-producers.md`: resolve `artifact-config`,
+  render/validate locally, verify target, apply only with approval, and read
+  back every external write.
 - Development/review workflows must load the effective development, QA, and
   gitflow Markdown policy planes and record their source list/fingerprint.
 - Environment-scoped investigation must identify the deployed version before
-  choosing code. Read-only investigation never authorizes mutation.
+  choosing code. Read-only investigation never authorizes mutation. When VPN,
+  environment, authentication, or a provider is unavailable, pause one
+  receipt-backed run and resume it after fresh availability evidence; do not
+  create repeated failure attempts.
 
 ## Notification Rules
 

@@ -515,3 +515,59 @@ skills:
     purpose: >
       Resolve polymorphic artifact contracts and govern provider-native render,
       validation, apply, readback, and receipts.
+  - id: auto-dev-detective
+    title: Auto-Dev Detective
+    source_path: harness/skills/auto-dev-detective
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-detective
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Investigate bugs and causal questions with deployed-version gates,
+      polymorphic evidence plans, pause/resume, analysis, and receipts.
+  - id: auto-dev-readiness
+    title: Auto-Dev Readiness
+    source_path: harness/skills/auto-dev-readiness
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-readiness
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Prepare tracker, repository/base, policy, worktree, and plan.
+  - id: auto-dev-implementation
+    title: Auto-Dev Implementation
+    source_path: harness/skills/auto-dev-implementation
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-implementation
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Implement and locally validate a planned task.
+  - id: auto-dev-review-repair
+    title: Auto-Dev Review and Repair
+    source_path: harness/skills/auto-dev-review-repair
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-review-repair
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Review, open the governed PR, repair checks and findings, and prove readiness.
+  - id: auto-dev-release-propagation
+    title: Auto-Dev Release Propagation
+    source_path: harness/skills/auto-dev-release-propagation
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-release-propagation
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Operate configured release and hotfix branch families.
+  - id: auto-dev-closeout
+    title: Auto-Dev Closeout
+    source_path: harness/skills/auto-dev-closeout
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-closeout
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Merge, validate deployment, reconcile providers, clean up, and close delivery.

@@ -8,6 +8,7 @@
 
 ```bash
 agentic-os develop start <domain> <project> <ticket> [<ticket> ...]
+# Add --repository <id> when repository.catalog requires explicit selection.
 ```
 
 The dry run validates `config/development.yml`, resolves repository/base/worktree
@@ -29,6 +30,9 @@ Required behavior includes tracker, repository/base branch, worktree directory
 and branch template, validation commands/policy, opposing review, merge policy,
 and recovery attempt/lease limits. Missing configuration blocks; Auto-Dev does
 not silently default to LOS, Jira, Linear, `main`, `develop`, or a test command.
+Multi-repository projects use `repository.catalog` plus
+`selection_required: true`; each run receipts the chosen repository and refuses
+to infer it from ticket wording.
 
 ## Effective policy gate
 

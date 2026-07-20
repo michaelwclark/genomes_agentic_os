@@ -84,6 +84,7 @@ def test_applied_run_pins_policy_snapshot_and_reports_later_drift(tmp_path: Path
     first = start_development_run(root, "acme", "app", ["ENG-2"], run_id="pinned-policy", apply=True)
     snapshot_path = project / "state/development-runs/pinned-policy/effective-policies.json"
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot["planes"]["dev_standards"]["sources"][-1]["body_markdown"] == "# Initial standard\n"
 
     policy.write_text("# Changed standard\n", encoding="utf-8")
     resumed = start_development_run(root, "acme", "app", ["ENG-2"], run_id="pinned-policy", apply=True)

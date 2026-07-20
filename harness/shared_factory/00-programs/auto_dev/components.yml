@@ -1,5 +1,5 @@
 api_version: agentic-os-program-components/v1
-program: auto_dev
+program: auto-dev
 status: active
 operator_surface: auto_dev
 execution_engine: development_delivery
@@ -8,16 +8,40 @@ commands:
     path: harness/skills/auto-dev/SKILL.md
   - id: auto-dev-create-artifacts
     path: harness/commands/auto-dev-create-artifacts.md
+  - id: auto-dev-detective
+    path: harness/commands/auto-dev-detective.md
   - id: develop
     path: harness/commands/develop.md
+  - id: auto-dev-readiness
+    path: harness/commands/auto-dev-readiness.md
+  - id: auto-dev-implementation
+    path: harness/commands/auto-dev-implementation.md
+  - id: auto-dev-review-repair
+    path: harness/commands/auto-dev-review-repair.md
+  - id: auto-dev-release-propagation
+    path: harness/commands/auto-dev-release-propagation.md
+  - id: auto-dev-closeout
+    path: harness/commands/auto-dev-closeout.md
 skills:
   - id: auto-dev
     path: harness/skills/auto-dev/SKILL.md
   - id: auto-dev-create-artifacts
     path: harness/skills/auto-dev-create-artifacts/SKILL.md
+  - id: auto-dev-detective
+    path: harness/skills/auto-dev-detective/SKILL.md
+  - id: auto-dev-readiness
+    path: harness/skills/auto-dev-readiness/SKILL.md
+  - id: auto-dev-implementation
+    path: harness/skills/auto-dev-implementation/SKILL.md
+  - id: auto-dev-review-repair
+    path: harness/skills/auto-dev-review-repair/SKILL.md
+  - id: auto-dev-release-propagation
+    path: harness/skills/auto-dev-release-propagation/SKILL.md
+  - id: auto-dev-closeout
+    path: harness/skills/auto-dev-closeout/SKILL.md
 workflows:
   - id: auto_dev_detective
-    status: planned
+    status: active
     path: ../../04-workflows/auto_dev/detective
   - id: auto_dev_create_artifacts
     status: active
@@ -46,7 +70,18 @@ policy_planes:
 receipts:
   development: <project>/state/development-runs/<run-id>
   artifacts: <work-item-or-run>/artifacts/auto-dev-create-artifacts/<run-id>
-  investigations: <work-item-or-run>/artifacts/auto-dev-detective/<run-id>
+  investigations:
+    project: <project>/state/investigation-runs/<run-id>
+    domain: <domain>/06-runs-and-logs/investigations/<run-id>
+    root: harness/shared_factory/06-runs-and-logs/investigations/<run-id>
+  schemas:
+    development_stage: development-stage-evidence/v1
+    version_authority: investigation-version-authority/v1
+    availability: investigation-availability/v1
+    investigation_evidence: investigation-evidence/v1
+    artifact_approval: artifact-approval/v1
+    artifact_target: artifact-target-verification/v1
+    artifact_readback: artifact-provider-readback/v1
 compatibility:
   map: ARCHIVE_SOON.md
   trigger_adapters:
@@ -57,3 +92,17 @@ documentation:
   - runbook.md
   - ARCHIVE_SOON.md
   - worklog.md
+diagrams:
+  - assets/auto-dev-program.svg
+  - assets/auto-dev-create-artifacts.svg
+  - assets/auto-dev-detective.svg
+  - assets/development-delivery-stages.svg
+templates:
+  - templates/development-stage-evidence.json
+  - templates/artifact-evidence.yml
+  - templates/artifact-approval.json
+  - templates/artifact-target-verification.json
+  - templates/artifact-provider-readback.json
+  - templates/investigation-version-authority.json
+  - templates/investigation-availability.json
+  - templates/investigation-analysis.yml

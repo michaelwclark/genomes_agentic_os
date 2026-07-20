@@ -1,10 +1,19 @@
 # Testing, Review, and PR Repair
 
+## Flow
+
+![Auto-Dev Development Delivery stages](../../../00-programs/auto_dev/assets/development-delivery-stages.svg)
+
 ## What this does
 
 Proves the implementation with a risk-based test triangle, opens the PR only
 after a pre-PR review, and repairs CI and review findings until the PR is truly
 ready or a classified blocker is exhausted.
+
+## Manual run
+
+Use `/auto-dev-review-repair`, then record verified work with
+`agentic-os develop stage <state.json> --stage review ...`.
 
 ## Inputs
 

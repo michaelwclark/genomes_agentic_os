@@ -38,6 +38,25 @@ KNOWN_TYPES = frozenset(
         "pull-request",
         "program",
         "workflow-documentation",
+        "subtask",
+        "project",
+        "review",
+        "release",
+        "daily-handoff",
+        "work-handoff",
+        "dashboard",
+        "closeout",
+        "technical-design",
+        "test-plan",
+        "incident-report",
+        "decision-record",
+        "meeting-notes",
+        "control-plane",
+        "spike",
+        "review-report",
+        "report",
+        "health-report",
+        "client-automation-brief",
     }
 )
 ALLOWED_FRONTMATTER = frozenset(
@@ -82,6 +101,16 @@ SECRET_RE = re.compile(
     r"(?i)(?:sk-[a-z0-9_-]{20,}|gh[pousr]_[a-z0-9_]{20,}|xox[baprs]-[a-z0-9-]{20,}|"
     r"(?:authorization\s*:\s*(?:bearer|basic)\s+\S+)|"
     r"(?:api[_-]?key|token|secret|password|private[_-]?key|access[_-]?key)\s*[:=]\s*[^\s]{8,})"
+)
+BUILTIN_VALIDATIONS = frozenset(
+    {
+        "required_sections_present",
+        "audience_safe",
+        "facts_distinct_from_inference",
+        "evidence_is_sanitized",
+        "adf_renders_without_markdown_artifacts",
+        "jira_native_rendering",
+    }
 )
 
 
@@ -140,24 +169,39 @@ def artifact_policy_roots(
     return layers
 
 
-def _candidate_paths(root: Path, provider: str, artifact_type: str) -> list[Path]:
-    relative = [
-        Path("any") / "any.md",
-        Path("any") / f"{artifact_type}.md",
-        Path(provider) / "any.md",
-        Path(provider) / f"{artifact_type}.md",
+def _candidate_paths(
+    root: Path, provider: str, artifact_type: str
+) -> list[tuple[Path, str, str]]:
+    """Return ordered base files plus 1-N Markdown addenda directories."""
+
+    identities = [
+        ("any", "any"),
+        ("any", artifact_type),
+        (provider, "any"),
+        (provider, artifact_type),
     ]
-    seen: set[Path] = set()
-    result: list[Path] = []
-    for item in relative:
-        candidate = (root / item).resolve()
-        if candidate not in seen:
-            seen.add(candidate)
-            result.append(candidate)
+    seen: set[tuple[Path, str, str]] = set()
+    result: list[tuple[Path, str, str]] = []
+    for expected_provider, expected_type in identities:
+        base = (root / expected_provider / expected_type).resolve()
+        entries = [base.with_suffix(".md")]
+        if base.is_dir():
+            entries.extend(sorted(path.resolve() for path in base.rglob("*.md") if path.is_file()))
+        for candidate in entries:
+            row = (candidate, expected_provider, expected_type)
+            if row not in seen:
+                seen.add(row)
+                result.append(row)
     return result
 
 
-def _validate_document(document: MarkdownPolicyDocument, *, overlay: bool = False) -> list[dict[str, Any]]:
+def _validate_document(
+    document: MarkdownPolicyDocument,
+    *,
+    overlay: bool = False,
+    expected_provider: str | None = None,
+    expected_type: str | None = None,
+) -> list[dict[str, Any]]:
     metadata = document.frontmatter
     findings: list[dict[str, Any]] = []
 
@@ -174,8 +218,8 @@ def _validate_document(document: MarkdownPolicyDocument, *, overlay: bool = Fals
         if not isinstance(value, str) or not value.strip():
             finding("missing_identity", f"{key} is required", field=key)
     if not overlay:
-        expected_provider = document.path.parent.name
-        expected_type = document.path.stem
+        expected_provider = expected_provider or document.path.parent.name
+        expected_type = expected_type or document.path.stem
         if metadata.get("provider") != expected_provider:
             finding("identity_path_mismatch", f"provider must match folder {expected_provider!r}", field="provider")
         if metadata.get("artifact_type") != expected_type:
@@ -288,20 +332,26 @@ def resolve_artifact_contract(
     diagnostics: list[dict[str, Any]] = []
     for layer in layers:
         candidates = _candidate_paths(layer.root, provider_name, type_name)
-        found = [path for path in candidates if path.is_file()]
+        found = [row for row in candidates if row[0].is_file()]
         layer_rows.append(
             {
                 "scope": layer.scope,
                 "root": _relative(root, layer.root),
                 "exists": layer.root.is_dir(),
-                "candidates": [_relative(root, path) for path in candidates],
-                "matched": [_relative(root, path) for path in found],
+                "candidates": [_relative(root, path) for path, _, _ in candidates],
+                "matched": [_relative(root, path) for path, _, _ in found],
             }
         )
-        for path in found:
+        for path, expected_provider, expected_type in found:
             document = parse_markdown_policy(root, path, scope=layer.scope, rank=layer.rank)
             documents.append(document)
-            diagnostics.extend(_validate_document(document))
+            diagnostics.extend(
+                _validate_document(
+                    document,
+                    expected_provider=expected_provider,
+                    expected_type=expected_type,
+                )
+            )
     explicit_rank = len(layers)
     for raw in overlays:
         path = Path(raw).expanduser().resolve()
@@ -469,6 +519,77 @@ def _pick(evidence: Mapping[str, Any], names: Sequence[str]) -> Any:
     return None
 
 
+def _contract_receipt_rows(
+    evidence: Mapping[str, Any], required: Sequence[Any]
+) -> list[dict[str, Any]]:
+    """Normalize producer-supplied evidence receipts without inventing proof."""
+
+    raw = evidence.get("evidence_receipts")
+    receipts = raw if isinstance(raw, Mapping) else {}
+    rows: list[dict[str, Any]] = []
+    for item in required:
+        name = str(item).strip()
+        value = receipts.get(name)
+        if isinstance(value, Mapping):
+            row = dict(value)
+        elif value not in (None, ""):
+            row = {"status": "verified", "value": value}
+        else:
+            row = {}
+        rows.append(
+            {
+                "requirement": name,
+                "status": str(row.get("status") or "missing").strip().lower(),
+                "value": row.get("value"),
+                "evidence_ref": row.get("evidence_ref"),
+                "captured_at": row.get("captured_at"),
+            }
+        )
+    return rows
+
+
+def _validation_assertion_rows(
+    evidence: Mapping[str, Any], rules: Sequence[Any]
+) -> list[dict[str, Any]]:
+    raw = evidence.get("validation_assertions")
+    assertions = raw if isinstance(raw, Mapping) else {}
+    rows: list[dict[str, Any]] = []
+    for item in rules:
+        rule = str(item).strip()
+        if rule in BUILTIN_VALIDATIONS:
+            rows.append({"rule": rule, "status": "engine_validated", "evidence_ref": None, "checked_at": None})
+            continue
+        value = assertions.get(rule)
+        row = dict(value) if isinstance(value, Mapping) else {}
+        rows.append(
+            {
+                "rule": rule,
+                "status": str(row.get("status") or "missing").strip().lower(),
+                "evidence_ref": row.get("evidence_ref"),
+                "checked_at": row.get("checked_at"),
+            }
+        )
+    return rows
+
+
+def _provider_payload(renderer: str, title: str, markdown: str, contract: Mapping[str, Any]) -> Any:
+    """Build the provider-adapter payload; only Jira claims a native document."""
+
+    if renderer in {"jira_adf", "atlassian_adf"}:
+        return markdown_to_adf(markdown)
+    if renderer in {"github_markdown", "linear_markdown"}:
+        return {"title": title, "body": markdown}
+    if renderer == "slack_markdown":
+        return {"text": markdown}
+    if renderer in {"notion_enhanced_markdown", "confluence_markdown"}:
+        return {
+            "title": title,
+            "enhanced_markdown": markdown,
+            "layout": deepcopy(dict(contract.get("format") or {})),
+        }
+    return markdown
+
+
 def _render_markdown(resolution: Mapping[str, Any], evidence: Mapping[str, Any]) -> str:
     artifact_type = str(resolution["artifact_type"])
     contract = resolution["effective"]
@@ -570,8 +691,8 @@ def render_artifact(
     evidence = _load_evidence(evidence_path)
     markdown = _render_markdown(resolution, evidence)
     renderer = str((resolution["effective"].get("format") or {}).get("renderer") or "markdown")
-    native: Any = markdown_to_adf(markdown) if renderer in {"jira_adf", "atlassian_adf"} else markdown
     title = str(evidence.get("title") or evidence.get("summary") or artifact_type.replace("-", " ").title()).strip()
+    provider_payload = _provider_payload(renderer, title, markdown, resolution["effective"])
     evidence_hash = hashlib.sha256(
         json.dumps(evidence, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -582,7 +703,16 @@ def render_artifact(
         "title": title,
         "renderer": renderer,
         "body_markdown": markdown,
-        "native": native,
+        "provider_payload": provider_payload,
+        # Compatibility alias. Only Jira ADF is a provider-native document;
+        # every other value is an explicit adapter payload.
+        "native": provider_payload,
+        "evidence_contract": _contract_receipt_rows(
+            evidence, resolution["effective"].get("required_evidence") or []
+        ),
+        "validation_contract": _validation_assertion_rows(
+            evidence, resolution["effective"].get("validation") or []
+        ),
         "contract_fingerprint": resolution["fingerprint"],
         "contract_sources": [item["source_ref"] for item in resolution["sources"]],
         "evidence_sha256": evidence_hash,
@@ -644,6 +774,28 @@ def validate_rendered_artifact(path: str | Path) -> dict[str, Any]:
     for section in required:
         if section.casefold() not in headings:
             findings.append({"code": "missing_required_section", "message": f"required heading is absent: {section}"})
+    for receipt in artifact.get("evidence_contract") or []:
+        if not isinstance(receipt, Mapping) or receipt.get("status") not in {"verified", "satisfied", "captured"}:
+            requirement = receipt.get("requirement") if isinstance(receipt, Mapping) else "unknown"
+            findings.append(
+                {
+                    "code": "missing_required_evidence",
+                    "message": f"required evidence lacks a verified receipt: {requirement}",
+                }
+            )
+    for assertion in artifact.get("validation_contract") or []:
+        if not isinstance(assertion, Mapping):
+            findings.append({"code": "missing_validation_assertion", "message": "invalid validation assertion"})
+            continue
+        if assertion.get("status") == "engine_validated":
+            continue
+        if assertion.get("status") not in {"passed", "verified"} or not assertion.get("evidence_ref") or not assertion.get("checked_at"):
+            findings.append(
+                {
+                    "code": "missing_validation_assertion",
+                    "message": f"semantic validation lacks a passed evidence receipt: {assertion.get('rule')}",
+                }
+            )
     return {
         "schema": "artifact-validation/v1",
         "valid": not findings,
@@ -656,6 +808,60 @@ def validate_rendered_artifact(path: str | Path) -> dict[str, Any]:
     }
 
 
+def _load_governance_receipt(
+    root: Path,
+    raw: str | Path | None,
+    *,
+    schema: str,
+    label: str,
+) -> dict[str, Any]:
+    if raw is None:
+        raise ArtifactContractError(f"external provider apply requires a {label} receipt")
+    path = Path(raw).expanduser().resolve()
+    _relative(root, path)
+    if not path.is_file():
+        raise ArtifactContractError(f"{label} receipt not found: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ArtifactContractError(f"{label} receipt must be valid JSON") from exc
+    if not isinstance(value, dict) or value.get("schema") != schema:
+        raise ArtifactContractError(f"{label} receipt must use {schema}")
+    return {**value, "receipt_ref": _relative(root, path)}
+
+
+def _validate_apply_governance(
+    artifact: Mapping[str, Any],
+    *,
+    target: str,
+    approval: Mapping[str, Any],
+    target_verification: Mapping[str, Any],
+) -> None:
+    provider = artifact.get("provider")
+    artifact_type = artifact.get("artifact_type")
+    fingerprint = artifact.get("contract_fingerprint")
+    if approval.get("status") != "approved":
+        raise ArtifactContractError("approval receipt must have status: approved")
+    for key, expected in (
+        ("provider", provider),
+        ("artifact_type", artifact_type),
+        ("contract_fingerprint", fingerprint),
+        ("target", target),
+    ):
+        if approval.get(key) != expected:
+            raise ArtifactContractError(f"approval receipt {key} does not match the rendered artifact")
+    if not approval.get("approved_by") or not approval.get("approved_at"):
+        raise ArtifactContractError("approval receipt requires approved_by and approved_at")
+    if target_verification.get("status") != "verified":
+        raise ArtifactContractError("target verification receipt must have status: verified")
+    if target_verification.get("provider") != provider or target_verification.get("target") != target:
+        raise ArtifactContractError("target verification does not match the provider and target")
+    if not target_verification.get("resolver") or not target_verification.get("verified_at") or not target_verification.get("evidence_ref"):
+        raise ArtifactContractError(
+            "target verification requires resolver, verified_at, and evidence_ref"
+        )
+
+
 def prepare_artifact_apply(
     os_root: str | Path,
     artifact_path: str | Path,
@@ -663,6 +869,8 @@ def prepare_artifact_apply(
     target: str | Path | None,
     execute: bool,
     receipt_path: str | Path,
+    approval_receipt: str | Path | None = None,
+    target_receipt: str | Path | None = None,
 ) -> dict[str, Any]:
     """Apply filesystem output or produce an explicit provider-adapter handoff."""
 
@@ -677,6 +885,7 @@ def prepare_artifact_apply(
     receipt = Path(receipt_path).expanduser().resolve()
     _relative(root, receipt)
     approval = ((artifact.get("resolution") or {}).get("effective") or {}).get("approval") or {}
+    effective = ((artifact.get("resolution") or {}).get("effective") or {})
     result: dict[str, Any] = {
         "schema": "artifact-apply/v1",
         "provider": provider,
@@ -706,15 +915,42 @@ def prepare_artifact_apply(
             }
         )
     else:
+        if target is None or not str(target).strip():
+            raise ArtifactContractError("external provider apply requires a verified --target")
+        approval_value = _load_governance_receipt(
+            root,
+            approval_receipt,
+            schema="artifact-approval/v1",
+            label="approval",
+        )
+        target_value = _load_governance_receipt(
+            root,
+            target_receipt,
+            schema="artifact-target-verification/v1",
+            label="target verification",
+        )
+        _validate_apply_governance(
+            artifact,
+            target=str(target),
+            approval=approval_value,
+            target_verification=target_value,
+        )
+        payload_hash = hashlib.sha256(
+            json.dumps(artifact.get("provider_payload"), sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         result.update(
             {
                 "status": "awaiting_provider_adapter",
-                "target": str(target) if target else None,
+                "target": str(target),
+                "approval_receipt": approval_value,
+                "target_verification": target_value,
+                "required_readback": list(effective.get("readback") or []),
+                "expected_content_sha256": payload_hash,
                 "adapter_handoff": {
                     "provider": provider,
                     "title": artifact["title"],
                     "renderer": artifact["renderer"],
-                    "native": artifact["native"],
+                    "provider_payload": artifact["provider_payload"],
                     "required_action": "Use the registered provider tool, verify target identity, read back the result, then record readback.",
                 },
             }
@@ -727,9 +963,7 @@ def record_artifact_readback(
     os_root: str | Path,
     apply_receipt: str | Path,
     *,
-    external_id: str,
-    external_url: str | None,
-    readback_sha256: str,
+    readback_receipt: str | Path,
 ) -> dict[str, Any]:
     """Close an external-provider handoff after an agent performs live readback."""
 
@@ -739,15 +973,38 @@ def record_artifact_readback(
     value = json.loads(path.read_text(encoding="utf-8"))
     if value.get("schema") != "artifact-apply/v1" or value.get("status") != "awaiting_provider_adapter":
         raise ArtifactContractError("apply receipt is not awaiting provider readback")
-    if not external_id.strip() or not re.fullmatch(r"[a-fA-F0-9]{64}", readback_sha256):
-        raise ArtifactContractError("external id and 64-character readback SHA-256 are required")
+    readback = _load_governance_receipt(
+        root,
+        readback_receipt,
+        schema="artifact-provider-readback/v1",
+        label="provider readback",
+    )
+    if readback.get("status") != "verified":
+        raise ArtifactContractError("provider readback receipt must have status: verified")
+    if readback.get("provider") != value.get("provider") or readback.get("target") != value.get("target"):
+        raise ArtifactContractError("provider readback does not match the apply provider and target")
+    if not str(readback.get("external_id") or "").strip() or not readback.get("verified_at"):
+        raise ArtifactContractError("provider readback requires external_id and verified_at")
+    observed = readback.get("observed") if isinstance(readback.get("observed"), Mapping) else {}
+    missing = [field for field in value.get("required_readback") or [] if field not in observed]
+    if missing:
+        raise ArtifactContractError("provider readback is missing observed fields: " + ", ".join(missing))
+    if "content" not in readback:
+        raise ArtifactContractError("provider readback requires the normalized live content")
+    actual_hash = hashlib.sha256(
+        json.dumps(readback["content"], sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if actual_hash != value.get("expected_content_sha256"):
+        raise ArtifactContractError("provider readback content does not match the rendered provider payload")
     value["status"] = "completed"
     value["readback"] = {
         "verified": True,
-        "external_id": external_id,
-        "external_url": external_url,
-        "sha256": readback_sha256.lower(),
-        "verified_at": utc_now(),
+        "external_id": readback["external_id"],
+        "external_url": readback.get("external_url"),
+        "observed": dict(observed),
+        "sha256": actual_hash,
+        "verified_at": readback["verified_at"],
+        "receipt_ref": _relative(root, Path(readback_receipt).expanduser().resolve()),
     }
     value.pop("adapter_handoff", None)
     _atomic_json(path, value)
@@ -799,7 +1056,18 @@ def artifact_contract_doctor(
             files += 1
             try:
                 document = parse_markdown_policy(root, path, scope=layer.scope, rank=layer.rank)
-                diagnostics.extend(_validate_document(document))
+                relative = path.relative_to(layer.root)
+                if len(relative.parts) >= 3:
+                    expected_provider, expected_type = relative.parts[0], relative.parts[1]
+                else:
+                    expected_provider, expected_type = path.parent.name, path.stem
+                diagnostics.extend(
+                    _validate_document(
+                        document,
+                        expected_provider=expected_provider,
+                        expected_type=expected_type,
+                    )
+                )
                 provider = str(document.frontmatter.get("provider") or path.parent.name)
                 artifact_type = str(document.frontmatter.get("artifact_type") or path.stem)
                 identities.add((provider, artifact_type))

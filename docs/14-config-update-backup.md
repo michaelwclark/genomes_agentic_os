@@ -150,10 +150,13 @@ remote URL.
 
 **Default backup scope (from `templates/runtime/backup-policy.yml`):**
 
-Include: `.agentic_root`, `harness/AGENTS.md`, `harness/ROUTER.md`,
-`harness/CONTEXT.md`, `harness/RULES.md`, `harness/TOOLS.md`, `harness/bin/`,
-`harness/commands/`, `harness/registries/`, `harness/rules/`,
-`harness/skills/`, `harness/shared_factory/00-control-plane/`
+Include: `.agentic_root`, `lib/`, `harness/AGENTS.md`,
+`harness/artifact-config/`, `harness/ROUTER.md`, `harness/CONTEXT.md`,
+`harness/RULES.md`, `harness/TOOLS.md`, `harness/bin/`, `harness/commands/`,
+`harness/investigation-config/`, `harness/registries/`, `harness/rules/`,
+`harness/skills/`, `harness/shared_factory/00-control-plane/`. The `lib/`
+entry preserves canonical program objects; the two policy entries preserve
+root artifact and investigation contracts.
 
 Exclude: `projects/`, `harness/logs/`, `harness/security/ssh/*`, `**/.env`,
 `**/*secret*`, `**/*token*`

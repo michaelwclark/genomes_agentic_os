@@ -1,0 +1,6 @@
+interface:
+  display_name: "Auto-Dev Detective"
+  short_description: "Investigate bugs with versioned evidence"
+  default_prompt: "Use $auto-dev-detective to investigate this report against the correct deployed version and produce an evidence-backed conclusion."
+policy:
+  allow_implicit_invocation: true

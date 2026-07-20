@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | Auto-Dev program | intent routing, workflow family, shared policy planes, operator docs and handoffs | a second execution state machine |
 | Development Delivery | work items, isolated worktrees, task/portfolio state, retries, receipts, review/release/deploy stages | provider artifact style or domain evidence catalogs |
-| Create Artifacts | provider/type policy, native rendering, safety validation, explicit apply/readback | tracker or documentation lifecycle state |
+| Create Artifacts | provider/type policy, provider-adapter rendering, evidence/semantic validation, typed apply/readback governance | tracker or documentation lifecycle state |
 | Detective | version-first evidence gathering, source adapters, hypotheses and RCA | data/config mutation |
 | Domain/project packs | exact tech stack, repositories, environments, evidence sources, provider terminology and output requirements | forks of shared workflow code |
 
@@ -33,6 +33,27 @@ Every resolution records ordered sources and a content fingerprint. Narrower
 configuration may specialize behavior but cannot weaken parent safety,
 approval, sanitization, target verification, or readback.
 
+## Detective
+
+![Detective flow](architecture/diagrams/auto-dev-detective.svg)
+
+```bash
+agentic-os detective resolve --trigger bug --domain los \
+  --project los_app_los_django --environment preprod --explain
+agentic-os detective start --input signal.yml --trigger bug --domain los \
+  --project los_app_los_django --environment preprod --tenant navyfederal
+agentic-os detective record-version --run-dir <run> \
+  --authority-receipt <investigation-version-authority.json>
+```
+
+Environment investigations stay at `version_pending` until the exact deployed
+version authority readback is known. Only sources declared in the pinned policy
+may be recorded; authority, prerequisites, freshness, and explicit source
+dispositions are enforced. Facts, hypotheses, disconfirming evidence, and the
+conclusion cite evidence IDs. VPN, environment, authentication, and provider
+unavailability pause the same run and resume only from a typed availability
+probe receipt. The workflow is read-only; remediation routes separately.
+
 ## Create Artifacts
 
 ![Create Artifacts flow](architecture/diagrams/auto-dev-create-artifacts.svg)
@@ -46,10 +67,29 @@ agentic-os artifacts render --provider jira --type bug \
 agentic-os artifacts validate --artifact draft.json
 ```
 
-Rendering is local. `apply --execute` either writes a routed filesystem target
-atomically or creates an external-provider handoff. A chat agent then uses the
-registered provider tool, reads the created/updated result back, and records its
-ID and hash. A create response alone is not completion.
+Rendering is local. Validation enforces required evidence receipts and
+producer-supplied semantic assertions in addition to sections and safety.
+`apply --execute` writes a routed filesystem target atomically; external
+handoffs also require typed approval and target-verification receipts. The
+registered provider adapter must return normalized live content in a typed
+readback receipt, and the engine compares its hash with the rendered payload.
+A create response or caller-supplied hash alone is not completion.
+
+## Development stages
+
+![Development Delivery stages](architecture/diagrams/development-delivery-stages.svg)
+
+| Stage | Manual skill | Recorder |
+| --- | --- | --- |
+| Readiness and Context | `/auto-dev-readiness` | `develop stage --stage readiness` |
+| Isolated Implementation | `/auto-dev-implementation` | `develop stage --stage implementation` |
+| Testing, Review, and PR Repair | `/auto-dev-review-repair` | `develop stage --stage review` |
+| Release Propagation | `/auto-dev-release-propagation` | `develop stage --stage release_propagation` |
+| Merge, Deployment, and Cleanup | `/auto-dev-closeout` | `develop stage --stage closeout` |
+
+The skills perform the code/provider work. The recorder validates all typed
+`development-stage-evidence/v1` files before its first state mutation. Direct
+string-receipt transitions fail closed.
 
 ## Development policy readback
 

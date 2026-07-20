@@ -63,7 +63,7 @@ python3 harness/skills/finishing-touches-review/scripts/finishing_touches_review
 
 ## Auto Dev Integration
 
-`auto-dev` consumes this engine at two mandatory checkpoints:
+`$auto-dev-review-repair` consumes this engine at two mandatory checkpoints:
 
 - `pre_pr`: after local validation and before PR creation. Target decision:
   `ready_pre_pr`.
@@ -71,9 +71,16 @@ python3 harness/skills/finishing-touches-review/scripts/finishing_touches_review
   `ready_post_pr_checks`.
 
 For an Anthropic-family opposing reviewer, the canonical transport is the
-installed Claude CLI using CLI-native authentication. Auto Dev must remove
-`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment and
-must not call the Anthropic API or SDK as a fallback:
+installed Claude CLI using CLI-native authentication. The review stage must
+remove `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment
+and must not call the Anthropic API or SDK as a fallback. Prepare the declared
+review artifacts, run the read-only reviewer in the selected worktree, ingest
+its structured output into `review-ledger.jsonl`, then invoke this skill's
+deterministic helper.
+
+The command below is compatibility-only for an already-existing legacy
+`artifacts/auto-dev/state.json` run; never use it to start a Development
+Delivery review:
 
 ```bash
 python3 harness/skills/auto-dev/scripts/auto_dev_state.py run-review \
@@ -83,7 +90,7 @@ python3 harness/skills/auto-dev/scripts/auto_dev_state.py run-review \
   --review-unavailable-policy continue_with_receipt
 ```
 
-The runner verifies the review request still names the canonical Auto Dev
+That legacy runner verifies the review request still names the canonical Auto Dev
 worktree (falling back to the repository only when no worktree exists) and that
 its recorded head SHA still matches `git rev-parse HEAD`. It executes `claude -p
 --model opus --safe-mode --permission-mode dontAsk` there with only file reads,

@@ -138,7 +138,8 @@ Projects may replace the development/QA/gitflow folder order through
 Narrower scopes may specialize behavior but cannot weaken inherited safety,
 approval, sanitization, target verification, or readback.
 
-Use `agentic-os artifacts doctor` after changing artifact contracts. Applied
+Use `agentic-os artifacts doctor` after changing artifact contracts and
+`agentic-os detective doctor` after changing investigation packs. Applied
 development runs snapshot all three development planes in
 `state/development-runs/<run-id>/effective-policies.json`.
 

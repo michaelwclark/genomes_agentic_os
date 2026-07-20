@@ -5,7 +5,7 @@ model_verbosity = "low"
 model_reasoning_summary = "concise"
 
 [program]
-id = "auto_dev"
+id = "auto-dev"
 execution_engine = "development_delivery"
 external_writes = "explicit_approval_and_readback"
 policy_resolution = "root_domain_project_invocation"

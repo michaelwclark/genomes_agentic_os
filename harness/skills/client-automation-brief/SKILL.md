@@ -155,3 +155,13 @@ The `customer/` folder also contains a rendered copy of the blank template:
 - Approval gate names the approver and is recorded in the file.
 - The pilot is small, measurable, and reversible.
 - No build decision exists without an approved brief.
+
+## Canonical artifact projection
+
+This skill owns discovery questions, layer classification, and approval
+judgment. The `customer brief` command may create the routed source scaffold,
+but the completed filesystem or Notion brief must be rendered and validated as
+`client-automation-brief` through `$auto-dev-create-artifacts`. External Notion
+apply requires verified Genome's Notion target, typed approval/target receipts,
+and provider readback. Do not maintain a second presentation or readback policy
+in this skill.

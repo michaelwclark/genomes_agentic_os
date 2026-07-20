@@ -1,0 +1,14 @@
+{
+  "schema": "investigation-version-authority/v1",
+  "status": "verified",
+  "source_id": "deployed-version",
+  "authority_class": "replace-with-policy-authority-class",
+  "environment": "preprod",
+  "tenant": "example-tenant",
+  "version": "v1.2.3",
+  "source": "declared-deployment-authority",
+  "git_ref": "refs/tags/v1.2.3",
+  "commit_sha": "abcdef1234567",
+  "evidence_ref": "safe-deployment-readback-reference",
+  "captured_at": "2026-07-19T12:00:00Z"
+}

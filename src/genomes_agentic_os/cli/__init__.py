@@ -50,6 +50,7 @@ from . import work
 from . import naming
 from . import long_run
 from . import artifacts
+from . import detective
 from .project import handle_project_exec
 
 __all__ = ["COMMAND_MODULES", "build_parser", "main"]
@@ -93,6 +94,7 @@ COMMAND_MODULES = [
     naming,
     long_run,
     artifacts,
+    detective,
 ]
 
 

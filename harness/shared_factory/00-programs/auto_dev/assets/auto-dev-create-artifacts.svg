@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
+  <title id="title">Auto-Dev Create Artifacts workflow</title>
+  <desc id="desc">Evidence flows through contract resolution, native rendering, validation, explicit approval, provider apply, and readback.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#071A1A"/><stop offset="1" stop-color="#0F3D3E"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="8" stdDeviation="9" flood-opacity=".32"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#99F6E4"/></marker>
+    <style>.t{font:700 42px Inter,Arial;fill:#F0FDFA}.s{font:400 19px Inter,Arial;fill:#CCFBF1}.h{font:700 19px Inter,Arial;fill:#F8FAFC}.b{font:400 15px Inter,Arial;fill:#DFF7F3}.k{font:700 13px Inter,Arial;fill:#99F6E4;letter-spacing:.08em}.a{stroke:#99F6E4;stroke-width:4;fill:none;marker-end:url(#arrow)}.d{stroke:#5EEAD4;stroke-width:3;fill:none;stroke-dasharray:8 8;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1600" height="820" rx="34" fill="url(#bg)"/>
+  <text x="80" y="78" class="t">Create Artifacts: policy to verified provider output</text>
+  <text x="80" y="112" class="s">Dry-run first • native provider shape • explicit mutation • readback is completion</text>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="190" width="200" height="130" rx="20" fill="#334155" stroke="#64748B" stroke-width="2"/><text x="95" y="228" class="k">INPUT</text><text x="95" y="263" class="h">Evidence map</text><text x="95" y="290" class="b">Facts • context • gaps</text>
+    <rect x="320" y="170" width="240" height="170" rx="20" fill="#115E59" stroke="#5EEAD4" stroke-width="2"/><text x="348" y="210" class="k">1. RESOLVE</text><text x="348" y="247" class="h">Effective contract</text><text x="348" y="276" class="b">root → domain → project</text><text x="348" y="301" class="b">provider/type fallback</text><text x="348" y="326" class="b">fingerprint + conflicts</text>
+    <rect x="610" y="170" width="220" height="170" rx="20" fill="#0F766E" stroke="#5EEAD4" stroke-width="2"/><text x="638" y="210" class="k">2. RENDER</text><text x="638" y="247" class="h">Native draft</text><text x="638" y="276" class="b">ADF or rich Markdown</text><text x="638" y="301" class="b">inspection view</text>
+    <rect x="880" y="170" width="220" height="170" rx="20" fill="#0E7490" stroke="#67E8F9" stroke-width="2"/><text x="908" y="210" class="k">3. VALIDATE</text><text x="908" y="247" class="h">Quality + safety</text><text x="908" y="276" class="b">required evidence</text><text x="908" y="301" class="b">scrub • target policy</text>
+    <rect x="1150" y="190" width="200" height="130" rx="20" fill="#9A3412" stroke="#FDBA74" stroke-width="2"/><text x="1178" y="228" class="k">GATE</text><text x="1178" y="263" class="h">Explicit approval</text><text x="1178" y="290" class="b">draft may stop here</text>
+    <rect x="1400" y="190" width="140" height="130" rx="20" fill="#166534" stroke="#86EFAC" stroke-width="2"/><text x="1422" y="228" class="k">4. APPLY</text><text x="1422" y="263" class="h">Provider</text><text x="1422" y="290" class="b">verified target</text>
+  </g>
+  <path d="M270 255 H310" class="a"/><path d="M560 255 H600" class="a"/><path d="M830 255 H870" class="a"/><path d="M1100 255 H1140" class="a"/><path d="M1350 255 H1390" class="a"/>
+
+  <g filter="url(#shadow)">
+    <rect x="1180" y="455" width="360" height="150" rx="22" fill="#14532D" stroke="#86EFAC" stroke-width="2"/><text x="1210" y="496" class="k">5. READ BACK</text><text x="1210" y="532" class="h">Fetch the rendered result</text><text x="1210" y="562" class="b">Verify workspace, type, parent, fields, content</text><text x="1210" y="588" class="b">Record external ID, URL, hash, timestamp</text>
+    <rect x="720" y="455" width="360" height="150" rx="22" fill="#3F3F46" stroke="#A1A1AA" stroke-width="2"/><text x="750" y="496" class="k">PAUSE / REPAIR</text><text x="750" y="532" class="h">Resume the same handoff</text><text x="750" y="562" class="b">Provider unavailable • target mismatch</text><text x="750" y="588" class="b">validation or readback mismatch</text>
+    <rect x="70" y="455" width="550" height="150" rx="22" fill="#1F2937" stroke="#64748B" stroke-width="2"/><text x="100" y="496" class="k">DURABLE RECEIPTS</text><text x="100" y="532" class="h">Evidence • sources • fingerprint • native payload</text><text x="100" y="562" class="b">Validation • authorization • provider action • readback</text><text x="100" y="588" class="b">External artifact contains no private local receipt paths</text>
+  </g>
+  <path d="M1470 330 V445" class="a"/>
+  <path d="M1180 530 H1090" class="d"/>
+  <path d="M900 455 V380 H990 V350" class="d"/>
+  <path d="M1180 580 H630" class="d"/>
+  <text x="80" y="730" class="s">Success = validated draft, or provider ID + rendered readback + matching receipt. A create/update response alone is not completion.</text>
+</svg>

@@ -1,10 +1,19 @@
 # Merge, Deployment, and Cleanup
 
+## Flow
+
+![Auto-Dev Development Delivery stages](../../../00-programs/auto_dev/assets/development-delivery-stages.svg)
+
 ## What this does
 
 Observes the authoritative merge, updates the tracker, watches configured
 deployment and post-deploy signals, then compacts durable evidence and removes
 ephemeral work without losing resumability.
+
+## Manual run
+
+Use `/auto-dev-closeout`, then record verified work with
+`agentic-os develop stage <state.json> --stage closeout ...`.
 
 ## Inputs
 

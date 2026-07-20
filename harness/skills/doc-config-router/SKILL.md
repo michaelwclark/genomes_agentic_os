@@ -41,3 +41,11 @@ agentic-os doc-config plan --root <root> --request "<request>" [--domain <domain
 - Do not create a child `FEATURES` bucket inside a spec page by default; `Specs` is the namespace.
 - Do not disable filesystem authority unless an explicit local config says another system owns the source of truth.
 - Do not store secrets, raw tokens, or private connector payloads in doc config or routing artifacts.
+
+## Boundary with Create Artifacts
+
+Doc Config owns destination, workspace, parent, create-versus-update intent,
+and information architecture. It returns that decision as target evidence.
+`$auto-dev-create-artifacts` owns provider/type content, validation, approval,
+apply handoff, and readback. Do not invent artifact prose in the router or let
+an artifact contract invent a destination.

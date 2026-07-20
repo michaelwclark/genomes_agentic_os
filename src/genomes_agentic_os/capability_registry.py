@@ -54,10 +54,46 @@ CAPABILITY_COLLECTIONS = {
 def command_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "auto-dev-detective",
+            "command": "/auto-dev-detective",
+            "description": "Investigate bugs, QA failures, logs, alerts, incidents, and RCA questions with deployed-version gates, polymorphic evidence sources, pause/resume, and receipts.",
+            "source": "harness/commands/auto-dev-detective.md",
+        },
+        {
             "id": "auto-dev-create-artifacts",
             "command": "/auto-dev-create-artifacts",
             "description": "Create provider-native SDLC artifacts through root/domain/project Markdown contracts, validation, governed apply, and readback.",
             "source": "harness/commands/auto-dev-create-artifacts.md",
+        },
+        {
+            "id": "auto-dev-readiness",
+            "command": "/auto-dev-readiness",
+            "description": "Resolve tracker, repository/base, policy, worktree, and plan before implementation.",
+            "source": "harness/commands/auto-dev-readiness.md",
+        },
+        {
+            "id": "auto-dev-implementation",
+            "command": "/auto-dev-implementation",
+            "description": "Implement a planned task under effective standards and receipt local validation.",
+            "source": "harness/commands/auto-dev-implementation.md",
+        },
+        {
+            "id": "auto-dev-review-repair",
+            "command": "/auto-dev-review-repair",
+            "description": "Run review, governed PR creation, quiet CI/review repair, and merge-readiness validation.",
+            "source": "harness/commands/auto-dev-review-repair.md",
+        },
+        {
+            "id": "auto-dev-release-propagation",
+            "command": "/auto-dev-release-propagation",
+            "description": "Resolve and execute policy-backed release, hotfix, backport, or forward-port branch families.",
+            "source": "harness/commands/auto-dev-release-propagation.md",
+        },
+        {
+            "id": "auto-dev-closeout",
+            "command": "/auto-dev-closeout",
+            "description": "Merge with approval, validate deployment, reconcile providers, clean up, and prove delivery complete.",
+            "source": "harness/commands/auto-dev-closeout.md",
         },
         {
             "id": "project-domain-investigate",
@@ -763,7 +799,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev",
             "name": "Auto Dev",
-            "description": "Run a Jira or Linear tracker item through project-aware SDLC orchestration, state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge or merge-blocked closeout.",
+            "description": "Route programming work through the canonical polymorphic investigation, artifact, delivery, review, release, deployment, and closeout family.",
             "source": "harness/skills/auto-dev/SKILL.md",
         },
         {
@@ -771,6 +807,42 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Auto-Dev Create Artifacts",
             "description": "Resolve polymorphic provider/type contracts and render, validate, apply, and read back excellent Jira, Linear, Notion, Confluence, GitHub, Slack, or filesystem artifacts.",
             "source": "harness/skills/auto-dev-create-artifacts/SKILL.md",
+        },
+        {
+            "id": "auto-dev-detective",
+            "name": "Auto-Dev Detective",
+            "description": "Investigate reported bugs, failed QA, logs, alerts, incidents, and suspected causes against the exact deployed version with governed source evidence and resumable receipts.",
+            "source": "harness/skills/auto-dev-detective/SKILL.md",
+        },
+        {
+            "id": "auto-dev-readiness",
+            "name": "Auto-Dev Readiness",
+            "description": "Prepare tracker truth, repository/base, policy, worktree, and implementation plan.",
+            "source": "harness/skills/auto-dev-readiness/SKILL.md",
+        },
+        {
+            "id": "auto-dev-implementation",
+            "name": "Auto-Dev Implementation",
+            "description": "Implement and locally validate a planned task under effective engineering policy.",
+            "source": "harness/skills/auto-dev-implementation/SKILL.md",
+        },
+        {
+            "id": "auto-dev-review-repair",
+            "name": "Auto-Dev Review and Repair",
+            "description": "Review, create the governed PR, repair checks/findings, and prove merge readiness.",
+            "source": "harness/skills/auto-dev-review-repair/SKILL.md",
+        },
+        {
+            "id": "auto-dev-release-propagation",
+            "name": "Auto-Dev Release Propagation",
+            "description": "Operate configured release and hotfix branch families with exact receipts.",
+            "source": "harness/skills/auto-dev-release-propagation/SKILL.md",
+        },
+        {
+            "id": "auto-dev-closeout",
+            "name": "Auto-Dev Closeout",
+            "description": "Merge, validate deployment, reconcile provider state, clean up, and close delivery.",
+            "source": "harness/skills/auto-dev-closeout/SKILL.md",
         },
         {
             "id": "develop",
@@ -975,6 +1047,12 @@ def rule_entries() -> list[dict[str, str]]:
             "name": "Agentic OS Convention Authoring",
             "description": "Feature, workflow, automation, command, and skill authors follow the compact convention policy.",
             "source": "harness/rules/os-authoring-rules.md",
+        },
+        {
+            "id": "auto-dev-artifact-producers",
+            "name": "Auto-Dev Artifact Producers",
+            "description": "All nested and standalone human-facing outputs resolve shared artifact contracts, validate, apply with approval, and read back.",
+            "source": "harness/rules/auto-dev-artifact-producers.md",
         },
     ]
 

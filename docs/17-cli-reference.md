@@ -116,19 +116,35 @@ adapter behavior, and compatibility commands.
 | --- | --- |
 | `artifacts` | Resolve, render, validate, and govern polymorphic SDLC artifacts. |
 | `artifacts resolve` | Compose root/domain/project/invocation provider/type contracts; `--explain` includes provenance and blocked safety overrides. |
-| `artifacts render` | Produce a local provider-native `rendered-artifact/v1` envelope and render receipt. |
-| `artifacts validate` | Check required sections and external-output safety; write a validation receipt. |
-| `artifacts apply` | Atomically apply filesystem output or create an explicit external-provider handoff; requires `--execute`. |
-| `artifacts record-readback` | Close an external handoff with verified provider identity and content hash. |
+| `artifacts render` | Produce a local `rendered-artifact/v1` envelope, provider-adapter payload, evidence contract, semantic-validation contract, and render receipt. Jira payloads are ADF; other providers use normalized adapter inputs. |
+| `artifacts validate` | Enforce required sections, verified evidence receipts, semantic assertions, and external-output safety; write a validation receipt. |
+| `artifacts apply` | Atomically apply filesystem output or create an explicit external-provider handoff; external providers require matching `artifact-approval/v1` and `artifact-target-verification/v1` receipts plus `--execute`. |
+| `artifacts record-readback` | Close an external handoff from an `artifact-provider-readback/v1` receipt containing normalized live content; the engine verifies target identity, required fields, and content hash. |
 | `artifacts doctor` | Validate contract frontmatter, fallback coverage, and representative resolutions. |
+
+### Auto-Dev Detective — `cli/detective.py`
+
+| Command | What it does |
+| --- | --- |
+| `detective resolve` | Compose and explain the root/domain/project/invocation evidence plan. |
+| `detective start` | Create one idempotent request, policy, source-manifest, version-gate, event, and state packet. |
+| `detective status` | Read compact state, deployed version, source coverage, evidence count, and receipts. |
+| `detective record-version` | Pin the environment's exact version/ref/commit authority before code analysis. |
+| `detective record-evidence` | Append one bounded source receipt with facts, limitations, authority, and freshness. |
+| `detective source-status` | Explicitly disposition a declared source as unavailable, deferred, or not applicable; deferred sources still block conclusion. |
+| `detective pause` / `resume` | Suspend the same run for VPN/provider/environment availability and restore its prior state. |
+| `detective analyze` / `conclude` | Record competing hypotheses or write the evidence-backed final JSON/Markdown result. |
+| `detective render` | Render a concluded result through the common provider/type artifact contracts. |
+| `detective doctor` | Validate every installed investigation policy pack and representative trigger/output route. |
 
 ### Development Delivery — `cli/develop.py`
 
 | Command | What it does |
 | --- | --- |
-| `develop start` | Plan or create a 1-N development portfolio with one active work item and isolated worktree per ticket. |
+| `develop start` | Plan or create a 1-N development portfolio with one active work item and isolated worktree per ticket; multi-repository projects require `--repository <id>`. |
 | `develop status` | Read portfolio and task state receipts. |
-| `develop transition` | Advance one legal receipt-backed task state. |
+| `develop transition` | Compatibility command that fails closed; direct string-receipt transitions are disabled. Use `develop stage`. |
+| `develop stage` | Preflight all typed `development-stage-evidence/v1` receipts for one named workflow stage, then apply its legal state transitions atomically. |
 | `develop fail` | Classify a failure and retry or block according to policy. |
 | `develop recover` | Resume a recorded recoverable failure. |
 | `develop heartbeat` | Renew a non-terminal task lease. |

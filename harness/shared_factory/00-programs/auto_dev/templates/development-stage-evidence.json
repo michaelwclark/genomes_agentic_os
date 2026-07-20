@@ -1,0 +1,12 @@
+{
+  "schema": "development-stage-evidence/v1",
+  "state": "planned",
+  "status": "verified",
+  "summary": "Implementation plan is evidence-backed and ready.",
+  "evidence": {
+    "tracker_ref": "TRACKER-123",
+    "policy_fingerprint": "replace-with-effective-policy-fingerprint",
+    "plan_ref": "safe-relative-or-provider-reference"
+  },
+  "verified_at": "2026-07-19T12:00:00Z"
+}

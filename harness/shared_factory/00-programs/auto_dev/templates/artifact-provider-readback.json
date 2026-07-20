@@ -1,0 +1,17 @@
+{
+  "schema": "artifact-provider-readback/v1",
+  "status": "verified",
+  "provider": "jira",
+  "target": "project:EXAMPLE",
+  "external_id": "EXAMPLE-123",
+  "external_url": "https://provider.example/item/EXAMPLE-123",
+  "verified_at": "2026-07-19T12:00:00Z",
+  "observed": {
+    "issue_type": "Bug",
+    "project": "EXAMPLE"
+  },
+  "content": {
+    "title": "Use the exact normalized live adapter payload here",
+    "description": {}
+  }
+}

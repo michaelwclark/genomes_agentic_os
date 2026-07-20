@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator
 
 from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.artifact_contracts import artifact_contract_doctor
+from genomes_agentic_os.investigation_contracts import investigation_contract_doctor
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.config_ops import LAYER_POLICIES, PROFILE_MANAGED_MARKER, sidecar_path
 from genomes_agentic_os.routing import context_from_here
@@ -79,6 +80,7 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "TOOLS.md",
         "domains",
         "harness",
+        "lib",
     }
 
     for domain in ("personal", "work"):
@@ -111,6 +113,10 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
 
     assert (shared_factory(root) / "domain.yml").is_file()
     assert (shared_factory(root) / "00-control-plane" / "state-index.md").is_file()
+    auto_dev_alias = shared_factory(root) / "00-programs" / "auto_dev"
+    assert auto_dev_alias.is_symlink()
+    assert auto_dev_alias.resolve() == (root / "lib/programs/root/auto-dev").resolve()
+    assert (auto_dev_alias / "object.yml").is_file()
     assert not (root / "shared_factory").exists()
 
     assert (harness(root) / "ROUTER.md").is_file()
@@ -443,11 +449,34 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
     assert main(["init", "--target", str(root)]) == 0
 
     assert (root / "harness/artifact-config/any/any.md").is_file()
+    assert (root / "harness/investigation-config/sources/deployed-version.md").is_file()
     assert (shared_factory(root) / "00-programs/auto_dev/program.md").is_file()
     assert (harness(root) / "skills/auto-dev-create-artifacts/SKILL.md").is_file()
+    expected_skill_ids = {
+        "auto-dev",
+        "auto-dev-create-artifacts",
+        "auto-dev-detective",
+        "auto-dev-readiness",
+        "auto-dev-implementation",
+        "auto-dev-review-repair",
+        "auto-dev-release-propagation",
+        "auto-dev-closeout",
+    }
+    for skill_id in expected_skill_ids:
+        assert (root / "lib/skills/root" / skill_id / "object.yml").is_file()
+    library_registry = json.loads((root / "lib/registry/objects.json").read_text(encoding="utf-8"))
+    object_ids = {item["object_id"] for item in library_registry["objects"]}
+    assert {f"skill:root:{skill_id}" for skill_id in expected_skill_ids} <= object_ids
+    program = next(
+        item for item in library_registry["objects"] if item["object_id"] == "program:root:auto-dev"
+    )
+    assert set(program["dependencies"]) <= object_ids
     doctor = artifact_contract_doctor(root)
     assert doctor["ok"] is True
     assert doctor["counts"]["files"] >= 25
+    detective_doctor = investigation_contract_doctor(root)
+    assert detective_doctor["ok"] is True
+    assert detective_doctor["counts"]["files"] >= 20
     assert not validate_root(root).errors
 
 
@@ -1011,6 +1040,7 @@ def test_update_apply_migrates_legacy_root_layout_to_harness(tmp_path: Path, cap
         "TOOLS.md",
         "domains",
         "harness",
+        "lib",
     }
     assert (harness(root) / "AGENTS.md").is_file()
     assert (harness(root) / "PROFILE.md").is_file()
@@ -1112,7 +1142,10 @@ def test_backup_policy_excludes_projects_keys_and_secrets(tmp_path: Path) -> Non
     includes = policy["backup_policy"]["include"]
     excludes = policy["backup_policy"]["exclude"]
     assert "harness/bin/" in includes
+    assert "lib/" in includes
+    assert "harness/artifact-config/" in includes
     assert "harness/commands/" in includes
+    assert "harness/investigation-config/" in includes
     assert "harness/rules/" in includes
     assert "harness/skills/" in includes
     # AC: backup excludes private keys, env files, secrets, raw customer data, and projects/ by default.

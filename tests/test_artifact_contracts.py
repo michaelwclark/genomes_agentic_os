@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -22,6 +21,21 @@ from genomes_agentic_os.cli import main
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
+NOW = "2026-07-19T12:00:00Z"
+
+
+def _artifact_evidence(value: dict) -> dict:
+    return {
+        **value,
+        "evidence_receipts": {
+            "source identity": {
+                "status": "verified",
+                "value": "TEST-1",
+                "evidence_ref": "test-fixture",
+                "captured_at": NOW,
+            }
+        },
+    }
 
 
 def _contract(path: Path, *, provider: str, artifact_type: str, extra: dict | None = None, body: str = "") -> None:
@@ -105,6 +119,35 @@ def test_fallback_precedence_is_deterministic_and_safety_is_monotonic(tmp_path: 
     assert sum(item["code"] == "blocked_safety_override" for item in first["diagnostics"]) == 2
 
 
+def test_provider_type_accepts_ordered_one_to_many_markdown_addenda(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _contract(
+        root / "harness/artifact-config/jira/story/10-product-outcome.md",
+        provider="jira",
+        artifact_type="story",
+        extra={"required_sections": ["User Outcome"]},
+        body="# Outcome module",
+    )
+    _contract(
+        root / "harness/artifact-config/jira/story/20-qa-scenarios.md",
+        provider="jira",
+        artifact_type="story",
+        extra={"required_sections": ["Acceptance Criteria"], "validation": ["gherkin_is_testable"]},
+        body="# QA module",
+    )
+
+    resolution = resolve_artifact_contract(root, "jira", "story")
+
+    assert [item["source_ref"] for item in resolution["sources"]][-2:] == [
+        "harness/artifact-config/jira/story/10-product-outcome.md",
+        "harness/artifact-config/jira/story/20-qa-scenarios.md",
+    ]
+    assert resolution["effective"]["required_sections"] == ["User Outcome", "Acceptance Criteria"]
+    assert resolution["effective"]["validation"] == ["gherkin_is_testable"]
+    assert "Outcome module" in resolution["effective"]["guidance_markdown"]
+    assert "QA module" in resolution["effective"]["guidance_markdown"]
+
+
 def test_render_jira_native_and_validate_required_evidence(tmp_path: Path) -> None:
     root = _root(tmp_path)
     _contract(
@@ -130,7 +173,7 @@ def test_render_jira_native_and_validate_required_evidence(tmp_path: Path) -> No
     evidence = root / "evidence.yml"
     evidence.write_text(
         yaml.safe_dump(
-            {
+            _artifact_evidence({
                 "title": "Borrower cannot submit",
                 "summary": "Submission fails after document upload.",
                 "observed_behavior": "The API returns 500.",
@@ -139,7 +182,7 @@ def test_render_jira_native_and_validate_required_evidence(tmp_path: Path) -> No
                 "impact": "Eligible borrowers cannot continue.",
                 "acceptance_criteria": ["Submission returns success", "Existing validation remains active"],
                 "facts": ["Failure reproduced in preprod"],
-            },
+            }),
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -153,7 +196,10 @@ def test_render_jira_native_and_validate_required_evidence(tmp_path: Path) -> No
     validation = validate_rendered_artifact(artifact)
     assert validation["valid"] is True
 
-    evidence.write_text("title: Missing evidence\nobserved_behavior: broken\n", encoding="utf-8")
+    evidence.write_text(
+        yaml.safe_dump(_artifact_evidence({"title": "Missing evidence", "observed_behavior": "broken"})),
+        encoding="utf-8",
+    )
     incomplete = render_artifact(root, "jira", "bug", evidence)
     artifact.write_text(json.dumps(incomplete), encoding="utf-8")
     invalid = validate_rendered_artifact(artifact)
@@ -165,7 +211,14 @@ def test_external_safety_blocks_paths_private_links_and_secrets(tmp_path: Path) 
     root = _root(tmp_path)
     evidence = root / "evidence.yml"
     evidence.write_text(
-        "title: Unsafe\nsummary: See /Users/genome/private and https://app.notion.com/private with token=abcdefghijklmnopqrstuvwxyz\n",
+        yaml.safe_dump(
+            _artifact_evidence(
+                {
+                    "title": "Unsafe",
+                    "summary": "See /Users/genome/private and https://app.notion.com/private with token=abcdefghijklmnopqrstuvwxyz",
+                }
+            )
+        ),
         encoding="utf-8",
     )
     rendered = render_artifact(root, "slack", "status", evidence)
@@ -180,10 +233,135 @@ def test_external_safety_blocks_paths_private_links_and_secrets(tmp_path: Path) 
     }
 
 
+def test_evidence_semantic_governance_and_live_readback_fail_closed(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _contract(
+        root / "harness/artifact-config/linear/issue.md",
+        provider="linear",
+        artifact_type="issue",
+        extra={
+            "validation": ["acceptance criteria are testable"],
+            "readback": ["team", "issue_type"],
+        },
+    )
+    evidence = root / "evidence.yml"
+    evidence.write_text(
+        yaml.safe_dump(
+            {
+                "title": "Governed issue",
+                "summary": "A bounded, safe issue.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact = root / "rendered.json"
+    rendered = render_artifact(root, "linear", "issue", evidence)
+    artifact.write_text(json.dumps(rendered), encoding="utf-8")
+    findings = {item["code"] for item in validate_rendered_artifact(artifact)["findings"]}
+    assert findings == {"missing_required_evidence", "missing_validation_assertion"}
+
+    evidence.write_text(
+        yaml.safe_dump(
+            {
+                **_artifact_evidence(
+                    {
+                        "title": "Governed issue",
+                        "summary": "A bounded, safe issue.",
+                    }
+                ),
+                "validation_assertions": {
+                    "acceptance criteria are testable": {
+                        "status": "passed",
+                        "evidence_ref": "review:acceptance",
+                        "checked_at": NOW,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    rendered = render_artifact(root, "linear", "issue", evidence)
+    artifact.write_text(json.dumps(rendered), encoding="utf-8")
+    assert validate_rendered_artifact(artifact)["valid"] is True
+
+    with pytest.raises(ArtifactContractError, match="approval receipt"):
+        prepare_artifact_apply(
+            root,
+            artifact,
+            target="team:ENG",
+            execute=True,
+            receipt_path=root / "runs/apply.json",
+        )
+
+    approval = root / "runs/approval.json"
+    target_receipt = root / "runs/target.json"
+    approval.parent.mkdir(parents=True, exist_ok=True)
+    approval.write_text(
+        json.dumps(
+            {
+                "schema": "artifact-approval/v1",
+                "status": "approved",
+                "provider": "linear",
+                "artifact_type": "issue",
+                "contract_fingerprint": rendered["contract_fingerprint"],
+                "target": "team:ENG",
+                "approved_by": "test-user",
+                "approved_at": NOW,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_receipt.write_text(
+        json.dumps(
+            {
+                "schema": "artifact-target-verification/v1",
+                "status": "verified",
+                "provider": "linear",
+                "target": "team:ENG",
+                "resolver": "test-adapter",
+                "verified_at": NOW,
+                "evidence_ref": "linear-team-readback",
+            }
+        ),
+        encoding="utf-8",
+    )
+    apply_receipt = root / "runs/linear-apply.json"
+    prepare_artifact_apply(
+        root,
+        artifact,
+        target="team:ENG",
+        execute=True,
+        receipt_path=apply_receipt,
+        approval_receipt=approval,
+        target_receipt=target_receipt,
+    )
+    bad_readback = root / "runs/bad-readback.json"
+    bad_readback.write_text(
+        json.dumps(
+            {
+                "schema": "artifact-provider-readback/v1",
+                "status": "verified",
+                "provider": "linear",
+                "target": "team:ENG",
+                "external_id": "ENG-1",
+                "verified_at": NOW,
+                "observed": {"team": "ENG", "issue_type": "Issue"},
+                "content": {"title": "Provider silently changed content"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ArtifactContractError, match="does not match"):
+        record_artifact_readback(root, apply_receipt, readback_receipt=bad_readback)
+
+
 def test_filesystem_apply_and_external_provider_handoff_are_receipted(tmp_path: Path) -> None:
     root = _root(tmp_path)
     evidence = root / "evidence.yml"
-    evidence.write_text("title: Local summary\nsummary: A safe outcome.\n", encoding="utf-8")
+    evidence.write_text(
+        yaml.safe_dump(_artifact_evidence({"title": "Local summary", "summary": "A safe outcome."})),
+        encoding="utf-8",
+    )
     rendered = render_artifact(root, "filesystem", "status", evidence)
     artifact = root / "rendered.json"
     artifact.write_text(json.dumps(rendered), encoding="utf-8")
@@ -196,20 +374,69 @@ def test_filesystem_apply_and_external_provider_handoff_are_receipted(tmp_path: 
 
     rendered = render_artifact(root, "linear", "status", evidence)
     artifact.write_text(json.dumps(rendered), encoding="utf-8")
+    approval_path = root / "runs/approval.json"
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    approval_path.write_text(
+        json.dumps(
+            {
+                "schema": "artifact-approval/v1",
+                "status": "approved",
+                "provider": "linear",
+                "artifact_type": "status",
+                "contract_fingerprint": rendered["contract_fingerprint"],
+                "target": "team:ENG",
+                "approved_by": "test-user",
+                "approved_at": NOW,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_path = root / "runs/target.json"
+    target_path.write_text(
+        json.dumps(
+            {
+                "schema": "artifact-target-verification/v1",
+                "status": "verified",
+                "provider": "linear",
+                "target": "team:ENG",
+                "resolver": "test-fixture",
+                "verified_at": NOW,
+                "evidence_ref": "linear-team-readback",
+            }
+        ),
+        encoding="utf-8",
+    )
     handoff = prepare_artifact_apply(
         root,
         artifact,
         target="team:ENG",
         execute=True,
         receipt_path=root / "runs/linear-apply.json",
+        approval_receipt=approval_path,
+        target_receipt=target_path,
     )
     assert handoff["status"] == "awaiting_provider_adapter"
+    readback_path = root / "runs/readback.json"
+    readback_path.write_text(
+        json.dumps(
+            {
+                "schema": "artifact-provider-readback/v1",
+                "status": "verified",
+                "provider": "linear",
+                "target": "team:ENG",
+                "external_id": "ENG-123",
+                "external_url": "https://linear.app/example/issue/ENG-123",
+                "verified_at": NOW,
+                "observed": {},
+                "content": rendered["provider_payload"],
+            }
+        ),
+        encoding="utf-8",
+    )
     closed = record_artifact_readback(
         root,
         root / "runs/linear-apply.json",
-        external_id="ENG-123",
-        external_url="https://linear.app/example/issue/ENG-123",
-        readback_sha256=hashlib.sha256(b"readback").hexdigest(),
+        readback_receipt=readback_path,
     )
     assert closed["status"] == "completed"
     assert closed["readback"]["external_id"] == "ENG-123"
@@ -221,6 +448,8 @@ def test_filesystem_apply_and_external_provider_handoff_are_receipted(tmp_path: 
             target="team:ENG",
             execute=True,
             receipt_path=tmp_path / "outside.json",
+            approval_receipt=approval_path,
+            target_receipt=target_path,
         )
 
 

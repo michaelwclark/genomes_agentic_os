@@ -15,3 +15,8 @@ Use when creating or completing a workflow folder.
 ## Completion Standard
 
 A fresh agent should be able to run the workflow without relying on chat history.
+
+Notion, Confluence, Jira/Linear, or other durable workflow documentation must
+use `$auto-dev-create-artifacts` with type `workflow-documentation` (or the
+specific provider artifact type). Workflow Builder owns behavior and contracts,
+not provider formatting or readback.

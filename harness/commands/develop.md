@@ -6,6 +6,13 @@ Canonical entry point for one or many Agentic OS programming tasks.
 # Plan only (default)
 agentic-os develop start <domain> <project> <ticket> [<ticket> ...]
 
+# Multi-repository project (repository.catalog + selection_required)
+agentic-os develop start <domain> <project> <ticket> --repository <repository-id>
+
+# Ticket/release-derived base and invocation policy addenda
+agentic-os develop start <domain> <project> <ticket> \
+  --base-branch <branch> --policy-overlay dev_standards=<file.md>
+
 # Provision portfolio, one active work item, and one isolated worktree per task
 agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 
@@ -15,7 +22,9 @@ agentic-os develop status <run-dir>
 
 Project behavior comes from `config/development.yml`, the canonical code
 settings file for projects in every domain. Repository, base branch, worktree
-directory, branch template, and date-prefix inheritance are configured there. The program contract and
+directory, branch template, and date-prefix inheritance are configured there.
+Multi-repository projects declare a catalog and require explicit `--repository`;
+the engine never guesses from the ticket. The program contract and
 five complete workflow specifications live in
 `harness/shared_factory/00-programs/development_delivery/` and
 `harness/shared_factory/04-workflows/development_delivery/`.
@@ -32,11 +41,29 @@ The conventional folder order is root → domain → project. Projects may provi
 an ordered 1-N path list in `config/development.yml`; adding a Markdown file is
 picked up automatically on the next run.
 
-Transitions, failures, and recovery are receipt-backed:
+Direct state transitions fail closed. Named workflow stages are the only normal
+advancement route; failures, recovery, and leases remain receipt-backed:
 
 ```bash
-agentic-os develop transition <state.json> --to <state> --receipt <ref> --idempotency-key <key>
 agentic-os develop fail <state.json> --kind <classification> --detail <text> --receipt <ref> --idempotency-key <key>
 agentic-os develop recover <state.json> --receipt <ref> --idempotency-key <key>
 agentic-os develop heartbeat <state.json> --owner <worker> --idempotency-key <key>
 ```
+
+Each delivery workflow also has a manual chat skill and a stage recorder:
+
+```bash
+agentic-os develop stage <state.json> --stage <readiness|implementation|review|release_propagation|closeout> \
+  --receipt <state>=<development-stage-evidence.json> ... \
+  --idempotency-prefix <stable-key>
+```
+
+`stage` records work already performed by the named skill; it is not a provider
+executor. It preflights every receipt before mutation. Each JSON file must use
+`development-stage-evidence/v1`, match the target state, contain terminal
+status, summary, structured evidence, and `verified_at`; PR, merge, readiness,
+and completion states require their specific readback fields.
+
+Manual stage skills are `/auto-dev-readiness`, `/auto-dev-implementation`,
+`/auto-dev-review-repair`, `/auto-dev-release-propagation`, and
+`/auto-dev-closeout`. They also route implicitly from equivalent chat requests.

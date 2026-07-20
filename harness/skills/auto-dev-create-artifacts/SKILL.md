@@ -1,6 +1,6 @@
 ---
 name: auto-dev-create-artifacts
-description: Resolve root/domain/project Markdown contracts and create excellent Jira, Linear, Notion, Confluence, GitHub, Slack, or filesystem artifacts with provider-native rendering, safety validation, explicit apply, readback, and receipts. Use implicitly for any artifact-authoring request.
+description: Resolve root/domain/project Markdown contracts and create excellent Jira, Linear, Notion, Confluence, GitHub, Slack, or filesystem artifacts with provider-adapter rendering, evidence and semantic validation, explicit apply, readback, and receipts. Use implicitly for any artifact-authoring request.
 ---
 
 # Auto-Dev Create Artifacts
@@ -40,6 +40,10 @@ Include only applicable fields:
 - acceptance criteria, scope, non-goals, dependencies, risks;
 - facts, evidence, inference, recommendations, gaps, and confidence;
 - artifact-specific sections under `sections`.
+- `evidence_receipts`, keyed by every inherited evidence requirement, with
+  verified status, safe evidence reference, and capture time;
+- `validation_assertions`, keyed by semantic rule, with passed status,
+  evidence reference, and check time when the engine cannot validate it.
 
 Never promote an allegation or hypothesis into a fact. Keep private/raw evidence
 in local receipts and give external readers only audience-safe references.
@@ -52,14 +56,17 @@ agentic-os artifacts render --provider <provider> --type <artifact-type> \
 agentic-os artifacts validate --artifact <draft.json>
 ```
 
-Inspect `body_markdown` and provider-native `native` content. Repair every
-missing-section or scrub finding. A draft is local and non-mutating.
+Inspect `body_markdown` and `provider_payload` (`native` is a compatibility
+alias). Jira payloads are native ADF; other providers receive normalized
+adapter inputs. Repair every evidence, semantic, missing-section, or scrub
+finding. A draft is local and non-mutating.
 
 For an approved write:
 
 ```bash
 agentic-os artifacts apply --artifact <draft.json> --target <verified-target> \
-  --receipt <run>/apply.json --execute
+  --receipt <run>/apply.json --approval-receipt <run>/approval.json \
+  --target-receipt <run>/target-verification.json --execute
 ```
 
 - `filesystem` applies atomically and verifies content by readback.
@@ -68,7 +75,16 @@ agentic-os artifacts apply --artifact <draft.json> --target <verified-target> \
   project/team/space/repository, parent, issue/page type, and audience before
   invoking it.
 - Fetch the created/updated artifact. Hash the rendered readback and close the
-  handoff with `agentic-os artifacts record-readback`.
+  handoff from a typed provider receipt:
+
+```bash
+agentic-os artifacts record-readback --apply-receipt <run>/apply.json \
+  --readback-receipt <run>/provider-readback.json
+```
+
+The readback receipt uses `artifact-provider-readback/v1` and includes provider,
+target, external ID/URL, required observed fields, verification time, and the
+normalized live `content`. The engine computes and checks its hash.
 
 Do not claim completion from a provider create/update response alone.
 

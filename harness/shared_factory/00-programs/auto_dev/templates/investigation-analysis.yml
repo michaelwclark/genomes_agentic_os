@@ -1,0 +1,22 @@
+facts:
+  - claim: A directly supported observation
+    evidence_ids: [replace-with-evidence-id]
+hypotheses:
+  - claim: The most likely causal explanation
+    support_evidence_ids: [replace-with-evidence-id]
+    falsifier: The exact observation that would disprove it
+contradictions: []
+disconfirming_evidence:
+  - claim: Evidence checked against the leading hypothesis
+    evidence_ids: [replace-with-evidence-id]
+unknowns:
+  - A material fact not yet available
+causes:
+  - Bounded probable or confirmed cause
+conclusion: Evidence-calibrated conclusion
+conclusion_evidence_ids: [replace-with-evidence-id]
+confidence: medium
+scope: Exact tenants, environments, versions, and time window covered
+recommendations:
+  - Next evidence-backed action
+next_owner: Named owner or team

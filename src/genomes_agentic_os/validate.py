@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from .artifact_contracts import artifact_contract_doctor
+from .investigation_contracts import investigation_contract_doctor
 from .runtime_backend import runtime_queue_items
 from .artifact_naming import CONFIG_RELATIVE_PATH, load_artifact_naming_policy
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
@@ -80,6 +81,7 @@ LEGACY_ROOT_FOLDERS = (
     "templates",
     "lenders",
     "shared_factory",
+    "artifact-config",
     "bin",
     "commands",
     "skills",
@@ -87,6 +89,7 @@ LEGACY_ROOT_FOLDERS = (
     "plugins",
     "libraries",
     "hooks",
+    "investigation-config",
     "reports",
     "rules",
     "registries",
@@ -1655,6 +1658,22 @@ def validate_root(root: str | Path) -> ValidationResult:
     else:
         result.warnings.append(
             "artifact contract library is not installed; run `agentic-os update apply` or install current docs/assets"
+        )
+    investigation_config = os_root / "harness" / "investigation-config"
+    if investigation_config.is_dir():
+        investigation_health = investigation_contract_doctor(os_root)
+        for finding in investigation_health["findings"]:
+            message = (
+                f"investigation contract {finding.get('code')}: "
+                f"{finding.get('source_ref') or 'unknown'}: {finding.get('message')}"
+            )
+            if finding.get("severity") == "error":
+                result.errors.append(message)
+            elif finding.get("severity") == "warning":
+                result.warnings.append(message)
+    else:
+        result.warnings.append(
+            "investigation contract library is not installed; run `agentic-os update apply` or install current docs/assets"
         )
     context_check = check_context_contracts(os_root)
     result.errors.extend(context_check.errors)

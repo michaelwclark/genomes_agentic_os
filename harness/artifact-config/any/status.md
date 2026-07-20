@@ -3,7 +3,13 @@ schema_version: 1
 provider: any
 artifact_type: status
 mode: compose
-required_sections: []
+required_sections:
+  - Outcome
+  - State
+  - Evidence
+  - Changes
+  - Risks and Blockers
+  - Next Actions
 format:
   renderer: markdown
 approval:

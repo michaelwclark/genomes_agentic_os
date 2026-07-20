@@ -197,9 +197,8 @@ skills:
   source: harness/skills/aos-product-orchestrator/SKILL.md
 - id: auto-dev
   name: Auto Dev
-  description: Run a Jira or Linear tracker item through project-aware SDLC orchestration,
-    state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge
-    or merge-blocked closeout.
+  description: Route programming work through the canonical polymorphic investigation,
+    artifact, delivery, review, release, deployment, and closeout family.
   source: harness/skills/auto-dev/SKILL.md
 - id: auto-dev-create-artifacts
   name: Auto-Dev Create Artifacts
@@ -207,6 +206,32 @@ skills:
     render provider-native Jira, Linear, Notion, Confluence, GitHub, Slack, or
     filesystem drafts; validate safety; and complete explicit apply with readback receipts.
   source: harness/skills/auto-dev-create-artifacts/SKILL.md
+- id: auto-dev-detective
+  name: Auto-Dev Detective
+  description: Investigate bugs, failed QA, ticket comments, logs, alerts, incidents,
+    and RCA questions with deployed-version awareness, polymorphic evidence sources,
+    pause/resume, and durable receipts.
+  source: harness/skills/auto-dev-detective/SKILL.md
+- id: auto-dev-readiness
+  name: Auto-Dev Readiness
+  description: Prepare tracker truth, repository/base, policy, worktree, and plan.
+  source: harness/skills/auto-dev-readiness/SKILL.md
+- id: auto-dev-implementation
+  name: Auto-Dev Implementation
+  description: Implement and locally validate a planned task under effective policy.
+  source: harness/skills/auto-dev-implementation/SKILL.md
+- id: auto-dev-review-repair
+  name: Auto-Dev Review and Repair
+  description: Review, create the governed PR, repair checks/findings, and prove readiness.
+  source: harness/skills/auto-dev-review-repair/SKILL.md
+- id: auto-dev-release-propagation
+  name: Auto-Dev Release Propagation
+  description: Operate configured release and hotfix branch families with exact receipts.
+  source: harness/skills/auto-dev-release-propagation/SKILL.md
+- id: auto-dev-closeout
+  name: Auto-Dev Closeout
+  description: Merge, validate deployment, reconcile providers, clean up, and close delivery.
+  source: harness/skills/auto-dev-closeout/SKILL.md
 - id: develop
   name: Develop
   description: Canonical 1-N programming delivery with project profiles, isolated

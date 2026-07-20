@@ -1,10 +1,13 @@
 # Program: Auto-Dev
 
-![Auto-Dev program flow](../../../../docs/architecture/diagrams/auto-dev-program.svg)
+![Auto-Dev program flow](assets/auto-dev-program.svg)
 
 > **Outcome:** one polymorphic SDLC program—from signal or idea to verified
 > evidence, excellent artifacts, production-quality implementation, clean
 > review, release/deployment proof, and durable closeout.
+
+Operator documentation: [Auto-Dev — Canonical SDLC Program](https://www.notion.so/3a3683b48dab81b88875f5ec875dab3e)
+in Genome's Notion. Local definitions and typed receipts remain authoritative.
 
 ## How the pieces fit
 
@@ -20,11 +23,11 @@ specialize each workflow without forking shared code.
 | --- | --- | --- | --- | --- |
 | 0 | Detective | bug, QA/log/alert/ticket-comment analysis and RCA | `/auto-dev-detective` | evidence packet or investigation report |
 | 0 | Create Artifacts | Jira/Linear/Notion/Confluence/GitHub/Slack/filesystem output | `/auto-dev-create-artifacts` | validated draft or read-back artifact |
-| 1 | Readiness and Context | claim, grooming, evidence and plan | `/auto-dev` | `context_ready` |
-| 2 | Isolated Implementation | work item/worktree/code/local checks | `/auto-dev` | `local_validation` |
-| 3 | Testing, Review, and PR Repair | test triangle, opposing review, CI/review loops | `/auto-dev` | `ready_for_merge` |
-| 4 | Release Propagation | required target branches/release PRs | `/auto-dev` resume | `release_ready` or `not_required` |
-| 5 | Merge, Deployment, and Cleanup | merge/deploy/readback/retention | `/auto-dev` resume | `delivery_complete` |
+| 1 | Readiness and Context | claim, grooming, evidence and plan | `/auto-dev-readiness` | `planned` |
+| 2 | Isolated Implementation | work item/worktree/code/local checks | `/auto-dev-implementation` | `local_validation` |
+| 3 | Testing, Review, and PR Repair | test triangle, opposing review, CI/review loops | `/auto-dev-review-repair` | `ready_for_merge` |
+| 4 | Release Propagation | required target branches/release PRs | `/auto-dev-release-propagation` | propagation receipt |
+| 5 | Merge, Deployment, and Cleanup | merge/deploy/readback/retention | `/auto-dev-closeout` | `delivery_complete` |
 
 Detective and Create Artifacts may run independently, before ticket creation,
 or as sub-workflows. A full Auto-Dev run invokes them when evidence or external
@@ -47,7 +50,8 @@ run and is visible in the effective fingerprint receipt.
 ## Invocation model
 
 - **Implicit chat route:** intent phrases in `ROUTER.md` select the workflow.
-- **Manual:** every workflow exposes a command/skill and can be resumed by run id.
+- **Manual:** every workflow exposes a named command/skill and resumes the same
+  task state/run packet.
 - **Sub-workflow:** programs pass explicit evidence and receipt references.
 - **Trigger adapter:** schedules/queues may start a run but do not own its state.
 
@@ -57,6 +61,11 @@ Each run keeps an immutable request/snapshot, effective policy source list and
 fingerprint, state/event ledger, decisions, validation, provider actions,
 readback, final result, and unresolved gaps. Raw evidence follows routed
 retention; compact receipts survive closeout.
+
+Development stage skills perform provider, code, test, review, merge, and
+deployment work. `agentic-os develop stage` is deliberately only a recorder:
+it accepts a complete set of `development-stage-evidence/v1` receipts, validates
+them before the first transition, and never turns an assertion into an action.
 
 ## Failure model
 

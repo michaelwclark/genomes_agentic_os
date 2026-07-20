@@ -5,6 +5,10 @@ tracker:
 repository:
   root: /absolute/path/to/canonical/repository
   base_branch: main
+  # Multi-repository alternative: remove root/base_branch, set
+  # selection_required: true, and declare catalog rows with id/root/base_branch.
+  # Per-repository validation or release behavior may be supplied under a row's
+  # profile_overrides mapping. `develop start` then requires --repository <id>.
 worktrees:
   directory: worktrees
   branch_template: feature/{ticket}-{slug}

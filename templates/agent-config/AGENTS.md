@@ -31,7 +31,7 @@ Read `MEMORY.md` when present before writing durable memory.
 Route SDLC intent to the Auto-Dev family even when the user does not name it.
 Artifact-authoring requests use `auto-dev-create-artifacts`; implementation uses
 Auto-Dev over the Development Delivery engine; bug/RCA/QA/log investigation
-uses Auto-Dev Detective when installed. Before each workflow, load its ordered
+uses `auto-dev-detective`. Before each workflow, load its ordered
 root/domain/project Markdown policy sources and retain the effective fingerprint.
 
 ## Notification Contract

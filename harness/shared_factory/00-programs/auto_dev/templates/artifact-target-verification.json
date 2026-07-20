@@ -1,0 +1,9 @@
+{
+  "schema": "artifact-target-verification/v1",
+  "status": "verified",
+  "provider": "jira",
+  "target": "project:EXAMPLE",
+  "resolver": "registered-provider-adapter",
+  "verified_at": "2026-07-19T12:00:00Z",
+  "evidence_ref": "provider-target-readback"
+}

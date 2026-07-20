@@ -1,0 +1,14 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-release-propagation
+title: Auto-Dev Release Propagation
+description: Operate configured release and hotfix branch families with receipts.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, release, sdlc]
+dependencies: [skill:root:auto-dev-create-artifacts]
+aliases: [harness/skills/auto-dev-release-propagation/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-release-propagation}
+validation: {commands: []}

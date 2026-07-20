@@ -13,14 +13,15 @@ from ._shared import DEFAULT_ROOT, print_result
 
 def handle_init(args: argparse.Namespace) -> int:
     if args.profile:
+        result = install_profile_os(
+            args.target,
+            args.profile,
+            projects_source=args.projects_source,
+            include_legacy_agent=args.include_legacy_agent,
+        )
         print(
             format_profile_result(
-                install_profile_os(
-                    args.target,
-                    args.profile,
-                    projects_source=args.projects_source,
-                    include_legacy_agent=args.include_legacy_agent,
-                )
+                result
             )
         )
         return 0
@@ -30,14 +31,13 @@ def handle_init(args: argparse.Namespace) -> int:
         if not domains:
             print("--domains requires at least one domain slug", file=sys.stderr)
             return 2
-    print_result(
-        init_os(
-            args.target,
-            projects_source=args.projects_source,
-            include_legacy_agent=args.include_legacy_agent,
-            domains=domains,
-        )
+    result = init_os(
+        args.target,
+        projects_source=args.projects_source,
+        include_legacy_agent=args.include_legacy_agent,
+        domains=domains,
     )
+    print_result(result)
     return 0
 
 

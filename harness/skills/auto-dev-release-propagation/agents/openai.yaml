@@ -1,0 +1,6 @@
+interface:
+  display_name: "Auto-Dev Release Propagation"
+  short_description: "Propagate release and hotfix branch families"
+  default_prompt: "Use $auto-dev-release-propagation to resolve and receipt the required release branch family."
+policy:
+  allow_implicit_invocation: true

@@ -47,3 +47,7 @@ propagation.
 
 A fresh agent should be able to update the named program without chat history by
 loading the program folder and following `components.yml`.
+
+Notion or other human-facing program documentation must be rendered through
+`$auto-dev-create-artifacts` with type `program` or `control-plane`. This skill
+owns program structure; the artifact contract owns presentation and readback.

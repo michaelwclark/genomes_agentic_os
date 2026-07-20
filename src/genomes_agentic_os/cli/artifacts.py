@@ -94,6 +94,8 @@ def handle_apply(args: argparse.Namespace) -> int:
         target=args.target,
         execute=args.execute,
         receipt_path=args.receipt,
+        approval_receipt=args.approval_receipt,
+        target_receipt=args.target_receipt,
     )
     _print(result, json_output=args.json)
     return 0
@@ -103,9 +105,7 @@ def handle_readback(args: argparse.Namespace) -> int:
     result = record_artifact_readback(
         args.root,
         args.apply_receipt,
-        external_id=args.external_id,
-        external_url=args.external_url,
-        readback_sha256=args.readback_sha256,
+        readback_receipt=args.readback_receipt,
     )
     _print(result, json_output=args.json)
     return 0
@@ -168,6 +168,8 @@ def register(subparsers) -> None:
     apply.add_argument("--artifact", required=True)
     apply.add_argument("--target", help="Verified filesystem path or provider destination identifier.")
     apply.add_argument("--receipt", required=True, help="Durable local apply/handoff receipt under the OS root.")
+    apply.add_argument("--approval-receipt", help="artifact-approval/v1 JSON receipt; required for external providers.")
+    apply.add_argument("--target-receipt", help="artifact-target-verification/v1 JSON receipt; required for external providers.")
     apply.add_argument("--execute", action="store_true", help="Required explicit mutation/handoff approval gate.")
     apply.add_argument("--root", default=DEFAULT_ROOT)
     _output(apply)
@@ -175,9 +177,7 @@ def register(subparsers) -> None:
 
     readback = sub.add_parser("record-readback", help="Close a provider handoff after live target readback.")
     readback.add_argument("--apply-receipt", required=True)
-    readback.add_argument("--external-id", required=True)
-    readback.add_argument("--external-url")
-    readback.add_argument("--readback-sha256", required=True)
+    readback.add_argument("--readback-receipt", required=True, help="artifact-provider-readback/v1 receipt containing normalized live content.")
     readback.add_argument("--root", default=DEFAULT_ROOT)
     _output(readback)
     readback.set_defaults(handler=handle_readback)
