@@ -201,6 +201,12 @@ skills:
     state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge
     or merge-blocked closeout.
   source: harness/skills/auto-dev/SKILL.md
+- id: auto-dev-create-artifacts
+  name: Auto-Dev Create Artifacts
+  description: Resolve root, domain, project, and invocation artifact contracts;
+    render provider-native Jira, Linear, Notion, Confluence, GitHub, Slack, or
+    filesystem drafts; validate safety; and complete explicit apply with readback receipts.
+  source: harness/skills/auto-dev-create-artifacts/SKILL.md
 - id: develop
   name: Develop
   description: Canonical 1-N programming delivery with project profiles, isolated

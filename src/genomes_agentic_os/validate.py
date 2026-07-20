@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from .artifact_contracts import artifact_contract_doctor
 from .runtime_backend import runtime_queue_items
 from .artifact_naming import CONFIG_RELATIVE_PATH, load_artifact_naming_policy
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
@@ -1639,6 +1640,22 @@ def validate_root(root: str | Path) -> ValidationResult:
     validate_work_state(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)
+    artifact_config = os_root / "harness" / "artifact-config"
+    if artifact_config.is_dir():
+        artifact_health = artifact_contract_doctor(os_root)
+        for finding in artifact_health["diagnostics"]:
+            message = (
+                f"artifact contract {finding.get('code')}: "
+                f"{finding.get('source_ref') or finding.get('provider') or 'unknown'}: {finding.get('message')}"
+            )
+            if finding.get("severity") == "error":
+                result.errors.append(message)
+            elif finding.get("severity") == "warning":
+                result.warnings.append(message)
+    else:
+        result.warnings.append(
+            "artifact contract library is not installed; run `agentic-os update apply` or install current docs/assets"
+        )
     context_check = check_context_contracts(os_root)
     result.errors.extend(context_check.errors)
     if context_check.legacy_fallbacks or context_check.duplicate_groups:

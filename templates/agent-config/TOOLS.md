@@ -7,12 +7,17 @@ List the visible capabilities intended for this layer.
 | Skill | Use When | Source |
 | --- | --- | --- |
 | `notification-operator` | A bounded local macOS alert is warranted and the agent needs the right severity, dedupe key, or source-registration guidance. | `harness/skills/notification-operator/SKILL.md` |
+| `auto-dev` | A tracker-backed code change should run through the canonical SDLC family. | `harness/skills/auto-dev/SKILL.md` |
+| `auto-dev-create-artifacts` | Any Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, PR, report, or filesystem artifact must follow effective provider/type contracts. | `harness/skills/auto-dev-create-artifacts/SKILL.md` |
 
 ## Commands
 
 | Command | Use When | Notes |
 | --- | --- | --- |
 | `/notify` | A failed run, high-priority item, or other operator-actionable condition needs a governed local notification. | Uses `agentic-os-notify`; follow quiet hours, severity, source, dedupe, and anti-flood policy. |
+| `/auto-dev-create-artifacts` | Draft or write a configured artifact with native rendering and readback. | Resolve root/domain/project policy first; external apply is explicit. |
+| `agentic-os artifacts` | Inspect, render, validate, apply, read back, or doctor artifact contracts. | Local/dry-run until an explicit `apply --execute`; external providers use the registered tool handoff. |
+| `agentic-os develop policy` | Explain the 1-N development, QA, or gitflow Markdown bundle for a project. | Adding a Markdown file affects the next run without code changes. |
 
 ## MCP Servers
 
@@ -57,7 +62,11 @@ List the visible capabilities intended for this layer.
 
 ## When To Use What
 
--
+- Bug, QA/log/alert, suspected cause, or RCA: Auto-Dev Detective.
+- Artifact creation/update in any provider: Auto-Dev Create Artifacts.
+- Coding from tracker item through delivery: Auto-Dev / `agentic-os develop`.
+- Provider authentication and mutation: the routed provider tool, only after
+  the Auto-Dev workflow has resolved policy and verified the target.
 
 ## Missing Or Disabled
 

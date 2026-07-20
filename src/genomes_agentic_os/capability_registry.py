@@ -54,6 +54,12 @@ CAPABILITY_COLLECTIONS = {
 def command_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "auto-dev-create-artifacts",
+            "command": "/auto-dev-create-artifacts",
+            "description": "Create provider-native SDLC artifacts through root/domain/project Markdown contracts, validation, governed apply, and readback.",
+            "source": "harness/commands/auto-dev-create-artifacts.md",
+        },
+        {
             "id": "project-domain-investigate",
             "command": "/project-domain-investigate",
             "description": "Retrieve bounded project-domain context and emit the receipt consumed by development work.",
@@ -759,6 +765,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Auto Dev",
             "description": "Run a Jira or Linear tracker item through project-aware SDLC orchestration, state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge or merge-blocked closeout.",
             "source": "harness/skills/auto-dev/SKILL.md",
+        },
+        {
+            "id": "auto-dev-create-artifacts",
+            "name": "Auto-Dev Create Artifacts",
+            "description": "Resolve polymorphic provider/type contracts and render, validate, apply, and read back excellent Jira, Linear, Notion, Confluence, GitHub, Slack, or filesystem artifacts.",
+            "source": "harness/skills/auto-dev-create-artifacts/SKILL.md",
         },
         {
             "id": "develop",

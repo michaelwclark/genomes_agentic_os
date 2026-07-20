@@ -1,0 +1,59 @@
+api_version: agentic-os-program-components/v1
+program: auto_dev
+status: active
+operator_surface: auto_dev
+execution_engine: development_delivery
+commands:
+  - id: auto-dev
+    path: harness/skills/auto-dev/SKILL.md
+  - id: auto-dev-create-artifacts
+    path: harness/commands/auto-dev-create-artifacts.md
+  - id: develop
+    path: harness/commands/develop.md
+skills:
+  - id: auto-dev
+    path: harness/skills/auto-dev/SKILL.md
+  - id: auto-dev-create-artifacts
+    path: harness/skills/auto-dev-create-artifacts/SKILL.md
+workflows:
+  - id: auto_dev_detective
+    status: planned
+    path: ../../04-workflows/auto_dev/detective
+  - id: auto_dev_create_artifacts
+    status: active
+    path: ../../04-workflows/auto_dev/create_artifacts
+  - id: readiness_and_context
+    status: active
+    path: ../../04-workflows/development_delivery/readiness_and_context
+  - id: isolated_implementation
+    status: active
+    path: ../../04-workflows/development_delivery/isolated_implementation
+  - id: testing_review_and_pr_repair
+    status: active
+    path: ../../04-workflows/development_delivery/testing_review_and_pr_repair
+  - id: release_propagation
+    status: active
+    path: ../../04-workflows/development_delivery/release_propagation
+  - id: merge_deployment_and_cleanup
+    status: active
+    path: ../../04-workflows/development_delivery/merge_deployment_and_cleanup
+policy_planes:
+  development: harness/shared_factory/05-knowledge/dev_standards
+  qa: harness/shared_factory/05-knowledge/qa_gates
+  gitflow: harness/shared_factory/05-knowledge/gitflow_topology
+  artifacts: harness/artifact-config
+  investigations: harness/investigation-config
+receipts:
+  development: <project>/state/development-runs/<run-id>
+  artifacts: <work-item-or-run>/artifacts/auto-dev-create-artifacts/<run-id>
+  investigations: <work-item-or-run>/artifacts/auto-dev-detective/<run-id>
+compatibility:
+  map: ARCHIVE_SOON.md
+  trigger_adapters:
+    - domains/los/00-programs/auto_dev_queue
+documentation:
+  - program.md
+  - documentation.md
+  - runbook.md
+  - ARCHIVE_SOON.md
+  - worklog.md

@@ -118,6 +118,32 @@ agentic-os doc-config plan --request "..."               Get a routing decision.
 
 ---
 
+## 5A. Auto-Dev Markdown Policy Planes
+
+Auto-Dev workflow behavior is configured by ordered 1-N Markdown folders. A
+new `.md` file is consumed on the next run without a Python or registry change.
+Every resolver records ordered sources and a content fingerprint.
+
+| Plane | Root | Domain | Project | CLI |
+| --- | --- | --- | --- | --- |
+| Development standards | `harness/shared_factory/05-knowledge/dev_standards/` | `05-knowledge/dev_standards/` | `config/dev_standards/` | `agentic-os develop policy ... --plane dev_standards` |
+| QA gates | `harness/shared_factory/05-knowledge/qa_gates/` | `05-knowledge/qa_gates/` | `config/qa_gates/` | `agentic-os develop policy ... --plane qa_gates` |
+| Gitflow topology | `harness/shared_factory/05-knowledge/gitflow_topology/` | `05-knowledge/gitflow_topology/` | `config/gitflow_topology/` | `agentic-os develop policy ... --plane gitflow_topology` |
+| Artifact contracts | `harness/artifact-config/` | `artifact-config/` | `artifact-config/` | `agentic-os artifacts resolve ... --explain` |
+| Investigation sources | `harness/investigation-config/` | `investigation-config/` | `investigation-config/` | `agentic-os detective resolve ... --explain` |
+
+Projects may replace the development/QA/gitflow folder order through
+`config/development.yml policies.<plane>.paths`. Artifact contracts compose
+`any/any`, `any/<type>`, `<provider>/any`, and `<provider>/<type>` at each scope.
+Narrower scopes may specialize behavior but cannot weaken inherited safety,
+approval, sanitization, target verification, or readback.
+
+Use `agentic-os artifacts doctor` after changing artifact contracts. Applied
+development runs snapshot all three development planes in
+`state/development-runs/<run-id>/effective-policies.json`.
+
+---
+
 ## 6. Control-Plane YAMLs — Runtime State
 
 Located at `~/agentic_os/harness/shared_factory/00-control-plane/`. These files are the live runtime state of the OS. Most are managed by CLI commands; do not edit manually while the OS is running.

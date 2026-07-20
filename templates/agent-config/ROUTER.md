@@ -16,6 +16,9 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 | Shared template or skill | `shared_factory/` or `05-knowledge/` | relevant template, source map, or skill |
 | Shell, terminal, package-manager, runtime, or cleanup work | system registry | `shared_factory/05-knowledge/host-tool-registry.<host>.yml` |
 | Historical material | `08-archive/` | archive index or linked run log |
+| Reported bug, QA failure, error/log/alert, suspected cause, or RCA | Auto-Dev Detective, then routed domain/project | `harness/shared_factory/00-programs/auto_dev/ROUTER.md` |
+| Create/update Jira, Linear, Notion, Confluence, GitHub, Slack, PR text, RCA, report, or local artifact | Auto-Dev Create Artifacts | `harness/skills/auto-dev-create-artifacts/SKILL.md` |
+| Implement, fix, build, review/repair, release, deploy, or close out code | Auto-Dev / Development Delivery | `harness/shared_factory/00-programs/auto_dev/program.md` |
 
 ## Routing Rules
 
@@ -26,6 +29,8 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 - Reuse an existing project, workflow, automation, or run log when it fits.
 - Create new workflow or automation folders only when the pattern should repeat.
 - Record unclear routing decisions in the local run log or triage file.
+- Select Auto-Dev workflows by intent; the user does not need to say
+  “Auto-Dev.” Domain/project configuration specializes shared behavior.
 
 ## Output Rule
 

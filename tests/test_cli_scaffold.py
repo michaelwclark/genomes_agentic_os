@@ -16,6 +16,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from genomes_agentic_os import runtime_ops
+from genomes_agentic_os.artifact_contracts import artifact_contract_doctor
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.config_ops import LAYER_POLICIES, PROFILE_MANAGED_MARKER, sidecar_path
 from genomes_agentic_os.routing import context_from_here
@@ -433,6 +434,20 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
     }
     assert "execution-fabric" in {entry["id"] for entry in commands["commands"]}
     assert "execution-fabric" in {entry["id"] for entry in skills["skills"]}
+    assert not validate_root(root).errors
+
+
+def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    assert (root / "harness/artifact-config/any/any.md").is_file()
+    assert (shared_factory(root) / "00-programs/auto_dev/program.md").is_file()
+    assert (harness(root) / "skills/auto-dev-create-artifacts/SKILL.md").is_file()
+    doctor = artifact_contract_doctor(root)
+    assert doctor["ok"] is True
+    assert doctor["counts"]["files"] >= 25
     assert not validate_root(root).errors
 
 

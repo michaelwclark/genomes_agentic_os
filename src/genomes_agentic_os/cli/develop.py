@@ -6,7 +6,13 @@ import argparse
 import json
 from pathlib import Path
 
-from ..development_delivery import DevelopmentDeliveryError, TaskState, start_development_run
+from ..development_delivery import (
+    DEVELOPMENT_POLICY_PLANES,
+    DevelopmentDeliveryError,
+    TaskState,
+    resolve_development_policy,
+    start_development_run,
+)
 from ._shared import DEFAULT_ROOT, yaml_dump
 
 
@@ -84,6 +90,18 @@ def handle_heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_policy(args: argparse.Namespace) -> int:
+    result = resolve_development_policy(
+        args.root,
+        args.domain,
+        args.project,
+        args.plane,
+        explicit_files=args.overlay or [],
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def _common_output(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Print deterministic JSON instead of YAML.")
 
@@ -146,3 +164,15 @@ def register(subparsers) -> None:
     heartbeat.add_argument("--idempotency-key", required=True)
     _common_output(heartbeat)
     heartbeat.set_defaults(handler=handle_heartbeat)
+
+    policy = sub.add_parser(
+        "policy",
+        help="Resolve the ordered root/domain/project Markdown standards for a development plane.",
+    )
+    policy.add_argument("domain")
+    policy.add_argument("project")
+    policy.add_argument("--plane", choices=DEVELOPMENT_POLICY_PLANES, default="dev_standards")
+    policy.add_argument("--overlay", action="append", help="Invocation Markdown overlay; repeatable.")
+    policy.add_argument("--root", default=DEFAULT_ROOT)
+    _common_output(policy)
+    policy.set_defaults(handler=handle_policy)

@@ -482,3 +482,36 @@ skills:
     purpose: >
       Retrieve bounded, evidence-backed project-domain context and emit the
       receipt consumed by grooming, planning, coding, review, or upkeep.
+  - id: auto-dev
+    title: Auto Dev
+    source_path: harness/skills/auto-dev
+    installed_path: shared_factory/05-knowledge/skills/auto-dev
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Route and operate the canonical Auto-Dev SDLC family over the durable
+      Development Delivery engine.
+  - id: develop
+    title: Develop
+    source_path: harness/skills/develop
+    installed_path: shared_factory/05-knowledge/skills/develop
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Run one or many programming tasks through project-configured, isolated,
+      receipt-backed development delivery.
+  - id: auto-dev-create-artifacts
+    title: Auto-Dev Create Artifacts
+    source_path: harness/skills/auto-dev-create-artifacts
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-create-artifacts
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Resolve polymorphic artifact contracts and govern provider-native render,
+      validation, apply, readback, and receipts.

@@ -1006,6 +1006,7 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     result = ScaffoldResult()
     harness_root = harness_source_dir()
     for directory in (
+        "artifact-config",
         "bin",
         "commands",
         "skills",

@@ -20,6 +20,18 @@ five complete workflow specifications live in
 `harness/shared_factory/00-programs/development_delivery/` and
 `harness/shared_factory/04-workflows/development_delivery/`.
 
+Every run snapshots its dynamic Markdown policy planes:
+
+```bash
+agentic-os develop policy <domain> <project> --plane dev_standards --json
+agentic-os develop policy <domain> <project> --plane qa_gates --json
+agentic-os develop policy <domain> <project> --plane gitflow_topology --json
+```
+
+The conventional folder order is root → domain → project. Projects may provide
+an ordered 1-N path list in `config/development.yml`; adding a Markdown file is
+picked up automatically on the next run.
+
 Transitions, failures, and recovery are receipt-backed:
 
 ```bash

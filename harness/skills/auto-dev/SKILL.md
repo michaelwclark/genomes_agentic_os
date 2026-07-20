@@ -5,10 +5,11 @@ description: Run a Jira or Linear tracker item through project-aware SDLC orches
 
 # Auto Dev
 
-> Compatibility alias: all new generic Agentic OS programming jobs start with
-> `agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply`
-> and follow the `development_delivery` program. The contracts below remain
-> available for existing Auto-Dev runs and provider adapters during migration.
+Auto-Dev is the canonical operator-facing SDLC family. New programming jobs use
+`agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply` as
+the durable Development Delivery engine beneath this skill. Artifact authorship
+routes to `auto-dev-create-artifacts`; bug/RCA investigation routes to Auto-Dev
+Detective. Select these workflows from user intent even when Auto-Dev is not named.
 
 Auto Dev is the Agentic OS dark-factory SDLC runner. It starts from a tracker
 item, resolves the routed project `project.yml dev_factory` block, creates or
@@ -22,14 +23,17 @@ projection-only.
 
 ## Hard Rules
 
-- Read the Agentic OS routed layer before acting. At the auto-dev program layer,
-  load `program.md`, `components.yml`, `config/auto-dev-queue.yml`, `RULES.md`,
-  and the target project `project.yml`.
-- Use `project.yml dev_factory` for every project-specific behavior: tracker,
+- Read the Agentic OS routed layer before acting. Load Auto-Dev `program.md`,
+  `components.yml`, `RULES.md`, `TOOLS.md`, the selected workflow, and the target
+  project `config/development.yml`.
+- Use `config/development.yml` for every project-specific behavior: tracker,
   repo path, base branch, branch template, validation commands, PR provider,
   Copilot policy, finishing-review policy, projection policy, and merge policy.
   Missing required config blocks the run; never silently default to LOS, Jira,
   Notion, `develop`, or `make t`.
+- Load and receipt the effective `dev_standards`, `qa_gates`, and
+  `gitflow_topology` folders before implementation/review. Use
+  `agentic-os develop policy`; adding a Markdown file affects the next run.
 - Edit this harness source only. The `.agents/skills/auto-dev/` and
   `$HOME/.codex/skills/auto-dev/` copies are generated; refresh them with:
 
@@ -128,7 +132,8 @@ scrubber.
 
 ## Project Profile
 
-Load `project.yml dev_factory` before claim. Required sections:
+Load `config/development.yml` before claim. Legacy `project.yml dev_factory` is
+a compatibility bridge only. Required sections:
 
 - `enabled`
 - `queue_source`

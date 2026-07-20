@@ -21,6 +21,12 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
 - Route before creating or changing artifacts.
 - Preserve source links, validation evidence, and next actions.
 - Do not store secrets in markdown, config files, logs, or memory.
+- Artifact-producing workflows must resolve `artifact-config` before rendering
+  and must validate, verify target, and read back any external write.
+- Development/review workflows must load the effective development, QA, and
+  gitflow Markdown policy planes and record their source list/fingerprint.
+- Environment-scoped investigation must identify the deployed version before
+  choosing code. Read-only investigation never authorizes mutation.
 
 ## Notification Rules
 

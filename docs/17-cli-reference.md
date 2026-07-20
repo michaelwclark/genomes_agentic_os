@@ -110,6 +110,32 @@ All Spec commands emit YAML records or receipts. See
 [29 · Spec Engine](29-spec-engine.md) for exact forms, lifecycle semantics,
 adapter behavior, and compatibility commands.
 
+### Auto-Dev Artifact Authoring — `cli/artifacts.py`
+
+| Command | What it does |
+| --- | --- |
+| `artifacts` | Resolve, render, validate, and govern polymorphic SDLC artifacts. |
+| `artifacts resolve` | Compose root/domain/project/invocation provider/type contracts; `--explain` includes provenance and blocked safety overrides. |
+| `artifacts render` | Produce a local provider-native `rendered-artifact/v1` envelope and render receipt. |
+| `artifacts validate` | Check required sections and external-output safety; write a validation receipt. |
+| `artifacts apply` | Atomically apply filesystem output or create an explicit external-provider handoff; requires `--execute`. |
+| `artifacts record-readback` | Close an external handoff with verified provider identity and content hash. |
+| `artifacts doctor` | Validate contract frontmatter, fallback coverage, and representative resolutions. |
+
+### Development Delivery — `cli/develop.py`
+
+| Command | What it does |
+| --- | --- |
+| `develop start` | Plan or create a 1-N development portfolio with one active work item and isolated worktree per ticket. |
+| `develop status` | Read portfolio and task state receipts. |
+| `develop transition` | Advance one legal receipt-backed task state. |
+| `develop fail` | Classify a failure and retry or block according to policy. |
+| `develop recover` | Resume a recorded recoverable failure. |
+| `develop heartbeat` | Renew a non-terminal task lease. |
+| `develop policy` | Resolve a project's dynamic development, QA, or gitflow Markdown plane. |
+
+See [42 · Auto-Dev Program](42-auto-dev-program.md) for how these groups compose.
+
 ### Workflows & Programs — `cli/workflow.py`
 
 | Command | What it does |

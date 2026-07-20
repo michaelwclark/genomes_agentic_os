@@ -106,6 +106,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [37 · Governed Workflow Engine](37-governed-workflow-engine.md) | Versioned workflow definitions, immutable publish, installed instances, field/step validation, drift-safe authoring, rollback, and honest queue-only run requests. |
 | [38 · Program and Automation Operator Resource Query](38-operator-resource-query.md) | One typed read-only envelope for Program and Automation definitions, instances, configuration provenance, schedules, runs, health, qualification, and diagnostics. |
 | [39 · First-Class Resource Registry and Tags](39-first-class-resource-registry.md) | Atomic local resource snapshot plus a guarded durable custom-tag overlay, mutation receipts, and deterministic tag provenance. |
+| [42 · Auto-Dev Program](42-auto-dev-program.md) | One polymorphic SDLC family, dynamic root/domain/project policy planes, artifact rendering/readback, investigation routing, development delivery, receipts, and retirement map. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,

@@ -7,6 +7,11 @@ from one tracker item to a bounded portfolio. Every task gets an active work
 item, an isolated worktree, receipt-backed quality gates, repair loops, and a
 post-delivery cleanup decision.
 
+This is the durable execution engine beneath the operator-facing Auto-Dev
+program. It owns coordination, state, worktrees, recovery, and delivery
+receipts; Auto-Dev owns the coherent SDLC family, investigation/artifact
+workflows, implicit routing, and documentation.
+
 ## Operator entry point
 
 ```bash
@@ -33,6 +38,10 @@ controlled by `worktrees.directory`.
 Each workflow is documented completely in one `workflow.md`; its adjacent
 `workflow.yml` contains only the machine contract. Do not add routing/context
 stubs inside workflow folders.
+
+Every run also snapshots `dev_standards`, `qa_gates`, and `gitflow_topology`
+from the configured 1-N root/domain/project Markdown folders into
+`effective-policies.json`.
 
 ## Safety boundaries
 

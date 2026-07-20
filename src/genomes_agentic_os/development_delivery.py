@@ -23,6 +23,7 @@ import yaml
 
 from .artifact_naming import dated_name, load_artifact_naming_policy
 from .lifecycle import create_project_work_item
+from .policy_plane import PolicyLayer, PolicyPlaneError, public_policy_plane, resolve_markdown_plane
 from .scaffold import (
     domain_path,
     expand_path,
@@ -85,10 +86,17 @@ WORKFLOW_DOC_SECTIONS = (
     "Events and receipts",
     "Cleanup and handoff",
 )
+DEVELOPMENT_POLICY_PLANES = ("dev_standards", "qa_gates", "gitflow_topology")
 
 
 class DevelopmentDeliveryError(ValueError):
     """Raised when a run cannot safely continue."""
+
+
+def _mapping_copy(value: Any) -> dict[str, Any]:
+    """Return a mutable mapping without accepting ambiguous scalar config."""
+
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def utc_now() -> str:
@@ -155,6 +163,7 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
             "release": {"fix_version_drives_targets": True},
             "deployment": {"required": False, "monitor_after_merge": True},
             "recovery": {"max_attempts": 3, "lease_minutes": 30, "stale_after_minutes": 45},
+            "policies": {},
             "compatibility": {"source": "project.yml#sources"},
         }
     repo = legacy.get("repo") if isinstance(legacy.get("repo"), Mapping) else {}
@@ -172,7 +181,7 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "version": PROFILE_VERSION,
         "enabled": bool(legacy.get("enabled", True)),
-        "tracker": dict(legacy.get("tracker") or {}),
+            "tracker": _mapping_copy(legacy.get("tracker")),
         "repository": {
             "root": repo.get("root"),
             "base_branch": repo.get("base_branch") or repo.get("default_base_branch") or repo.get("base") or "main",
@@ -193,15 +202,20 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
             ),
             "test_policy": "risk_based_triangle",
         },
-        "pull_request": dict(legacy.get("pull_request") or {}),
+        "pull_request": _mapping_copy(legacy.get("pull_request")),
         "review": {
-            "finishing": dict(legacy.get("finishing_review") or {}),
-            "copilot": dict(legacy.get("copilot") or {}),
+            "finishing": _mapping_copy(legacy.get("finishing_review")),
+            "copilot": _mapping_copy(legacy.get("copilot")),
         },
-        "merge": dict(legacy.get("merge") or {"policy": "never_auto"}),
-        "release": dict(legacy.get("release") or {}),
-        "deployment": dict(legacy.get("deployment") or {}),
+        "merge": _mapping_copy(legacy.get("merge")) or {"policy": "never_auto"},
+        "release": _mapping_copy(legacy.get("release")),
+        "deployment": _mapping_copy(legacy.get("deployment")),
         "recovery": {"max_attempts": 3, "lease_minutes": 30, "stale_after_minutes": 45},
+        "policies": {
+            "dev_standards": _mapping_copy(legacy.get("dev_standards") or legacy.get("quality_gates")),
+            "qa_gates": _mapping_copy(legacy.get("qa_gates")),
+            "gitflow_topology": _mapping_copy(legacy.get("gitflow_topology")),
+        },
         "compatibility": {"source": "project.yml#dev_factory"},
     }
 
@@ -255,6 +269,110 @@ def load_development_profile(root: str | Path, domain: str, project: str) -> tup
         raise DevelopmentDeliveryError("invalid development profile: " + "; ".join(errors))
     profile["loaded_from"] = str(source)
     return profile, source
+
+
+def _policy_path(
+    raw: str,
+    *,
+    os_root: Path,
+    domain_root: Path,
+    project_path: Path,
+) -> Path:
+    expanded = raw.format(root=str(os_root), domain_root=str(domain_root), project_root=str(project_path))
+    path = Path(expanded).expanduser()
+    if not path.is_absolute():
+        if path.parts and path.parts[0] in {"harness", "domains"}:
+            path = os_root / path
+        else:
+            path = project_path / path
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(os_root)
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(f"development policy path is outside the Agentic OS root: {raw}") from exc
+    return resolved
+
+
+def resolve_development_policy(
+    root: str | Path,
+    domain: str,
+    project: str,
+    plane: str,
+    *,
+    explicit_files: Sequence[str | Path] = (),
+) -> dict[str, Any]:
+    """Resolve a 1-N development policy folder list with stable provenance."""
+
+    if plane not in DEVELOPMENT_POLICY_PLANES:
+        raise DevelopmentDeliveryError(
+            f"policy plane must be one of {', '.join(DEVELOPMENT_POLICY_PLANES)}"
+        )
+    os_root = expand_path(root)
+    domain_root = domain_path(os_root, normalize_domain(domain))
+    project_path = project_root(os_root, domain, project)
+    profile, profile_source = load_development_profile(os_root, domain, project)
+    policies = profile.get("policies") if isinstance(profile.get("policies"), Mapping) else {}
+    configured = policies.get(plane) if isinstance(policies.get(plane), Mapping) else {}
+    paths = configured.get("paths") if isinstance(configured, Mapping) else None
+    if paths is None and isinstance(profile.get(plane), Mapping):
+        paths = profile[plane].get("paths")
+    if paths is not None and not isinstance(paths, list):
+        raise DevelopmentDeliveryError(f"policies.{plane}.paths must be a list")
+    if paths:
+        layers = [
+            PolicyLayer(
+                scope=f"configured_{index:02d}",
+                root=_policy_path(
+                    str(raw), os_root=os_root, domain_root=domain_root, project_path=project_path
+                ),
+                rank=index,
+            )
+            for index, raw in enumerate(paths)
+        ]
+    else:
+        layers = [
+            PolicyLayer("root", os_root / "harness" / "shared_factory" / "05-knowledge" / plane, 0),
+            PolicyLayer("domain", domain_root / "05-knowledge" / plane, 1),
+            PolicyLayer("project", project_path / "config" / plane, 2),
+        ]
+    try:
+        result = resolve_markdown_plane(os_root, layers, explicit_files=explicit_files)
+    except PolicyPlaneError as exc:
+        raise DevelopmentDeliveryError(str(exc)) from exc
+    public = public_policy_plane(result, include_body=False)
+    public.update(
+        {
+            "schema": "development-policy-plane/v1",
+            "plane": plane,
+            "domain": normalize_domain(domain),
+            "project": validate_name(project, "project"),
+            "profile_source": str(profile_source),
+        }
+    )
+    return public
+
+
+def resolve_development_policies(root: str | Path, domain: str, project: str) -> dict[str, Any]:
+    """Resolve every development policy plane consumed by an SDLC run."""
+
+    planes = {
+        plane: resolve_development_policy(root, domain, project, plane)
+        for plane in DEVELOPMENT_POLICY_PLANES
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {name: value["fingerprint"] for name, value in planes.items()},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema": "development-effective-policies/v1",
+        "domain": normalize_domain(domain),
+        "project": validate_name(project, "project"),
+        "fingerprint": fingerprint,
+        "planes": planes,
+    }
 
 
 def required_test_layers(risk: str, *, changed_behavior: bool = True) -> list[str]:
@@ -545,6 +663,7 @@ def start_development_run(
     if not tickets:
         raise DevelopmentDeliveryError("at least one tracker ticket is required")
     profile, source = load_development_profile(root, domain, project)
+    effective_policies = resolve_development_policies(root, domain, project)
     project_path = project_root(root, domain, project)
     started_at = datetime.now(timezone.utc)
     run_id = run_id or dated_name(
@@ -566,6 +685,11 @@ def start_development_run(
         "titles": requested_titles,
         "run_dir": str(run_dir),
         "apply": apply,
+        "policy_fingerprint": effective_policies["fingerprint"],
+        "policy_sources": {
+            name: [item["source_ref"] for item in value["sources"]]
+            for name, value in effective_policies["planes"].items()
+        },
     }
     if not apply:
         return plan
@@ -578,9 +702,28 @@ def start_development_run(
             raise DevelopmentDeliveryError("run id already belongs to a different ticket portfolio")
         plan = existing
         requested_titles = dict(plan.get("titles") or requested_titles)
+        policy_path = run_dir / "effective-policies.json"
+        if policy_path.is_file():
+            run_policies = json.loads(policy_path.read_text(encoding="utf-8"))
+            if not isinstance(run_policies, dict) or run_policies.get("schema") != "development-effective-policies/v1":
+                raise DevelopmentDeliveryError(f"invalid effective policy receipt: {policy_path}")
+        else:
+            # Backfill early runs once. Resumes thereafter remain pinned to
+            # this immutable policy snapshot.
+            run_policies = effective_policies
+            _atomic_json(policy_path, run_policies)
+        if run_policies.get("fingerprint") != effective_policies.get("fingerprint"):
+            plan["policy_drift"] = {
+                "run_fingerprint": run_policies.get("fingerprint"),
+                "current_fingerprint": effective_policies.get("fingerprint"),
+                "behavior": "continue_with_run_snapshot",
+                "observed_at": utc_now(),
+            }
     else:
         run_dir.mkdir(parents=True)
         plan["created_at"] = utc_now()
+        run_policies = effective_policies
+        _atomic_json(run_dir / "effective-policies.json", run_policies)
         _atomic_json(portfolio_path, plan)
     recovery = profile["recovery"]
     rollup_ledger = expand_path(root) / "harness" / "shared_factory" / "00-control-plane" / "development-runs.jsonl"
@@ -639,6 +782,8 @@ def start_development_run(
                     "ticket": ticket,
                     "task_state": str(state_path),
                     "profile_source": str(source),
+                    "policy_receipt": str(run_dir / "effective-policies.json"),
+                    "policy_fingerprint": run_policies["fingerprint"],
                     "recorded_at": utc_now(),
                 },
             )
