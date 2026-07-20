@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import json
+import os
 from pathlib import Path
 import sqlite3
+import tempfile
 from typing import Any, Iterator, Sequence
 
 from ..conversation_logging import find_os_root
@@ -27,6 +30,9 @@ MEMORY_DB_PATH = ":memory:"
 # Relative to a domain root (e.g. "<agentic-root>/harness/shared_factory"),
 # mirroring the existing "<domain>/00-control-plane/<file>.yml" convention.
 STATE_DB_RELATIVE = Path("00-control-plane") / "state.db"
+STATE_BACKUP_RELATIVE = Path("06-runs-and-logs") / "state-backups"
+DEFAULT_STATE_BACKUP_RETENTION = 7
+DEFAULT_STATE_BACKUP_INTERVAL_HOURS = 24
 
 SCHEMA_TABLES: tuple[str, ...] = (
     "events",
@@ -101,8 +107,142 @@ def connect(db_path: str | Path = MEMORY_DB_PATH, *, busy_timeout_ms: int = 5000
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")  # silently stays "memory" for :memory: connections
+    # The state plane is low throughput and authoritative. Prefer waiting for
+    # the WAL frame to reach durable storage over NORMAL's smaller latency.
+    conn.execute("PRAGMA synchronous = FULL")
     ensure_schema(conn)
     return conn
+
+
+def state_backup_dir(root: str | Path | None = None, *, domain: str = SHARED_FACTORY_DOMAIN) -> Path:
+    return harness_path(resolve_os_root(root), domain, *STATE_BACKUP_RELATIVE.parts)
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        temporary.replace(path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def backup_database(
+    db_path: str | Path,
+    backup_dir: str | Path,
+    *,
+    retention: int = DEFAULT_STATE_BACKUP_RETENTION,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Publish one consistent, integrity-checked SQLite snapshot and receipt."""
+    if retention < 1:
+        raise StateDbError("state backup retention must be at least 1")
+    source_path = expand_path(db_path)
+    if not source_path.is_file():
+        raise StateDbError(f"state database is missing: {source_path}")
+    destination_dir = expand_path(backup_dir)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    captured = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    stamp = captured.strftime("%Y%m%dT%H%M%SZ")
+    target = destination_dir / f"state-{stamp}.db"
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=destination_dir)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    source: sqlite3.Connection | None = None
+    destination: sqlite3.Connection | None = None
+    try:
+        source = sqlite3.connect(str(source_path), isolation_level=None, timeout=5)
+        source.execute("PRAGMA busy_timeout = 5000")
+        destination = sqlite3.connect(str(temporary), isolation_level=None, timeout=5)
+        source.backup(destination)
+        integrity = str(destination.execute("PRAGMA integrity_check").fetchone()[0])
+        if integrity != "ok":
+            raise StateDbError(f"state backup integrity check failed: {integrity}")
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    finally:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
+    try:
+        temporary.replace(target)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+    snapshots = sorted(destination_dir.glob("state-*.db"), key=lambda path: (path.stat().st_mtime, path.name))
+    pruned: list[str] = []
+    for stale in snapshots[:-retention]:
+        stale.unlink()
+        pruned.append(str(stale))
+        stale.with_suffix(".json").unlink(missing_ok=True)
+    receipt = {
+        "schema_version": "agentic-os-state-backup/v1",
+        "status": "completed",
+        "captured_at": captured.isoformat().replace("+00:00", "Z"),
+        "source": str(source_path),
+        "snapshot": str(target),
+        "integrity_check": "ok",
+        "retention": retention,
+        "pruned": pruned,
+    }
+    receipt_path = destination_dir / f"state-{stamp}.json"
+    _write_json_atomic(receipt_path, receipt)
+    _write_json_atomic(destination_dir / "latest.json", {**receipt, "receipt": str(receipt_path)})
+    return {**receipt, "receipt": str(receipt_path)}
+
+
+def backup_state_database(
+    root: str | Path | None = None,
+    *,
+    domain: str = SHARED_FACTORY_DOMAIN,
+    retention: int = DEFAULT_STATE_BACKUP_RETENTION,
+    if_due_hours: int | None = None,
+    dry_run: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Back up the authoritative state database, optionally only when due."""
+    os_root = resolve_os_root(root)
+    db_path = default_db_path(os_root, domain=domain)
+    destination = state_backup_dir(os_root, domain=domain)
+    captured = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if not db_path.is_file():
+        return {
+            "status": "not_initialized",
+            "dry_run": dry_run,
+            "db_path": str(db_path),
+            "message": "state database does not exist yet; no snapshot is required",
+        }
+    latest = max(destination.glob("state-*.db"), key=lambda path: path.stat().st_mtime, default=None)
+    if if_due_hours is not None and latest is not None:
+        age_seconds = max(0.0, captured.timestamp() - latest.stat().st_mtime)
+        if age_seconds < max(1, if_due_hours) * 3600:
+            return {
+                "status": "not_due",
+                "dry_run": dry_run,
+                "db_path": str(db_path),
+                "latest_snapshot": str(latest),
+                "age_seconds": round(age_seconds, 3),
+            }
+    if dry_run:
+        return {
+            "status": "would_backup",
+            "dry_run": True,
+            "db_path": str(db_path),
+            "backup_dir": str(destination),
+            "retention": retention,
+        }
+    return {
+        **backup_database(db_path, destination, retention=retention, now=captured),
+        "dry_run": False,
+        "db_path": str(db_path),
+    }
 
 
 _SCHEMA_VERSION_TABLE_SQL = """
@@ -312,6 +452,10 @@ CREATE INDEX IF NOT EXISTS idx_execution_workers_pool_status
 def ensure_schema(conn: sqlite3.Connection) -> int:
     """Create/upgrade the schema to the latest known version. Returns the resulting version."""
     conn.execute(_SCHEMA_VERSION_TABLE_SQL)
+    latest = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
+    current = schema_version(conn)
+    if current >= latest:
+        return current
     for version, description, sql in _MIGRATIONS:
         with transaction(conn):
             current = schema_version(conn)

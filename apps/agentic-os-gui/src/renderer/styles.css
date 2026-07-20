@@ -196,7 +196,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .secondary-button { padding: 8px 11px; border: 1px solid #344253; border-radius: 8px; color: #c7d2df; background: #171e28; cursor: pointer; font-size: 10px; font-weight: 700; }
 .secondary-button:hover { background: #202a37; }
 .secondary-button:disabled { cursor: wait; opacity: .62; }
-.fabric-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px; }
+.fabric-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-bottom: 20px; }
 .fabric-kpis article { display: flex; min-height: 78px; flex-direction: column; justify-content: center; padding: 14px 16px; border: 1px solid #27313e; border-radius: 11px; background: #111720; }
 .fabric-kpis span { color: #778497; font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .fabric-kpis strong { margin-top: 5px; font-size: 23px; text-transform: capitalize; }

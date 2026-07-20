@@ -43,6 +43,8 @@ describe("Execution Fabric renderer behavior", () => {
     expect(markup).toContain('aria-label="Search sampled tasks"');
     expect(markup).toContain("latest 2-task sample");
     expect(markup).toContain("Refreshing…");
+    expect(markup).toContain("Retrying / delayed");
+    expect(markup).toContain("Oldest wait");
     expect(markup).toContain("disabled");
     expect(markup).toContain('value="blocked"');
     expect(markup).toContain('value="skipped"');

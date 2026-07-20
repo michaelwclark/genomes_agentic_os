@@ -101,6 +101,29 @@ DEFAULT_RUN_QUEUE_FAILED_MAX_AGE_DAYS = 7
 DEFAULT_RUN_QUEUE_SKIPPED_MAX_AGE_DAYS = 1
 DEFAULT_RUN_QUEUE_BACKUP_MAX_AGE_DAYS = 7
 RUNTIME_TRACKING_RUN_QUEUE_LIMIT = 50
+DEFAULT_RETRY_BACKOFF_SECONDS = 60
+MAX_RETRY_BACKOFF_SECONDS = 1800
+
+_TRANSIENT_EXECUTION_PATTERNS = (
+    r"\b429\b",
+    r"\b(?:408|409|529)\b",
+    r"rate[ -]?limit",
+    r"too many requests",
+    r"usage limit",
+    r"quota.*(?:exceeded|reached)",
+    r"insufficient_quota",
+    r"overload(?:ed)?",
+    r"\b50[0234]\b",
+    r"service unavailable",
+    r"temporar(?:y|ily) (?:unavailable|failure|failed)",
+    r"connection (?:reset|refused|aborted)",
+    r"network is unreachable",
+    r"temporary failure in name resolution",
+    r"name or service not known",
+    r"nodename nor servname provided",
+    r"timed? out",
+    r"tls (?:handshake|connection).*failed",
+)
 
 
 def _now() -> str:
@@ -892,7 +915,17 @@ def _append_execution_fabric_item(root: Path, item: dict[str, Any]) -> tuple[Pat
         route = resolve_execution_route(root, item)
         queue_name = route["queue_name"]
         worker_pool = route["worker_pool"]
+        retry_policy = (
+            item.get("retry_policy")
+            if isinstance(item.get("retry_policy"), dict)
+            else route.get("retry_policy") or {}
+        )
         payload = {key: value for key, value in item.items() if key not in _STATE_QUEUE_CORE_FIELDS}
+        if retry_policy:
+            payload["retry_policy"] = dict(retry_policy)
+        max_attempts = item.get("max_attempts")
+        if max_attempts is None:
+            max_attempts = retry_policy.get("max_attempts")
         written = execution_fabric.enqueue_task(
             conn,
             queue_name=queue_name,
@@ -908,7 +941,7 @@ def _append_execution_fabric_item(root: Path, item: dict[str, Any]) -> tuple[Pat
             dry_run=bool(item.get("dry_run", False)),
             due_at=str(item["due_at"]) if item.get("due_at") else None,
             created_at=str(item["created_at"]) if item.get("created_at") else None,
-            max_attempts=int(item.get("max_attempts") or 3),
+            max_attempts=int(max_attempts or 3),
             dead_letter_queue=str(item["dead_letter_queue"]) if item.get("dead_letter_queue") else None,
             payload=payload,
         )
@@ -1650,6 +1683,57 @@ def _dispatch_timeout_seconds(item: dict[str, Any]) -> int:
         if timeout > 0:
             return timeout
     return SCRIPT_DISPATCH_TIMEOUT_SECONDS
+
+
+def _execution_failure_class(execution: dict[str, Any]) -> dict[str, Any]:
+    """Classify only known transient failures as retryable.
+
+    Unknown non-zero exits stay terminal. This deliberately conservative
+    default prevents configuration and code defects from consuming the worker
+    pool until their attempt budget is exhausted.
+    """
+    explicit = execution.get("retryable")
+    if isinstance(explicit, bool):
+        return {
+            "retryable": explicit,
+            "failure_class": "explicit_transient" if explicit else "explicit_terminal",
+        }
+    governed_status = str(execution.get("governed_status") or "").lower()
+    if execution.get("timed_out") or governed_status in {"timeout", "no-progress-timeout", "stale"}:
+        return {"retryable": True, "failure_class": "timeout"}
+    # Retry only from structured errors/stderr. Successful diagnostic text in
+    # stdout may legitimately mention HTTP statuses or past timeouts.
+    evidence = "\n".join(
+        str(value)
+        for value in (
+            *(execution.get("errors") or []),
+            execution.get("stderr") or "",
+        )
+        if value
+    ).lower()
+    terminal_markers = (
+        "invalid local script command",
+        "local script command is empty",
+        "executable not found",
+        "no such file or directory",
+        "permission denied",
+    )
+    if any(marker in evidence for marker in terminal_markers):
+        return {"retryable": False, "failure_class": "configuration"}
+    if any(re.search(pattern, evidence, flags=re.IGNORECASE) for pattern in _TRANSIENT_EXECUTION_PATTERNS):
+        return {"retryable": True, "failure_class": "provider_or_network"}
+    return {"retryable": False, "failure_class": "execution"}
+
+
+def _retry_backoff_seconds(item: dict[str, Any]) -> int:
+    retry_policy = item.get("retry_policy") if isinstance(item.get("retry_policy"), dict) else {}
+    raw_base = retry_policy.get("backoff_seconds", DEFAULT_RETRY_BACKOFF_SECONDS)
+    try:
+        base = max(0, int(raw_base))
+    except (TypeError, ValueError):
+        base = DEFAULT_RETRY_BACKOFF_SECONDS
+    attempt = max(1, int(item.get("attempts") or 1))
+    return min(MAX_RETRY_BACKOFF_SECONDS, base * (2 ** (attempt - 1)))
 
 
 def _trim_dispatch_output(value: str | bytes | None) -> str:
@@ -2846,6 +2930,11 @@ def _execute_prepared_execution_fabric_dispatch(
     execution = _run_local_script(os_root, str(item.get("command")), timeout_seconds=timeout_seconds)
     finished_at = _now()
     status = "done" if execution["supported"] and execution["ok"] else "failed"
+    failure = _execution_failure_class(execution) if status == "failed" else {
+        "retryable": False,
+        "failure_class": None,
+    }
+    backoff_seconds = _retry_backoff_seconds(item) if failure["retryable"] else 0
     external_effect = execution.get("external_effect") or (
         "local script executed" if execution.get("ok") else "local script failed"
     )
@@ -2859,6 +2948,9 @@ def _execute_prepared_execution_fabric_dispatch(
         "worker_pool": worker_pool,
         "worker_id": worker_id,
         "status": status,
+        "failure_class": failure["failure_class"],
+        "retryable": failure["retryable"],
+        "retry_backoff_seconds": backoff_seconds,
         "approval_state": item.get("approval_state", "not_required"),
         "dry_run": False,
         "started_at": started_at,
@@ -2871,21 +2963,39 @@ def _execute_prepared_execution_fabric_dispatch(
     _write_yaml(log_path, log)
     conn = state_db.connect(state_db.default_db_path(os_root))
     try:
-        completed = execution_fabric.complete_task(
-            conn,
-            str(item["id"]),
-            worker_id=worker_id,
-            worker_token=worker_token,
-            lease_token=lease_token,
-            status=status,
-            error="; ".join(execution["errors"]) or None,
-        )
+        error = "; ".join(execution["errors"]) or None
+        if status == "failed" and failure["retryable"]:
+            completed = execution_fabric.retry_task(
+                conn,
+                str(item["id"]),
+                worker_id=worker_id,
+                worker_token=worker_token,
+                lease_token=lease_token,
+                error=error,
+                backoff_seconds=backoff_seconds,
+            )
+            status = str(completed["status"])
+            log["status"] = status
+            log["retry_due_at"] = completed.get("due_at")
+            _write_yaml(log_path, log)
+        else:
+            completed = execution_fabric.complete_task(
+                conn,
+                str(item["id"]),
+                worker_id=worker_id,
+                worker_token=worker_token,
+                lease_token=lease_token,
+                status=status,
+                error=error,
+            )
         payload = completed.get("payload") if isinstance(completed.get("payload"), dict) else {}
         payload = dict(payload)
         payload.update(
             {
                 "dispatch_log": relative_log_path,
                 "external_effect": external_effect,
+                "last_failure_class": failure["failure_class"],
+                "last_retry_backoff_seconds": backoff_seconds,
                 "evidence": [
                     *(payload.get("evidence") or []),
                     {"type": "dispatch_log", "path": relative_log_path},
@@ -2914,6 +3024,8 @@ def _execute_prepared_execution_fabric_dispatch(
         "log": str(log_path),
         "queue_backend": EXECUTION_FABRIC_MODE,
         "external_effect": external_effect,
+        "failure_class": failure["failure_class"],
+        "retry_scheduled": status == "queued" and bool(failure["retryable"]),
     }
 
 

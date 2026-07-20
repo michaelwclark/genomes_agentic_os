@@ -60,6 +60,13 @@ def test_runtime_health_distinguishes_terminal_history_from_stale_queue(
             "ref": "watcher",
             "due_at": "2026-07-14T05:45:00Z",
         },
+        {
+            "id": "retrying",
+            "status": "queued",
+            "ref": "provider",
+            "attempts": 1,
+            "due_at": "2026-07-14T06:05:00Z",
+        },
     ]
     queue_path.write_text(yaml.safe_dump(queue, sort_keys=False), encoding="utf-8")
     report = build_runtime_health(
@@ -68,10 +75,15 @@ def test_runtime_health_distinguishes_terminal_history_from_stale_queue(
         launchctl_runner=_launchctl(),
     )
     assert report["status"] == "critical"
-    assert report["queue"]["total_records"] == 3
-    assert report["queue"]["queued"] == 2
+    assert report["queue"]["total_records"] == 4
+    assert report["queue"]["queued"] == 3
+    assert report["queue"]["retrying"] == 1
+    assert report["queue"]["delayed_retries"] == 1
     assert report["queue"]["stale_queued_over_24h"] == 1
-    assert report["queue"]["top_backlogs"] == [{"ref": "watcher", "queued": 2}]
+    assert report["queue"]["top_backlogs"] == [
+        {"ref": "watcher", "queued": 2},
+        {"ref": "provider", "queued": 1},
+    ]
 
 
 def test_runtime_health_writes_json_and_markdown(tmp_path: Path) -> None:

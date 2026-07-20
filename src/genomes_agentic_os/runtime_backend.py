@@ -57,13 +57,13 @@ def _execution_fabric_catalog(root: str | Path) -> tuple[dict[str, Any], dict[st
     return _load_mapping(config_root / "queues.yml"), _load_mapping(config_root / "worker-pools.yml")
 
 
-def resolve_execution_route(root: str | Path, item: dict[str, Any]) -> dict[str, str]:
+def resolve_execution_route(root: str | Path, item: dict[str, Any]) -> dict[str, Any]:
     """Resolve one task onto a configured named queue without producer-specific logic."""
     explicit_queue = str(item.get("queue_name") or "").strip()
     explicit_pool = str(item.get("worker_pool") or "").strip()
     task_type = str(item.get("task_type") or "").strip()
     target = str(item.get("execution_target") or "").strip()
-    queue_config, _ = _execution_fabric_catalog(root)
+    queue_config, pools_config = _execution_fabric_catalog(root)
     queues = [row for row in queue_config.get("queues") or [] if isinstance(row, dict)]
     by_name = {str(row.get("id")): row for row in queues if row.get("id")}
 
@@ -89,7 +89,16 @@ def resolve_execution_route(root: str | Path, item: dict[str, Any]) -> dict[str,
     worker_pool = explicit_pool or str(selected.get("worker_pool") or "")
     if not worker_pool:
         raise RuntimeBackendError(f"execution queue {queue_name!r} has no worker pool")
-    return {"queue_name": queue_name, "worker_pool": worker_pool}
+    pool = next(
+        (
+            row
+            for row in pools_config.get("worker_pools") or []
+            if isinstance(row, dict) and str(row.get("id") or "") == worker_pool
+        ),
+        {},
+    )
+    retry_policy = pool.get("retry") if isinstance(pool.get("retry"), dict) else {}
+    return {"queue_name": queue_name, "worker_pool": worker_pool, "retry_policy": dict(retry_policy)}
 
 
 def _configure_execution_fabric(root: str | Path, conn: sqlite3.Connection) -> dict[str, Any]:

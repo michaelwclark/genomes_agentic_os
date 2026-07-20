@@ -48,6 +48,8 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
         <article><span>Queued</span><strong>{runtime.queue_depth}</strong></article>
         <article><span>Running</span><strong>{runtime.running}</strong></article>
         <article><span>Workers</span><strong>{runtime.active_workers}</strong></article>
+        <article><span>Retrying / delayed</span><strong>{runtime.retrying} / {runtime.delayed_retries}</strong></article>
+        <article><span>Oldest wait</span><strong>{Math.round(runtime.oldest_wait_seconds)}s</strong></article>
         <article><span>Failed / dead</span><strong>{runtime.failed + runtime.dead_letter}</strong></article>
         <article><span>Health</span><strong data-health={runtime.status}>{runtime.status}</strong></article>
       </div>
@@ -56,10 +58,10 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
         <div className="fabric-section-title"><h3>Named queues</h3><span>{runtime.queue_mode.replaceAll("_", " ")}</span></div>
         <div className="fabric-table-wrap">
           <table className="fabric-table">
-            <thead><tr><th>Queue</th><th>Depth</th><th>Running</th><th>Failed</th><th>Dead</th><th>Run limit</th><th>Queue limit</th></tr></thead>
+            <thead><tr><th>Queue</th><th>Depth</th><th>Running</th><th>Retrying</th><th>Delayed</th><th>Failed</th><th>Dead</th><th>Run limit</th><th>Queue limit</th></tr></thead>
             <tbody>{runtime.queues.map((item) => (
               <tr key={item.queue_name} data-selected={queue === item.queue_name}>
-                <th><button type="button" onClick={() => setQueue(queue === item.queue_name ? "all" : item.queue_name)}>{item.queue_name}</button></th><td>{item.depth}</td><td>{item.running}</td><td>{item.failed}</td><td>{item.dead_letter}</td><td>{item.max_concurrency ?? "—"}</td><td>{item.max_queued ?? "—"}</td>
+                <th><button type="button" onClick={() => setQueue(queue === item.queue_name ? "all" : item.queue_name)}>{item.queue_name}</button></th><td>{item.depth}</td><td>{item.running}</td><td>{item.retrying ?? 0}</td><td>{item.delayed_retries ?? 0}</td><td>{item.failed}</td><td>{item.dead_letter}</td><td>{item.max_concurrency ?? "—"}</td><td>{item.max_queued ?? "—"}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -127,6 +129,7 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
               <div><dt>Worker</dt><dd>{selected.lease_owner || "unclaimed"}</dd></div>
               <div><dt>Lease until</dt><dd>{selected.lease_until || "—"}</dd></div>
               <div><dt>Attempts</dt><dd>{selected.attempts ?? 0}</dd></div>
+              <div><dt>Next eligible</dt><dd>{selected.due_at ? new Date(selected.due_at).toLocaleString() : "now"}</dd></div>
             </dl>
           </aside>}
         </div>

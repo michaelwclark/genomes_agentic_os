@@ -38,6 +38,7 @@ from .runtime_ops import (
     schedule_run_due,
 )
 from .source_watch import run_due_watch_sources
+from .state.db import DEFAULT_STATE_BACKUP_INTERVAL_HOURS, backup_state_database
 
 
 def _utc_now() -> str:
@@ -65,8 +66,8 @@ def _summarize(result: dict[str, Any]) -> dict[str, Any]:
 def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     """Run one supervisor tick across the runtime surface.
 
-    Order: heartbeats -> schedules -> watch sources -> events -> run queue,
-    then a read-only health check. Returns an auditable report; `ok` is true
+    Order: heartbeats -> schedules -> watch sources -> events -> run queue ->
+    state backup, then a read-only health check. Returns an auditable report; `ok` is true
     when every mutating step completed without raising.
     """
     steps: list[dict[str, Any]] = []
@@ -99,6 +100,14 @@ def supervise_tick(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
     _run("events", lambda: process_due(root, dry_run=dry_run))
     _run("priority_run_queue", _priority_run_queue)
     _run("run_queue", lambda: runtime_run_batch(root, dry_run=dry_run))
+    _run(
+        "state_backup",
+        lambda: backup_state_database(
+            root,
+            if_due_hours=DEFAULT_STATE_BACKUP_INTERVAL_HOURS,
+            dry_run=dry_run,
+        ),
+    )
 
     # Health is read-only — collected every tick, never gates mutation.
     try:

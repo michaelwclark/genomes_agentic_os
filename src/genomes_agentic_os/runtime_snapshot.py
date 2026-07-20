@@ -202,6 +202,22 @@ def _fabric_backend_snapshot(
             entry["statuses"][status] = count
             entry["total"] += count
             status_counts[status] += count
+        captured_iso = _iso(captured)
+        for row in conn.execute(
+            """
+            SELECT queue_name,
+                   COUNT(*) AS retrying,
+                   SUM(CASE WHEN due_at IS NOT NULL AND due_at > ? THEN 1 ELSE 0 END) AS delayed_retries
+            FROM run_queue
+            WHERE status = 'queued' AND attempts > 0
+            GROUP BY queue_name
+            """,
+            (captured_iso,),
+        ).fetchall():
+            task_queue = str(row["queue_name"] or "unrouted")
+            entry = queue_map.setdefault(task_queue, {"queue_name": task_queue, "statuses": {}, "total": 0})
+            entry["retrying"] = int(row["retrying"] or 0)
+            entry["delayed_retries"] = int(row["delayed_retries"] or 0)
         for row in conn.execute(
             "SELECT name, max_concurrency, enabled, metadata_json FROM execution_queues ORDER BY name"
         ).fetchall():
@@ -214,7 +230,6 @@ def _fabric_backend_snapshot(
                 max_queued=int(metadata.get("max_queued") or 0),
             )
 
-        captured_iso = _iso(captured)
         pools: list[dict[str, Any]] = []
         if {"worker_pools", "execution_workers"}.issubset(tables):
             pool_rows = conn.execute(
@@ -265,10 +280,12 @@ def _fabric_backend_snapshot(
                 MIN(CASE WHEN status IN ('queued', 'approval-needed') THEN julianday(COALESCE(due_at, created_at)) END) AS oldest_wait,
                 SUM(CASE WHEN status IN ('queued', 'approval-needed') AND julianday(COALESCE(due_at, created_at)) < julianday(?) - 1 THEN 1 ELSE 0 END) AS stale_queued,
                 SUM(CASE WHEN status = 'running' AND julianday(lease_until) < julianday(?) THEN 1 ELSE 0 END) AS expired_running_leases,
-                SUM(CASE WHEN status = 'failed' AND julianday(COALESCE(finished_at, updated_at)) >= julianday(?) - (1.0 / 24.0) AND julianday(COALESCE(finished_at, updated_at)) <= julianday(?) THEN 1 ELSE 0 END) AS failed_last_hour
+                SUM(CASE WHEN status = 'failed' AND julianday(COALESCE(finished_at, updated_at)) >= julianday(?) - (1.0 / 24.0) AND julianday(COALESCE(finished_at, updated_at)) <= julianday(?) THEN 1 ELSE 0 END) AS failed_last_hour,
+                SUM(CASE WHEN status = 'queued' AND attempts > 0 THEN 1 ELSE 0 END) AS retrying,
+                SUM(CASE WHEN status = 'queued' AND attempts > 0 AND due_at IS NOT NULL AND julianday(due_at) > julianday(?) THEN 1 ELSE 0 END) AS delayed_retries
             FROM run_queue
             """,
-            (captured_iso, captured_iso, captured_iso, captured_iso),
+            (captured_iso, captured_iso, captured_iso, captured_iso, captured_iso),
         ).fetchone()
         oldest_wait_seconds = 0.0
         if health_row is not None and health_row["oldest_wait"] is not None:
@@ -282,6 +299,8 @@ def _fabric_backend_snapshot(
             "stale_queued": int(health_row["stale_queued"] or 0) if health_row is not None else 0,
             "expired_running_leases": int(health_row["expired_running_leases"] or 0) if health_row is not None else 0,
             "failed_last_hour": int(health_row["failed_last_hour"] or 0) if health_row is not None else 0,
+            "retrying": int(health_row["retrying"] or 0) if health_row is not None else 0,
+            "delayed_retries": int(health_row["delayed_retries"] or 0) if health_row is not None else 0,
         }
         return tasks, workers, metrics, stats, "sqlite_read_transaction"
     except sqlite3.DatabaseError as exc:
@@ -360,6 +379,19 @@ def build_runtime_snapshot(
             and (finished := _parsed(task.get("finished_at") or task.get("updated_at"))) is not None
             and timedelta(0) <= captured - finished.astimezone(timezone.utc) <= timedelta(hours=1)
         )
+        retrying = sum(
+            1
+            for task in all_tasks
+            if task.get("status") == "queued" and int(task.get("attempts") or 0) > 0
+        )
+        delayed_retries = sum(
+            1
+            for task in all_tasks
+            if task.get("status") == "queued"
+            and int(task.get("attempts") or 0) > 0
+            and (due := _parsed(task.get("due_at"))) is not None
+            and due.astimezone(timezone.utc) > captured
+        )
     else:
         raw_tasks, workers, metrics, stats, consistency = _fabric_backend_snapshot(
             os_root,
@@ -376,6 +408,8 @@ def build_runtime_snapshot(
         stale_queued = int(stats["stale_queued"])
         expired_leases = int(stats["expired_running_leases"])
         recent_failed = int(stats["failed_last_hour"])
+        retrying = int(stats["retrying"])
+        delayed_retries = int(stats["delayed_retries"])
 
     dead_letter = int(status_counts.get("dead-letter", 0))
     unhealthy_workers = int(metrics.get("unhealthy_worker_count") or 0)
@@ -388,6 +422,18 @@ def build_runtime_snapshot(
         item["running"] = int(counts.get("running", 0))
         item["failed"] = int(counts.get("failed", 0))
         item["dead_letter"] = int(counts.get("dead-letter", 0))
+        if queue_mode == FILESYSTEM_MODE:
+            queue_tasks = [task for task in all_tasks if task.get("status") == "queued"]
+            item["retrying"] = sum(int(task.get("attempts") or 0) > 0 for task in queue_tasks)
+            item["delayed_retries"] = sum(
+                int(task.get("attempts") or 0) > 0
+                and (due := _parsed(task.get("due_at"))) is not None
+                and due.astimezone(timezone.utc) > captured
+                for task in queue_tasks
+            )
+        else:
+            item["retrying"] = int(item.get("retrying") or 0)
+            item["delayed_retries"] = int(item.get("delayed_retries") or 0)
         queues.append(item)
     saturated = any(
         int(queue.get("max_queued") or 0)
@@ -424,6 +470,8 @@ def build_runtime_snapshot(
             "active_workers": int(metrics.get("live_worker_count") or 0),
             "unhealthy_workers": unhealthy_workers,
             "failed_last_hour": recent_failed,
+            "retrying": retrying,
+            "delayed_retries": delayed_retries,
             "global_max_running": int(metrics.get("global_max_running") or 0),
             "background_max_running": int(metrics.get("background_max_running") or 0),
             "reserved_interactive_slots": int(metrics.get("reserved_interactive_slots") or 0),
@@ -452,16 +500,18 @@ def format_runtime_snapshot(snapshot: dict[str, Any]) -> str:
         (
             f"Queued: {summary['queued'] + summary['approval_needed']}  Running: {summary['running']}  "
             f"Workers: {summary['active_workers']}  Failed/dead: {summary['failed'] + summary['dead_letter']}  "
+            f"Retrying: {summary['retrying']} ({summary['delayed_retries']} delayed)  "
             f"Oldest wait: {int(summary['oldest_wait_seconds'])}s"
         ),
         "",
         "QUEUES",
-        "NAME             DEPTH  RUNNING  FAILED  DEAD  LIMIT",
+        "NAME             DEPTH  RUNNING  RETRY  DELAY  FAILED  DEAD  LIMIT",
     ]
     for queue in snapshot["queues"]:
         lines.append(
             f"{str(queue.get('queue_name') or '-')[:16]:16} "
             f"{int(queue.get('depth') or 0):5}  {int(queue.get('running') or 0):7}  "
+            f"{int(queue.get('retrying') or 0):5}  {int(queue.get('delayed_retries') or 0):5}  "
             f"{int(queue.get('failed') or 0):6}  {int(queue.get('dead_letter') or 0):4}  "
             f"{int(queue.get('max_queued') or 0):5}"
         )

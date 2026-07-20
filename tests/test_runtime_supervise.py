@@ -15,7 +15,16 @@ from genomes_agentic_os.runtime_backend import apply_queue_mode, runtime_queue_i
 from genomes_agentic_os.runtime_ops import runtime_doctor, runtime_run_latest_by_ref, runtime_run_next
 from genomes_agentic_os.supervisor import supervise_tick
 
-STEP_NAMES = {"heartbeats", "schedules", "watch_sources", "events", "priority_run_queue", "run_queue", "health"}
+STEP_NAMES = {
+    "heartbeats",
+    "schedules",
+    "watch_sources",
+    "events",
+    "priority_run_queue",
+    "run_queue",
+    "state_backup",
+    "health",
+}
 
 
 def _fresh_root(tmp_path: Path) -> Path:

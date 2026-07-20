@@ -555,7 +555,15 @@ def test_heartbeat_retry_dead_letter_and_cancel() -> None:
         )
         assert heartbeat["heartbeat_at"] == "2026-01-01T00:00:20Z"
 
-        dead = fabric.retry_task(conn, doomed["id"], error="provider unavailable", now="2026-01-01T00:00:30Z")
+        dead = fabric.retry_task(
+            conn,
+            doomed["id"],
+            worker_id="worker-a",
+            worker_token=worker["lease_token"],
+            lease_token=claimed["lease_token"],
+            error="provider unavailable",
+            now="2026-01-01T00:00:30Z",
+        )
         assert dead["status"] == "dead-letter"
         assert dead["queue_name"] == "dead"
 
@@ -576,11 +584,73 @@ def test_heartbeat_retry_dead_letter_and_cancel() -> None:
         recovery = fabric.recover_expired_leases(conn, now="2026-01-01T00:06:00Z")
         assert recovery["recovered"] == [recoverable["id"]]
         assert recovery["expired_workers"] == ["worker-a"]
+        recovered = state_queue.get(conn, recoverable["id"])
+        assert recovered is not None
+        assert recovered["due_at"] == "2026-01-01T00:07:00Z"
 
         waiting = fabric.enqueue_task(conn, queue_name="llm", worker_pool="codex", kind="manual")
         cancelled = fabric.cancel_task(conn, waiting["id"], reason="operator cancelled")
         assert cancelled["status"] == "cancelled"
         assert cancelled["error"] == "operator cancelled"
+    finally:
+        conn.close()
+
+
+def test_expired_lease_recovery_honors_backoff_and_dead_letters_exhausted_task() -> None:
+    conn = db.connect(":memory:")
+    try:
+        fabric.configure_queue(conn, "llm", max_concurrency=2)
+        fabric.configure_queue(conn, "dead", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "codex", queue_name="llm", max_workers=2, max_concurrency=2)
+        first_worker = fabric.register_worker(
+            conn, "worker-a", pool_name="codex", lease_seconds=60, now="2026-01-01T00:00:00Z"
+        )
+        delayed = fabric.enqueue_task(
+            conn,
+            queue_name="llm",
+            worker_pool="codex",
+            kind="manual",
+            max_attempts=3,
+            payload={"retry_policy": {"backoff_seconds": 15}},
+        )
+        assert fabric.claim_next(
+            conn,
+            worker_id="worker-a",
+            worker_token=first_worker["lease_token"],
+            lease_seconds=10,
+            now="2026-01-01T00:00:01Z",
+        ) is not None
+
+        second_worker = fabric.register_worker(
+            conn, "worker-b", pool_name="codex", lease_seconds=60, now="2026-01-01T00:00:02Z"
+        )
+        doomed = fabric.enqueue_task(
+            conn,
+            queue_name="llm",
+            worker_pool="codex",
+            kind="manual",
+            max_attempts=1,
+            dead_letter_queue="dead",
+        )
+        assert fabric.claim_next(
+            conn,
+            worker_id="worker-b",
+            worker_token=second_worker["lease_token"],
+            lease_seconds=10,
+            now="2026-01-01T00:00:02Z",
+            item_id=doomed["id"],
+        ) is not None
+
+        recovery = fabric.recover_expired_leases(conn, now="2026-01-01T00:00:20Z")
+        assert recovery["recovered"] == [delayed["id"]]
+        assert recovery["dead_lettered"] == [doomed["id"]]
+        recovered = state_queue.get(conn, delayed["id"])
+        dead = state_queue.get(conn, doomed["id"])
+        assert recovered is not None and recovered["due_at"] == "2026-01-01T00:00:35Z"
+        assert dead is not None
+        assert dead["status"] == "dead-letter"
+        assert dead["queue_name"] == "dead"
+        assert dead["finished_at"] == "2026-01-01T00:00:20Z"
     finally:
         conn.close()
 
@@ -636,14 +706,14 @@ def test_expired_and_stale_leases_are_fenced() -> None:
             conn,
             "worker-a",
             pool_name="codex",
-            lease_seconds=60,
+            lease_seconds=180,
             now="2026-01-01T00:00:22Z",
         )
         second_claim = fabric.claim_next(
             conn,
             worker_id="worker-a",
             worker_token=second_worker["lease_token"],
-            now="2026-01-01T00:00:23Z",
+            now="2026-01-01T00:01:21Z",
         )
         assert second_claim is not None
         assert second_claim["lease_token"] != first_claim["lease_token"]
@@ -654,7 +724,7 @@ def test_expired_and_stale_leases_are_fenced() -> None:
                 worker_id="worker-a",
                 worker_token=first_worker["lease_token"],
                 lease_token=second_claim["lease_token"],
-                now="2026-01-01T00:00:24Z",
+                now="2026-01-01T00:01:22Z",
             )
         with pytest.raises(fabric.ExecutionFabricError, match="active fenced lease"):
             fabric.complete_task(
@@ -663,7 +733,7 @@ def test_expired_and_stale_leases_are_fenced() -> None:
                 worker_id="worker-a",
                 worker_token=second_worker["lease_token"],
                 lease_token=first_claim["lease_token"],
-                now="2026-01-01T00:00:24Z",
+                now="2026-01-01T00:01:22Z",
             )
         completed = fabric.complete_task(
             conn,
@@ -671,9 +741,85 @@ def test_expired_and_stale_leases_are_fenced() -> None:
             worker_id="worker-a",
             worker_token=second_worker["lease_token"],
             lease_token=second_claim["lease_token"],
-            now="2026-01-01T00:00:24Z",
+            now="2026-01-01T00:01:22Z",
         )
         assert completed["status"] == "done"
+    finally:
+        conn.close()
+
+
+def test_retry_is_fenced_delayed_and_not_claimable_before_due() -> None:
+    conn = db.connect(":memory:")
+    try:
+        fabric.configure_queue(conn, "llm", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "codex", queue_name="llm", max_workers=1, max_concurrency=1)
+        worker = fabric.register_worker(
+            conn,
+            "worker-a",
+            pool_name="codex",
+            lease_seconds=600,
+            now="2026-01-01T00:00:00Z",
+        )
+        task = fabric.enqueue_task(
+            conn,
+            queue_name="llm",
+            worker_pool="codex",
+            kind="manual",
+            max_attempts=2,
+        )
+        claimed = fabric.claim_next(
+            conn,
+            worker_id="worker-a",
+            worker_token=worker["lease_token"],
+            lease_seconds=600,
+            now="2026-01-01T00:00:01Z",
+        )
+        assert claimed is not None
+        with pytest.raises(fabric.ExecutionFabricError, match="active fenced lease"):
+            fabric.retry_task(
+                conn,
+                task["id"],
+                worker_id="worker-a",
+                worker_token="stale-worker-token",
+                lease_token=claimed["lease_token"],
+                now="2026-01-01T00:00:02Z",
+            )
+        retried = fabric.retry_task(
+            conn,
+            task["id"],
+            worker_id="worker-a",
+            worker_token=worker["lease_token"],
+            lease_token=claimed["lease_token"],
+            backoff_seconds=60,
+            now="2026-01-01T00:00:02Z",
+        )
+        assert retried["status"] == "queued"
+        assert retried["due_at"] == "2026-01-01T00:01:02Z"
+        assert fabric.claim_next(
+            conn,
+            worker_id="worker-a",
+            worker_token=worker["lease_token"],
+            now="2026-01-01T00:01:01Z",
+        ) is None
+        second_claim = fabric.claim_next(
+            conn,
+            worker_id="worker-a",
+            worker_token=worker["lease_token"],
+            now="2026-01-01T00:01:02Z",
+        )
+        assert second_claim is not None
+        dead = fabric.retry_task(
+            conn,
+            task["id"],
+            worker_id="worker-a",
+            worker_token=worker["lease_token"],
+            lease_token=second_claim["lease_token"],
+            backoff_seconds=120,
+            now="2026-01-01T00:01:03Z",
+        )
+        assert dead["status"] == "dead-letter"
+        assert dead["due_at"] is None
+        assert dead["finished_at"] == "2026-01-01T00:01:03Z"
     finally:
         conn.close()
 
@@ -762,6 +908,153 @@ def test_runtime_dispatch_claims_and_completes_in_execution_fabric(
     assert result["queue_item"]["lease_owner"] is None
     assert result["queue_item"]["dispatch_log"].endswith("run-log.yml")
     assert queue_mode_status(root)["metrics"]["live_worker_count"] == 0
+
+
+def test_runtime_dispatch_retries_transient_failures_and_honors_nested_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [{"id": "script", "status": "active"}]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "retry-transient",
+            "kind": "manual",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": "provider-call",
+            "retry_policy": {"max_attempts": 3, "backoff_seconds": 30},
+        },
+    )
+    monkeypatch.setattr(
+        runtime_ops,
+        "_run_local_script",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "ok": False,
+            "command": "provider-call",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "provider returned 503 service unavailable",
+            "errors": ["local script exited 1"],
+            "warnings": [],
+            "external_effect": "test provider failed",
+        },
+    )
+
+    first = runtime_ops.runtime_run_next(root, dry_run=False, item_id="retry-transient")
+
+    assert first["status"] == "queued"
+    assert first["retry_scheduled"] is True
+    assert first["failure_class"] == "provider_or_network"
+    assert first["queue_item"]["attempts"] == 1
+    assert first["queue_item"]["max_attempts"] == 3
+    assert first["queue_item"]["due_at"]
+    snapshot = build_runtime_snapshot(root, task_limit=None)
+    assert snapshot["summary"]["retrying"] == 1
+    assert snapshot["summary"]["delayed_retries"] == 1
+    retry_queue = next(queue for queue in snapshot["queues"] if queue["queue_name"] == "non_llm")
+    assert retry_queue["retrying"] == 1
+    assert retry_queue["delayed_retries"] == 1
+    assert "Retrying: 1 (1 delayed)" in format_runtime_snapshot(snapshot)
+
+    conn = db.connect(db.default_db_path(root))
+    try:
+        conn.execute("UPDATE run_queue SET due_at = '2000-01-01T00:00:00Z' WHERE id = 'retry-transient'")
+    finally:
+        conn.close()
+    second = runtime_ops.runtime_run_next(root, dry_run=False, item_id="retry-transient")
+    assert second["status"] == "queued"
+    assert second["queue_item"]["attempts"] == 2
+
+    conn = db.connect(db.default_db_path(root))
+    try:
+        conn.execute("UPDATE run_queue SET due_at = '2000-01-01T00:00:00Z' WHERE id = 'retry-transient'")
+    finally:
+        conn.close()
+    exhausted = runtime_ops.runtime_run_next(root, dry_run=False, item_id="retry-transient")
+    assert exhausted["status"] == "dead-letter"
+    assert exhausted["retry_scheduled"] is False
+    assert exhausted["queue_item"]["attempts"] == 3
+    assert exhausted["queue_item"]["finished_at"]
+
+
+def test_runtime_dispatch_does_not_retry_deterministic_configuration_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [{"id": "script", "status": "active"}]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "terminal-config",
+            "kind": "manual",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": "missing-tool",
+            "retry_policy": {"max_attempts": 5, "backoff_seconds": 1},
+        },
+    )
+    monkeypatch.setattr(
+        runtime_ops,
+        "_run_local_script",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "ok": False,
+            "command": "missing-tool",
+            "errors": ["local script executable not found: missing-tool"],
+            "warnings": [],
+            "external_effect": "local script failed before execution",
+        },
+    )
+
+    result = runtime_ops.runtime_run_next(root, dry_run=False, item_id="terminal-config")
+
+    assert result["status"] == "failed"
+    assert result["retry_scheduled"] is False
+    assert result["failure_class"] == "configuration"
+    assert result["queue_item"]["attempts"] == 1
+
+
+@pytest.mark.parametrize(
+    ("evidence", "failure_class"),
+    [
+        ("429 too many requests", "provider_or_network"),
+        ("usage limit reached; try again later", "provider_or_network"),
+        ("insufficient_quota", "provider_or_network"),
+        ("provider overloaded with status 529", "provider_or_network"),
+        ("connection reset by peer", "provider_or_network"),
+    ],
+)
+def test_provider_usage_and_network_failures_are_retryable(evidence: str, failure_class: str) -> None:
+    result = runtime_ops._execution_failure_class(
+        {"ok": False, "errors": ["local script exited 1"], "stderr": evidence, "stdout": ""}
+    )
+    assert result == {"retryable": True, "failure_class": failure_class}
+
+
+def test_transient_words_in_stdout_do_not_make_a_failure_retryable() -> None:
+    result = runtime_ops._execution_failure_class(
+        {
+            "ok": False,
+            "errors": ["local script exited 1"],
+            "stderr": "",
+            "stdout": "processed historical 503 errors; previous request timed out",
+        }
+    )
+    assert result == {"retryable": False, "failure_class": "execution"}
 
 
 def test_run_latest_does_not_skip_work_claimed_during_snapshot_race(

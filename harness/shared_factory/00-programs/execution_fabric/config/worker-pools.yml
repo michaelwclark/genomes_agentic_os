@@ -15,6 +15,7 @@ worker_pools:
       heartbeat_seconds: 60
     retry:
       max_attempts: 3
+      backoff_seconds: 60
   - id: claude_workers
     enabled: false
     provider: claude
@@ -29,6 +30,7 @@ worker_pools:
       heartbeat_seconds: 60
     retry:
       max_attempts: 3
+      backoff_seconds: 60
   - id: non_llm_workers
     enabled: false
     provider: non_llm
@@ -43,3 +45,4 @@ worker_pools:
       heartbeat_seconds: 30
     retry:
       max_attempts: 3
+      backoff_seconds: 60

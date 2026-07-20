@@ -47,8 +47,27 @@ describe("GUI-owned session snapshot overlay", () => {
   });
 
   it("normalizes legacy aggregate-only runtime snapshots for the detailed view", () => {
-    const { workers: _workers, tasks: _tasks, task_count: _taskCount, task_sample_count: _sampleCount, task_sample_limit: _sampleLimit, captured_at: _capturedAt, ...legacyRuntime } = fixtureSnapshot.runtime;
-    const legacyQueues = legacyRuntime.queues.map(({ depth: _depth, running: _running, failed: _failed, dead_letter: _deadLetter, ...queue }) => queue);
+    const {
+      workers: _workers,
+      tasks: _tasks,
+      task_count: _taskCount,
+      task_sample_count: _sampleCount,
+      task_sample_limit: _sampleLimit,
+      captured_at: _capturedAt,
+      retrying: _retrying,
+      delayed_retries: _delayedRetries,
+      oldest_wait_seconds: _oldestWait,
+      ...legacyRuntime
+    } = fixtureSnapshot.runtime;
+    const legacyQueues = legacyRuntime.queues.map(({
+      depth: _depth,
+      running: _running,
+      failed: _failed,
+      dead_letter: _deadLetter,
+      retrying: _retrying,
+      delayed_retries: _delayedRetries,
+      ...queue
+    }) => queue);
     const state: OperatorState = { schemaVersion: 1, pinnedConversationIds: [], routeOverrides: {}, launchedSessions: {} };
     const snapshot = normalizeSnapshot(
       { ...fixtureSnapshot, runtime: { ...legacyRuntime, queues: legacyQueues } } as unknown as GuiSnapshot,
@@ -61,6 +80,9 @@ describe("GUI-owned session snapshot overlay", () => {
     expect(snapshot.runtime.task_count).toBe(0);
     expect(snapshot.runtime.task_sample_count).toBe(0);
     expect(snapshot.runtime.task_sample_limit).toBe(200);
+    expect(snapshot.runtime.retrying).toBe(0);
+    expect(snapshot.runtime.delayed_retries).toBe(0);
+    expect(snapshot.runtime.oldest_wait_seconds).toBe(0);
     expect(snapshot.runtime.queues.find((queue) => queue.queue_name === "codex")?.depth).toBe(2);
   });
 

@@ -636,10 +636,10 @@ own boundary and produce a clear failure receipt when it is unavailable.
 
 ```bash
 # Preview what would be installed (dry-run; changes nothing):
-bash installers/install-scheduler.sh --root ~/agentic_os --interval-minutes 15
+bash installers/install-scheduler.sh --root ~/agentic_os --interval-minutes 5
 
 # Install the background driver:
-bash installers/install-scheduler.sh --root ~/agentic_os --interval-minutes 15 --apply
+bash installers/install-scheduler.sh --root ~/agentic_os --interval-minutes 5 --apply
 
 # Remove it later:
 bash installers/install-scheduler.sh --uninstall --apply
