@@ -24,7 +24,7 @@ import yaml
 from . import cursors as cursors_module
 from . import events as events_module
 from . import queue as queue_module
-from .db import connect, default_db_path, resolve_os_root, schema_version, table_counts
+from .db import backup_state_database, connect, default_db_path, resolve_os_root, schema_version, table_counts
 from .importers import import_all, scan_all, verify_import
 
 DEFAULT_ROOT = "~/agentic_os"
@@ -70,6 +70,17 @@ def handle_state_status(args: argparse.Namespace) -> int:
         }
     finally:
         conn.close()
+    print(_format_result(result, as_json=args.json))
+    return 0
+
+
+def handle_state_backup(args: argparse.Namespace) -> int:
+    result = backup_state_database(
+        args.root,
+        retention=args.retention,
+        if_due_hours=args.if_due_hours,
+        dry_run=not args.apply,
+    )
     print(_format_result(result, as_json=args.json))
     return 0
 
@@ -172,6 +183,16 @@ def register_state_cli(subparsers: argparse._SubParsersAction) -> None:
     status_parser = state_subparsers.add_parser("status", help="Show db path, schema version, and per-table counts.")
     _add_common_arguments(status_parser)
     status_parser.set_defaults(handler=handle_state_status)
+
+    backup_parser = state_subparsers.add_parser(
+        "backup", help="Create a consistent, integrity-checked local state.db snapshot."
+    )
+    backup_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    backup_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of YAML.")
+    backup_parser.add_argument("--retention", type=int, default=7, help="Number of valid snapshots to retain.")
+    backup_parser.add_argument("--if-due-hours", type=int, default=None, help="Skip when a newer snapshot exists.")
+    backup_parser.add_argument("--apply", action="store_true", help="Create the snapshot; default is a dry run.")
+    backup_parser.set_defaults(handler=handle_state_backup)
 
     import_parser = state_subparsers.add_parser("import", help="Import run-queue/events/cursors YAML into state.db.")
     _add_common_arguments(import_parser)

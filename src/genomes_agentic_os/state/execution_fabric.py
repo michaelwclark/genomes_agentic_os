@@ -509,25 +509,67 @@ def complete_task(
     return state_queue.get(conn, item_id)  # type: ignore[return-value]
 
 
-def retry_task(conn: sqlite3.Connection, item_id: str, *, error: str | None = None, now: str | None = None) -> dict[str, Any]:
+def retry_task(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    error: str | None = None,
+    backoff_seconds: int = 0,
+    worker_id: str | None = None,
+    worker_token: str | None = None,
+    lease_token: str | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Requeue a recoverable failure or dead-letter an exhausted task.
+
+    A running task is mutable only by the worker holding both the current
+    worker fence and task lease tokens. Queued tasks may still be retried by
+    recovery/operator paths without fabricating a worker lease.
+    """
+    if backoff_seconds < 0:
+        raise ExecutionFabricError("backoff_seconds cannot be negative")
     now_value = now or utc_now_iso()
     with transaction(conn):
         item = state_queue.get(conn, item_id)
         if item is None:
             raise ExecutionFabricError(f"unknown execution task: {item_id}")
-        worker_id = item.get("lease_owner")
+        lease_owner = item.get("lease_owner")
+        if item.get("status") == "running":
+            worker = conn.execute(
+                "SELECT status, lease_until, lease_token FROM execution_workers WHERE id = ?",
+                (worker_id,),
+            ).fetchone()
+            if (
+                not worker_id
+                or not worker_token
+                or not lease_token
+                or worker is None
+                or worker["status"] != "online"
+                or worker["lease_until"] < now_value
+                or worker["lease_token"] != worker_token
+                or lease_owner != worker_id
+                or item.get("lease_token") != lease_token
+                or not item.get("lease_until")
+                or str(item["lease_until"]) < now_value
+            ):
+                raise ExecutionFabricError(
+                    f"worker {worker_id!r} does not own the active fenced lease for task {item_id!r}"
+                )
         exhausted = int(item["attempts"]) >= int(item["max_attempts"])
         status = "dead-letter" if exhausted else "queued"
         queue_name = item.get("dead_letter_queue") if exhausted and item.get("dead_letter_queue") else item["queue_name"]
+        due_at = None if exhausted else (_future_iso(now_value, backoff_seconds) if backoff_seconds else now_value)
+        finished_at = now_value if exhausted else None
         conn.execute(
             """
             UPDATE run_queue SET status = ?, queue_name = ?, error = COALESCE(?, error),
-                lease_owner = NULL, lease_until = NULL, lease_token = NULL, finished_at = NULL, updated_at = ?
+                due_at = ?, lease_owner = NULL, lease_until = NULL, lease_token = NULL,
+                finished_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, queue_name, error, now_value, item_id),
+            (status, queue_name, error, due_at, finished_at, now_value, item_id),
         )
-        _release_worker(conn, worker_id, now_value)
+        _release_worker(conn, lease_owner, now_value)
     return state_queue.get(conn, item_id)  # type: ignore[return-value]
 
 

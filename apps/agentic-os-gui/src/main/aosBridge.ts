@@ -47,6 +47,7 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
   const fallbackRuntime = {
     status: "unavailable" as const, queue_mode: "unknown", queue_depth: 0, running: 0,
     failed: 0, dead_letter: 0, active_workers: 0, unhealthy_workers: 0,
+    retrying: 0, delayed_retries: 0, oldest_wait_seconds: 0,
     reserved_interactive_slots: 1,
     max_interactive_running: 1,
     queues: [], worker_pools: [], workers: [], tasks: [], task_count: 0,
@@ -65,6 +66,8 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
         running: Number(queue.running ?? statuses.running ?? 0),
         failed: Number(queue.failed ?? statuses.failed ?? 0),
         dead_letter: Number(queue.dead_letter ?? statuses["dead-letter"] ?? 0),
+        retrying: Number(queue.retrying ?? 0),
+        delayed_retries: Number(queue.delayed_retries ?? 0),
       };
     }),
     worker_pools: Array.isArray(native.runtime.worker_pools) ? native.runtime.worker_pools : [],
@@ -75,6 +78,9 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     task_sample_limit: Number.isInteger(native.runtime.task_sample_limit) ? native.runtime.task_sample_limit : 200,
     captured_at: native.runtime.captured_at || generatedAt,
     max_interactive_running: Number.isInteger(native.runtime.max_interactive_running) ? native.runtime.max_interactive_running : 1,
+    retrying: Number(native.runtime.retrying || 0),
+    delayed_retries: Number(native.runtime.delayed_retries || 0),
+    oldest_wait_seconds: Number(native.runtime.oldest_wait_seconds || 0),
   } : fallbackRuntime;
   const launchedByOwnedId = new Map(
     Object.values(state.launchedSessions).map((session) => [`${session.harness}:${session.sessionId}`, session]),

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -47,6 +50,52 @@ def test_file_db_uses_wal_journal_mode(tmp_path: Path) -> None:
     finally:
         conn.close()
     assert db_path.is_file()
+
+
+def test_state_db_uses_full_synchronous_durability(tmp_path: Path) -> None:
+    conn = db.connect(tmp_path / "state.db")
+    try:
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+    finally:
+        conn.close()
+
+
+def test_state_backup_is_consistent_receipted_and_prunes_only_after_validation(tmp_path: Path) -> None:
+    source = tmp_path / "state.db"
+    backup_dir = tmp_path / "backups"
+    conn = db.connect(source)
+    try:
+        conn.execute(
+            "INSERT INTO cursors (name, payload_json, updated_at) VALUES ('durable', '{}', '2026-01-01T00:00:00Z')"
+        )
+    finally:
+        conn.close()
+
+    for day in range(1, 4):
+        result = db.backup_database(
+            source,
+            backup_dir,
+            retention=2,
+            now=datetime(2026, 1, day, tzinfo=timezone.utc),
+        )
+        assert result["integrity_check"] == "ok"
+        assert Path(result["snapshot"]).is_file()
+        assert Path(result["receipt"]).is_file()
+
+    snapshots = sorted(backup_dir.glob("state-*.db"))
+    assert [path.name for path in snapshots] == [
+        "state-20260102T000000Z.db",
+        "state-20260103T000000Z.db",
+    ]
+    assert not (backup_dir / "state-20260101T000000Z.json").exists()
+    latest = json.loads((backup_dir / "latest.json").read_text(encoding="utf-8"))
+    assert latest["snapshot"].endswith("state-20260103T000000Z.db")
+    restored = sqlite3.connect(snapshots[-1])
+    try:
+        assert restored.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert restored.execute("SELECT name FROM cursors").fetchone()[0] == "durable"
+    finally:
+        restored.close()
 
 
 def test_connect_creates_parent_directories(tmp_path: Path) -> None:

@@ -308,6 +308,9 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["status"] == "healthy"
     assert snapshot["runtime"]["queue_mode"] == "execution_fabric"
     assert snapshot["runtime"]["queue_depth"] == 1
+    assert snapshot["runtime"]["retrying"] == 0
+    assert snapshot["runtime"]["delayed_retries"] == 0
+    assert snapshot["runtime"]["oldest_wait_seconds"] >= 0
     assert {queue["queue_name"] for queue in snapshot["runtime"]["queues"]} == {"codex", "claude", "non_llm"}
     assert snapshot["runtime"]["task_count"] == 1
     assert snapshot["runtime"]["tasks"][0]["id"] == "gui-codex"

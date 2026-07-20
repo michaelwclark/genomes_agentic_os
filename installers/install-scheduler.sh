@@ -12,7 +12,7 @@ set -euo pipefail
 
 LABEL="com.genome.agentic-os.supervisor"
 ROOT="${HOME}/agentic_os"
-INTERVAL_MINUTES=15
+INTERVAL_MINUTES=5
 AGENTIC_OS=""
 MODE="dry-run"
 ACTION="install"

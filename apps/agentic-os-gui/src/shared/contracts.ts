@@ -107,6 +107,8 @@ export interface RuntimeQueue {
   running: number;
   failed: number;
   dead_letter: number;
+  retrying?: number;
+  delayed_retries?: number;
   max_concurrency?: number;
   max_queued?: number;
   enabled?: boolean;
@@ -148,6 +150,7 @@ export interface RuntimeTask {
   attempts?: number;
   created_at?: string;
   updated_at?: string;
+  due_at?: string;
   started_at?: string;
   finished_at?: string;
   lease_owner?: string;
@@ -183,6 +186,9 @@ export interface RuntimeHealth {
   dead_letter: number;
   active_workers: number;
   unhealthy_workers: number;
+  retrying: number;
+  delayed_retries: number;
+  oldest_wait_seconds: number;
   stale_queued?: number;
   expired_running_leases?: number;
   reserved_interactive_slots: number;

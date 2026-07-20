@@ -128,6 +128,12 @@ def build_runtime_health(
     fabric_metrics = mode_status["metrics"]
     statuses = Counter(str(item.get("status") or "unknown") for item in items)
     queued = [item for item in items if item.get("status") == "queued"]
+    retrying = [item for item in queued if int(item.get("attempts") or 0) > 0]
+    delayed_retries = [
+        item
+        for item in retrying
+        if (due_at := _parse_time(item.get("due_at"))) is not None and due_at > checked_at
+    ]
     running = [item for item in items if item.get("status") == "running"]
     queued_ages = [
         age
@@ -218,6 +224,8 @@ def build_runtime_health(
             "total_records": len(items),
             "status_counts": dict(statuses),
             "queued": len(queued),
+            "retrying": len(retrying),
+            "delayed_retries": len(delayed_retries),
             "stale_queued_over_24h": stale_queued,
             "oldest_queued_age_hours": round(max(queued_ages), 3) if queued_ages else 0.0,
             "top_backlogs": [{"ref": ref, "queued": count} for ref, count in backlog_refs.most_common(10)],
@@ -253,6 +261,7 @@ def render_runtime_health(report: dict[str, Any]) -> str:
         "## Queue",
         "",
         f"- Actionable queued: **{queue['queued']}**",
+        f"- Retrying: **{queue['retrying']}** ({queue['delayed_retries']} delayed by backoff)",
         f"- Stale over 24h: **{queue['stale_queued_over_24h']}**",
         f"- Oldest queued age: **{queue['oldest_queued_age_hours']:.1f}h**",
         f"- Total retained records: **{queue['total_records']}**",

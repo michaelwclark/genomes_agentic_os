@@ -39,3 +39,14 @@ letters, authoritative backend reads, health observability, self-heal routing,
 system notifications, concurrent supervisor batches, interactive capacity
 reservation, detached-child lease retention, and rollback blockers for
 unprojected work.
+
+Transient timeouts, provider throttling and 5xx responses, and recognized
+network transport failures use bounded exponential backoff. Unknown command
+failures remain terminal by default. The five-minute default supervisor cadence
+keeps queue pickup within AutoDev's documented 5-10 minute expectation without
+requiring an always-on broker on a laptop.
+
+The supervisor also creates one daily online SQLite snapshot after validating
+it with `PRAGMA integrity_check`; seven valid snapshots are retained under the
+installed shared-factory run-log tree. Operators can request the same guarded
+operation with `agentic-os state backup --root <root> --apply`.

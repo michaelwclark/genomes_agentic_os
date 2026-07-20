@@ -38,7 +38,7 @@ def test_register_state_cli_adds_state_group_with_all_subcommands() -> None:
 
 @pytest.mark.parametrize(
     "state_command",
-    ["init", "status", "import", "query", "prune", "verify-import"],
+    ["init", "status", "backup", "import", "query", "prune", "verify-import"],
 )
 def test_all_documented_subcommands_are_registered(state_command: str) -> None:
     parser = _build_parser()
@@ -77,6 +77,29 @@ def test_status_reports_counts_after_writes(tmp_path: Path, capsys: pytest.Captu
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["table_counts"]["events"] == 1
+
+
+def test_backup_is_dry_run_by_default_and_apply_writes_valid_snapshot(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "fixture_os"
+    db_path = db_module.default_db_path(root)
+    conn = db_module.connect(db_path)
+    conn.close()
+
+    rc, _ = _run(["state", "backup", "--root", str(root), "--json"])
+    assert rc == 0
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run["status"] == "would_backup"
+    assert list((root / "harness/shared_factory/06-runs-and-logs/state-backups").glob("*.db")) == []
+
+    rc, _ = _run(["state", "backup", "--root", str(root), "--apply", "--json"])
+    assert rc == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["status"] == "completed"
+    assert applied["integrity_check"] == "ok"
+    assert Path(applied["snapshot"]).is_file()
 
 
 def test_import_dry_run_never_creates_a_database(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
