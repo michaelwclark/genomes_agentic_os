@@ -29,17 +29,31 @@ controlled by `worktrees.directory`.
 
 | Order | Workflow | Owns | Terminal handoff |
 |---|---|---|---|
-| 1 | `readiness_and_context` | claim, grooming check, evidence and plan inputs | `context_ready` |
+| 1 | `readiness_and_context` | claim, grooming check, evidence, worktree and plan inputs | `planned` |
 | 2 | `isolated_implementation` | work item, worktree, implementation and local checks | `local_validation` |
 | 3 | `testing_review_and_pr_repair` | test triangle, PR, CI, Copilot and opposing review loops | `ready_for_merge` |
-| 4 | `release_propagation` | fix-version and cherry-pick/release-PR needs | `release_ready` or `not_required` |
-| 5 | `merge_deployment_and_cleanup` | merge observation, deployment watch, closeout and retention | `delivery_complete` |
+| 4 | `release_propagation` | fix-version and cherry-pick/release-PR needs | separate propagation receipt while retaining `ready_for_merge` or `merged` |
+| 5 | `merge_deployment_and_cleanup` | independently record Merge, Deploy, provider Closeout, and the cleanup decision | `delivery_complete`; Auto-Dev Health performs later resource pruning |
 
 Each workflow is documented completely in one `workflow.md`; its adjacent
 `workflow.yml` contains only the machine contract. Do not add routing/context
 stubs inside workflow folders.
 
-Every run also snapshots `dev_standards`, `qa_gates`, and `gitflow_topology`
+The workflow's historical name is compatibility. Development Delivery owns the
+closeout decision and `delivery_complete`; it does not claim the worktree,
+target-local runtime, active indexes, or durable packet have been cleaned.
+Operators use `develop stage --stage merge`, then `--stage deploy`, then
+`--stage closeout`; the broad Closeout range remains only as a compatibility
+catch-up path for older callers with every missing receipt.
+
+The Merge recorder accepts only completed typed evidence with an authoritative
+`merge_sha`, provider-read `source_head_sha` equal to the reviewed
+`subject_revision`, `provider`, `pull_request`, and
+`readback_verified: true`. Auto-Dev Health uses those same provider/PR fields
+and merge revision as its terminal authority.
+
+Every run also snapshots `auto_dev`, `environment_access`, `dev_standards`,
+`qa_gates`, and `gitflow_topology`
 from the configured 1-N root/domain/project Markdown folders into
 `effective-policies.json`.
 

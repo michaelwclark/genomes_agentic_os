@@ -1,0 +1,21 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-health
+title: Auto-Dev Health
+description: Audit final delivery receipts, preserve a resume manifest, prune reconstructable local resources, and finish the durable work item.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, cleanup, health, closeout, sdlc]
+dependencies: [skill:root:auto-dev-closeout, skill:root:os-cleaner]
+aliases: [harness/skills/auto-dev-health/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-health}
+validation: {commands: []}
+interface:
+  display_name: "Auto-Dev Health"
+  short_description: "Audit receipts, prune local resources, finish packet"
+  default_prompt: "Use $auto-dev-health on this existing delivered work item to audit receipts, preserve its resume manifest, remove only reconstructable local resources, and finish the packet."
+policy:
+  allow_implicit_invocation: true
+

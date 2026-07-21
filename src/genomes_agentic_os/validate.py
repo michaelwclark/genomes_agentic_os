@@ -395,6 +395,99 @@ def validate_project_code_settings(project_root: Path, result: ValidationResult)
             branch_template.format(ticket="ticket", slug="slug")
         except (KeyError, ValueError) as exc:
             result.errors.append(f"invalid project code setting worktrees.branch_template in {path}: {exc}")
+    runtime = data.get("runtime")
+    if not isinstance(runtime, dict):
+        result.errors.append(f"project code setting runtime must be a mapping: {path}")
+        return
+    ownership = str(runtime.get("ownership") or "").strip()
+    provider = str(runtime.get("provider") or "").strip()
+    if ownership == "not_managed":
+        if provider != "none":
+            result.errors.append(
+                f"project code setting runtime.provider must be none when ownership is not_managed: {path}"
+            )
+        if runtime.get("identity") != "not-managed":
+            result.errors.append(
+                f"project code setting runtime.identity must be not-managed when ownership is not_managed: {path}"
+            )
+    elif ownership == "managed":
+        identity_template = str(runtime.get("identity_template") or "").strip()
+        if not provider or provider == "none":
+            result.errors.append(
+                f"project code setting managed runtime.provider must name the provider: {path}"
+            )
+        if not identity_template:
+            result.errors.append(
+                f"project code setting managed runtime.identity_template is required: {path}"
+            )
+        else:
+            required_fields = ("{domain}", "{project}", "{worktree}")
+            if not all(field in identity_template for field in required_fields):
+                result.errors.append(
+                    "project code setting managed runtime.identity_template must include "
+                    f"{{domain}}, {{project}}, and {{worktree}} for globally item-unique ownership: {path}"
+                )
+            try:
+                resolved_identity = identity_template.format(
+                    domain="domain",
+                    project="project",
+                    worktree="worktree",
+                    worktree_path="/worktree/path",
+                    ticket="ticket",
+                )
+                if not resolved_identity.strip() or resolved_identity == "not-managed":
+                    result.errors.append(
+                        f"project code setting managed runtime.identity_template must resolve to a managed identity: {path}"
+                    )
+            except (KeyError, ValueError) as exc:
+                result.errors.append(
+                    f"invalid project code setting managed runtime.identity_template in {path}: {exc}"
+                )
+        for field in ("teardown_command", "readback_command"):
+            command = str(runtime.get(field) or "").strip()
+            if not command:
+                result.errors.append(
+                    f"project code setting managed runtime.{field} is required: {path}"
+                )
+            elif "{runtime_identity}" not in command:
+                result.errors.append(
+                    f"project code setting managed runtime.{field} must include "
+                    f"{{runtime_identity}} for exact-target execution: {path}"
+                )
+            elif any(
+                forbidden in command.lower()
+                for forbidden in (
+                    "system prune",
+                    "container prune",
+                    "volume prune",
+                    "worktree prune",
+                    "--all",
+                    "delete all",
+                )
+            ):
+                result.errors.append(
+                    f"project code setting managed runtime.{field} contains a forbidden global cleanup operation: {path}"
+                )
+    else:
+        result.errors.append(
+            f"project code setting runtime.ownership must be managed or not_managed: {path}"
+        )
+    review = data.get("review") if isinstance(data.get("review"), dict) else {}
+    authorship = review.get("authorship") if isinstance(review.get("authorship"), dict) else {}
+    ours = authorship.get("ours")
+    if not (
+        isinstance(ours, list)
+        and all(isinstance(identity, str) and identity.strip() and ":" in identity for identity in ours)
+    ):
+        result.errors.append(
+            "project code setting review.authorship.ours must contain only "
+            f"provider-qualified identities: {path}"
+        )
+    elif not ours:
+        result.warnings.append(
+            "project review.authorship.ours is empty; PR-authority Auto-Dev stages "
+            f"will fail closed until domain/project setup records a real identity: {path}"
+        )
 
 
 def validate_project_layer(project_root: Path, result: ValidationResult) -> None:
@@ -1202,6 +1295,31 @@ def validate_update_backup_contract(root: Path, result: ValidationResult) -> Non
 _SCHEMA_DIR = Path(__file__).parent.parent.parent / "schemas"
 
 SCHEMA_TARGETS: dict[str, list[str]] = {
+    "auto-dev-work-item.schema.json": [
+        "domains/*/02-projects/*/work-items/*/autodev.json",
+        "domains/*/02-projects/*/work-items/*/*/autodev.json",
+    ],
+    "auto-dev-health-evidence.schema.json": [
+        "domains/*/02-projects/*/work-items/*/*/artifacts/auto-dev-health/evidence.json",
+    ],
+    "auto-dev-health-preflight.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/preflight.json",
+    ],
+    "auto-dev-packet-manifest.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/receipts/packet-manifest.json",
+    ],
+    "auto-dev-resource-cleanup.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/receipts/resource-cleanup.json",
+    ],
+    "auto-dev-runtime-cleanup.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+    ],
+    "auto-dev-reopen.schema.json": [
+        "**/work-items/02-active/*/artifacts/auto-dev-reopen/reopen.json",
+    ],
+    "auto-dev-stage-policy-decision.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-orchestration/proofs/*/policy-decision-*.json",
+    ],
     "analytics-metrics.schema.json": ["harness/registries/analytics-metrics.yml"],
     "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
     "command-registry.schema.json": [REGISTRY_FILES["commands"]],

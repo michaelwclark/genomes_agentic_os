@@ -1,0 +1,19 @@
+# Copy this runtime mapping into the installed LOS project's
+# config/development.yml. Replace __AGENTIC_OS_ROOT__ with that installation's
+# absolute Agentic OS root before starting a new Development Delivery run.
+runtime:
+  ownership: managed
+  provider: los_fast_worktree
+  identity_template: '{domain}-{project}-{worktree}'
+  teardown_command: >-
+    /usr/bin/env AUTO_DEV_RUNTIME_ID={runtime_identity}
+    python3 "__AGENTIC_OS_ROOT__/harness/bin/agentic-os-los-fast-worktree-health.py"
+    teardown --domain {domain} --project {project} --repository-root "{repository_root}"
+    --worktree {worktree}
+    --worktree-path "{worktree_path}" --runtime-identity {runtime_identity}
+  readback_command: >-
+    /usr/bin/env AUTO_DEV_RUNTIME_ID={runtime_identity}
+    python3 "__AGENTIC_OS_ROOT__/harness/bin/agentic-os-los-fast-worktree-health.py"
+    readback --domain {domain} --project {project} --repository-root "{repository_root}"
+    --worktree {worktree}
+    --worktree-path "{worktree_path}" --runtime-identity {runtime_identity}

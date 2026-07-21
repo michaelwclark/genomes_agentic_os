@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR Review"
+  short_description: "Review another author's PR through canonical gates"
+  default_prompt: "Use $pr-review to review this PR from live GitHub and tracker evidence."

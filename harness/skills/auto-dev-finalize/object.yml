@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-finalize
+title: Auto-Dev Finalize
+description: Converge an agent-authored tracker PR family and record immutable merge readiness after independent review, without merging.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, review, merge, pr-family, sdlc]
+dependencies: [skill:root:auto-dev-review-repair]
+aliases: [harness/skills/auto-dev-finalize/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-finalize}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

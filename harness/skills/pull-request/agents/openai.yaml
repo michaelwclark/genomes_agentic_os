@@ -1,4 +1,4 @@
 interface:
   display_name: "Pull Request"
-  short_description: "Run a Graybeard PR review with high-risk findings and GitHub-ready comments"
-  default_prompt: "Use $pull-request to review this PR from GitHub/Jira remote evidence only. Do not use a local checkout as evidence or run tests/builds."
+  short_description: "Compatibility alias for canonical PR Review"
+  default_prompt: "Use $pull-request to route this request to $pr-review."

@@ -61,7 +61,19 @@ def test_upsert_transition_history_and_active_projection(tmp_path: Path) -> None
         assert work_items.active_now(conn)["active_count"] == 0
         assert conn.execute("SELECT COUNT(*) FROM work_item_history").fetchone()[0] == 2
 
-        reopened = work_items.update(conn, created["id"], state="building", actor="test")
+        with pytest.raises(
+            work_items.WorkItemError,
+            match="cannot be reactivated directly",
+        ):
+            work_items.update(conn, created["id"], state="building", actor="test")
+
+        reopened = work_items.update(
+            conn,
+            created["id"],
+            state="building",
+            actor="explicit-reopen-test",
+            allow_terminal_reopen=True,
+        )
         assert reopened["attention"] == "parked"
     finally:
         conn.close()
@@ -151,6 +163,56 @@ def test_work_cli_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     payload = json.loads(capsys.readouterr().out)
     assert payload["active_count"] == 1
     assert (root / work_items.ACTIVE_NOW_RELATIVE).is_file()
+
+
+def test_work_cli_finished_reconciles_packet_and_clears_worktree(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    conn = db.connect(db.default_db_path(root))
+    try:
+        work_items.upsert(
+            conn,
+            item_id="acme:app:one",
+            title="One",
+            state="building",
+            attention="active",
+            packet_path="domains/acme/02-projects/app/work-items/02-active/one",
+            worktree_path="domains/acme/02-projects/app/worktrees/one",
+            branch="feature/one",
+            context_summary="Health will reconcile this delivered item.",
+            verified=True,
+        )
+    finally:
+        conn.close()
+
+    assert main(
+        [
+            "work",
+            "set",
+            "acme:app:one",
+            "--root",
+            str(root),
+            "--state",
+            "finished",
+            "--attention",
+            "closed",
+            "--packet-path",
+            "domains/acme/02-projects/app/work-items/03-complete/one",
+            "--clear-worktree",
+            "--receipt",
+            "receipt://health",
+            "--verified",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    item = payload["item"]
+    assert item["state"] == "finished"
+    assert item["packet_path"].endswith("work-items/03-complete/one")
+    assert item["worktree_path"] is None
+    assert item["branch"] is None
+    assert payload["projection"]["active_count"] == 0
 
 
 def test_work_path_prefix_migration_is_dry_run_then_atomic(

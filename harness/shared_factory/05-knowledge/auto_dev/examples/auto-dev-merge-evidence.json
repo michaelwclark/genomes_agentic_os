@@ -1,0 +1,30 @@
+{
+  "schema": "development-stage-evidence/v1",
+  "state": "merged",
+  "status": "completed",
+  "summary": "GitHub reports that pull request 1234 merged the exact reviewed head into the configured target.",
+  "evidence": {
+    "merge_sha": "1234567890abcdef1234567890abcdef12345678",
+    "source_head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+    "provider": "github",
+    "pull_request": "github:example/los-app#1234",
+    "repository": "los_app_los_django",
+    "base_branch": "develop",
+    "author_identity": "github:michaelwclark",
+    "author_kind": "ours",
+    "readiness_authority": {
+      "owner": "finalize",
+      "ref": "artifacts/auto-dev-orchestration/stages/finalize/example.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "provider": "github",
+      "pull_request": "github:example/los-app#1234",
+      "repository": "los_app_los_django",
+      "base_branch": "develop",
+      "subject_revision": "abcdef1234567890abcdef1234567890abcdef12",
+      "author_identity": "github:michaelwclark",
+      "author_kind": "ours"
+    },
+    "readback_verified": true
+  },
+  "verified_at": "2026-07-20T20:00:00Z"
+}

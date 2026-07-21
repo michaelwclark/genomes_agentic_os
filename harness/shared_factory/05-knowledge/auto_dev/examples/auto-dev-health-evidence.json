@@ -1,0 +1,144 @@
+{
+  "schema": "auto-dev-health-evidence/v1",
+  "stage": "health",
+  "status": "completed",
+  "work_item_id": "FLYWL-1234",
+  "summary": "The receipt inventory is complete, the resume manifest is readable, scoped local resources are reconciled, and the durable packet is finished.",
+  "subject_revision": "1234567890abcdef1234567890abcdef12345678",
+  "terminal_revision": "abcdef1234567890abcdef1234567890abcdef12",
+  "evidence": {
+    "preflight_ref": "artifacts/auto-dev-health/preflight.json",
+    "receipt_refs": [
+      "artifacts/auto-dev-health/preflight.json",
+      "artifacts/auto-dev-health/receipts/terminal-authority.json",
+      "artifacts/auto-dev-health/receipts/closeout.json",
+      "artifacts/auto-dev-health/receipts/pre-cleanup-receipt-audit.json",
+      "artifacts/auto-dev-health/RESUME.md",
+      "artifacts/auto-dev-health/receipts/packet-manifest.json",
+      "artifacts/auto-dev-health/receipts/resource-cleanup.json",
+      "artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+      "artifacts/auto-dev-health/receipts/closed-worktree-readback.json",
+      "artifacts/auto-dev-health/receipts/work-state.json",
+      "artifacts/auto-dev-health/receipts/active-index.json",
+      "artifacts/auto-dev-health/receipts/validation.json"
+    ],
+    "terminal_authority": {
+      "kind": "pull_request_merge",
+      "provider": "github",
+      "ref": "github:example/los-app#1234",
+      "revision": "abcdef1234567890abcdef1234567890abcdef12",
+      "verified_at": "2026-07-20T20:00:00Z"
+    },
+    "receipt_audit": {
+      "required": [
+        "terminal_authority",
+        "closeout",
+        "receipt_audit",
+        "resume_manifest",
+        "packet_manifest",
+        "resource_cleanup",
+        "runtime_cleanup",
+        "work_state",
+        "active_index",
+        "validation"
+      ],
+      "present": [
+        {
+          "kind": "terminal_authority",
+          "ref": "artifacts/auto-dev-health/receipts/terminal-authority.json",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "kind": "closeout",
+          "ref": "artifacts/auto-dev-health/receipts/closeout.json",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "kind": "receipt_audit",
+          "ref": "artifacts/auto-dev-health/receipts/pre-cleanup-receipt-audit.json",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        {
+          "kind": "resume_manifest",
+          "ref": "artifacts/auto-dev-health/RESUME.md",
+          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "kind": "packet_manifest",
+          "ref": "artifacts/auto-dev-health/receipts/packet-manifest.json",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "kind": "resource_cleanup",
+          "ref": "artifacts/auto-dev-health/receipts/resource-cleanup.json",
+          "sha256": "9821852c9f5b68c3b0c815d25deda135006b69057da710ac940461fea6b03746"
+        },
+        {
+          "kind": "runtime_cleanup",
+          "ref": "artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+          "sha256": "9bb4a61cfc5356a9864d63604b893e00dd0a01d0eb5fe7f1a4dd086bb03197ac"
+        },
+        {
+          "kind": "resource_cleanup",
+          "ref": "artifacts/auto-dev-health/receipts/closed-worktree-readback.json",
+          "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        {
+          "kind": "work_state",
+          "ref": "artifacts/auto-dev-health/receipts/work-state.json",
+          "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        {
+          "kind": "active_index",
+          "ref": "artifacts/auto-dev-health/receipts/active-index.json",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        {
+          "kind": "validation",
+          "ref": "artifacts/auto-dev-health/receipts/validation.json",
+          "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+        }
+      ],
+      "missing": [],
+      "resume_ready": true
+    },
+    "resources": {
+      "worktree": {
+        "identity": "072026-123-flywl-1234",
+        "preflight": "Merged pull request verified; checkout is under the managed worktree root; no REOPEN.md.",
+        "action": "git worktree remove exact registered checkout",
+        "result": "removed",
+        "receipt": "artifacts/auto-dev-health/receipts/resource-cleanup.json"
+      },
+      "runtime": {
+        "identity": "los-los_app_los_django-072026-123-flywl-1234",
+        "preflight": "The runtime belongs only to this checkout and uses its target-local teardown command.",
+        "action": "/usr/bin/env AUTO_DEV_RUNTIME_ID=los-los_app_los_django-072026-123-flywl-1234 python3 /example/agentic-os/harness/bin/agentic-os-los-fast-worktree-health.py teardown --domain los --project los_app_los_django --repository-root \"/example/los-app-los-django\" --worktree 072026-123-flywl-1234 --worktree-path \"/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234\" --runtime-identity los-los_app_los_django-072026-123-flywl-1234",
+        "result": "removed",
+        "receipt": "artifacts/auto-dev-health/receipts/resource-cleanup.json"
+      }
+    },
+    "work_state": {
+      "canonical_work_id": "work:FLYWL-1234",
+      "before": "delivery_complete",
+      "before_attention": "active",
+      "after": "finished",
+      "history_receipt": "artifacts/auto-dev-health/receipts/work-state.json",
+      "packet_old_path": "work-items/02-active/FLYWL-1234",
+      "packet_new_path": "work-items/03-complete/FLYWL-1234"
+    },
+    "closed_worktree_registry_ref": "artifacts/auto-dev-health/receipts/closed-worktree-readback.json",
+    "active_index_refs": [
+      "artifacts/auto-dev-health/receipts/active-index.json"
+    ],
+    "validation_results": [
+      {
+        "command": "agentic-os validate --root /example/agentic-os",
+        "result": "passed",
+        "ref": "artifacts/auto-dev-health/receipts/validation.json"
+      }
+    ],
+    "residual_holds": []
+  },
+  "verified_at": "2026-07-20T20:05:00Z"
+}

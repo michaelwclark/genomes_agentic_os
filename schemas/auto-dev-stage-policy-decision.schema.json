@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-stage-policy-decision.schema.json",
+  "title": "Auto-Dev stage not-required policy decision",
+  "type": "object",
+  "required": [
+    "schema",
+    "work_item_id",
+    "canonical_work_id",
+    "domain",
+    "project",
+    "stage",
+    "decision",
+    "reason",
+    "decided_by",
+    "policy_fingerprint",
+    "policy_source",
+    "verified_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-stage-policy-decision/v1"},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "domain": {"type": "string", "minLength": 1},
+    "project": {"type": "string", "minLength": 1},
+    "stage": {
+      "enum": [
+        "detective",
+        "create_artifacts",
+        "review_others",
+        "pr_create",
+        "finalize",
+        "release",
+        "deploy"
+      ]
+    },
+    "decision": {"const": "not_required"},
+    "reason": {"type": "string", "minLength": 1},
+    "decided_by": {"type": "string", "minLength": 1},
+    "policy_fingerprint": {"type": "string", "minLength": 1},
+    "policy_source": {
+      "type": "object",
+      "required": ["ref", "sha256"],
+      "properties": {
+        "ref": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "verified_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

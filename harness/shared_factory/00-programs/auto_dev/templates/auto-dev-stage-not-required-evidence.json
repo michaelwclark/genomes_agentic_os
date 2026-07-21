@@ -1,0 +1,10 @@
+{
+  "schema": "auto-dev-stage-evidence/v1",
+  "stage": "<detective|create_artifacts|review_others|finalize|release>",
+  "status": "not_required",
+  "summary": "<plain-English explanation of why this stage does not apply>",
+  "evidence": {
+    "policy_ref": "<auto-dev-stage-policy-decision.json>"
+  },
+  "verified_at": "<ISO-8601 UTC>"
+}

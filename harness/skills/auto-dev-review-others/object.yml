@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-review-others
+title: Auto-Dev Review Others
+description: Friendly alias for canonical review of another author's pull request.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, review, pull-request, alias, sdlc]
+dependencies: [skill:root:pr-review]
+aliases: [harness/skills/auto-dev-review-others/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-review-others}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

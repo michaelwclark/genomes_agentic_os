@@ -1,0 +1,13 @@
+{
+  "schema": "auto-dev-closed-worktree-readback/v1",
+  "work_item_id": "FLYWL-1234",
+  "canonical_work_id": "los:los-app:flywl-1234",
+  "entry": {
+    "id": "072026-123-flywl-1234",
+    "path": "/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234",
+    "status": "closed",
+    "terminal_revision": "abcdef1234567890abcdef1234567890abcdef12",
+    "health_preflight_ref": "artifacts/auto-dev-health/preflight.json"
+  },
+  "captured_at": "2026-07-20T20:04:00Z"
+}

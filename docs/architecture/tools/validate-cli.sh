@@ -62,8 +62,13 @@ run "project create acme launch"     "$AOS" project create acme launch --root "$
 mkdir -p "$WORK/source-repo"
 run "project link-source acme launch" "$AOS" project link-source acme launch --root "$ROOT" --repo "$WORK/source-repo"
 run "project onboard acme launch"    "$AOS" project onboard acme launch --root "$ROOT"
+run "auto-dev help"                  "$AOS" auto-dev --help
+run "auto-dev everything help"       "$AOS" auto-dev everything --help
+run "auto-dev reopen help"           "$AOS" auto-dev reopen --help
+run "auto-dev health existing-state guard" "$AOS" auto-dev health acme launch VALIDATE-1 --root "$ROOT" --apply
 run "project work-item create intake" "$AOS" project work-item create acme launch --root "$ROOT" --title "Validation intake idea" --summary "capture the validation intake idea"
 run "project work-item create packet" "$AOS" project work-item create acme launch --root "$ROOT" --title "Validation packet idea" --summary "capture the expanded validation packet" --format packet
+run "project work-item set help"      "$AOS" project work-item set --help
 mkdir -p "$WORK/source-worktree"
 run "project worktree add acme launch" "$AOS" project worktree add acme launch source_worktree --root "$ROOT" --path "$WORK/source-worktree"
 run "route a request"                "$AOS" route "ship the launch blog post" --root "$ROOT"

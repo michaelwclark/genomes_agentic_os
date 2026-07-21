@@ -1,0 +1,7 @@
+interface:
+  display_name: "OS Cleaner"
+  short_description: "Safely reconcile worktrees and work items"
+  default_prompt: "Use $os-cleaner to audit cleanup candidates, preserve durable receipts, and apply only approved target-local cleanup."
+policy:
+  allow_implicit_invocation: true
+

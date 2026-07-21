@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-reopen.schema.json",
+  "title": "Auto-Dev immutable-history reopen receipt",
+  "type": "object",
+  "required": [
+    "schema",
+    "run_id",
+    "reason",
+    "requested_stage",
+    "canonical_work_id",
+    "source",
+    "repository",
+    "request_fingerprint",
+    "finished_packet",
+    "finished_autodev_sha256",
+    "health_receipt",
+    "health_sha256",
+    "active_packet",
+    "decision",
+    "created_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-reopen/v1"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "reason": {"type": "string", "minLength": 1},
+    "requested_stage": {"enum": ["develop", "qa"]},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["system", "key", "url"],
+      "properties": {
+        "system": {"type": ["string", "null"]},
+        "key": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "repository": {
+      "type": "object",
+      "required": ["id", "root", "base_branch"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "root": {"type": "string", "minLength": 1},
+        "base_branch": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "request_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "finished_packet": {"type": "string", "minLength": 1},
+    "finished_autodev_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "health_receipt": {"type": "string", "minLength": 1},
+    "health_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "active_packet": {"type": "string", "minLength": 1},
+    "decision": {"const": "preserve finished history and provision fresh resources"},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

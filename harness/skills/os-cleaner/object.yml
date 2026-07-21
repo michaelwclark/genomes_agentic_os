@@ -1,0 +1,21 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: os-cleaner
+title: OS Cleaner
+description: Apply canonical dry-run-first worktree and work-item cleanup policy with preserved receipts and active-index readback.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, operations, cleanup, worktrees, work-items]
+dependencies: []
+aliases: [harness/skills/os-cleaner/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/os-cleaner}
+validation: {commands: []}
+interface:
+  display_name: "OS Cleaner"
+  short_description: "Safely reconcile worktrees and work items"
+  default_prompt: "Use $os-cleaner to audit cleanup candidates, preserve durable receipts, and apply only approved target-local cleanup."
+policy:
+  allow_implicit_invocation: true
+

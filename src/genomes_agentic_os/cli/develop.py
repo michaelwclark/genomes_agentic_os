@@ -35,7 +35,7 @@ def handle_start(args: argparse.Namespace) -> int:
         plane, path = item.split("=", 1)
         if plane not in DEVELOPMENT_POLICY_PLANES or not path.strip():
             raise DevelopmentDeliveryError(
-                "--policy-overlay plane must be dev_standards, qa_gates, or gitflow_topology"
+                f"--policy-overlay plane must be one of: {', '.join(DEVELOPMENT_POLICY_PLANES)}"
             )
         overlays.setdefault(plane, []).append(path)
     result = start_development_run(
@@ -58,9 +58,14 @@ def handle_status(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).expanduser().resolve()
     portfolio = json.loads((run_dir / "portfolio.json").read_text(encoding="utf-8"))
     tasks = []
+    auto_dev = []
     for state_path in sorted((run_dir / "tasks").glob("*/state.json")):
-        tasks.append(TaskState(state_path).read())
-    _print({"portfolio": portfolio, "tasks": tasks}, json_output=args.json)
+        task = TaskState(state_path).read()
+        tasks.append(task)
+        projection = task.get("autodev_path")
+        if projection and Path(str(projection)).is_file():
+            auto_dev.append(json.loads(Path(str(projection)).read_text(encoding="utf-8")))
+    _print({"portfolio": portfolio, "tasks": tasks, "auto_dev": auto_dev}, json_output=args.json)
     return 0
 
 
@@ -228,7 +233,7 @@ def register(subparsers) -> None:
     stage.add_argument(
         "--stage",
         required=True,
-        choices=("readiness", "implementation", "review", "release_propagation", "closeout"),
+        choices=("readiness", "implementation", "review", "release_propagation", "merge", "deploy", "closeout"),
     )
     stage.add_argument(
         "--receipt",

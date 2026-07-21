@@ -35,6 +35,8 @@ Every run snapshots its dynamic Markdown policy planes:
 agentic-os develop policy <domain> <project> --plane dev_standards --json
 agentic-os develop policy <domain> <project> --plane qa_gates --json
 agentic-os develop policy <domain> <project> --plane gitflow_topology --json
+agentic-os develop policy <domain> <project> --plane auto_dev --json
+agentic-os develop policy <domain> <project> --plane environment_access --json
 ```
 
 The conventional folder order is root → domain → project. Projects may provide
@@ -53,7 +55,7 @@ agentic-os develop heartbeat <state.json> --owner <worker> --idempotency-key <ke
 Each delivery workflow also has a manual chat skill and a stage recorder:
 
 ```bash
-agentic-os develop stage <state.json> --stage <readiness|implementation|review|release_propagation|closeout> \
+agentic-os develop stage <state.json> --stage <readiness|implementation|review|release_propagation|merge|deploy|closeout> \
   --receipt <state>=<development-stage-evidence.json> ... \
   --idempotency-prefix <stable-key>
 ```
@@ -61,9 +63,20 @@ agentic-os develop stage <state.json> --stage <readiness|implementation|review|r
 `stage` records work already performed by the named skill; it is not a provider
 executor. It preflights every receipt before mutation. Each JSON file must use
 `development-stage-evidence/v1`, match the target state, contain terminal
-status, summary, structured evidence, and `verified_at`; PR, merge, readiness,
-and completion states require their specific readback fields.
+status, summary, structured evidence, and `verified_at`; PR, merge, deploy,
+readiness, and completion states require their specific readback fields.
+In particular, a completed `merged` receipt requires `merge_sha`, provider-read
+`source_head_sha` equal to the reviewed `subject_revision`, `provider`,
+`pull_request`, and `readback_verified: true`. See the Auto-Dev Merge template;
+Health later reuses that provider, PR reference, and merge revision exactly.
 
-Manual stage skills are `/auto-dev-readiness`, `/auto-dev-implementation`,
-`/auto-dev-review-repair`, `/auto-dev-release-propagation`, and
-`/auto-dev-closeout`. They also route implicitly from equivalent chat requests.
+Manual named stage skills are `/auto-dev-readiness`, `/auto-dev-develop`,
+`/auto-dev-review-self`, `/auto-dev-release-propagation`, `/auto-dev-merge`,
+`/auto-dev-deploy`, and `/auto-dev-closeout`. Develop delegates to
+`/auto-dev-implementation`, and Review Self delegates to
+`/auto-dev-review-repair`; both preserve the same canonical delivery state.
+They also route implicitly from equivalent chat requests.
+
+The friendlier operator facade is `agentic-os auto-dev`. It creates or resumes
+the same delivery task and `<work-item>/autodev.json`; it never owns another
+delivery transition engine.

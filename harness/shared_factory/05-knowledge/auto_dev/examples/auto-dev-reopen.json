@@ -1,0 +1,25 @@
+{
+  "schema": "auto-dev-reopen/v1",
+  "run_id": "072026-example-123-qa-reopen",
+  "reason": "QA found a follow-up after Health cleanup.",
+  "requested_stage": "qa",
+  "canonical_work_id": "acme:app:example-123",
+  "source": {
+    "system": "jira",
+    "key": "EXAMPLE-123",
+    "url": "https://tracker.example/browse/EXAMPLE-123"
+  },
+  "repository": {
+    "id": "git:github.com/example/app",
+    "root": "/Users/example/projects/app",
+    "base_branch": "main"
+  },
+  "request_fingerprint": "3333333333333333333333333333333333333333333333333333333333333333",
+  "finished_packet": "/Users/example/agentic_os/domains/acme/02-projects/app/work-items/03-complete/example-123",
+  "finished_autodev_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "health_receipt": "artifacts/auto-dev-health/evidence.json",
+  "health_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "active_packet": "/Users/example/agentic_os/domains/acme/02-projects/app/work-items/02-active/example-123-qa-reopen",
+  "decision": "preserve finished history and provision fresh resources",
+  "created_at": "2026-07-20T21:15:00Z"
+}

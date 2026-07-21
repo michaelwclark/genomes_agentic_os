@@ -4,20 +4,33 @@ id: auto-dev
 title: Auto-Dev
 description: >-
   Route programming work through the canonical polymorphic investigation,
-  artifact, delivery, review, release, deployment, and closeout family.
+  artifact, delivery, review, release, deployment, closeout, and lifecycle
+  health family.
 status: active
 scope: {level: root, domain: null, project: null}
 owner: {type: package, id: genomes_agentic_os}
 entrypoint: SKILL.md
 tags: [skill, sdlc, development]
 dependencies:
+  - skill:root:auto-dev-everything
+  - skill:root:auto-dev-grooming
   - skill:root:auto-dev-create-artifacts
   - skill:root:auto-dev-detective
   - skill:root:auto-dev-readiness
   - skill:root:auto-dev-implementation
+  - skill:root:auto-dev-develop
+  - skill:root:auto-dev-document
+  - skill:root:auto-dev-qa
   - skill:root:auto-dev-review-repair
+  - skill:root:auto-dev-review-self
+  - skill:root:auto-dev-review-others
+  - skill:root:auto-dev-finalize
+  - skill:root:auto-dev-merge
   - skill:root:auto-dev-release-propagation
+  - skill:root:auto-dev-release
+  - skill:root:auto-dev-deploy
   - skill:root:auto-dev-closeout
+  - skill:root:auto-dev-health
 aliases: [harness/skills/auto-dev/SKILL.md]
 runtime: {root: runtime/objects/skills/skill/root/auto-dev}
 validation: {commands: []}

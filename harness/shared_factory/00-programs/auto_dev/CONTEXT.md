@@ -3,8 +3,9 @@
 ## Purpose
 
 Provide one discoverable SDLC front door from a signal or idea through evidence,
-excellent artifacts, implementation, review/repair, release/deploy, and durable
-closeout.
+excellent artifacts, implementation, review/repair, release/deploy, delivery
+closeout, and receipt-backed lifecycle hygiene that leaves a resumable finished
+packet.
 
 ## Source hierarchy
 
@@ -26,3 +27,9 @@ closeout.
 | Investigation config | `investigation-config/` at root/domain/project | Detective and ticket grooming |
 
 Every resolver is dynamic: add a Markdown file and the next run consumes it.
+
+Closeout and Health are separate responsibilities. Closeout reconciles live
+provider/delivery truth and proves `delivery_complete`. Health audits that proof
+before removing reconstructable local resources, writes the resume manifest,
+and preserves the work-item packet in the finished lane. It must not infer
+permission for a host-wide/all-resource container operation or an automated schedule.

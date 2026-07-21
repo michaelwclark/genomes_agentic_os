@@ -103,6 +103,47 @@ def test_capability_inventory_regenerate_creates_missing(inited_root: Path, caps
     assert inventory_path.exists()
 
 
+def test_capability_inventory_regenerate_replaces_stale_projection(
+    inited_root: Path, capsys
+) -> None:
+    inventory_path = inited_root / "harness" / "INVENTORY.md"
+    inventory_path.write_text("# stale inventory\n", encoding="utf-8")
+
+    assert main(
+        ["capability", "inventory", "--root", str(inited_root), "--regenerate"]
+    ) == 0
+
+    refreshed = inventory_path.read_text(encoding="utf-8")
+    assert refreshed.startswith("# Agentic OS Inventory")
+    assert "auto-dev-health" in refreshed
+    assert "updated:" in capsys.readouterr().out
+
+
+def test_capability_inventory_regenerate_preserves_installed_custom_entries(
+    inited_root: Path,
+) -> None:
+    commands_path = inited_root / "harness" / "registries" / "commands.yml"
+    commands = {
+        "commands": [
+            {
+            "id": "local-release-audit",
+            "command": "/local-release-audit",
+            "description": "Project-local release evidence audit.",
+            "source": "harness/commands/local-release-audit.md",
+            }
+        ]
+    }
+    commands_path.write_text(yaml.safe_dump(commands, sort_keys=False), encoding="utf-8")
+
+    assert main(
+        ["capability", "inventory", "--root", str(inited_root), "--regenerate"]
+    ) == 0
+
+    refreshed = (inited_root / "harness" / "INVENTORY.md").read_text(encoding="utf-8")
+    assert "`local-release-audit`" in refreshed
+    assert "`auto-dev-health`" in refreshed
+
+
 def test_capability_list_without_init_uses_builtin_payloads(tmp_path: Path, capsys) -> None:
     """capability list on an empty root still shows built-in registry payloads (no init needed)."""
     ret = main(["capability", "list", "--root", str(tmp_path)])

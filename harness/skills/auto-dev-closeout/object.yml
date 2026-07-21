@@ -2,7 +2,7 @@ api_version: agentic-os-library-object/v1
 kind: skill
 id: auto-dev-closeout
 title: Auto-Dev Closeout
-description: Validate deployment, reconcile providers, clean up, and close delivery.
+description: Reconcile providers and close canonical delivery after merge and deployment decisions have verified receipts.
 status: active
 scope: {level: root, domain: null, project: null}
 owner: {type: package, id: genomes_agentic_os}

@@ -16,6 +16,8 @@ versioned program definition.
 Auto Dev
 ├── Start Here and Operating Model
 ├── Policy and Configuration
+│   ├── Auto-Dev Workflow Policy
+│   ├── Environment Access
 │   ├── Development, QA, and Gitflow
 │   ├── Investigation Sources
 │   └── Artifact Contracts
@@ -30,18 +32,96 @@ Auto Dev
 │   ├── LOS Investigation
 │   ├── Kanga Investigation
 │   └── Failure and Recovery
+├── Everything
+├── Groom
 ├── Readiness and Context
-├── Isolated Implementation
-├── Testing, Review, and PR Repair
+├── Develop
+├── Document
+├── Review Self
+├── Review Others
+├── QA
 ├── Release Propagation
-└── Merge, Deployment, and Cleanup
+├── Finalize
+├── Merge
+├── Release
+├── Deploy
+├── Closeout
+└── Health
 ```
+
+That child-page sequence is the canonical executable order: Groom, Detective,
+Create Artifacts, Readiness, Develop, Document, Review Self, Review Others, QA,
+Release Propagation, Finalize, Merge, Release, Deploy, Closeout, Health.
+Everything explains the orchestration across those pages; it is not a
+seventeenth stage. Single-stage commands use the same order and predecessor
+receipts.
 
 Each workflow page is manually runnable and must include: intended outcome;
 implicit and explicit triggers; inputs and prerequisites; ordered states/steps;
 root/domain/project/invocation policy inputs; outputs; success validations;
 failure classes and exact resume behavior; receipts; command and skill; owner;
 and links to its code, tests, policies, and Archive Soon rows.
+
+The Closeout page must describe provider/delivery reconciliation and the
+`delivery_complete` gate. The Health page must describe receipt-first audit,
+the resume manifest, the complete pre-cleanup packet manifest and hashes,
+immutable packet-local preflight, target-local runtime receipt bound to that
+preflight hash, exact known-root worktree cleanup, one atomic two-resource
+receipt, a packet-local closed-worktree registry readback cross-checked against
+live `worktrees/closed.yml`, the semantic relocation exception for only
+`work.yml` and `autodev.json`, the finished-lane move, and reopen/hold
+protection. It must state that worktree identity, path, branch, and HEAD are
+exact; runtime identity includes domain/project/worktree; teardown and readback
+commands are identity-bound; the readback is at most 15 minutes old and is
+executed again immediately; and exit 0 means only the registered worktree
+runtime is absent. It must forbid force, Git metadata sweeps, host-wide/all
+cleanup, guessed resources, and shared-runtime teardown. Health is manually
+runnable and has no enabled schedule.
+
+Provider-specific Health documentation must name every durable item-owned
+surface its readback proves. For LOS fast worktrees that means the declared
+runtime identity, exact Git worktree and compose project, per-worktree
+containers, exact project-labeled/prefixed networks and volumes, Postgres
+database, Redis and Valkey namespaces, fast-worktree registry row, and
+`.env.worktree`. It must distinguish the shared external LOS network from
+project residue and state that Docker enumeration errors or unavailable shared
+infra make those resources unprovable and block cleanup; an ordinary status
+display or grep is not a substitute.
+
+The Finalize, Review Others, and Merge pages must explain the authorship
+boundary. Provider-read `author_identity` is classified against the frozen task
+`authorship.ours` list; callers cannot select `author_kind`. Finalize authorizes
+only `ours` and only records `readiness_decision: ready_for_merge`. Review
+Others authorizes only `others` and records a clean `review_no_merge` result.
+Merge consumes the hashed completed receipt from the correct owner and keeps
+provider, pull request, repository, base branch, reviewed revision, author
+identity, and derived author kind identical through open/ready/merged readback.
+The completed Merge receipt also contains `merge_sha`, provider-read
+`source_head_sha` equal to `subject_revision`, and `readback_verified: true`.
+The Health page must show that terminal-authority provider/reference and
+revision match those Merge fields exactly, with no renamed or inferred
+substitute.
+
+Every page that permits `not_required` must show the strict
+`auto-dev-stage-policy-decision/v1` fields and explain that `policy_source` is
+the exact frozen delivery policy receipt plus SHA-256. Recording materializes
+the policy and decision into packet-local immutable proof. Standalone
+`not_required` is limited to Detective, Create Artifacts, Review Others,
+Finalize, and Release; Release Propagation and Deploy route the same typed
+decision through Development Delivery. The other stages must complete.
+
+The work-item page must explain `autodev.json` as a projection over canonical
+delivery state, not an independent state machine. It must show Everything and
+single-stage invocation, typed completion/not-required receipts, and resume.
+For a multi-ticket invocation, it must show one packet and `autodev.json` per
+ticket and ticket-local `--state` resume. Finished packets are immutable: an
+explicit receipt-backed canonical work-item reopen starts a new delivery run
+and new resources while the old packet remains unchanged.
+
+The Health evidence page must list these ten exact receipt kinds:
+`terminal_authority`, `closeout`, `receipt_audit`, `resume_manifest`,
+`packet_manifest`, `resource_cleanup`, `runtime_cleanup`, `work_state`,
+`active_index`, and `validation`.
 
 ## Visual and readability standard
 

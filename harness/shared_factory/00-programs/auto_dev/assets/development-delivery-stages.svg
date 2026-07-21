@@ -56,8 +56,8 @@
   </g>
   <g class="stage">
     <rect x="590" y="155" width="230" height="240" rx="22" fill="#7c3aed" stroke="#c4b5fd"/>
-    <text x="614" y="190" class="n">03 · REVIEW</text>
-    <text x="614" y="227" class="h">PR + repair loop</text>
+    <text x="614" y="190" class="n">03 · PR CREATE</text>
+    <text x="614" y="227" class="h">Target family</text>
     <text x="614" y="263" class="p">Finishing review</text>
     <text x="614" y="289" class="p">PR target readback</text>
     <text x="614" y="315" class="p">CI + reviewer repair</text>
@@ -66,8 +66,8 @@
   </g>
   <g class="stage">
     <rect x="850" y="155" width="230" height="240" rx="22" fill="#b45309" stroke="#fbbf24"/>
-    <text x="874" y="190" class="n">04 · PROPAGATE</text>
-    <text x="874" y="227" class="h">Release topology</text>
+    <text x="874" y="190" class="n">04 · REVIEW</text>
+    <text x="874" y="227" class="h">Review + repair loop</text>
     <text x="874" y="263" class="p">Resolve target branches</text>
     <text x="874" y="289" class="p">Create sibling work</text>
     <text x="874" y="315" class="p">Verify PR family</text>
@@ -77,11 +77,11 @@
   <g class="stage">
     <rect x="1110" y="155" width="260" height="240" rx="22" fill="#be123c" stroke="#fda4af"/>
     <text x="1134" y="190" class="n">05 · CLOSEOUT</text>
-    <text x="1134" y="227" class="h">Merge → deploy → clean</text>
+    <text x="1134" y="227" class="h">Merge → deploy → closeout</text>
     <text x="1134" y="263" class="p">Authoritative merge readback</text>
     <text x="1134" y="289" class="p">Deployment when required</text>
     <text x="1134" y="315" class="p">Post-deploy validation</text>
-    <text x="1134" y="341" class="p">Cleanup + durable learning</text>
+    <text x="1134" y="341" class="p">Cleanup decision + learning</text>
     <text x="1134" y="375" class="gate">Gate: delivery complete</text>
   </g>
 

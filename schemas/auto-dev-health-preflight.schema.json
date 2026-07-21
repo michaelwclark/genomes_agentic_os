@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-health-preflight.schema.json",
+  "title": "Auto-Dev Health pre-cleanup gate",
+  "type": "object",
+  "required": [
+    "schema", "mode", "work_item_id", "canonical_work_id", "domain", "project",
+    "packet_path", "task_state_ref", "task_state_sha256", "task_snapshot", "subject_revision",
+    "terminal_revision", "source_head_sha", "merge_sha", "merge_receipt_ref",
+    "merge_receipt_sha256", "closeout_receipt_ref", "closeout_receipt_sha256",
+    "resume_manifest", "packet_manifest", "receipt_audit", "worktree", "runtime", "repository",
+    "dirty_disposition", "residual_holds", "safe_to_cleanup", "prepared_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-health-preflight/v1"},
+    "mode": {"enum": ["apply", "dry-run"]},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "domain": {"type": "string", "minLength": 1},
+    "project": {"type": "string", "minLength": 1},
+    "packet_path": {"type": "string", "minLength": 1},
+    "task_state_ref": {"type": "string", "minLength": 1},
+    "task_state_sha256": {"$ref": "#/$defs/sha256"},
+    "task_snapshot": {"$ref": "#/$defs/hashedRef"},
+    "subject_revision": {"$ref": "#/$defs/revision"},
+    "terminal_revision": {"$ref": "#/$defs/revision"},
+    "source_head_sha": {"$ref": "#/$defs/revision"},
+    "merge_sha": {"$ref": "#/$defs/revision"},
+    "merge_receipt_ref": {"type": "string", "minLength": 1},
+    "merge_receipt_sha256": {"$ref": "#/$defs/sha256"},
+    "closeout_receipt_ref": {"type": "string", "minLength": 1},
+    "closeout_receipt_sha256": {"$ref": "#/$defs/sha256"},
+    "resume_manifest": {"$ref": "#/$defs/hashedRef"},
+    "packet_manifest": {"$ref": "#/$defs/hashedRef"},
+    "receipt_audit": {"$ref": "#/$defs/hashedRef"},
+    "worktree": {
+      "type": "object",
+      "required": ["identity", "path", "branch"],
+      "properties": {
+        "identity": {"type": "string", "minLength": 1},
+        "path": {"type": "string"},
+        "branch": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "oneOf": [
+        {"$ref": "#/$defs/managedRuntime"},
+        {"$ref": "#/$defs/notManagedRuntime"}
+      ]
+    },
+    "repository": {
+      "type": "object",
+      "required": ["id", "base_branch"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "base_branch": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "dirty_disposition": {"const": "clean_only"},
+    "residual_holds": {"type": "array", "maxItems": 0},
+    "safe_to_cleanup": {"const": true},
+    "prepared_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "revision": {"type": "string", "pattern": "^[0-9a-fA-F]{7,64}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hashedRef": {
+      "type": "object",
+      "required": ["ref", "sha256"],
+      "properties": {
+        "ref": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "managedRuntime": {
+      "type": "object",
+      "required": [
+        "identity",
+        "ownership",
+        "provider",
+        "teardown_command",
+        "readback_command"
+      ],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "minLength": 1,
+          "not": {"const": "not-managed"}
+        },
+        "ownership": {"const": "managed"},
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "not": {"const": "none"}
+        },
+        "teardown_command": {"type": "string", "minLength": 1},
+        "readback_command": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "notManagedRuntime": {
+      "type": "object",
+      "required": ["identity", "ownership", "provider"],
+      "properties": {
+        "identity": {"const": "not-managed"},
+        "ownership": {"const": "not_managed"},
+        "provider": {"const": "none"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

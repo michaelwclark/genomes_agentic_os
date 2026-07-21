@@ -1,0 +1,22 @@
+{
+  "schema": "auto-dev-runtime-cleanup/v1",
+  "work_item_id": "replace-with-work-item-id",
+  "canonical_work_id": "work:replace-with-work-item-id",
+  "runtime_identity": "not-managed",
+  "ownership": "not_managed",
+  "provider": "none",
+  "teardown": {
+    "command": "not_managed",
+    "ref": "artifacts/auto-dev-health/receipts/runtime-not-managed.json",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "readback": {
+    "command": "not_managed",
+    "ref": "artifacts/auto-dev-health/receipts/runtime-not-managed.json",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "result": "not_managed",
+  "readback_verified": true,
+  "preflight_sha256": "50645058c0de8d53d2766a81b6e5d26780b1a98ccd0861b08fc8c88c9154b13f",
+  "verified_at": "2026-01-01T00:00:00Z"
+}

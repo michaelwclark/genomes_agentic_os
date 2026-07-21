@@ -1,0 +1,9 @@
+{
+  "schema": "auto-dev-stage-evidence/v1",
+  "stage": "<stage-name>",
+  "status": "completed",
+  "summary": "<plain-English verified outcome>",
+  "subject_revision": "<head-sha, document-version, or provider-revision when revision-sensitive>",
+  "evidence": {"receipt_refs": ["<durable receipt reference>"]},
+  "verified_at": "<ISO-8601 UTC>"
+}

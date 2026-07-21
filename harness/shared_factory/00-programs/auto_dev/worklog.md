@@ -1,5 +1,62 @@
 # Auto-Dev Worklog
 
+## 2026-07-20 — LOS runtime proof hardening
+
+- Added a source-owned LOS fast-worktree Health wrapper that binds the frozen
+  domain/project/worktree identity to the exact Git worktree, runtime registry
+  row, compose containers/networks/volumes, database, cache prefixes, and env
+  file while excluding the shared external LOS network.
+- Replaced the unsafe sample `status.sh | grep` readback with explicit
+  Postgres, Redis, and Valkey queries. Shared infra down/unqueryable now blocks
+  both teardown and readback instead of hiding residual DB/cache state.
+- Added a copyable LOS project runtime overlay, provider examples, component
+  registration, and focused negative tests for infra-down, Docker enumeration
+  failure, failed-Compose network residue, and DB/cache residue.
+
+## 2026-07-20 — Health lifecycle workflow
+
+- Added Health as the final Auto-Dev stage after Closeout. Closeout continues to
+  reconcile provider/delivery state and prove `delivery_complete`; Health owns
+  the final receipt audit and lifecycle hygiene.
+- Defined receipt-first, dry-run-first cleanup for one exact registered
+  reconstructable worktree and one identity-bound target-local runtime. Cleanup
+  has no force, metadata-sweep, host-wide/all-resource, shared-runtime, or guessed-
+  identity path; reopen/hold markers stop cleanup.
+- Kept the durable work-item packet and compact receipts, added a resume
+  manifest, and moved completed packets to the canonical finished lane instead
+  of deleting history.
+- Added a full pre-cleanup packet manifest, exact worktree id/path/branch/HEAD
+  checks, domain/project/worktree runtime identities, packet-local teardown and
+  readback hashes, a 15-minute freshness window, and an immediate readback whose
+  exit 0 means the exact registered worktree runtime is absent. Only `work.yml`
+  and `autodev.json` may change semantically during the finished-lane move.
+- Required ten final Health receipt kinds: terminal authority, Closeout, receipt
+  audit, resume manifest, packet manifest, resource cleanup, runtime cleanup,
+  work state, active index, and validation.
+- Kept Health manually runnable with command/skill parity. No schedule or
+  automation was enabled.
+
+## 2026-07-20 — Everything, single-stage verbs, and work-item state
+
+- Added the `agentic-os auto-dev` plain-English facade, `/auto-dev-everything`,
+  and the exact ordered family: Groom, Detective, Create Artifacts, Readiness,
+  Develop, Document, Review Self, Review Others, QA, Release Propagation,
+  Finalize, Merge, Release, Deploy, Closeout, and Health. Every workflow keeps
+  an independently callable command and skill.
+- Added `<work-item>/autodev.json` as an atomic cross-workflow projection over
+  Development Delivery, typed standalone workflow receipts, sync/readback, and
+  legacy read-only references.
+- Defined multi-ticket runs as one task/packet/`autodev.json` per ticket with
+  ticket-local resume, and finished packets as immutable history that require a
+  receipt-backed canonical reopen plus a fresh delivery run.
+- Bound `not_required` to a typed identity/policy/fingerprint/hash decision and
+  bound Merge to immutable Finalize-versus-Review-Others authorship authority,
+  configured repository/base, provider-read identity, and exact revision chain.
+- Added `auto_dev` and `environment_access` Markdown planes with root stage
+  policy and sparse domain/project additions for every registered project.
+- Kept manual kickoff canonical. No schedule or opened-PR automation was
+  enabled; future adapters must invoke the same entrypoint and state contract.
+
 ## 2026-07-20 — overlap inventory and retirement controls
 
 - Replaced the category-only Archive Soon notes with a stable, item-by-item

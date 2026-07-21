@@ -4,9 +4,14 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
-from genomes_agentic_os.development_delivery import resolve_development_policy, start_development_run
+from genomes_agentic_os.development_delivery import (
+    DevelopmentDeliveryError,
+    resolve_development_policy,
+    start_development_run,
+)
 from genomes_agentic_os.scaffold import create_project
 
 
@@ -36,6 +41,7 @@ def _tree(tmp_path: Path) -> tuple[Path, Path]:
         "repository": {"root": str(repo), "base_branch": "main"},
         "worktrees": {"directory": "worktrees", "branch_template": "feature/{ticket}-{slug}"},
         "work_items": {"active_status": "building"},
+        "runtime": {"ownership": "not_managed", "provider": "none", "identity": "not-managed"},
         "validation": {"commands": [], "test_policy": "risk_based_triangle"},
         "review": {"opposing_harness": {"required": True}},
         "merge": {"policy": "never_auto"},
@@ -73,6 +79,43 @@ def test_conventional_root_domain_project_files_are_dynamic_and_receipted(tmp_pa
     plan = start_development_run(root, "acme", "app", ["ENG-1"], run_id="policy-run", apply=False)
     assert plan["policy_fingerprint"]
     assert plan["policy_sources"]["dev_standards"][-1].endswith("40_new_focus.md")
+
+
+def test_snake_case_command_resolves_recovered_kebab_case_project_room(tmp_path: Path) -> None:
+    root, project = _tree(tmp_path)
+    legacy_project = project.parent / "legacy-app"
+    project.rename(legacy_project)
+    policy = legacy_project / "config/auto_dev/10-legacy.md"
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    policy.write_text("# Legacy project policy\n", encoding="utf-8")
+
+    resolved = resolve_development_policy(root, "acme", "legacy_app", "auto_dev")
+
+    assert resolved["project"] == "legacy_app"
+    assert resolved["sources"][-1]["source_ref"].endswith(
+        "domains/acme/02-projects/legacy-app/config/auto_dev/10-legacy.md"
+    )
+
+
+def test_policy_readback_works_before_repository_onboarding(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    create_project(root, "acme", "unrooted")
+    project = root / "domains/acme/02-projects/unrooted"
+    policy = project / "config/auto_dev/10-unrooted.md"
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    policy.write_text(
+        "# Unrooted project policy\n\nReadiness blocks until a repository is verified.\n",
+        encoding="utf-8",
+    )
+
+    resolved = resolve_development_policy(root, "acme", "unrooted", "auto_dev")
+
+    assert resolved["project"] == "unrooted"
+    assert resolved["sources"][-1]["source_ref"].endswith(
+        "domains/acme/02-projects/unrooted/config/auto_dev/10-unrooted.md"
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="repository.root or repository.catalog"):
+        start_development_run(root, "acme", "unrooted", ["ENG-3"], apply=False)
 
 
 def test_applied_run_pins_policy_snapshot_and_reports_later_drift(tmp_path: Path) -> None:

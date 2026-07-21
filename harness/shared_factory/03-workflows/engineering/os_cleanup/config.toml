@@ -1,0 +1,80 @@
+
+# Agentic OS managed additions
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
+project_doc_fallback_filenames = ["AGENTS.md", "PROFILE.md", "CLAUDE.md"]
+[profiles.workflow_or_task]
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+
+# Agentic OS managed additions
+[mcp_servers.context_mode]
+command = "context-mode"
+secret_policy = "no inline secrets; env var names only"
+
+# Agentic OS managed additions
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+bearer_token_env_var = "GITHUB_PAT_TOKEN"
+secret_policy = "no inline secrets; env var names only"
+
+# Agentic OS managed additions
+[mcp_servers.genomes_brain]
+url = "http://127.0.0.1:3155/mcp"
+secret_policy = "no inline secrets; env var names only"
+
+# Agentic OS managed additions
+[mcp_servers.notion]
+url = "https://mcp.notion.com/mcp"
+secret_policy = "no inline secrets; env var names only"
+
+# Agentic OS managed additions
+[mcp_servers.filesystem_runtime]
+command = "agentic-os"
+args = ["config", "doctor"]
+secret_policy = "no inline secrets"
+
+# Agentic OS managed additions
+[otel]
+log_user_prompt = false
+exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+# Agentic OS managed additions
+[profiles.workflow_or_task.agentic_os]
+layer = "workflow_or_task"
+prompt_files = ["AGENTS.md", "PROFILE.md", "CLAUDE.md"]
+context_contract = "context-contract.yml"
+rules_file = "inherited"
+tool_registry_file = "inherited"
+mcp_availability = "workflow-approved systems only"
+environment = "local filesystem"
+
+# Agentic OS managed additions
+[profiles.workflow_orchestrator.agentic_os]
+layer = "workflow_or_task"
+prompt_files = ["AGENTS.md", "PROFILE.md", "CLAUDE.md"]
+context_contract = "context-contract.yml"
+rules_file = "inherited"
+tool_registry_file = "inherited"
+mcp_availability = "workflow-approved systems only"
+environment = "local filesystem"
+
+# Agentic OS managed additions
+[profiles.workflow_orchestrator]
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+model_verbosity = "low"
+model_reasoning_summary = "concise"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"

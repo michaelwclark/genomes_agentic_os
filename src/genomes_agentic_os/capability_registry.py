@@ -54,6 +54,24 @@ CAPABILITY_COLLECTIONS = {
 def command_entries() -> list[dict[str, str]]:
     return [
         {
+            "id": "auto-dev",
+            "command": "/auto-dev",
+            "description": "Route to the complete Auto-Dev program or one named plain-English workflow.",
+            "source": "harness/commands/auto-dev.md",
+        },
+        {
+            "id": "auto-dev-everything",
+            "command": "/auto-dev-everything",
+            "description": "Take a tracker item through every applicable Auto-Dev workflow using one resumable autodev.json.",
+            "source": "harness/commands/auto-dev-everything.md",
+        },
+        {
+            "id": "auto-dev-grooming",
+            "command": "/auto-dev-grooming",
+            "description": "Groom rough work into a source-backed implementation-ready specification and provider backlog.",
+            "source": "harness/commands/auto-dev-grooming.md",
+        },
+        {
             "id": "auto-dev-detective",
             "command": "/auto-dev-detective",
             "description": "Investigate bugs, QA failures, logs, alerts, incidents, and RCA questions with deployed-version gates, polymorphic evidence sources, pause/resume, and receipts.",
@@ -78,10 +96,52 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/auto-dev-implementation.md",
         },
         {
+            "id": "auto-dev-develop",
+            "command": "/auto-dev-develop",
+            "description": "Friendly single-step entrypoint for canonical implementation and local validation.",
+            "source": "harness/commands/auto-dev-develop.md",
+        },
+        {
+            "id": "auto-dev-document",
+            "command": "/auto-dev-document",
+            "description": "Document code, issues, architecture, operations, QA, releases, and handoffs with verified output.",
+            "source": "harness/commands/auto-dev-document.md",
+        },
+        {
+            "id": "auto-dev-qa",
+            "command": "/auto-dev-qa",
+            "description": "Run the project-configured QA gates as an independently callable, receipt-backed step.",
+            "source": "harness/commands/auto-dev-qa.md",
+        },
+        {
             "id": "auto-dev-review-repair",
             "command": "/auto-dev-review-repair",
             "description": "Run review, governed PR creation, quiet CI/review repair, and merge-readiness validation.",
             "source": "harness/commands/auto-dev-review-repair.md",
+        },
+        {
+            "id": "auto-dev-review-self",
+            "command": "/auto-dev-review-self",
+            "description": "Review and repair our change through the canonical independent merge-readiness path.",
+            "source": "harness/commands/auto-dev-review-self.md",
+        },
+        {
+            "id": "auto-dev-review-others",
+            "command": "/auto-dev-review-others",
+            "description": "Review another author's live PR through the canonical PR Review owner.",
+            "source": "harness/commands/auto-dev-review-others.md",
+        },
+        {
+            "id": "auto-dev-finalize",
+            "command": "/auto-dev-finalize",
+            "description": "Converge our tracker PR family and record immutable merge readiness without merging.",
+            "source": "harness/commands/auto-dev-finalize.md",
+        },
+        {
+            "id": "auto-dev-merge",
+            "command": "/auto-dev-merge",
+            "description": "Execute the final authorized merge from a PR-owner readiness receipt with live provider readback.",
+            "source": "harness/commands/auto-dev-merge.md",
         },
         {
             "id": "auto-dev-release-propagation",
@@ -90,10 +150,40 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/auto-dev-release-propagation.md",
         },
         {
+            "id": "auto-dev-pr-create",
+            "command": "/auto-dev-pr-create",
+            "description": "Resolve and create or reuse the complete project-specific PR family before review.",
+            "source": "harness/commands/auto-dev-pr-create.md",
+        },
+        {
+            "id": "gitflow-pr-create",
+            "command": "/gitflow-pr-create",
+            "description": "Compatibility alias for Auto-Dev PR Create GitFlow-family mode.",
+            "source": "harness/commands/gitflow-pr-create.md",
+        },
+        {
+            "id": "auto-dev-release",
+            "command": "/auto-dev-release",
+            "description": "Create and verify versions, tags, packages, changelogs, and provider releases.",
+            "source": "harness/commands/auto-dev-release.md",
+        },
+        {
+            "id": "auto-dev-deploy",
+            "command": "/auto-dev-deploy",
+            "description": "Deploy or monitor an exact merged artifact and verify deployed behavior.",
+            "source": "harness/commands/auto-dev-deploy.md",
+        },
+        {
             "id": "auto-dev-closeout",
             "command": "/auto-dev-closeout",
-            "description": "Merge with approval, validate deployment, reconcile providers, clean up, and prove delivery complete.",
+            "description": "Reconcile tracker, PR, release, and deployment truth and prove delivery complete.",
             "source": "harness/commands/auto-dev-closeout.md",
+        },
+        {
+            "id": "auto-dev-health",
+            "command": "/auto-dev-health",
+            "description": "Audit final receipts, prune reconstructable local resources, and move the durable packet to finished.",
+            "source": "harness/commands/auto-dev-health.md",
         },
         {
             "id": "project-domain-investigate",
@@ -689,9 +779,15 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/quiet-workon-orchestrate/SKILL.md",
         },
         {
+            "id": "pr-review",
+            "name": "PR Review",
+            "description": "Run the canonical review, report, or authorized review-plus-merge workflow for another author's pull request.",
+            "source": "harness/skills/pr-review/SKILL.md",
+        },
+        {
             "id": "pull-request",
-            "name": "Pull Request",
-            "description": "Run a senior, blocker-focused GitHub PR review with multi-lane evidence.",
+            "name": "Pull Request Compatibility Alias",
+            "description": "Compatibility alias that delegates all PR review policy to canonical pr-review.",
             "source": "harness/skills/pull-request/SKILL.md",
         },
         {
@@ -803,6 +899,18 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/auto-dev/SKILL.md",
         },
         {
+            "id": "auto-dev-everything",
+            "name": "Auto-Dev Everything",
+            "description": "Take tracker work through every applicable Auto-Dev workflow using one resumable state projection.",
+            "source": "harness/skills/auto-dev-everything/SKILL.md",
+        },
+        {
+            "id": "auto-dev-grooming",
+            "name": "Auto-Dev Grooming",
+            "description": "Groom rough work into a source-backed implementation-ready specification and provider backlog.",
+            "source": "harness/skills/auto-dev-grooming/SKILL.md",
+        },
+        {
             "id": "auto-dev-create-artifacts",
             "name": "Auto-Dev Create Artifacts",
             "description": "Resolve polymorphic provider/type contracts and render, validate, apply, and read back excellent Jira, Linear, Notion, Confluence, GitHub, Slack, or filesystem artifacts.",
@@ -827,10 +935,52 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/auto-dev-implementation/SKILL.md",
         },
         {
+            "id": "auto-dev-develop",
+            "name": "Auto-Dev Develop",
+            "description": "Friendly alias for canonical implementation and local validation.",
+            "source": "harness/skills/auto-dev-develop/SKILL.md",
+        },
+        {
+            "id": "auto-dev-document",
+            "name": "Auto-Dev Document",
+            "description": "Create source-backed code, issue, architecture, operational, QA, release, and handoff documentation.",
+            "source": "harness/skills/auto-dev-document/SKILL.md",
+        },
+        {
+            "id": "auto-dev-qa",
+            "name": "Auto-Dev QA",
+            "description": "Run project-configured risk-based QA as a standalone receipt-backed workflow.",
+            "source": "harness/skills/auto-dev-qa/SKILL.md",
+        },
+        {
             "id": "auto-dev-review-repair",
             "name": "Auto-Dev Review and Repair",
             "description": "Review, create the governed PR, repair checks/findings, and prove merge readiness.",
             "source": "harness/skills/auto-dev-review-repair/SKILL.md",
+        },
+        {
+            "id": "auto-dev-review-self",
+            "name": "Auto-Dev Review Self",
+            "description": "Review and repair our own change through the canonical independent path.",
+            "source": "harness/skills/auto-dev-review-self/SKILL.md",
+        },
+        {
+            "id": "auto-dev-review-others",
+            "name": "Auto-Dev Review Others",
+            "description": "Review another author's live PR through the canonical PR Review owner.",
+            "source": "harness/skills/auto-dev-review-others/SKILL.md",
+        },
+        {
+            "id": "auto-dev-finalize",
+            "name": "Auto-Dev Finalize",
+            "description": "Converge our ticket PR family and record immutable merge readiness without merging.",
+            "source": "harness/skills/auto-dev-finalize/SKILL.md",
+        },
+        {
+            "id": "auto-dev-merge",
+            "name": "Auto-Dev Merge",
+            "description": "Execute the final authorized live merge from a PR-owner readiness receipt.",
+            "source": "harness/skills/auto-dev-merge/SKILL.md",
         },
         {
             "id": "auto-dev-release-propagation",
@@ -839,10 +989,40 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/auto-dev-release-propagation/SKILL.md",
         },
         {
+            "id": "auto-dev-pr-create",
+            "name": "Auto-Dev PR Create",
+            "description": "Resolve and create or reuse the complete project-specific PR family before review.",
+            "source": "harness/skills/auto-dev-pr-create/SKILL.md",
+        },
+        {
+            "id": "gitflow-pr-create",
+            "name": "GitFlow PR Create",
+            "description": "Compatibility alias for Auto-Dev PR Create family mode.",
+            "source": "harness/skills/gitflow-pr-create/SKILL.md",
+        },
+        {
+            "id": "auto-dev-release",
+            "name": "Auto-Dev Release",
+            "description": "Create and verify project versions, tags, packages, changelogs, and provider releases.",
+            "source": "harness/skills/auto-dev-release/SKILL.md",
+        },
+        {
+            "id": "auto-dev-deploy",
+            "name": "Auto-Dev Deploy",
+            "description": "Deploy or monitor an exact artifact and verify deployed behavior.",
+            "source": "harness/skills/auto-dev-deploy/SKILL.md",
+        },
+        {
             "id": "auto-dev-closeout",
             "name": "Auto-Dev Closeout",
-            "description": "Merge, validate deployment, reconcile provider state, clean up, and close delivery.",
+            "description": "Reconcile provider state and close canonical delivery after verified merge and deployment decisions.",
             "source": "harness/skills/auto-dev-closeout/SKILL.md",
+        },
+        {
+            "id": "auto-dev-health",
+            "name": "Auto-Dev Health",
+            "description": "Audit final receipts, remove reconstructable worktrees and target-local runtimes, and finish the preserved work packet.",
+            "source": "harness/skills/auto-dev-health/SKILL.md",
         },
         {
             "id": "develop",

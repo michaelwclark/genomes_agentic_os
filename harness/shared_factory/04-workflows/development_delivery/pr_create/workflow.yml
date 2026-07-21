@@ -1,0 +1,13 @@
+id: pr_create
+title: Auto-Dev PR Create
+owner: auto-dev-pr-create
+status: active
+inputs:
+  - tracker_release_authority
+  - effective_gitflow_topology
+  - source_branch_and_sha
+  - existing_provider_pull_requests
+outputs:
+  - target_matrix
+  - family_complete_receipt
+compatibility_receipt_state: release_propagation

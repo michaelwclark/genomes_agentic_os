@@ -20,12 +20,31 @@ from pathlib import Path
 import re
 import subprocess
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 import uuid
 
 import yaml
 
+from .auto_dev_orchestration import (
+    AUTO_DEV_MODES,
+    AUTO_DEV_STAGE_ORDER,
+    AutoDevStateError,
+    materialize_auto_dev_policy_decision,
+    read_auto_dev_state,
+    require_auto_dev_predecessors,
+    same_pull_request_authority,
+    sync_delivery_projection,
+    validate_recorded_auto_dev_health,
+    validate_auto_dev_readiness_authority,
+    validate_auto_dev_stage_order,
+    validate_pull_request_authority,
+)
 from .artifact_naming import dated_name, load_artifact_naming_policy
-from .lifecycle import create_project_work_item
+from .lifecycle import (
+    create_project_work_item,
+    next_work_item_index,
+    worktree_entries_for_project,
+)
 from .policy_plane import PolicyLayer, PolicyPlaneError, public_policy_plane, resolve_markdown_plane
 from .scaffold import (
     domain_path,
@@ -36,6 +55,9 @@ from .scaffold import (
     register_project_worktree,
     validate_name,
 )
+from .state import work_items as canonical_work_items
+from .state.db import connect as connect_state
+from .state.db import default_db_path
 
 
 PROFILE_VERSION = 1
@@ -69,6 +91,7 @@ RETRYABLE_FAILURES = {
     "ci_failed",
     "review_findings",
     "test_failed",
+    "provisioning_failed",
 }
 WORKFLOW_NAMES = (
     "readiness_and_context",
@@ -89,12 +112,20 @@ WORKFLOW_DOC_SECTIONS = (
     "Events and receipts",
     "Cleanup and handoff",
 )
-DEVELOPMENT_POLICY_PLANES = ("dev_standards", "qa_gates", "gitflow_topology")
+DEVELOPMENT_POLICY_PLANES = (
+    "dev_standards",
+    "qa_gates",
+    "gitflow_topology",
+    "auto_dev",
+    "environment_access",
+)
 DEVELOPMENT_STAGE_RANGES = {
     "readiness": ("worktree_ready", "planned"),
     "implementation": ("planned", "local_validation"),
     "review": ("local_validation", "ready_for_merge"),
-    "closeout": ("ready_for_merge", "delivery_complete"),
+    "merge": ("ready_for_merge", "merged"),
+    "deploy": ("merged", "post_deploy_validation"),
+    "closeout": ("post_deploy_validation", "delivery_complete"),
 }
 
 
@@ -142,10 +173,31 @@ def _read_mapping(path: Path) -> dict[str, Any]:
 
 
 def project_root(root: str | Path, domain: str, project: str) -> Path:
-    path = domain_path(expand_path(root), normalize_domain(domain)) / "02-projects" / validate_name(project, "project")
+    projects_root = domain_path(expand_path(root), normalize_domain(domain)) / "02-projects"
+    normalized_project = validate_name(project, "project")
+    path = projects_root / normalized_project
+    if not (path / "project.yml").is_file() and "_" in normalized_project:
+        # Compatibility for recovered pre-canonical rooms whose directory used
+        # kebab-case. New project IDs remain snake_case, and this lookup never
+        # creates a second project owner or symlink.
+        legacy_path = projects_root / normalized_project.replace("_", "-")
+        if (legacy_path / "project.yml").is_file():
+            path = legacy_path
     if not (path / "project.yml").is_file():
         raise DevelopmentDeliveryError(f"project not found: {domain}/{project}")
     return path
+
+
+def _project_work_item_lane(packet: Path, project_path: Path) -> str | None:
+    """Return the packet lane, or ``None`` when it is outside this project."""
+
+    try:
+        relative = packet.expanduser().resolve().relative_to(
+            (project_path / "work-items").resolve()
+        )
+    except ValueError:
+        return None
+    return relative.parts[0] if relative.parts else None
 
 
 def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
@@ -167,6 +219,11 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
                 "date_prefix": "inherit",
             },
             "work_items": {"active_status": "building"},
+            "runtime": {
+                "ownership": "not_managed",
+                "provider": "none",
+                "identity": "not-managed",
+            },
             "validation": {
                 "commands": [],
                 "ci_fallback_on_environment_failure": True,
@@ -214,6 +271,11 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
             "date_prefix": "inherit",
         },
         "work_items": {"active_status": "building"},
+        "runtime": {
+            "ownership": "not_managed",
+            "provider": "none",
+            "identity": "not-managed",
+        },
         "validation": {
             "commands": commands,
             "ci_fallback_on_environment_failure": bool(
@@ -228,6 +290,7 @@ def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
         "review": {
             "finishing": _mapping_copy(legacy.get("finishing_review")),
             "copilot": _mapping_copy(legacy.get("copilot")),
+            "authorship": _mapping_copy(legacy.get("authorship")),
         },
         "merge": _mapping_copy(legacy.get("merge")) or {"policy": "never_auto"},
         "release": _mapping_copy(legacy.get("release")),
@@ -248,7 +311,17 @@ def validate_profile(profile: Mapping[str, Any]) -> list[str]:
         errors.append(f"version must be {PROFILE_VERSION}")
     if profile.get("enabled") is not True:
         errors.append("enabled must be true")
-    for section in ("tracker", "repository", "worktrees", "work_items", "validation", "review", "merge", "recovery"):
+    for section in (
+        "tracker",
+        "repository",
+        "worktrees",
+        "work_items",
+        "runtime",
+        "validation",
+        "review",
+        "merge",
+        "recovery",
+    ):
         if not isinstance(profile.get(section), Mapping):
             errors.append(f"{section} must be a mapping")
     repository = profile.get("repository") if isinstance(profile.get("repository"), Mapping) else {}
@@ -290,6 +363,17 @@ def validate_profile(profile: Mapping[str, Any]) -> list[str]:
         errors.append("repository.selection_required needs repository.catalog")
     if repository.get("default") and str(repository.get("default")) not in catalog_ids:
         errors.append("repository.default must match a catalog id")
+    review = profile.get("review") if isinstance(profile.get("review"), Mapping) else {}
+    authorship = review.get("authorship") if isinstance(review.get("authorship"), Mapping) else {}
+    ours = authorship.get("ours")
+    if ours is not None and not (
+        isinstance(ours, list)
+        and all(isinstance(identity, str) and identity.strip() and ":" in identity for identity in ours)
+    ):
+        errors.append(
+            "review.authorship.ours must contain only provider-qualified identities "
+            "such as github:username"
+        )
     recovery = profile.get("recovery") if isinstance(profile.get("recovery"), Mapping) else {}
     if int(recovery.get("max_attempts") or 0) < 1:
         errors.append("recovery.max_attempts must be at least 1")
@@ -308,7 +392,181 @@ def validate_profile(profile: Mapping[str, Any]) -> list[str]:
         template.format(ticket="ticket", slug="slug")
     except (KeyError, ValueError) as exc:
         errors.append(f"worktrees.branch_template is invalid: {exc}")
+    runtime = profile.get("runtime") if isinstance(profile.get("runtime"), Mapping) else {}
+    ownership = str(runtime.get("ownership") or "").strip()
+    provider = str(runtime.get("provider") or "").strip()
+    if ownership == "not_managed":
+        if provider != "none":
+            errors.append("runtime.provider must be none when ownership is not_managed")
+        if runtime.get("identity") != "not-managed":
+            errors.append("runtime.identity must be not-managed when ownership is not_managed")
+    elif ownership == "managed":
+        identity_template = str(runtime.get("identity_template") or "").strip()
+        if not provider or provider == "none":
+            errors.append("managed runtime.provider must name the project runtime provider")
+        if not identity_template:
+            errors.append("managed runtime.identity_template is required")
+        else:
+            required_identity_fields = {"{domain}", "{project}", "{worktree}"}
+            missing_identity_fields = sorted(
+                field for field in required_identity_fields if field not in identity_template
+            )
+            if missing_identity_fields:
+                errors.append(
+                    "managed runtime.identity_template must include {domain}, {project}, "
+                    "and {worktree} for globally item-unique ownership"
+                )
+            try:
+                resolved_identity = identity_template.format(
+                    domain="domain",
+                    project="project",
+                    worktree="worktree",
+                    worktree_path="/worktree/path",
+                    ticket="ticket",
+                )
+                if not resolved_identity.strip() or resolved_identity == "not-managed":
+                    errors.append("managed runtime.identity_template must resolve to a managed identity")
+            except (KeyError, ValueError) as exc:
+                errors.append(f"managed runtime.identity_template is invalid: {exc}")
+        for field in ("teardown_command", "readback_command"):
+            command_template = str(runtime.get(field) or "").strip()
+            if not command_template:
+                errors.append(f"managed runtime.{field} is required")
+            elif "{runtime_identity}" not in command_template:
+                errors.append(
+                    f"managed runtime.{field} must include {{runtime_identity}} for exact-target execution"
+                )
+            elif any(
+                forbidden in command_template.lower()
+                for forbidden in (
+                    "system prune",
+                    "container prune",
+                    "volume prune",
+                    "worktree prune",
+                    "--all",
+                    "delete all",
+                )
+            ):
+                errors.append(f"managed runtime.{field} contains a forbidden global cleanup operation")
+    elif ownership:
+        errors.append("runtime.ownership must be managed or not_managed")
+    elif isinstance(profile.get("runtime"), Mapping):
+        errors.append("runtime.ownership is required")
     return errors
+
+
+def _normalized_repository_identity(repository: Mapping[str, Any]) -> str:
+    """Return one non-empty repository identity for all provider receipts.
+
+    Catalog IDs are authoritative.  A single-repository profile is upgraded
+    from its Git remote when possible; a content-stable local identity is the
+    fail-closed fallback for repositories without a remote.
+    """
+
+    configured = str(repository.get("id") or "").strip()
+    if configured:
+        return configured
+    root = expand_path(str(repository.get("root") or ""))
+    remote = subprocess.run(
+        ["git", "-C", str(root), "config", "--get", "remote.origin.url"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    value = remote.stdout.strip() if remote.returncode == 0 else ""
+    if value:
+        value = value.removesuffix(".git")
+        if value.startswith("git@") and ":" in value:
+            host, path = value[4:].split(":", 1)
+            value = f"{host.lower()}/{path.strip('/')}"
+        else:
+            parsed = urlsplit(value if "://" in value else f"ssh://{value}")
+            host = (parsed.hostname or "").lower()
+            path = parsed.path.strip("/")
+            value = f"{host}/{path}" if host and path else ""
+        if value:
+            return f"git:{value}"
+    resolved = str(root.resolve())
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+    return f"local:{root.name or 'repository'}:{digest}"
+
+
+def _configured_authorship(
+    profile: Mapping[str, Any], *, required: bool = False
+) -> dict[str, list[str]]:
+    review = profile.get("review") if isinstance(profile.get("review"), Mapping) else {}
+    authorship = review.get("authorship") if isinstance(review.get("authorship"), Mapping) else {}
+    ours = sorted({str(value).strip() for value in authorship.get("ours") or [] if str(value).strip()})
+    if required and not ours:
+        raise DevelopmentDeliveryError(
+            "review.authorship.ours must configure at least one provider-qualified identity"
+        )
+    return {"ours": ours}
+
+
+def _runtime_registration(
+    profile: Mapping[str, Any],
+    worktree: Mapping[str, Any],
+    *,
+    domain: str,
+    project: str,
+    ticket: str,
+) -> dict[str, str]:
+    """Resolve one immutable, project-owned runtime registration for a task."""
+
+    runtime = profile.get("runtime") if isinstance(profile.get("runtime"), Mapping) else {}
+    ownership = str(runtime.get("ownership") or "")
+    if ownership == "not_managed":
+        return {
+            "ownership": "not_managed",
+            "provider": "none",
+            "identity": "not-managed",
+        }
+    if ownership != "managed":
+        raise DevelopmentDeliveryError("development runtime ownership is not configured")
+    identity_template = str(runtime.get("identity_template") or "")
+    if not all(field in identity_template for field in ("{domain}", "{project}", "{worktree}")):
+        raise DevelopmentDeliveryError(
+            "managed runtime identity_template must include {domain}, {project}, and {worktree}"
+        )
+    context = {
+        "domain": normalize_domain(domain),
+        "project": validate_name(project, "project"),
+        "repository_root": str(
+            expand_path(
+                str(
+                    (
+                        profile.get("repository")
+                        if isinstance(profile.get("repository"), Mapping)
+                        else {}
+                    ).get("root")
+                    or ""
+                )
+            )
+        ),
+        "worktree": str(worktree.get("name") or ""),
+        "worktree_path": str(worktree.get("path") or ""),
+        "ticket": ticket,
+    }
+    try:
+        identity = identity_template.format(**context).strip()
+    except (KeyError, ValueError) as exc:
+        raise DevelopmentDeliveryError(f"cannot resolve managed runtime identity: {exc}") from exc
+    if not identity or identity == "not-managed":
+        raise DevelopmentDeliveryError("managed runtime identity resolved to an unsafe value")
+    command_context = {**context, "runtime_identity": identity}
+    try:
+        teardown_command = str(runtime["teardown_command"]).format(**command_context).strip()
+        readback_command = str(runtime["readback_command"]).format(**command_context).strip()
+    except (KeyError, ValueError) as exc:
+        raise DevelopmentDeliveryError(f"cannot resolve managed runtime commands: {exc}") from exc
+    return {
+        "ownership": "managed",
+        "provider": str(runtime["provider"]),
+        "identity": identity,
+        "teardown_command": teardown_command,
+        "readback_command": readback_command,
+    }
 
 
 def select_development_repository(
@@ -371,6 +629,32 @@ def load_development_profile(root: str | Path, domain: str, project: str) -> tup
     return profile, source
 
 
+def load_development_policy_profile(
+    root: str | Path,
+    domain: str,
+    project: str,
+) -> tuple[dict[str, Any], Path]:
+    """Load policy configuration without pretending an unrooted project can run."""
+
+    root_path = project_root(root, domain, project)
+    canonical = root_path / "config" / "development.yml"
+    if canonical.is_file():
+        profile = _read_mapping(canonical)
+        source = canonical
+    else:
+        profile = _compatibility_profile(_read_mapping(root_path / "project.yml"))
+        source = root_path / "project.yml"
+    errors = [
+        error
+        for error in validate_profile(profile)
+        if error != "repository.root or repository.catalog is required"
+    ]
+    if errors:
+        raise DevelopmentDeliveryError("invalid development profile: " + "; ".join(errors))
+    profile["loaded_from"] = str(source)
+    return profile, source
+
+
 def _policy_path(
     raw: str,
     *,
@@ -414,7 +698,11 @@ def resolve_development_policy(
     domain_root = domain_path(os_root, normalize_domain(domain))
     project_path = project_root(os_root, domain, project)
     if selected_profile is None:
-        profile, loaded_profile_source = load_development_profile(os_root, domain, project)
+        profile, loaded_profile_source = load_development_policy_profile(
+            os_root,
+            domain,
+            project,
+        )
     else:
         profile = deepcopy(dict(selected_profile))
         loaded_profile_source = Path(profile_source).expanduser().resolve() if profile_source else project_path / "config" / "development.yml"
@@ -554,6 +842,18 @@ def _legal_transition(current: str, target: str) -> bool:
     return FORWARD_STATES.index(target) == FORWARD_STATES.index(current) + 1
 
 
+def _portfolio_rollup(states: Sequence[str]) -> str:
+    if not states:
+        return "accepted"
+    distinct = set(states)
+    if len(distinct) == 1:
+        only = states[0]
+        return "dispatching" if only == "worktree_ready" else only
+    if all(state == "blocked" for state in states):
+        return "blocked"
+    return "partial"
+
+
 def _refresh_portfolio_state(task_state_path: Path) -> None:
     """Roll task state into its portfolio after every governed mutation."""
 
@@ -577,19 +877,36 @@ def _refresh_portfolio_state(task_state_path: Path) -> None:
                 states.append(str(payload["state"]))
         if not states:
             return
-        distinct = set(states)
-        if len(distinct) == 1:
-            only = states[0]
-            rollup = "dispatching" if only == "worktree_ready" else only
-        elif all(state == "blocked" for state in states):
-            rollup = "blocked"
-        else:
-            rollup = "partial"
+        rollup = _portfolio_rollup(states)
         if portfolio.get("state") == rollup:
             return
         portfolio["state"] = rollup
         portfolio["updated_at"] = utc_now()
         _atomic_json(portfolio_path, portfolio)
+
+
+def _sync_auto_dev_projection(task_state_path: Path) -> dict[str, Any] | None:
+    """Refresh the non-canonical projection without rolling back committed delivery state."""
+
+    try:
+        return sync_delivery_projection(task_state_path)
+    except (AutoDevStateError, OSError) as exc:
+        task = _read_mapping(task_state_path)
+        append_event(
+            task_state_path.parent / "events.jsonl",
+            event_type="development.autodev_projection.sync_failed",
+            idempotency_key=(
+                f"{task.get('run_id')}:{task.get('ticket')}:projection-sync-failed:"
+                f"{task.get('updated_at')}"
+            ),
+            payload={
+                "ticket": task.get("ticket"),
+                "projection": task.get("autodev_path"),
+                "error": str(exc),
+                "recovery": "repair autodev.json, then run agentic-os auto-dev sync",
+            },
+        )
+        return None
 
 
 @dataclass
@@ -630,10 +947,16 @@ class TaskState:
                     raise DevelopmentDeliveryError(f"illegal transition: {current} -> {target}")
                 now = utc_now()
                 state.update({"state": target, "updated_at": now, "last_transition_key": idempotency_key})
-                state.setdefault("receipts", []).append({"state": target, "ref": receipt, "recorded_at": now})
+                receipt_row = {"state": target, "ref": receipt, "recorded_at": now}
+                receipt_path = Path(receipt).expanduser()
+                if receipt_path.is_file():
+                    receipt_row["sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+                state.setdefault("receipts", []).append(receipt_row)
                 _atomic_json(self.path, state)
         if replayed:
             _refresh_portfolio_state(self.path)
+            _sync_auto_dev_projection(self.path)
+            _sync_canonical_task_progress(self.path)
             return state
         self.emit(
             event_type="development.task.transitioned",
@@ -641,6 +964,8 @@ class TaskState:
             payload={"ticket": state["ticket"], "from": current, "to": target, "receipt": receipt},
         )
         _refresh_portfolio_state(self.path)
+        _sync_auto_dev_projection(self.path)
+        _sync_canonical_task_progress(self.path)
         return state
 
     def fail(self, *, kind: str, detail: str, receipt: str, idempotency_key: str) -> dict[str, Any]:
@@ -669,6 +994,8 @@ class TaskState:
                 _atomic_json(self.path, state)
         if replayed:
             _refresh_portfolio_state(self.path)
+            _sync_auto_dev_projection(self.path)
+            _sync_canonical_task_progress(self.path)
             return state
         self.emit(
             event_type="development.task.failed",
@@ -676,6 +1003,8 @@ class TaskState:
             payload={"ticket": state["ticket"], **state["failure"], "attempt": attempts},
         )
         _refresh_portfolio_state(self.path)
+        _sync_auto_dev_projection(self.path)
+        _sync_canonical_task_progress(self.path)
         return state
 
     def recover(self, *, receipt: str, idempotency_key: str) -> dict[str, Any]:
@@ -700,6 +1029,8 @@ class TaskState:
                 _atomic_json(self.path, state)
         if replayed:
             _refresh_portfolio_state(self.path)
+            _sync_auto_dev_projection(self.path)
+            _sync_canonical_task_progress(self.path, allow_unblock=True)
             return state
         self.emit(
             event_type="development.task.recovered",
@@ -707,6 +1038,8 @@ class TaskState:
             payload={"ticket": state["ticket"], "to": retry_state, "receipt": receipt},
         )
         _refresh_portfolio_state(self.path)
+        _sync_auto_dev_projection(self.path)
+        _sync_canonical_task_progress(self.path, allow_unblock=True)
         return state
 
     def recover_stale_lease(self, *, now: datetime | None = None) -> dict[str, Any]:
@@ -730,6 +1063,7 @@ class TaskState:
         with _file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
             state = self.read()
             if state.get("last_heartbeat_key") == idempotency_key:
+                _sync_auto_dev_projection(self.path)
                 return state
             if state.get("state") in TERMINAL_STATES:
                 raise DevelopmentDeliveryError("cannot heartbeat a terminal task")
@@ -748,12 +1082,321 @@ class TaskState:
             idempotency_key=idempotency_key,
             payload={"ticket": state["ticket"], "owner": owner, "until": until},
         )
+        _sync_auto_dev_projection(self.path)
         return state
 
 
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug[:48] or "task"
+
+
+def _canonical_development_work_id(domain: str, project: str, ticket: str) -> str:
+    return f"{normalize_domain(domain)}:{validate_name(project, 'project')}:{_slug(ticket)}"
+
+
+def _canonical_source_match(
+    connection,
+    *,
+    domain: str,
+    project: str,
+    tracker: str,
+    ticket: str,
+    preferred_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve one canonical row without silently changing source identity."""
+
+    normalized_domain = normalize_domain(domain)
+    normalized_project = validate_name(project, "project")
+    source_row = connection.execute(
+        "SELECT id FROM work_items WHERE source_system = ? AND source_key = ?",
+        (tracker, ticket),
+    ).fetchone()
+    source_match = (
+        canonical_work_items.get(connection, str(source_row["id"]))
+        if source_row is not None
+        else None
+    )
+    if source_match and (
+        source_match.get("domain") != normalized_domain
+        or source_match.get("project") != normalized_project
+    ):
+        raise DevelopmentDeliveryError(
+            f"canonical source identity {tracker}:{ticket} belongs to another project"
+        )
+    preferred = canonical_work_items.get(connection, preferred_id) if preferred_id else None
+    if preferred is not None:
+        if (
+            preferred.get("domain") != normalized_domain
+            or preferred.get("project") != normalized_project
+            or str(preferred.get("source_key") or "") != ticket
+        ):
+            raise DevelopmentDeliveryError(
+                f"canonical work item identity does not match {ticket}: {preferred_id}"
+            )
+        if source_match and source_match["id"] != preferred["id"]:
+            raise DevelopmentDeliveryError(
+                f"canonical source identity for {ticket} conflicts with {preferred_id}"
+            )
+        return preferred
+    if source_match:
+        return source_match
+    derived_id = _canonical_development_work_id(domain, project, ticket)
+    derived = canonical_work_items.get(connection, derived_id)
+    if derived is not None:
+        derived_source = (
+            str(derived.get("source_system") or ""),
+            str(derived.get("source_key") or ""),
+        )
+        if (
+            derived.get("domain") != normalized_domain
+            or derived.get("project") != normalized_project
+            or derived_source not in {("", ""), (tracker, ticket)}
+        ):
+            raise DevelopmentDeliveryError(
+                f"derived canonical work id already belongs to another source: {derived_id}"
+            )
+    return derived
+
+
+def _resolve_canonical_development_work_id(
+    root: str | Path,
+    *,
+    domain: str,
+    project: str,
+    tracker: str,
+    ticket: str,
+    preferred_id: str | None = None,
+) -> str:
+    connection = connect_state(default_db_path(root))
+    try:
+        existing = _canonical_source_match(
+            connection,
+            domain=domain,
+            project=project,
+            tracker=tracker,
+            ticket=ticket,
+            preferred_id=preferred_id,
+        )
+        return str(
+            (existing or {}).get("id")
+            or preferred_id
+            or _canonical_development_work_id(domain, project, ticket)
+        )
+    finally:
+        connection.close()
+
+
+def _canonical_packet_match(
+    root: str | Path,
+    *,
+    domain: str,
+    project: str,
+    ticket: str,
+    packet: Path,
+) -> dict[str, Any]:
+    """Resolve one existing canonical row by its exact packet path for migration."""
+
+    os_root = expand_path(root)
+    connection = connect_state(default_db_path(root))
+    try:
+        rows = canonical_work_items.query(
+            connection,
+            domain=normalize_domain(domain),
+            project=validate_name(project, "project"),
+            limit=10000,
+        )
+    finally:
+        connection.close()
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        raw = str(row.get("packet_path") or "").strip()
+        if not raw:
+            continue
+        value = Path(raw).expanduser()
+        resolved = value.resolve() if value.is_absolute() else (os_root / value).resolve()
+        if resolved == packet.resolve():
+            matches.append(row)
+    if len(matches) != 1:
+        raise DevelopmentDeliveryError(
+            "Auto-Dev adoption requires exactly one canonical work row for the selected packet"
+        )
+    row = matches[0]
+    if str(row.get("source_key") or "") != ticket:
+        raise DevelopmentDeliveryError(
+            "Auto-Dev adoption ticket does not match the selected packet's canonical source key"
+        )
+    if row.get("state") in canonical_work_items.TERMINAL_STATES or row.get("attention") == "closed":
+        raise DevelopmentDeliveryError("Auto-Dev adoption requires an active canonical work item")
+    return row
+
+
+def _canonical_state_for_delivery(
+    delivery_state: str,
+    *,
+    worktree: Mapping[str, Any] | None,
+) -> str:
+    if delivery_state == "blocked":
+        return "blocked"
+    if delivery_state in FORWARD_STATES:
+        index = FORWARD_STATES.index(delivery_state)
+        if index >= FORWARD_STATES.index("local_validation"):
+            return "validating"
+        if index >= FORWARD_STATES.index("worktree_ready") or worktree:
+            return "building"
+    return "ready"
+
+
+def _sync_canonical_development_work(
+    root: str | Path,
+    *,
+    domain: str,
+    project: str,
+    ticket: str,
+    title: str,
+    run_id: str,
+    tracker: str,
+    packet: Path,
+    worktree: Mapping[str, Any] | None,
+    delivery_state: str,
+    canonical_work_id: str | None = None,
+    blocked_reason: str | None = None,
+    allow_unblock: bool = False,
+) -> dict[str, Any]:
+    """Create or refresh the canonical state.db row for one delivery task."""
+
+    packet_lane = _project_work_item_lane(packet, project_root(root, domain, project))
+    if packet_lane == "03-complete" and delivery_state != "delivery_complete":
+        raise DevelopmentDeliveryError(
+            "finished Auto-Dev packets are immutable; use `agentic-os auto-dev reopen` "
+            "to create a new active packet and delivery run"
+        )
+
+    connection = connect_state(default_db_path(root))
+    try:
+        existing = _canonical_source_match(
+            connection,
+            domain=domain,
+            project=project,
+            tracker=tracker,
+            ticket=ticket,
+            preferred_id=canonical_work_id,
+        )
+        item_id = str(
+            (existing or {}).get("id")
+            or canonical_work_id
+            or _canonical_development_work_id(domain, project, ticket)
+        )
+        if existing and existing.get("state") in canonical_work_items.TERMINAL_STATES:
+            packet_value = Path(str(existing.get("packet_path") or "")).expanduser()
+            existing_packet = (
+                packet_value.resolve()
+                if packet_value.is_absolute()
+                else (expand_path(root) / packet_value).resolve()
+            )
+            if delivery_state == "delivery_complete" and existing_packet == packet.resolve():
+                canonical_work_items.write_active_projection(connection, root)
+                return existing
+            raise DevelopmentDeliveryError(
+                f"canonical work item is already terminal and cannot be reprovisioned: {item_id}"
+            )
+        if existing and existing.get("packet_path"):
+            packet_value = Path(str(existing["packet_path"])).expanduser()
+            existing_packet = (
+                packet_value.resolve()
+                if packet_value.is_absolute()
+                else (expand_path(root) / packet_value).resolve()
+            )
+            if existing_packet != packet.resolve():
+                same_moved_packet = (
+                    existing_packet.name == packet.name
+                    and not existing_packet.exists()
+                    and packet.is_dir()
+                )
+                if not same_moved_packet:
+                    raise DevelopmentDeliveryError(
+                        f"canonical work item {item_id} already points to another packet"
+                    )
+        desired_state = _canonical_state_for_delivery(delivery_state, worktree=worktree)
+        desired_attention = "active"
+        desired_blocker = blocked_reason
+        if existing and existing.get("state") == "blocked" and not allow_unblock:
+            desired_state = "blocked"
+            desired_attention = str(existing.get("attention") or "active")
+            desired_blocker = str(existing.get("blocked_reason") or "canonical blocker remains unresolved")
+        elif existing and desired_state != "blocked":
+            progress_rank = {"ready": 0, "building": 1, "validating": 2}
+            existing_state = str(existing.get("state") or "")
+            if progress_rank.get(existing_state, -1) > progress_rank.get(desired_state, -1):
+                desired_state = existing_state
+        row = canonical_work_items.upsert(
+            connection,
+            item_id=item_id,
+            title=title,
+            state=desired_state,
+            attention=desired_attention,
+            domain=domain,
+            project=project,
+            source_system=(existing or {}).get("source_system") or tracker,
+            source_key=(existing or {}).get("source_key") or ticket,
+            source_url=(existing or {}).get("source_url"),
+            owner=(existing or {}).get("owner"),
+            priority=int((existing or {}).get("priority") or 0),
+            packet_path=str(packet),
+            worktree_path=str(worktree.get("path")) if worktree and worktree.get("path") else None,
+            branch=str(worktree.get("branch")) if worktree and worktree.get("branch") else None,
+            context_summary=f"Auto-Dev run {run_id} for {ticket}; resume from the linked packet and autodev.json.",
+            metadata={
+                **dict((existing or {}).get("metadata") or {}),
+                "development_run_id": run_id,
+                "autodev_path": str(packet / "autodev.json"),
+            },
+            blocked_reason=desired_blocker,
+            actor="development-delivery",
+            receipt_ref=str(packet / "autodev.json"),
+            verified=True,
+        )
+        canonical_work_items.write_active_projection(connection, root)
+        return row
+    finally:
+        connection.close()
+
+
+def _sync_canonical_task_progress(
+    task_state_path: Path,
+    *,
+    allow_unblock: bool = False,
+) -> dict[str, Any] | None:
+    """Project a linked delivery task into canonical work state monotonically."""
+
+    task = _read_mapping(task_state_path)
+    required = (
+        task.get("os_root"),
+        task.get("domain"),
+        task.get("project"),
+        task.get("ticket"),
+        task.get("work_item"),
+        task.get("canonical_work_id"),
+    )
+    if not all(required):
+        return None
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
+    worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else None
+    return _sync_canonical_development_work(
+        str(task["os_root"]),
+        domain=str(task["domain"]),
+        project=str(task["project"]),
+        ticket=str(task["ticket"]),
+        title=str(task.get("title") or f"Implement {task['ticket']}"),
+        run_id=str(task.get("run_id") or "development-delivery"),
+        tracker=str((task.get("source") or {}).get("system") or "filesystem"),
+        packet=Path(str(task["work_item"])).expanduser().resolve(),
+        worktree=worktree,
+        delivery_state=str(task.get("state") or ""),
+        canonical_work_id=str(task["canonical_work_id"]),
+        blocked_reason=str(failure.get("detail") or "") or None,
+        allow_unblock=allow_unblock,
+    )
 
 
 def _task_branch(template: str, ticket: str, slug: str) -> str:
@@ -828,6 +1471,74 @@ def create_isolated_worktree(
     }
 
 
+def _adopt_registered_worktree(
+    *,
+    os_root: str | Path,
+    domain: str,
+    project: str,
+    profile: Mapping[str, Any],
+    canonical_row: Mapping[str, Any],
+    runner: Any = _run_command,
+) -> dict[str, Any] | None:
+    """Attach only the exact canonical and project-registered existing worktree."""
+
+    raw_path = str(canonical_row.get("worktree_path") or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser().resolve()
+    project_path = project_root(os_root, domain, project)
+    boundary = project_worktree_root(project_path, {"worktrees": dict(profile["worktrees"])}).resolve()
+    if boundary != path.parent and boundary not in path.parents:
+        raise DevelopmentDeliveryError("adopted worktree is outside the configured project boundary")
+    matches = [
+        row
+        for row in worktree_entries_for_project(project_path)
+        if str(row.get("path") or "").strip()
+        and Path(str(row["path"])).expanduser().resolve() == path
+        and str(row.get("status") or "active") == "active"
+    ]
+    if not matches:
+        raise DevelopmentDeliveryError("adopted worktree is not present in the active project registry")
+    canonical_branch = str(canonical_row.get("branch") or "").strip()
+    registered_branches = {
+        str(row.get("branch") or "").strip() for row in matches if row.get("branch")
+    }
+    actual = runner(["git", "-C", str(path), "branch", "--show-current"])
+    actual_branch = actual.stdout.strip() if actual.returncode == 0 else ""
+    if not actual_branch or (canonical_branch and actual_branch != canonical_branch) or (
+        registered_branches and actual_branch not in registered_branches
+    ):
+        raise DevelopmentDeliveryError("adopted worktree branch does not match canonical registration")
+    repository = profile["repository"]
+    repo = expand_path(str(repository["root"]))
+    registered = runner(["git", "-C", str(repo), "worktree", "list", "--porcelain"])
+    registered_paths = {
+        Path(line.removeprefix("worktree ")).expanduser().resolve()
+        for line in registered.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+    if registered.returncode != 0 or path not in registered_paths:
+        raise DevelopmentDeliveryError("adopted worktree is not registered in Git worktree metadata")
+    base = str(repository["base_branch"])
+    merge_base = runner(["git", "-C", str(path), "merge-base", "HEAD", f"origin/{base}"])
+    if merge_base.returncode != 0:
+        merge_base = runner(["git", "-C", str(path), "merge-base", "HEAD", base])
+    base_sha = merge_base.stdout.strip() if merge_base.returncode == 0 else ""
+    if not re.fullmatch(r"[a-fA-F0-9]{7,64}", base_sha):
+        raise DevelopmentDeliveryError("adopted worktree base revision could not be proven")
+    names = {str(row.get("id") or row.get("name") or path.name) for row in matches}
+    if len(names) != 1:
+        raise DevelopmentDeliveryError("adopted worktree has conflicting registry identities")
+    return {
+        "name": names.pop(),
+        "path": str(path),
+        "branch": actual_branch,
+        "base_sha": base_sha,
+        "repository_id": repository.get("id"),
+        "resumed": True,
+    }
+
+
 def _write_task_state(
     path: Path,
     *,
@@ -867,22 +1578,144 @@ def start_development_run(
     repository_id: str | None = None,
     base_branch: str | None = None,
     policy_overlays: Mapping[str, Sequence[str | Path]] | None = None,
+    auto_dev_mode: str = "single_stage",
+    requested_stage: str | None = None,
+    goal: str = "ready_for_merge",
+    provision_worktree: bool = True,
+    selected_work_item: str | Path | None = None,
+    adopt_existing: bool = False,
+    existing_state_only: bool = False,
     apply: bool = False,
 ) -> dict[str, Any]:
     if not tickets:
         raise DevelopmentDeliveryError("at least one tracker ticket is required")
+    if auto_dev_mode not in AUTO_DEV_MODES:
+        raise DevelopmentDeliveryError(f"Auto-Dev mode must be one of: {', '.join(AUTO_DEV_MODES)}")
+    if requested_stage is not None:
+        requested_stage = requested_stage.strip().lower().replace("-", "_")
+        if requested_stage not in AUTO_DEV_STAGE_ORDER:
+            raise DevelopmentDeliveryError(
+                f"requested Auto-Dev stage must be one of: {', '.join(AUTO_DEV_STAGE_ORDER)}"
+            )
+    if auto_dev_mode == "single_stage" and not requested_stage:
+        requested_stage = "develop"
+    if auto_dev_mode == "everything":
+        requested_stage = None
+    selected_packet = (
+        Path(selected_work_item).expanduser().resolve() if selected_work_item is not None else None
+    )
+    adoption_row: dict[str, Any] | None = None
+    if selected_packet is not None:
+        if len(dict.fromkeys(tickets)) != 1:
+            raise DevelopmentDeliveryError("a selected work item can belong to only one ticket")
+        if not selected_packet.is_dir():
+            raise DevelopmentDeliveryError(
+                f"selected Auto-Dev work item is missing or incomplete: {selected_packet}"
+            )
+        projection_exists = (selected_packet / "autodev.json").is_file()
+        if adopt_existing:
+            if projection_exists:
+                raise DevelopmentDeliveryError(
+                    "selected packet already has autodev.json; resume it instead of adopting it"
+                )
+            work_metadata = _read_mapping(selected_packet / "work.yml")
+            work_metadata_id = str(work_metadata.get("id") or "").lower().replace("-", "_")
+            ticket_token = _slug(str(tickets[0])).replace("-", "_")
+            if not work_metadata_id or ticket_token not in work_metadata_id:
+                raise DevelopmentDeliveryError(
+                    "Auto-Dev adoption ticket must be represented in work.yml id"
+                )
+            adoption_row = _canonical_packet_match(
+                root,
+                domain=domain,
+                project=project,
+                ticket=str(tickets[0]),
+                packet=selected_packet,
+            )
+        elif not projection_exists:
+            raise DevelopmentDeliveryError(
+                f"selected Auto-Dev work item is missing or incomplete: {selected_packet}"
+            )
+    elif adopt_existing:
+        raise DevelopmentDeliveryError("Auto-Dev adoption requires an exact selected work-item packet")
+    if existing_state_only and selected_packet is None:
+        raise DevelopmentDeliveryError("this Auto-Dev action requires an existing work-item state")
     profile, source = load_development_profile(root, domain, project)
     profile = select_development_repository(profile, repository_id)
+    profile_auto_dev = profile.get("auto_dev") if isinstance(profile.get("auto_dev"), Mapping) else {}
+    configured_stage_order = profile_auto_dev.get("stage_order")
+    if configured_stage_order is None:
+        auto_dev_stage_order = list(AUTO_DEV_STAGE_ORDER)
+    elif (
+        not isinstance(configured_stage_order, list)
+        or not all(isinstance(name, str) for name in configured_stage_order)
+    ):
+        raise DevelopmentDeliveryError(
+            "auto_dev.stage_order must contain every canonical Auto-Dev stage exactly once"
+        )
+    else:
+        if (
+            len(configured_stage_order) == len(set(configured_stage_order))
+            and set(configured_stage_order) < set(AUTO_DEV_STAGE_ORDER)
+            and configured_stage_order
+            == [name for name in AUTO_DEV_STAGE_ORDER if name in configured_stage_order]
+        ):
+            configured_stage_order = list(AUTO_DEV_STAGE_ORDER)
+        try:
+            auto_dev_stage_order = validate_auto_dev_stage_order(configured_stage_order)
+        except AutoDevStateError as exc:
+            raise DevelopmentDeliveryError(str(exc)) from exc
     if base_branch is not None:
         requested_base = str(base_branch).strip()
         if not requested_base or requested_base.startswith("-") or any(character.isspace() for character in requested_base):
             raise DevelopmentDeliveryError("--base-branch must be a non-empty git ref without whitespace")
         profile["repository"] = {**dict(profile["repository"]), "base_branch": requested_base}
+    profile["repository"] = {
+        **dict(profile["repository"]),
+        "id": _normalized_repository_identity(profile["repository"]),
+    }
     selected_errors = validate_profile(profile)
     if selected_errors:
         raise DevelopmentDeliveryError(
             "invalid selected repository profile: " + "; ".join(selected_errors)
         )
+    adopted_worktree_preflight: dict[str, Any] | None = None
+    adopted_runtime_preflight: dict[str, str] | None = None
+    if adoption_row is not None:
+        # Adoption is a migration of existing state, so every external
+        # identity check must pass before the run directory, packet, task, or
+        # canonical work row is changed. A failed preflight is safe to fix and
+        # rerun because it leaves no partial autodev.json behind.
+        adopted_worktree_preflight = _adopt_registered_worktree(
+            os_root=root,
+            domain=domain,
+            project=project,
+            profile=profile,
+            canonical_row=adoption_row,
+        )
+        if adopted_worktree_preflight is not None:
+            adopted_runtime_preflight = _runtime_registration(
+                profile,
+                adopted_worktree_preflight,
+                domain=domain,
+                project=project,
+                ticket=str(tickets[0]),
+            )
+    authorship_required = auto_dev_mode == "everything" or requested_stage in {
+        "review_self",
+        "review_others",
+        "qa",
+        "pr_create",
+        "finalize",
+        "merge",
+        "release",
+        "deploy",
+        "closeout",
+        "health",
+    }
+    configured_authorship = _configured_authorship(
+        profile, required=authorship_required
+    )
     effective_policies = resolve_development_policies(
         root,
         domain,
@@ -893,6 +1726,61 @@ def start_development_run(
         include_body=True,
     )
     project_path = project_root(root, domain, project)
+    if apply and selected_packet is None:
+        tracker_name = str(profile["tracker"].get("primary") or "filesystem")
+        for ticket in dict.fromkeys(tickets):
+            canonical_id = _resolve_canonical_development_work_id(
+                root,
+                domain=normalize_domain(domain),
+                project=validate_name(project, "project"),
+                tracker=tracker_name,
+                ticket=ticket,
+            )
+            connection = connect_state(default_db_path(root))
+            try:
+                canonical_existing = canonical_work_items.get(connection, canonical_id)
+            finally:
+                connection.close()
+            packet_raw = (
+                str(canonical_existing.get("packet_path") or "").strip()
+                if isinstance(canonical_existing, Mapping)
+                else ""
+            )
+            if not packet_raw:
+                continue
+            packet_value = Path(packet_raw).expanduser()
+            packet = (
+                packet_value.resolve()
+                if packet_value.is_absolute()
+                else (expand_path(root) / packet_value).resolve()
+            )
+            packet_lane = _project_work_item_lane(packet, project_path)
+            if packet_lane == "03-complete":
+                raise DevelopmentDeliveryError(
+                    f"{ticket} points to an immutable finished packet; use "
+                    "`agentic-os auto-dev reopen --state <finished-packet>`"
+                )
+            if packet_lane != "02-active":
+                raise DevelopmentDeliveryError(
+                    f"{ticket} canonical packet is outside the active work-item lane"
+                )
+            projection = packet / "autodev.json"
+            if projection.is_file():
+                existing_projection = _read_mapping(projection)
+                linked_task = str(
+                    (existing_projection.get("delivery") or {}).get("task_state_ref") or ""
+                ).strip()
+                if linked_task:
+                    linked_path = Path(linked_task).expanduser()
+                    linked_run_id = ""
+                    if linked_path.is_file():
+                        linked_run_id = str(_read_mapping(linked_path).get("run_id") or "")
+                    if run_id and linked_run_id == run_id:
+                        continue
+                    raise DevelopmentDeliveryError(
+                        f"{ticket} already has a live Auto-Dev item; resume it with "
+                        f"--state {projection} so its delivery and pull-request history cannot be replaced"
+                    )
     started_at = datetime.now(timezone.utc)
     run_id = run_id or dated_name(
         f"dev-{started_at.strftime('%H%M%SZ')}-{uuid.uuid4().hex[:6]}",
@@ -919,9 +1807,17 @@ def start_development_run(
             "root": profile["repository"]["root"],
             "base_branch": profile["repository"]["base_branch"],
         },
+        "authorship": configured_authorship,
         "policy_sources": {
             name: [item["source_ref"] for item in value["sources"]]
             for name, value in effective_policies["planes"].items()
+        },
+        "auto_dev": {
+            "mode": auto_dev_mode,
+            "requested_stage": requested_stage,
+            "goal": goal,
+            "stage_order": auto_dev_stage_order,
+            "provision_worktree": provision_worktree,
         },
     }
     if not apply:
@@ -931,16 +1827,41 @@ def start_development_run(
         raise DevelopmentDeliveryError(f"run directory exists without a portfolio receipt: {run_dir}")
     if portfolio_path.is_file():
         existing = json.loads(portfolio_path.read_text(encoding="utf-8"))
-        if existing.get("tickets") != plan["tickets"]:
+        selected_tickets = list(dict.fromkeys(tickets))
+        selected_member_resume = (
+            selected_packet is not None
+            and len(selected_tickets) == 1
+            and selected_tickets[0] in (existing.get("tickets") or [])
+        )
+        if existing.get("tickets") != plan["tickets"] and not selected_member_resume:
             raise DevelopmentDeliveryError("run id already belongs to a different ticket portfolio")
         # Runs created before repository catalogs did not include this field.
         # Backfill that one compatibility shape, but never permit a recorded
         # selection to drift to another repository on resume.
-        if existing.get("repository") is None:
+        existing_repository = (
+            existing.get("repository")
+            if isinstance(existing.get("repository"), Mapping)
+            else None
+        )
+        if existing_repository is None:
+            existing["repository"] = plan["repository"]
+            _atomic_json(portfolio_path, existing)
+        elif (
+            not str(existing_repository.get("id") or "").strip()
+            and existing_repository.get("root") == plan["repository"]["root"]
+            and existing_repository.get("base_branch") == plan["repository"]["base_branch"]
+        ):
             existing["repository"] = plan["repository"]
             _atomic_json(portfolio_path, existing)
         elif existing.get("repository") != plan["repository"]:
             raise DevelopmentDeliveryError("run id already belongs to a different repository selection")
+        if existing.get("authorship") is None:
+            existing["authorship"] = plan["authorship"]
+            _atomic_json(portfolio_path, existing)
+        elif existing.get("authorship") != plan["authorship"]:
+            raise DevelopmentDeliveryError(
+                "run id authorship boundary differs from the selected project profile"
+            )
         plan = existing
         requested_titles = dict(plan.get("titles") or requested_titles)
         policy_path = run_dir / "effective-policies.json"
@@ -966,11 +1887,47 @@ def start_development_run(
         run_policies = effective_policies
         _atomic_json(run_dir / "effective-policies.json", run_policies)
         _atomic_json(portfolio_path, plan)
+
+    operation_tickets = (
+        list(dict.fromkeys(tickets)) if selected_packet is not None else list(plan["tickets"])
+    )
+    plan.setdefault(
+        "policy_sources",
+        {
+            name: [item["source_ref"] for item in value["sources"]]
+            for name, value in run_policies["planes"].items()
+        },
+    )
+    recorded_auto_dev = plan.get("auto_dev") if isinstance(plan.get("auto_dev"), Mapping) else None
+    if recorded_auto_dev:
+        recorded_order = list(recorded_auto_dev.get("stage_order") or auto_dev_stage_order)
+        if (
+            len(recorded_order) == len(set(recorded_order))
+            and set(recorded_order) < set(AUTO_DEV_STAGE_ORDER)
+            and recorded_order == [name for name in AUTO_DEV_STAGE_ORDER if name in recorded_order]
+        ):
+            auto_dev_stage_order = list(AUTO_DEV_STAGE_ORDER)
+        else:
+            try:
+                auto_dev_stage_order = validate_auto_dev_stage_order(recorded_order)
+            except AutoDevStateError as exc:
+                raise DevelopmentDeliveryError(
+                    f"recorded auto_dev.stage_order is unsafe: {exc}"
+                ) from exc
+    if selected_packet is None or recorded_auto_dev is None:
+        plan["auto_dev"] = {
+            "mode": auto_dev_mode,
+            "requested_stage": requested_stage,
+            "goal": goal,
+            "stage_order": auto_dev_stage_order,
+            "provision_worktree": provision_worktree,
+            "requested_at": utc_now(),
+        }
     recovery = profile["recovery"]
     rollup_ledger = expand_path(root) / "harness" / "shared_factory" / "00-control-plane" / "development-runs.jsonl"
     prior_rows = {row.get("ticket"): row for row in plan.get("tasks", []) if isinstance(row, Mapping)}
     task_rows: list[dict[str, Any]] = []
-    for ticket in plan["tickets"]:
+    for ticket in operation_tickets:
         title = requested_titles[ticket]
         repository_prefix = ""
         if profile["repository"].get("id"):
@@ -989,20 +1946,206 @@ def start_development_run(
             )
         task_state = TaskState(state_path)
         current = task_state.read()
-        if current.get("state") == "worktree_ready" and current.get("worktree"):
-            task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), **current}))
-            continue
         failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
         if failure.get("recoverable"):
             task_state.recover(
                 receipt="automatic provisioning resume",
                 idempotency_key=f"{run_id}:{ticket}:auto-recover:{current.get('updated_at')}",
             )
+            current = task_state.read()
         elif current.get("state") == "blocked":
             task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), "error": failure}))
             continue
+        if selected_packet is not None:
+            work_items_root = (project_path / "work-items").resolve()
+            try:
+                selected_relative = selected_packet.relative_to(work_items_root)
+            except ValueError as exc:
+                raise DevelopmentDeliveryError(
+                    "selected Auto-Dev packet is outside the owning project's work-items tree"
+                ) from exc
+            if not selected_relative.parts or selected_relative.parts[0] not in {
+                "02-active",
+                "03-complete",
+            }:
+                raise DevelopmentDeliveryError(
+                    "selected Auto-Dev packet must be in 02-active or 03-complete"
+                )
+            if selected_relative.parts[0] == "03-complete" and requested_stage != "health":
+                raise DevelopmentDeliveryError(
+                    "finished Auto-Dev packets are immutable; use the explicit work-item "
+                    "reopen path to start a new delivery run before changing them"
+                )
+            selected_projection = (
+                _read_mapping(selected_packet / "autodev.json")
+                if (selected_packet / "autodev.json").is_file()
+                else {}
+            )
+            selected_delivery = (
+                selected_projection.get("delivery")
+                if isinstance(selected_projection.get("delivery"), Mapping)
+                else {}
+            )
+            linked_task = str(selected_delivery.get("task_state_ref") or "").strip()
+            if linked_task and Path(linked_task).expanduser().resolve() != state_path.resolve():
+                raise DevelopmentDeliveryError(
+                    "selected Auto-Dev packet belongs to a different delivery task"
+                )
+            if selected_projection and (
+                str(selected_projection.get("domain") or "") != plan["domain"]
+                or str(selected_projection.get("project") or "") != plan["project"]
+                or str((selected_projection.get("source") or {}).get("key") or "") != ticket
+            ):
+                raise DevelopmentDeliveryError(
+                    "selected Auto-Dev packet identity does not match the requested task"
+                )
+            prior_packet = Path(str(current.get("work_item") or selected_packet)).expanduser()
+            if prior_packet.name != selected_packet.name:
+                raise DevelopmentDeliveryError(
+                    "selected Auto-Dev packet name does not match the linked delivery packet"
+                )
+            current["work_item"] = str(selected_packet)
+            current["autodev_path"] = str(selected_packet / "autodev.json")
+            if adoption_row is not None:
+                current["canonical_work_id"] = adoption_row["id"]
+                current["source"] = {
+                    "system": adoption_row.get("source_system") or "filesystem",
+                    "key": adoption_row.get("source_key") or ticket,
+                    "url": adoption_row.get("source_url"),
+                }
+                if adopted_worktree_preflight is not None:
+                    current["worktree"] = adopted_worktree_preflight
+                    current["runtime"] = adopted_runtime_preflight
+            if not current.get("canonical_work_id") and selected_projection.get("canonical_work_id"):
+                current["canonical_work_id"] = selected_projection["canonical_work_id"]
+            _atomic_json(state_path, current)
+        existing_work_item_raw = current.get("work_item")
+        existing_work_item = Path(str(existing_work_item_raw)).expanduser() if existing_work_item_raw else None
+        current_name = str(current.get("state") or "")
+        if (
+            existing_work_item is not None
+            and existing_work_item.is_dir()
+            and current_name in FORWARD_STATES
+            and FORWARD_STATES.index(current_name) >= FORWARD_STATES.index("work_item_ready")
+        ):
+            current_source = (
+                current.get("source")
+                if isinstance(current.get("source"), Mapping)
+                else {}
+            )
+            task_tracker = str(
+                current_source.get("system")
+                or profile["tracker"].get("primary")
+                or "filesystem"
+            )
+            canonical_work_id = _resolve_canonical_development_work_id(
+                root,
+                domain=plan["domain"],
+                project=plan["project"],
+                tracker=task_tracker,
+                ticket=ticket,
+                preferred_id=(
+                    str(current["canonical_work_id"])
+                    if current.get("canonical_work_id")
+                    else None
+                ),
+            )
+            current.update(
+                {
+                    "os_root": str(expand_path(root)),
+                    "domain": plan["domain"],
+                    "project": plan["project"],
+                    "title": title,
+                    "source": {
+                        "system": task_tracker,
+                        "key": ticket,
+                        "url": current_source.get("url"),
+                    },
+                    "autodev_path": str(existing_work_item / "autodev.json"),
+                    "auto_dev_mode": auto_dev_mode,
+                    "requested_stage": requested_stage,
+                    "goal": goal,
+                    "auto_dev_stage_order": auto_dev_stage_order,
+                    "profile_source": str(source),
+                    "policy_receipt": str(run_dir / "effective-policies.json"),
+                    "policy_fingerprint": run_policies["fingerprint"],
+                    "policy_sources": plan["policy_sources"],
+                    "repository": plan["repository"],
+                    "authorship": plan["authorship"],
+                    "canonical_work_id": canonical_work_id,
+                }
+            )
+            _atomic_json(state_path, current)
+            _sync_auto_dev_projection(state_path)
+            _sync_canonical_development_work(
+                root,
+                domain=plan["domain"],
+                project=plan["project"],
+                ticket=ticket,
+                title=title,
+                run_id=run_id,
+                tracker=task_tracker,
+                packet=existing_work_item,
+                worktree=(current.get("worktree") if isinstance(current.get("worktree"), Mapping) else None),
+                delivery_state=current_name,
+                canonical_work_id=canonical_work_id,
+            )
+            current_index = FORWARD_STATES.index(current_name)
+            worktree_index = FORWARD_STATES.index("worktree_ready")
+            if not provision_worktree or (current_index >= worktree_index and current.get("worktree")):
+                task_rows.append(
+                    dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), **current})
+                )
+                continue
+            if current_index > FORWARD_STATES.index("work_item_ready"):
+                raise DevelopmentDeliveryError(
+                    f"progressed task {ticket} is missing its worktree receipt"
+                )
+        if existing_state_only:
+            raise DevelopmentDeliveryError(
+                "existing-state-only Auto-Dev action could not resolve its linked work item"
+            )
         try:
-            work_item = next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
+            current_source = current.get("source") if isinstance(current.get("source"), Mapping) else {}
+            profile_tracker = str(
+                current_source.get("system")
+                or profile["tracker"].get("primary")
+                or "filesystem"
+            )
+            canonical_work_id = _resolve_canonical_development_work_id(
+                root,
+                domain=plan["domain"],
+                project=plan["project"],
+                tracker=profile_tracker,
+                ticket=ticket,
+                preferred_id=(str(current.get("canonical_work_id")) if current.get("canonical_work_id") else None),
+            )
+            connection = connect_state(default_db_path(root))
+            try:
+                canonical_existing = canonical_work_items.get(connection, canonical_work_id)
+            finally:
+                connection.close()
+            work_item = selected_packet if adoption_row is not None else None
+            if canonical_existing and canonical_existing.get("packet_path"):
+                if canonical_existing.get("state") in canonical_work_items.TERMINAL_STATES:
+                    raise DevelopmentDeliveryError(
+                        f"canonical work item is already terminal: {canonical_work_id}"
+                    )
+                packet_value = Path(str(canonical_existing["packet_path"])).expanduser()
+                canonical_packet = (
+                    packet_value.resolve()
+                    if packet_value.is_absolute()
+                    else (expand_path(root) / packet_value).resolve()
+                )
+                if canonical_packet.is_dir():
+                    if _project_work_item_lane(canonical_packet, project_path) != "02-active":
+                        raise DevelopmentDeliveryError(
+                            "canonical work item points to a non-active packet; use the explicit "
+                            "Auto-Dev reopen command for finished history"
+                        )
+                    work_item = canonical_packet
+            if work_item is None:
+                work_item = next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
             if work_item is None:
                 result = create_project_work_item(
                     root,
@@ -1018,6 +2161,48 @@ def start_development_run(
                 work_item = created_dirs[0] if created_dirs else next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
             if work_item is None:
                 raise DevelopmentDeliveryError(f"work item receipt missing for {ticket}")
+            current = task_state.read()
+            current.update(
+                {
+                    "os_root": str(expand_path(root)),
+                    "domain": plan["domain"],
+                    "project": plan["project"],
+                    "title": title,
+                    "source": {"system": profile_tracker, "key": ticket, "url": None},
+                    "work_item": str(work_item),
+                    "autodev_path": str(work_item / "autodev.json"),
+                    "auto_dev_mode": auto_dev_mode,
+                    "requested_stage": requested_stage,
+                    "goal": goal,
+                    "auto_dev_stage_order": auto_dev_stage_order,
+                    "profile_source": str(source),
+                    "policy_receipt": str(run_dir / "effective-policies.json"),
+                    "policy_fingerprint": run_policies["fingerprint"],
+                    "policy_sources": plan["policy_sources"],
+                    "repository": plan["repository"],
+                    "authorship": plan["authorship"],
+                    "canonical_work_id": canonical_work_id,
+                }
+            )
+            _atomic_json(state_path, current)
+            _sync_auto_dev_projection(state_path)
+            _sync_canonical_development_work(
+                root,
+                domain=plan["domain"],
+                project=plan["project"],
+                ticket=ticket,
+                title=title,
+                run_id=run_id,
+                tracker=profile_tracker,
+                packet=work_item,
+                worktree=(
+                    current.get("worktree")
+                    if isinstance(current.get("worktree"), Mapping)
+                    else None
+                ),
+                delivery_state=str(current.get("state") or "work_item_ready"),
+                canonical_work_id=canonical_work_id,
+            )
             _atomic_json(
                 work_item / "artifacts" / "development-delivery" / "run.json",
                 {
@@ -1029,12 +2214,13 @@ def start_development_run(
                     "policy_receipt": str(run_dir / "effective-policies.json"),
                     "policy_fingerprint": run_policies["fingerprint"],
                     "repository": plan["repository"],
+                    "authorship": plan["authorship"],
                     "recorded_at": utc_now(),
                 },
             )
             transition_receipts = {
-                "claimed": f"tracker:{ticket}",
-                "groom_check": f"tracker:{ticket}",
+                "claimed": f"{profile_tracker}:{ticket}",
+                "groom_check": f"{profile_tracker}:{ticket}",
                 "context_ready": str(work_item / "SPEC.md"),
                 "work_item_ready": str(work_item),
             }
@@ -1048,6 +2234,65 @@ def start_development_run(
                     receipt=transition_receipts[target],
                     idempotency_key=f"{run_id}:{ticket}:{target}",
                 )
+            adopted_worktree = (
+                adopted_worktree_preflight if adoption_row is not None else None
+            )
+            if adopted_worktree is not None:
+                runtime_registration = adopted_runtime_preflight
+                if runtime_registration is None:
+                    raise DevelopmentDeliveryError(
+                        "adopted worktree passed preflight without a runtime ownership receipt"
+                    )
+                task_state.transition(
+                    "worktree_ready",
+                    receipt=adopted_worktree["path"],
+                    idempotency_key=f"{run_id}:{ticket}:adopt-worktree",
+                )
+                current = task_state.read()
+                current.update(
+                    {
+                        "work_item": str(work_item),
+                        "worktree": adopted_worktree,
+                        "runtime": runtime_registration,
+                    }
+                )
+                _atomic_json(state_path, current)
+                _sync_auto_dev_projection(state_path)
+                _sync_canonical_development_work(
+                    root,
+                    domain=plan["domain"],
+                    project=plan["project"],
+                    ticket=ticket,
+                    title=title,
+                    run_id=run_id,
+                    tracker=profile_tracker,
+                    packet=work_item,
+                    worktree=adopted_worktree,
+                    delivery_state="worktree_ready",
+                    canonical_work_id=canonical_work_id,
+                )
+                task_rows.append(
+                    {
+                        "ticket": ticket,
+                        "state_ref": str(state_path),
+                        "work_item": str(work_item),
+                        "worktree": adopted_worktree,
+                        "runtime": runtime_registration,
+                        "canonical_work_id": canonical_work_id,
+                    }
+                )
+                continue
+            if not provision_worktree:
+                current = task_state.read()
+                task_rows.append(
+                    {
+                        "ticket": ticket,
+                        "state_ref": str(state_path),
+                        "work_item": str(work_item),
+                        "canonical_work_id": canonical_work_id,
+                    }
+                )
+                continue
             worktree = create_isolated_worktree(
                 os_root=root,
                 domain=domain,
@@ -1056,11 +2301,47 @@ def start_development_run(
                 ticket=ticket,
                 title=title,
             )
+            runtime_registration = _runtime_registration(
+                profile,
+                worktree,
+                domain=domain,
+                project=project,
+                ticket=ticket,
+            )
             task_state.transition("worktree_ready", receipt=worktree["path"], idempotency_key=f"{run_id}:{ticket}:worktree")
             current = task_state.read()
-            current.update({"work_item": str(work_item), "worktree": worktree})
+            current.update(
+                {
+                    "work_item": str(work_item),
+                    "worktree": worktree,
+                    "runtime": runtime_registration,
+                }
+            )
             _atomic_json(state_path, current)
-            task_rows.append({"ticket": ticket, "state_ref": str(state_path), "work_item": str(work_item), "worktree": worktree})
+            _sync_auto_dev_projection(state_path)
+            _sync_canonical_development_work(
+                root,
+                domain=plan["domain"],
+                project=plan["project"],
+                ticket=ticket,
+                title=title,
+                run_id=run_id,
+                tracker=profile_tracker,
+                packet=work_item,
+                worktree=worktree,
+                delivery_state=str(current.get("state") or "worktree_ready"),
+                canonical_work_id=canonical_work_id,
+            )
+            task_rows.append(
+                {
+                    "ticket": ticket,
+                    "state_ref": str(state_path),
+                    "work_item": str(work_item),
+                    "worktree": worktree,
+                    "runtime": runtime_registration,
+                    "canonical_work_id": canonical_work_id,
+                }
+            )
         except (DevelopmentDeliveryError, OSError, subprocess.SubprocessError) as exc:
             detail = str(exc)
             kind = "provider_unavailable" if any(word in detail.lower() for word in ("fetch", "timeout", "unavailable")) else "provisioning_failed"
@@ -1071,12 +2352,22 @@ def start_development_run(
                 idempotency_key=f"{run_id}:{ticket}:provisioning-failed:{task_state.read().get('updated_at')}",
             )
             task_rows.append({"ticket": ticket, "state_ref": str(state_path), "error": failed["failure"]})
-        plan["tasks"] = task_rows
-        plan["state"] = "dispatching"
-        _atomic_json(portfolio_path, plan)
+    merged_task_rows = {
+        str(row.get("ticket")): dict(row)
+        for row in plan.get("tasks", [])
+        if isinstance(row, Mapping) and row.get("ticket")
+    }
+    merged_task_rows.update(
+        {
+            str(row.get("ticket")): dict(row)
+            for row in task_rows
+            if isinstance(row, Mapping) and row.get("ticket")
+        }
+    )
+    task_rows = [merged_task_rows[ticket] for ticket in plan["tickets"] if ticket in merged_task_rows]
     task_states = [TaskState(Path(row["state_ref"])).read()["state"] for row in task_rows]
     plan.update({
-        "state": "dispatching" if all(state == "worktree_ready" for state in task_states) else ("blocked" if all(state == "blocked" for state in task_states) else "partial"),
+        "state": _portfolio_rollup(task_states),
         "tasks": task_rows,
         "updated_at": utc_now(),
     })
@@ -1103,6 +2394,434 @@ def start_development_run(
     return plan
 
 
+def reopen_auto_dev_item(
+    root: str | Path,
+    state_file: str | Path,
+    *,
+    run_id: str,
+    reason: str,
+    requested_stage: str = "qa",
+    repository_id: str | None = None,
+    base_branch: str | None = None,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Reopen immutable Health history into one fresh active packet and run."""
+
+    run_id = str(run_id or "").strip()
+    reason = str(reason or "").strip()
+    requested_stage = str(requested_stage or "").strip().lower().replace("-", "_")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id):
+        raise DevelopmentDeliveryError(
+            "Auto-Dev reopen --run-id must contain only letters, numbers, dot, underscore, and hyphen"
+        )
+    if not reason:
+        raise DevelopmentDeliveryError("Auto-Dev reopen requires a durable --reason")
+    if requested_stage not in {"develop", "qa"}:
+        raise DevelopmentDeliveryError("Auto-Dev reopen --stage must be develop or qa")
+
+    selected = Path(state_file).expanduser().resolve()
+    if selected.is_dir():
+        selected = selected / "autodev.json"
+    if not selected.is_file():
+        raise DevelopmentDeliveryError(f"finished Auto-Dev state is missing: {selected}")
+    finished_packet = selected.parent
+    projection = read_auto_dev_state(selected)
+    domain = str(projection.get("domain") or "")
+    project = str(projection.get("project") or "")
+    source = projection.get("source") if isinstance(projection.get("source"), Mapping) else {}
+    ticket = str(source.get("key") or "")
+    canonical_work_id = str(projection.get("canonical_work_id") or "")
+    if not all((domain, project, ticket, canonical_work_id)):
+        raise DevelopmentDeliveryError(
+            "finished Auto-Dev state lacks domain, project, source key, or canonical work id"
+        )
+    project_path = project_root(root, domain, project)
+    if _project_work_item_lane(finished_packet, project_path) != "03-complete":
+        raise DevelopmentDeliveryError("Auto-Dev reopen requires a packet in 03-complete")
+    health = (
+        (projection.get("stages") or {}).get("health")
+        if isinstance(projection.get("stages"), Mapping)
+        else None
+    )
+    if not isinstance(health, Mapping) or health.get("status") != "completed":
+        raise DevelopmentDeliveryError("Auto-Dev reopen requires completed Health evidence")
+    finished_autodev_sha256 = hashlib.sha256(selected.read_bytes()).hexdigest()
+
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, canonical_work_id)
+    finally:
+        connection.close()
+    if canonical is None:
+        raise DevelopmentDeliveryError(f"canonical work item is missing: {canonical_work_id}")
+    canonical_packet_raw = Path(str(canonical.get("packet_path") or "")).expanduser()
+    canonical_packet = (
+        canonical_packet_raw.resolve()
+        if canonical_packet_raw.is_absolute()
+        else (expand_path(root) / canonical_packet_raw).resolve()
+    )
+    try:
+        health_receipt = validate_recorded_auto_dev_health(
+            selected,
+            allow_reopened=canonical_packet != finished_packet,
+        )
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(
+            f"completed Health evidence is not valid for reopen: {exc}"
+        ) from exc
+    health_sha256 = hashlib.sha256(health_receipt.read_bytes()).hexdigest()
+    health_receipt_ref = health_receipt.relative_to(finished_packet).as_posix()
+    title = str(canonical.get("title") or f"Implement {ticket}")
+    launch_preflight = start_development_run(
+        root,
+        domain,
+        project,
+        [ticket],
+        titles={ticket: title},
+        run_id=run_id,
+        repository_id=repository_id,
+        base_branch=base_branch,
+        auto_dev_mode="single_stage",
+        requested_stage=requested_stage,
+        goal=requested_stage,
+        provision_worktree=True,
+        apply=False,
+    )
+    selected_repository = dict(launch_preflight["repository"])
+    request = {
+        "run_id": run_id,
+        "reason": reason,
+        "requested_stage": requested_stage,
+        "canonical_work_id": canonical_work_id,
+        "domain": domain,
+        "project": project,
+        "ticket": ticket,
+        "finished_packet": str(finished_packet),
+        "finished_autodev_sha256": finished_autodev_sha256,
+        "health_receipt": health_receipt_ref,
+        "health_sha256": health_sha256,
+        "repository": selected_repository,
+    }
+    request_fingerprint = hashlib.sha256(
+        json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    plan = {
+        "schema": "auto-dev-reopen-plan/v1",
+        "status": "planned" if not apply else "reopening",
+        "run_id": run_id,
+        "reason": reason,
+        "requested_stage": requested_stage,
+        "canonical_work_id": canonical_work_id,
+        "domain": domain,
+        "project": project,
+        "ticket": ticket,
+        "finished_packet": str(finished_packet),
+        "health_receipt": str(health_receipt),
+        "health_sha256": health_sha256,
+        "repository": selected_repository,
+        "request_fingerprint": request_fingerprint,
+        "safety": {
+            "preserve_finished_packet": True,
+            "new_active_packet": True,
+            "fresh_worktree": True,
+            "fresh_runtime_registration": True,
+        },
+    }
+    intent_dir = project_path / "state" / "auto-dev-reopen"
+    intent_path = intent_dir / f"{run_id}.json"
+    intent_lock = intent_dir / ".lock"
+    active_root = project_path / "work-items" / "02-active"
+
+    def resolved_packet(raw: Any) -> Path:
+        value = Path(str(raw or "")).expanduser()
+        return value.resolve() if value.is_absolute() else (expand_path(root) / value).resolve()
+
+    def validate_intent(value: Mapping[str, Any]) -> Path:
+        active = resolved_packet(value.get("active_packet"))
+        try:
+            active.relative_to(active_root.resolve())
+        except ValueError as exc:
+            raise DevelopmentDeliveryError(
+                "Auto-Dev reopen intent points outside the active work-item lane"
+            ) from exc
+        if not (
+            value.get("schema") == "auto-dev-reopen-intent/v1"
+            and value.get("run_id") == run_id
+            and value.get("request_fingerprint") == request_fingerprint
+            and value.get("request") == request
+            and str(value.get("seed_work_id") or "").strip()
+            and str(value.get("created_at") or "").strip()
+        ):
+            raise DevelopmentDeliveryError(
+                "reopen run id is already bound to different inputs, Health evidence, "
+                "or repository selection"
+            )
+        return active
+
+    def validate_reopen_receipt(path: Path, active_packet: Path) -> dict[str, Any]:
+        value = _read_mapping(path)
+        prior_finished = resolved_packet(value.get("finished_packet"))
+        if not (
+            value.get("schema") == "auto-dev-reopen/v1"
+            and value.get("run_id") == run_id
+            and value.get("reason") == reason
+            and value.get("requested_stage") == requested_stage
+            and value.get("canonical_work_id") == canonical_work_id
+            and value.get("request_fingerprint") == request_fingerprint
+            and value.get("repository") == selected_repository
+            and value.get("finished_autodev_sha256") == finished_autodev_sha256
+            and value.get("health_receipt") == health_receipt_ref
+            and value.get("health_sha256") == health_sha256
+            and prior_finished == finished_packet
+            and resolved_packet(value.get("active_packet")) == active_packet
+        ):
+            raise DevelopmentDeliveryError(
+                "existing reopen receipt does not match this exact immutable-history request"
+            )
+        return value
+
+    def launch(active_packet: Path, receipt: Path) -> dict[str, Any]:
+        launched = start_development_run(
+            root,
+            domain,
+            project,
+            [ticket],
+            titles={ticket: title},
+            run_id=run_id,
+            repository_id=repository_id,
+            base_branch=base_branch,
+            auto_dev_mode="single_stage",
+            requested_stage=requested_stage,
+            goal=requested_stage,
+            provision_worktree=True,
+            selected_work_item=active_packet,
+            adopt_existing=not (active_packet / "autodev.json").is_file(),
+            apply=True,
+        )
+        rows = [row for row in launched.get("tasks", []) if isinstance(row, Mapping)]
+        failures = [row for row in rows if row.get("error")]
+        successful = [
+            row
+            for row in rows
+            if not row.get("error")
+            and row.get("state_ref")
+            and isinstance(row.get("worktree"), Mapping)
+        ]
+        with _file_lock(intent_lock):
+            intent = _read_mapping(intent_path)
+            validate_intent(intent)
+            intent["state"] = "launched" if len(successful) == 1 and not failures else "provisioning_failed"
+            intent["updated_at"] = utc_now()
+            intent["delivery_run"] = str(project_path / "state" / "development-runs" / run_id)
+            if successful:
+                intent["task_state_ref"] = str(successful[0]["state_ref"])
+                intent["worktree"] = dict(successful[0]["worktree"])
+            _atomic_json(intent_path, intent)
+        if failures or len(successful) != 1:
+            detail = failures[0].get("error") if failures else "fresh worktree receipt is missing"
+            raise DevelopmentDeliveryError(
+                f"Auto-Dev reopen is durably staged but provisioning failed; rerun the same "
+                f"command after correcting the cause: {detail}"
+            )
+        return launched
+
+    if canonical_packet != finished_packet:
+        if _project_work_item_lane(canonical_packet, project_path) != "02-active":
+            raise DevelopmentDeliveryError(
+                "canonical work item does not point to the selected finished packet or a valid reopen"
+            )
+        prior_receipt = (
+            canonical_packet / "artifacts" / "auto-dev-reopen" / "reopen.json"
+        )
+        if not prior_receipt.is_file() or not intent_path.is_file():
+            raise DevelopmentDeliveryError(
+                "canonical work item does not have a complete durable reopen transaction"
+            )
+        validate_reopen_receipt(prior_receipt, canonical_packet)
+        prior_intent = _read_mapping(intent_path)
+        validate_intent(prior_intent)
+        if not apply:
+            return {
+                **plan,
+                "schema": "auto-dev-reopen-result/v1",
+                "status": "already_reopened",
+                "active_packet": str(canonical_packet),
+                "reopen_receipt": str(prior_receipt),
+                "autodev_path": str(canonical_packet / "autodev.json"),
+            }
+        was_launched = prior_intent.get("state") == "launched"
+        launched = launch(canonical_packet, prior_receipt)
+        return {
+            **plan,
+            "schema": "auto-dev-reopen-result/v1",
+            "status": "already_reopened" if was_launched else "reopened",
+            "active_packet": str(canonical_packet),
+            "reopen_receipt": str(prior_receipt),
+            "autodev_path": str(canonical_packet / "autodev.json"),
+            "delivery": launched,
+        }
+
+    if (
+        canonical.get("state") not in canonical_work_items.TERMINAL_STATES
+        or canonical.get("attention") != "closed"
+    ):
+        raise DevelopmentDeliveryError(
+            "canonical work item must still be terminal and closed; use only the explicit "
+            "Auto-Dev reopen workflow"
+        )
+    if canonical.get("worktree_path") or canonical.get("branch"):
+        raise DevelopmentDeliveryError(
+            "finished canonical work still has live worktree pointers; rerun Health before reopen"
+        )
+    if not apply:
+        return plan
+
+    with _file_lock(intent_lock):
+        if intent_path.is_file():
+            intent = _read_mapping(intent_path)
+            active_packet = validate_intent(intent)
+        else:
+            created_at = utc_now()
+            seed_work_id = (
+                f"{next_work_item_index(project_path):03d}_"
+                f"{_slug(ticket).replace('-', '_')}_reopen_"
+                f"{_slug(run_id).replace('-', '_')}"
+            )
+            active_name = dated_name(
+                seed_work_id,
+                when=created_at,
+                policy=load_artifact_naming_policy(root),
+                scope="work_items",
+            )
+            active_packet = active_root / active_name
+            intent = {
+                "schema": "auto-dev-reopen-intent/v1",
+                "run_id": run_id,
+                "request_fingerprint": request_fingerprint,
+                "request": request,
+                "seed_work_id": seed_work_id,
+                "active_packet": str(active_packet),
+                "state": "planned",
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+            _atomic_json(intent_path, intent)
+
+        connection = connect_state(default_db_path(root))
+        try:
+            live = canonical_work_items.get(connection, canonical_work_id)
+        finally:
+            connection.close()
+        if live is None:
+            raise DevelopmentDeliveryError("canonical work disappeared during reopen")
+        live_packet = resolved_packet(live.get("packet_path"))
+        if live_packet != finished_packet:
+            raise DevelopmentDeliveryError(
+                "canonical packet changed during reopen preflight; no new packet was created"
+            )
+        if (
+            live.get("state") not in canonical_work_items.TERMINAL_STATES
+            or live.get("attention") != "closed"
+            or live.get("worktree_path")
+            or live.get("branch")
+        ):
+            raise DevelopmentDeliveryError(
+                "canonical work changed during reopen preflight; rerun Health or inspect the work state"
+            )
+
+        existing_metadata = _read_mapping(active_packet / "work.yml")
+        if existing_metadata and existing_metadata.get("id") != active_packet.name:
+            raise DevelopmentDeliveryError(
+                "planned reopen packet path is occupied by a different work item"
+            )
+        create_project_work_item(
+            root,
+            domain,
+            project,
+            title=title,
+            summary=(
+                f"Receipt-backed {requested_stage} follow-up for {ticket}. The completed packet "
+                f"at {finished_packet} remains immutable. Reason: {reason}"
+            ),
+            status="building",
+            work_id=str(intent["seed_work_id"]),
+            item_format="packet",
+            naming_time=str(intent["created_at"]),
+        )
+        if not active_packet.is_dir():
+            raise DevelopmentDeliveryError(
+                "reopen did not create or recover its exact planned active packet"
+            )
+        receipt = active_packet / "artifacts" / "auto-dev-reopen" / "reopen.json"
+        receipt_payload = {
+            "schema": "auto-dev-reopen/v1",
+            "run_id": run_id,
+            "reason": reason,
+            "requested_stage": requested_stage,
+            "canonical_work_id": canonical_work_id,
+            "source": {
+                "system": canonical.get("source_system"),
+                "key": canonical.get("source_key"),
+                "url": canonical.get("source_url"),
+            },
+            "repository": selected_repository,
+            "request_fingerprint": request_fingerprint,
+            "finished_packet": str(finished_packet),
+            "finished_autodev_sha256": finished_autodev_sha256,
+            "health_receipt": health_receipt_ref,
+            "health_sha256": health_sha256,
+            "active_packet": str(active_packet),
+            "decision": "preserve finished history and provision fresh resources",
+            "created_at": str(intent["created_at"]),
+        }
+        if receipt.is_file():
+            validate_reopen_receipt(receipt, active_packet)
+        else:
+            _atomic_json(receipt, receipt_payload)
+
+        connection = connect_state(default_db_path(root))
+        try:
+            live = canonical_work_items.get(connection, canonical_work_id)
+            if live is None or live.get("state") not in canonical_work_items.TERMINAL_STATES:
+                raise DevelopmentDeliveryError("canonical work changed during reopen commit")
+            if resolved_packet(live.get("packet_path")) != finished_packet:
+                raise DevelopmentDeliveryError("canonical packet changed during reopen commit")
+            canonical_work_items.update(
+                connection,
+                canonical_work_id,
+                state="building",
+                attention="active",
+                context_summary=(
+                    f"Auto-Dev reopen run {run_id} for {ticket}; prior finished packet is "
+                    f"preserved. Reason: {reason}"
+                ),
+                packet_path=str(active_packet),
+                clear_worktree=True,
+                actor="auto-dev-reopen",
+                receipt_ref=str(receipt),
+                verified=True,
+                allow_terminal_reopen=True,
+            )
+            canonical_work_items.write_active_projection(connection, root)
+        finally:
+            connection.close()
+        intent["state"] = "canonical_relinked"
+        intent["updated_at"] = utc_now()
+        intent["reopen_receipt"] = str(receipt)
+        _atomic_json(intent_path, intent)
+
+    launched = launch(active_packet, receipt)
+    return {
+        **plan,
+        "schema": "auto-dev-reopen-result/v1",
+        "status": "reopened",
+        "active_packet": str(active_packet),
+        "reopen_receipt": str(receipt),
+        "autodev_path": str(active_packet / "autodev.json"),
+        "delivery": launched,
+    }
+
+
 def run_development_stage(
     state_file: str | Path,
     *,
@@ -1111,6 +2830,151 @@ def run_development_stage(
     idempotency_prefix: str,
 ) -> dict[str, Any]:
     """Record a completed manual Auto-Dev stage from typed evidence receipts."""
+
+    state = TaskState(Path(state_file).expanduser().resolve())
+    validated_payloads: dict[str, dict[str, Any]] = {}
+
+    def receipt_payload(target: str) -> dict[str, Any] | None:
+        payload = validated_payloads.get(target)
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        for item in reversed(state.read().get("receipts") or []):
+            if not isinstance(item, Mapping) or item.get("state") != target:
+                continue
+            ref = Path(str(item.get("ref") or "")).expanduser()
+            if not ref.is_file():
+                continue
+            expected_hash = str(item.get("sha256") or "").strip().lower()
+            if expected_hash and hashlib.sha256(ref.read_bytes()).hexdigest() != expected_hash:
+                raise DevelopmentDeliveryError(
+                    f"immutable {target} receipt changed after its transition"
+                )
+            if state.read().get("work_item") and not expected_hash:
+                raise DevelopmentDeliveryError(
+                    f"canonical {target} receipt lacks an immutable sha256 binding"
+                )
+            try:
+                prior = json.loads(ref.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(prior, Mapping):
+                return dict(prior)
+        return None
+
+    def merged_revision() -> str | None:
+        """Return the exact merged revision from this preflight or task history."""
+
+        payload = receipt_payload("merged")
+        evidence = payload.get("evidence") if isinstance(payload, Mapping) else None
+        if isinstance(evidence, Mapping) and evidence.get("merge_sha"):
+            return str(evidence["merge_sha"])
+        return None
+
+    def reviewed_revision() -> str | None:
+        """Return the exact head revision that passed the merge-readiness gate."""
+
+        task_value = state.read()
+        ready_payload = receipt_payload("ready_for_merge")
+        ready_evidence = (
+            ready_payload.get("evidence") if isinstance(ready_payload, Mapping) else None
+        )
+        canonical = (
+            str(ready_evidence.get("subject_revision") or "").strip()
+            if isinstance(ready_evidence, Mapping)
+            else ""
+        )
+        if not canonical:
+            return None
+        projections = [str(task_value.get("subject_revision") or "").strip()]
+        autodev_ref = str(task_value.get("autodev_path") or "").strip()
+        if autodev_ref:
+            autodev_path = Path(autodev_ref).expanduser()
+            if autodev_path.is_file():
+                try:
+                    autodev = json.loads(autodev_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    autodev = {}
+                projections.append(str(autodev.get("subject_revision") or "").strip())
+        if any(value and value != canonical for value in projections):
+            raise DevelopmentDeliveryError(
+                "task or autodev subject_revision drifted from the canonical ready_for_merge receipt"
+            )
+        return canonical
+
+    def pull_request_authority(
+        target: str,
+        evidence: Mapping[str, Any],
+    ) -> dict[str, str]:
+        """Return and validate the provider identity for one PR milestone."""
+        try:
+            return validate_pull_request_authority(state.read(), evidence, target)
+        except AutoDevStateError as exc:
+            raise DevelopmentDeliveryError(str(exc)) from exc
+
+    def prior_pull_request_authority(target: str) -> dict[str, str]:
+        payload = receipt_payload(target)
+        evidence = payload.get("evidence") if isinstance(payload, Mapping) else None
+        if not isinstance(evidence, Mapping):
+            raise DevelopmentDeliveryError(
+                f"delivery task lacks typed {target} pull-request authority"
+            )
+        return pull_request_authority(target, evidence)
+
+    def require_same_pull_request(
+        target: str,
+        authority: Mapping[str, str],
+        prior_target: str,
+        prior: Mapping[str, str],
+    ) -> None:
+        if not same_pull_request_authority(authority, prior):
+            raise DevelopmentDeliveryError(
+                f"{target} receipt PR authority must match {prior_target}"
+            )
+
+    def persist_delivery_revision_metadata() -> dict[str, Any]:
+        """Keep reviewed-head and terminal merge/deploy revisions distinct."""
+
+        merge_sha = merged_revision()
+        ready_payload = receipt_payload("ready_for_merge")
+        ready_evidence = (
+            ready_payload.get("evidence") if isinstance(ready_payload, Mapping) else None
+        )
+        review_sha = (
+            str(ready_evidence.get("subject_revision") or "").strip()
+            if isinstance(ready_evidence, Mapping)
+            else ""
+        )
+        deploy_payload = receipt_payload("post_deploy_validation")
+        deploy_evidence = (
+            deploy_payload.get("evidence") if isinstance(deploy_payload, Mapping) else None
+        )
+        changed = False
+        with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
+            task_value = state.read()
+            if review_sha and task_value.get("subject_revision") != review_sha:
+                task_value["subject_revision"] = review_sha
+                changed = True
+            if merge_sha and task_value.get("terminal_revision") != merge_sha:
+                task_value["terminal_revision"] = merge_sha
+                changed = True
+            if isinstance(deploy_payload, Mapping) and isinstance(deploy_evidence, Mapping):
+                applicable = deploy_payload.get("status") != "not_required"
+                deployed_revision = str(
+                    deploy_evidence.get("deployed_revision") or merge_sha or ""
+                ) or None
+                if task_value.get("deployment_applicable") is not applicable:
+                    task_value["deployment_applicable"] = applicable
+                    changed = True
+                if deployed_revision and task_value.get("deployed_revision") != deployed_revision:
+                    task_value["deployed_revision"] = deployed_revision
+                    changed = True
+            if changed:
+                task_value["updated_at"] = utc_now()
+                _atomic_json(state.path, task_value)
+        if changed:
+            _refresh_portfolio_state(state.path)
+            _sync_auto_dev_projection(state.path)
+        return state.read()
 
     def validate_receipt(target: str, raw: str) -> tuple[str, dict[str, Any]]:
         path = Path(raw).expanduser().resolve()
@@ -1132,48 +2996,240 @@ def run_development_stage(
         evidence = payload.get("evidence")
         if not isinstance(evidence, (Mapping, list)) or not evidence:
             raise DevelopmentDeliveryError(f"{target} receipt requires structured evidence")
-        if status == "not_required" and not (
-            isinstance(evidence, Mapping) and evidence.get("policy_ref")
-        ):
-            raise DevelopmentDeliveryError(f"{target} not_required receipt requires evidence.policy_ref")
-        if target == "pr_open" and not (
-            isinstance(evidence, Mapping)
-            and evidence.get("pull_request")
-            and evidence.get("readback_verified") is True
-        ):
-            raise DevelopmentDeliveryError("pr_open receipt requires pull_request and readback_verified")
-        if target == "ready_for_merge" and not (
-            isinstance(evidence, Mapping)
-            and evidence.get("checks_verified") is True
-            and evidence.get("reviews_verified") is True
-        ):
-            raise DevelopmentDeliveryError(
-                "ready_for_merge receipt requires checks_verified and reviews_verified"
+        if status == "not_required":
+            policy_stage = {
+                "release_propagation": "release_propagation",
+                "deployment_pending": "deploy",
+                "deploying": "deploy",
+                "post_deploy_validation": "deploy",
+            }.get(target)
+            if not policy_stage or not isinstance(evidence, Mapping):
+                raise DevelopmentDeliveryError(
+                    f"{target} cannot use a not_required delivery receipt"
+                )
+            raw_policy = str(evidence.get("policy_ref") or "").strip()
+            policy_candidate = Path(raw_policy).expanduser()
+            task_value = state.read()
+            work_item_raw = str(task_value.get("work_item") or "").strip()
+            work_item = Path(work_item_raw).expanduser().resolve() if work_item_raw else None
+            candidates = [policy_candidate] if policy_candidate.is_absolute() else [
+                path.parent / policy_candidate,
+                *(([work_item / policy_candidate]) if work_item is not None else []),
+            ]
+            policy_path = next((item.resolve() for item in candidates if item.resolve().is_file()), None)
+            if policy_path is None:
+                raise DevelopmentDeliveryError(
+                    f"{target} not_required policy_ref must resolve to a typed receipt"
+                )
+            try:
+                policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                raise DevelopmentDeliveryError(
+                    f"{target} not_required policy receipt must be valid JSON"
+                ) from exc
+            durable_root = work_item if work_item is not None else state.path.parent
+            autodev_raw = str(task_value.get("autodev_path") or "").strip()
+            if work_item is None or not autodev_raw:
+                raise DevelopmentDeliveryError(
+                    f"{target} not_required requires the linked Auto-Dev work-item state"
+                )
+            try:
+                descriptor = materialize_auto_dev_policy_decision(
+                    policy_path,
+                    policy_stage,
+                    work_item=durable_root,
+                    current=read_auto_dev_state(autodev_raw),
+                )
+            except AutoDevStateError as exc:
+                raise DevelopmentDeliveryError(str(exc)) from exc
+            canonical_evidence = dict(evidence)
+            canonical_evidence["policy_ref"] = descriptor["ref"]
+            canonical_evidence["policy_sha256"] = descriptor["sha256"]
+            payload = {**payload, "evidence": canonical_evidence}
+            evidence = canonical_evidence
+        if target == "pr_open":
+            if not (
+                isinstance(evidence, Mapping)
+                and evidence.get("readback_verified") is True
+                and evidence.get("author_kind") in {"ours", "others"}
+            ):
+                raise DevelopmentDeliveryError(
+                    "pr_open receipt requires provider, pull_request, and readback_verified"
+                )
+            pull_request_authority(target, evidence)
+        if target == "ready_for_merge":
+            if not (
+                isinstance(evidence, Mapping)
+                and evidence.get("checks_verified") is True
+                and evidence.get("reviews_verified") is True
+                and evidence.get("readback_verified") is True
+                and re.fullmatch(
+                    r"[a-fA-F0-9]{7,64}", str(evidence.get("subject_revision") or "")
+                )
+            ):
+                raise DevelopmentDeliveryError(
+                    "ready_for_merge receipt requires checks_verified, reviews_verified, "
+                    "readback_verified, and the exact subject_revision"
+                )
+            ready_authority = pull_request_authority(target, evidence)
+            require_same_pull_request(
+                target,
+                ready_authority,
+                "pr_open",
+                prior_pull_request_authority("pr_open"),
             )
-        if target == "merged" and not (
-            status == "completed"
-            and isinstance(evidence, Mapping)
-            and re.fullmatch(r"[a-fA-F0-9]{7,64}", str(evidence.get("merge_sha") or ""))
-            and evidence.get("readback_verified") is True
-        ):
-            raise DevelopmentDeliveryError(
-                "merged receipt requires completed status, merge_sha, and readback_verified"
+        if target == "merged":
+            expected_subject = reviewed_revision()
+            source_head_sha = (
+                str(evidence.get("source_head_sha") or "")
+                if isinstance(evidence, Mapping)
+                else ""
             )
+            merge_authority = (
+                pull_request_authority(target, evidence)
+                if isinstance(evidence, Mapping)
+                else {}
+            )
+            if not (
+                status == "completed"
+                and isinstance(evidence, Mapping)
+                and re.fullmatch(r"[a-fA-F0-9]{7,64}", str(evidence.get("merge_sha") or ""))
+                and re.fullmatch(r"[a-fA-F0-9]{7,64}", source_head_sha)
+                and expected_subject
+                and source_head_sha == expected_subject
+                and evidence.get("readback_verified") is True
+            ):
+                raise DevelopmentDeliveryError(
+                    "merged receipt requires completed status, merge_sha, provider-read "
+                    "source_head_sha equal to the reviewed subject_revision, provider, "
+                    "pull_request, and readback_verified"
+                )
+            ready_authority = prior_pull_request_authority("ready_for_merge")
+            require_same_pull_request(
+                target,
+                merge_authority,
+                "ready_for_merge",
+                ready_authority,
+            )
+            if (
+                merge_authority.get("author_kind") not in {"ours", "others"}
+                or merge_authority.get("author_kind") != ready_authority.get("author_kind")
+            ):
+                raise DevelopmentDeliveryError(
+                    "merged receipt author_kind must match the provider-read ready_for_merge receipt"
+                )
+            task_value = state.read()
+            autodev_ref = str(task_value.get("autodev_path") or "").strip()
+            if task_value.get("work_item") and not autodev_ref:
+                raise DevelopmentDeliveryError(
+                    "Auto-Dev Merge requires the work item's canonical autodev.json linkage"
+                )
+            if autodev_ref:
+                readiness = evidence.get("readiness_authority")
+                if not isinstance(readiness, Mapping):
+                    raise DevelopmentDeliveryError(
+                        "merged receipt requires evidence.readiness_authority from Finalize or Review Others"
+                    )
+                try:
+                    validate_auto_dev_readiness_authority(
+                        autodev_ref,
+                        readiness,
+                        expected_subject=expected_subject,
+                        expected_pull_request=ready_authority,
+                    )
+                except AutoDevStateError as exc:
+                    raise DevelopmentDeliveryError(str(exc)) from exc
+        if target == "post_deploy_validation":
+            if status == "not_required":
+                if not (
+                    isinstance(evidence, Mapping)
+                    and evidence.get("policy_ref")
+                    and evidence.get("deployment_applicable") is False
+                ):
+                    raise DevelopmentDeliveryError(
+                        "post_deploy_validation not_required receipt requires "
+                        "policy_ref and deployment_applicable=false"
+                    )
+            else:
+                expected_revision = merged_revision()
+                deployed_revision = (
+                    str(evidence.get("deployed_revision") or "")
+                    if isinstance(evidence, Mapping)
+                    else ""
+                )
+                artifact_ref = (
+                    str(evidence.get("artifact_ref") or "")
+                    if isinstance(evidence, Mapping)
+                    else ""
+                )
+                environment = (
+                    str(evidence.get("environment") or "")
+                    if isinstance(evidence, Mapping)
+                    else ""
+                )
+                if not (
+                    expected_revision
+                    and deployed_revision == expected_revision
+                    and artifact_ref.strip()
+                    and environment.strip()
+                    and isinstance(evidence, Mapping)
+                    and evidence.get("readback_verified") is True
+                ):
+                    raise DevelopmentDeliveryError(
+                        "post_deploy_validation receipt requires the exact merged "
+                        "deployed_revision, artifact_ref, environment, and readback_verified"
+                    )
         if target == "delivery_complete" and not (
             isinstance(evidence, Mapping) and evidence.get("closeout_verified") is True
         ):
             raise DevelopmentDeliveryError(
                 "delivery_complete receipt requires evidence.closeout_verified"
             )
+        task_value = state.read()
+        work_item_raw = str(task_value.get("work_item") or "").strip()
+        if work_item_raw:
+            work_item = Path(work_item_raw).expanduser().resolve()
+            receipt_sha256 = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            snapshot = (
+                work_item
+                / "artifacts"
+                / "development-delivery"
+                / "evidence"
+                / f"{target}-{receipt_sha256[:20]}.json"
+            )
+            if snapshot.is_file():
+                try:
+                    existing = json.loads(snapshot.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    raise DevelopmentDeliveryError(
+                        "immutable delivery evidence snapshot is invalid"
+                    ) from exc
+                if existing != payload:
+                    raise DevelopmentDeliveryError("immutable delivery evidence snapshot collision")
+            else:
+                _atomic_json(snapshot, payload)
+            path = snapshot
         return str(path), payload
 
-    state = TaskState(Path(state_file).expanduser().resolve())
     stage_name = stage.strip().lower().replace("-", "_")
     if stage_name == "release_propagation":
         current = state.read()
-        if current.get("state") not in {"ready_for_merge", "merged"}:
+        autodev_ref = str(current.get("autodev_path") or "").strip()
+        if current.get("work_item") and not autodev_ref:
             raise DevelopmentDeliveryError(
-                "release_propagation requires ready_for_merge or merged state"
+                "Auto-Dev release_propagation requires canonical autodev.json linkage"
+            )
+        if autodev_ref:
+            _sync_auto_dev_projection(state.path)
+            try:
+                require_auto_dev_predecessors(autodev_ref, "pr_create")
+            except AutoDevStateError as exc:
+                raise DevelopmentDeliveryError(str(exc)) from exc
+        if current.get("state") not in {"local_validation", "ready_for_merge", "merged"}:
+            raise DevelopmentDeliveryError(
+                "PR creation requires local_validation, ready_for_merge, or merged state"
             )
         raw_receipt = str(receipts.get("release_propagation") or "").strip()
         if not raw_receipt:
@@ -1181,6 +3237,16 @@ def run_development_stage(
                 "release_propagation requires --receipt release_propagation=<ref>"
             )
         receipt, receipt_payload = validate_receipt("release_propagation", raw_receipt)
+        work_item_raw = str(current.get("work_item") or "").strip()
+        if work_item_raw:
+            work_item = Path(work_item_raw).expanduser().resolve()
+            try:
+                receipt = Path(receipt).expanduser().resolve().relative_to(work_item).as_posix()
+            except ValueError as exc:
+                raise DevelopmentDeliveryError(
+                    "release_propagation evidence must be snapshotted inside the work item"
+                ) from exc
+        validated_payloads["release_propagation"] = receipt_payload
         output = state.path.parent / "stages" / "release-propagation.json"
         payload = {
             "schema": "development-stage-receipt/v1",
@@ -1197,13 +3263,29 @@ def run_development_stage(
             existing = json.loads(output.read_text(encoding="utf-8"))
             if existing.get("idempotency_key") != payload["idempotency_key"] or existing.get("receipt") != receipt:
                 raise DevelopmentDeliveryError("release propagation receipt already exists with different input")
+            with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
+                task_value = state.read()
+                task_value.setdefault("stage_receipts", {})["release_propagation"] = {
+                    "ref": str(output),
+                    "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                }
+                _atomic_json(state.path, task_value)
+            _sync_auto_dev_projection(state.path)
             return existing
         _atomic_json(output, payload)
+        with _file_lock(state.path.with_suffix(state.path.suffix + ".lock")):
+            task_value = state.read()
+            task_value.setdefault("stage_receipts", {})["release_propagation"] = {
+                "ref": str(output),
+                "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+            }
+            _atomic_json(state.path, task_value)
         state.emit(
             event_type="development.stage.release_propagated",
             idempotency_key=payload["idempotency_key"],
             payload={"ticket": current.get("ticket"), "receipt": receipt},
         )
+        _sync_auto_dev_projection(state.path)
         return payload
     normalized = "closeout" if stage_name in {"cleanup", "merge_deployment_cleanup"} else stage_name
     if normalized not in DEVELOPMENT_STAGE_RANGES:
@@ -1211,9 +3293,28 @@ def run_development_stage(
         raise DevelopmentDeliveryError(f"stage must be one of: {choices}")
     start_name, end_name = DEVELOPMENT_STAGE_RANGES[normalized]
     current = state.read()
+    autodev_ref = str(current.get("autodev_path") or "").strip()
+    predecessor_target = {
+        "review": "review_self",
+        "merge": "merge",
+        "deploy": "deploy",
+        "closeout": "closeout",
+    }.get(normalized)
+    if current.get("work_item") and predecessor_target and not autodev_ref:
+        raise DevelopmentDeliveryError(
+            f"Auto-Dev {normalized} requires the work item's canonical autodev.json linkage"
+        )
+    if autodev_ref and predecessor_target:
+        _sync_auto_dev_projection(state.path)
+        try:
+            require_auto_dev_predecessors(autodev_ref, predecessor_target)
+        except AutoDevStateError as exc:
+            raise DevelopmentDeliveryError(str(exc)) from exc
     current_name = str(current.get("state"))
     if current_name == end_name:
+        current = persist_delivery_revision_metadata()
         _refresh_portfolio_state(state.path)
+        _sync_auto_dev_projection(state.path)
         return current
     if current_name not in FORWARD_STATES:
         raise DevelopmentDeliveryError(f"cannot run {normalized} from state {current_name}")
@@ -1231,14 +3332,14 @@ def run_development_stage(
         raw_receipt = str(receipts.get(target) or "").strip()
         if not raw_receipt:
             raise DevelopmentDeliveryError(f"{normalized} requires --receipt {target}=<ref>")
-        validated[target], _ = validate_receipt(target, raw_receipt)
+        validated[target], validated_payloads[target] = validate_receipt(target, raw_receipt)
     for target in required_targets:
         current = state.transition(
             target,
             receipt=validated[target],
             idempotency_key=f"{idempotency_prefix}:{target}",
         )
-    return current
+    return persist_delivery_revision_metadata()
 
 
 def validate_workflow_contracts(repository_root: str | Path) -> list[str]:

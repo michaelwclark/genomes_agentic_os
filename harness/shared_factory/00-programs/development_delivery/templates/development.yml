@@ -14,6 +14,12 @@ worktrees:
   branch_template: feature/{ticket}-{slug}
 work_items:
   active_status: building
+# Auto-Dev Health tears down only a runtime explicitly registered here.
+# Projects without a per-worktree runtime keep this not-managed declaration.
+runtime:
+  ownership: not_managed
+  provider: none
+  identity: not-managed
 validation:
   commands:
     - python3 -m pytest tests -q
@@ -38,7 +44,23 @@ policies:
       - harness/shared_factory/05-knowledge/gitflow_topology
       - '{domain_root}/05-knowledge/gitflow_topology'
       - config/gitflow_topology
+  auto_dev:
+    paths:
+      - harness/shared_factory/05-knowledge/auto_dev
+      - '{domain_root}/05-knowledge/auto_dev'
+      - config/auto_dev
+  environment_access:
+    paths:
+      - harness/shared_factory/05-knowledge/environment_access
+      - '{domain_root}/05-knowledge/environment_access'
+      - config/environment_access
 review:
+  # Provider-qualified identities that count as "our" pull requests.
+  # Keep this synchronized with the account used for provider readback.
+  authorship:
+    # Domain/project setup fills this with real provider identities.
+    # PR-authority stages fail closed while this list is empty.
+    ours: []
   opposing_harness:
     required: true
     preferred: claude

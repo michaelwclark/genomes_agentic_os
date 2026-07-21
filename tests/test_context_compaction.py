@@ -106,7 +106,9 @@ def test_context_cli_explain_check_and_plan_receipts(tmp_path: Path, capsys) -> 
 
     assert main(["context", "check", "--root", str(root)]) == 0
     checked = yaml.safe_load(capsys.readouterr().out)
-    assert checked["manifests"] == 2
+    # The installed shared OS Cleanup workflow contributes one manifest in
+    # addition to the workflow and automation created by this test.
+    assert checked["manifests"] == 3
     automation_root = root / "domains/acme/04-automations/engineering/watch_ship"
     assert (automation_root / "context-contract.yml").is_file()
     for copied_contract in ("ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"):

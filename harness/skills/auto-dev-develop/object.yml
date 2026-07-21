@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-develop
+title: Auto-Dev Develop
+description: Friendly alias for canonical Auto-Dev implementation and local validation.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, alias, sdlc]
+dependencies: [skill:root:auto-dev-implementation]
+aliases: [harness/skills/auto-dev-develop/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-develop}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

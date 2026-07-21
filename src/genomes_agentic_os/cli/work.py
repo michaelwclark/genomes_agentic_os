@@ -94,8 +94,10 @@ def handle_set(args: argparse.Namespace) -> int:
             attention=args.attention,
             context_summary=args.summary,
             blocked_reason=args.blocked_reason,
+            packet_path=args.packet_path,
             worktree_path=args.worktree_path,
             branch=args.branch,
+            clear_worktree=args.clear_worktree,
             actor=args.actor,
             receipt_ref=args.receipt,
             verified=args.verified,
@@ -213,7 +215,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     set_parser.add_argument("--attention", choices=work_items.ATTENTION_STATES)
     set_parser.add_argument("--summary")
     set_parser.add_argument("--blocked-reason")
-    set_parser.add_argument("--worktree-path")
+    set_parser.add_argument("--packet-path", help="Reconcile the packet path after a governed lane move.")
+    worktree_group = set_parser.add_mutually_exclusive_group()
+    worktree_group.add_argument("--worktree-path")
+    worktree_group.add_argument(
+        "--clear-worktree",
+        action="store_true",
+        help="Clear the reconstructable worktree and branch pointers after verified cleanup.",
+    )
     set_parser.add_argument("--branch")
     set_parser.add_argument("--actor", default="agentic-os")
     set_parser.add_argument("--receipt")

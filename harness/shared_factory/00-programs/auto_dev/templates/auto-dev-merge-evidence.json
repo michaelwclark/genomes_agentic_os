@@ -1,0 +1,30 @@
+{
+  "schema": "development-stage-evidence/v1",
+  "state": "merged",
+  "status": "completed",
+  "summary": "The provider reports that the reviewed pull-request head was merged and returned the exact merge revision.",
+  "evidence": {
+    "merge_sha": "1234567890abcdef1234567890abcdef12345678",
+    "source_head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+    "provider": "github",
+    "pull_request": "github:owner/repository#123",
+    "repository": "configured-repository-id",
+    "base_branch": "main",
+    "author_identity": "github:owner-login",
+    "author_kind": "ours",
+    "readiness_authority": {
+      "owner": "finalize",
+      "ref": "artifacts/auto-dev-orchestration/stages/finalize/<receipt>.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "provider": "github",
+      "pull_request": "github:owner/repository#123",
+      "repository": "configured-repository-id",
+      "base_branch": "main",
+      "subject_revision": "abcdef1234567890abcdef1234567890abcdef12",
+      "author_identity": "github:owner-login",
+      "author_kind": "ours"
+    },
+    "readback_verified": true
+  },
+  "verified_at": "2026-01-01T00:00:00Z"
+}

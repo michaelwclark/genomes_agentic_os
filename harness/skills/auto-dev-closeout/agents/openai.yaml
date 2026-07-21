@@ -1,6 +1,6 @@
 interface:
   display_name: "Auto-Dev Closeout"
-  short_description: "Merge, deploy, validate, reconcile, and close"
-  default_prompt: "Use $auto-dev-closeout to finish this ready change through verified delivery and cleanup."
+  short_description: "Reconcile providers and close verified delivery"
+  default_prompt: "Use $auto-dev-closeout to reconcile and close this change after merge and deployment decisions have verified receipts."
 policy:
   allow_implicit_invocation: true

@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-review-self
+title: Auto-Dev Review Self
+description: Friendly alias for canonical independent review and repair of our own change.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, review, repair, alias, sdlc]
+dependencies: [skill:root:auto-dev-review-repair]
+aliases: [harness/skills/auto-dev-review-self/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-review-self}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

@@ -161,6 +161,7 @@ def upsert(
     receipt_ref: str | None = None,
     verified: bool = False,
     now: str | None = None,
+    allow_terminal_reopen: bool = False,
 ) -> dict[str, Any]:
     normalized = _normalize(
         item_id=item_id,
@@ -185,6 +186,16 @@ def upsert(
     existing = get(conn, normalized["id"])
     previous_state = existing["state"] if existing else None
     previous_attention = existing["attention"] if existing else None
+    if (
+        existing
+        and previous_state in TERMINAL_STATES
+        and normalized["state"] not in TERMINAL_STATES
+        and not allow_terminal_reopen
+    ):
+        raise WorkItemError(
+            "terminal work items cannot be reactivated directly; use the explicit "
+            "Auto-Dev reopen workflow"
+        )
     closed_at = timestamp if normalized["attention"] == "closed" else None
     last_verified = timestamp if verified else (existing or {}).get("last_verified_at")
     with transaction(conn):
@@ -272,12 +283,15 @@ def update(
     attention: str | None = None,
     context_summary: str | None = None,
     blocked_reason: str | None = None,
+    packet_path: str | None = None,
     worktree_path: str | None = None,
     branch: str | None = None,
+    clear_worktree: bool = False,
     actor: str = "agentic-os",
     receipt_ref: str | None = None,
     verified: bool = False,
     now: str | None = None,
+    allow_terminal_reopen: bool = False,
 ) -> dict[str, Any]:
     current = get(conn, _identifier(item_id, "work-item id"))
     if current is None:
@@ -304,9 +318,13 @@ def update(
         source_url=current["source_url"],
         owner=current["owner"],
         priority=current["priority"],
-        packet_path=current["packet_path"],
-        worktree_path=worktree_path if worktree_path is not None else current["worktree_path"],
-        branch=branch if branch is not None else current["branch"],
+        packet_path=packet_path if packet_path is not None else current["packet_path"],
+        worktree_path=(
+            None
+            if clear_worktree
+            else worktree_path if worktree_path is not None else current["worktree_path"]
+        ),
+        branch=None if clear_worktree else branch if branch is not None else current["branch"],
         context_summary=(
             context_summary if context_summary is not None else current["context_summary"]
         ),
@@ -316,6 +334,7 @@ def update(
         receipt_ref=receipt_ref,
         verified=verified,
         now=now,
+        allow_terminal_reopen=allow_terminal_reopen,
     )
 
 

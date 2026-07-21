@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-qa
+title: Auto-Dev QA
+description: Run project-configured risk-based QA as an independently callable Auto-Dev workflow.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, qa, testing, sdlc]
+dependencies: []
+aliases: [harness/skills/auto-dev-qa/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-qa}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

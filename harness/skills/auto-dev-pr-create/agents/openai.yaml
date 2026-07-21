@@ -1,0 +1,4 @@
+interface:
+  display_name: Auto-Dev PR Create
+  short_description: Resolve and create the complete PR target family.
+  default_prompt: "Use $auto-dev-pr-create to resolve, create or reuse, and receipt the complete pull-request family before review."

@@ -45,6 +45,7 @@ from . import rules
 from . import operator_resources
 from . import first_class_registry
 from . import develop
+from . import auto_dev
 from . import library
 from . import work
 from . import naming
@@ -89,6 +90,7 @@ COMMAND_MODULES = [
     operator_resources,
     first_class_registry,
     develop,
+    auto_dev,
     library,
     work,
     naming,

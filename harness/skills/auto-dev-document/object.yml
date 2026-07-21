@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-document
+title: Auto-Dev Document
+description: Create source-backed code, issue, architecture, operational, QA, release, and handoff documentation.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, documentation, artifacts, sdlc]
+dependencies: [skill:root:auto-dev-create-artifacts]
+aliases: [harness/skills/auto-dev-document/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-document}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

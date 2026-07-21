@@ -2,15 +2,15 @@ id: merge_deployment_and_cleanup
 version: 1
 owner: development_delivery
 inputs: [ready_pull_requests, merge_policy, tracker_mapping, deployment_profile, health_checks, work_item, worktree_registry, retention_policy]
-outputs: [merge_receipt, tracker_readback, deployment_receipt, health_receipt, final_summary, archive_receipt, cleanup_receipt]
+outputs: [merge_receipt, tracker_readback, deployment_receipt, health_receipt, final_summary, cleanup_decision]
 states: [ready_for_merge, merged, deployment_pending, deploying, post_deploy_validation, delivery_complete, blocked]
-steps: [verify_merge_gate, observe_or_merge, update_tracker, watch_deployment, validate_health, closeout, archive_and_cleanup]
-validations: [authoritative_merge_sha, tracker_readback, deployed_version, post_deploy_health, durable_summary, safe_cleanup_scope]
+steps: [verify_merge_gate, observe_or_merge, update_tracker, watch_deployment, validate_health, closeout, handoff_to_auto_dev_health]
+validations: [authoritative_merge_sha, provider_read_source_head_matches_reviewed_revision, provider_and_pull_request_readback, tracker_readback, deployed_version, post_deploy_health, durable_summary, safe_cleanup_scope_decision]
 failure_modes:
   merge_blocked: remain_ready_and_recheck_gate
   tracker_unavailable: retry_idempotently_without_reverting_merge
   deployment_failed: stop_and_rollback_or_open_repair
   cleanup_conflict: preserve_and_alert
   projection_unavailable: retain_local_closeout_and_retry_projection
-events: [pr.merged, tracker.updated, deployment.started, deployment.failed, deployment.healthy, rollback.started, rollback.completed, work_item.archived, worktree.cleaned, worktree.preserved, delivery.completed]
+events: [pr.merged, tracker.updated, deployment.started, deployment.failed, deployment.healthy, rollback.started, rollback.completed, delivery.completed]
 receipts: [merge_snapshot, tracker_readback, deploy_version, health_results, incident_or_rollback, cleanup_decision, final_summary]
