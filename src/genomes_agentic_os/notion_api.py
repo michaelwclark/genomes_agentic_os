@@ -201,6 +201,69 @@ def append_block_children(
         )
 
 
+def list_block_children(
+    block_id: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> list[dict[str, Any]]:
+    """Return all first-level children for *block_id* with pagination."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    headers = _auth_headers(token)
+    cursor: str | None = None
+    results: list[dict[str, Any]] = []
+    while True:
+        suffix = f"&start_cursor={cursor}" if cursor else ""
+        data = _json_request(
+            "GET",
+            f"{_NOTION_API_BASE}/blocks/{block_id}/children?page_size=100{suffix}",
+            headers,
+            None,
+            fetcher,
+        )
+        results.extend(item for item in data.get("results") or [] if isinstance(item, dict))
+        if not data.get("has_more") or not data.get("next_cursor"):
+            return results
+        cursor = str(data["next_cursor"])
+
+
+def archive_block(
+    block_id: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> None:
+    """Archive one block without exposing token or payload data."""
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    _json_request(
+        "DELETE",
+        f"{_NOTION_API_BASE}/blocks/{block_id}",
+        _auth_headers(token),
+        None,
+        fetcher,
+    )
+
+
+def replace_block_children(
+    block_id: str,
+    children: list[dict[str, Any]],
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> None:
+    """Replace a page's first-level content while preserving child pages/databases."""
+    existing = list_block_children(block_id, token_env, fetcher=fetcher)
+    for child in existing:
+        if child.get("type") in {"child_page", "child_database"}:
+            continue
+        archive_block(str(child["id"]), token_env, fetcher=fetcher)
+    append_block_children(block_id, children, token_env, fetcher=fetcher)
+
+
 def search_child_databases(
     parent_page_id: str,
     token_env: str = _DEFAULT_TOKEN_ENV,
