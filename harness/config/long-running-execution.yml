@@ -15,7 +15,9 @@ long_running_execution:
     resource_violation_samples: 3
     sample_seconds: 2
   collateral_processes:
-    - fseventsd:250:20480
+    # fseventsd is host collateral, not the scheduled child process. Permit
+    # bounded multicore indexing spikes while retaining a 32 GiB RSS ceiling.
+    - fseventsd:400:32768
   mutating_kinds:
     - install
     - sync
