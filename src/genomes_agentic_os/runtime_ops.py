@@ -92,6 +92,7 @@ ACTIVE_RUN_QUEUE_STATES = {"queued", "running", "approval-needed"}
 RUN_QUEUE_STALE_GRACE = timedelta(hours=24)
 SAFE_DISPATCH_TARGETS = {"script", "codex_harness", "claude_harness"}
 SCRIPT_DISPATCH_TIMEOUT_SECONDS = 900
+INLINE_SCRIPT_LEASE_SECONDS = 3600
 LONG_RUNNING_THRESHOLD_SECONDS = 120
 SCRIPT_DISPATCH_OUTPUT_LIMIT = 20000
 DEFAULT_RUN_QUEUE_ACTIVE_MAX_AGE_HOURS = 24
@@ -992,9 +993,38 @@ def _append_queue_item(root: Path, item: dict[str, Any]) -> tuple[Path, dict[str
 
 def _prepare_queue_item(root: Path, item: dict[str, Any]) -> dict[str, Any]:
     prepared = _infer_provider_worker(root, deepcopy(item))
+    prepared = _materialize_inline_script_lease(root, prepared)
     prepared = _materialize_quiet_run_timeout(prepared)
     prepared = _materialize_watcher_timeout(root, prepared)
     return _materialize_provider_worker(root, prepared)
+
+
+def _materialize_inline_script_lease(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    """Reserve a realistic lease for commands executed inside the dispatcher.
+
+    These commands bypass the subprocess timeout path and can legitimately scan
+    the full installed root. The default 15-minute lease made a healthy worker
+    appear abandoned before the in-process command returned.
+    """
+    runtime_policy = item.get("runtime_policy")
+    if item.get("timeout_seconds") or (
+        isinstance(runtime_policy, dict) and runtime_policy.get("timeout_seconds")
+    ):
+        return item
+    normalized = str(item.get("command") or "").replace("<root>", str(root)).strip()
+    inline_prefixes = (
+        "agentic-os self-improvement run ",
+        "agentic-os self-improvement morning-report ",
+        "agentic-os self-improvement nightly-apply ",
+    )
+    inline_exact = {
+        f"agentic-os validate --root {root}",
+        f"agentic-os thread stale-finalize --root {root} --older-than-days 3 --apply",
+        f"agentic-os project worktree cleanup-closed --root {root} --apply",
+    }
+    if normalized in inline_exact or normalized.startswith(inline_prefixes):
+        item["timeout_seconds"] = INLINE_SCRIPT_LEASE_SECONDS
+    return item
 
 
 def _provider_from_text(text: str) -> str | None:

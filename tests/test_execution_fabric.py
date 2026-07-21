@@ -1674,6 +1674,37 @@ def test_quiet_run_timeout_extends_execution_fabric_lease_budget(tmp_path: Path)
     assert queued["timeout_seconds"] == 1260
 
 
+def test_inline_root_scan_extends_execution_fabric_lease_budget(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+
+    validation = runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "inline-validation",
+            "kind": "schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": "agentic-os validate --root <root>",
+        },
+    )["queue_item"]
+    morning_report = runtime_ops.append_run_queue_item(
+        root,
+        {
+            "id": "inline-morning-report",
+            "kind": "schedule",
+            "status": "queued",
+            "approval_state": "not_required",
+            "execution_target": "script",
+            "command": f"agentic-os self-improvement morning-report --root {root} --apply",
+        },
+    )["queue_item"]
+
+    assert validation["timeout_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
+    assert morning_report["timeout_seconds"] == runtime_ops.INLINE_SCRIPT_LEASE_SECONDS
+
+
 def test_registered_watcher_timeout_extends_execution_fabric_lease_budget(tmp_path: Path) -> None:
     root = _root(tmp_path)
     watcher = root / "watchers/notion_work_intake"
