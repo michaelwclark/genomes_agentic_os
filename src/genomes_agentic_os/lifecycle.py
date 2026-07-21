@@ -42,6 +42,7 @@ WORK_LIFECYCLE_STATES = (
 )
 
 WORK_ITEM_LANES = ("01-intake", "02-active", "03-complete")
+ARCHIVE_DIRECTORY = "99-archived"
 TERMINAL_JIRA_STATUSES = {"qa_ready", "done", "ready_for_production", "wont_do", "won_t_do"}
 TERMINAL_WORKTREE_STATUSES = TERMINAL_JIRA_STATUSES | {"merged", "closed", "archived", "inactive"}
 
@@ -203,7 +204,17 @@ def work_items_root(project_root: Path) -> Path:
     return project_root / "work-items"
 
 
+def work_lifecycle_settings(project_root: Path) -> dict[str, Any]:
+    """Return the project lifecycle mapping from either supported config surface."""
+    path = project_root / "config" / "work-lifecycle.yml"
+    payload = load_yaml_mapping(path) if path.is_file() else load_yaml_mapping(project_root / "project.yml")
+    nested = payload.get("work_lifecycle")
+    return dict(nested) if isinstance(nested, dict) else dict(payload)
+
+
 def lane_root(project_root: Path, status: str) -> Path:
+    if str(work_lifecycle_settings(project_root).get("layout") or "single_canonical_root") == "single_canonical_root":
+        return work_items_root(project_root)
     return work_items_root(project_root) / lane_for_status(status)
 
 
@@ -262,6 +273,9 @@ def next_work_item_index(project_root: Path) -> int:
         lane_path = root / lane
         if lane_path.is_dir():
             candidates.extend(lane_path.iterdir())
+    archive_path = root / ARCHIVE_DIRECTORY
+    if archive_path.is_dir():
+        candidates.extend(archive_path.iterdir())
     for candidate in candidates:
         index = work_item_index_from_name(candidate.name)
         if index is not None:
@@ -280,6 +294,8 @@ def work_item_path(project_root: Path, work_id: str, status: str, *, item_format
     if item_format not in {None, "markdown", "packet"}:
         raise ValueError(f"item_format must be markdown or packet: {item_format!r}")
     lane = lane_root(project_root, status)
+    if lane == work_items_root(project_root):
+        return lane / work_id
     if status in INTAKE_MARKDOWN_STATES and item_format != "packet":
         return lane / f"{work_id}.md"
     return lane / work_id
@@ -643,13 +659,19 @@ def create_project_work_item(
     work_root = work_items_root(project_root)
     work_item_root = work_item_path(project_root, work_id, status, item_format=item_format)
     result = ScaffoldResult()
-    for directory in (work_root, *(work_root / lane for lane in WORK_ITEM_LANES)):
+    canonical = lane_root(project_root, status) == work_root
+    directories = (
+        (work_root, work_root / ARCHIVE_DIRECTORY)
+        if canonical
+        else (work_root, *(work_root / lane for lane in WORK_ITEM_LANES))
+    )
+    for directory in directories:
         if directory.is_dir():
             result.skipped.append(directory)
         else:
             directory.mkdir(parents=True, exist_ok=True)
             result.created.append(directory)
-    if status in INTAKE_MARKDOWN_STATES and item_format != "packet":
+    if not canonical and status in INTAKE_MARKDOWN_STATES and item_format != "packet":
         write_file_once(
             work_item_root,
             intake_spec_markdown(
@@ -727,7 +749,16 @@ def local_work_item_candidates(work_items_root: Path) -> list[Path]:
         return []
     candidates: list[Path] = []
     for child in sorted(work_items_root.iterdir()):
-        if child.name in WORK_ITEM_LANES and child.is_dir():
+        if child.name == ARCHIVE_DIRECTORY and child.is_dir():
+            candidates.extend(
+                sorted(
+                    item
+                    for item in child.iterdir()
+                    if (item.is_dir() or item.suffix == ".md")
+                    and not item.name.endswith(".artifacts")
+                )
+            )
+        elif child.name in WORK_ITEM_LANES and child.is_dir():
             candidates.extend(
                 sorted(
                     item
@@ -1089,11 +1120,20 @@ def current_lane(record: WorkItemRecord) -> str | None:
     for index, part in enumerate(path_parts):
         if part == "work-items" and index + 1 < len(path_parts) and path_parts[index + 1] in WORK_ITEM_LANES:
             return path_parts[index + 1]
+        if part == "work-items" and index + 1 < len(path_parts) and path_parts[index + 1] == ARCHIVE_DIRECTORY:
+            return ARCHIVE_DIRECTORY
+        if part == "work-items" and index + 1 < len(path_parts):
+            return "work-items"
     return None
 
 
 def is_lingering_terminal_record(record: WorkItemRecord) -> bool:
-    return record.source == "project_work_item" and record.status in TERMINAL_WORK_ITEM_STATES and current_lane(record) != lane_for_status(record.status)
+    lane = current_lane(record)
+    return (
+        record.source == "project_work_item"
+        and record.status in TERMINAL_WORK_ITEM_STATES
+        and lane not in {"work-items", ARCHIVE_DIRECTORY, lane_for_status(record.status)}
+    )
 
 
 def file_has_substantive_content(path: Path, *, empty_markers: tuple[str, ...] = ("pending", "tbd")) -> bool:
@@ -1373,7 +1413,7 @@ def infer_complete_work_items(
     skipped: list[dict[str, Any]] = []
     for project_root in root_project_dirs(os_root, domain=domain, project=project):
         for record in local_project_work_items(project_root):
-            if record.source != "project_work_item" or current_lane(record) != "02-active":
+            if record.source != "project_work_item" or current_lane(record) not in {"work-items", "02-active"}:
                 continue
             decision = infer_completion_decision(
                 project_root,
@@ -1408,7 +1448,12 @@ def infer_complete_work_items(
                     cwd=record.path,
                 )
                 closeout_artifact = str((Path(closeout["artifact_root"]) / "closeout.md")) if closeout.get("artifact_root") else None
-            update_work_item_metadata(record, status="finished", lane="02-active", metadata_path=record.metadata_path)
+            update_work_item_metadata(
+                record,
+                status="finished",
+                lane=lane_for_status("finished"),
+                metadata_path=record.metadata_path,
+            )
             applied.append(
                 {
                     "domain": decision["domain"],
@@ -2037,7 +2082,7 @@ def sync_active_container(root: str | Path, *, domain: str | None = None, projec
         else:
             linked_work_item_paths: set[Path] = set()
             for record in local_project_work_items(project_root):
-                if record.status not in ACTIVE_CONTAINER_WORK_ITEM_STATES or current_lane(record) != "02-active":
+                if record.status not in ACTIVE_CONTAINER_WORK_ITEM_STATES or current_lane(record) not in {"work-items", "02-active"}:
                     continue
                 link = work_item_links / safe_link_name(
                     record_domain,

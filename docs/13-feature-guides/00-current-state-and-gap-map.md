@@ -45,12 +45,10 @@ The migrated backlog is prefix ordered inside the installed OS project:
 
 ```text
 work-items/
-  01-intake/
-  02-active/
-  03-complete/
+  99-archived/
 ```
 
-Each plan should be precise enough to become implementation work. If a later
+Each date-prefixed packet should be precise enough to become implementation work. If a later
 feature discovers a prerequisite, create a new spec or work item with a stable
 prefix and record the source card or artifact that justified it.
 

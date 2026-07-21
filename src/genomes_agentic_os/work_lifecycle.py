@@ -37,7 +37,8 @@ WORK_ITEM_STATES = (
 
 TERMINAL_WORK_ITEM_STATES = {"documented", "archived"}
 
-WORK_ITEM_LANES = ("01-intake", "02-active", "03-complete")
+LEGACY_WORK_ITEM_LANES = ("01-intake", "02-active", "03-complete")
+ARCHIVE_DIRECTORY = "99-archived"
 
 WORK_ITEM_STATE_LANES = {
     "captured": "01-intake",
@@ -134,6 +135,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 def work_lifecycle_config(project_root: Path) -> dict[str, Any]:
     config = load_yaml(project_root / "config" / "work-lifecycle.yml")
+    if isinstance(config.get("work_lifecycle"), dict):
+        config = config["work_lifecycle"]
     if not config:
         config = load_yaml(project_root / "project.yml").get("work_lifecycle") or {}
     if not isinstance(config, dict):
@@ -141,6 +144,14 @@ def work_lifecycle_config(project_root: Path) -> dict[str, Any]:
     return {
         "enabled": config.get("enabled", True),
         "work_items_root": config.get("work_items_root") or "work-items",
+        "layout": config.get("layout") or "single_canonical_root",
+        "archive": config.get("archive")
+        or {
+            "enabled": True,
+            "directory": ARCHIVE_DIRECTORY,
+            "retention": {"value": 7, "unit": "days"},
+            "retention_days": 7,
+        },
         "default_state": config.get("default_state") or "captured",
         "transcript_logging": config.get("transcript_logging")
         or {
@@ -150,7 +161,7 @@ def work_lifecycle_config(project_root: Path) -> dict[str, Any]:
             "include_tool_call_markdown": True,
             "redaction_policy": "strict",
         },
-        "spec_destination": config.get("spec_destination") or {"type": "local", "path": "work-items/02-active"},
+        "spec_destination": config.get("spec_destination") or {"type": "local", "path": "work-items"},
         "external_tracker": config.get("external_tracker") or {"type": "none"},
     }
 
@@ -170,7 +181,9 @@ def iter_work_item_roots(project_root: Path) -> list[Path]:
         return []
     candidates: list[Path] = []
     for child in sorted(root.iterdir()):
-        if child.name in WORK_ITEM_LANES and child.is_dir():
+        if child.name == ARCHIVE_DIRECTORY and child.is_dir():
+            candidates.extend(sorted(item for item in child.iterdir() if item.is_dir()))
+        elif child.name in LEGACY_WORK_ITEM_LANES and child.is_dir():
             candidates.extend(sorted(item for item in child.iterdir() if item.is_dir()))
         elif child.is_dir():
             candidates.append(child)
@@ -193,7 +206,7 @@ def work_item_root_for(project_root: Path, work_item: str, state: str | None = N
     if found:
         return found
     root = project_work_items_root(project_root)
-    if state:
+    if work_lifecycle_config(project_root).get("layout") != "single_canonical_root" and state:
         return root / lane_for_state(state) / slugify_work_id(work_item)
     return root / slugify_work_id(work_item)
 
@@ -324,16 +337,23 @@ def create_project_work_item(
             policy=load_artifact_naming_policy(root),
             scope="work_items",
         )
-        work_root = project_work_items_root(project_root) / lane_for_state(state) / work_item
+        if config.get("layout") == "single_canonical_root":
+            work_root = project_work_items_root(project_root) / work_item
+        else:
+            work_root = project_work_items_root(project_root) / lane_for_state(state) / work_item
     timestamp = utc_timestamp()
     result = ScaffoldResult()
-    for lane in WORK_ITEM_LANES:
-        lane_root = project_work_items_root(project_root) / lane
-        if lane_root.is_dir():
-            result.skipped.append(lane_root)
+    items_root = project_work_items_root(project_root)
+    if config.get("layout") == "single_canonical_root":
+        required_roots = (items_root, items_root / ARCHIVE_DIRECTORY)
+    else:
+        required_roots = tuple(items_root / lane for lane in LEGACY_WORK_ITEM_LANES)
+    for required_root in required_roots:
+        if required_root.is_dir():
+            result.skipped.append(required_root)
         else:
-            lane_root.mkdir(parents=True, exist_ok=True)
-            result.created.append(lane_root)
+            required_root.mkdir(parents=True, exist_ok=True)
+            result.created.append(required_root)
     for directory in (work_root, work_root / "artifacts", work_root / "logs", work_root / "logs" / "conversations"):
         if directory.is_dir():
             result.skipped.append(directory)
@@ -445,7 +465,10 @@ def promote_project_work_item(
     metadata = load_yaml(path)
     old_state = str(metadata.get("state") or metadata.get("status") or "")
     timestamp = utc_timestamp()
-    target_root = project_work_items_root(project_root) / lane_for_state(state) / work_root.name
+    if work_lifecycle_config(project_root).get("layout") == "single_canonical_root":
+        target_root = work_root
+    else:
+        target_root = project_work_items_root(project_root) / lane_for_state(state) / work_root.name
     result = ScaffoldResult()
     if target_root != work_root:
         if target_root.exists():

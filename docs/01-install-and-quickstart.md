@@ -341,9 +341,7 @@ created: .../agentic_os/acme/02-projects/launch/config
 created: .../agentic_os/acme/02-projects/launch/worklogs
 created: .../agentic_os/acme/02-projects/launch/ideas
 created: .../agentic_os/acme/02-projects/launch/work-items
-created: .../agentic_os/acme/02-projects/launch/work-items/01-intake
-created: .../agentic_os/acme/02-projects/launch/work-items/02-active
-created: .../agentic_os/acme/02-projects/launch/work-items/03-complete
+created: .../agentic_os/acme/02-projects/launch/work-items/99-archived
 created: .../agentic_os/acme/02-projects/launch/worktrees
 created: .../agentic_os/acme/02-projects/launch/AGENTS.md
 created: .../agentic_os/acme/02-projects/launch/config/output-artifacts.yml

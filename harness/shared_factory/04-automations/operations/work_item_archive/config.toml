@@ -1,0 +1,15 @@
+schema_version = "1.0"
+id = "work_item_archive"
+name = "Work Item Archive Health"
+kind = "automation"
+status = "active"
+
+[schedule]
+cadence = "daily"
+local_time = "01:30"
+timezone = "America/Chicago"
+
+[execution]
+command = "agentic-os work-item-archive --root <root> --apply"
+external_writes = false
+deletes_data = false

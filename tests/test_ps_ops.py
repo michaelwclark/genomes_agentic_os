@@ -42,8 +42,8 @@ def _active_work_item(root: Path) -> Path:
         )
         == 0
     )
-    active_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os" / "work-items" / "02-active"
-    return next(path for path in active_root.iterdir() if path.is_dir())
+    active_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os" / "work-items"
+    return next(path for path in active_root.iterdir() if path.is_dir() and path.name != "99-archived")
 
 
 def _age_files(path: Path, *, days: int) -> None:

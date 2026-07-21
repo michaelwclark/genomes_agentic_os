@@ -40,7 +40,7 @@ confirmed merged PR cleanup, local dirt is allowed unless root `REOPEN.md` is
 present.
 
 Use `infer-complete` before `finalize-lingering` when active work items appear
-finished but still live in `02-active/`. The command treats stale-only work as
+finished but still marked active in lifecycle state. The command treats stale-only work as
 active; it needs terminal evidence plus completion artifacts plus clear
 `NEXT.md` plus a quiet conversation window before it marks a packet `finished`.
 

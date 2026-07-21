@@ -43,7 +43,7 @@ def test_packet_write_in_linked_repo_points_to_canonical_work_item(tmp_path: Pat
 
     context = output["hookSpecificOutput"]["additionalContext"]
     assert "work-item-routing-guard" in context
-    assert str(project / "work-items" / "02-active") in context
+    assert str(project / "work-items") in context
     assert "disposable mirror" in context
 
 

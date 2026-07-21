@@ -189,6 +189,10 @@ MANAGED_RUNTIME_FILES = (
 # not overwrite operator-owned changes.
 MANAGED_RESOURCE_TREES = (
     (
+        "harness/shared_factory/04-automations/operations/work_item_archive",
+        "harness/shared_factory/04-automations/operations/work_item_archive",
+    ),
+    (
         "harness/shared_factory/00-programs/execution_fabric",
         "harness/shared_factory/00-programs/execution_fabric",
     ),
@@ -2418,6 +2422,38 @@ def project_config(
                 f"      kind: {kind}\n"
                 f"      authority: {authority}\n"
             )
+    linear_block = (
+        "  linear: https://linear.app/genomes/project/genomes-agentic-os-2c6a1847b558\n"
+        if project == "genomes_agentic_os"
+        else ""
+    )
+    auto_dev_block = (
+        """
+
+auto_dev:
+  enabled: true
+  tracker:
+    mode: provider
+    primary: linear
+  finishing_review:
+    required: false
+    preferred: claude
+    unavailable_policy: continue_with_receipt
+  merge:
+    auto_merge: true
+    policy: auto_after_gates
+  release:
+    required: true
+    provider: github
+  documentation:
+    required_after_release: true
+  projection:
+    notion_operator_projection: required
+    public_site_projection: required
+"""
+        if project == "genomes_agentic_os"
+        else ""
+    )
     return f"""id: {project}
 name: {project}
 domain: {domain}
@@ -2427,7 +2463,8 @@ lane: {lane or ""}
 sources:
   repo: {repo or ""}
   notion: {notion or ""}
-  jira: {jira or ""}{remotes_block}
+  jira: {jira or ""}
+{linear_block}{remotes_block}
 
 routing:
   project_root: 02-projects/{project}
@@ -2442,6 +2479,13 @@ work_lifecycle:
   active_projection: harness/shared_factory/00-control-plane/active-now.json
   work_items_root: work-items
   packet_policy: stable
+  layout: single_canonical_root
+  archive:
+    enabled: true
+    directory: 99-archived
+    retention: {{value: 7, unit: days}}
+    retention_days: 7
+    terminal_states: [finished, documented, archived]
   default_state: captured
   legacy_import_lanes:
     intake: 01-intake
@@ -2468,7 +2512,7 @@ work_lifecycle:
   external_tracker:
     type: configured_jira_or_linear
     required: true
-"""
+{auto_dev_block}"""
 
 
 def project_status(project: str, status: str) -> str:
@@ -2725,6 +2769,7 @@ This registry names project-local capabilities for `domains/{domain}/projects/{p
 | `worklogs/` or `WORKLOGS/` | Human-readable work history and receipt summaries, matching local folder casing. |
 | `ideas/` | Legacy compatibility index for project ideas; do not use as the lifecycle source of truth. |
 | `work-items/<work-item-id>/` | Stable packet for bounded local evidence and resume context. |
+| `work-items/99-archived/` | Retained terminal packets; search here before creating work for a returned ticket. |
 | `work-items/01-intake/`, `02-active/`, `03-complete/` | Legacy import/read surfaces only; state lives in SQLite. |
 | `artifacts/` | Project outputs that do not belong in a run log. |
 
@@ -2781,6 +2826,135 @@ def project_config_file_content(
             sort_keys=False,
         )
     if filename == "development.yml":
+        if project == "genomes_agentic_os":
+            return yaml.safe_dump(
+                {
+                    "version": 1,
+                    "enabled": True,
+                    "tracker": {
+                        "primary": "linear",
+                        "fallback": "filesystem",
+                        "create_during_grooming": True,
+                        "require_write_readback": True,
+                        "linear": {
+                            "workspace": "genomes",
+                            "team": "Clarks Consulting",
+                            "team_id": "2225b211-a962-4392-98ef-b2e78a26669f",
+                            "project": "Genomes Agentic OS",
+                            "project_id": "5812f46f-f7a5-4518-8a59-593aaa45f418",
+                            "statuses": {
+                                "groomed": "Todo",
+                                "developing": "In Progress",
+                                "ready_for_merge": "In Progress",
+                                "delivered": "Done",
+                                "blocked": "Blocked",
+                            },
+                        },
+                    },
+                    "repository": {
+                        "id": "git:configured/genomes_agentic_os",
+                        "provider": "github",
+                        "owner": "configured_from_repository_remote",
+                        "name": "genomes_agentic_os",
+                        "root": repo or "~/projects/genomes_agentic_os",
+                        "base_branch": "main",
+                    },
+                    "worktrees": {
+                        "directory": "worktrees",
+                        "branch_template": "feature/{ticket}-{slug}",
+                        "date_prefix": "inherit",
+                    },
+                    "work_items": {
+                        "active_status": "building",
+                        "root": "work-items",
+                        "archive": "work-items/99-archived",
+                        "reopen_lookup_order": ["work-items", "work-items/99-archived"],
+                    },
+                    "validation": {
+                        "commands": [
+                            "uv sync --extra dev",
+                            "uv run pytest -q",
+                            "scripts/qa/reinstall-agentic-os.sh --root ~/agentic_os_qa",
+                        ],
+                        "test_policy": "risk_based_triangle",
+                        "ci_fallback_on_environment_failure": True,
+                        "secondary_install": {
+                            "root": "~/agentic_os_qa",
+                            "command": "scripts/qa/reinstall-agentic-os.sh --root ~/agentic_os_qa",
+                            "required_passes": 3,
+                            "preserve_operator_sentinel": True,
+                            "validate_after_each_pass": True,
+                        },
+                    },
+                    "review": {
+                        "opposing_harness": {
+                            "required": False,
+                            "preferred": "claude",
+                            "fallback": "codex",
+                            "unavailable_policy": "continue_with_receipt",
+                        },
+                        "self_review": {
+                            "command": "claude",
+                            "skill": "auto-dev-review-self",
+                            "failure_policy": "continue_with_receipt",
+                        },
+                    },
+                    "pull_request": {
+                        "provider": "github",
+                        "repository": "configured_from_repository_remote",
+                        "draft": False,
+                        "target": "main",
+                    },
+                    "merge": {
+                        "policy": "auto_after_gates",
+                        "method": "squash",
+                        "required_approvals": 0,
+                        "require_acceptance_evidence": True,
+                        "require_local_qa": True,
+                        "require_ci_green": True,
+                        "require_mergeable_readback": True,
+                        "reviewer_unavailable_blocks": False,
+                    },
+                    "release": {
+                        "required": True,
+                        "provider": "github",
+                        "repository": "configured_from_repository_remote",
+                        "branch": "main",
+                        "version_files": ["pyproject.toml", "src/genomes_agentic_os/__init__.py"],
+                        "default_bump": "patch",
+                        "tag_template": "v{version}",
+                        "release_notes": "generated_from_merged_pr_and_changelog",
+                        "create_github_release": True,
+                        "require_tag_readback": True,
+                        "require_release_readback": True,
+                    },
+                    "deployment": {"required": False, "monitor_after_merge": True},
+                    "documentation": {
+                        "required_after_release": True,
+                        "source_repository": {"root": repo or "~/projects/genomes_agentic_os", "handbook": "docs"},
+                        "notion": {
+                            "required": True,
+                            "workspace": "Genome's Notion",
+                            "parent_surface": "genomes_agentic_os_hub",
+                            "parent_page_id": "363683b48dab807baca1c468a45b269b",
+                            "require_workspace_verification": True,
+                            "require_write_readback": True,
+                        },
+                        "public_site": {
+                            "required": True,
+                            "repository": "~/projects/clark_consulting",
+                            "base_branch": "main",
+                            "public_path": "/genomes_agentic_os/",
+                            "validation_command": "npm run build",
+                            "require_pull_request": True,
+                            "require_public_readback": True,
+                        },
+                    },
+                    "recovery": {"max_attempts": 3, "lease_minutes": 30, "stale_after_minutes": 45},
+                    "retention": {"raw_logs_days": 4, "merged_worktree_grace_days": 3},
+                },
+                sort_keys=False,
+            )
         return yaml.safe_dump(
             {
                 "version": 1,
@@ -2815,16 +2989,30 @@ def project_config_file_content(
             sort_keys=False,
         )
     if filename == "workflows.yml":
-        return yaml.safe_dump(
+        auto_dev = (
             {
-                "workflows": {
-                    "default_lane": lane_value,
-                    "feature_development": {
-                        "artifacts_ref": "config/output-artifacts.yml",
-                        "validation_ref": "config/validation.yml",
-                    },
-                }
+                "tracker": "linear",
+                "stages": [
+                    "groom", "detective", "create_artifacts", "readiness", "develop", "document",
+                    "review_self", "review_others", "qa", "release_propagation", "finalize", "merge",
+                    "release", "deploy", "closeout", "health",
+                ],
+                "completion": "delivery_complete",
+            }
+            if project == "genomes_agentic_os"
+            else None
+        )
+        workflows = {
+            "default_lane": lane_value,
+            "feature_development": {
+                "artifacts_ref": "config/output-artifacts.yml",
+                "validation_ref": "config/validation.yml",
             },
+        }
+        if auto_dev:
+            workflows["auto_dev_everything"] = auto_dev
+        return yaml.safe_dump(
+            {"workflows": workflows},
             sort_keys=False,
         )
     if filename == "work-lifecycle.yml":
@@ -2838,6 +3026,14 @@ def project_config_file_content(
                     "work_items_root": "work-items",
                     "worklogs_root": "worklogs",
                     "packet_policy": "stable",
+                    "layout": "single_canonical_root",
+                    "archive": {
+                        "enabled": True,
+                        "directory": "99-archived",
+                        "retention": {"value": 7, "unit": "days"},
+                        "retention_days": 7,
+                        "terminal_states": ["finished", "documented", "archived"],
+                    },
                     "default_state": "captured",
                     "legacy_import_lanes": {
                         "intake": "01-intake",
@@ -2889,18 +3085,36 @@ def project_config_file_content(
             sort_keys=False,
         )
     if filename == "spec-engine.yml":
+        linear_enabled = project == "genomes_agentic_os"
+        linear_target = (
+            {
+                "workspace": "genomes",
+                "team_id": "2225b211-a962-4392-98ef-b2e78a26669f",
+                "project_id": "5812f46f-f7a5-4518-8a59-593aaa45f418",
+            }
+            if linear_enabled
+            else {}
+        )
         return yaml.safe_dump(
             {
                 "schema_version": 1,
                 "spec_engine": {
                     "enabled": True,
-                    "authority": {"content": "filesystem", "lifecycle": "filesystem"},
+                    "authority": {
+                        "content": "linear" if linear_enabled else "filesystem",
+                        "lifecycle": "linear" if linear_enabled else "filesystem",
+                    },
                     "defaults": {"type": "feature", "status": "idea", "disposition": "active"},
                     "adapters": {
-                        "primary": "filesystem",
-                        "mirrors": [],
+                        "primary": "linear" if linear_enabled else "filesystem",
+                        "mirrors": ["filesystem"] if linear_enabled else [],
                         "filesystem": {"enabled": True, "work_items_root": "work-items"},
-                        "linear": {"enabled": False, "mode": "backlog", "target": {}, "status_map": {}},
+                        "linear": {
+                            "enabled": linear_enabled,
+                            "mode": "backlog",
+                            "target": linear_target,
+                            "status_map": {},
+                        },
                         "jira": {
                             "enabled": False,
                             "mode": "sprint",
@@ -2933,11 +3147,20 @@ def project_config_file_content(
             sort_keys=False,
         )
     if filename == "validation.yml":
+        commands = (
+            [
+                "uv sync --extra dev",
+                "uv run pytest -q",
+                "scripts/qa/reinstall-agentic-os.sh --root ~/agentic_os_qa",
+            ]
+            if project == "genomes_agentic_os"
+            else []
+        )
         return yaml.safe_dump(
             {
                 "validation": {
                     "source_root": "src",
-                    "commands": [],
+                    "commands": commands,
                     "required_before_handoff": ["agentic-os validate --root <os-root>"],
                 }
             },

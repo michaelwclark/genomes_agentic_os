@@ -170,7 +170,7 @@ Create a project scaffold inside a domain.
 | `--status` | No (default: `active`) | One of: `active`, `waiting`, `blocked`, `done` |
 | `--lane` | No | Primary operating lane for this project |
 
-Writes: `<root>/domains/<domain>/02-projects/<project>/` with `project.yml`, `status.md`, `decisions.md`, `source-map.md`, `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, `work-items/01-intake/`, `work-items/02-active/`, `work-items/03-complete/`, `worktrees/`, and `artifacts/`; creates `src` when `--repo` is a local path; updates domain `README.md` and `active-work.md`.
+Writes: `<root>/domains/<domain>/02-projects/<project>/` with `project.yml`, `status.md`, `decisions.md`, `source-map.md`, `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, canonical `work-items/` and `work-items/99-archived/`, `worktrees/`, and `artifacts/`; creates `src` when `--repo` is a local path; updates domain `README.md` and `active-work.md`.
 
 ```bash
 agentic-os project create acme launch --root /tmp/aos-ref \
@@ -191,7 +191,7 @@ Create or repair the project-local agent/config surface for an existing project.
 | `project` | Yes | Project slug (snake_case) |
 | `--root` | No | Installed OS root path |
 
-Writes missing project-local `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, `work-items/01-intake/`, `work-items/02-active/`, `work-items/03-complete/`, `worktrees/`, and `config.toml`. Existing local edits are preserved unless the file is an older generic scaffold.
+Writes missing project-local `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `MEMORY.md`, `config/*.yml`, `ideas/`, canonical `work-items/` and `work-items/99-archived/`, `worktrees/`, and `config.toml`. Existing local edits are preserved unless the file is an older generic scaffold.
 
 ```bash
 agentic-os project onboard acme launch --root /tmp/aos-ref
@@ -203,8 +203,7 @@ Status: **OK** (rc 0)
 
 ### `project work-item create`
 
-Capture a project-known idea or create a lifecycle packet under the configured
-project work-item lanes.
+Capture a project-known idea as one stable, date-prefixed lifecycle packet.
 
 | Arg / Flag | Required | Description |
 |---|---|---|
@@ -214,14 +213,12 @@ project work-item lanes.
 | `--summary` | Yes | Raw idea, scope, or next-step summary |
 | `--work-id` | No | Optional slug; the command adds the next `NNN_` index when absent |
 | `--status` | No (default: `captured`) | One of the lifecycle states |
-| `--format` | No | `markdown` or `packet`; captured/triaged ideas default to markdown |
+| `--format` | No | Compatibility option; canonical installs always create a packet |
 | `--root` | No | Installed OS root path |
 
-Writes default intake to
-`<project>/work-items/01-intake/NNN_slug.md`. With `--format packet`, writes
-`<project>/work-items/01-intake/NNN_slug/`. Active states write packet folders
-under `work-items/02-active/`; complete states write packet folders under
-`work-items/03-complete/`.
+Writes `<project>/work-items/MMDDYY-NNN_slug/`. State changes never move the
+packet. Terminal packets are moved to `work-items/99-archived/` only after the
+configured retention period.
 
 ```bash
 agentic-os project work-item create acme launch --root /tmp/aos-ref \

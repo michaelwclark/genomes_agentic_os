@@ -476,6 +476,10 @@ def _state_json_candidates(root: Path) -> list[Path]:
         "*/02-projects/*/work-items/02-active/*/runs/*/state.json",
         "harness/shared_factory/02-projects/*/work-items/02-active/*/artifacts/async-runs/*/state.json",
         "harness/shared_factory/02-projects/*/work-items/02-active/*/runs/*/state.json",
+        "*/02-projects/*/work-items/*/artifacts/async-runs/*/state.json",
+        "*/02-projects/*/work-items/*/runs/*/state.json",
+        "harness/shared_factory/02-projects/*/work-items/*/artifacts/async-runs/*/state.json",
+        "harness/shared_factory/02-projects/*/work-items/*/runs/*/state.json",
         "*/02-projects/*/team_prs/logs/async-runs/*/state.json",
         "harness/shared_factory/06-runs-and-logs/runs/*/state.json",
     )

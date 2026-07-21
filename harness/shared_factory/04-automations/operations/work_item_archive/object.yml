@@ -1,0 +1,11 @@
+id: work_item_archive
+name: Work Item Archive Health
+status: active
+cadence: daily
+local_time: "01:30"
+timezone: America/Chicago
+command: agentic-os work-item-archive --root <root> --apply
+external_writes: false
+deletes_data: false
+outputs:
+- harness/shared_factory/06-runs-and-logs/work-item-archive/

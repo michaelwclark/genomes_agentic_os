@@ -442,6 +442,28 @@ def _slug(value: str) -> str:
     return slug[:48] or "task"
 
 
+def find_delivery_work_item(project_path: Path, work_id: str) -> Path | None:
+    """Find one canonical or legacy packet, including retained archive history."""
+    root = project_path / "work-items"
+    if not root.is_dir():
+        return None
+    candidates: list[Path] = []
+    candidates.extend(path for path in root.glob(f"*{work_id}*") if path.is_dir())
+    archive = root / "99-archived"
+    if archive.is_dir():
+        candidates.extend(path for path in archive.glob(f"*{work_id}*") if path.is_dir())
+    for lane in ("01-intake", "02-active", "03-complete"):
+        lane_root = root / lane
+        if lane_root.is_dir():
+            candidates.extend(path for path in lane_root.glob(f"*{work_id}*") if path.is_dir())
+    unique = sorted({path.resolve(): path for path in candidates}.values(), key=str)
+    if len(unique) > 1:
+        raise DevelopmentDeliveryError(
+            f"multiple work items match {work_id}: " + ", ".join(str(path) for path in unique)
+        )
+    return unique[0] if unique else None
+
+
 def _task_branch(template: str, ticket: str, slug: str) -> str:
     return template.format(ticket=ticket.lower(), slug=slug)
 
@@ -615,7 +637,7 @@ def start_development_run(
             task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), "error": failure}))
             continue
         try:
-            work_item = next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
+            work_item = find_delivery_work_item(project_path, work_id)
             if work_item is None:
                 result = create_project_work_item(
                     root,
@@ -628,7 +650,7 @@ def start_development_run(
                     item_format="packet",
                 )
                 created_dirs = [path for path in result.created if path.is_dir() and path.name.endswith(work_id)]
-                work_item = created_dirs[0] if created_dirs else next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
+                work_item = created_dirs[0] if created_dirs else find_delivery_work_item(project_path, work_id)
             if work_item is None:
                 raise DevelopmentDeliveryError(f"work item receipt missing for {ticket}")
             _atomic_json(

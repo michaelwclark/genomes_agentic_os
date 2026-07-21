@@ -467,6 +467,12 @@ def command_entries() -> list[dict[str, str]]:
             "description": "Read and mutate canonical lifecycle, attention, resume context, and active work state.",
             "source": "harness/commands/os-work-state.md",
         },
+        {
+            "id": "work-item-archive",
+            "command": "agentic-os work-item-archive",
+            "description": "Archive terminal work-item packets after each project's configured retention period.",
+            "source": "harness/commands/os-work-item-archive.md",
+        },
     ]
 
 

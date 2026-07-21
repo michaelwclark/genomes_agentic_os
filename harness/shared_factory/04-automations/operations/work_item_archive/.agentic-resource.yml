@@ -1,0 +1,5 @@
+kind: automation
+id: work_item_archive
+display_name: Work Item Archive Health
+status: active
+icon: "📦"

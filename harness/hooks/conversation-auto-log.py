@@ -34,6 +34,7 @@ TOOL_KEYS = {
 }
 
 WORK_ITEM_LANES = {"01-intake", "02-active", "03-complete"}
+ARCHIVE_DIRECTORY = "99-archived"
 MAX_ROUTING_TEXT_BYTES = 400_000
 
 
@@ -151,6 +152,8 @@ def active_work_item(project_dir: Path) -> Path | None:
         for lane in WORK_ITEM_LANES:
             candidates.extend(sorted((work_items / lane).glob("*/work.yml")))
             candidates.extend(sorted((work_items / lane).glob("*.md")))
+        candidates.extend(sorted((work_items / ARCHIVE_DIRECTORY).glob("*/work.yml")))
+        candidates.extend(sorted((work_items / ARCHIVE_DIRECTORY).glob("*.md")))
     for metadata in candidates:
         status = yaml_scalar(metadata, "status") or yaml_scalar(metadata, "state")
         if status in active_states:
@@ -205,6 +208,8 @@ def iter_work_items(root: Path) -> list[Path]:
             for lane in WORK_ITEM_LANES:
                 candidates.extend((work_items / lane).glob("*/work.yml"))
                 candidates.extend((work_items / lane).glob("*.md"))
+            candidates.extend((work_items / ARCHIVE_DIRECTORY).glob("*/work.yml"))
+            candidates.extend((work_items / ARCHIVE_DIRECTORY).glob("*.md"))
             for metadata in candidates:
                 item = metadata if metadata.suffix == ".md" else metadata.parent
                 try:

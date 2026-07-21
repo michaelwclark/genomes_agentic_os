@@ -30,7 +30,7 @@ The real workflow shape is:
 
 1. Build the feature in `lending-app-django`.
 2. Preserve the development context in the canonical Agentic OS work item at
-   `<domain>/02-projects/<project>/work-items/02-active/<index>_<slug>/` (a code
+   `<domain>/02-projects/<project>/work-items/<date>-<index>_<slug>/` (a code
    repo `.features/<ticket>/` folder is at most a disposable mirror, never the
    source of truth — see `harness/rules/work-lifecycle-standard.md` §1a).
 3. Open and monitor the Django pull request.
@@ -130,7 +130,7 @@ The paper describes five useful context layers:
 | Layer 1 | Routing: where should this work go? | root/domain `ROUTER.md` |
 | Layer 2 | Stage contract: what do I do here? | workflow runbooks, project `AGENTS.md`, QA skill instructions |
 | Layer 3 | Reference material: stable rules | `TOOLS.md`, `RULES.md`, repo conventions, branch rules, Playwright standards |
-| Layer 4 | Working artifacts: this run's state | the OS work item `work-items/02-active/<index>_<slug>/JIRA.md`, `WORKLOG.md`, `PR.md`, `QA_HANDOFF.md`, run assets (a code-repo `.features/<ticket>/` is only a mirror) |
+| Layer 4 | Working artifacts: this run's state | the OS work item `work-items/<date>-<index>_<slug>/JIRA.md`, `WORKLOG.md`, `PR.md`, `QA_HANDOFF.md`, run assets (a code-repo `.features/<ticket>/` is only a mirror) |
 
 My example is not trying to restate ICM academically. It is applying the same idea to real software delivery. The Django feature context pack is Layer 4. The repo rules and QA automation conventions are Layer 3. The routers decide which layer to enter next. The handoff from Django to QA is the same pipeline idea the paper describes: one stage writes durable output, a human or agent reviews it, then the next stage reads it as input.
 
@@ -311,7 +311,7 @@ path with `agentic-os doc-config plan --root ~/agentic_os --domain <domain>
 --project <project> --work-item <index>_<slug>`):
 
 ```text
-<domain>/02-projects/<project>/work-items/02-active/<index>_<slug>/
+<domain>/02-projects/<project>/work-items/<date>-<index>_<slug>/
   JIRA.md
   SPEC.md
   PLAN.md
@@ -336,7 +336,7 @@ The project router points into the source checkout:
 
 - Primary checkout: `src/`
 - Agent worktrees: `worktrees/`
-- Feature context (canonical): `work-items/02-active/<index>_<slug>/`
+- Feature context (canonical): `work-items/<date>-<index>_<slug>/`
   (a `src/.features/<ticket-slug>/` folder is only an optional mirror)
 
 ## Workon flow
@@ -357,9 +357,9 @@ and `PLAN.md` exist.
 - Create the branch from the repo's configured base branch.
 - Use the ticket key in the branch name, for example:
   `codex/LEND-0000-some-cool-feature`.
-- Keep the OS work item `work-items/02-active/<index>_<slug>/WORKLOG.md` current
+- Keep the OS work item `work-items/<date>-<index>_<slug>/WORKLOG.md` current
   as implementation decisions change.
-- Before opening a PR, update `work-items/02-active/<index>_<slug>/PR.md` with
+- Before opening a PR, update `work-items/<date>-<index>_<slug>/PR.md` with
   summary, validation, risk, and follow-up QA notes.
 
 ## Done condition
