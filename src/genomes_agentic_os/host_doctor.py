@@ -30,7 +30,14 @@ from . import notion_api
 REPORT_ROOT = "harness/shared_factory/06-runs-and-logs/auto-doctor"
 PROGRAM_CONFIG = "lib/programs/root/host_agentic_os_health/config"
 DEFAULT_SCHEDULE = ("06:00", "14:00", "22:00")
-SAFE_ACTIONS = {"restart_user_service", "start_user_service", "restart_container"}
+SAFE_ACTIONS = {
+    "restart_user_service",
+    "start_user_service",
+    "restart_container",
+    "prune_docker_images",
+    "prune_docker_build_cache",
+    "prune_ephemeral_worktrees",
+}
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -294,10 +301,236 @@ def _probe_processes(
     return findings
 
 
+def _parse_bytes(value: str) -> int:
+    match = re.match(r"\s*([0-9.]+)\s*([kmgt]?i?b)?", value.lower())
+    if not match:
+        return 0
+    units = {"": 1, "b": 1, "kb": 1000, "kib": 1024, "mb": 1000**2, "mib": 1024**2,
+             "gb": 1000**3, "gib": 1024**3, "tb": 1000**4, "tib": 1024**4}
+    return int(float(match.group(1)) * units.get(match.group(2) or "", 1))
+
+
+def _docker_inventory(policy: dict[str, Any], *, now: datetime, runner: Runner) -> dict[str, Any]:
+    config = policy.get("docker") or {}
+    if not config.get("enabled"):
+        return {}
+    ids_result = _run(["docker", "ps", "-aq"], runner=runner)
+    if ids_result.returncode != 0:
+        return {"available": False, "detail": ids_result.stderr[-300:]}
+    ids = ids_result.stdout.split()
+    containers: list[dict[str, Any]] = []
+    if ids:
+        template = "{{.Name}}\t{{.State.Status}}\t{{.State.StartedAt}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.Image}}"
+        inspected = _run(["docker", "inspect", "--format", template, *ids], timeout=30, runner=runner)
+        for line in inspected.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 5:
+                continue
+            name, state, started, health, image_id = parts
+            try:
+                started_at = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                age_hours = max(0.0, (now - started_at.astimezone(UTC)).total_seconds() / 3600)
+            except ValueError:
+                age_hours = 0.0
+            containers.append({"name": name.removeprefix("/"), "state": state, "health": health,
+                               "started_at": started, "age_hours": round(age_hours, 2), "image_id": image_id})
+    stats_result = _run(["docker", "stats", "--no-stream", "--format", "{{json .}}"], timeout=30, runner=runner)
+    stats: dict[str, dict[str, Any]] = {}
+    for line in stats_result.stdout.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        name = str(item.get("Name") or item.get("Container") or "")
+        stats[name] = {
+            "cpu_percent": float(str(item.get("CPUPerc") or "0").rstrip("%") or 0),
+            "memory_bytes": _parse_bytes(str(item.get("MemUsage") or "").split("/", 1)[0]),
+        }
+    for container in containers:
+        container.update(stats.get(container["name"], {}))
+    image_result = _run(["docker", "image", "ls", "-q", "--no-trunc"], runner=runner)
+    image_ids = sorted(set(image_result.stdout.split()))
+    images: list[dict[str, Any]] = []
+    used_ids = {str(item["image_id"]) for item in containers}
+    if image_ids:
+        template = "{{.Id}}\t{{.Created}}\t{{json .RepoTags}}"
+        inspected = _run(["docker", "image", "inspect", "--format", template, *image_ids], timeout=45, runner=runner)
+        for line in inspected.stdout.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            image_id, created, tags_raw = parts
+            try:
+                created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                age_hours = max(0.0, (now - created_at.astimezone(UTC)).total_seconds() / 3600)
+            except ValueError:
+                age_hours = 0.0
+            try:
+                tags = json.loads(tags_raw) or []
+            except json.JSONDecodeError:
+                tags = []
+            images.append({"id": image_id, "created_at": created, "age_hours": round(age_hours, 2),
+                           "tags": tags, "used": image_id in used_ids})
+    prune_hours = float(config.get("image_prune_after_hours") or 120)
+    persistent = re.compile(str(config.get("persistent_name_regex") or r"$^"))
+    long_hours = float(config.get("long_running_hours") or 120)
+    long_running = [item for item in containers if item["state"] == "running" and item["age_hours"] > long_hours
+                    and not persistent.search(item["name"])]
+    memory_warn = int(config.get("container_memory_warn_bytes") or 2 * 1024**3)
+    cpu_warn = float(config.get("container_cpu_warn_percent") or 150)
+    restart_watch_hits: list[dict[str, Any]] = []
+    by_name = {item["name"]: item for item in containers}
+    for watch in config.get("restart_watches") or []:
+        watched = by_name.get(str(watch.get("name") or ""))
+        threshold = int(watch.get("memory_bytes_above") or 0)
+        if watched and threshold and int(watched.get("memory_bytes") or 0) >= threshold:
+            restart_watch_hits.append({**watched, "finding_code": str(watch.get("finding_code") or ""),
+                                       "threshold_bytes": threshold})
+    return {
+        "available": True,
+        "containers": containers,
+        "images": images,
+        "old_unused_images": [item for item in images if not item["used"] and item["age_hours"] >= prune_hours],
+        "long_running": long_running,
+        "memory_hogs": [item for item in containers if int(item.get("memory_bytes") or 0) >= memory_warn],
+        "cpu_hogs": [item for item in containers if float(item.get("cpu_percent") or 0) >= cpu_warn],
+        "restart_watch_hits": restart_watch_hits,
+    }
+
+
+def _probe_docker(policy: dict[str, Any], inventory: dict[str, Any]) -> list[dict[str, Any]]:
+    if not inventory:
+        return []
+    if not inventory.get("available"):
+        return [_finding(policy, "docker.unavailable", "degraded", "Docker/OrbStack inventory is unavailable",
+                         detail=inventory.get("detail"))]
+    findings: list[dict[str, Any]] = []
+    old = inventory.get("old_unused_images") or []
+    if old:
+        findings.append(_finding(policy, "docker.old_unused_images", "degraded",
+                                 f"{len(old)} unused Docker images are at least five days old",
+                                 count=len(old), sample_tags=[item.get("tags") for item in old[:10]]))
+    long_running = inventory.get("long_running") or []
+    if long_running:
+        findings.append(_finding(policy, "docker.long_running", "degraded",
+                                 f"{len(long_running)} non-persistent containers exceed the host age policy",
+                                 containers=[{"name": x["name"], "age_hours": x["age_hours"]} for x in long_running[:15]]))
+    unhealthy = [item for item in inventory.get("containers") or []
+                 if item["state"] == "running" and item["health"] not in {"none", "healthy"}]
+    if unhealthy:
+        findings.append(_finding(policy, "docker.unhealthy_containers", "critical",
+                                 f"{len(unhealthy)} running containers are unhealthy",
+                                 containers=[{"name": x["name"], "state": x["state"], "health": x["health"]} for x in unhealthy[:15]]))
+    stopped = [item for item in inventory.get("containers") or [] if item["state"] != "running"]
+    if stopped:
+        findings.append(_finding(policy, "docker.stopped_containers", "degraded",
+                                 f"{len(stopped)} containers are stopped",
+                                 containers=[{"name": x["name"], "state": x["state"]} for x in stopped[:15]]))
+    if inventory.get("memory_hogs"):
+        findings.append(_finding(policy, "docker.memory_hogs", "degraded",
+                                 f"{len(inventory['memory_hogs'])} containers exceed the memory policy",
+                                 containers=[{"name": x["name"], "memory_bytes": x.get("memory_bytes")} for x in inventory["memory_hogs"][:15]]))
+    if inventory.get("cpu_hogs"):
+        findings.append(_finding(policy, "docker.cpu_hogs", "degraded",
+                                 f"{len(inventory['cpu_hogs'])} containers exceed the CPU policy",
+                                 containers=[{"name": x["name"], "cpu_percent": x.get("cpu_percent")} for x in inventory["cpu_hogs"][:15]]))
+    for item in inventory.get("restart_watch_hits") or []:
+        if item.get("finding_code"):
+            findings.append(_finding(policy, item["finding_code"], "critical",
+                                     f"{item['name']} exceeds its exact automatic-recovery memory threshold",
+                                     container=item["name"], memory_bytes=item.get("memory_bytes"),
+                                     threshold_bytes=item.get("threshold_bytes")))
+    return findings
+
+
+def _worktree_inventory(policy: dict[str, Any], *, now: datetime, runner: Runner) -> dict[str, Any]:
+    config = policy.get("worktrees") or {}
+    repositories = [Path(str(item)).expanduser() for item in config.get("repositories") or []]
+    cleanup_days = float(config.get("cleanup_after_days") or 5)
+    cleanup_regex = re.compile(str(config.get("auto_cleanup_path_regex") or r"$^"))
+    auto_unlock_ephemeral = config.get("auto_unlock_ephemeral") is True
+    worktrees: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    for repository in repositories:
+        if not repository.exists():
+            continue
+        result = _run(["git", "-C", str(repository), "worktree", "list", "--porcelain"], timeout=20, runner=runner)
+        records: list[dict[str, Any]] = []
+        current: dict[str, Any] = {}
+        for line in [*result.stdout.splitlines(), ""]:
+            if not line:
+                if current:
+                    records.append(current)
+                    current = {}
+                continue
+            key, _, value = line.partition(" ")
+            current[key] = value if value else True
+        for index, record in enumerate(records):
+            path = Path(str(record.get("worktree") or ""))
+            if index == 0 or not path.exists():
+                continue
+            branch = str(record.get("branch") or "")
+            log = _run(["git", "-C", str(path), "log", "-1", "--format=%ct"], runner=runner)
+            try:
+                age_days = max(0.0, (now.timestamp() - int(log.stdout.strip())) / 86400)
+            except ValueError:
+                age_days = 0.0
+            item = {"repository": str(repository), "path": str(path), "branch": branch,
+                    "age_days": round(age_days, 2), "locked": bool(record.get("locked"))}
+            worktrees.append(item)
+            if (branch.startswith("refs/heads/") and (not item["locked"] or auto_unlock_ephemeral)
+                    and age_days >= cleanup_days
+                    and cleanup_regex.search(str(path))):
+                status = _run(["git", "-C", str(path), "status", "--porcelain", "--untracked-files=normal"],
+                              timeout=20, runner=runner)
+                if status.returncode == 0 and not status.stdout.strip():
+                    candidates.append(item)
+    return {"worktrees": worktrees, "cleanup_candidates": candidates,
+            "max_cleanup_per_run": int(config.get("max_cleanup_per_run") or 20),
+            "warn_above": int(config.get("warn_above") or 40),
+            "critical_above": int(config.get("critical_above") or 100)}
+
+
+def _probe_worktrees(policy: dict[str, Any], inventory: dict[str, Any]) -> list[dict[str, Any]]:
+    if not inventory:
+        return []
+    count = len(inventory.get("worktrees") or [])
+    severity = "critical" if count > inventory["critical_above"] else "degraded" if count > inventory["warn_above"] else None
+    findings: list[dict[str, Any]] = []
+    if severity:
+        findings.append(_finding(policy, "worktrees.excessive", severity,
+                                 f"{count} secondary Git worktrees exceed the host policy", count=count))
+    candidates = inventory.get("cleanup_candidates") or []
+    if candidates:
+        findings.append(_finding(policy, "worktrees.cleanup_candidates", "degraded",
+                                 f"{len(candidates)} clean ephemeral worktrees are eligible for bounded cleanup",
+                                 count=len(candidates), sample_paths=[Path(x["path"]).name for x in candidates[:15]]))
+    return findings
+
+
+def _probe_memory_hogs(policy: dict[str, Any], processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    config = policy.get("memory_hogs") or {}
+    if not config:
+        return []
+    excluded = re.compile(str(config.get("exclude_regex") or r"$^"))
+    warn = int(config.get("rss_warn_bytes") or 4 * 1024**3)
+    critical = int(config.get("rss_critical_bytes") or 12 * 1024**3)
+    matched = [row for row in processes if row["rss_bytes"] >= warn and not excluded.search(row["command"])]
+    if not matched:
+        return []
+    severity = "critical" if any(row["rss_bytes"] >= critical for row in matched) else "degraded"
+    return [_finding(policy, "process.memory_hogs", severity,
+                     f"{len(matched)} processes exceed the resident-memory policy",
+                     processes=[{"pid": x["pid"], "rss_bytes": x["rss_bytes"], "command": x["command"][:160]} for x in matched[:12]])]
+
+
 def _service_status(watch: dict[str, Any], *, runner: Runner) -> tuple[bool, str]:
     kind, name = watch.get("kind"), str(watch.get("name") or "")
     if kind == "systemd_user":
         result = _run(["systemctl", "--user", "is-active", name], runner=runner)
+        return result.returncode == 0 and result.stdout.strip() == "active", result.stdout.strip() or result.stderr.strip()
+    if kind == "systemd_system":
+        result = _run(["systemctl", "is-active", name], runner=runner)
         return result.returncode == 0 and result.stdout.strip() == "active", result.stdout.strip() or result.stderr.strip()
     if kind == "launchd":
         result = _run(["launchctl", "print", f"gui/{os.getuid()}/{name}"], runner=runner)
@@ -313,6 +546,12 @@ def _service_status(watch: dict[str, Any], *, runner: Runner) -> tuple[bool, str
         result = _run(["docker", "inspect", name, "--format", "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"], runner=runner)
         state = result.stdout.strip()
         return result.returncode == 0 and (state.startswith("running|healthy") or state == "running|none"), state or result.stderr.strip()
+    if kind == "tcp":
+        try:
+            with socket.create_connection((str(watch.get("host") or "127.0.0.1"), int(watch.get("port"))), timeout=3):
+                return True, "connected"
+        except OSError as exc:
+            return False, f"{type(exc).__name__}: {exc}"
     return False, f"unsupported service kind: {kind}"
 
 
@@ -381,6 +620,7 @@ def build_host_report(
     policies = load_host_policies(policy_root, alias)
     metrics, processes = collect_metrics(runner=runner)
     findings: list[dict[str, Any]] = []
+    inventory: dict[str, Any] = {"docker": {}, "worktrees": {}}
     for policy in policies:
         platforms = {str(item).lower() for item in policy.get("platforms") or []}
         if platforms and metrics["platform"] not in platforms:
@@ -388,6 +628,24 @@ def build_host_report(
         findings.extend(_probe_thresholds(policy, metrics))
         findings.extend(_probe_processes(policy, processes))
         findings.extend(_probe_services(policy, runner=runner))
+        docker_inventory = _docker_inventory(policy, now=checked, runner=runner)
+        if docker_inventory:
+            inventory["docker"] = docker_inventory
+            metrics.update({
+                "docker_container_count": len(docker_inventory.get("containers") or []),
+                "docker_long_running_count": len(docker_inventory.get("long_running") or []),
+                "docker_old_unused_image_count": len(docker_inventory.get("old_unused_images") or []),
+                "docker_memory_hog_count": len(docker_inventory.get("memory_hogs") or []),
+                "docker_cpu_hog_count": len(docker_inventory.get("cpu_hogs") or []),
+            })
+            findings.extend(_probe_docker(policy, docker_inventory))
+        worktree_inventory = _worktree_inventory(policy, now=checked, runner=runner)
+        if worktree_inventory.get("worktrees"):
+            inventory["worktrees"] = worktree_inventory
+            metrics["worktree_count"] = len(worktree_inventory["worktrees"])
+            metrics["worktree_cleanup_candidate_count"] = len(worktree_inventory["cleanup_candidates"])
+            findings.extend(_probe_worktrees(policy, worktree_inventory))
+        findings.extend(_probe_memory_hogs(policy, processes))
     findings = _compose_findings(findings)
     schedule = next((policy.get("schedule") for policy in reversed(policies) if policy.get("schedule")), {}) or {}
     cadence = tuple(schedule.get("local_times") or DEFAULT_SCHEDULE)
@@ -403,6 +661,7 @@ def build_host_report(
         "policy_sources": [policy["source"] for policy in policies],
         "metrics": metrics,
         "findings": findings,
+        "inventory": inventory,
         "repairs": [],
     }
 
@@ -414,7 +673,60 @@ def _repair_command(action: dict[str, Any]) -> list[str] | None:
         return ["systemctl", "--user", verb, target]
     if action_id == "restart_container":
         return ["docker", "restart", target]
+    if action_id == "prune_docker_images" and re.fullmatch(r"\d+[hmd]", target):
+        return ["docker", "image", "prune", "-a", "--force", "--filter", f"until={target}"]
+    if action_id == "prune_docker_build_cache" and re.fullmatch(r"\d+[hmd]", target):
+        return ["docker", "builder", "prune", "--all", "--force", "--filter", f"until={target}"]
     return None
+
+
+def _prune_ephemeral_worktrees(report: dict[str, Any], action: dict[str, Any], *, runner: Runner) -> tuple[bool, str]:
+    inventory = (report.get("inventory") or {}).get("worktrees") or {}
+    candidates = list(inventory.get("cleanup_candidates") or [])
+    limit = min(int(action.get("max_per_run") or inventory.get("max_cleanup_per_run") or 20), 25)
+    removed: list[str] = []
+    failures: list[str] = []
+    repositories: set[str] = set()
+    for item in candidates[:limit]:
+        repository, path = str(item["repository"]), str(item["path"])
+        if item.get("locked"):
+            unlocked = _run(["git", "-C", repository, "worktree", "unlock", path], timeout=20, runner=runner)
+            if unlocked.returncode != 0:
+                failures.append(f"{Path(path).name}: unlock exit {unlocked.returncode}")
+                continue
+        result = _run(["git", "-C", repository, "worktree", "remove", path], timeout=45, runner=runner)
+        if result.returncode == 0:
+            removed.append(Path(path).name)
+            repositories.add(repository)
+        else:
+            failures.append(f"{Path(path).name}: exit {result.returncode}")
+    for repository in repositories:
+        _run(["git", "-C", repository, "worktree", "prune"], runner=runner)
+    detail = f"removed={len(removed)} failures={len(failures)}"
+    if failures:
+        detail += " " + "; ".join(failures[:5])
+    return bool(removed) and not failures, detail
+
+
+def _remove_old_unused_images(report: dict[str, Any], *, runner: Runner) -> tuple[bool, str]:
+    inventory = (report.get("inventory") or {}).get("docker") or {}
+    image_ids = [str(item.get("id") or "") for item in inventory.get("old_unused_images") or []]
+    image_ids = [item for item in image_ids if item.startswith("sha256:")][:50]
+    if not image_ids:
+        return False, "removed=0 failures=0"
+    removed = 0
+    failures: list[str] = []
+    for offset in range(0, len(image_ids), 25):
+        batch = image_ids[offset:offset + 25]
+        result = _run(["docker", "image", "rm", *batch], timeout=180, runner=runner)
+        if result.returncode == 0:
+            removed += len(batch)
+        else:
+            failures.append(f"batch-{offset // 25 + 1}: exit {result.returncode}")
+    detail = f"removed={removed} failures={len(failures)}"
+    if failures:
+        detail += " " + "; ".join(failures)
+    return bool(removed) and not failures, detail
 
 
 def apply_safe_repairs(
@@ -445,7 +757,13 @@ def apply_safe_repairs(
                 "status": "planned" if eligible else "manual_only",
             }
             command = _repair_command(action) if eligible else None
-            if apply and command:
+            if apply and eligible and action_id == "prune_ephemeral_worktrees":
+                success, detail = _prune_ephemeral_worktrees(report, action, runner=runner)
+                receipt.update({"applied": success, "status": "repaired" if success else "failed", "detail": detail})
+            elif apply and eligible and action_id == "prune_docker_images":
+                success, detail = _remove_old_unused_images(report, runner=runner)
+                receipt.update({"applied": success, "status": "repaired" if success else "failed", "detail": detail})
+            elif apply and command:
                 result = _run(command, timeout=int(action.get("timeout_seconds") or 45), runner=runner)
                 receipt.update(
                     {
@@ -456,7 +774,7 @@ def apply_safe_repairs(
                     }
                 )
             repairs.append(receipt)
-            if len(repairs) >= 3:
+            if len(repairs) >= 5:
                 return repairs
     return repairs
 
@@ -477,6 +795,8 @@ def render_host_report(report: dict[str, Any]) -> str:
         f"- Swap used: {metrics.get('swap_used_percent')}%",
         f"- Root disk used: {metrics.get('disk_used_percent')}%",
         f"- Processes: {metrics.get('process_count')} total, {metrics.get('node_process_count')} Node, {metrics.get('curl_process_count')} curl",
+        f"- Docker/OrbStack: {metrics.get('docker_container_count', 'unavailable')} containers, {metrics.get('docker_old_unused_image_count', 0)} unused images older than policy, {metrics.get('docker_long_running_count', 0)} long-running development containers",
+        f"- Worktrees: {metrics.get('worktree_count', 'unavailable')} secondary, {metrics.get('worktree_cleanup_candidate_count', 0)} safe cleanup candidates",
         "",
         "## Findings",
         "",
@@ -539,6 +859,7 @@ def notion_blocks(report: dict[str, Any]) -> list[dict[str, Any]]:
         {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"{str(report['status']).upper()} · Last ran {report['checked_at']} · Next run {report['next_run_at']}"), "icon": {"type": "emoji", "emoji": "🩺"}}},
         {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Current snapshot")}},
         {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(f"Load {metrics.get('load1')} · memory available {metrics.get('memory_available_percent')}% · swap used {metrics.get('swap_used_percent')}% · disk used {metrics.get('disk_used_percent')}%")}},
+        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(f"Docker/OrbStack containers {metrics.get('docker_container_count', 'n/a')} · old unused images {metrics.get('docker_old_unused_image_count', 0)} · long-running containers {metrics.get('docker_long_running_count', 0)} · worktrees {metrics.get('worktree_count', 'n/a')} · cleanup candidates {metrics.get('worktree_cleanup_candidate_count', 0)}")}},
         {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Findings")}},
     ]
     for finding in report.get("findings") or []:

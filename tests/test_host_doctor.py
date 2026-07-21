@@ -15,6 +15,8 @@ from genomes_agentic_os.host_doctor import (
     project_losmon_report,
     project_losmon_drop,
     write_host_report,
+    _docker_inventory,
+    _worktree_inventory,
 )
 
 
@@ -148,3 +150,111 @@ notion_page_id: abc-123
 def test_next_run_rolls_to_next_day() -> None:
     now = datetime(2026, 7, 22, 4, 0, tzinfo=UTC)  # 23:00 prior day in Chicago
     assert next_run_at(now).isoformat() == "2026-07-22T11:00:00+00:00"
+
+
+def test_docker_inventory_finds_old_unused_images_and_hogs() -> None:
+    now = datetime(2026, 7, 21, 16, 0, tzinfo=UTC)
+    def runner(args, **kwargs):
+        command = " ".join(args)
+        if args[:3] == ["docker", "ps", "-aq"]:
+            return subprocess.CompletedProcess(args, 0, "c1\n", "")
+        if args[:3] == ["docker", "inspect", "--format"]:
+            return subprocess.CompletedProcess(args, 0, "api\trunning\t2026-07-10T00:00:00Z\thealthy\tsha256:used\n", "")
+        if args[:3] == ["docker", "stats", "--no-stream"]:
+            return subprocess.CompletedProcess(args, 0, '{"Name":"api","CPUPerc":"175%","MemUsage":"3GiB / 8GiB"}\n', "")
+        if args[:4] == ["docker", "image", "ls", "-q"]:
+            return subprocess.CompletedProcess(args, 0, "sha256:used\nsha256:old\n", "")
+        if args[:4] == ["docker", "image", "inspect", "--format"]:
+            return subprocess.CompletedProcess(args, 0,
+                'sha256:used\t2026-07-20T00:00:00Z\t["used:latest"]\n'
+                'sha256:old\t2026-07-01T00:00:00Z\t["old:latest"]\n', "")
+        raise AssertionError(command)
+    policy = {"docker": {"enabled": True, "image_prune_after_hours": 120,
+                         "long_running_hours": 120, "container_memory_warn_bytes": 2 * 1024**3,
+                         "container_cpu_warn_percent": 150,
+                         "restart_watches": [{"name": "api", "memory_bytes_above": 3 * 1024**3,
+                                              "finding_code": "docker.container_memory.api"}]}}
+    inventory = _docker_inventory(policy, now=now, runner=runner)
+    assert [item["id"] for item in inventory["old_unused_images"]] == ["sha256:old"]
+    assert inventory["long_running"][0]["name"] == "api"
+    assert inventory["memory_hogs"][0]["memory_bytes"] == 3 * 1024**3
+    assert inventory["cpu_hogs"][0]["cpu_percent"] == 175
+    assert inventory["restart_watch_hits"][0]["finding_code"] == "docker.container_memory.api"
+
+
+def test_worktree_inventory_only_selects_old_clean_ephemeral_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    candidate = tmp_path / ".claude" / "worktrees" / "agent-old"
+    repo.mkdir()
+    candidate.mkdir(parents=True)
+    def runner(args, **kwargs):
+        if args[-3:] == ["worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0,
+                f"worktree {repo}\nbranch refs/heads/main\n\nworktree {candidate}\nbranch refs/heads/agent-old\n\n", "")
+        if "--format=%ct" in args:
+            return subprocess.CompletedProcess(args, 0, "1750000000\n", "")
+        if "--porcelain" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        raise AssertionError(args)
+    policy = {"worktrees": {"repositories": [str(repo)], "cleanup_after_days": 5,
+                             "auto_cleanup_path_regex": r"/\.claude/worktrees/agent-"}}
+    inventory = _worktree_inventory(policy, now=datetime(2026, 7, 21, tzinfo=UTC), runner=runner)
+    assert len(inventory["worktrees"]) == 1
+    assert inventory["cleanup_candidates"][0]["path"] == str(candidate)
+
+
+def test_worktree_inventory_can_select_locked_ephemeral_paths_only_when_enabled(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    candidate = tmp_path / ".claude" / "worktrees" / "agent-old"
+    repo.mkdir()
+    candidate.mkdir(parents=True)
+    def runner(args, **kwargs):
+        if args[-3:] == ["worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0,
+                f"worktree {repo}\nbranch refs/heads/main\n\nworktree {candidate}\nbranch refs/heads/agent-old\nlocked stale agent\n\n", "")
+        if "--format=%ct" in args:
+            return subprocess.CompletedProcess(args, 0, "1750000000\n", "")
+        if "--porcelain" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        raise AssertionError(args)
+    base = {"repositories": [str(repo)], "cleanup_after_days": 5,
+            "auto_cleanup_path_regex": r"/\.claude/worktrees/agent-"}
+    assert not _worktree_inventory({"worktrees": base}, now=datetime(2026, 7, 21, tzinfo=UTC), runner=runner)["cleanup_candidates"]
+    enabled = {**base, "auto_unlock_ephemeral": True}
+    assert len(_worktree_inventory({"worktrees": enabled}, now=datetime(2026, 7, 21, tzinfo=UTC), runner=runner)["cleanup_candidates"]) == 1
+
+
+def test_cleanup_commands_are_bounded_and_reconstructable() -> None:
+    policy = {"workflow": "cleanup", "repairs": [
+        {"id": "images", "action": "prune_docker_images", "target": "120h",
+         "when": "docker.old_unused_images", "automatic": True, "safety": "reconstructable"},
+        {"id": "cache", "action": "prune_docker_build_cache", "target": "120h",
+         "when": "docker.old_unused_images", "automatic": True, "safety": "reconstructable"},
+    ]}
+    commands = []
+    def runner(args, **kwargs):
+        commands.append(args)
+        return subprocess.CompletedProcess(args, 0, "reclaimed", "")
+    report = {"findings": [{"code": "docker.old_unused_images"}], "inventory": {"docker": {
+        "old_unused_images": [{"id": "sha256:old1"}, {"id": "sha256:old2"}],
+    }}}
+    receipts = apply_safe_repairs(report, [policy], apply=True, runner=runner)
+    assert all(item["status"] == "repaired" for item in receipts)
+    assert commands == [
+        ["docker", "image", "rm", "sha256:old1", "sha256:old2"],
+        ["docker", "builder", "prune", "--all", "--force", "--filter", "until=120h"],
+    ]
+
+
+def test_stopped_containers_are_degraded_but_unhealthy_running_containers_are_critical() -> None:
+    from genomes_agentic_os.host_doctor import _probe_docker
+
+    inventory = {"available": True, "containers": [
+        {"name": "old-dev", "state": "exited", "health": "none"},
+        {"name": "database", "state": "running", "health": "unhealthy"},
+    ], "images": [], "old_unused_images": [], "long_running": [], "memory_hogs": [], "cpu_hogs": []}
+    findings = _probe_docker({"workflow": "docker"}, inventory)
+    assert {(item["code"], item["severity"]) for item in findings} == {
+        ("docker.stopped_containers", "degraded"),
+        ("docker.unhealthy_containers", "critical"),
+    }
