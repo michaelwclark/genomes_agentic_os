@@ -89,6 +89,46 @@ def test_claim_next_two_items_two_claimants_get_distinct_ids(conn: sqlite3.Conne
     assert claimed_a["id"] == first["id"]
 
 
+def test_claim_next_ages_old_work_ahead_of_fresh_high_priority_work(conn: sqlite3.Connection) -> None:
+    fresh_high = queue.enqueue(conn, kind="schedule", id="fresh-high", priority=100)
+    aged_low = queue.enqueue(
+        conn,
+        kind="schedule",
+        id="aged-low",
+        priority=0,
+        created_at="2000-01-01T00:00:00Z",
+    )
+
+    claimed = queue.claim_next(conn, worker_id="worker-a")
+
+    assert claimed is not None
+    assert claimed["id"] == aged_low["id"]
+    assert queue.get(conn, fresh_high["id"])["status"] == "queued"
+
+
+def test_claim_next_uses_oldest_availability_inside_starvation_class(conn: sqlite3.Connection) -> None:
+    newer_high = queue.enqueue(
+        conn,
+        kind="schedule",
+        id="newer-high",
+        priority=100,
+        created_at="2001-01-01T00:00:00Z",
+    )
+    oldest_low = queue.enqueue(
+        conn,
+        kind="schedule",
+        id="oldest-low",
+        priority=0,
+        created_at="2000-01-01T00:00:00Z",
+    )
+
+    claimed = queue.claim_next(conn, worker_id="worker-a")
+
+    assert claimed is not None
+    assert claimed["id"] == oldest_low["id"]
+    assert queue.get(conn, newer_high["id"])["status"] == "queued"
+
+
 def test_claim_next_respects_due_at(conn: sqlite3.Connection) -> None:
     queue.enqueue(conn, kind="schedule", due_at="2026-06-01T00:00:00Z")
     assert queue.claim_next(conn, worker_id="worker-a", now="2026-01-01T00:00:00Z") is None

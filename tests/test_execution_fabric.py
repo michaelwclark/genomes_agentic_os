@@ -594,6 +594,45 @@ def test_named_queue_pool_and_worker_capacity_are_transactional() -> None:
         conn.close()
 
 
+def test_named_queue_ages_old_work_ahead_of_fresh_high_priority_work() -> None:
+    conn = db.connect(":memory:")
+    try:
+        fabric.configure_queue(conn, "non_llm", max_concurrency=1)
+        fabric.configure_worker_pool(
+            conn,
+            "non_llm_workers",
+            queue_name="non_llm",
+            max_workers=1,
+            max_concurrency=1,
+        )
+        worker = fabric.register_worker(conn, "worker-a", pool_name="non_llm_workers")
+        fresh_high = fabric.enqueue_task(
+            conn,
+            queue_name="non_llm",
+            worker_pool="non_llm_workers",
+            kind="schedule",
+            id="fresh-high",
+            priority=100,
+        )
+        aged_low = fabric.enqueue_task(
+            conn,
+            queue_name="non_llm",
+            worker_pool="non_llm_workers",
+            kind="schedule",
+            id="aged-low",
+            priority=0,
+            created_at="2000-01-01T00:00:00Z",
+        )
+
+        claimed = fabric.claim_next(conn, worker_id="worker-a", worker_token=worker["lease_token"])
+
+        assert claimed is not None
+        assert claimed["id"] == aged_low["id"]
+        assert state_queue.get(conn, fresh_high["id"])["status"] == "queued"
+    finally:
+        conn.close()
+
+
 def test_global_and_provider_caps_keep_work_queued() -> None:
     conn = db.connect(":memory:")
     try:

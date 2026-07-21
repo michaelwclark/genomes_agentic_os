@@ -2703,9 +2703,16 @@ def runtime_run_batch(
                 """
                 SELECT id FROM run_queue
                 WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
-                ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
+                ORDER BY
+                  CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+                  CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,
+                  priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
                 """,
-                (now_value,),
+                (
+                    now_value,
+                    state_queue.starvation_cutoff(now_value),
+                    state_queue.starvation_cutoff(now_value),
+                ),
             ).fetchall()
         ]
     finally:
@@ -3088,11 +3095,13 @@ def _prepare_execution_fabric_dispatch(
                         (
                             "SELECT id FROM run_queue",
                             "WHERE " + " AND ".join(candidate_clauses),
-                            "ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
+                            "ORDER BY CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END, "
+                            "CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC, "
+                            "priority DESC, (due_at IS NULL) ASC, due_at, created_at, id",
                             "LIMIT 1",
                         )
                     ),
-                    candidate_params,
+                    (*candidate_params, state_queue.starvation_cutoff(now_value), state_queue.starvation_cutoff(now_value)),
                 ).fetchone()
                 candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
                 if candidate_state is None and queue_name and worker_pool:

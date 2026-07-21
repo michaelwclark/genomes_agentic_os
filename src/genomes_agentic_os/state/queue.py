@@ -42,6 +42,7 @@ VALID_STATUSES = (
 VALID_APPROVAL_STATES = ("not_required", "required", "approved", "denied", "expired", "blocked")
 
 TERMINAL_STATUSES = ("done", "failed", "skipped", "cancelled", "dead-letter")
+DISPATCH_STARVATION_AGE_SECONDS = 3600
 
 _INSERT_SQL = """
 INSERT INTO run_queue (
@@ -60,6 +61,13 @@ INSERT INTO run_queue (
 
 class StateQueueError(RuntimeError):
     """Raised for run_queue item errors (not found, invalid status, ...)."""
+
+
+def starvation_cutoff(now: str) -> str:
+    """Return the availability timestamp before which queued work is starvation-aged."""
+    return (parse_iso(now) - timedelta(seconds=DISPATCH_STARVATION_AGE_SECONDS)).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -194,6 +202,7 @@ def claim_next(
         "+00:00", "Z"
     )
     lease_token = uuid.uuid4().hex
+    starvation_cutoff_value = starvation_cutoff(now_value)
     with transaction(conn):
         row = conn.execute(
             f"""
@@ -201,10 +210,13 @@ def claim_next(
             WHERE status IN ({placeholders})
               AND (due_at IS NULL OR due_at <= ?)
               AND (lease_until IS NULL OR lease_until < ?)
-            ORDER BY priority DESC, (due_at IS NULL) ASC, due_at ASC, created_at ASC
+            ORDER BY
+              CASE WHEN COALESCE(due_at, created_at) <= ? THEN 0 ELSE 1 END,
+              CASE WHEN COALESCE(due_at, created_at) <= ? THEN COALESCE(due_at, created_at) END ASC,
+              priority DESC, (due_at IS NULL) ASC, due_at ASC, created_at ASC
             LIMIT 1
             """,
-            (*statuses, now_value, now_value),
+            (*statuses, now_value, now_value, starvation_cutoff_value, starvation_cutoff_value),
         ).fetchone()
         if row is None:
             return None

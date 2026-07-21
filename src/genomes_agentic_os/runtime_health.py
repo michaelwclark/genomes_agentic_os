@@ -44,6 +44,42 @@ def _ref(item: dict[str, Any]) -> str:
     return str(item.get("ref") or item.get("schedule_id") or item.get("work_type") or "unknown")
 
 
+def _compact_failure_reason(item: dict[str, Any], *, limit: int = 220) -> str:
+    candidates = (
+        item.get("error"),
+        item.get("blocked_reason"),
+        item.get("failure_reason"),
+        item.get("last_failure_class"),
+        item.get("external_effect"),
+    )
+    reason = next((str(value) for value in candidates if value), "failure recorded without a reason")
+    compact = re.sub(r"\s+", " ", reason).strip()
+    return compact if len(compact) <= limit else compact[: limit - 1].rstrip() + "…"
+
+
+def _recent_failure_summary(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    failures: dict[str, dict[str, Any]] = {}
+    ordered = sorted(
+        items,
+        key=lambda item: _parse_time(item.get("finished_at") or item.get("updated_at"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for item in ordered:
+        ref = _ref(item)
+        latest_at = item.get("finished_at") or item.get("updated_at")
+        if ref not in failures:
+            failures[ref] = {
+                "ref": ref,
+                "count": 1,
+                "latest_at": latest_at,
+                "reason": _compact_failure_reason(item),
+            }
+        else:
+            failures[ref]["count"] += 1
+    return list(failures.values())[:10]
+
+
 def _running_is_stale(item: dict[str, Any], now: datetime) -> bool:
     age = _age_hours(item.get("started_at") or item.get("updated_at"), now)
     if age is None:
@@ -156,6 +192,9 @@ def build_runtime_health(
         )
     ]
     recent_statuses = Counter(str(item.get("status")) for item in recent_terminal)
+    recent_failures = _recent_failure_summary(
+        [item for item in recent_terminal if item.get("status") == "failed"]
+    )
     backlog_refs = Counter(_ref(item) for item in queued)
     schedules = [item for item in registry.get("schedules") or [] if isinstance(item, dict)]
     enabled = [item for item in schedules if item.get("enabled") is not False]
@@ -184,9 +223,13 @@ def build_runtime_health(
     elif len(queued) > 100:
         severity = "degraded" if severity == "healthy" else severity
         findings.append(f"queue depth is elevated at {len(queued)} items")
-    if recent_statuses.get("failed", 0) > recent_statuses.get("done", 0) and recent_statuses.get("failed", 0):
+    recent_failed_count = recent_statuses.get("failed", 0)
+    if recent_failed_count > recent_statuses.get("done", 0):
         severity = "degraded" if severity == "healthy" else severity
         findings.append("dispatch failures exceeded successful dispatches in the last hour")
+    elif recent_failed_count:
+        severity = "degraded" if severity == "healthy" else severity
+        findings.append(f"{recent_failed_count} dispatch failures occurred in the last hour")
     dead_letters = int(fabric_metrics.get("dead_letter_count") or statuses.get("dead-letter", 0))
     unhealthy_workers = int(fabric_metrics.get("unhealthy_worker_count") or 0)
     if dead_letters:
@@ -244,6 +287,7 @@ def build_runtime_health(
             "live": int(fabric_metrics.get("live_worker_count") or 0),
             "unhealthy": unhealthy_workers,
         },
+        "recent_failures": recent_failures,
         "schedules": {"enabled": len(enabled), "priority": len(priority)},
         "findings": findings,
     }
@@ -282,6 +326,14 @@ def render_runtime_health(report: dict[str, Any]) -> str:
         "",
     ]
     lines.extend([f"- `{item['ref']}`: {item['queued']}" for item in queue["top_backlogs"]] or ["- None"])
+    lines.extend(["", "## Recent Failures (last hour)", ""])
+    lines.extend(
+        [
+            f"- `{item['ref']}`: {item['count']} failure(s), latest `{item['latest_at'] or 'unknown'}` — {item['reason']}"
+            for item in report.get("recent_failures") or []
+        ]
+        or ["- None"]
+    )
     lines.extend(
         [
             "",
