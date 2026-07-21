@@ -595,3 +595,22 @@ def project_losmon_report(
     if status < 200 or status >= 300:
         raise RuntimeError(f"LOSMON report ingestion returned HTTP {status}")
     return {"applied": True, "url": url, "status": status}
+
+
+def project_losmon_drop(
+    latest_json: str | Path,
+    target: str,
+    *,
+    runner: Runner = subprocess.run,
+) -> dict[str, Any]:
+    """Copy a report to an SSH-backed LOSMON drop path using a fixed command."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+:/[A-Za-z0-9_./-]+\.json", target):
+        raise ValueError("LOSMON drop target must be ssh-alias:/absolute/path.json")
+    result = _run(
+        ["scp", "-q", "-o", "ConnectTimeout=8", str(Path(latest_json).resolve()), target],
+        timeout=20,
+        runner=runner,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"LOSMON SSH report drop failed with exit {result.returncode}")
+    return {"applied": True, "target": target}

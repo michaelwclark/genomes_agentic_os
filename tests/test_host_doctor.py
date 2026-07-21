@@ -13,6 +13,7 @@ from genomes_agentic_os.host_doctor import (
     next_run_at,
     render_host_report,
     project_losmon_report,
+    project_losmon_drop,
     write_host_report,
 )
 
@@ -37,6 +38,22 @@ def test_losmon_projection_uses_env_token_without_returning_it(monkeypatch) -> N
     assert result == {'applied': True, 'url': 'http://example.test/api/host-health/bigmac', 'status': 202}
     assert seen == {'authorization': 'Bearer secret-value', 'timeout': 20}
     assert 'secret-value' not in str(result)
+
+
+def test_losmon_drop_uses_fixed_scp_command(tmp_path: Path) -> None:
+    latest = tmp_path / 'latest.json'
+    latest.write_text('{}', encoding='utf-8')
+    seen = []
+    def runner(args, **kwargs):
+        seen.append(args)
+        return subprocess.CompletedProcess(args, 0, '', '')
+    result = project_losmon_drop(
+        latest,
+        'genomesbox:/home/genome/agentic_os/auto-doctor/bigmac/latest.json',
+        runner=runner,
+    )
+    assert result['applied'] is True
+    assert seen[0][:5] == ['scp', '-q', '-o', 'ConnectTimeout=8', str(latest.resolve())]
 
 
 def _policy(path: Path, body: str) -> None:

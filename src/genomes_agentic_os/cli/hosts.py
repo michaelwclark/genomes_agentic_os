@@ -16,6 +16,7 @@ from ..host_doctor import (
     load_host_policies,
     project_host_report,
     project_losmon_report,
+    project_losmon_drop,
     write_host_report,
 )
 
@@ -111,6 +112,12 @@ def handle_host_health_report(args: argparse.Namespace) -> int:
             str(url),
             token_env=str(identity.get("losmon_token_env") or args.losmon_token_env),
         )
+    if args.apply_losmon_drop:
+        identity = next((policy for policy in reversed(policies) if policy.get("losmon_drop_target")), {})
+        target = identity.get("losmon_drop_target")
+        if not target:
+            raise ValueError("no losmon_drop_target configured in the host identity policy")
+        losmon = project_losmon_drop(paths["latest_json"], str(target))
     result = {"report": report, "paths": paths, "notion": notion, "losmon": losmon}
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else yaml.safe_dump(result, sort_keys=False))
     return 1 if args.fail_on_unhealthy and report["status"] != "healthy" else 0
@@ -155,6 +162,7 @@ def register(subparsers) -> None:
     host_health.add_argument("--apply-losmon", action="store_true", help="Ingest the report into the configured LOSMON fleet endpoint.")
     host_health.add_argument("--losmon-url", help="Override the LOSMON report ingestion URL from policy.")
     host_health.add_argument("--losmon-token-env", default="LOSMON_HOST_HEALTH_TOKEN", help="LOSMON ingestion token environment variable name.")
+    host_health.add_argument("--apply-losmon-drop", action="store_true", help="Copy latest.json to the policy's SSH-backed LOSMON drop path.")
     host_health.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     host_health.add_argument("--fail-on-unhealthy", action="store_true", help="Return exit 1 for degraded or critical health (interactive/CI use).")
     host_health.set_defaults(handler=handle_host_health_report)
