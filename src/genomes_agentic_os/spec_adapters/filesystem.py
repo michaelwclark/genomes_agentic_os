@@ -36,6 +36,15 @@ class FilesystemSpecAdapter:
             raise ValueError(f"project not found: {self.domain}/{self.project}")
 
     def _iter_roots(self):
+        if self.work_items_root.is_dir():
+            for path in sorted(self.work_items_root.iterdir()):
+                if path.name == "99-archived" and path.is_dir():
+                    for archived in sorted(path.iterdir()):
+                        if archived.is_dir() and ((archived / "work.yml").is_file() or (archived / "spec.yml").is_file()):
+                            yield archived
+                elif path.is_dir() and path.name not in {"01-intake", "02-active", "03-complete"}:
+                    if (path / "work.yml").is_file() or (path / "spec.yml").is_file():
+                        yield path
         for lane in ("01-intake", "02-active", "03-complete"):
             lane_root = self.work_items_root / lane
             if not lane_root.is_dir():
@@ -68,7 +77,9 @@ class FilesystemSpecAdapter:
         return spec
 
     def _path_for(self, spec: Spec) -> Path:
-        return self.work_items_root / lane_for_status(spec.status) / spec.id
+        prefix = datetime.now(timezone.utc).strftime("%m%d%y")
+        name = spec.id if re.match(r"^\d{6}-", spec.id) else f"{prefix}-{spec.id}"
+        return self.work_items_root / name
 
     def _find_path(self, spec_id: str) -> Path | None:
         for path in self._iter_roots():

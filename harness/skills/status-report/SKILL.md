@@ -16,7 +16,7 @@ analysis across recent agent work.
    `output-contract.md`, `runbook.md`, and `progress.md`.
 3. Read the active work item when changing the workflow or reporting on this
    feature:
-   `/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow`.
+   `<os-root>/<domain>/02-projects/genomes_agentic_os/work-items/<date>-011_status_report_workflow`.
 
 ## Inputs
 
@@ -89,7 +89,7 @@ Default full report:
 Default artifacts:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow/artifacts/status-reports/<run-id>/
+<os-root>/<domain>/02-projects/genomes_agentic_os/work-items/<date>-011_status_report_workflow/artifacts/status-reports/<run-id>/
 ```
 
 ## Safety

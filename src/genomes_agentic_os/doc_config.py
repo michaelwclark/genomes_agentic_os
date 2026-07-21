@@ -226,7 +226,7 @@ def build_doc_config_plan(
     filesystem_destination = None
     if destination_domain and destination_project:
         project_root = domain_path(expand_path(root), validate_name(str(destination_domain), "domain")) / "02-projects" / validate_name(str(destination_project), "project")
-        filesystem_destination = str(project_root / "work-items" / "02-active" / work_item) if work_item else str(project_root / "work-items" / "02-active")
+        filesystem_destination = str(project_root / "work-items" / work_item) if work_item else str(project_root / "work-items")
     base_notion_path = (area or {}).get("notion_path")
     if not base_notion_path and destination_project:
         base_notion_path = f"Projects -> {titleize_name(str(destination_project))}"

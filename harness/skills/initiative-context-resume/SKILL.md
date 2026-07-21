@@ -30,8 +30,8 @@ A fresh agent starting from the OS root can find the initiative by following nor
 2. Choose the initiative anchor.
    - Prefer an existing project work item when the initiative belongs to a codebase or durable project.
    - Use `spec-intake-router`/`/add-spec` ownership for unbuilt feature/spec work; this skill only adds the durable resume context and indexes.
-   - Use `work-items/01-intake/<nnn_slug>/` with `--status captured` while it is still planning/spec work.
-   - Move through normal lifecycle lanes later instead of creating a second tracking shape.
+   - Use `work-items/<date>-<nnn_slug>/` with `--status captured` while it is still planning/spec work.
+   - Keep the packet path stable as lifecycle state changes.
 
 3. Build or update the context pack.
    - Preferred command:

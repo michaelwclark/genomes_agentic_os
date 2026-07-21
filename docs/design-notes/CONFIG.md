@@ -182,7 +182,7 @@ Notes:
 
 ```env
 BUILD_RUNNER_FEATURE_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-features/
-BUILD_RUNNER_PLAN_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/work-items/01-intake/
+BUILD_RUNNER_PLAN_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/work-items/
 BUILD_RUNNER_LOG_DIR=<os-root>/<work-domain>/02-projects/genomes_agentic_os/worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/
@@ -219,14 +219,14 @@ Notes:
 
 ### `BUILD_RUNNER_PLAN_DIR`
 
-Default for this source package: installed OS project `work-items/01-intake/`
+Default for this source package: installed OS project `work-items/`
 
 Controls where specs and generated prerequisite task files live.
 
 Valid options:
 
 - Installed OS project path, such as
-  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/work-items/01-intake/`.
+  `<os-root>/<work-domain>/02-projects/genomes_agentic_os/work-items/`.
 - Relative repository path only for legacy compatibility.
 - Absolute path only when explicitly requested.
 
@@ -672,7 +672,7 @@ For fresh installs:
 
 ```env
 BUILD_RUNNER_FEATURE_DIR=./worklogs/source-features/
-BUILD_RUNNER_PLAN_DIR=./work-items/01-intake/
+BUILD_RUNNER_PLAN_DIR=./work-items/
 BUILD_RUNNER_LOG_DIR=./worklogs/source-build-logs/
 BUILD_RUNNER_RUN_STATE=./RUN_STATE.json
 BUILD_RUNNER_WORKTREE_ROOT=../.worktrees/

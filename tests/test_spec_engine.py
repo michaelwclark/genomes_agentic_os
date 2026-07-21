@@ -136,7 +136,11 @@ def test_filesystem_adapter_create_duplicate_transition_and_readback(tmp_path: P
     spec = Spec(id="001_login", title="Fix Login", type="bug", status="idea", domain="acme", project="app", summary="Repair login")
     receipt = adapter.create(spec, apply=True)
     assert receipt.ok and receipt.readback_verified
-    path = root / "domains" / "acme" / "02-projects" / "app" / "work-items" / "01-intake" / "001_login"
+    matches = list(
+        (root / "domains" / "acme" / "02-projects" / "app" / "work-items").glob("*-001_login")
+    )
+    assert len(matches) == 1
+    path = matches[0]
     assert (path / "work.yml").is_file()
     assert adapter.create(spec, apply=True).status == "exists"
     duplicate = Spec(id="002_login", title="Fix Login", domain="acme", project="app")
@@ -145,8 +149,8 @@ def test_filesystem_adapter_create_duplicate_transition_and_readback(tmp_path: P
     spec.transition("ready")
     moved = adapter.transition(spec, previous_status="idea", apply=True)
     assert moved.ok
-    assert not path.exists()
-    assert (root / "domains" / "acme" / "02-projects" / "app" / "work-items" / "02-active" / "001_login" / "work.yml").is_file()
+    assert path.exists()
+    assert (path / "work.yml").is_file()
 
 
 def test_engine_filesystem_default_writes_while_dry_run_does_not(tmp_path: Path):
@@ -183,19 +187,13 @@ def test_external_override_still_creates_required_local_identity(tmp_path: Path)
             "url": "https://provider.invalid/remote-1",
         }
     ]
+    work_items_root = (
+        root / "domains" / "acme" / "02-projects" / "app" / "work-items"
+    )
+    local_packets = list(work_items_root.glob(f"*-{spec.id}"))
+    assert len(local_packets) == 1
     receipt_files = list(
-        (
-            root
-            / "domains"
-            / "acme"
-            / "02-projects"
-            / "app"
-            / "work-items"
-            / "01-intake"
-            / spec.id
-            / "artifacts"
-            / "spec-receipts"
-        ).glob("*-add.yml")
+        (local_packets[0] / "artifacts" / "spec-receipts").glob("*-add.yml")
     )
     assert len(receipt_files) == 1
     assert all(receipt["readback_verified"] for receipt in result["receipts"])
@@ -273,18 +271,12 @@ def test_provider_outage_receipt_is_persisted_with_local_identity(tmp_path: Path
     result = engine.add(spec, adapter="linear", apply_external=True)
 
     assert result["ok"] is False
-    receipt_dir = (
-        root
-        / "domains"
-        / "acme"
-        / "02-projects"
-        / "app"
-        / "work-items"
-        / "01-intake"
-        / spec.id
-        / "artifacts"
-        / "spec-receipts"
+    work_items_root = (
+        root / "domains" / "acme" / "02-projects" / "app" / "work-items"
     )
+    local_packets = list(work_items_root.glob(f"*-{spec.id}"))
+    assert len(local_packets) == 1
+    receipt_dir = local_packets[0] / "artifacts" / "spec-receipts"
     payload = yaml.safe_load(next(receipt_dir.glob("*-add.yml")).read_text())
     assert payload["receipts"][1]["status"] == "blocked"
     assert "unavailable" in payload["receipts"][1]["error"]
@@ -325,5 +317,11 @@ def test_project_work_item_compatibility_routes_explicit_type_to_spec_engine(tmp
     assert main(["project", "work-item", "create", "acme", "app", "--title", "Typed Bug", "--summary", "Bug", "--type", "bug", "--root", str(root)]) == 0
     result = yaml.safe_load(capsys.readouterr().out)
     assert result["spec"]["type"] == "bug"
-    work_item = root / "domains" / "acme" / "02-projects" / "app" / "work-items" / "01-intake" / result["spec"]["id"]
+    matches = list(
+        (root / "domains" / "acme" / "02-projects" / "app" / "work-items").glob(
+            f"*-{result['spec']['id']}"
+        )
+    )
+    assert len(matches) == 1
+    work_item = matches[0]
     assert (work_item / "work.yml").is_file()

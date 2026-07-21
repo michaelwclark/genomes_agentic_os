@@ -561,6 +561,21 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
             "last_queued_at": None,
         },
         {
+            "id": "work_item_archive_health",
+            "display_name": "Work Item Archive Health",
+            "enabled": True,
+            "cadence": "daily",
+            "timezone": "America/Chicago",
+            "local_time": "01:30",
+            "execution_target": "script",
+            "supervisor_priority": True,
+            "command": "agentic-os work-item-archive --root <root> --apply",
+            "outputs": ["harness/shared_factory/06-runs-and-logs/work-item-archive/"],
+            "notion_update": {"object": "OS Cleanup", "status_field": "Last Status"},
+            "next_due_at": None,
+            "last_queued_at": None,
+        },
+        {
             "id": "queue_worker_health_report",
             "display_name": "Queue and worker health report",
             "enabled": True,
@@ -2190,6 +2205,23 @@ def _run_local_script(
             "candidate_count": result.get("candidate_count"),
             "closed_count": len(result.get("closed") or []),
             "skipped_count": len(result.get("skipped") or []),
+        }
+    if normalized in {
+        f"agentic-os work-item-archive --root {root} --apply",
+        f"agentic-os work-item-archive --root {str(root)} --apply",
+    }:
+        from .work_item_archive import archive_retained_work_items
+
+        result = archive_retained_work_items(root, apply=True)
+        return {
+            "supported": True,
+            "ok": not bool(result.get("skipped")),
+            "command": normalized,
+            "errors": [str(row.get("reason")) for row in result.get("skipped") or []],
+            "warnings": [],
+            "candidate_count": result.get("candidate_count"),
+            "archived_count": len(result.get("archived") or []),
+            "receipt_path": result.get("receipt"),
         }
     if normalized in {
         f"agentic-os automation-control run --root {root} --apply",

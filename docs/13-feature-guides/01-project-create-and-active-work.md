@@ -81,19 +81,17 @@ artifacts/
 config/
 ideas/
 work-items/
-  01-intake/
-  02-active/
-  03-complete/
+  99-archived/
 worklogs/
 worktrees/
 ```
 
 `config/` holds parsed project defaults such as workflow profiles, output
 artifact locations, validation commands, MCP boundaries, tools, memory policy,
-and registered worktrees. `work-items/01-intake/` is the project-known idea
-intake lane, defaulting to indexed files such as `001_build_logger.md`.
-Expanded intake can use an indexed packet folder when a duel/spec pass needs
-multiple files.
+and registered worktrees. New work is a date-prefixed packet directly under
+`work-items/`, such as `072126-001_build_logger/`. The packet path remains
+stable across lifecycle state changes; nightly retention moves terminal
+packets into `99-archived/`.
 `ideas/` remains only as a compatibility index.
 `worktrees/` contains visible symlinks and `worktrees/index.yml`, which routing
 uses to recognize commands run from real worktree paths.

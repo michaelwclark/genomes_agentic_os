@@ -5,7 +5,7 @@ PostToolUse hook. When an agent writes a lifecycle/handoff packet (PROMPT-PACK,
 WORKLOG, JIRA, PR, QA_HANDOFF, review packet, etc.) into a `.features/<ticket>/`
 directory that lives *inside a linked code repository* (i.e. outside the OS root),
 this hook nudges the agent to relocate it to the canonical OS work item at
-`<domain>/02-projects/<project>/work-items/02-active/<slug>/`.
+`<domain>/02-projects/<project>/work-items/<date>-<slug>/`.
 
 It never blocks or fails a tool call (always exits 0). It stays silent for
 disposable raw evidence (watcher state, logs, screenshots) so that legitimate
@@ -111,7 +111,7 @@ def canonical_destination(repo_root: Path) -> str | None:
     """Best-effort map a linked repo root to its OS work-items destination.
 
     Scans `<OS_ROOT>/*/02-projects/*/project.yml` for a `repo:` entry matching
-    the code repo root. Returns the canonical `work-items/02-active/` path if a
+    the code repo root. Returns the canonical `work-items/` path if a
     single project owns the repo, else None. Pure stdlib, no YAML dependency.
     """
     if not OS_ROOT.is_dir():
@@ -128,7 +128,7 @@ def canonical_destination(repo_root: Path) -> str | None:
             continue
         if needle in text:
             room = cfg.parent
-            return str(room / "work-items" / "02-active")
+            return str(room / "work-items")
     return None
 
 
@@ -153,7 +153,7 @@ def main() -> int:
         else:
             where = (
                 "the OS work item at "
-                "`<domain>/02-projects/<project>/work-items/02-active/<index>_<slug>/` "
+                "`<domain>/02-projects/<project>/work-items/<date>-<index>_<slug>/` "
                 "(resolve it with `agentic-os doc-config plan --root ~/agentic_os "
                 "--domain <domain> --project <project> --work-item <slug>`)"
             )

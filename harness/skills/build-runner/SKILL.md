@@ -54,7 +54,7 @@ folder is the audit trail. Git is the merge record.
   comments directly.
 - Make automation finite and checkpointed. "Do not stop" means resumable loop,
   retry limits, timeouts, and kill criteria.
-- Make generated `work-items/01-intake/*.md` subtasks idempotent and linked back to the source
+- Make generated subtasks inside the canonical `work-items/<packet>/` idempotent and linked back to the source
   card ID.
 - Treat Notion as the control plane, not the runtime database.
 
@@ -69,7 +69,7 @@ The user should provide:
 - Target branch: default to the repo default branch.
 - Worklog root: default to `worklogs/`, or `WORKLOGS/` when the project uses
   uppercase bucket folders.
-- Spec root: default to `work-items/01-intake/`.
+- Spec root: default to the canonical `work-items/` root; search `99-archived/` before creating a packet.
 - Legacy artifact roots: read existing `features/`, `.features/`, `PLANS/`,
   and `BUILD_LOGS/` only as compatibility inputs unless project config says
   otherwise.
@@ -268,7 +268,7 @@ configuration, risks, unknowns, and missing acceptance criteria.
 If investigation reveals a missing prerequisite feature, create:
 
 ```text
-work-items/01-intake/<parent-prefix>_<subtask-number>_<parent-slug>_<sub-name>.md
+work-items/<date>-<parent-prefix>_<parent-slug>/<subtask-number>_<sub-name>.md
 ```
 
 Add the prerequisite to the board only after board write access is verified.
@@ -453,7 +453,7 @@ directly.
 
 1. Should completed source cards move to `DONE`, move to `QA`, or stay in place
    with tracking notes only?
-2. Should generated prerequisite `work-items/01-intake/*.md` items enter the active queue
+2. Should generated prerequisite items inside the canonical packet enter the active queue
    immediately or wait in backlog for review?
 3. What is the canonical Genome's Notion board schema: status, title, prefix,
    acceptance criteria, notes, and done/review properties?

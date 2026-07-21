@@ -309,7 +309,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-path", type=Path, required=True)
     parser.add_argument("--work-item-id", required=True)
-    parser.add_argument("--lane", default="01-intake")
+    parser.add_argument("--lane", default="work-items", help="Legacy lane override; new packets use work-items.")
     parser.add_argument("--title", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--status", default="captured")
@@ -334,7 +334,12 @@ def main() -> int:
     args.updated_at = args.updated_at or utc_now()
 
     domain, project = derive_domain_project(args.project_path)
-    work_item_dir = args.project_path / "work-items" / args.lane / args.work_item_id
+    work_items_root = args.project_path / "work-items"
+    work_item_dir = (
+        work_items_root / args.work_item_id
+        if args.lane in {"", "work-items"}
+        else work_items_root / args.lane / args.work_item_id
+    )
     context = build_context(args, domain, project, work_item_dir)
 
     planned_paths = [

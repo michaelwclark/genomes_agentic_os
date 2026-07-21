@@ -52,13 +52,11 @@ agentic-os plan capture --root ~/agentic_os \
   `harness/shared_factory/05-knowledge/plans/future-ideas/` and appends it to
   the shared plans index.
 - `--kind domain` appends to `<domain>/01-inbox/raw-ideas.md`.
-- `--kind customer` with `--project` creates a captured project work item under
-  `<domain>/02-projects/<project>/work-items/01-intake/NNN_slug.md` and appends
+- `--kind customer` with `--project` creates a date-prefixed packet directly
+  under `<domain>/02-projects/<project>/work-items/` and appends
   status/control-plane indexes.
-- Expanded intake may use a folder packet at
-  `<domain>/02-projects/<project>/work-items/01-intake/NNN_slug/` when a duel or
-  spec pass creates multiple files. Subtasks keep the parent index, for example
-  `NNN_01_update_database.md`.
+- Before creating a returned ticket, search `work-items/99-archived/` and
+  resume its existing history.
 
 Domain and customer captures require `--domain`. Project captures require an
 existing project status file.

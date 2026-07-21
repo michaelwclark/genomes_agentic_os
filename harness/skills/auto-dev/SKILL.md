@@ -5,6 +5,29 @@ description: Run a Jira or Linear tracker item through project-aware SDLC orches
 
 # Auto Dev
 
+## Canonical work-item lookup
+
+Resolve a matching packet directly under the owning project's `work-items/`
+root before creating anything. If the ticket has returned, also search
+`work-items/99-archived/` and preserve the prior packet as history. Legacy
+`01-intake`, `02-active`, and `03-complete` lanes are import/read surfaces,
+not destinations for new Auto-Dev packets.
+
+## Genomes Agentic OS maintainer profile
+
+When the routed project is `genomes_agentic_os`, load its generated
+`config/development.yml`, `config/workflows.yml`, and `config/validation.yml`.
+The configured `auto_dev_everything` workflow owns the complete sequence:
+Groom, Detective, Create Artifacts, Readiness, Develop, Document, Review Self,
+Review Others, QA, Release Propagation, Finalize, Merge, Release, Deploy,
+Closeout, and Health.
+
+This profile requires Linear grooming, a fresh install plus two additive
+installs at `~/agentic_os_qa`, exact-head CI, gated squash merge, a version/tag
+and GitHub release after merge, then repository, verified Genome's Notion, and
+Clark's Consulting documentation projections. Claude Review Self is preferred
+but non-blocking when its receipt records that the reviewer was unavailable.
+
 > Compatibility alias: all new generic Agentic OS programming jobs start with
 > `agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply`
 > and follow the `development_delivery` program. The contracts below remain

@@ -11,11 +11,14 @@ from genomes_agentic_os.cli import main
 
 
 def work_item_root(root: Path) -> Path:
-    active_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os" / "work-items" / "02-active"
-    return next(path for path in active_root.iterdir() if path.is_dir())
+    active_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os" / "work-items"
+    return next(path for path in active_root.iterdir() if path.is_dir() and path.name != "99-archived")
 
 
 def named_work_item(project_root: Path, lane: str, legacy_name: str) -> Path:
+    canonical = next((project_root / "work-items").glob(f"??????-{legacy_name}"), None)
+    if canonical is not None:
+        return canonical
     return next((project_root / "work-items" / lane).glob(f"??????-{legacy_name}"))
 
 
@@ -304,6 +307,11 @@ def test_finalize_lingering_moves_terminal_packets_and_syncs_active_container(tm
     project_root = root / "harness" / "shared_factory" / "02-projects" / "genomes_agentic_os"
     lingering = named_work_item(project_root, "02-active", "001_lingering_done")
     still_active = named_work_item(project_root, "02-active", "002_still_active")
+    legacy_active = project_root / "work-items" / "02-active"
+    legacy_active.mkdir()
+    legacy_lingering = legacy_active / lingering.name
+    lingering.rename(legacy_lingering)
+    lingering = legacy_lingering
     metadata_path = lingering / "work.yml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
     metadata["status"] = "documented"
@@ -584,13 +592,11 @@ def test_infer_complete_apply_marks_finished_and_moves_packet(tmp_path: Path, ca
         == 0
     )
     result = yaml.safe_load(capsys.readouterr().out)
-    completed = project_root / "work-items" / "03-complete" / item.name
     assert result["mode"] == "apply"
     assert result["decision_counts"]["finish-ready"] == 1
     assert result["applied"][0]["marked_status"] == "finished"
-    assert completed.is_dir()
-    assert not item.exists()
-    completed_metadata = yaml.safe_load((completed / "work.yml").read_text(encoding="utf-8"))
+    assert item.is_dir()
+    completed_metadata = yaml.safe_load((item / "work.yml").read_text(encoding="utf-8"))
     assert completed_metadata["status"] == "finished"
     assert completed_metadata["lane"] == "03-complete"
 
