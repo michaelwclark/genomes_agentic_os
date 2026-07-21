@@ -17,6 +17,7 @@ from genomes_agentic_os.host_doctor import (
     write_host_report,
     _docker_inventory,
     _worktree_inventory,
+    notion_blocks,
 )
 
 
@@ -258,3 +259,25 @@ def test_stopped_containers_are_degraded_but_unhealthy_running_containers_are_cr
         ("docker.stopped_containers", "degraded"),
         ("docker.unhealthy_containers", "critical"),
     }
+
+
+def test_notion_blocks_use_operator_friendly_native_layout() -> None:
+    report = {
+        "api_version": "auto-doctor-report/v1", "host": "bigmac", "status": "healthy",
+        "checked_at": "2026-07-21T18:00:00Z", "next_run_at": "2026-07-21T19:00:00Z",
+        "metrics": {"load1": 1, "load5": 1, "load15": 1, "memory_available_percent": 80,
+                    "swap_used_percent": 0, "disk_used_percent": 20, "process_count": 100,
+                    "node_process_count": 2, "curl_process_count": 0, "docker_container_count": 4,
+                    "docker_long_running_count": 0, "worktree_count": 10,
+                    "worktree_cleanup_candidate_count": 0},
+        "findings": [], "repairs": [],
+        "watch": {"phase": "monitoring", "samples_completed": 1, "samples_total": 3,
+                  "planned_finish_at": "2026-07-21T19:00:00Z"},
+        "watch_timeline": [{"checked_at": "18:00", "status": "healthy",
+                            "memory_available_percent": 80, "swap_used_percent": 0,
+                            "fseventsd_cpu_percent": 1, "curl_process_count": 0}],
+    }
+    blocks = notion_blocks(report)
+    types = [block["type"] for block in blocks]
+    assert {"callout", "column_list", "divider", "table", "heading_2", "toggle"}.issubset(types)
+    assert sum(1 for block in blocks if block["type"] == "table") == 2

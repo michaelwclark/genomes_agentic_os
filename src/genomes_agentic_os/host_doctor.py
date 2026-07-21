@@ -849,29 +849,103 @@ def write_host_report(root: str | Path, report: dict[str, Any]) -> dict[str, str
     return {key: str(value) for key, value in paths.items()}
 
 
-def _rich_text(content: str) -> list[dict[str, Any]]:
-    return [{"type": "text", "text": {"content": content[:2000]}}]
+def _rich_text(content: str, *, bold: bool = False, color: str = "default") -> list[dict[str, Any]]:
+    return [{
+        "type": "text",
+        "text": {"content": content[:2000]},
+        "annotations": {"bold": bold, "color": color},
+    }]
+
+
+def _table_row(*cells: str, header: bool = False) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "table_row",
+        "table_row": {"cells": [_rich_text(cell, bold=header) for cell in cells]},
+    }
+
+
+def _status_style(status: str) -> tuple[str, str]:
+    return {
+        "healthy": ("✅", "green_background"),
+        "degraded": ("⚠️", "yellow_background"),
+        "critical": ("🚨", "red_background"),
+    }.get(status.lower(), ("🩺", "blue_background"))
 
 
 def notion_blocks(report: dict[str, Any]) -> list[dict[str, Any]]:
     metrics = report.get("metrics") or {}
-    blocks: list[dict[str, Any]] = [
-        {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"{str(report['status']).upper()} · Last ran {report['checked_at']} · Next run {report['next_run_at']}"), "icon": {"type": "emoji", "emoji": "🩺"}}},
-        {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Current snapshot")}},
-        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(f"Load {metrics.get('load1')} · memory available {metrics.get('memory_available_percent')}% · swap used {metrics.get('swap_used_percent')}% · disk used {metrics.get('disk_used_percent')}%")}},
-        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(f"Docker/OrbStack containers {metrics.get('docker_container_count', 'n/a')} · old unused images {metrics.get('docker_old_unused_image_count', 0)} · long-running containers {metrics.get('docker_long_running_count', 0)} · worktrees {metrics.get('worktree_count', 'n/a')} · cleanup candidates {metrics.get('worktree_cleanup_candidate_count', 0)}")}},
-        {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Findings")}},
+    status = str(report.get("status") or "unknown")
+    icon, status_color = _status_style(status)
+    snapshot_rows = [
+        _table_row("Signal", "Current", "Why it matters", header=True),
+        _table_row("Load", f"{metrics.get('load1')} / {metrics.get('load5')} / {metrics.get('load15')}", "Sustained compute pressure"),
+        _table_row("Memory available", f"{metrics.get('memory_available_percent')}%", "Headroom before compression or OOM"),
+        _table_row("Swap used", f"{metrics.get('swap_used_percent')}%", "Post-pressure recovery signal"),
+        _table_row("Disk used", f"{metrics.get('disk_used_percent')}%", "Capacity and Docker build health"),
+        _table_row("Processes", f"{metrics.get('process_count')} total · {metrics.get('node_process_count')} Node · {metrics.get('curl_process_count')} curl", "Storm and leak detection"),
+        _table_row("Docker / OrbStack", f"{metrics.get('docker_container_count', 'n/a')} containers · {metrics.get('docker_long_running_count', 0)} long-running", "Development runtime pressure"),
+        _table_row("Worktrees", f"{metrics.get('worktree_count', 'n/a')} total · {metrics.get('worktree_cleanup_candidate_count', 0)} safe candidates", "Filesystem watcher pressure"),
     ]
+    blocks: list[dict[str, Any]] = [
+        {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"{status.upper()} · BigMac host health"), "icon": {"type": "emoji", "emoji": icon}, "color": status_color}},
+        {"object": "block", "type": "column_list", "column_list": {"children": [
+            {"object": "block", "type": "column", "column": {"children": [
+                {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"Last ran\n{report['checked_at']}"), "icon": {"type": "emoji", "emoji": "🕒"}, "color": "blue_background"}},
+            ]}},
+            {"object": "block", "type": "column", "column": {"children": [
+                {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"Next scheduled\n{report['next_run_at']}"), "icon": {"type": "emoji", "emoji": "⏭️"}, "color": "purple_background"}},
+            ]}},
+            {"object": "block", "type": "column", "column": {"children": [
+                {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text("Scope\nDevelopment host"), "icon": {"type": "emoji", "emoji": "🧰"}, "color": "gray_background"}},
+            ]}},
+        ]}},
+        {"object": "block", "type": "divider", "divider": {}},
+        {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Current snapshot", color="blue")}},
+        {"object": "block", "type": "table", "table": {"table_width": 3, "has_column_header": True, "has_row_header": False, "children": snapshot_rows}},
+    ]
+    watch = report.get("watch") or {}
+    timeline = report.get("watch_timeline") or []
+    if watch:
+        blocks.extend([
+            {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Post-reboot watch", color="purple")}},
+            {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(
+                f"{watch.get('phase', 'monitoring').upper()} · sample {watch.get('samples_completed', 0)} of {watch.get('samples_total', '?')} · planned finish {watch.get('planned_finish_at', 'unknown')}"
+            ), "icon": {"type": "emoji", "emoji": "📡"}, "color": "purple_background"}},
+        ])
+        if timeline:
+            timeline_rows = [_table_row("Time", "Status", "Memory", "Swap", "fseventsd CPU", "Curl", header=True)]
+            for item in timeline[-30:]:
+                timeline_rows.append(_table_row(
+                    str(item.get("checked_at") or ""), str(item.get("status") or "unknown").upper(),
+                    f"{item.get('memory_available_percent')}%", f"{item.get('swap_used_percent')}%",
+                    f"{item.get('fseventsd_cpu_percent')}%", str(item.get("curl_process_count")),
+                ))
+            blocks.append({"object": "block", "type": "table", "table": {
+                "table_width": 6, "has_column_header": True, "has_row_header": False, "children": timeline_rows,
+            }})
+    blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Findings", color="orange")}})
     for finding in report.get("findings") or []:
-        blocks.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rich_text(f"{str(finding['severity']).upper()}: {finding['summary']}")}})
+        finding_icon, finding_color = _status_style(str(finding.get("severity") or "unknown"))
+        blocks.append({"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(str(finding["summary"])), "icon": {"type": "emoji", "emoji": finding_icon}, "color": finding_color}})
     if not report.get("findings"):
-        blocks.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rich_text("No threshold or liveness findings.")}})
+        blocks.append({"object": "block", "type": "callout", "callout": {"rich_text": _rich_text("No threshold or liveness findings."), "icon": {"type": "emoji", "emoji": "✅"}, "color": "green_background"}})
+    repair_children = [
+        {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rich_text(f"{item['status']}: {item['action']} → {item.get('target') or 'policy target'}")}}
+        for item in report.get("repairs") or []
+    ] or [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text("No repair was required.")}}]
     blocks.extend(
         [
-            {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Repair activity")}},
-            {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text("; ".join(f"{item['status']}: {item['action']} → {item.get('target')}" for item in report.get('repairs') or []) or "No repair was required.")}},
-            {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich_text("Operating rules")}},
-            {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text("Auto-Doctor may only apply policy-allowlisted reconstructable repairs. Root services, reboots, deletions, indexing changes, and unknown processes require approval.")}},
+            {"object": "block", "type": "toggle", "toggle": {"rich_text": _rich_text("Repair activity", bold=True), "color": "green_background", "children": repair_children}},
+            {"object": "block", "type": "toggle", "toggle": {"rich_text": _rich_text("Operating rules", bold=True), "color": "gray_background", "children": [
+                {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rich_text("Only policy-allowlisted reconstructable repairs run automatically.")}},
+                {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rich_text("Active images, Docker volumes, dirty worktrees, and database data are preserved.")}},
+                {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rich_text("Reboots, OrbStack restarts, Spotlight changes, and unknown process termination require approval.")}},
+            ]}},
+            {"object": "block", "type": "toggle", "toggle": {"rich_text": _rich_text("Source and validation", bold=True), "color": "blue_background", "children": [
+                {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text("Source of truth: Auto-Doctor Markdown policy plus durable JSON/Markdown host receipts. This page is a live operator projection.")}},
+                {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(f"Report schema {report.get('api_version', 'unknown')} · host {report.get('host', 'unknown')}")}},
+            ]}},
         ]
     )
     return blocks
