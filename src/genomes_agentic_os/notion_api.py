@@ -1034,7 +1034,7 @@ def build_record_properties(record: dict[str, Any], updated_at: str) -> dict[str
 
 
 # ---------------------------------------------------------------------------
-# Database property schemas (used when creating the 7 runtime databases)
+# Database property schemas used by runtime tracking
 # ---------------------------------------------------------------------------
 
 def _base_db_properties() -> dict[str, Any]:
@@ -1104,5 +1104,23 @@ DATABASE_PROPERTY_SCHEMAS: dict[str, dict[str, Any]] = {
         "Dry Run": {"checkbox": {}},
         "Log Path": {"rich_text": {}},
         "Linked Runtime Object": {"rich_text": {}},
+    },
+    "Self Improvement": {
+        **_base_db_properties(),
+        "Summary": {"rich_text": {}},
+        "Proposed Spec": {"rich_text": {}},
+        "Score": {"number": {}},
+        "Evidence Path": {"rich_text": {}},
+        "Run ID": {"rich_text": {}},
+        "Date": {"date": {}},
+        "Type": {"select": {}},
+        "Proposal ID": {"rich_text": {}},
+        "Parent Run ID": {"rich_text": {}},
+        "Recommended Artifact": {"rich_text": {}},
+        "Action Status": {"select": {}},
+        "Action Log": {"rich_text": {}},
+        "Auto Groom": {"checkbox": {}},
+        "Run Grooming": {"checkbox": {}},
+        "Auto-dev Implementation": {"checkbox": {}},
     },
 }
