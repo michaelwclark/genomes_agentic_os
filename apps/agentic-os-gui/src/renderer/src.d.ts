@@ -6,4 +6,11 @@ declare global {
   }
 }
 
+declare module "react" {
+  // Allow CSS custom properties in style objects without assertions (layout widths, model accents).
+  interface CSSProperties {
+    [key: `--${string}`]: string | number | undefined;
+  }
+}
+
 export {};

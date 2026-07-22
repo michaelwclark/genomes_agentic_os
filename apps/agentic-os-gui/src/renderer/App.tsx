@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ConversationSummary, ConversationTranscript, GuiSnapshot, StreamEvent, UiConfig } from "../shared/contracts";
 import { filterConversations, isActiveConversation, isArchivedConversation } from "../shared/presentation";
 import { ConversationList } from "./components/ConversationList";
 import { ConversationView } from "./components/ConversationView";
 import { ScopeTree, type ScopeSelection } from "./components/ScopeTree";
-
-interface WorkspaceTab {
-  key: number;
-  conversationId: string;
-}
+import { layoutBounds, useLayoutState } from "./layout/layoutState";
+import { Sash } from "./layout/Sash";
+import {
+  activateTab,
+  activeTab,
+  closeTab,
+  createWorkspaceState,
+  focusGroup,
+  focusedGroup,
+  openConversationTab,
+  openPageTab,
+  splitActiveTabRight,
+  visibleConversationIds,
+  type EditorGroup,
+} from "./layout/workspaceModel";
+import { pageRegistry, type PageId } from "./pages/registry";
 
 type PaletteMode = "commands" | "search";
 
@@ -21,24 +32,24 @@ export function App() {
   const [uiConfig, setUiConfig] = useState<UiConfig>({ displayName: "Command Center", operatorLabel: "Operator" });
   const [scope, setScope] = useState<ScopeSelection>({ view: "active" });
   const [query, setQuery] = useState("");
-  const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
-  const [selectedTabKey, setSelectedTabKey] = useState<number>();
-  const [transcript, setTranscript] = useState<ConversationTranscript>();
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [workspace, setWorkspace] = useState(createWorkspaceState);
+  const [transcripts, setTranscripts] = useState<Record<string, ConversationTranscript | undefined>>({});
+  const [transcriptLoading, setTranscriptLoading] = useState<Record<string, boolean | undefined>>({});
   const [streamEvents, setStreamEvents] = useState<StreamEvent[]>([]);
   const [leaseId, setLeaseId] = useState<string>();
   const [fatalError, setFatalError] = useState<string>();
   const [snapshotRefreshFailed, setSnapshotRefreshFailed] = useState(false);
   const [snapshotRefreshing, setSnapshotRefreshing] = useState(false);
-  const [navVisible, setNavVisible] = useState(true);
-  const [metadataVisible, setMetadataVisible] = useState(true);
+  const [layout, updateLayout] = useLayoutState();
   const [paletteMode, setPaletteMode] = useState<PaletteMode>();
   const [paletteQuery, setPaletteQuery] = useState("");
-  const nextTabKey = useRef(1);
   const snapshotRequest = useRef(0);
   const snapshotRef = useRef<GuiSnapshot | undefined>(undefined);
+  const visibleIdsRef = useRef<string[]>([]);
+  const groupsRef = useRef<HTMLDivElement | null>(null);
 
-  const selectedId = tabs.find((tab) => tab.key === selectedTabKey)?.conversationId;
+  const focusedTab = activeTab(focusedGroup(workspace));
+  const selectedId = focusedTab?.kind === "conversation" ? focusedTab.conversationId : undefined;
   const refreshSnapshot = useCallback(async () => {
     const request = ++snapshotRequest.current;
     setSnapshotRefreshing(true);
@@ -76,30 +87,17 @@ export function App() {
     setStreamEvents((current) => [...current.slice(-499), event]);
     if (event.kind === "completed" || event.kind === "error") {
       setLeaseId(undefined);
-      if (event.kind === "completed" && event.conversationId === selectedId) {
-        void window.agenticOS.getTranscript(event.conversationId).then(setTranscript).catch(() => undefined);
+      if (event.kind === "completed" && visibleIdsRef.current.includes(event.conversationId)) {
+        void window.agenticOS.getTranscript(event.conversationId)
+          .then((next) => setTranscripts((current) => ({ ...current, [event.conversationId]: next })))
+          .catch(() => undefined);
       }
     }
-  }), [selectedId]);
+  }), []);
 
-  const openTab = (conversationId: string, forceNew = false) => {
-    const existing = forceNew ? undefined : tabs.find((tab) => tab.conversationId === conversationId);
-    if (existing) {
-      setSelectedTabKey(existing.key);
-      return;
-    }
-    const tab = { key: nextTabKey.current++, conversationId };
-    setTabs((current) => [...current, tab]);
-    setSelectedTabKey(tab.key);
-  };
-  const closeTab = (key: number) => {
-    setTabs((current) => {
-      const index = current.findIndex((tab) => tab.key === key);
-      const next = current.filter((tab) => tab.key !== key);
-      if (key === selectedTabKey) setSelectedTabKey(next[Math.min(index, next.length - 1)]?.key);
-      return next;
-    });
-  };
+  const openConversation = (conversationId: string, forceNew = false) =>
+    setWorkspace((current) => openConversationTab(current, conversationId, { forceNew }));
+  const openPage = (pageId: PageId) => setWorkspace((current) => openPageTab(current, pageId));
   const openPalette = (mode: PaletteMode) => {
     setPaletteMode(mode);
     setPaletteQuery("");
@@ -114,24 +112,27 @@ export function App() {
         openPalette(event.shiftKey ? "commands" : "search");
       } else if (key === "b" && !event.shiftKey) {
         event.preventDefault();
-        setNavVisible((visible) => !visible);
+        updateLayout({ navVisible: !layout.navVisible });
       } else if (key === "u" && !event.shiftKey) {
         event.preventDefault();
-        setMetadataVisible((visible) => !visible);
+        updateLayout({ railVisible: !layout.railVisible });
       } else if (key === "t" && event.shiftKey) {
         event.preventDefault();
         openPalette("search");
+      } else if (key === "\\") {
+        event.preventDefault();
+        setWorkspace((current) => splitActiveTabRight(current));
       } else if (/^[1-9]$/.test(event.key)) {
-        const tab = tabs[Number(event.key) - 1];
+        const tab = focusedGroup(workspace).tabs[Number(event.key) - 1];
         if (tab) {
           event.preventDefault();
-          setSelectedTabKey(tab.key);
+          setWorkspace((current) => activateTab(current, tab.key));
         }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [tabs]);
+  }, [workspace, layout, updateLayout]);
 
   const scopedConversations = useMemo(() => {
     const all = snapshot?.conversations ?? [];
@@ -143,7 +144,6 @@ export function App() {
     () => filterConversations(scopedConversations, { ...scope, query }),
     [scopedConversations, scope, query],
   );
-  const selected = snapshot?.conversations.find((item) => item.id === selectedId);
   const counts = useMemo(() => {
     const all = (snapshot?.conversations ?? []).filter((conversation) => !isArchivedConversation(conversation));
     const values = new Map<string, number>([
@@ -161,30 +161,62 @@ export function App() {
     return values;
   }, [snapshot, scopedConversations]);
 
+  const loadTranscript = useCallback((conversationId: string) => {
+    setTranscriptLoading((current) => ({ ...current, [conversationId]: true }));
+    void window.agenticOS.getTranscript(conversationId)
+      .then((next) => {
+        if (visibleIdsRef.current.includes(conversationId)) setTranscripts((current) => ({ ...current, [conversationId]: next }));
+      })
+      .catch((error) => {
+        if (visibleIdsRef.current.includes(conversationId)) {
+          setTranscripts((current) => ({
+            ...current,
+            [conversationId]: { conversation_id: conversationId, messages: [], diagnostics: [{ severity: "error", message: String(error) }] },
+          }));
+        }
+      })
+      .finally(() => {
+        setTranscriptLoading((current) => conversationId in current ? { ...current, [conversationId]: false } : current);
+      });
+  }, []);
+
+  const visibleIds = useMemo(() => visibleConversationIds(workspace), [workspace]);
   useEffect(() => {
-    if (!selectedId) { setTranscript(undefined); return; }
-    setTranscriptLoading(true);
+    const previous = visibleIdsRef.current;
+    visibleIdsRef.current = visibleIds;
+    const added = visibleIds.filter((id) => !previous.includes(id));
+    const removed = previous.filter((id) => !visibleIds.includes(id));
+    if (removed.length > 0) {
+      setTranscripts((current) => {
+        const next = { ...current };
+        for (const id of removed) delete next[id];
+        return next;
+      });
+      setTranscriptLoading((current) => {
+        const next = { ...current };
+        for (const id of removed) delete next[id];
+        return next;
+      });
+    }
+    for (const id of added) loadTranscript(id);
+  }, [visibleIds, loadTranscript]);
+  useEffect(() => {
     setStreamEvents([]);
-    void window.agenticOS.getTranscript(selectedId)
-      .then(setTranscript)
-      .catch((error) => setTranscript({ conversation_id: selectedId, messages: [], diagnostics: [{ severity: "error", message: String(error) }] }))
-      .finally(() => setTranscriptLoading(false));
   }, [selectedId]);
 
   const pin = async (conversation: ConversationSummary, pinned: boolean) => {
     await window.agenticOS.setPinned(conversation.id, pinned);
   };
-  const sendMessage = async (prompt: string) => {
-    if (!selected) return;
+  const sendMessage = async (conversation: ConversationSummary, prompt: string) => {
     setStreamEvents([]);
     const result = await window.agenticOS.sendTurn({
-      conversationId: selected.id,
-      harness: selected.harness,
+      conversationId: conversation.id,
+      harness: conversation.harness,
       prompt,
-      imported: selected.imported,
+      imported: conversation.imported,
     });
     if (result.accepted) setLeaseId(result.leaseId);
-    else setStreamEvents([{ conversationId: selected.id, kind: "error", content: result.message, fallbackCommand: result.fallbackCommand }]);
+    else setStreamEvents([{ conversationId: conversation.id, kind: "error", content: result.message, fallbackCommand: result.fallbackCommand }]);
   };
   const cancelMessage = async () => {
     if (!leaseId) return;
@@ -196,9 +228,11 @@ export function App() {
     [snapshot, paletteQuery],
   );
   const commands = [
-    { label: navVisible ? "Hide navigation" : "Show navigation", shortcut: "⌘B", run: () => setNavVisible((visible) => !visible) },
-    { label: metadataVisible ? "Hide linked work panel" : "Show linked work panel", shortcut: "⌘U", run: () => setMetadataVisible((visible) => !visible) },
+    { label: layout.navVisible ? "Hide navigation" : "Show navigation", shortcut: "⌘B", run: () => updateLayout({ navVisible: !layout.navVisible }) },
+    { label: layout.railVisible ? "Hide linked work panel" : "Show linked work panel", shortcut: "⌘U", run: () => updateLayout({ railVisible: !layout.railVisible }) },
     { label: "Open conversation in new tab", shortcut: "⇧⌘T", run: () => openPalette("search") },
+    { label: "Split editor right", shortcut: "⌘\\", run: () => setWorkspace((current) => splitActiveTabRight(current)) },
+    { label: "Open Execution Fabric", shortcut: "", run: () => openPage("execution-fabric") },
     { label: "Focus Active work", shortcut: "", run: () => setScope({ view: "active" }) },
     { label: "Open Archive", shortcut: "", run: () => setScope({ view: "archive" }) },
   ].filter((command) => command.label.toLocaleLowerCase().includes(paletteQuery.toLocaleLowerCase()));
@@ -206,10 +240,81 @@ export function App() {
   if (fatalError && !snapshot) return <div className="fatal"><strong>Command Center could not start</strong><span>{fatalError}</span><code>AOS_GUI_FIXTURE=1 pnpm dev</code></div>;
   if (!snapshot) return <div className="boot"><span className="boot-mark">AOS</span><strong>Loading the local operating system…</strong></div>;
 
+  const shellStyle: CSSProperties = {
+    "--nav-w": `${layout.navWidth}px`,
+    "--list-w": `${layout.listWidth}px`,
+    "--rail-w": `${layout.railWidth}px`,
+  };
+  const splitStyle: CSSProperties = {
+    "--split-a": `${layout.centerSplitRatio}fr`,
+    "--split-b": `${1 - layout.centerSplitRatio}fr`,
+  };
+
+  const renderGroup = (group: EditorGroup) => {
+    const active = activeTab(group);
+    const conversationTab = active?.kind === "conversation" ? active : undefined;
+    const conversation = conversationTab ? snapshot.conversations.find((item) => item.id === conversationTab.conversationId) : undefined;
+    return (
+      <div
+        className="editor-group"
+        data-focused={workspace.focusedGroupId === group.id}
+        onPointerDownCapture={() => setWorkspace((current) => focusGroup(current, group.id))}
+      >
+        <div className="workspace-tabs" role="tablist" aria-label={group.id === "primary" ? "Open tabs" : "Split tabs"}>
+          {group.tabs.map((tab, index) => {
+            const title = tab.kind === "conversation"
+              ? snapshot.conversations.find((item) => item.id === tab.conversationId)?.title ?? "Conversation"
+              : pageRegistry[tab.pageId].title;
+            return (
+              <div className="workspace-tab" data-active={tab.key === group.activeKey} key={tab.key}>
+                <button role="tab" aria-selected={tab.key === group.activeKey} onClick={() => setWorkspace((current) => activateTab(current, tab.key))}>
+                  <span className="tab-number">{index + 1}</span>
+                  <span>{title}</span>
+                </button>
+                <button className="tab-close" aria-label={`Close ${title}`} onClick={() => setWorkspace((current) => closeTab(current, tab.key))}>×</button>
+              </div>
+            );
+          })}
+          <button className="new-tab" aria-label="Open conversation in new tab" title="Open conversation in new tab (Cmd+Shift+T)" onClick={() => { setWorkspace((current) => focusGroup(current, group.id)); openPalette("search"); }}>+</button>
+        </div>
+        {active?.kind === "page" ? (
+          <div className="page-view">
+            {pageRegistry[active.pageId].render({ runtime: snapshot.runtime, refreshRuntime: refreshSnapshot, runtimeRefreshing: snapshotRefreshing })}
+          </div>
+        ) : (
+          <ConversationView
+            conversation={conversation}
+            transcript={conversationTab ? transcripts[conversationTab.conversationId] : undefined}
+            loading={conversationTab ? transcriptLoading[conversationTab.conversationId] ?? transcripts[conversationTab.conversationId] === undefined : false}
+            streamEvents={conversationTab ? streamEvents.filter((event) => event.conversationId === conversationTab.conversationId) : []}
+            sending={Boolean(leaseId)}
+            operatorLabel={uiConfig.operatorLabel}
+            showMetadata={layout.railVisible}
+            railWidth={layout.railWidth}
+            onRailResize={(next) => updateLayout({ railWidth: next })}
+            sendMessage={async (prompt) => { if (conversation) await sendMessage(conversation, prompt); }}
+            cancelMessage={cancelMessage}
+            openExternal={(url) => void window.agenticOS.openExternal(url)}
+          />
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="app-shell" data-nav-visible={navVisible}>
+    <div className="app-shell" data-nav-visible={layout.navVisible} style={shellStyle}>
       {snapshotRefreshFailed && <div className="snapshot-warning" role="status">Snapshot refresh failed. Showing the last known state.</div>}
-      {navVisible && <ScopeTree displayName={uiConfig.displayName} domains={snapshot.navigation.domains} selected={scope} counts={counts} onSelect={(next) => { setScope(next); setQuery(""); }} />}
+      {layout.navVisible && <ScopeTree displayName={uiConfig.displayName} domains={snapshot.navigation.domains} selected={scope} counts={counts} onSelect={(next) => { setScope(next); setQuery(""); }} />}
+      {layout.navVisible && (
+        <Sash
+          label="Resize navigation"
+          value={layout.navWidth}
+          min={layoutBounds.navWidth.min}
+          max={layoutBounds.navWidth.max}
+          onChange={(next) => updateLayout({ navWidth: next })}
+          onReset={() => updateLayout({ navWidth: layoutBounds.navWidth.default })}
+        />
+      )}
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
@@ -217,39 +322,40 @@ export function App() {
         generatedAt={snapshot.generated_at}
         runtime={snapshot.runtime}
         onQuery={setQuery}
-        onSelect={(id) => openTab(id)}
+        onSelect={(id) => openConversation(id)}
         onPin={(conversation, pinned) => void pin(conversation, pinned)}
-        onRefreshRuntime={refreshSnapshot}
-        runtimeRefreshing={snapshotRefreshing}
+        onOpenPage={openPage}
+      />
+      <Sash
+        label="Resize conversation list"
+        value={layout.listWidth}
+        min={layoutBounds.listWidth.min}
+        max={layoutBounds.listWidth.max}
+        onChange={(next) => updateLayout({ listWidth: next })}
+        onReset={() => updateLayout({ listWidth: layoutBounds.listWidth.default })}
       />
       <section className="workspace" aria-label="Conversation workspace">
-        <div className="workspace-tabs" role="tablist" aria-label="Open conversations">
-          {tabs.map((tab, index) => {
-            const conversation = snapshot.conversations.find((item) => item.id === tab.conversationId);
-            return (
-              <div className="workspace-tab" data-active={tab.key === selectedTabKey} key={tab.key}>
-                <button role="tab" aria-selected={tab.key === selectedTabKey} onClick={() => setSelectedTabKey(tab.key)}>
-                  <span className="tab-number">{index + 1}</span>
-                  <span>{conversation?.title ?? "Conversation"}</span>
-                </button>
-                <button className="tab-close" aria-label={`Close ${conversation?.title ?? "conversation"}`} onClick={() => closeTab(tab.key)}>×</button>
-              </div>
-            );
-          })}
-          <button className="new-tab" aria-label="Open conversation in new tab" title="Open conversation in new tab (Cmd+Shift+T)" onClick={() => openPalette("search")}>+</button>
+        <div className="workspace-groups" data-split={workspace.groups.length > 1} style={splitStyle} ref={groupsRef}>
+          {workspace.groups.map((group, index) => (
+            <Fragment key={group.id}>
+              {index > 0 && (
+                <Sash
+                  label="Resize editor split"
+                  value={layout.centerSplitRatio}
+                  min={layoutBounds.centerSplitRatio.min}
+                  max={layoutBounds.centerSplitRatio.max}
+                  onChange={(next) => updateLayout({ centerSplitRatio: next })}
+                  onReset={() => updateLayout({ centerSplitRatio: layoutBounds.centerSplitRatio.default })}
+                  getPixelsPerUnit={() => {
+                    const width = groupsRef.current?.clientWidth ?? 0;
+                    return width > 0 ? width : 1;
+                  }}
+                />
+              )}
+              {renderGroup(group)}
+            </Fragment>
+          ))}
         </div>
-        <ConversationView
-          conversation={selected}
-          transcript={transcript}
-          loading={transcriptLoading}
-          streamEvents={streamEvents.filter((event) => event.conversationId === selectedId)}
-          sending={Boolean(leaseId)}
-          operatorLabel={uiConfig.operatorLabel}
-          showMetadata={metadataVisible}
-          sendMessage={sendMessage}
-          cancelMessage={cancelMessage}
-          openExternal={(url) => void window.agenticOS.openExternal(url)}
-        />
       </section>
       {paletteMode && (
         <div className="palette-backdrop" onMouseDown={() => setPaletteMode(undefined)}>
@@ -264,7 +370,7 @@ export function App() {
                   <span>{command.label}</span><kbd>{command.shortcut}</kbd>
                 </button>
               )) : paletteConversations.map((conversation) => (
-                <button key={`${conversation.harness}:${conversation.id}`} onClick={() => { openTab(conversation.id, true); setPaletteMode(undefined); }}>
+                <button key={`${conversation.harness}:${conversation.id}`} onClick={() => { openConversation(conversation.id, true); setPaletteMode(undefined); }}>
                   <span><strong>{conversation.title}</strong><small>{[conversation.domain, conversation.project].filter(Boolean).join(" / ") || "Unclassified"}</small></span>
                   <kbd>New tab</kbd>
                 </button>
