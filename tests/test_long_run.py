@@ -21,15 +21,22 @@ from genomes_agentic_os.long_run import (
 )
 
 
-def _wait_for(run_dir: Path, statuses: set[str], timeout: float = 15) -> dict[str, object]:
+def _wait_for(run_dir: Path, statuses: set[str], timeout: float = 90) -> dict[str, object]:
+    # The terminal receipt lands via a detached monitor process, so loaded CI
+    # runners need a generous deadline; the status is always re-read once after
+    # the deadline expires so a write during the final sleep cannot be missed.
     deadline = time.monotonic() + timeout
-    state: dict[str, object] = {}
-    while time.monotonic() < deadline:
+    delay = 0.05
+    while True:
         state = status_for_run(run_dir)
         if state.get("status") in statuses:
             return state
-        time.sleep(0.05)
-    raise AssertionError(f"run did not reach {statuses}: {state}")
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"run did not reach {statuses} within {timeout}s: {state}"
+            )
+        time.sleep(delay)
+        delay = min(delay * 2, 1.0)
 
 
 def test_long_run_success_registers_progress_log_and_terminal_receipt(tmp_path: Path) -> None:
