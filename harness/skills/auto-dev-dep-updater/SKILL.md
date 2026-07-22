@@ -1,6 +1,6 @@
 ---
 name: auto-dev-dep-updater
-description: Operate one repository's dependency-update lane, proven against the dependency contract suites, merged under written per-repo authority or repaired to green first.
+description: Operate one repository's dependency-update lane: one Renovate PR per run, proven against the dependency contract suites, merged under written per-repo authority or repaired to green first.
 ---
 
 # Auto-Dev Dep Updater

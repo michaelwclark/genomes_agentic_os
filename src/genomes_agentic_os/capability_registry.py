@@ -769,7 +769,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-dep-updater",
             "name": "Auto-Dev Dep Updater",
-            "description": "Operate one repository's dependency-update lane, proven against the dependency contract suites, merged under written per-repo authority or repaired to green first.",
+            "description": "Operate one repository's dependency-update lane: one Renovate PR per run, proven against the dependency contract suites, merged under written per-repo authority or repaired to green first.",
             "source": "harness/skills/auto-dev-dep-updater/SKILL.md",
         },
         {
