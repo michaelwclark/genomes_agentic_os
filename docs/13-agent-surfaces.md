@@ -93,10 +93,9 @@ contract:
 - `config.toml` gives Codex the project layer posture.
 - `config/*.yml` stores machine-readable project profile, workflows, output
   artifacts, validation, worktrees, memory, MCP, and tool defaults.
-- `work-items/01-intake/` captures project-known rough ideas as indexed markdown
-  files before they become specs, tickets, workflows, or implementation packets.
-  Expanded intake can use an indexed packet folder when a duel/spec pass creates
-  multiple files.
+- `work-items/` contains date-prefixed project packets whose paths remain stable
+  across lifecycle changes. `work-items/99-archived/` retains terminal packets
+  and must be searched before recreating a returned ticket.
 - `ideas/` is a compatibility index for older tools, not the lifecycle source
   of truth.
 - `src/` is the canonical source symlink when a local repo is known.

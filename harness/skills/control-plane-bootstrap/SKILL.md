@@ -86,7 +86,7 @@ For each database, map the corresponding filesystem objects:
 
 | Control Plane Database | Filesystem Source of Truth |
 | --- | --- |
-| Work Items | `<domain>/02-projects/<project>/work-items/` and `01-intake/` files |
+| Work Items | Date-prefixed packets under `<domain>/02-projects/<project>/work-items/`, plus `99-archived/` history |
 | Runs | `<domain>/03-workflows/<lane>/<name>/runs/` and run-log files |
 | Approvals | `<domain>/03-workflows/<lane>/<name>/runs/` approval records |
 | Activity Log | `<domain>/run-log.md` entries |

@@ -127,7 +127,7 @@ def capture_plan(
         work_item_target = next(
             path
             for path in (*creation.created, *creation.skipped)
-            if path.parent.name == "01-intake" and path.name.endswith(f"{work_id}.md")
+            if path.name == "SPEC.md" and path.parent.name.endswith(work_id)
         )
         target = work_item_target
         relative_target = target.relative_to(project_root)

@@ -292,7 +292,13 @@ def _conversation_dirs(root: Path, *, project: str | None = None) -> list[Path]:
             work_items = project_root / "work-items"
             if not work_items.is_dir():
                 continue
-            for lane in ("01-intake", "02-active", "03-complete"):
+            for item_root in sorted(
+                path
+                for path in work_items.iterdir()
+                if path.is_dir() and path.name not in {"01-intake", "02-active", "03-complete", "99-archived"}
+            ):
+                dirs.append(item_root / "logs" / "conversations")
+            for lane in ("01-intake", "02-active", "03-complete", "99-archived"):
                 lane_root = work_items / lane
                 if not lane_root.is_dir():
                     continue
@@ -358,11 +364,17 @@ def build_work_item_index(root: str | Path, *, project: str | None = None) -> li
             work_items = project_root / "work-items"
             if not work_items.is_dir():
                 continue
-            for lane in ("01-intake", "02-active", "03-complete"):
+            item_roots = [
+                path
+                for path in work_items.iterdir()
+                if path.name not in {"01-intake", "02-active", "03-complete", "99-archived"}
+            ]
+            for lane in ("01-intake", "02-active", "03-complete", "99-archived"):
                 lane_root = work_items / lane
                 if not lane_root.is_dir():
                     continue
-                for item in sorted(lane_root.iterdir()):
+                item_roots.extend(lane_root.iterdir())
+            for item in sorted(item_roots):
                     if item.is_dir():
                         title = _read_title(item)
                         text = f"{item.name} {title}"

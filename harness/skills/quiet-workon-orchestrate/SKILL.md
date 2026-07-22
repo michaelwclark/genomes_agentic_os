@@ -57,7 +57,7 @@ Example ledger:
 
 ```text
 FLYWL-1234 Something Cool | branch feature/FLYWL-1234-something-cool | 4 agents
-Artifacts: /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/001_flywl_1234_something_cool/artifacts/
+Artifacts: <os-root>/domains/los/02-projects/los_app_los_django/work-items/<date>-001_flywl_1234_something_cool/artifacts/
 - Plan locked; agents 1-4 dispatched
 - Agent 1 accepted: API behavior (receipt: agent-returns/agent-1.md)
 - Agent 3 rejected: tests asserted internals; re-dispatched (receipt: agent-returns/agent-3.md)
@@ -90,7 +90,7 @@ worktree plus Docker/OrbStack runtime are safe to delete. Cleanup automation
 must not silently remove a worktree while `REOPEN.md` is present.
 
 ```text
-/Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/<id>/
+<os-root>/domains/los/02-projects/los_app_los_django/work-items/<date>-<id>/
   work.yml
   artifacts/
     orchestration.md
@@ -310,7 +310,7 @@ FLYWL-1234 blocked.
 - Blocker: <specific blocker>
 - Last good state: <branch/sha/artifact>
 - Resume from: <exact command or next action>
-- Detail: /Users/genome/agentic_os/domains/los/02-projects/los_app_los_django/work-items/02-active/<id>/artifacts/orchestration.md
+- Detail: <os-root>/domains/los/02-projects/los_app_los_django/work-items/<date>-<id>/artifacts/orchestration.md
 ```
 
 ## LOS Bindings

@@ -44,7 +44,7 @@ agentic-os project work-item infer-complete --root <os-root> --apply
 
 Cleanup candidates are worktree entries with cached Jira status `QA Ready`, `Done`, `Ready for Production`, or `Wont Do`, or cached pull-request state `merged`.
 
-Active work completion candidates are `02-active` packets with terminal evidence,
+Active work completion candidates are canonical packets with terminal evidence,
 completion artifacts, clear `NEXT.md`, and no recent conversation activity.
 Stale-only packets stay active.
 

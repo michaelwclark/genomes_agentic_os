@@ -107,6 +107,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [38 · Program and Automation Operator Resource Query](38-operator-resource-query.md) | One typed read-only envelope for Program and Automation definitions, instances, configuration provenance, schedules, runs, health, qualification, and diagnostics. |
 | [39 · First-Class Resource Registry and Tags](39-first-class-resource-registry.md) | Atomic local resource snapshot plus a guarded durable custom-tag overlay, mutation receipts, and deterministic tag provenance. |
 | [29 · Versioned Object Library](29-versioned-object-library.md) | Canonical source repository, manifest identities, exact-artifact release lifecycle, disposable installed projection, atomic install/readback, and compatibility boundaries. |
+| [40 · Auto-Dev Everything for Maintainers](40-auto-dev-everything-maintainers.md) | Linear-first delivery, canonical work items, reinstall-safe QA, optional Claude review, gated merge, release, and documentation projection. |
 | [42 · Auto-Dev Program](42-auto-dev-program.md) | One polymorphic SDLC family, five nested root/domain/project/invocation policy planes, artifact rendering/readback, investigation routing, development delivery, receipts, and retirement map. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration

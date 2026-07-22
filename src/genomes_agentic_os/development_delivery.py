@@ -208,7 +208,7 @@ def project_root(root: str | Path, domain: str, project: str) -> Path:
 
 
 def _project_work_item_lane(packet: Path, project_path: Path) -> str | None:
-    """Return the packet lane, or ``None`` when it is outside this project."""
+    """Return the packet lane, including the canonical root-level active layout."""
 
     try:
         relative = packet.expanduser().resolve().relative_to(
@@ -216,7 +216,16 @@ def _project_work_item_lane(packet: Path, project_path: Path) -> str | None:
         )
     except ValueError:
         return None
-    return relative.parts[0] if relative.parts else None
+    if not relative.parts:
+        return None
+    if len(relative.parts) == 1 and relative.parts[0] not in {
+        "01-intake",
+        "02-active",
+        "03-complete",
+        "99-archived",
+    }:
+        return "02-active"
+    return relative.parts[0]
 
 
 def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
@@ -1472,9 +1481,12 @@ def _sync_canonical_development_work(
     """Create or refresh the canonical state.db row for one delivery task."""
 
     packet_lane = _project_work_item_lane(packet, project_root(root, domain, project))
-    if packet_lane == "03-complete" and delivery_state != "delivery_complete":
+    if (
+        packet_lane in {"03-complete", "99-archived"}
+        and delivery_state != "delivery_complete"
+    ):
         raise DevelopmentDeliveryError(
-            "finished Auto-Dev packets are immutable; use `agentic-os auto-dev reopen` "
+            "finished or archived Auto-Dev packets are immutable; use `agentic-os auto-dev reopen` "
             "to create a new active packet and delivery run"
         )
 
@@ -1603,6 +1615,28 @@ def _sync_canonical_task_progress(
         blocked_reason=str(failure.get("detail") or "") or None,
         allow_unblock=allow_unblock,
     )
+
+
+def find_delivery_work_item(project_path: Path, work_id: str) -> Path | None:
+    """Find one canonical or legacy packet, including retained archive history."""
+    root = project_path / "work-items"
+    if not root.is_dir():
+        return None
+    candidates: list[Path] = []
+    candidates.extend(path for path in root.glob(f"*{work_id}*") if path.is_dir())
+    archive = root / "99-archived"
+    if archive.is_dir():
+        candidates.extend(path for path in archive.glob(f"*{work_id}*") if path.is_dir())
+    for lane in ("01-intake", "02-active", "03-complete"):
+        lane_root = root / lane
+        if lane_root.is_dir():
+            candidates.extend(path for path in lane_root.glob(f"*{work_id}*") if path.is_dir())
+    unique = sorted({path.resolve(): path for path in candidates}.values(), key=str)
+    if len(unique) > 1:
+        raise DevelopmentDeliveryError(
+            f"multiple work items match {work_id}: " + ", ".join(str(path) for path in unique)
+        )
+    return unique[0] if unique else None
 
 
 def _task_branch(template: str, ticket: str, slug: str) -> str:
@@ -2165,19 +2199,20 @@ def start_development_run(
         if selected_packet is not None:
             work_items_root = (project_path / "work-items").resolve()
             try:
-                selected_relative = selected_packet.relative_to(work_items_root)
+                selected_packet.relative_to(work_items_root)
             except ValueError as exc:
                 raise DevelopmentDeliveryError(
                     "selected Auto-Dev packet is outside the owning project's work-items tree"
                 ) from exc
-            if not selected_relative.parts or selected_relative.parts[0] not in {
+            selected_lane = _project_work_item_lane(selected_packet, project_path)
+            if selected_lane not in {
                 "02-active",
                 "03-complete",
             }:
                 raise DevelopmentDeliveryError(
                     "selected Auto-Dev packet must be in 02-active or 03-complete"
                 )
-            if selected_relative.parts[0] == "03-complete" and requested_stage != "health":
+            if selected_lane == "03-complete" and requested_stage != "health":
                 raise DevelopmentDeliveryError(
                     "finished Auto-Dev packets are immutable; use the explicit work-item "
                     "reopen path to start a new delivery run before changing them"
@@ -2351,7 +2386,15 @@ def start_development_run(
                         )
                     work_item = canonical_packet
             if work_item is None:
-                work_item = next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
+                work_item = find_delivery_work_item(project_path, work_id)
+                if (
+                    work_item is not None
+                    and _project_work_item_lane(work_item, project_path) != "02-active"
+                ):
+                    raise DevelopmentDeliveryError(
+                        "existing work item is outside the active lane; use the explicit "
+                        "Auto-Dev reopen command for finished or archived history"
+                    )
             if work_item is None:
                 result = create_project_work_item(
                     root,
@@ -2364,7 +2407,7 @@ def start_development_run(
                     item_format="packet",
                 )
                 created_dirs = [path for path in result.created if path.is_dir() and path.name.endswith(work_id)]
-                work_item = created_dirs[0] if created_dirs else next(project_path.glob(f"work-items/02-active/*{work_id}"), None)
+                work_item = created_dirs[0] if created_dirs else find_delivery_work_item(project_path, work_id)
             if work_item is None:
                 raise DevelopmentDeliveryError(f"work item receipt missing for {ticket}")
             current = task_state.read()

@@ -13,8 +13,7 @@ For project-backed initiatives, use this shape:
   status.md
   source-map.md
   work-items/
-    01-intake/
-      <nnn_slug>/
+    <date>-<nnn_slug>/
         CONTEXT.md
         work.yml
         SPEC.md
@@ -25,7 +24,8 @@ For project-backed initiatives, use this shape:
         WORKLOG.md
 ```
 
-Use `01-intake` with status `captured` while the initiative is unbuilt spec/planning work. Promote to `02-active` only when implementation is underway or the existing project convention says it is ready.
+Use status `captured` while the initiative is unbuilt spec/planning work. Change
+the lifecycle state in metadata without moving the packet.
 
 ## Required CONTEXT.md Sections
 

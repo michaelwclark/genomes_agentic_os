@@ -1,5 +1,12 @@
 # Work Lifecycle Standard
 
+New work uses one date-prefixed packet directly under the project's canonical
+`work-items/` root. Lifecycle state lives in the tracker and state plane, not
+in a numbered subfolder. Terminal packets remain in place for the configured
+retention period, then the nightly `work_item_archive` health automation moves
+them to `work-items/99-archived/` without deleting evidence. Agents must search
+that archive before creating work for a ticket that has returned.
+
 **Source of truth:** `harness/rules/work-lifecycle-standard.md` (repo canonical).
 Instance copy lives at the same path under `/Users/genome/agentic_os/`.
 Last updated: 2026-07-07.

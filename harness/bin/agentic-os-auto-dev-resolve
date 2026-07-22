@@ -172,17 +172,24 @@ def _find_project(root: Path, project_id: str) -> Path | None:
 
 
 def _find_packet(project_dir: Path, number: str) -> Path | None:
-    """Find work-items/*/<NNN>_*/ matching the zero-padded prefix."""
+    """Find canonical, archived, or legacy packets matching an indexed prefix."""
     padded = number.zfill(3)
     work_items = project_dir / "work-items"
     if not work_items.is_dir():
         return None
     matches = []
-    for lane_dir in sorted(work_items.iterdir()):
-        if not lane_dir.is_dir():
+    containers = [work_items]
+    containers.extend(
+        work_items / name for name in ("99-archived", "01-intake", "02-active", "03-complete")
+    )
+    for container in containers:
+        if not container.is_dir():
             continue
-        for item in sorted(lane_dir.iterdir()):
-            if item.is_dir() and item.name.split("_")[0] == padded:
+        for item in sorted(container.iterdir()):
+            if not item.is_dir() or item.name in {"99-archived", "01-intake", "02-active", "03-complete"}:
+                continue
+            undated = re.sub(r"^\d{6}-", "", item.name)
+            if undated.split("_")[0] == padded:
                 matches.append(item)
     if len(matches) == 1:
         return matches[0]
@@ -223,8 +230,8 @@ def _load_project_yml(project_dir: Path) -> dict:
 
 
 def _lane_of_packet(packet: Path) -> str:
-    """Return the lane directory name (e.g. '02-active')."""
-    return packet.parent.name
+    """Return the physical work-item container."""
+    return "work-items" if packet.parent.name == "work-items" else packet.parent.name
 
 
 def _tracker_id(packet: Path, spec: dict) -> str | None:
@@ -465,8 +472,8 @@ def _stage_gate(state: str | None, allow_specified: bool) -> tuple[bool, str]:
             "BLOCK: state='specified' (groom-phase complete, not yet promoted to ready).\n\n"
             "Options:\n"
             "  1. Add --allow-specified to start from specified.\n"
-            "  2. Promote the packet: update state: ready in SPEC.md and move to 02-active lane,\n"
-            "     then re-run without the flag.",
+            "  2. Promote the packet: update state: ready in SPEC.md, then re-run without the flag.\n"
+            "     The packet remains in the canonical work-items folder.",
         )
     if state in _CLOSE_STATES:
         return (

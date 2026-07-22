@@ -39,6 +39,7 @@ subcommand, see [`docs/17-cli-reference.md`](docs/17-cli-reference.md).
 | AgenticOSGui | Opens a local desktop conversation driver with first-class domain/project focus, native Claude/Codex titles and active state, pins, linked work metadata, and guarded continuation. | `agentic-os gui open` |
 | State plane | A local SQLite state plane at `<os-root>/00-control-plane/state.db` holds the events ledger, run queue, and watch cursors as queryable rows alongside the markdown files, with commands to initialize it, check its status, import existing files into it, query it, and prune old rows. | `agentic-os state status` |
 | Customer OS factory | Scaffolds an isolated client OS from a profile, blocks Genome's private operator-identity terms from leaking into it, and keeps it current. | `agentic-os customer init <slug>` |
+| Work-item retention | Keeps new work in one canonical date-prefixed project folder and archives retained terminal packets without deleting evidence. | `agentic-os work-item-archive --dry-run` |
 
 ## Quickstart
 

@@ -10,6 +10,36 @@ delivery state/worktree/recovery engine. `<work-item>/autodev.json` is the
 cross-workflow resume projection and points to that engine. Never start a second
 state packet under `artifacts/auto-dev/` for a new run.
 
+## Canonical work-item lookup
+
+Resolve a matching packet directly under the owning project's `work-items/`
+root before creating anything. If the ticket has returned, also search
+`work-items/99-archived/` and preserve the prior packet as history. Legacy
+`01-intake`, `02-active`, and `03-complete` lanes are import/read surfaces,
+not destinations for new Auto-Dev packets.
+
+## Genomes Agentic OS maintainer profile
+
+When the routed project is `genomes_agentic_os`, load its generated
+`config/development.yml`, `config/workflows.yml`, and `config/validation.yml`.
+The configured `auto_dev_everything` workflow owns the complete sequence:
+Groom, Detective, Create Artifacts, Readiness, Develop, Document, PR Create,
+Review Self, Review Others, QA, Finalize, Merge, Release, Deploy, Closeout, and
+Health. Generated configurations that still say `release_propagation` use that
+name as a compatibility alias for the PR Create boundary; it is not a separate
+or later stage.
+
+This profile requires Linear grooming, a fresh install plus two additive
+installs at `~/agentic_os_qa`, exact-head CI, gated squash merge, a version/tag
+and GitHub release after merge, then repository, verified Genome's Notion, and
+Clark's Consulting documentation projections. Claude Review Self is preferred
+but non-blocking when its receipt records that the reviewer was unavailable.
+
+> Compatibility alias: all new generic Agentic OS programming jobs start with
+> `agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply`
+> and follow the `development_delivery` program. The contracts below remain
+> available for existing Auto-Dev runs and provider adapters during migration.
+
 ## Route by intent
 
 - Uncertain cause, reported bug, failed QA, log, alert, or RCA: start with
@@ -22,7 +52,7 @@ state packet under `artifacts/auto-dev/` for a new run.
 - One friendly stage: `agentic-os auto-dev groom|investigate|create|readiness|
   develop|document|pr-create|review-self|review-others|qa|finalize|merge|release|
   deploy|closeout|health ...` and the same-named skill. `release-propagation` is
-  compatibility aliases for `pr-create`.
+  a compatibility alias for `pr-create`.
 
 ## Canonical delivery path
 

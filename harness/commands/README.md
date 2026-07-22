@@ -79,6 +79,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`os-update.md`](os-update.md) | Plan, apply, inspect, or roll back an OS update. |
 | [`os-watch-source.md`](os-watch-source.md) | Configure and poll connected source watchers. |
 | [`os-work-state.md`](os-work-state.md) | Maintain SQLite-backed canonical work state and the bounded active-now projection. |
+| [`os-work-item-archive.md`](os-work-item-archive.md) | Run retention-based Work Item Archive Health cleanup. |
 | [`system-tool-registry.md`](system-tool-registry.md) | Inspect or update host-safe tool declarations. |
 
 When adding or removing a command, update this table and the owning registry or
