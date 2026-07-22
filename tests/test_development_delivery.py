@@ -2764,6 +2764,7 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
             clear_worktree=True,
             receipt_ref=work_state_receipt.relative_to(finished).as_posix(),
             verified=True,
+            now="2026-07-20T20:57:00Z",
         )
         canonical_work_items.write_active_projection(connection, root)
     finally:
@@ -3041,7 +3042,72 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
             clear_worktree=True,
             receipt_ref=work_state_receipt.relative_to(finished).as_posix(),
             verified=True,
+            # A same-state verification refreshes mutable freshness without
+            # rewriting the immutable terminal transition history.
+            now="2026-07-20T21:05:00Z",
         )
+        canonical_after_reverification = canonical_work_items.get(
+            connection, canonical_work_id
+        )
+        terminal_history = connection.execute(
+            """
+            SELECT changed_at, receipt_ref
+            FROM work_item_history
+            WHERE work_item_id = ? AND to_state = 'finished' AND to_attention = 'closed'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (canonical_work_id,),
+        ).fetchone()
+        assert canonical_after_reverification is not None
+        assert (
+            canonical_after_reverification["last_verified_at"]
+            == "2026-07-20T21:05:00Z"
+        )
+        assert terminal_history is not None
+        assert terminal_history["changed_at"] == "2026-07-20T20:57:00Z"
+        assert terminal_history["receipt_ref"] == work_state_receipt.relative_to(
+            finished
+        ).as_posix()
+
+        # Freshness may advance independently, but terminal history must remain
+        # bound to the exact packet-local receipt audited by Health.
+        auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+        connection.execute(
+            """
+            UPDATE work_item_history
+            SET receipt_ref = 'artifacts/auto-dev-health/receipts/wrong-work-state.json'
+            WHERE id = (
+                SELECT id
+                FROM work_item_history
+                WHERE work_item_id = ? AND to_state = 'finished' AND to_attention = 'closed'
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (canonical_work_id,),
+        )
+        connection.commit()
+        with pytest.raises(
+            AutoDevStateError,
+            match="final finished/closed history row",
+        ):
+            auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+        connection.execute(
+            """
+            UPDATE work_item_history
+            SET receipt_ref = ?
+            WHERE id = (
+                SELECT id
+                FROM work_item_history
+                WHERE work_item_id = ? AND to_state = 'finished' AND to_attention = 'closed'
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (work_state_receipt.relative_to(finished).as_posix(), canonical_work_id),
+        )
+        connection.commit()
     finally:
         connection.close()
 

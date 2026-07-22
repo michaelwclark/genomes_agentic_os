@@ -3214,16 +3214,15 @@ def _validate_health_evidence(
             if history_receipt_value.is_absolute()
             else history_receipt_value.as_posix() == history_ref
         )
+    # The terminal history row is immutable transition evidence. Canonical
+    # last_verified_at is mutable freshness metadata and may advance after a
+    # same-state verification without creating another history row.
     if not (
         history_values.get("to_state") == "finished"
         and history_values.get("to_attention") == "closed"
         and history_values.get("from_state") == work_state.get("before")
         and history_values.get("from_attention") == work_state.get("before_attention")
         and history_receipt_matches
-        and (
-            allow_reopened
-            or history_values.get("changed_at") == canonical.get("last_verified_at")
-        )
     ):
         raise AutoDevStateError(
             "health requires the final finished/closed history row to reference the audited work-state receipt"
