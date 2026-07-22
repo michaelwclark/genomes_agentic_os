@@ -50,6 +50,8 @@ commands:
     path: harness/commands/auto-dev-closeout.md
   - id: auto-dev-health
     path: harness/commands/auto-dev-health.md
+  - id: object-library
+    path: harness/commands/os-library.md
 skills:
   - id: auto-dev
     path: harness/skills/auto-dev/SKILL.md
@@ -95,6 +97,8 @@ skills:
     path: harness/skills/auto-dev-closeout/SKILL.md
   - id: auto-dev-health
     path: harness/skills/auto-dev-health/SKILL.md
+  - id: object-library
+    path: harness/skills/object-library/SKILL.md
 workflows:
   - id: auto_dev_detective
     status: active
@@ -102,6 +106,9 @@ workflows:
   - id: auto_dev_create_artifacts
     status: active
     path: ../../04-workflows/auto_dev/create_artifacts
+  - id: library_self_hosting
+    status: active
+    path: ../../04-workflows/auto_dev/library_self_hosting
   - id: readiness_and_context
     status: active
     path: ../../04-workflows/development_delivery/readiness_and_context
@@ -124,13 +131,29 @@ workflows:
     status: delegated
     path: ../../03-workflows/engineering/os_cleanup
 policy_planes:
+  # These are the five nested Auto-Dev planes. Artifact and investigation
+  # contracts are adjacent consumers, not additional development planes.
   auto_dev: harness/shared_factory/05-knowledge/auto_dev
-  environment_access: harness/shared_factory/05-knowledge/environment_access
-  development: harness/shared_factory/05-knowledge/dev_standards
-  qa: harness/shared_factory/05-knowledge/qa_gates
-  gitflow: harness/shared_factory/05-knowledge/gitflow_topology
+  environment_access: harness/shared_factory/05-knowledge/auto_dev/environment_access
+  dev_standards: harness/shared_factory/05-knowledge/auto_dev/dev_standards
+  qa_gates: harness/shared_factory/05-knowledge/auto_dev/qa_gates
+  gitflow_topology: harness/shared_factory/05-knowledge/auto_dev/gitflow_topology
+supporting_contracts:
   artifacts: harness/artifact-config
   investigations: harness/investigation-config
+self_hosting_profiles:
+  object_library:
+    source_repository: michaelwclark/genomes_agentic_lib
+    installed_projection: <os-root>/lib
+    command: harness/commands/os-library.md
+    skill: harness/skills/object-library/SKILL.md
+    workflow: ../../04-workflows/auto_dev/library_self_hosting
+    stage_mapping:
+      develop: build
+      qa: validate_exact_artifact
+      release: publish
+      deploy: install_and_readback
+      document_rerun: post_release_documentation
 runtime_adapters:
   - id: los_fast_worktree_health
     owner: auto-dev-health
@@ -172,6 +195,7 @@ documentation:
   - runbook.md
   - ARCHIVE_SOON.md
   - worklog.md
+  - docs/29-versioned-object-library.md
 diagrams:
   - assets/auto-dev-program.svg
   - assets/auto-dev-health.svg

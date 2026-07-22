@@ -10,6 +10,12 @@ Development Delivery owns the canonical delivery state, worktree, stage
 transitions, and typed evidence. The work item's `autodev.json` is the readable
 resume projection across the Auto-Dev family.
 
+This directory is also the single parent for all five development policy
+planes. Auto-Dev stage files live directly here; environment access,
+development standards, QA gates, and Gitflow topology live in the four named
+nested folders. They are not active sibling folders elsewhere in
+`05-knowledge/`.
+
 ## How policy is composed
 
 Every run loads all applicable files in this order:
@@ -25,7 +31,7 @@ safety, approval, evidence, tenant, security, sanitization, target-verification,
 or provider-readback requirements. A run records the selected sources, hashes,
 and effective fingerprint so it can be resumed against the same rules.
 
-Related policy planes are loaded when a stage needs them:
+The other four nested policy planes are loaded when a stage needs them:
 
 - `dev_standards` defines how code is designed, changed, tested, documented,
   secured, and observed;
@@ -33,9 +39,11 @@ Related policy planes are loaded when a stage needs them:
 - `gitflow_topology` defines repositories, base branches, sibling pull
   requests, and propagation rules;
 - `environment_access` defines hosts, VPN, cloud, and runtime access without
-  storing credentials;
-- `artifact-config` defines provider-native output and rendering rules;
-- `investigation-config` defines evidence-led, read-only detective work.
+  storing credentials.
+
+`artifact-config` defines provider-native output and rendering rules, and
+`investigation-config` defines evidence-led, read-only detective work. They are
+adjacent contracts, not sixth and seventh development planes.
 
 ## Files and execution order
 

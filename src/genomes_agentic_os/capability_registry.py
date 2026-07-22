@@ -584,7 +584,7 @@ def command_entries() -> list[dict[str, str]]:
         {
             "id": "object-library",
             "command": "agentic-os library",
-            "description": "Read, create, migrate, refresh, and validate the versioned installed object library.",
+            "description": "Install, verify, migrate, refresh, and inspect the disposable projection of the canonical external object library.",
             "source": "harness/commands/os-library.md",
         },
         {
@@ -711,6 +711,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "OS Authoring Guard",
             "description": "Apply compact Agentic OS authoring rules to commands, skills, workflows, automations, tools, registries, and worktrees.",
             "source": "harness/skills/os-authoring-guard/SKILL.md",
+        },
+        {
+            "id": "object-library",
+            "name": "Object Library",
+            "description": "Route reusable object-library changes through source, exact-artifact validation, release, install readback, and post-release documentation.",
+            "source": "harness/skills/object-library/SKILL.md",
         },
         {
             "id": "os-doctor",

@@ -297,6 +297,11 @@ skills:
   description: Audit final receipts, remove reconstructable local resources, and
     finish the preserved work packet.
   source: harness/skills/auto-dev-health/SKILL.md
+- id: object-library
+  name: Object Library
+  description: Route reusable object-library changes through source, exact-artifact
+    validation, release, install readback, and post-release documentation.
+  source: harness/skills/object-library/SKILL.md
 - id: develop
   name: Develop
   description: Canonical 1-N programming delivery with project profiles, isolated

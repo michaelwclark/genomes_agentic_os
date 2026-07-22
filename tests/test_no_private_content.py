@@ -61,6 +61,11 @@ ALLOWLIST = {
     # The PRIVATE_TERMS guard itself: it must name the private identifiers
     # in order to block them from generated customer-facing files.
     "src/genomes_agentic_os/customer.py",
+    # Explicit domain adapter: this fail-closed runtime teardown is installed
+    # only when the matching project profile selects it.  It is not emitted by
+    # customer scaffolding, and its domain boundary makes later repository
+    # extraction mechanical.
+    "harness/bin/agentic-os-los-fast-worktree-health.py",
 }
 
 _WORD_PATTERNS = {

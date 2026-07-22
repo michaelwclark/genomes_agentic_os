@@ -4,20 +4,26 @@ This directory contains the plain-English behavior that every configured
 domain and project inherits. It is policy, not source code and not a second
 workflow engine.
 
-## Active policy planes
+## Five active policy planes
 
-- `auto_dev/` describes the complete Auto-Dev lifecycle and every independently
-  callable stage.
-- `dev_standards/` describes how software is designed, changed, secured,
-  tested, documented, and observed.
-- `qa_gates/` describes acceptance, regression, runtime, and evidence gates.
-- `gitflow_topology/` describes branches, pull-request families, propagation,
-  and merge relationships.
-- `environment_access/` describes safe host, VPN, cloud, and runtime access
-  without storing credentials.
+All five development planes live under one `auto_dev/` parent at every scope:
 
-Each plane is composed in the same order: shared root policy, domain policy,
-project policy, then an explicit invocation overlay when one is supplied.
+```text
+auto_dev/                         Auto-Dev stage behavior (`*.md` here)
+├── environment_access/          hosts, VPN, cloud, and runtime access
+├── dev_standards/               design, code, security, tests, docs, observability
+├── qa_gates/                    acceptance, regression, runtime, and evidence gates
+└── gitflow_topology/            branches, PR families, propagation, and merges
+```
+
+This containment is part of the contract. Do not recreate
+`dev_standards/`, `qa_gates/`, `gitflow_topology/`, or
+`environment_access/` as active siblings of `auto_dev/`.
+
+Each of the five planes is composed in the same order: shared root policy,
+domain policy, project policy, then an explicit invocation overlay when one is
+supplied.
+
 Later layers may add verified specifics or stricter rules; they may not remove
 inherited safety, evidence, approval, or readback requirements.
 

@@ -951,6 +951,30 @@ def _registry_ids(root: Path, registry_name: str, collection: str) -> set[str]:
     return {str(entry.get("id") or "") for entry in load_registry(path, collection)}
 
 
+def _library_registry_aliases(root: Path, *, kind: str) -> set[str]:
+    """Return visible adapter paths owned by manifest-backed library objects."""
+
+    path = root / "lib/registry/objects.json"
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    objects = payload.get("objects") if isinstance(payload, dict) else None
+    if not isinstance(objects, list):
+        return set()
+    aliases: set[str] = set()
+    for item in objects:
+        if not isinstance(item, dict) or item.get("kind") != kind:
+            continue
+        raw_aliases = item.get("aliases")
+        if not isinstance(raw_aliases, list):
+            continue
+        aliases.update(alias for alias in raw_aliases if isinstance(alias, str) and alias)
+    return aliases
+
+
 def validate_command_skill_registry_coverage(root: Path, result: ValidationResult) -> None:
     command_sources = _registry_sources(root, "commands", "commands")
     command_ids = _registry_ids(root, "commands", "commands")
@@ -962,9 +986,10 @@ def validate_command_skill_registry_coverage(root: Path, result: ValidationResul
             result.errors.append(f"command doc missing registry entry: {relative}")
 
     skill_sources = _registry_sources(root, "skills", "skills")
+    library_skill_aliases = _library_registry_aliases(root, kind="skill")
     for skill_doc in sorted(harness_path(root, "skills").glob("*/SKILL.md")):
         relative = skill_doc.relative_to(root).as_posix()
-        if relative not in skill_sources:
+        if relative not in skill_sources and relative not in library_skill_aliases:
             result.errors.append(f"skill doc missing registry entry: {relative}")
 
 

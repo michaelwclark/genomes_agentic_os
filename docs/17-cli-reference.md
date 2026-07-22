@@ -148,9 +148,29 @@ adapter behavior, and compatibility commands.
 | `develop fail` | Classify a failure and retry or block according to policy. |
 | `develop recover` | Resume a recorded recoverable failure. |
 | `develop heartbeat` | Renew a non-terminal task lease. |
-| `develop policy` | Resolve a project's dynamic development, QA, or gitflow Markdown plane. |
+| `develop policy` | Resolve one of the five nested Auto-Dev Markdown planes: workflow behavior, environment access, development standards, QA gates, or gitflow topology. |
 
 See [42 · Auto-Dev Program](42-auto-dev-program.md) for how these groups compose.
+
+### Versioned Object Library — `cli/library.py`
+
+| Command | What it does |
+| --- | --- |
+| `library list` / `library show` | Read the installed compact registry and one canonical object. |
+| `library doctor` | Validate manifests, generated registries, dependencies, and source/install provenance. |
+| `library build` | Run the source-owned deterministic builder as an Auto-Dev Develop helper. |
+| `library validate` | Validate source or the exact receipt-bound archive as an Auto-Dev QA helper. |
+| `library release` | Prepare release evidence/notes; it does not bypass protected CI or operator publication authority. |
+| `library document` | Verify provider release readback and post-release documentation evidence; it does not publish. |
+| `library install` | Plan or atomically install a validated immutable revision from the canonical source repository; `--apply` performs the replacement. |
+| `library verify-install` | Compare the installed object count/content hash and doctor result with the durable install receipt. |
+| `library rollback-install` | Plan or atomically restore the retained prior projection together with its exact verification receipt. |
+| `library init` / `library create` | Bootstrap a library layout or manifest-backed object; these are migration/scaffolding tools, not normal installed authorship. |
+| `library migrate-legacy` | Plan or copy legacy definitions into manifest-backed form. |
+| `library refresh` | Rebuild generated registry projections from canonical manifests. |
+
+See [29 · Versioned Object Library](29-versioned-object-library.md) for the
+source-versus-installed boundary and Auto-Dev self-hosting lifecycle.
 
 ### Workflows & Programs — `cli/workflow.py`
 

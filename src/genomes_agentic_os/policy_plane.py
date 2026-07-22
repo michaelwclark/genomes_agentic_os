@@ -110,15 +110,36 @@ def parse_markdown_policy(
     )
 
 
-def markdown_files(path: str | Path, *, recursive: bool = True) -> list[Path]:
+def markdown_files(
+    path: str | Path,
+    *,
+    recursive: bool = True,
+    excluded_subdirectories: Sequence[str | Path] = (),
+) -> list[Path]:
     """Return deterministic 1-N Markdown files, excluding explanatory READMEs."""
 
     root = Path(path).expanduser().resolve()
     if not root.is_dir():
         return []
     iterator = root.rglob("*.md") if recursive else root.glob("*.md")
+    excluded_parts = tuple(Path(item).parts for item in excluded_subdirectories)
+
+    def included(item: Path) -> bool:
+        relative_parts = item.relative_to(root).parts
+        return not any(
+            relative_parts[: len(prefix)] == prefix
+            for prefix in excluded_parts
+            if prefix
+        )
+
     return sorted(
-        (item for item in iterator if item.is_file() and item.name.casefold() != "readme.md"),
+        (
+            item
+            for item in iterator
+            if item.is_file()
+            and item.name.casefold() != "readme.md"
+            and included(item)
+        ),
         key=lambda item: item.relative_to(root).as_posix(),
     )
 
@@ -129,6 +150,7 @@ def resolve_markdown_plane(
     *,
     explicit_files: Iterable[str | Path] = (),
     recursive: bool = True,
+    excluded_subdirectories: Sequence[str | Path] = (),
 ) -> dict[str, Any]:
     """Resolve ordered Markdown sources and return provenance plus fingerprint."""
 
@@ -137,7 +159,11 @@ def resolve_markdown_plane(
     seen: set[Path] = set()
     layer_rows: list[dict[str, Any]] = []
     for layer in sorted(layers, key=lambda item: (item.rank, item.scope, str(item.root))):
-        files = markdown_files(layer.root, recursive=recursive)
+        files = markdown_files(
+            layer.root,
+            recursive=recursive,
+            excluded_subdirectories=excluded_subdirectories,
+        )
         layer_rows.append(
             {
                 "scope": layer.scope,

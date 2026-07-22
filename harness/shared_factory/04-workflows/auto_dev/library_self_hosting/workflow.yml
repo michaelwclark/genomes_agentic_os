@@ -1,0 +1,50 @@
+id: library_self_hosting
+version: 1
+owner: auto_dev
+command: agentic-os library
+skill: object-library
+inputs:
+  - object_identity
+  - source_repository
+  - source_revision
+  - version
+  - target_os_root
+  - release_authority
+outputs:
+  - build_receipt
+  - exact_artifact_qa_receipt
+  - release_readback
+  - install_receipt
+  - install_readback
+  - post_release_documentation_receipt
+stage_mapping:
+  develop: build
+  qa: validate_exact_artifact
+  release: publish
+  deploy: install_and_readback
+  document_rerun: post_release_documentation
+validations:
+  - canonical_source_repository
+  - manifest_and_entrypoint_valid
+  - generated_registry_matches_source
+  - qa_hash_matches_published_artifact
+  - immutable_release_readback
+  - installed_revision_matches_release
+  - installed_content_matches_receipt
+  - post_release_docs_match_readback
+failure_modes:
+  - source_invalid
+  - artifact_hash_changed
+  - release_unavailable
+  - version_or_tag_mismatch
+  - installed_projection_dirty
+  - installed_projection_owns_worktrees
+  - staged_validation_failed
+  - install_readback_mismatch
+receipts:
+  - build-receipt.json
+  - exact-artifact-qa.json
+  - release-readback.json
+  - library-install.json
+  - library-install-readback.json
+  - post-release-documentation.json

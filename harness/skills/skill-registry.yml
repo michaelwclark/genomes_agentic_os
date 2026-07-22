@@ -657,7 +657,7 @@ skills:
     source_path: harness/skills/gitflow-pr-create
     installed_path: shared_factory/05-knowledge/skills/gitflow-pr-create
     harness_targets: [codex, claude]
-    status: deprecated
+    status: active
     builtin: true
     bootstrap: false
     purpose: Preserve legacy GitFlow PR creation invocations through Auto-Dev PR Create.
@@ -697,3 +697,12 @@ skills:
     builtin: true
     bootstrap: false
     purpose: Audit final receipts, remove reconstructable local resources, and finish the preserved work packet.
+  - id: object-library
+    title: Object Library
+    source_path: harness/skills/object-library
+    installed_path: shared_factory/05-knowledge/skills/object-library
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Route reusable object-library changes through source, exact-artifact validation, release, install readback, and post-release documentation.

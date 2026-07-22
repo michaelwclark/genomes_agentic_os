@@ -42,11 +42,14 @@ Before implementation or review, inspect the dynamic 1-N Markdown bundles:
 agentic-os develop policy <domain> <project> --plane dev_standards --json
 agentic-os develop policy <domain> <project> --plane qa_gates --json
 agentic-os develop policy <domain> <project> --plane gitflow_topology --json
+agentic-os develop policy <domain> <project> --plane auto_dev --json
+agentic-os develop policy <domain> <project> --plane environment_access --json
 ```
 
 Default inheritance is root → domain → project. A project may configure an
 ordered path list in `config/development.yml`. The applied run snapshots all
-three into `state/development-runs/<run-id>/effective-policies.json`.
+five nested Auto-Dev planes into
+`state/development-runs/<run-id>/effective-policies.json`.
 
 ## Readiness checks
 

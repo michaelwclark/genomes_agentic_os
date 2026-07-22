@@ -1,0 +1,34 @@
+api_version: agentic-os-library-object/v1
+kind: workflow
+id: library_self_hosting
+title: Object Library Self-Hosting
+description: >-
+  Build, validate, publish, install, read back, and document the reusable
+  Object Library through existing Auto-Dev stages and a source-versus-installed
+  projection boundary.
+status: active
+scope:
+  level: root
+  domain: null
+  project: null
+owner:
+  type: package
+  id: genomes_agentic_os
+entrypoint: workflow.md
+tags: [workflow, object-library, self-hosting, auto-dev]
+dependencies:
+  - command:root:object-library
+  - skill:root:object-library
+  - skill:root:auto-dev-develop
+  - skill:root:auto-dev-qa
+  - skill:root:auto-dev-release
+  - skill:root:auto-dev-deploy
+  - skill:root:auto-dev-document
+aliases:
+  - harness/shared_factory/04-workflows/auto_dev/library_self_hosting
+runtime:
+  root: runtime/objects/workflows/workflow/root/library_self_hosting
+  legacy_roots: []
+validation:
+  commands:
+    - agentic-os library doctor --root <root>

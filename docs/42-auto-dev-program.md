@@ -23,19 +23,45 @@
 Adding a Markdown file changes the next run; no Python or registry edit is
 needed.
 
+These are five planes under one `auto_dev/` parent at every scope: Auto-Dev
+behavior in the parent itself, plus nested environment access, development
+standards, QA gates, and Gitflow topology. Artifact and investigation folders
+are adjacent contracts, not additional development planes.
+
 | Behavior | Root | Domain | Project |
 | --- | --- | --- | --- |
 | Auto-Dev workflow behavior | `harness/shared_factory/05-knowledge/auto_dev/` | `05-knowledge/auto_dev/` | `config/auto_dev/` |
-| Hosts/VPN/cloud access | `harness/shared_factory/05-knowledge/environment_access/` | `05-knowledge/environment_access/` | `config/environment_access/` |
-| Code/review | `harness/shared_factory/05-knowledge/dev_standards/` | `05-knowledge/dev_standards/` | `config/dev_standards/` |
-| QA | `harness/shared_factory/05-knowledge/qa_gates/` | `05-knowledge/qa_gates/` | `config/qa_gates/` |
-| Gitflow | `harness/shared_factory/05-knowledge/gitflow_topology/` | `05-knowledge/gitflow_topology/` | `config/gitflow_topology/` |
+| Hosts/VPN/cloud access | `harness/shared_factory/05-knowledge/auto_dev/environment_access/` | `05-knowledge/auto_dev/environment_access/` | `config/auto_dev/environment_access/` |
+| Code/review | `harness/shared_factory/05-knowledge/auto_dev/dev_standards/` | `05-knowledge/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` |
+| QA | `harness/shared_factory/05-knowledge/auto_dev/qa_gates/` | `05-knowledge/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` |
+| Gitflow | `harness/shared_factory/05-knowledge/auto_dev/gitflow_topology/` | `05-knowledge/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` |
 | Artifact output | `harness/artifact-config/<provider>/<type>.md` | `artifact-config/<provider>/<type>.md` | `artifact-config/<provider>/<type>.md` |
 | Investigation | `harness/investigation-config/` | `investigation-config/` | `investigation-config/` |
 
 Every resolution records ordered sources and a content fingerprint. Narrower
 configuration may specialize behavior but cannot weaken parent safety,
 approval, sanitization, target verification, or readback.
+
+## Object Library self-hosting
+
+The reusable Object Library uses Auto-Dev itself. Its durable source is
+`michaelwclark/genomes_agentic_lib`; installed `<os-root>/lib/` is a validated,
+replaceable projection. The `object-library` skill and
+`library_self_hosting` workflow keep command/skill/workflow parity without
+creating another state machine.
+
+| Existing stage | Library responsibility |
+| --- | --- |
+| Develop | Build the deterministic source archive and receipt. |
+| QA | Validate the exact archive SHA-256 and all manifest/registry boundaries. |
+| Release | Publish the verified version, tag, archive, receipt, and changelog. |
+| Deploy | Install the immutable released revision and verify installed object count/content hash plus library doctor. |
+| Document rerun | Record actual release and install truth after Release/Deploy. |
+
+The normal PR/review/Finalize/Merge/Closeout/Health owners still apply. The
+post-release documentation pass reruns Document and adds evidence; it does not
+become a seventeenth stage. See
+[29 · Versioned Object Library](29-versioned-object-library.md).
 
 ## Detective
 

@@ -18,6 +18,7 @@ owner:
 entrypoint: program.md
 tags: [program, sdlc, development, investigation, artifacts]
 dependencies:
+  - command:root:object-library
   - skill:root:auto-dev
   - skill:root:auto-dev-everything
   - skill:root:auto-dev-grooming
@@ -40,6 +41,8 @@ dependencies:
   - skill:root:auto-dev-deploy
   - skill:root:auto-dev-closeout
   - skill:root:auto-dev-health
+  - skill:root:object-library
+  - workflow:root:library_self_hosting
 aliases:
   - harness/shared_factory/00-programs/auto_dev
 runtime:

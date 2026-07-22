@@ -7,8 +7,13 @@
   authorship routes to Create Artifacts even if Auto-Dev is not named.
 - Every workflow has one manual command/skill, a program/sub-workflow route, a
   trigger-adapter contract, and durable receipts.
-- Load the effective root/domain/project policy bundle before analysis,
-  implementation, review, QA, PR creation, or artifact rendering.
+- Load the effective root/domain/project/invocation bundle for all five nested
+  Auto-Dev policy planes before analysis, implementation, review, QA, PR
+  creation, or artifact rendering.
+- Object Library changes are authored in the registered source repository.
+  Installed `lib/` is a replaceable projection and may not become a second
+  source checkout or a place to bypass build, QA, Release, Deploy readback, or
+  post-release documentation.
 - Resolve deployed environment version before environment-scoped code analysis.
 - Read-only investigation does not authorize a mutation. External writes,
   merges, deployments, and production actions retain their own approval gates.

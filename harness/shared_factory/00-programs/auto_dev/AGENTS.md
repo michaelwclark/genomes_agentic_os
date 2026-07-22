@@ -5,6 +5,7 @@ Read `ROUTER.md`, `CONTEXT.md`, `RULES.md`, `TOOLS.md`, `program.md`, and
 domain/project before acting.
 
 Use the workflow intent even when the user does not say “Auto-Dev.” Every run
-loads its root/domain/project 1-N Markdown policy plane and records the sources
-and fingerprint. Do not duplicate provider formatting, development standards,
-QA gates, investigation sources, or gitflow rules inside a skill prompt.
+loads all five nested root/domain/project/invocation 1-N Markdown policy planes
+and records the sources and fingerprint. Do not duplicate provider formatting,
+development standards, QA gates, investigation sources, or gitflow rules inside
+a skill prompt.

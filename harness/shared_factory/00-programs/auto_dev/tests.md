@@ -51,6 +51,17 @@
 - No Auto-Dev Health schedule is enabled by installation or validation.
 - Every registered workflow has command+skill parity, complete docs, receipts,
   implicit routing, and a manual smoke test.
+- Object Library parity includes `agentic-os library`, the `object-library`
+  skill, and the `library_self_hosting` workflow plus all three manifests and
+  Auto-Dev program dependencies. Its lifecycle proof binds Develop to build,
+  QA to the exact archive SHA-256, Release to that same published artifact,
+  Deploy to install/doctor readback, and a Document rerun to actual
+  post-release truth.
+- Library installation tests keep the source repository separate from the
+  replaceable installed `lib/` projection, block linked worktrees or
+  uncaptured dirt, validate before atomic replacement, preserve rollback and
+  install receipts outside `lib/`, and compare installed object count/content
+  hash with the source revision receipt.
 - Multi-repository profiles require an explicit repository when configured,
   merge per-repository overrides, revalidate the selected profile, and pin the
   selected repository in plan, work-item, worktree, and resume receipts.

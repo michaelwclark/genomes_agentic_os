@@ -1,5 +1,19 @@
 # Auto-Dev Worklog
 
+## 2026-07-21 — Object Library self-hosting
+
+- Defined one plain-English source/install topology: reusable definitions are
+  authored in `michaelwclark/genomes_agentic_lib`; installed `lib/` is a
+  validated replaceable projection with runtime-owned receipts and backups.
+- Added command, skill, workflow, manifest, program-component, dependency, and
+  parity contracts for Object Library work without adding a new state machine.
+- Reused Auto-Dev Develop for build, QA for exact-artifact validation, Release
+  for publication, Deploy for installation/readback, and a Document rerun for
+  post-release truth.
+- Consolidated all five development policy planes under `auto_dev/` and kept
+  artifact/investigation contracts adjacent rather than counting them as extra
+  development planes.
+
 ## 2026-07-20 — LOS runtime proof hardening
 
 - Added a source-owned LOS fast-worktree Health wrapper that binds the frozen

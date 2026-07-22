@@ -46,6 +46,27 @@ to an Auto-Dev item its predecessors must already be terminal and
 receipt-backed. Everything records a terminal result for every stage before
 Health; it does not omit an inapplicable row.
 
+## Object Library self-hosting profile
+
+Object Library work uses the same stages above; it is not a seventeenth stage
+or a second delivery engine. Durable definitions are authored in
+`michaelwclark/genomes_agentic_lib`, while `<os-root>/lib/` is the validated,
+replaceable installed projection.
+
+| Existing stage | Library responsibility |
+| --- | --- |
+| Develop | Change source manifests/content and build the deterministic archive plus receipt. |
+| QA | Validate the exact candidate archive and bind evidence to its SHA-256. |
+| Release | Publish the already verified version, tag, archive, receipt, and changelog. |
+| Deploy | Install the immutable released revision, then verify the installed content and run library doctor. |
+| Document rerun | After release/deploy, record the actual version, revision, hash, install receipt, and resume path. |
+
+The ordinary PR, review, Finalize, Merge, Closeout, and Health gates remain in
+force. The first Document pass stays in its normal pre-PR position; the
+post-release update reruns that same workflow and adds linked evidence without
+reordering the stage list. Use the `object-library` skill and
+`library_self_hosting` workflow for the full source/install contract.
+
 ## Polymorphic behavior
 
 The shared engine does not contain LOS, Kanga, Jira, Linear, Django, or Vue
@@ -55,10 +76,12 @@ defaults. It composes Markdown at runtime:
 root policy -> domain additions -> project additions -> invocation overlay
 ```
 
-Use `auto_dev/` for program behavior, `environment_access/` for hosts/VPN/cloud
-rules, `artifact-config/` for provider/type output, `investigation-config/` for
-Detective sources, and the other development planes for code, QA, and gitflow.
-Adding a Markdown file affects the next run and appears in the fingerprint.
+The five development planes share one parent. Use root files directly under
+`auto_dev/` for program behavior, then the nested `environment_access/`,
+`dev_standards/`, `qa_gates/`, and `gitflow_topology/` folders for their named
+concerns. `artifact-config/` and `investigation-config/` are adjacent contracts,
+not sixth and seventh development planes. Adding a Markdown file affects the
+next run and appears in the fingerprint.
 
 ## Invocation model
 

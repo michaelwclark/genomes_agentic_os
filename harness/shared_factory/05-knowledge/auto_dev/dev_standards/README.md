@@ -8,9 +8,9 @@ may add precision; the strictest safety and quality requirement still wins.
 Conventional folders:
 
 ```text
-harness/shared_factory/05-knowledge/dev_standards/
-domains/<domain>/05-knowledge/dev_standards/
-domains/<domain>/02-projects/<project>/config/dev_standards/
+harness/shared_factory/05-knowledge/auto_dev/dev_standards/
+domains/<domain>/05-knowledge/auto_dev/dev_standards/
+domains/<domain>/02-projects/<project>/config/auto_dev/dev_standards/
 ```
 
 Projects may replace the ordered folder list through

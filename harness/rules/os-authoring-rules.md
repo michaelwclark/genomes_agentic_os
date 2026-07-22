@@ -97,21 +97,25 @@ Update `program.md`, `components.yml`, `context-pack.md`, `crud.md`,
 behavior, ownership, routing, validation, external projection, schedule, or
 linked component list changes.
 
-## Versioned Installed Object Library
+## Versioned Object Library
 
-When an installed root contains lib/registry/objects.json, treat that compact
-registry as the first read surface for programs, workflows, automations,
+The registered external `genomes_agentic_lib` source project owns durable
+object definitions. An installed root's `lib/registry/objects.json` is the
+compact first read surface for programs, workflows, automations,
 commands, skills, hooks, rules, references, templates, and toolkits.
 
-- Each object.yml manifest is canonical for mutation.
-- Generated files under lib/registry are canonical read projections and must
-  not be edited directly.
-- Use agentic-os library refresh --apply after changing an object.
-- Use agentic-os library doctor before committing or projecting adapters.
+- Each source-repository `object.yml` manifest is canonical for mutation.
+- Generated source registries are committed projections and must not be edited
+  directly.
+- Build and validate the exact source archive before release.
+- Use `agentic-os library install --apply` only after release, then use
+  `agentic-os library verify-install` for installed readback.
+- Never repair an object only in installed `lib/`; that entire directory is a
+  disposable, receipt-backed projection.
 - Put mutable logs, runs, state, caches, receipts, artifacts, secrets, and
   worktrees under runtime, never in the versioned object definition.
 - During migration, legacy paths are compatibility aliases. New definitions and
-  normal writes target lib.
+  normal writes target the registered source project.
 
 Work state is not a library object. Read `active-now.json` before broad context,
 then use `agentic-os work show/list` for detail. Mutate lifecycle state,

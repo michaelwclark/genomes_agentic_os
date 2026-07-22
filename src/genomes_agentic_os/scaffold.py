@@ -24,6 +24,7 @@ from .capability_registry import (
     HARNESS_DIRECTORY,
     REGISTRY_FILES,
     VISIBLE_CAPABILITY_DIRECTORIES,
+    command_entries,
     hook_entries,
     inventory_markdown,
     registry_file_payloads,
@@ -62,6 +63,44 @@ STANDARD_LANES = (
     "finance",
     "personal_admin",
     "learning",
+)
+
+AUTO_DEV_CHILD_POLICY_PLANES = (
+    "dev_standards",
+    "qa_gates",
+    "gitflow_topology",
+    "environment_access",
+)
+
+AUTO_DEV_POLICY_COMPATIBILITY_BREADCRUMB = """<!-- generated-by: agentic-os auto-dev-policy-migration -->
+# Auto-Dev policy compatibility breadcrumb
+
+The active policy files moved beneath `auto_dev/`. This managed file exists
+only so an interrupted compatibility migration can safely recognize and remove
+the obsolete sibling directory.
+"""
+
+_MANAGED_LEGACY_AUTO_DEV_READMES = (
+    """# Development Standards Policy Plane
+
+Every development, own-PR finalization, and others'-PR review run loads every
+Markdown file in this folder, followed by the routed domain and project
+folders. Files are ordered lexicographically within each folder. Later scopes
+may add precision; the strictest safety and quality requirement still wins.
+
+Conventional folders:
+
+```text
+harness/shared_factory/05-knowledge/dev_standards/
+domains/<domain>/05-knowledge/dev_standards/
+domains/<domain>/02-projects/<project>/config/dev_standards/
+```
+
+Projects may replace the ordered folder list through
+`config/development.yml policies.dev_standards.paths`. Adding a Markdown file
+changes the next run without a code or registry edit. `README.md` is explanatory
+and is not loaded as policy.
+""",
 )
 
 MANAGED_RUNTIME_FILES = (
@@ -210,16 +249,16 @@ MANAGED_RESOURCE_TREES = (
         "harness/shared_factory/05-knowledge/auto_dev",
     ),
     (
-        "harness/shared_factory/05-knowledge/environment_access",
-        "harness/shared_factory/05-knowledge/environment_access",
-    ),
-    (
         "harness/shared_factory/03-workflows/engineering/os_cleanup",
         "harness/shared_factory/03-workflows/engineering/os_cleanup",
     ),
     (
         "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
         "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
+    ),
+    (
+        "harness/shared_factory/04-workflows/auto_dev/library_self_hosting",
+        "lib/workflows/root/library_self_hosting",
     ),
     (
         "harness/skills/auto-dev",
@@ -320,6 +359,10 @@ MANAGED_RESOURCE_TREES = (
     (
         "harness/skills/pull-request",
         "lib/skills/root/pull-request",
+    ),
+    (
+        "harness/skills/object-library",
+        "lib/skills/root/object-library",
     ),
 )
 
@@ -646,6 +689,84 @@ def ensure_dir(path: Path, result: ScaffoldResult) -> None:
         return
     path.mkdir(parents=True, exist_ok=True)
     result.created.append(path)
+
+
+def _is_managed_auto_dev_compatibility_readme(path: Path) -> bool:
+    """Return whether ``path`` is an exact package-owned migration README."""
+
+    if path.is_symlink() or not path.is_file():
+        return False
+    content = path.read_bytes()
+    managed = (
+        AUTO_DEV_POLICY_COMPATIBILITY_BREADCRUMB,
+        *_MANAGED_LEGACY_AUTO_DEV_READMES,
+    )
+    return any(content == item.encode("utf-8") for item in managed)
+
+
+def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) -> None:
+    """Move legacy sibling policy folders beneath the single Auto-Dev parent.
+
+    The move is additive and conflict-safe. Identical files and explicitly
+    managed compatibility READMEs collapse to one canonical copy. Any other
+    collision stops the scaffold instead of silently choosing one.
+    """
+
+    operations: list[tuple[str, Path, Path]] = []
+    legacy_roots: list[Path] = []
+    auto_dev = parent / "auto_dev"
+    for plane in AUTO_DEV_CHILD_POLICY_PLANES:
+        legacy = parent / plane
+        if not legacy.is_dir():
+            continue
+        legacy_roots.append(legacy)
+        canonical = auto_dev / plane
+        files = sorted(
+            (path for path in legacy.rglob("*") if path.is_file() or path.is_symlink()),
+            key=lambda path: path.relative_to(legacy).as_posix(),
+        )
+        for source in files:
+            destination = canonical / source.relative_to(legacy)
+            if destination.exists() or destination.is_symlink():
+                if (
+                    source.is_file()
+                    and destination.is_file()
+                    and not source.is_symlink()
+                    and not destination.is_symlink()
+                    and source.read_bytes() == destination.read_bytes()
+                ):
+                    operations.append(("collapse", source, destination))
+                    continue
+                if (
+                    source.name.casefold() == "readme.md"
+                    and _is_managed_auto_dev_compatibility_readme(source)
+                ):
+                    operations.append(("collapse", source, destination))
+                    continue
+                raise ValueError(
+                    "Auto-Dev policy migration conflict: "
+                    f"{source} and {destination} contain different content"
+                )
+            operations.append(("move", source, destination))
+
+    # Preflight every collision before mutating any plane.
+    for action, source, destination in operations:
+        if action == "collapse":
+            source.unlink()
+            result.skipped.append(destination)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        result.updated.append(destination)
+
+    for legacy in legacy_roots:
+        for directory in sorted(
+            (path for path in legacy.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        ):
+            directory.rmdir()
+        legacy.rmdir()
 
 
 def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
@@ -1077,6 +1198,36 @@ def ensure_managed_resource_surfaces(root: Path, result: ScaffoldResult) -> None
         source_path = source_relative_path(source)
         if source_path.is_dir():
             result.extend(copy_tree(source_path, root / destination))
+    ensure_object_library_command_projection(root, result)
+
+
+def ensure_object_library_command_projection(root: Path, result: ScaffoldResult) -> None:
+    """Project the Python-registered library command into object discovery."""
+
+    command = next(entry for entry in command_entries() if entry["id"] == "object-library")
+    target = root / "lib" / "commands" / "root" / "object-library"
+    copy_file(source_relative_path(command["source"]), target / "command.md", result)
+    manifest = {
+        "api_version": "agentic-os-library-object/v1",
+        "kind": "command",
+        "id": "object-library",
+        "title": "Object Library",
+        "description": command["description"],
+        "status": "active",
+        "scope": {"level": "root", "domain": None, "project": None},
+        "owner": {"type": "package", "id": "genomes_agentic_os"},
+        "entrypoint": "command.md",
+        "tags": ["command", "object-library", "auto-dev"],
+        "dependencies": [],
+        "aliases": [command["source"]],
+        "runtime": {"root": "runtime/objects/commands/command/root/object-library"},
+        "validation": {"commands": ["agentic-os library --help"]},
+    }
+    write_file_once(
+        target / "object.yml",
+        yaml.safe_dump(manifest, sort_keys=False),
+        result,
+    )
 
 
 def ensure_auto_dev_program_alias(root: Path, result: ScaffoldResult) -> None:
@@ -2463,6 +2614,7 @@ def create_domain_structure(
 
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
+    migrate_auto_dev_policy_directories(domain_root / "05-knowledge", result)
 
     write_file_once(domain_root / "00-programs" / "README.md", programs_readme(domain), result)
 
@@ -2501,19 +2653,25 @@ Verify the effective root -> domain -> project selection with
 """,
         result,
     )
-    write_file_once(
-        domain_root / "05-knowledge" / "environment_access" / "README.md",
-        f"""# Environment access: {titleize_name(domain)}
+    plane_guidance = {
+        "dev_standards": "coding, architecture, security, review, and documentation expectations",
+        "qa_gates": "test layers, acceptance evidence, regression gates, and QA handoff",
+        "gitflow_topology": "branch, worktree, pull-request, merge, and release topology",
+        "environment_access": "host ownership, VPN, identity, cloud/runtime access, mutation boundaries, and recovery",
+    }
+    for plane, guidance in plane_guidance.items():
+        write_file_once(
+            domain_root / "05-knowledge" / "auto_dev" / plane / "README.md",
+            f"""# {plane.replace("_", " ").title()}: {titleize_name(domain)}
 
-Document the domain's host ownership, VPN and identity preflight, cloud/runtime
-routes, mutation approval, recovery, and resume behavior in numbered Markdown
-addenda. Reference registered programs for exact commands and never store
+This is the domain layer for {guidance}. Add numbered, plain-English Markdown
+only when this domain differs from the shared Auto-Dev contract. Never store
 credentials, tokens, private keys, kubeconfig content, or customer data here.
 
-Verify selection with `agentic-os develop policy {domain} <project> --plane environment_access --root <os-root> --json`.
+Verify selection with `agentic-os develop policy {domain} <project> --plane {plane} --root <os-root> --json`.
 """,
-        result,
-    )
+            result,
+        )
 
     for lane in STANDARD_LANES:
         ensure_dir(domain_root / "03-workflows" / lane, result)
@@ -2648,6 +2806,10 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         )
     )
     ensure_managed_resource_surfaces(os_root, result)
+    migrate_auto_dev_policy_directories(
+        shared_factory_path(os_root, "05-knowledge"),
+        result,
+    )
     # The package-owned Auto-Dev program is installed into the canonical
     # object library above. Initialize and refresh that library here so every
     # bootstrap path (init, domain/project creation, profile install, docs
@@ -3129,23 +3291,23 @@ def project_config_file_content(
                 "policies": {
                     "dev_standards": {
                         "paths": [
-                            "harness/shared_factory/05-knowledge/dev_standards",
-                            f"domains/{domain}/05-knowledge/dev_standards",
-                            "config/dev_standards",
+                            "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
+                            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+                            "config/auto_dev/dev_standards",
                         ]
                     },
                     "qa_gates": {
                         "paths": [
-                            "harness/shared_factory/05-knowledge/qa_gates",
-                            f"domains/{domain}/05-knowledge/qa_gates",
-                            "config/qa_gates",
+                            "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
+                            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+                            "config/auto_dev/qa_gates",
                         ]
                     },
                     "gitflow_topology": {
                         "paths": [
-                            "harness/shared_factory/05-knowledge/gitflow_topology",
-                            f"domains/{domain}/05-knowledge/gitflow_topology",
-                            "config/gitflow_topology",
+                            "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
+                            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+                            "config/auto_dev/gitflow_topology",
                         ]
                     },
                     "auto_dev": {
@@ -3157,9 +3319,9 @@ def project_config_file_content(
                     },
                     "environment_access": {
                         "paths": [
-                            "harness/shared_factory/05-knowledge/environment_access",
-                            f"domains/{domain}/05-knowledge/environment_access",
-                            "config/environment_access",
+                            "harness/shared_factory/05-knowledge/auto_dev/environment_access",
+                            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+                            "config/auto_dev/environment_access",
                         ]
                     },
                 },
@@ -3396,19 +3558,19 @@ def ensure_project_code_settings_defaults(
         raise ValueError(f"project code setting policies must be a mapping: {path}")
     conventional_policy_paths = {
         "dev_standards": [
-            "harness/shared_factory/05-knowledge/dev_standards",
-            f"domains/{domain}/05-knowledge/dev_standards",
-            "config/dev_standards",
+            "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
+            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+            "config/auto_dev/dev_standards",
         ],
         "qa_gates": [
-            "harness/shared_factory/05-knowledge/qa_gates",
-            f"domains/{domain}/05-knowledge/qa_gates",
-            "config/qa_gates",
+            "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
+            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+            "config/auto_dev/qa_gates",
         ],
         "gitflow_topology": [
-            "harness/shared_factory/05-knowledge/gitflow_topology",
-            f"domains/{domain}/05-knowledge/gitflow_topology",
-            "config/gitflow_topology",
+            "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
+            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+            "config/auto_dev/gitflow_topology",
         ],
         "auto_dev": [
             "harness/shared_factory/05-knowledge/auto_dev",
@@ -3416,14 +3578,29 @@ def ensure_project_code_settings_defaults(
             "config/auto_dev",
         ],
         "environment_access": [
-            "harness/shared_factory/05-knowledge/environment_access",
-            f"domains/{domain}/05-knowledge/environment_access",
-            "config/environment_access",
+            "harness/shared_factory/05-knowledge/auto_dev/environment_access",
+            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+            "config/auto_dev/environment_access",
         ],
     }
+    legacy_policy_paths = {
+        plane: [
+            path.replace("/auto_dev", "")
+            for path in paths
+        ]
+        for plane, paths in conventional_policy_paths.items()
+        if plane != "auto_dev"
+    }
     for plane, paths in conventional_policy_paths.items():
+        current = policies.get(plane)
         if plane not in policies:
             policies[plane] = {"paths": paths}
+            changed = True
+        elif (
+            isinstance(current, dict)
+            and current.get("paths") == legacy_policy_paths.get(plane)
+        ):
+            current["paths"] = paths
             changed = True
     if not changed:
         return
@@ -3742,6 +3919,7 @@ def ensure_project_operating_surface(
     worklogs_dir = worklogs_dir_name(project_root)
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
+    migrate_auto_dev_policy_directories(project_root / "config", result)
     write_file_once(
         project_root / "config" / "auto_dev" / "README.md",
         f"""# Auto-Dev: {project}
@@ -3758,19 +3936,24 @@ selection with `agentic-os develop policy {domain} {project} --plane auto_dev
 """,
         result,
     )
-    write_file_once(
-        project_root / "config" / "environment_access" / "README.md",
-        f"""# Environment access: {project}
+    plane_guidance = {
+        "dev_standards": "repository-specific coding, architecture, security, review, and documentation expectations",
+        "qa_gates": "repository-specific tests, acceptance evidence, regression gates, and QA handoff",
+        "gitflow_topology": "repository-specific branch, worktree, pull-request, merge, and release topology",
+        "environment_access": "verified local runtime, item-owned resources, hosts, VPN, cloud access, readback, cleanup, and recovery",
+    }
+    for plane, guidance in plane_guidance.items():
+        write_file_once(
+            project_root / "config" / "auto_dev" / plane / "README.md",
+            f"""# {plane.replace("_", " ").title()}: {project}
 
-Add numbered Markdown files for the verified local runtime, item-owned resource
-identity, routed host owners, upper-environment entry points, safe preflight,
-mutation boundary, readback, cleanup, and recovery. Never store credentials or
-customer data.
+Add numbered, plain-English Markdown for {guidance}. Never store credentials or
+customer data here.
 
-Verify selection with `agentic-os develop policy {domain} {project} --plane environment_access --root <os-root> --json`.
+Verify selection with `agentic-os develop policy {domain} {project} --plane {plane} --root <os-root> --json`.
 """,
-        result,
-    )
+            result,
+        )
     ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)

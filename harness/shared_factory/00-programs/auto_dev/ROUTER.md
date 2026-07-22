@@ -20,6 +20,7 @@
 | Deploy and validate the exact artifact | Deploy | `/auto-dev-deploy` |
 | Reconcile provider/delivery state and prove delivery complete | Closeout | `/auto-dev-closeout` |
 | Audit and clean a completed item, then preserve it in the finished lane | Health | `/auto-dev-health` |
+| Change, publish, install, or reconcile reusable Object Library definitions | Object Library Self-Hosting profile | `$object-library` and `agentic-os library` |
 
 Route first to the target domain/project. Domain evidence and policy adapters
 extend the shared workflow; they do not fork it.

@@ -3,7 +3,7 @@ kind: skill
 id: gitflow-pr-create
 title: GitFlow PR Create
 description: Compatibility alias for Auto-Dev PR Create family mode.
-status: deprecated
+status: active
 scope: {level: root, domain: null, project: null}
 owner: {type: package, id: genomes_agentic_os}
 entrypoint: SKILL.md

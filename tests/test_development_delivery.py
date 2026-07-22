@@ -644,7 +644,7 @@ def test_multi_repository_profile_requires_and_receipts_explicit_selection(
     repo, _ = _repository(tmp_path)
     root = tmp_path / "os"
     project = _project(root, repo)
-    selected_policy = project / "config/dev_standards-user-web/10_USER_WEB.md"
+    selected_policy = project / "config/auto_dev/dev_standards-user-web/10_USER_WEB.md"
     selected_policy.parent.mkdir(parents=True, exist_ok=True)
     selected_policy.write_text("# User Web\n\nUse the selected web repository policy.\n", encoding="utf-8")
     path = project / "config/development.yml"
@@ -660,7 +660,7 @@ def test_multi_repository_profile_requires_and_receipts_explicit_selection(
                 "profile_overrides": {
                     "validation": {"commands": ["npm test"]},
                     "policies": {
-                        "dev_standards": {"paths": ["config/dev_standards-user-web"]}
+                        "dev_standards": {"paths": ["config/auto_dev/dev_standards-user-web"]}
                     },
                 },
             },
@@ -714,7 +714,7 @@ def test_multi_repository_profile_requires_and_receipts_explicit_selection(
     user_web_plan = json.loads(capsys.readouterr().out)
     assert user_web_plan["repository"]["id"] == "user_web"
     assert user_web_plan["policy_sources"]["dev_standards"] == [
-        "domains/acme/02-projects/app/config/dev_standards-user-web/10_USER_WEB.md"
+        "domains/acme/02-projects/app/config/auto_dev/dev_standards-user-web/10_USER_WEB.md"
     ]
 
 

@@ -126,6 +126,30 @@ worktree and runtime registration. It is idempotent by run id. Never use
 `agentic-os work set` to make the finished packet active, and never reuse its
 retired runtime/worktree.
 
+## Object Library self-hosting
+
+Use `$object-library` and the `library_self_hosting` workflow for reusable
+definition changes. Author in `michaelwclark/genomes_agentic_lib`, not in
+installed `<root>/lib/`. Develop builds the candidate archive; QA validates
+that exact archive; Release publishes it; Deploy installs the immutable tag or
+commit and reads it back; Document is rerun after release/deploy to record the
+actual version and receipts.
+
+Deploy is dry-run-first:
+
+```bash
+agentic-os library install --root <root> --ref <tag-or-commit>
+agentic-os library install --root <root> --ref <tag-or-commit> --apply
+agentic-os library verify-install --root <root>
+agentic-os library doctor --root <root>
+agentic-os library rollback-install --root <root>
+agentic-os library rollback-install --root <root> --apply
+```
+
+Linked library worktrees or uncaptured installed edits block replacement.
+Preserve/re-home them and repeat the same Deploy run; do not use an installed
+edit, moving branch, or local archive as a substitute for the verified release.
+
 ## Health checks
 
 ```bash
@@ -133,6 +157,7 @@ agentic-os detective doctor --root <root>
 agentic-os artifacts doctor --root <root>
 agentic-os develop policy <domain> <project> --plane dev_standards --root <root> --json
 agentic-os develop policy <domain> <project> --plane qa_gates --root <root> --json
+agentic-os develop policy <domain> <project> --plane gitflow_topology --root <root> --json
 agentic-os develop policy <domain> <project> --plane auto_dev --root <root> --json
 agentic-os develop policy <domain> <project> --plane environment_access --root <root> --json
 agentic-os auto-dev status <work-item>

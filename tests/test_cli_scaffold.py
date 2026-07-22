@@ -106,16 +106,18 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "04-automations" / "operations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations").is_dir()
         assert (domain_root / "05-knowledge" / "auto_dev" / "README.md").is_file()
-        assert (domain_root / "05-knowledge" / "environment_access" / "README.md").is_file()
+        assert (
+            domain_root / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+        ).is_file()
         domain_auto_dev_readme = (
             domain_root / "05-knowledge" / "auto_dev" / "README.md"
         ).read_text(encoding="utf-8")
         assert "Do not leave the domain" in domain_auto_dev_readme
         assert "--plane auto_dev" in domain_auto_dev_readme
         domain_environment_readme = (
-            domain_root / "05-knowledge" / "environment_access" / "README.md"
+            domain_root / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
         ).read_text(encoding="utf-8")
-        assert "mutation approval" in domain_environment_readme
+        assert "cloud/runtime access" in domain_environment_readme
         assert "--plane environment_access" in domain_environment_readme
         assert (domain_root / "06-runs-and-logs" / "runs").is_dir()
         assert (domain_root / "06-runs-and-logs" / "runs" / "README.md").is_file()
@@ -244,6 +246,10 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         "/orchestrate",
         "agentic-os project worktree cleanup-closed",
     }
+    object_library_command = next(
+        entry for entry in commands["commands"] if entry["id"] == "object-library"
+    )
+    assert "disposable projection" in object_library_command["description"]
     skills = yaml.safe_load((harness(root) / "registries" / "skills.yml").read_text(encoding="utf-8"))
     assert "os-cleaner" in {entry["id"] for entry in skills["skills"]}
     assert "spec-groomer" in {entry["id"] for entry in skills["skills"]}
@@ -567,6 +573,32 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
     library_registry = json.loads((root / "lib/registry/objects.json").read_text(encoding="utf-8"))
     object_ids = {item["object_id"] for item in library_registry["objects"]}
     assert {f"skill:root:{skill_id}" for skill_id in expected_skill_ids} <= object_ids
+    assert "command:root:object-library" in object_ids
+    assert "skill:root:object-library" in object_ids
+    assert "workflow:root:library_self_hosting" in object_ids
+    object_library_command = next(
+        item
+        for item in library_registry["objects"]
+        if item["object_id"] == "command:root:object-library"
+    )
+    assert "harness/commands/os-library.md" in object_library_command["aliases"]
+    object_library = next(
+        item
+        for item in library_registry["objects"]
+        if item["object_id"] == "skill:root:object-library"
+    )
+    assert "harness/skills/object-library/SKILL.md" in object_library["aliases"]
+    for object_id in (
+        "command:root:object-library",
+        "skill:root:object-library",
+        "workflow:root:library_self_hosting",
+    ):
+        item = next(
+            candidate
+            for candidate in library_registry["objects"]
+            if candidate["object_id"] == object_id
+        )
+        assert set(item["dependencies"]) <= object_ids
     program = next(
         item for item in library_registry["objects"] if item["object_id"] == "program:root:auto-dev"
     )
@@ -1947,7 +1979,9 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
     assert (created_domain / "03-workflows" / "engineering").is_dir()
     assert (created_domain / "04-automations" / "support").is_dir()
     assert (created_domain / "05-knowledge" / "auto_dev" / "README.md").is_file()
-    assert (created_domain / "05-knowledge" / "environment_access" / "README.md").is_file()
+    assert (
+        created_domain / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+    ).is_file()
     assert "Do not leave the domain" in (
         created_domain / "05-knowledge" / "auto_dev" / "README.md"
     ).read_text(encoding="utf-8")
@@ -2162,9 +2196,9 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert "Do not call the project configured" in project_auto_dev_readme
     assert "--plane auto_dev" in project_auto_dev_readme
     project_environment_readme = (
-        project_root / "config" / "environment_access" / "README.md"
+        project_root / "config" / "auto_dev" / "environment_access" / "README.md"
     ).read_text(encoding="utf-8")
-    assert "item-owned resource" in project_environment_readme
+    assert "item-owned resources" in project_environment_readme
     assert "--plane environment_access" in project_environment_readme
     assert not (project_root / "SPECS").exists()
     assert (project_root / "worklogs" / "README.md").is_file()
@@ -2184,7 +2218,7 @@ def test_project_create_creates_project_state_and_indexes(tmp_path: Path) -> Non
     assert development["worktrees"]["date_prefix"] == "inherit"
     assert development["merge"]["policy"] == "never_auto"
     assert development["policies"]["auto_dev"]["paths"][-1] == "config/auto_dev"
-    assert development["policies"]["environment_access"]["paths"][-1] == "config/environment_access"
+    assert development["policies"]["environment_access"]["paths"][-1] == "config/auto_dev/environment_access"
     assert (project_root / "config.toml").is_file()
     assert (project_root / "AGENTS.md").is_file()
     assert (project_root / "src").is_symlink()
@@ -2330,11 +2364,43 @@ def test_project_onboard_repairs_project_config_ideas_and_worktrees(tmp_path: Pa
     assert repaired_development["worktrees"]["date_prefix"] == "inherit"
     assert repaired_development["repository"]["root"] == str(repo.resolve())
     assert repaired_development["policies"]["auto_dev"]["paths"][-1] == "config/auto_dev"
-    assert repaired_development["policies"]["environment_access"]["paths"][-1] == "config/environment_access"
+    assert repaired_development["policies"]["environment_access"]["paths"][-1] == "config/auto_dev/environment_access"
     assert (project_root / "ideas" / "raw-ideas.md").is_file()
     assert (project_root / "worktrees" / ".metadata_never_index").is_file()
     assert (project_root / "worktrees" / "index.yml").is_file()
     assert validate_root(root).ok
+
+
+def test_project_onboard_normalizes_exact_legacy_policy_paths_and_preserves_custom_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["project", "create", "los", "policy_project", "--root", str(root)]) == 0
+    project_root = root / "domains" / "los" / "02-projects" / "policy_project"
+    development_path = project_root / "config" / "development.yml"
+    development = yaml.safe_load(development_path.read_text(encoding="utf-8"))
+    development["policies"]["dev_standards"]["paths"] = [
+        "harness/shared_factory/05-knowledge/dev_standards",
+        "domains/los/05-knowledge/dev_standards",
+        "config/dev_standards",
+    ]
+    development["policies"]["qa_gates"]["paths"] = ["config/team-specific-qa"]
+    development_path.write_text(
+        yaml.safe_dump(development, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    assert main(["project", "onboard", "los", "policy_project", "--root", str(root)]) == 0
+
+    repaired = yaml.safe_load(development_path.read_text(encoding="utf-8"))
+    assert repaired["policies"]["dev_standards"]["paths"] == [
+        "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
+        "domains/los/05-knowledge/auto_dev/dev_standards",
+        "config/auto_dev/dev_standards",
+    ]
+    assert repaired["policies"]["qa_gates"]["paths"] == [
+        "config/team-specific-qa"
+    ]
 
 
 def test_project_worktree_add_registers_visible_link_and_routes_from_target(tmp_path: Path) -> None:

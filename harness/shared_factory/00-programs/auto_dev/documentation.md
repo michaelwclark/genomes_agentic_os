@@ -21,6 +21,7 @@ Auto Dev
 │   ├── Development, QA, and Gitflow
 │   ├── Investigation Sources
 │   └── Artifact Contracts
+├── Object Library Self-Hosting
 ├── Receipts and Observability
 ├── Archive Soon
 ├── Create Artifacts
@@ -37,10 +38,10 @@ Auto Dev
 ├── Readiness and Context
 ├── Develop
 ├── Document
+├── PR Create
 ├── Review Self
 ├── Review Others
 ├── QA
-├── Release Propagation
 ├── Finalize
 ├── Merge
 ├── Release
@@ -49,12 +50,17 @@ Auto Dev
 └── Health
 ```
 
-That child-page sequence is the canonical executable order: Groom, Detective,
-Create Artifacts, Readiness, Develop, Document, Review Self, Review Others, QA,
-Release Propagation, Finalize, Merge, Release, Deploy, Closeout, Health.
+The stage child-page sequence is the canonical executable order: Groom,
+Detective, Create Artifacts, Readiness, Develop, Document, PR Create, Review
+Self, Review Others, QA, Finalize, Merge, Release, Deploy, Closeout, Health.
 Everything explains the orchestration across those pages; it is not a
 seventeenth stage. Single-stage commands use the same order and predecessor
 receipts.
+
+Object Library Self-Hosting is also a profile, not a stage. It must show the
+canonical source repository versus installed projection boundary and map build
+to Develop, exact-artifact validation to QA, publication to Release,
+installation/readback to Deploy, and post-release truth to a Document rerun.
 
 Each workflow page is manually runnable and must include: intended outcome;
 implicit and explicit triggers; inputs and prerequisites; ordered states/steps;

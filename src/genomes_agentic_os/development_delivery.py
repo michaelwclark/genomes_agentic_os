@@ -45,7 +45,13 @@ from .lifecycle import (
     next_work_item_index,
     worktree_entries_for_project,
 )
-from .policy_plane import PolicyLayer, PolicyPlaneError, public_policy_plane, resolve_markdown_plane
+from .policy_plane import (
+    PolicyLayer,
+    PolicyPlaneError,
+    markdown_files,
+    public_policy_plane,
+    resolve_markdown_plane,
+)
 from .scaffold import (
     domain_path,
     expand_path,
@@ -119,6 +125,19 @@ DEVELOPMENT_POLICY_PLANES = (
     "auto_dev",
     "environment_access",
 )
+
+# Auto-Dev owns one visible configuration tree.  The workflow policy remains
+# at the tree root while the other four independent planes live beneath it.
+# Keeping these as distinct resolver roots avoids loading the same Markdown
+# into more than one effective policy fingerprint.
+AUTO_DEV_POLICY_SUBDIRECTORY = {
+    "auto_dev": "",
+    "dev_standards": "dev_standards",
+    "qa_gates": "qa_gates",
+    "gitflow_topology": "gitflow_topology",
+    "environment_access": "environment_access",
+}
+AUTO_DEV_FOLDER_PROFILE_VERSION = "auto-dev-folder/v1"
 DEVELOPMENT_STAGE_RANGES = {
     "readiness": ("worktree_ready", "planned"),
     "implementation": ("planned", "local_validation"),
@@ -713,25 +732,87 @@ def resolve_development_policy(
         paths = profile[plane].get("paths")
     if paths is not None and not isinstance(paths, list):
         raise DevelopmentDeliveryError(f"policies.{plane}.paths must be a list")
+
+    subdirectory = AUTO_DEV_POLICY_SUBDIRECTORY[plane]
+    canonical_suffix = Path("auto_dev") / subdirectory if subdirectory else Path("auto_dev")
+    legacy_suffix = Path(plane)
+    reserved_children = tuple(
+        name for name in DEVELOPMENT_POLICY_PLANES if name != "auto_dev"
+    )
+
+    def has_active_markdown(path: Path) -> bool:
+        return bool(
+            markdown_files(
+                path,
+                excluded_subdirectories=(
+                    reserved_children if plane == "auto_dev" else ()
+                ),
+            )
+        )
+
+    def conventional_root(parent: Path) -> Path:
+        canonical = parent / canonical_suffix
+        legacy = parent / legacy_suffix
+        # Existing installations can still be read before they are migrated.
+        # A README-only canonical scaffold must not hide substantive legacy
+        # policy, and the two roots are never merged.
+        if has_active_markdown(canonical):
+            return canonical
+        if has_active_markdown(legacy):
+            return legacy
+        return canonical if canonical.is_dir() or not legacy.is_dir() else legacy
+
+    conventional_parents = (
+        os_root / "harness" / "shared_factory" / "05-knowledge",
+        domain_root / "05-knowledge",
+        project_path / "config",
+    )
+
+    def configured_root(raw: str) -> Path:
+        selected = _policy_path(
+            raw,
+            os_root=os_root,
+            domain_root=domain_root,
+            project_path=project_path,
+        )
+        for parent in conventional_parents:
+            if selected == (parent / legacy_suffix).resolve():
+                return conventional_root(parent)
+        return selected
+
     if paths:
         layers = [
             PolicyLayer(
                 scope=f"configured_{index:02d}",
-                root=_policy_path(
-                    str(raw), os_root=os_root, domain_root=domain_root, project_path=project_path
-                ),
+                root=configured_root(str(raw)),
                 rank=index,
             )
             for index, raw in enumerate(paths)
         ]
     else:
         layers = [
-            PolicyLayer("root", os_root / "harness" / "shared_factory" / "05-knowledge" / plane, 0),
-            PolicyLayer("domain", domain_root / "05-knowledge" / plane, 1),
-            PolicyLayer("project", project_path / "config" / plane, 2),
+            PolicyLayer(
+                "root",
+                conventional_root(conventional_parents[0]),
+                0,
+            ),
+            PolicyLayer("domain", conventional_root(conventional_parents[1]), 1),
+            PolicyLayer("project", conventional_root(conventional_parents[2]), 2),
         ]
     try:
-        result = resolve_markdown_plane(os_root, layers, explicit_files=explicit_files)
+        result = resolve_markdown_plane(
+            os_root,
+            layers,
+            explicit_files=explicit_files,
+            # The Auto-Dev parent also contains the four sibling policy
+            # planes. Preserve recursive workflow addenda while excluding
+            # those independently fingerprinted child roots.
+            excluded_subdirectories=(
+                reserved_children
+                if plane == "auto_dev"
+                else ()
+            ),
+        )
     except PolicyPlaneError as exc:
         raise DevelopmentDeliveryError(str(exc)) from exc
     public = public_policy_plane(result, include_body=include_body)
@@ -747,6 +828,113 @@ def resolve_development_policy(
     return public
 
 
+def resolve_auto_dev_folder_profile(
+    profile: Mapping[str, Any],
+    *,
+    domain: str,
+    project: str,
+) -> dict[str, Any]:
+    """Load the portable repository-level Auto-Dev overlay when it exists."""
+
+    repository = (
+        profile.get("repository")
+        if isinstance(profile.get("repository"), Mapping)
+        else {}
+    )
+    raw_root = repository.get("root")
+    if not raw_root:
+        return {"status": "not_configured"}
+    repo_root = Path(str(raw_root)).expanduser().resolve()
+    source = (repo_root / "auto_dev" / "profile.yml").resolve()
+    try:
+        source.relative_to(repo_root)
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(
+            "repository Auto-Dev profile escapes the repository root"
+        ) from exc
+    if not source.is_file():
+        return {"status": "not_configured"}
+    if source.stat().st_size > 256_000:
+        raise DevelopmentDeliveryError("repository Auto-Dev profile is too large")
+    raw = source.read_bytes()
+    try:
+        value = yaml.safe_load(raw.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml is invalid YAML"
+        ) from exc
+    if not isinstance(value, Mapping):
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml must be a mapping"
+        )
+    if value.get("api_version") != AUTO_DEV_FOLDER_PROFILE_VERSION:
+        raise DevelopmentDeliveryError(
+            f"repository auto_dev/profile.yml api_version must be {AUTO_DEV_FOLDER_PROFILE_VERSION}"
+        )
+    identity = value.get("identity")
+    lifecycle = value.get("lifecycle")
+    if not isinstance(identity, Mapping):
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml identity must be a mapping"
+        )
+    expected_domain = normalize_domain(domain)
+    expected_project = validate_name(project, "project")
+    raw_identity_domain = identity.get("domain")
+    raw_identity_project = identity.get("project")
+    if not isinstance(raw_identity_domain, str) or not raw_identity_domain.strip():
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml identity.domain is required"
+        )
+    if not isinstance(raw_identity_project, str) or not raw_identity_project.strip():
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml identity.project is required"
+        )
+    try:
+        identity_domain = normalize_domain(raw_identity_domain)
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(
+            f"repository auto_dev/profile.yml identity.domain is invalid: {exc}"
+        ) from exc
+    try:
+        identity_project = validate_name(
+            raw_identity_project,
+            "repository auto_dev/profile.yml identity.project",
+        )
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(str(exc)) from exc
+    if identity_domain != expected_domain:
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml identity.domain does not match "
+            f"requested domain {expected_domain!r}: {identity_domain!r}"
+        )
+    if identity_project != expected_project:
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml identity.project does not match "
+            f"requested project {expected_project!r}: {identity_project!r}"
+        )
+    if not isinstance(lifecycle, Mapping):
+        raise DevelopmentDeliveryError(
+            "repository auto_dev/profile.yml lifecycle must be a mapping"
+        )
+    for stage in ("build", "validate", "release", "document"):
+        if not isinstance(lifecycle.get(stage), Mapping):
+            raise DevelopmentDeliveryError(
+                f"repository auto_dev/profile.yml lifecycle.{stage} must be a mapping"
+            )
+    validated_identity = deepcopy(dict(identity))
+    validated_identity.update(
+        {"domain": identity_domain, "project": identity_project}
+    )
+    return {
+        "status": "loaded",
+        "schema": AUTO_DEV_FOLDER_PROFILE_VERSION,
+        "source_ref": "auto_dev/profile.yml",
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "identity": validated_identity,
+        "lifecycle": deepcopy(dict(lifecycle)),
+    }
+
+
 def resolve_development_policies(
     root: str | Path,
     domain: str,
@@ -759,6 +947,15 @@ def resolve_development_policies(
 ) -> dict[str, Any]:
     """Resolve every development policy plane consumed by an SDLC run."""
 
+    if selected_profile is None:
+        effective_profile, effective_source = load_development_policy_profile(
+            root,
+            domain,
+            project,
+        )
+    else:
+        effective_profile = deepcopy(dict(selected_profile))
+        effective_source = profile_source
     planes = {
         plane: resolve_development_policy(
             root,
@@ -766,15 +963,23 @@ def resolve_development_policies(
             project,
             plane,
             explicit_files=(explicit_files or {}).get(plane, ()),
-            selected_profile=selected_profile,
-            profile_source=profile_source,
+            selected_profile=effective_profile,
+            profile_source=effective_source,
             include_body=include_body,
         )
         for plane in DEVELOPMENT_POLICY_PLANES
     }
+    folder_profile = resolve_auto_dev_folder_profile(
+        effective_profile,
+        domain=domain,
+        project=project,
+    )
+    digest_values = {name: value["fingerprint"] for name, value in planes.items()}
+    if folder_profile["status"] == "loaded":
+        digest_values["folder_profile"] = folder_profile["sha256"]
     fingerprint = hashlib.sha256(
         json.dumps(
-            {name: value["fingerprint"] for name, value in planes.items()},
+            digest_values,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -785,6 +990,7 @@ def resolve_development_policies(
         "project": validate_name(project, "project"),
         "fingerprint": fingerprint,
         "planes": planes,
+        "folder_profile": folder_profile,
     }
 
 

@@ -1,0 +1,34 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: object-library
+title: Object Library
+description: >-
+  Route durable Object Library changes through the canonical source repository
+  and the existing Auto-Dev build, exact-artifact QA, release, install/readback,
+  and post-release documentation stages.
+status: active
+scope:
+  level: root
+  domain: null
+  project: null
+owner:
+  type: package
+  id: genomes_agentic_os
+entrypoint: SKILL.md
+tags: [skill, object-library, self-hosting, auto-dev]
+dependencies:
+  - command:root:object-library
+  - skill:root:auto-dev-develop
+  - skill:root:auto-dev-qa
+  - skill:root:auto-dev-release
+  - skill:root:auto-dev-deploy
+  - skill:root:auto-dev-document
+aliases:
+  - harness/skills/object-library/SKILL.md
+runtime:
+  root: runtime/objects/skills/skill/root/object-library
+validation:
+  commands:
+    - agentic-os library doctor --root <root>
+policy:
+  allow_implicit_invocation: true
