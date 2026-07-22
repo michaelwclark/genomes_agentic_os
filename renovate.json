@@ -10,5 +10,27 @@
     "renovate"
   ],
   "automerge": false,
-  "dependencyDashboard": true
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "react and react-dom pin exact cross-peers — split PRs each fail the gate (observed PRs #72/#73). Move the pair and its types together.",
+      "groupName": "react monorepo",
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom"
+      ]
+    },
+    {
+      "description": "typescript 7 (native port) restructures the package API — JsxEmit/ModuleKind/ScriptTarget/transpileModule no longer at the old entry (contract catch on PR #53). Paused until a TS7 migration work item lands (packet 072226-068).",
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    }
+  ]
 }
