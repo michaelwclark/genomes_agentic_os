@@ -33,6 +33,14 @@ Route Renovate or Dependabot dependency-update pull requests to
 and contract-suite gating come from the project's `dep_updater:` profile
 block; see `harness/shared_factory/04-workflows/auto-dev-project-profile.md`.
 
+## Auto-Dev Continuous Release
+
+Route an operator's own pull request toward a governed merge-and-release
+loop through `auto-dev-continuous-release` even when the user does not name
+it. Merge, release, and documentation authority come from the project's
+`continuous_release:` and `release:` profile blocks; see
+`harness/shared_factory/04-workflows/auto-dev-project-profile.md`.
+
 ## Notification Contract
 
 Use `/notify` or the `notification-operator` skill only for a bounded,
