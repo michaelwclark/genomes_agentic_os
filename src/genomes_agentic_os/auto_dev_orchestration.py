@@ -353,15 +353,14 @@ def _portable_packet_ref(ref: Any, work_item: Path) -> str:
 def _relink_moved_work_item(task_path: Path, state_path: Path, current: Mapping[str, Any]) -> bool:
     """Repair delivery pointers after the lifecycle command moves a packet.
 
-    Health is intentionally recorded *after* a packet reaches ``03-complete``.
-    The move is canonical filesystem state, so the delivery projection must be
-    taught the packet's new address before it can refresh ``autodev.json``.
-    Relinking is limited to the same packet name and the canonical finished
-    lane; it is not a general pointer-edit escape hatch.
+    Current packets remain at ``work-items/<item>`` while lifecycle state
+    changes.  Work Item Archive Health may later move a terminal packet to
+    ``work-items/99-archived/<item>``; older installs may instead have moved it
+    to ``work-items/03-complete/<item>``.  Those two bounded moves are the only
+    cases where the delivery projection may need its packet path repaired.
     """
     work_item = state_path.parent
-    parts = work_item.parts
-    if "work-items" not in parts or "03-complete" not in parts:
+    if _health_packet_location(work_item) not in {"archived", "legacy_finished"}:
         return False
     delivery = current.get("delivery") if isinstance(current.get("delivery"), Mapping) else {}
     old_raw = delivery.get("work_item") or None
@@ -756,13 +755,81 @@ def _health_local_receipt(work_item: Path, ref: Any, label: str) -> tuple[str, P
 
 
 def _health_os_root(work_item: Path, current: Mapping[str, Any]) -> Path:
-    domain = str(current.get("domain") or "")
-    project = str(current.get("project") or "")
-    project_root = work_item.parents[2]
-    for candidate in project_root.parents:
-        if (candidate / "domains" / domain / "02-projects" / project).resolve() == project_root:
-            return candidate
+    return _health_owner_roots(work_item, current)[0]
+
+
+def _health_owner_roots(
+    work_item: Path, current: Mapping[str, Any]
+) -> tuple[Path, Path]:
+    """Return the marked OS root and exact owning project ancestor.
+
+    Packet depth varies between the canonical single-root layout, the retained
+    archive, and legacy lifecycle lanes.  Derive ownership from ``.agentic_root``
+    and then prove that the state-declared project is an ancestor of the packet
+    in one of the supported domain layouts.
+    """
+
+    domain = str(current.get("domain") or "").strip()
+    project = str(current.get("project") or "").strip()
+    if (
+        not domain
+        or not project
+        or Path(domain).name != domain
+        or Path(project).name != project
+        or domain in {".", ".."}
+        or project in {".", ".."}
+    ):
+        raise AutoDevStateError(
+            "health cannot derive the owning Agentic OS root without a valid domain and project"
+        )
+
+    lineage = {work_item.resolve(), *(parent.resolve() for parent in work_item.parents)}
+    for candidate in (work_item, *work_item.parents):
+        if not (candidate / ".agentic_root").is_file():
+            continue
+        os_root = candidate.resolve()
+        project_candidates = [
+            os_root / "domains" / domain / "02-projects" / project,
+            os_root / domain / "02-projects" / project,
+        ]
+        if domain == "shared_factory":
+            project_candidates.append(
+                os_root / "harness" / "shared_factory" / "02-projects" / project
+            )
+        for project_root in project_candidates:
+            resolved_project = project_root.resolve()
+            if resolved_project in lineage:
+                return os_root, resolved_project
     raise AutoDevStateError("health cannot derive the owning Agentic OS root from the packet")
+
+
+def _health_project_root(work_item: Path, current: Mapping[str, Any]) -> Path:
+    return _health_owner_roots(work_item, current)[1]
+
+
+def _health_packet_location(work_item: Path) -> str | None:
+    """Classify one packet without treating lifecycle metadata as a directory."""
+
+    for work_items_root in work_item.parents:
+        if work_items_root.name != "work-items":
+            continue
+        try:
+            parts = work_item.relative_to(work_items_root).parts
+        except ValueError:
+            return None
+        if len(parts) == 1 and parts[0] not in {
+            "01-intake",
+            "02-active",
+            "03-complete",
+            "99-archived",
+        }:
+            return "canonical"
+        if len(parts) == 2 and parts[0] == "99-archived":
+            return "archived"
+        if len(parts) == 2 and parts[0] == "03-complete":
+            return "legacy_finished"
+        return None
+    return None
 
 
 def _resolve_health_receipt(
@@ -2219,7 +2286,7 @@ def prepare_auto_dev_health(
     if not task_ref:
         raise AutoDevStateError("health requires a linked Development Delivery task")
     task_path = Path(task_ref).expanduser().resolve()
-    if "03-complete" in work_item.parts:
+    if _health_packet_location(work_item) in {"archived", "legacy_finished"}:
         _relink_moved_work_item(task_path, state_path, current)
         refreshed = sync_delivery_projection(task_path)
         current = refreshed if isinstance(refreshed, Mapping) else read_auto_dev_state(state_path)
@@ -2622,15 +2689,15 @@ def _validate_health_evidence(
     terminal_revision = str(evidence.get("terminal_revision") or "").strip() or None
     if str(evidence.get("work_item_id") or "") != str(current.get("work_item_id") or ""):
         raise AutoDevStateError("health evidence work_item_id does not match autodev.json")
-    try:
-        work_items_offset = work_item.parts.index("work-items")
-    except ValueError as exc:
-        raise AutoDevStateError("health packet is outside a canonical work-items tree") from exc
-    if (
-        work_items_offset + 1 >= len(work_item.parts)
-        or work_item.parts[work_items_offset + 1] != "03-complete"
-    ):
-        raise AutoDevStateError("health must be recorded from work-items/03-complete")
+    if _health_packet_location(work_item) not in {
+        "canonical",
+        "archived",
+        "legacy_finished",
+    }:
+        raise AutoDevStateError(
+            "health must be recorded from work-items/<item>, "
+            "work-items/99-archived/<item>, or legacy work-items/03-complete/<item>"
+        )
     if (work_item / "REOPEN.md").exists():
         raise AutoDevStateError("health is blocked by the packet root REOPEN.md hold")
 
@@ -3054,7 +3121,7 @@ def _validate_health_evidence(
         raise AutoDevStateError("health work_state.after must be finished")
     if str(work_state.get("canonical_work_id")) != str(current.get("canonical_work_id") or ""):
         raise AutoDevStateError("health canonical_work_id does not match autodev.json")
-    packet_project_root = work_item.parents[2]
+    packet_project_root = _health_project_root(work_item, current)
 
     def resolved_packet_path(raw: Any) -> Path:
         candidate = Path(str(raw or "")).expanduser()

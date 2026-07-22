@@ -3342,6 +3342,11 @@ def project_config_file_content(
                         "archive": "work-items/99-archived",
                         "reopen_lookup_order": ["work-items", "work-items/99-archived"],
                     },
+                    "runtime": {
+                        "ownership": "not_managed",
+                        "provider": "none",
+                        "identity": "not-managed",
+                    },
                     "validation": {
                         "commands": [
                             "uv sync --extra dev",
@@ -3359,6 +3364,7 @@ def project_config_file_content(
                         },
                     },
                     "review": {
+                        "authorship": {"ours": ["github:configured_operator"]},
                         "opposing_harness": {
                             "required": False,
                             "preferred": "claude",
@@ -3378,7 +3384,7 @@ def project_config_file_content(
                         "target": "main",
                     },
                     "merge": {
-                        "policy": "auto_after_gates",
+                        "policy": "never_auto",
                         "method": "squash",
                         "required_approvals": 0,
                         "require_acceptance_evidence": True,

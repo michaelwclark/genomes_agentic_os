@@ -44,6 +44,8 @@ def test_local_project_work_items_survives_malformed_metadata(tmp_path: Path) ->
 
 def _cleanup_fixture(tmp_path: Path, entry_fields: dict[str, object]) -> tuple[Path, Path, Path]:
     root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
     project = root / "domains" / "acme" / "02-projects" / "app"
     (project / "config").mkdir(parents=True)
     (project / "project.yml").write_text("id: app\ndomain: acme\n", encoding="utf-8")

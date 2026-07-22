@@ -42,6 +42,7 @@ from .auto_dev_orchestration import (
 from .artifact_naming import dated_name, load_artifact_naming_policy
 from .lifecycle import (
     create_project_work_item,
+    lane_root as work_item_lane_root,
     next_work_item_index,
     worktree_entries_for_project,
 )
@@ -226,6 +227,26 @@ def _project_work_item_lane(packet: Path, project_path: Path) -> str | None:
     }:
         return "02-active"
     return relative.parts[0]
+
+
+def _project_work_item_is_finished(packet: Path, project_path: Path) -> bool:
+    """Recognize immutable history by bounded location or lifecycle metadata."""
+
+    if _project_work_item_lane(packet, project_path) in {
+        "03-complete",
+        "99-archived",
+    }:
+        return True
+    metadata = _read_mapping(packet / "work.yml")
+    states = {
+        str(metadata.get(key) or "").strip().lower()
+        for key in ("state", "status")
+        if metadata.get(key)
+    }
+    lifecycle = metadata.get("lifecycle")
+    if isinstance(lifecycle, Mapping) and lifecycle.get("state"):
+        states.add(str(lifecycle["state"]).strip().lower())
+    return bool(states & canonical_work_items.TERMINAL_STATES)
 
 
 def _compatibility_profile(project_data: Mapping[str, Any]) -> dict[str, Any]:
@@ -1480,11 +1501,9 @@ def _sync_canonical_development_work(
 ) -> dict[str, Any]:
     """Create or refresh the canonical state.db row for one delivery task."""
 
-    packet_lane = _project_work_item_lane(packet, project_root(root, domain, project))
-    if (
-        packet_lane in {"03-complete", "99-archived"}
-        and delivery_state != "delivery_complete"
-    ):
+    if _project_work_item_is_finished(
+        packet, project_root(root, domain, project)
+    ) and delivery_state != "delivery_complete":
         raise DevelopmentDeliveryError(
             "finished or archived Auto-Dev packets are immutable; use `agentic-os auto-dev reopen` "
             "to create a new active packet and delivery run"
@@ -1995,7 +2014,11 @@ def start_development_run(
                 else (expand_path(root) / packet_value).resolve()
             )
             packet_lane = _project_work_item_lane(packet, project_path)
-            if packet_lane == "03-complete":
+            if (
+                packet_lane in {"03-complete", "99-archived"}
+                or canonical_existing.get("state")
+                in canonical_work_items.TERMINAL_STATES
+            ):
                 raise DevelopmentDeliveryError(
                     f"{ticket} points to an immutable finished packet; use "
                     "`agentic-os auto-dev reopen --state <finished-packet>`"
@@ -2208,11 +2231,15 @@ def start_development_run(
             if selected_lane not in {
                 "02-active",
                 "03-complete",
+                "99-archived",
             }:
                 raise DevelopmentDeliveryError(
-                    "selected Auto-Dev packet must be in 02-active or 03-complete"
+                    "selected Auto-Dev packet must be canonical, archived, or in a retained legacy lane"
                 )
-            if selected_lane == "03-complete" and requested_stage != "health":
+            if (
+                _project_work_item_is_finished(selected_packet, project_path)
+                and requested_stage != "health"
+            ):
                 raise DevelopmentDeliveryError(
                     "finished Auto-Dev packets are immutable; use the explicit work-item "
                     "reopen path to start a new delivery run before changing them"
@@ -2685,8 +2712,10 @@ def reopen_auto_dev_item(
             "finished Auto-Dev state lacks domain, project, source key, or canonical work id"
         )
     project_path = project_root(root, domain, project)
-    if _project_work_item_lane(finished_packet, project_path) != "03-complete":
-        raise DevelopmentDeliveryError("Auto-Dev reopen requires a packet in 03-complete")
+    if not _project_work_item_is_finished(finished_packet, project_path):
+        raise DevelopmentDeliveryError(
+            "Auto-Dev reopen requires a finished canonical, archived, or legacy completed packet"
+        )
     health = (
         (projection.get("stages") or {}).get("health")
         if isinstance(projection.get("stages"), Mapping)
@@ -2779,7 +2808,7 @@ def reopen_auto_dev_item(
     intent_dir = project_path / "state" / "auto-dev-reopen"
     intent_path = intent_dir / f"{run_id}.json"
     intent_lock = intent_dir / ".lock"
-    active_root = project_path / "work-items" / "02-active"
+    active_root = work_item_lane_root(project_path, "building")
 
     def resolved_packet(raw: Any) -> Path:
         value = Path(str(raw or "")).expanduser()
@@ -2788,11 +2817,17 @@ def reopen_auto_dev_item(
     def validate_intent(value: Mapping[str, Any]) -> Path:
         active = resolved_packet(value.get("active_packet"))
         try:
-            active.relative_to(active_root.resolve())
+            active_relative = active.relative_to(active_root.resolve())
         except ValueError as exc:
             raise DevelopmentDeliveryError(
                 "Auto-Dev reopen intent points outside the active work-item lane"
             ) from exc
+        if len(active_relative.parts) != 1 or _project_work_item_is_finished(
+            active, project_path
+        ):
+            raise DevelopmentDeliveryError(
+                "Auto-Dev reopen intent points outside the active work-item lane"
+            )
         if not (
             value.get("schema") == "auto-dev-reopen-intent/v1"
             and value.get("run_id") == run_id

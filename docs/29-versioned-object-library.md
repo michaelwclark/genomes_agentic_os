@@ -18,6 +18,25 @@ The boundary is deliberate: the generic package can improve the machinery,
 the library source can version private reusable knowledge normally, and an
 installed OS can replace `lib/` without losing authorship or runtime history.
 
+## Two update lanes
+
+There are two independent things to update:
+
+1. The **Agentic OS package/installer** updates the Python machinery,
+   scaffolding, schemas, commands, and installer implementation. After that
+   package is installed, `agentic-os update plan` and `agentic-os update apply`
+   reconcile its bundled operating surfaces into the selected OS root.
+2. The **Object Library installer** updates reusable definitions by fetching a
+   chosen `genomes_agentic_lib` tag or commit, validating it in staging, and
+   atomically replacing `<os-root>/lib/`.
+
+Updating one does not silently update the other. This keeps an OS code release
+from changing private definitions and keeps a library release from replacing
+the OS runtime. A future convenience wrapper may select the newest approved
+library tag, but it must still call the same dry-run-first install transaction.
+Never run `git pull` inside installed `lib/`; there is intentionally no Git
+checkout there after migration.
+
 ## Object identity and layout
 
 Objects are grouped by kind and scope:

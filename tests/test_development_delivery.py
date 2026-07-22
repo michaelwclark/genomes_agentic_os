@@ -51,6 +51,25 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     return completed.stdout.strip()
 
 
+def _work_item_packets(project: Path) -> list[Path]:
+    """Return packets across the canonical root, archive, and legacy lanes."""
+
+    work_items = project / "work-items"
+    packets: list[Path] = []
+    for child in work_items.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in {"01-intake", "02-active", "03-complete", "99-archived"}:
+            packets.extend(
+                packet
+                for packet in child.iterdir()
+                if packet.is_dir() and (packet / "work.yml").is_file()
+            )
+        elif (child / "work.yml").is_file():
+            packets.append(child)
+    return sorted(packets)
+
+
 def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
@@ -450,6 +469,8 @@ def test_health_schema_resolves_installed_and_packaged_resources(
     schema_location: str,
 ) -> None:
     root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
     work_item = (
         root
         / "domains"
@@ -488,6 +509,66 @@ def test_health_schema_resolves_installed_and_packaged_resources(
         work_item,
         {"domain": "acme", "project": "app"},
     )
+
+
+@pytest.mark.parametrize(
+    ("domain", "project", "packet_parts"),
+    [
+        ("acme", "app", ("domains", "acme", "02-projects", "app", "work-items", "item")),
+        ("acme", "app", ("acme", "02-projects", "app", "work-items", "03-complete", "item")),
+        (
+            "shared_factory",
+            "genomes_agentic_lib",
+            (
+                "harness",
+                "shared_factory",
+                "02-projects",
+                "genomes_agentic_lib",
+                "work-items",
+                "99-archived",
+                "item",
+            ),
+        ),
+    ],
+)
+def test_health_root_uses_marked_owner_across_supported_project_layouts(
+    tmp_path: Path,
+    domain: str,
+    project: str,
+    packet_parts: tuple[str, ...],
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
+    work_item = root.joinpath(*packet_parts)
+    work_item.mkdir(parents=True)
+
+    assert auto_dev._health_os_root(
+        work_item, {"domain": domain, "project": project}
+    ) == root.resolve()
+
+
+def test_health_root_rejects_shared_factory_path_for_another_domain(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
+    work_item = (
+        root
+        / "harness"
+        / "shared_factory"
+        / "02-projects"
+        / "app"
+        / "work-items"
+        / "item"
+    )
+    work_item.mkdir(parents=True)
+
+    with pytest.raises(AutoDevStateError, match="cannot derive"):
+        auto_dev._health_os_root(
+            work_item, {"domain": "acme", "project": "app"}
+        )
 
 
 def test_profile_prefers_canonical_and_translates_legacy(tmp_path: Path) -> None:
@@ -2444,7 +2525,8 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     assert relocation_output["state"] == "finished"
     assert relocation_output["health_relocation"] is True
     finished = Path(relocation_output["path"])
-    assert finished == work_item.parent.parent / "03-complete" / work_item.name
+    assert finished == work_item
+    assert finished.parent == project / "work-items"
     assert (finished / "WORKLOG.md").read_bytes() == worklog_bytes
     assert (finished / "NEXT.md").read_bytes() == next_bytes
     finished_work = yaml.safe_load((finished / "work.yml").read_text(encoding="utf-8")) or {}
@@ -2901,7 +2983,9 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
         auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
     completed_projection_path.write_bytes(completed_projection_bytes)
 
-    assert hashlib.sha256(task_path.read_bytes()).hexdigest() != preflight_payload[
+    # Canonical single-root lifecycle transitions do not rewrite the delivery
+    # task merely to change filesystem lanes.
+    assert hashlib.sha256(task_path.read_bytes()).hexdigest() == preflight_payload[
         "task_state_sha256"
     ]
     task_snapshot = finished / preflight_payload["task_snapshot"]["ref"]
@@ -2996,12 +3080,10 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
         "--apply",
         "--json",
     ]
-    active_packets_before = set((project / "work-items" / "02-active").iterdir())
+    active_packets_before = set(_work_item_packets(project))
     assert main(reopen_args) == 2
     assert "durably staged but provisioning failed" in capsys.readouterr().err
-    active_packets_after_failure = set(
-        (project / "work-items" / "02-active").iterdir()
-    )
+    active_packets_after_failure = set(_work_item_packets(project))
     assert len(active_packets_after_failure - active_packets_before) == 1
     assert {
         path.relative_to(finished).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -3015,7 +3097,7 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     reopened = json.loads(capsys.readouterr().out)
     assert reopened["status"] == "reopened"
     active_packet = Path(reopened["active_packet"])
-    assert active_packet.parent == project / "work-items" / "02-active"
+    assert active_packet.parent == project / "work-items"
     assert active_packet != finished
     assert finished.is_dir()
     assert (active_packet / "autodev.json").is_file()
@@ -3055,12 +3137,12 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     finally:
         connection.close()
 
-    packet_count = len(list((project / "work-items" / "02-active").iterdir()))
+    packet_count = len(_work_item_packets(project))
     assert main(reopen_args) == 0
     replay = json.loads(capsys.readouterr().out)
     assert replay["status"] == "already_reopened"
     assert Path(replay["active_packet"]) == active_packet
-    assert len(list((project / "work-items" / "02-active").iterdir())) == packet_count
+    assert len(_work_item_packets(project)) == packet_count
 
     mismatched_reason = list(reopen_args)
     mismatched_reason[mismatched_reason.index("QA found a follow-up after cleanup.")] = (
@@ -3071,7 +3153,7 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     mismatched_base = [*reopen_args[:-2], "--base-branch", "release/other", *reopen_args[-2:]]
     assert main(mismatched_base) == 2
     assert "immutable-history request" in capsys.readouterr().err
-    assert len(list((project / "work-items" / "02-active").iterdir())) == packet_count
+    assert len(_work_item_packets(project)) == packet_count
 
 
 def test_auto_dev_health_rejects_cleanup_without_receipt_audit(tmp_path: Path) -> None:
@@ -3088,6 +3170,7 @@ def test_auto_dev_health_rejects_cleanup_without_receipt_audit(tmp_path: Path) -
         / "autodev.json"
     )
     state.parent.mkdir(parents=True)
+    (tmp_path / "os" / ".agentic_root").write_text("", encoding="utf-8")
     template = json.loads(
         (
             Path(__file__).resolve().parents[1]

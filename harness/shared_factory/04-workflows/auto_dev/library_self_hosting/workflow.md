@@ -19,6 +19,12 @@ without creating a second SDLC.
 Compatibility command, skill, workflow, and numbered-folder paths may route to
 these objects. They do not become additional definition owners.
 
+The OS package installer and Object Library installer are deliberately
+separate. Updating the OS package changes the machinery and then reconciles its
+bundled operating surfaces. `agentic-os library install` fetches and replaces
+only the reusable definition projection. Neither lane silently advances the
+other, and installed `lib/` is never updated with an in-place `git pull`.
+
 ## Existing Auto-Dev stage mapping
 
 This workflow is a reusable profile over the canonical stage order. It does

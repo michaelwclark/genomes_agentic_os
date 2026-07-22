@@ -4768,7 +4768,7 @@ def test_genomes_agentic_os_project_gets_full_auto_dev_policy(tmp_path: Path) ->
     assert development["repository"]["root"] == str(repo)
     assert development["validation"]["secondary_install"]["required_passes"] == 3
     assert development["review"]["opposing_harness"]["required"] is False
-    assert development["merge"]["policy"] == "auto_after_gates"
+    assert development["merge"]["policy"] == "never_auto"
     assert development["release"]["required"] is True
     assert development["documentation"]["required_after_release"] is True
     assert len(workflows["workflows"]["auto_dev_everything"]["stages"]) == 16

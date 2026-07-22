@@ -91,6 +91,25 @@ def _fake_worktree(monkeypatch: pytest.MonkeyPatch, ticket: str, base_sha: str) 
     )
 
 
+def _work_item_packets(project: Path) -> list[Path]:
+    """Return packets across the canonical root, archive, and legacy lanes."""
+
+    work_items = project / "work-items"
+    packets: list[Path] = []
+    for child in work_items.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in {"01-intake", "02-active", "03-complete", "99-archived"}:
+            packets.extend(
+                packet
+                for packet in child.iterdir()
+                if packet.is_dir() and (packet / "work.yml").is_file()
+            )
+        elif (child / "work.yml").is_file():
+            packets.append(child)
+    return sorted(packets)
+
+
 def test_canonical_work_state_tracks_delivery_and_never_regresses_or_clears_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -179,7 +198,11 @@ def test_start_reuses_canonical_source_identity_and_existing_packet(
     packet = next(
         path
         for path in created.created
-        if path.is_dir() and path.parent == project / "work-items" / "02-active"
+        if (
+            path.is_dir()
+            and path.parent == project / "work-items"
+            and (path / "work.yml").is_file()
+        )
     )
     canonical_work_id = "custom:legacy:cc-57"
     connection = connect_state(default_db_path(root))
@@ -210,7 +233,7 @@ def test_start_reuses_canonical_source_identity_and_existing_packet(
     task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
     assert task["canonical_work_id"] == canonical_work_id
     assert Path(task["work_item"]) == packet
-    assert len(list((project / "work-items" / "02-active").iterdir())) == 1
+    assert len(_work_item_packets(project)) == 1
 
     connection = connect_state(default_db_path(root))
     try:
@@ -248,7 +271,11 @@ def test_adopt_existing_packet_preserves_canonical_source_and_avoids_duplicate(
     packet = next(
         path
         for path in created.created
-        if path.is_dir() and path.parent == project / "work-items" / "02-active"
+        if (
+            path.is_dir()
+            and path.parent == project / "work-items"
+            and (path / "work.yml").is_file()
+        )
     )
     worktree = project / "worktrees" / "legacy-adopt"
     _git("worktree", "add", "-b", "feature/cc-adopt", str(worktree), "main", cwd=repo)
@@ -311,7 +338,7 @@ def test_adopt_existing_packet_preserves_canonical_source_and_avoids_duplicate(
         "provider": "none",
         "identity": "not-managed",
     }
-    assert len(list((project / "work-items" / "02-active").iterdir())) == 1
+    assert len(_work_item_packets(project)) == 1
 
 
 def test_adopt_worktree_mismatch_fails_before_any_state_mutation(
@@ -333,7 +360,11 @@ def test_adopt_worktree_mismatch_fails_before_any_state_mutation(
     packet = next(
         path
         for path in created.created
-        if path.is_dir() and path.parent == project / "work-items" / "02-active"
+        if (
+            path.is_dir()
+            and path.parent == project / "work-items"
+            and (path / "work.yml").is_file()
+        )
     )
     worktree = project / "worktrees" / "legacy-adopt-mismatch"
     _git(
@@ -400,7 +431,7 @@ def test_adopt_worktree_mismatch_fails_before_any_state_mutation(
         assert canonical_work_items.get(connection, canonical_work_id) == before
     finally:
         connection.close()
-    assert len(list((project / "work-items" / "02-active").iterdir())) == 1
+    assert len(_work_item_packets(project)) == 1
 
 
 def test_health_crash_resume_relinks_finished_packet_without_replacement(
@@ -434,6 +465,12 @@ def test_health_crash_resume_relinks_finished_packet_without_replacement(
         note="Simulate a crash immediately after the packet move.",
     )
     finished_packet = Path(promoted["path"])
+    assert finished_packet == active_packet
+    archive_root = project / "work-items" / "99-archived"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    archived_packet = archive_root / finished_packet.name
+    finished_packet.rename(archived_packet)
+    finished_packet = archived_packet
     canonical_work_id = str(task.read()["canonical_work_id"])
     connection = connect_state(default_db_path(root))
     try:
@@ -449,11 +486,7 @@ def test_health_crash_resume_relinks_finished_packet_without_replacement(
         )
     finally:
         connection.close()
-    packets_before = sorted(
-        str(path.resolve())
-        for lane in ("02-active", "03-complete")
-        for path in (project / "work-items" / lane).iterdir()
-    )
+    packets_before = [str(path.resolve()) for path in _work_item_packets(project)]
     assert Path(task.read()["work_item"]) == active_packet
     assert not active_packet.exists()
 
@@ -483,13 +516,9 @@ def test_health_crash_resume_relinks_finished_packet_without_replacement(
     assert json.loads(capsys.readouterr().out)["preflight"]["packet_path"] == str(
         finished_packet
     )
-    packets_after = sorted(
-        str(path.resolve())
-        for lane in ("02-active", "03-complete")
-        for path in (project / "work-items" / lane).iterdir()
-    )
+    packets_after = [str(path.resolve()) for path in _work_item_packets(project)]
     assert packets_after == packets_before
-    assert not (project / "work-items" / "02-active" / finished_packet.name).exists()
+    assert not (project / "work-items" / finished_packet.name).exists()
     connection = connect_state(default_db_path(root))
     try:
         canonical = canonical_work_items.get(connection, canonical_work_id)
