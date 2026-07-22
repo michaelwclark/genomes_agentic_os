@@ -1274,6 +1274,114 @@ def test_risk_based_testing_and_environment_classification() -> None:
     assert classify_validation(returncode=1, environment_evidence="docker unavailable") == "environment_unavailable"
 
 
+def test_local_validation_ci_deferral_is_typed_and_profile_gated(tmp_path: Path) -> None:
+    task = _state(tmp_path)
+    profile = tmp_path / "development.yml"
+    profile.write_text(
+        yaml.safe_dump(
+            {
+                "validation": {
+                    "ci_fallback_on_environment_failure": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    value = task.read()
+    value["profile_source"] = str(profile)
+    task.path.write_text(json.dumps(value), encoding="utf-8")
+    for state in ("claimed", "groom_check", "context_ready", "work_item_ready", "worktree_ready"):
+        task.transition(state, receipt=f"setup:{state}", idempotency_key=f"setup:{state}")
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")},
+        idempotency_prefix="ci-fallback:readiness",
+    )
+    unavailable = {
+        "compileall": "passed",
+        "unavailable_check": {
+            "command": "pytest tests/test_changed_behavior.py",
+            "classification": "infrastructure",
+            "reason": "private test dependency is unavailable locally",
+        },
+    }
+    with pytest.raises(DevelopmentDeliveryError, match="must use status=deferred_to_ci"):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={
+                "implementing": _stage_receipt(tmp_path, "implementing"),
+                "local_validation": _stage_receipt(
+                    tmp_path,
+                    "local_validation",
+                    evidence=unavailable,
+                    status="passed",
+                ),
+            },
+            idempotency_prefix="ci-fallback:invalid-pass",
+        )
+    result = run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(tmp_path, "implementing"),
+            "local_validation": _stage_receipt(
+                tmp_path,
+                "local_validation",
+                evidence=unavailable,
+                status="deferred_to_ci",
+            ),
+        },
+        idempotency_prefix="ci-fallback:valid",
+    )
+    assert result["state"] == "local_validation"
+
+
+def test_local_validation_ci_deferral_blocks_without_profile_authority(tmp_path: Path) -> None:
+    task = _state(tmp_path)
+    profile = tmp_path / "development.yml"
+    profile.write_text(
+        yaml.safe_dump(
+            {"validation": {"ci_fallback_on_environment_failure": False}}
+        ),
+        encoding="utf-8",
+    )
+    value = task.read()
+    value["profile_source"] = str(profile)
+    task.path.write_text(json.dumps(value), encoding="utf-8")
+    for state in ("claimed", "groom_check", "context_ready", "work_item_ready", "worktree_ready"):
+        task.transition(state, receipt=f"setup:{state}", idempotency_key=f"setup:{state}")
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")},
+        idempotency_prefix="no-fallback:readiness",
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="enables ci_fallback"):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={
+                "implementing": _stage_receipt(tmp_path, "implementing"),
+                "local_validation": _stage_receipt(
+                    tmp_path,
+                    "local_validation",
+                    evidence={
+                        "compileall": "passed",
+                        "unavailable_check": {
+                            "command": "pytest tests/test_changed_behavior.py",
+                            "classification": "environment_unavailable",
+                            "reason": "docker is unavailable",
+                        },
+                    },
+                    status="deferred_to_ci",
+                ),
+            },
+            idempotency_prefix="no-fallback:implementation",
+        )
+
+
 def test_real_worktree_uses_exact_remote_base_and_project_storage(tmp_path: Path) -> None:
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"

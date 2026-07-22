@@ -3273,13 +3273,71 @@ def run_development_stage(
         if payload.get("state") != target:
             raise DevelopmentDeliveryError(f"{target} receipt state does not match its transition")
         status = str(payload.get("status") or "")
-        if status not in {"verified", "passed", "completed", "not_required"}:
+        if status not in {
+            "verified",
+            "passed",
+            "completed",
+            "not_required",
+            "deferred_to_ci",
+        }:
             raise DevelopmentDeliveryError(f"{target} receipt status is not terminal evidence")
         if not str(payload.get("summary") or "").strip() or not payload.get("verified_at"):
             raise DevelopmentDeliveryError(f"{target} receipt requires summary and verified_at")
         evidence = payload.get("evidence")
         if not isinstance(evidence, (Mapping, list)) or not evidence:
             raise DevelopmentDeliveryError(f"{target} receipt requires structured evidence")
+        if target == "local_validation" and isinstance(evidence, Mapping):
+            unavailable = evidence.get("unavailable_check")
+            if unavailable is not None and status != "deferred_to_ci":
+                raise DevelopmentDeliveryError(
+                    "local_validation with an unavailable check must use "
+                    "status=deferred_to_ci, not passed"
+                )
+            if status == "deferred_to_ci":
+                task_value = state.read()
+                profile_ref = str(task_value.get("profile_source") or "").strip()
+                profile_path = Path(profile_ref).expanduser() if profile_ref else None
+                profile = (
+                    _read_mapping(profile_path)
+                    if profile_path is not None and profile_path.is_file()
+                    else {}
+                )
+                validation = (
+                    profile.get("validation")
+                    if isinstance(profile.get("validation"), Mapping)
+                    else {}
+                )
+                if validation.get("ci_fallback_on_environment_failure") is not True:
+                    raise DevelopmentDeliveryError(
+                        "local_validation may defer to CI only when the pinned project "
+                        "profile enables ci_fallback_on_environment_failure"
+                    )
+                if not isinstance(unavailable, Mapping):
+                    raise DevelopmentDeliveryError(
+                        "deferred_to_ci local_validation requires evidence.unavailable_check"
+                    )
+                if not all(
+                    str(unavailable.get(key) or "").strip()
+                    for key in ("command", "classification", "reason")
+                ):
+                    raise DevelopmentDeliveryError(
+                        "deferred_to_ci unavailable_check requires command, classification, and reason"
+                    )
+                if unavailable.get("classification") not in {
+                    "environment_unavailable",
+                    "infrastructure",
+                }:
+                    raise DevelopmentDeliveryError(
+                        "deferred_to_ci is reserved for environment or infrastructure failures"
+                    )
+                if not any(value == "passed" for key, value in evidence.items() if key != "unavailable_check"):
+                    raise DevelopmentDeliveryError(
+                        "deferred_to_ci local_validation requires at least one passed local check"
+                    )
+        elif status == "deferred_to_ci":
+            raise DevelopmentDeliveryError(
+                "deferred_to_ci is valid only for local_validation"
+            )
         if status == "not_required":
             policy_stage = {
                 "release_propagation": "release_propagation",

@@ -33,6 +33,13 @@ existing owners, not a second implementation or PR engine.
    cannot be `not_required`. Do not
    silently stop after local validation, PR creation, merge, or Closeout.
 
+Local validation has three dispositions: `passed`, `deferred_to_ci`, or failed.
+Use `deferred_to_ci` only for a typed environment/infrastructure failure when
+the pinned project profile enables `ci_fallback_on_environment_failure`; it is
+eligible to continue to Document and PR Create so CI can provide the missing
+signal. A code or test failure remains blocking. Never label an unavailable
+focused test as `passed`.
+
 When several tickets are supplied, the shared run creates one delivery task,
 packet, worktree, and `autodev.json` per ticket. Parallelize only independent
 work, resume a paused ticket through its own `--state`, and never merge several

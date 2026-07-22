@@ -49,6 +49,10 @@ but non-blocking when its receipt records that the reviewer was unavailable.
 - Code delivery: start/resume `agentic-os develop`, then use the matching stage
   skill below.
 - Full delivery: use `$auto-dev-everything`.
+- A bare request to "auto-dev" one or more tickets, implement fixes, or get PRs
+  ready is full delivery. Start with `$auto-dev-everything`; never narrow it to
+  Develop unless the user explicitly asks to stop after implementation and
+  local validation.
 - One friendly stage: `agentic-os auto-dev groom|investigate|create|readiness|
   develop|document|pr-create|review-self|review-others|qa|finalize|merge|release|
   deploy|closeout|health ...` and the same-named skill. `release-propagation` is
