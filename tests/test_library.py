@@ -260,6 +260,35 @@ def test_install_clones_validates_and_atomically_replaces_projection(tmp_path: P
     assert verify_library_install(root)["status"] == "failed"
 
 
+def test_install_discards_ignored_validator_outputs_before_projection(
+    tmp_path: Path,
+) -> None:
+    remote, _ = _library_remote(tmp_path)
+    source = tmp_path / "source-os" / "lib"
+    (source / ".gitignore").write_text("dist/\n", encoding="utf-8")
+    validator = source / "scripts" / "validate_library.py"
+    validator.parent.mkdir(parents=True)
+    validator.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "repo = Path(sys.argv[sys.argv.index('--repo') + 1])\n"
+        "output = repo / 'dist' / 'validation-receipt.json'\n"
+        "output.parent.mkdir(parents=True, exist_ok=True)\n"
+        "output.write_text('verified\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", ".gitignore", "scripts/validate_library.py")
+    _git(source, "commit", "--no-verify", "-m", "add standalone validator")
+    _git(source, "push", "origin", "main")
+
+    root = _root(tmp_path / "target")
+    installed = install_library(root, repository=str(remote), dry_run=False)
+
+    assert installed["status"] == "installed"
+    assert not (root / "lib" / "dist").exists()
+    assert verify_library_install(root)["status"] == "verified"
+
+
 def test_installed_projection_drift_blocks_replacement_without_override(tmp_path: Path) -> None:
     remote, _ = _library_remote(tmp_path)
     root = _root(tmp_path / "target")

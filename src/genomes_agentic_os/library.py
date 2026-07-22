@@ -1317,6 +1317,12 @@ def _install_library_locked(
             )
             if validation.returncode:
                 raise LibraryError("staged standalone library validation failed")
+        # Standalone validators may write declared ignored build evidence such
+        # as dist/ receipts.  The install projection must still be the clean
+        # Git revision, so discard ignored validator output inside this fresh
+        # staging clone before the exact cleanliness/readback check.  Tracked
+        # changes and non-ignored untracked files remain visible and blocking.
+        _git_output("-C", str(staged_lib), "clean", "-fdX")
         source_status = _git_output(
             "-C",
             str(staged_lib),
