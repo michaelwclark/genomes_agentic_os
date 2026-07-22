@@ -201,6 +201,12 @@ skills:
     state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge
     or merge-blocked closeout.
   source: harness/skills/auto-dev/SKILL.md
+- id: auto-dev-dep-updater
+  name: Auto-Dev Dep Updater
+  description: 'Operate one repository''s dependency-update lane: one Renovate
+    PR per run, proven against the dependency contract suites, merged under
+    written per-repo authority or repaired to green first.'
+  source: harness/skills/auto-dev-dep-updater/SKILL.md
 - id: develop
   name: Develop
   description: Canonical 1-N programming delivery with project profiles, isolated
