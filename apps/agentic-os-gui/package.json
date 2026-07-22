@@ -9,6 +9,8 @@
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:contracts": "vitest run --config vitest.contracts.config.ts",
+    "check:contracts-coverage": "node scripts/check-contract-coverage.mjs",
     "build": "electron-vite build",
     "package:mac": "pnpm build && electron-builder --mac dir --arm64"
   },
