@@ -26,6 +26,13 @@ non-executing, text-free telemetry; duplicate turn correlations are no-ops.
 
 Read `MEMORY.md` when present before writing durable memory.
 
+## Auto-Dev Dependency Updates
+
+Route Renovate or Dependabot dependency-update pull requests to
+`auto-dev-dep-updater` even when the user does not name it. Merge authority
+and contract-suite gating come from the project's `dep_updater:` profile
+block; see `harness/shared_factory/04-workflows/auto-dev-project-profile.md`.
+
 ## Notification Contract
 
 Use `/notify` or the `notification-operator` skill only for a bounded,

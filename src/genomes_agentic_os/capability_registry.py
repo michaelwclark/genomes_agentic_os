@@ -767,6 +767,12 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/auto-dev/SKILL.md",
         },
         {
+            "id": "auto-dev-dep-updater",
+            "name": "Auto-Dev Dep Updater",
+            "description": "Operate one repository's dependency-update lane, proven against the dependency contract suites, merged under written per-repo authority or repaired to green first.",
+            "source": "harness/skills/auto-dev-dep-updater/SKILL.md",
+        },
+        {
             "id": "develop",
             "name": "Develop",
             "description": "Run one or many programming tasks through the canonical project-configured development-delivery program.",
