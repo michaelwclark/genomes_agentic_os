@@ -128,6 +128,28 @@ local renderer and its own main process.
 - Electron-owned operator preferences are presentation state, not operational
   truth.
 
+## Deep Documentation
+
+The app maintains its own architecture suite under
+[`apps/agentic-os-gui/docs/`](../apps/agentic-os-gui/docs/ARCHITECTURE.md) —
+read it before building app features:
+
+- [`ARCHITECTURE.md`](../apps/agentic-os-gui/docs/ARCHITECTURE.md) — process/layer
+  model, IPC conventions, import rules, anti-patterns.
+- [`FEATURE-PLAYBOOK.md`](../apps/agentic-os-gui/docs/FEATURE-PLAYBOOK.md) —
+  recipes for new pages, dashboards, watcher feeds, rail widgets, IPC.
+- [`DESIGN-SYSTEM.md`](../apps/agentic-os-gui/docs/DESIGN-SYSTEM.md) — design
+  tokens, component conventions, data-viz standards.
+- [`DATA-AND-EVENTS.md`](../apps/agentic-os-gui/docs/DATA-AND-EVENTS.md) — truth
+  inventory, read paths, streams, caching tiers.
+- [`adr/`](../apps/agentic-os-gui/docs/adr/README.md) and
+  [`ROADMAP.md`](../apps/agentic-os-gui/docs/ROADMAP.md) — decision records and
+  the phased growth plan (resizable shell, editor groups, page registry landed
+  in Phase 1).
+
+Agents landing directly in the app directory get the same map from
+[`apps/agentic-os-gui/AGENTS.md`](../apps/agentic-os-gui/AGENTS.md).
+
 ## Rollback
 
 Quit or remove the local app and continue using:

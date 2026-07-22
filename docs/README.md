@@ -121,7 +121,8 @@ compatibility adapters to the same Spec Engine.
 - **[Tutorials](tutorials/)** — worked, scenario-based walkthroughs.
 - **[Examples](examples/)** — small example domain OS trees used for exploration
   and documentation, not runtime templates.
-- **[Architecture](architecture/system-architecture.md)** — the agent-facing architecture map, command reference, harness-modes, and the re-runnable validation + diagram tools under `architecture/tools/`.
+- **[Architecture](architecture/system-architecture.md)** — the agent-facing architecture map, command reference, harness-modes, the system-wide [tool catalog](architecture/tool-catalog.md), and the re-runnable validation + diagram tools under `architecture/tools/`.
+- **[Command Center app docs](../apps/agentic-os-gui/docs/ARCHITECTURE.md)** — the desktop app's own architecture, feature playbook, design system, data/events, ADRs, and roadmap (see also page [29 · AgenticOSGui](29-agentic-os-gui.md)).
 - **[Design notes](design-notes/)** — in-progress design records for surfaces still taking shape (config.toml, lifecycle, port assessments).
 
 ## About the diagrams
