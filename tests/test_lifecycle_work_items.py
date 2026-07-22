@@ -16,7 +16,11 @@ from genomes_agentic_os.auto_dev_orchestration import (
     record_auto_dev_stage,
     sync_delivery_projection,
 )
-from genomes_agentic_os.lifecycle import cleanup_terminal_worktrees, local_project_work_items
+from genomes_agentic_os.lifecycle import (
+    cleanup_terminal_worktrees,
+    create_project_work_item,
+    local_project_work_items,
+)
 
 
 def _write_work_item(project_root: Path, slug: str, body: str) -> Path:
@@ -40,6 +44,32 @@ def test_local_project_work_items_survives_malformed_metadata(tmp_path: Path) ->
     broken = [record for record in records if record.metadata.get("metadata_error")]
     assert len(broken) == 1
     assert "invalid yaml" in broken[0].metadata["metadata_error"]
+
+
+def test_new_canonical_packet_names_the_canonical_spec_root(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    project = root / "domains" / "acme" / "02-projects" / "app"
+    project.mkdir(parents=True)
+
+    created = create_project_work_item(
+        root,
+        "acme",
+        "app",
+        title="Canonical packet",
+        summary="Keep local specification truth in the stable packet root.",
+        status="building",
+    )
+    packet = next(
+        path
+        for path in created.created
+        if path.parent == project / "work-items" and (path / "work.yml").is_file()
+    )
+    metadata = yaml.safe_load((packet / "work.yml").read_text(encoding="utf-8"))
+
+    assert metadata["spec_destination"] == {
+        "type": "local",
+        "path": "work-items",
+    }
 
 
 def _cleanup_fixture(tmp_path: Path, entry_fields: dict[str, object]) -> tuple[Path, Path, Path]:

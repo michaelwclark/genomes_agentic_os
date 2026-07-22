@@ -394,7 +394,7 @@ def work_item_metadata(
         },
         "spec_destination": {
             "type": "local",
-            "path": "work-items/02-active",
+            "path": "work-items",
         },
         "external_tracker": {
             "type": "none",
@@ -422,7 +422,7 @@ def intake_spec_markdown(*, domain: str, project: str, work_id: str, title: str,
             "required_files": ["this file"],
             "conversation_logs": f"{work_id}.logs/conversations",
         },
-        "spec_destination": {"type": "local", "path": "work-items/02-active"},
+        "spec_destination": {"type": "local", "path": "work-items"},
         "external_tracker": {"type": "none"},
     }
     return f"""---
@@ -614,7 +614,7 @@ def repaired_work_item_metadata(record: WorkItemRecord, *, status: str, summary:
         }
     )
     payload["lifecycle"] = lifecycle
-    payload.setdefault("spec_destination", {"type": "local", "path": "work-items/02-active"})
+    payload.setdefault("spec_destination", {"type": "local", "path": "work-items"})
     payload.setdefault("external_tracker", {"type": "none"})
     return yaml.safe_dump(payload, sort_keys=False)
 

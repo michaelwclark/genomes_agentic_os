@@ -11,7 +11,7 @@ finding should become durable OS planning material.
 | Installed project spec | Do not create a source-repo planning file | Installed project `work-items/01-intake/<NNN>_<slug>/SPEC.md` |
 | Customer-specific OS need | Customer domain inbox or project folder | Link the reusable pattern back to shared plans |
 | Loose request not yet scoped | `shared_factory/01-inbox/raw-ideas.md` | — |
-| Already-scoped spec ready to plan | Installed project `work-items/02-active/<NNN>_<slug>/SPEC.md` | — |
+| Already-scoped spec ready to plan | Installed project `work-items/<NNN>_<slug>/SPEC.md` | — |
 
 ## Naming Convention
 
