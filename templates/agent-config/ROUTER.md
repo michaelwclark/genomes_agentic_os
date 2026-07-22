@@ -17,6 +17,7 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 | Shell, terminal, package-manager, runtime, or cleanup work | system registry | `shared_factory/05-knowledge/host-tool-registry.<host>.yml` |
 | Historical material | `08-archive/` | archive index or linked run log |
 | Renovate/Dependabot dependency-update PR to a governed merge | `auto-dev-dep-updater` | project `dep_updater` policy |
+| Own-PR continuous delivery to merged, released, and documented | `auto-dev-continuous-release` | project `continuous_release` + `release` policy |
 
 ## Routing Rules
 
