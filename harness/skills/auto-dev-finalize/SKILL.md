@@ -15,13 +15,17 @@ no schedule or automatic opened-PR trigger is enabled.
    then one direct operator decision. Per-PR and whole-family opt-outs win, but
    Finalize records the decision and never executes the merge.
 3. Require a reviewer from the opposing model family for agent-authored work.
-   Never let the implementation model approve its own result.
+   Never let the implementation model approve its own result. Use the
+   configured Claude CLI Fable model when the project selects it, and retain
+   the model/session receipt.
 4. Run bounded, quiet assessment and repair rounds. Re-read all automated and
-   human threads after every push. Resolve bot findings only after a fix or a
-   factual false-positive reply; never resolve human threads.
+   human threads after every push. A Copilot or blocking finding on one sibling
+   applies to the full family unless target-specific evidence says otherwise.
+   Resolve bot findings only after a fix or a factual false-positive reply;
+   never resolve human threads.
 5. Declare the family ready only when every required PR has current green
-   checks, clean actionable threads, acceptance evidence, branch parity, and
-   required reviews.
+   checks, clean actionable threads, live Jira and acceptance-effectiveness
+   evidence, dev-standard evidence, branch parity, and required reviews.
 6. Record the converged PR-family decision with `agentic-os auto-dev record
    --stage finalize`. Provider readback must include provider, pull request,
    configured repository and base branch, reviewed head, provider-qualified
