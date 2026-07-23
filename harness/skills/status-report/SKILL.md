@@ -14,9 +14,13 @@ analysis across recent agent work.
 1. Route to `/Users/genome/agentic_os/harness/shared_factory/03-workflows/operations/status_report`.
 2. Read `quick-reference.md`, `workflow.md`, `approval-rules.md`,
    `output-contract.md`, `runbook.md`, and `progress.md`.
-3. Read the active work item when changing the workflow or reporting on this
-   feature:
+3. Resolve the existing `011_status_report_workflow` packet before changing the
+   workflow or reporting on this feature. New packets use
    `<os-root>/<domain>/02-projects/genomes_agentic_os/work-items/<date>-011_status_report_workflow`.
+   The installed legacy packet at
+   `/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow`
+   remains a read/resume surface; also search `work-items/99-archived/` for a
+   returned packet. Do not create a duplicate in a legacy numbered lane.
 
 ## Inputs
 
@@ -83,7 +87,7 @@ Check for:
 Default full report:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/status-reports/<YYYY-MM-DD-HHMM>-status-report.md
+/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/worklogs/status-reports/<YYYY-MM-DD-HHMM>-status-report.md
 ```
 
 Default artifacts:
@@ -91,6 +95,9 @@ Default artifacts:
 ```text
 <os-root>/<domain>/02-projects/genomes_agentic_os/work-items/<date>-011_status_report_workflow/artifacts/status-reports/<run-id>/
 ```
+
+Existing reports continue under the resolved packet, including the legacy or
+archived packet when that is the ticket's durable history.
 
 ## Safety
 
@@ -100,3 +107,10 @@ Default artifacts:
 - Do not create fallback Notion pages in any other workspace.
 - Do not mutate source, commit, push, open PRs, update Jira, send external
   messages, or perform cleanup unless explicitly requested.
+
+## Artifact Producer Contract
+
+This skill owns collection and synthesis. Render filesystem or Notion output
+through `$auto-dev-create-artifacts` with type `status` or `report`, then follow
+the configured approval and readback contract. Do not maintain a competing
+Notion/status format here.

@@ -1,0 +1,17 @@
+{
+  "schema": "auto-dev-stage-policy-decision/v1",
+  "work_item_id": "072026-001_example",
+  "canonical_work_id": "work_example",
+  "domain": "example_domain",
+  "project": "example_project",
+  "stage": "pr_create",
+  "decision": "not_required",
+  "reason": "This project has no downstream configuration repository.",
+  "decided_by": "operator:genome",
+  "policy_fingerprint": "replace-with-the-effective-policy-fingerprint",
+  "policy_source": {
+    "ref": "/absolute/path/to/the-run/effective-policies.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "verified_at": "2026-07-20T20:00:00Z"
+}

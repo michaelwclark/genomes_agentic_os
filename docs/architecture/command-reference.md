@@ -285,25 +285,40 @@ Status: **OK** (rc 0)
 
 Move registered worktrees with cached terminal Jira state, merged PR state, or
 terminal worktree status out of active registries and into `worktrees/closed.yml`.
-Dry-run by default; file removal is opt-in and only removes clean checkouts
-inside the project `worktrees/` directory.
+Dry-run by default. Physical removal is opt-in and requires an explicitly
+merged PR, a non-primary registered Git worktree inside the project
+`worktrees/` directory, no `REOPEN.md`, a packet-local Health preflight, and a
+runtime-cleanup readback bound to that preflight hash. Registry closure happens
+only after exact Git worktree removal succeeds; no separate metadata-sweep
+operation runs.
 
 | Arg / Flag | Required | Description |
 |---|---|---|
-| `--domain` | No | Limit cleanup to one domain |
-| `--project` | No | Limit cleanup to one project |
+| `--domain` | With `--remove-files` | Limit cleanup to one domain |
+| `--project` | With `--remove-files` | Limit cleanup to one project |
+| `--worktree` | With `--remove-files` | Limit cleanup to one exact registered worktree id, name, or path |
+| `--health-preflight` | With `--remove-files` | Packet-local `auto-dev-health-preflight/v1` file that freezes authority, receipts, and exact resource identity |
+| `--runtime-receipt` | With `--remove-files` | Packet-local `auto-dev-runtime-cleanup/v1` readback whose `preflight_sha256` matches the preflight |
 | `--root` | No | Installed OS root path |
 | `--dry-run` | No (default) | Preview candidates without writing |
 | `--apply` | No | Move matching registry entries to `worktrees/closed.yml` |
-| `--remove-files` | No | Also remove clean in-project checkout directories |
+| `--remove-files` | No | Remove the selected merged Git worktree through the exact guarded Git operation when all five scoped Health inputs validate |
 
 Reads: `<project>/config/worktrees.yml` and `<project>/worktrees/index.yml`.
 Writes: `<project>/worktrees/closed.yml`, the source worktree registry, and the
 root active-work symlink container when `--apply` is used.
 
 ```bash
-agentic-os project worktree cleanup-closed --root /tmp/aos-ref --dry-run
-agentic-os project worktree cleanup-closed --root /tmp/aos-ref --apply --remove-files
+agentic-os project worktree cleanup-closed --root /tmp/aos-ref \
+  --domain acme --project launch --worktree feature-123 \
+  --health-preflight <packet>/artifacts/auto-dev-health/preflight.json \
+  --runtime-receipt <packet>/artifacts/auto-dev-health/receipts/runtime-cleanup.json \
+  --dry-run
+agentic-os project worktree cleanup-closed --root /tmp/aos-ref \
+  --domain acme --project launch --worktree feature-123 \
+  --health-preflight <packet>/artifacts/auto-dev-health/preflight.json \
+  --runtime-receipt <packet>/artifacts/auto-dev-health/receipts/runtime-cleanup.json \
+  --apply --remove-files
 ```
 
 Status: **OK** (unit-tested; rc 0)
@@ -2023,6 +2038,162 @@ Mutating kinds require `--checkpoint-strategy` plus `--mutation-lock` or a
 require a `--preflight-check` that records complexity and performance evidence.
 Use `--progress-file` for semantic phase/item/file/byte progress.
 `agentic-os-quiet-run` is a compatibility launcher for this same command.
+
+---
+
+## 16. Plain-English SDLC orchestration: `auto-dev`
+
+`auto-dev` starts or resumes one canonical Development Delivery run and keeps a
+plain-English `autodev.json` projection in its work-item packet. It does not
+replace tracker, Git provider, canonical work state, or Development Delivery
+truth.
+
+Run the whole applicable lifecycle:
+
+```bash
+agentic-os auto-dev everything <domain> <project> <ticket> [<ticket> ...] --apply
+```
+
+Adopt one exact active packet created before `autodev.json` existed:
+
+```bash
+agentic-os auto-dev adopt <domain> <project> <ticket> \
+  --state <existing-work-item> --run-id <stable-id> --apply
+```
+
+Adoption requires one canonical work row whose packet path and source key
+match. It preserves that identity and reuses an existing worktree only after
+the project registry, Git worktree metadata, and branch all match. It never
+creates a replacement packet or checkout.
+
+Reopen immutable post-Health history for a fresh QA or development run:
+
+```bash
+agentic-os auto-dev reopen --state <finished-packet-or-autodev.json> \
+  --run-id <new-run-id> --reason "<QA or support reason>" \
+  --stage qa --root <os-root> --apply
+```
+
+`--stage` is `qa` by default and also accepts `develop`. Without `--apply`, the
+command is a read-only safety plan. Apply requires completed Health evidence, a
+closed terminal canonical row pointing to the selected `03-complete` packet,
+and cleared prior worktree pointers. It creates one new active packet and reopen
+receipt, then provisions a fresh worktree/runtime registration. Repeating the
+same run id returns the existing reopen; it does not create a second packet.
+
+Run one named workflow with the same state model:
+
+```bash
+agentic-os auto-dev groom <domain> <project> <ticket> --apply
+agentic-os auto-dev investigate --state <work-item>/autodev.json --apply
+agentic-os auto-dev create --state <work-item>/autodev.json --apply
+agentic-os auto-dev readiness --state <work-item>/autodev.json --apply
+agentic-os auto-dev develop --state <work-item>/autodev.json --apply
+agentic-os auto-dev document --state <work-item>/autodev.json --apply
+agentic-os auto-dev review-self --state <work-item>/autodev.json --apply
+agentic-os auto-dev review-others --state <work-item>/autodev.json --apply
+agentic-os auto-dev qa --state <work-item>/autodev.json --apply
+agentic-os auto-dev propagate --state <work-item>/autodev.json --apply
+agentic-os auto-dev finalize --state <work-item>/autodev.json --apply
+agentic-os auto-dev merge --state <work-item>/autodev.json --apply
+agentic-os auto-dev release --state <work-item>/autodev.json --apply
+agentic-os auto-dev deploy --state <work-item>/autodev.json --apply
+agentic-os auto-dev closeout --state <work-item>/autodev.json --apply
+agentic-os auto-dev health --state <existing-packet>/autodev.json --apply
+```
+
+Merge, Deploy, Closeout, and Health are existing-state-only so a downstream
+command cannot create a duplicate packet or checkout. Health never provisions
+a worktree. The completed Merge receipt must contain provider-read `merge_sha`,
+`source_head_sha` equal to the reviewed `subject_revision`, `provider`,
+`pull_request`, configured `repository`, configured `base_branch`,
+provider-qualified `author_identity`, derived `author_kind`, and
+`readback_verified: true`. After verified
+`delivery_complete`, `auto-dev health --apply`
+audits and hashes the durable receipt inventory, preserves a resume manifest
+and full packet manifest, and writes `auto-dev-health-preflight/v1`; it stops
+before resource deletion.
+That preflight is always `clean_only`. A dirty checkout is preserved and blocks
+physical cleanup; no receipt or merge state can make dirty files disposable.
+Preserve or reconcile the changes through a separate operator workflow, verify
+the checkout is clean, then rerun Health with a fresh preflight.
+The exact runtime readback must use `auto-dev-runtime-cleanup/v1`, bind
+`preflight_sha256`, be newer than the preflight and at most 15 minutes old, and
+use the identity-bound command for the domain/project/worktree runtime. The gate
+immediately executes that command again; exit 0 means the exact runtime is
+absent. Physical worktree removal then requires domain, project, worktree,
+preflight, and runtime-receipt inputs. Preserve both final resource
+  results atomically in `auto-dev-resource-cleanup/v1`, move the packet with
+  `project work-item set ... --state finished --health-relocation` to
+canonical `finished` / `03-complete`, and preserve an
+`auto-dev-closed-worktree-readback/v1` snapshot of the exact closed registry
+row or `not_managed`. Audit that snapshot under `resource_cleanup` and
+cross-check a managed entry against live `worktrees/closed.yml`; then refresh
+active projections and record strict `auto-dev-health-evidence/v1`. A root
+`REOPEN.md`, missing receipt, unverified
+terminal merge revision, missing canonical finished state, teardown failure, or
+residual hold leaves Health incomplete. Health has no schedule or host-wide/
+all-resource mode and has no force, Git-metadata-sweep, guessed-identity, or shared-
+runtime path.
+
+The five-input physical cleanup gate does not trust the preflight flag alone.
+It hashes and parses the canonical task, requires `delivery_complete` and exact
+item/repository/base/worktree-id/path/branch/HEAD/revision matches, compares packet Merge and Closeout
+snapshots with canonical typed task receipts as JSON, validates their fields,
+and verifies the complete ordered non-Health stage audit, every stage snapshot,
+and the full packet manifest. After relocation, every packet hash must match
+except semantic `work.yml` and `autodev.json` state/path updates; those two are
+parsed and validated again.
+
+The exact stage order is Groom, Detective, Create Artifacts, Readiness,
+Develop, Document, PR Create, Review Self, Review Others, QA,
+Finalize, Merge, Release, Deploy, Closeout, Health. A multi-ticket command
+creates one task/packet/`autodev.json` per ticket; resume one with its own
+`--state`.
+
+`not_required` uses strict `auto-dev-stage-policy-decision/v1`, bound to the
+work item, canonical work id, domain/project/stage, decision maker/reason/time,
+frozen policy fingerprint, and exact policy source/hash. The policy and
+decision are materialized into packet-local immutable proof.
+
+Finalize authorizes only provider-read identities classified as `ours` and
+records readiness without merging. Review Others authorizes only identities
+classified as `others` and records a clean `review_no_merge` result. Merge's
+hashed readiness descriptor and open/ready/merged provider readbacks must keep
+the provider/PR/repository/base/revision/author chain identical.
+
+The final Health audit contains exactly `terminal_authority`, `closeout`,
+`receipt_audit`, `resume_manifest`, `packet_manifest`, `resource_cleanup`,
+`runtime_cleanup`, `work_state`, `active_index`, and `validation`.
+
+Finished packets are immutable. Follow-up QA or development uses `auto-dev
+reopen`; direct canonical state edits never authorize writes to a completed
+packet. The explicit command preserves the old packet and starts a new delivery
+run with fresh resources.
+
+Health does not rename or reinterpret Merge authority. Its
+`terminal_authority.provider` and `terminal_authority.ref` must exactly equal
+the typed Merge receipt's `provider` and `pull_request`, and its terminal
+revision must equal that receipt's `merge_sha`.
+
+Inspect, resynchronize, or record a standalone workflow:
+
+```bash
+agentic-os auto-dev status <work-item-or-autodev.json>
+agentic-os auto-dev sync <development-task-state.json>
+agentic-os auto-dev record <autodev.json> --stage <stage> \
+  --evidence <typed-evidence.json> --idempotency-key <stable-key>
+```
+
+`auto-dev record` accepts `auto-dev-stage-evidence/v1` for standalone stages
+and strict `auto-dev-health-evidence/v1` for Health. Record delivery-managed
+Readiness, Develop, PR Create, Review Self, Merge, Deploy, and
+Closeout transitions with `agentic-os develop stage`, not this command.
+
+Common launch flags are `--state`, `--run-id`, `--repository`, `--base-branch`,
+repeatable `--policy-overlay PLANE=PATH`, `--root`, `--apply`, and `--json`.
+Without `--apply`, launch commands are plans only. Matching `/auto-dev-*`
+commands and skills provide the operator workflow for every named stage.
 
 ---
 

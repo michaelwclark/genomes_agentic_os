@@ -1,0 +1,20 @@
+layer: workflow_or_task
+profile: workflow_orchestrator
+legacy_profiles:
+- workflow_or_task
+role: orchestrator
+role_summary: Run workflow-scoped heavy work, track acceptance criteria, verify delegated
+  outputs, and record evidence.
+model: gpt-5.5
+model_reasoning_effort: high
+model_verbosity: low
+model_reasoning_summary: concise
+prompt_files:
+- AGENTS.md
+- PROFILE.md
+- CLAUDE.md
+mcp_availability: workflow-approved systems only
+customer_safe: true
+managed_by: genomes_agentic_os
+managed_feature: 62-role-aware-codex-config-layers
+managed_policy_version: 1

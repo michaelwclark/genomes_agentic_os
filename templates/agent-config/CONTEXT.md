@@ -23,6 +23,7 @@ owns.
 | Resume active work | project status, run logs, source map | archived work |
 | Run a workflow | workflow quick reference, context pack, runbook | unrelated automations |
 | Review an automation | automation spec, permissions, tests | unrelated workflows |
+| Run SDLC work | Auto-Dev program, selected workflow, effective root/domain/project policy receipt | unrelated workflow policies and archived runs |
 
 ## Done Means
 

@@ -1,0 +1,25 @@
+{
+  "schema": "auto-dev-reopen/v1",
+  "run_id": "replace-with-new-run-id",
+  "reason": "QA found a follow-up after Health cleanup.",
+  "requested_stage": "qa",
+  "canonical_work_id": "work:replace-with-work-item-id",
+  "source": {
+    "system": "jira",
+    "key": "EXAMPLE-123",
+    "url": "https://tracker.example/browse/EXAMPLE-123"
+  },
+  "repository": {
+    "id": "git:github.com/example/app",
+    "root": "/absolute/path/to/repository",
+    "base_branch": "main"
+  },
+  "request_fingerprint": "3333333333333333333333333333333333333333333333333333333333333333",
+  "finished_packet": "/absolute/path/to/work-items/03-complete/example-123",
+  "finished_autodev_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "health_receipt": "artifacts/auto-dev-health/evidence.json",
+  "health_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "active_packet": "/absolute/path/to/work-items/02-active/example-123-reopen",
+  "decision": "preserve finished history and provision fresh resources",
+  "created_at": "2026-01-01T00:00:00Z"
+}

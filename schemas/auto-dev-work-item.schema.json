@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-work-item.schema.json",
+  "title": "Auto-Dev work item",
+  "type": "object",
+  "required": [
+    "schema",
+    "work_item_id",
+    "domain",
+    "project",
+    "mode",
+    "status",
+    "current_stage",
+    "stage_order",
+    "stages",
+    "delivery",
+    "compatibility",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-work-item/v1"},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": ["string", "null"]},
+    "domain": {"type": ["string", "null"]},
+    "project": {"type": ["string", "null"]},
+    "source": {"type": "object"},
+    "mode": {"enum": ["default", "everything", "single_stage"]},
+    "requested_stage": {
+      "type": ["string", "null"],
+      "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]
+    },
+    "subject_revision": {"type": ["string", "null"]},
+    "terminal_revision": {"type": ["string", "null"]},
+    "start_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
+    "completion_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
+    "stage_policies": {"type": "object"},
+    "status": {"enum": ["ready", "running", "paused", "blocked", "completed"]},
+    "current_stage": {
+      "type": ["string", "null"],
+      "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]
+    },
+    "stage_order": {
+      "type": "array",
+      "items": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
+      "minItems": 16,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "stages": {
+      "type": "object",
+      "required": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"],
+      "properties": {
+        "groom": {"$ref": "#/$defs/stage"},
+        "detective": {"$ref": "#/$defs/stage"},
+        "create_artifacts": {"$ref": "#/$defs/stage"},
+        "readiness": {"$ref": "#/$defs/stage"},
+        "develop": {"$ref": "#/$defs/stage"},
+        "document": {"$ref": "#/$defs/stage"},
+        "pr_create": {"$ref": "#/$defs/stage"},
+        "review_self": {"$ref": "#/$defs/stage"},
+        "review_others": {"$ref": "#/$defs/stage"},
+        "qa": {"$ref": "#/$defs/stage"},
+        "finalize": {"$ref": "#/$defs/stage"},
+        "merge": {"$ref": "#/$defs/stage"},
+        "release": {"$ref": "#/$defs/stage"},
+        "deploy": {"$ref": "#/$defs/stage"},
+        "closeout": {"$ref": "#/$defs/stage"},
+        "health": {"$ref": "#/$defs/healthStage"}
+      },
+      "additionalProperties": false
+    },
+    "delivery": {"type": "object"},
+    "compatibility": {"type": "object"},
+    "blocker": {"type": ["object", "null"]},
+    "next_action": {"type": ["string", "null"]},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "required": ["status", "owner", "command", "run_ref", "receipt_refs", "last_verified_at", "next_action"],
+      "properties": {
+        "status": {"enum": ["not_started", "ready", "running", "paused", "blocked", "completed", "not_required", "out_of_scope"]},
+        "applicability": {"enum": ["required", "contextual", "disabled"]},
+        "owner": {"type": "string"},
+        "command": {"type": "string", "minLength": 1},
+        "run_ref": {"type": ["string", "null"]},
+        "receipt_refs": {"type": "array", "items": {"type": "string"}},
+        "last_verified_at": {"type": ["string", "null"]},
+        "next_action": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "healthStage": {
+      "allOf": [
+        {"$ref": "#/$defs/stage"},
+        {
+          "properties": {
+            "status": {"enum": ["not_started", "ready", "running", "paused", "blocked", "completed", "out_of_scope"]}
+          }
+        }
+      ]
+    }
+  }
+}

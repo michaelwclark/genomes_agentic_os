@@ -1,0 +1,56 @@
+api_version: agentic-os-library-object/v1
+kind: program
+id: auto-dev
+title: Auto-Dev
+description: >-
+  Canonical polymorphic SDLC family for evidence investigation, governed
+  artifact authoring, implementation, review and repair, release propagation,
+  deployment, delivery closeout, receipt audit, lifecycle cleanup, and durable
+  finished-state handoff.
+status: active
+scope:
+  level: root
+  domain: null
+  project: null
+owner:
+  type: package
+  id: genomes_agentic_os
+entrypoint: program.md
+tags: [program, sdlc, development, investigation, artifacts]
+dependencies:
+  - command:root:object-library
+  - skill:root:auto-dev
+  - skill:root:auto-dev-everything
+  - skill:root:auto-dev-grooming
+  - skill:root:auto-dev-create-artifacts
+  - skill:root:auto-dev-detective
+  - skill:root:auto-dev-readiness
+  - skill:root:auto-dev-implementation
+  - skill:root:auto-dev-develop
+  - skill:root:auto-dev-document
+  - skill:root:auto-dev-pr-create
+  - skill:root:gitflow-pr-create
+  - skill:root:auto-dev-qa
+  - skill:root:auto-dev-review-repair
+  - skill:root:auto-dev-review-self
+  - skill:root:auto-dev-review-others
+  - skill:root:auto-dev-finalize
+  - skill:root:auto-dev-merge
+  - skill:root:auto-dev-release-propagation
+  - skill:root:auto-dev-release
+  - skill:root:auto-dev-deploy
+  - skill:root:auto-dev-closeout
+  - skill:root:auto-dev-health
+  - skill:root:auto-dev-dep-updater
+  - skill:root:auto-dev-continuous-release
+  - skill:root:object-library
+  - workflow:root:library_self_hosting
+aliases:
+  - harness/shared_factory/00-programs/auto_dev
+runtime:
+  root: runtime/objects/programs/program/root/auto-dev
+validation:
+  commands:
+    - agentic-os artifacts doctor --root <root>
+    - agentic-os detective doctor --root <root>
+    - agentic-os validate --strict --root <root>

@@ -6,6 +6,28 @@ command document explains routing, inputs, safety gates, and output receipts.
 
 | Command document | Concise purpose |
 | --- | --- |
+| [`auto-dev.md`](auto-dev.md) | Route to the complete lifecycle or one named Auto-Dev workflow. |
+| [`auto-dev-closeout.md`](auto-dev-closeout.md) | Reconcile provider and delivery state and prove delivery complete after merge/deployment evidence exists. |
+| [`auto-dev-create-artifacts.md`](auto-dev-create-artifacts.md) | Resolve, render, validate, apply, and read back polymorphic artifacts. |
+| [`auto-dev-deploy.md`](auto-dev-deploy.md) | Deploy or monitor the exact merged artifact and verify deployed behavior. |
+| [`auto-dev-detective.md`](auto-dev-detective.md) | Run a version-first, evidence-receipted investigation or RCA. |
+| [`auto-dev-develop.md`](auto-dev-develop.md) | Run the friendly single-step implementation alias. |
+| [`auto-dev-document.md`](auto-dev-document.md) | Create source-backed code, issue, architecture, operational, QA, release, or handoff documentation. |
+| [`auto-dev-everything.md`](auto-dev-everything.md) | Drive every applicable workflow for a work item through one resumable lifecycle. |
+| [`auto-dev-finalize.md`](auto-dev-finalize.md) | Converge agent-authored PRs and record immutable merge readiness without merging. |
+| [`auto-dev-grooming.md`](auto-dev-grooming.md) | Turn rough work into an implementation-ready, provider-backed specification. |
+| [`auto-dev-health.md`](auto-dev-health.md) | Audit final receipts, clean only reconstructable item-local resources, and preserve the packet in the finished lane. |
+| [`auto-dev-implementation.md`](auto-dev-implementation.md) | Manually run isolated implementation and local validation. |
+| [`auto-dev-merge.md`](auto-dev-merge.md) | Execute and record the final authorized live merge from a PR-owner readiness receipt. |
+| [`auto-dev-pr-create.md`](auto-dev-pr-create.md) | Resolve and create or reuse the complete PR target family before review. |
+| [`auto-dev-qa.md`](auto-dev-qa.md) | Run and receipt project-configured QA gates as a standalone step. |
+| [`auto-dev-readiness.md`](auto-dev-readiness.md) | Manually run context, policy, isolation, and planning readiness. |
+| [`auto-dev-release-propagation.md`](auto-dev-release-propagation.md) | Manually run release/backport/forward-port propagation. |
+| [`auto-dev-release.md`](auto-dev-release.md) | Create and verify a version, tag, package, changelog, or provider release. |
+| [`auto-dev-review-others.md`](auto-dev-review-others.md) | Review another author's PR through the canonical PR Review owner. |
+| [`auto-dev-review-repair.md`](auto-dev-review-repair.md) | Manually run tests, opposing review, PR, CI, and repair convergence. |
+| [`auto-dev-review-self.md`](auto-dev-review-self.md) | Run review and repair for our own change through evidence-backed merge readiness. |
+| [`gitflow-pr-create.md`](gitflow-pr-create.md) | Compatibility alias for Auto-Dev PR Create GitFlow-family mode. |
 | [`composio-debug-bundle.md`](composio-debug-bundle.md) | Capture a sanitized Composio diagnostics bundle. |
 | [`develop.md`](develop.md) | Run one or many tracker-backed programming tasks through canonical delivery. |
 | [`project-domain-investigate.md`](project-domain-investigate.md) | Retrieve bounded, evidence-backed project domain context before development. |

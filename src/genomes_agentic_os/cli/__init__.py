@@ -45,10 +45,13 @@ from . import rules
 from . import operator_resources
 from . import first_class_registry
 from . import develop
+from . import auto_dev
 from . import library
 from . import work
 from . import naming
 from . import long_run
+from . import artifacts
+from . import detective
 from . import work_item_archive
 from .project import handle_project_exec
 
@@ -88,10 +91,13 @@ COMMAND_MODULES = [
     operator_resources,
     first_class_registry,
     develop,
+    auto_dev,
     library,
     work,
     naming,
     long_run,
+    artifacts,
+    detective,
     work_item_archive,
 ]
 

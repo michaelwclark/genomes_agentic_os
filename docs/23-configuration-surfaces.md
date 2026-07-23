@@ -118,6 +118,40 @@ agentic-os doc-config plan --request "..."               Get a routing decision.
 
 ---
 
+## 5A. Five Nested Auto-Dev Markdown Policy Planes
+
+Auto-Dev workflow behavior is configured by ordered 1-N Markdown folders. A
+new `.md` file is consumed on the next run without a Python or registry change.
+Every resolver records ordered sources and a content fingerprint.
+
+All five live under the `auto_dev/` parent at root, domain, and project scope.
+Auto-Dev behavior is the Markdown directly in that parent; the other four use
+nested directories. Artifact and investigation configuration remain adjacent
+contracts and are not counted as development planes.
+
+| Plane | Root | Domain | Project | CLI |
+| --- | --- | --- | --- | --- |
+| Auto-Dev behavior | `harness/shared_factory/05-knowledge/auto_dev/` | `05-knowledge/auto_dev/` | `config/auto_dev/` | `agentic-os develop policy ... --plane auto_dev` |
+| Environment access | `harness/shared_factory/05-knowledge/auto_dev/environment_access/` | `05-knowledge/auto_dev/environment_access/` | `config/auto_dev/environment_access/` | `agentic-os develop policy ... --plane environment_access` |
+| Development standards | `harness/shared_factory/05-knowledge/auto_dev/dev_standards/` | `05-knowledge/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` | `agentic-os develop policy ... --plane dev_standards` |
+| QA gates | `harness/shared_factory/05-knowledge/auto_dev/qa_gates/` | `05-knowledge/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` | `agentic-os develop policy ... --plane qa_gates` |
+| Gitflow topology | `harness/shared_factory/05-knowledge/auto_dev/gitflow_topology/` | `05-knowledge/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` | `agentic-os develop policy ... --plane gitflow_topology` |
+| Artifact contracts | `harness/artifact-config/` | `artifact-config/` | `artifact-config/` | `agentic-os artifacts resolve ... --explain` |
+| Investigation sources | `harness/investigation-config/` | `investigation-config/` | `investigation-config/` | `agentic-os detective resolve ... --explain` |
+
+Projects may replace a plane's ordered folders through
+`config/development.yml policies.<plane>.paths`. Artifact contracts compose
+`any/any`, `any/<type>`, `<provider>/any`, and `<provider>/<type>` at each scope.
+Narrower scopes may specialize behavior but cannot weaken inherited safety,
+approval, sanitization, target verification, or readback.
+
+Use `agentic-os artifacts doctor` after changing artifact contracts and
+`agentic-os detective doctor` after changing investigation packs. Applied
+development runs snapshot all five development planes in
+`state/development-runs/<run-id>/effective-policies.json`.
+
+---
+
 ## 6. Control-Plane YAMLs — Runtime State
 
 Located at `~/agentic_os/harness/shared_factory/00-control-plane/`. These files are the live runtime state of the OS. Most are managed by CLI commands; do not edit manually while the OS is running.

@@ -24,6 +24,7 @@ from .capability_registry import (
     HARNESS_DIRECTORY,
     REGISTRY_FILES,
     VISIBLE_CAPABILITY_DIRECTORIES,
+    command_entries,
     hook_entries,
     inventory_markdown,
     registry_file_payloads,
@@ -32,6 +33,7 @@ from .config_ops import install_config
 from .composio_catalog import composio_tools_markdown
 from .hosts import load_hosts
 from .mcp_catalog import mcp_tools_markdown
+from . import __version__
 
 
 DEFAULT_DOMAINS = (
@@ -43,7 +45,7 @@ ROOT_MARKER_FILENAME = ".agentic_root"
 SHARED_FACTORY_DOMAIN = "shared_factory"
 # Backward-compatible default for the deprecated --projects-source flag.
 DEFAULT_PROJECTS_SOURCE = "~/projects"
-SOURCE_PACKAGE_VERSION = "0.1.1"
+SOURCE_PACKAGE_VERSION = __version__
 DEFAULT_UPDATE_CHANNEL = "stable"
 DEFAULT_UPDATE_POLICY = "operator_approved"
 
@@ -61,6 +63,44 @@ STANDARD_LANES = (
     "finance",
     "personal_admin",
     "learning",
+)
+
+AUTO_DEV_CHILD_POLICY_PLANES = (
+    "dev_standards",
+    "qa_gates",
+    "gitflow_topology",
+    "environment_access",
+)
+
+AUTO_DEV_POLICY_COMPATIBILITY_BREADCRUMB = """<!-- generated-by: agentic-os auto-dev-policy-migration -->
+# Auto-Dev policy compatibility breadcrumb
+
+The active policy files moved beneath `auto_dev/`. This managed file exists
+only so an interrupted compatibility migration can safely recognize and remove
+the obsolete sibling directory.
+"""
+
+_MANAGED_LEGACY_AUTO_DEV_READMES = (
+    """# Development Standards Policy Plane
+
+Every development, own-PR finalization, and others'-PR review run loads every
+Markdown file in this folder, followed by the routed domain and project
+folders. Files are ordered lexicographically within each folder. Later scopes
+may add precision; the strictest safety and quality requirement still wins.
+
+Conventional folders:
+
+```text
+harness/shared_factory/05-knowledge/dev_standards/
+domains/<domain>/05-knowledge/dev_standards/
+domains/<domain>/02-projects/<project>/config/dev_standards/
+```
+
+Projects may replace the ordered folder list through
+`config/development.yml policies.dev_standards.paths`. Adding a Markdown file
+changes the next run without a code or registry edit. `README.md` is explanatory
+and is not loaded as policy.
+""",
 )
 
 MANAGED_RUNTIME_FILES = (
@@ -189,6 +229,10 @@ MANAGED_RUNTIME_FILES = (
 # not overwrite operator-owned changes.
 MANAGED_RESOURCE_TREES = (
     (
+        "harness/shared_factory/00-programs/auto_dev",
+        "lib/programs/root/auto-dev",
+    ),
+    (
         "harness/shared_factory/04-automations/operations/work_item_archive",
         "harness/shared_factory/04-automations/operations/work_item_archive",
     ),
@@ -205,8 +249,132 @@ MANAGED_RESOURCE_TREES = (
         "harness/shared_factory/05-knowledge/toolkits/project-domain-analysis",
     ),
     (
+        "harness/shared_factory/05-knowledge/auto_dev",
+        "harness/shared_factory/05-knowledge/auto_dev",
+    ),
+    (
+        "harness/shared_factory/03-workflows/engineering/os_cleanup",
+        "harness/shared_factory/03-workflows/engineering/os_cleanup",
+    ),
+    (
         "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
         "harness/shared_factory/04-workflows/project-domain-architecture-analysis",
+    ),
+    (
+        "harness/shared_factory/04-workflows/auto_dev/library_self_hosting",
+        "lib/workflows/root/library_self_hosting",
+    ),
+    (
+        "harness/skills/auto-dev",
+        "lib/skills/root/auto-dev",
+    ),
+    (
+        "harness/skills/auto-dev-everything",
+        "lib/skills/root/auto-dev-everything",
+    ),
+    (
+        "harness/skills/auto-dev-grooming",
+        "lib/skills/root/auto-dev-grooming",
+    ),
+    (
+        "harness/skills/auto-dev-create-artifacts",
+        "lib/skills/root/auto-dev-create-artifacts",
+    ),
+    (
+        "harness/skills/auto-dev-detective",
+        "lib/skills/root/auto-dev-detective",
+    ),
+    (
+        "harness/skills/auto-dev-readiness",
+        "lib/skills/root/auto-dev-readiness",
+    ),
+    (
+        "harness/skills/auto-dev-implementation",
+        "lib/skills/root/auto-dev-implementation",
+    ),
+    (
+        "harness/skills/auto-dev-develop",
+        "lib/skills/root/auto-dev-develop",
+    ),
+    (
+        "harness/skills/auto-dev-document",
+        "lib/skills/root/auto-dev-document",
+    ),
+    (
+        "harness/skills/auto-dev-qa",
+        "lib/skills/root/auto-dev-qa",
+    ),
+    (
+        "harness/skills/auto-dev-review-repair",
+        "lib/skills/root/auto-dev-review-repair",
+    ),
+    (
+        "harness/skills/auto-dev-review-self",
+        "lib/skills/root/auto-dev-review-self",
+    ),
+    (
+        "harness/skills/auto-dev-review-others",
+        "lib/skills/root/auto-dev-review-others",
+    ),
+    (
+        "harness/skills/auto-dev-pr-create",
+        "lib/skills/root/auto-dev-pr-create",
+    ),
+    (
+        "harness/skills/gitflow-pr-create",
+        "lib/skills/root/gitflow-pr-create",
+    ),
+    (
+        "harness/skills/auto-dev-finalize",
+        "lib/skills/root/auto-dev-finalize",
+    ),
+    (
+        "harness/skills/auto-dev-merge",
+        "lib/skills/root/auto-dev-merge",
+    ),
+    (
+        "harness/skills/auto-dev-release-propagation",
+        "lib/skills/root/auto-dev-release-propagation",
+    ),
+    (
+        "harness/skills/auto-dev-release",
+        "lib/skills/root/auto-dev-release",
+    ),
+    (
+        "harness/skills/auto-dev-deploy",
+        "lib/skills/root/auto-dev-deploy",
+    ),
+    (
+        "harness/skills/auto-dev-closeout",
+        "lib/skills/root/auto-dev-closeout",
+    ),
+    (
+        "harness/skills/auto-dev-health",
+        "lib/skills/root/auto-dev-health",
+    ),
+    (
+        "harness/skills/auto-dev-dep-updater",
+        "lib/skills/root/auto-dev-dep-updater",
+    ),
+    (
+        "harness/skills/auto-dev-continuous-release",
+        "lib/skills/root/auto-dev-continuous-release",
+    ),
+    (
+        "harness/skills/os-cleaner",
+        "lib/skills/root/os-cleaner",
+    ),
+    (
+        "harness/skills/pr-review",
+        "lib/skills/root/pr-review",
+    ),
+    (
+        "harness/skills/pull-request",
+        "lib/skills/root/pull-request",
+    ),
+    (
+        "harness/skills/object-library",
+        "lib/skills/root/object-library",
     ),
 )
 
@@ -497,7 +665,13 @@ def normalize_domain(value: str) -> str:
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    source_checkout = Path(__file__).resolve().parents[2]
+    if all((source_checkout / name).is_dir() for name in ("harness", "templates", "schemas")):
+        return source_checkout
+    bundled = Path(__file__).resolve().parent / "_resources"
+    if bundled.is_dir():
+        return bundled
+    return source_checkout
 
 
 def template_source_dir() -> Path:
@@ -527,6 +701,84 @@ def ensure_dir(path: Path, result: ScaffoldResult) -> None:
         return
     path.mkdir(parents=True, exist_ok=True)
     result.created.append(path)
+
+
+def _is_managed_auto_dev_compatibility_readme(path: Path) -> bool:
+    """Return whether ``path`` is an exact package-owned migration README."""
+
+    if path.is_symlink() or not path.is_file():
+        return False
+    content = path.read_bytes()
+    managed = (
+        AUTO_DEV_POLICY_COMPATIBILITY_BREADCRUMB,
+        *_MANAGED_LEGACY_AUTO_DEV_READMES,
+    )
+    return any(content == item.encode("utf-8") for item in managed)
+
+
+def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) -> None:
+    """Move legacy sibling policy folders beneath the single Auto-Dev parent.
+
+    The move is additive and conflict-safe. Identical files and explicitly
+    managed compatibility READMEs collapse to one canonical copy. Any other
+    collision stops the scaffold instead of silently choosing one.
+    """
+
+    operations: list[tuple[str, Path, Path]] = []
+    legacy_roots: list[Path] = []
+    auto_dev = parent / "auto_dev"
+    for plane in AUTO_DEV_CHILD_POLICY_PLANES:
+        legacy = parent / plane
+        if not legacy.is_dir():
+            continue
+        legacy_roots.append(legacy)
+        canonical = auto_dev / plane
+        files = sorted(
+            (path for path in legacy.rglob("*") if path.is_file() or path.is_symlink()),
+            key=lambda path: path.relative_to(legacy).as_posix(),
+        )
+        for source in files:
+            destination = canonical / source.relative_to(legacy)
+            if destination.exists() or destination.is_symlink():
+                if (
+                    source.is_file()
+                    and destination.is_file()
+                    and not source.is_symlink()
+                    and not destination.is_symlink()
+                    and source.read_bytes() == destination.read_bytes()
+                ):
+                    operations.append(("collapse", source, destination))
+                    continue
+                if (
+                    source.name.casefold() == "readme.md"
+                    and _is_managed_auto_dev_compatibility_readme(source)
+                ):
+                    operations.append(("collapse", source, destination))
+                    continue
+                raise ValueError(
+                    "Auto-Dev policy migration conflict: "
+                    f"{source} and {destination} contain different content"
+                )
+            operations.append(("move", source, destination))
+
+    # Preflight every collision before mutating any plane.
+    for action, source, destination in operations:
+        if action == "collapse":
+            source.unlink()
+            result.skipped.append(destination)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        result.updated.append(destination)
+
+    for legacy in legacy_roots:
+        for directory in sorted(
+            (path for path in legacy.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        ):
+            directory.rmdir()
+        legacy.rmdir()
 
 
 def write_file_once(path: Path, content: str, result: ScaffoldResult) -> None:
@@ -654,13 +906,16 @@ def backup_policy_payload() -> dict[str, object]:
             "enabled": True,
             "include": [
                 ".agentic_root",
+                "lib/",
                 "harness/AGENTS.md",
+                "harness/artifact-config/",
                 "harness/ROUTER.md",
                 "harness/CONTEXT.md",
                 "harness/RULES.md",
                 "harness/TOOLS.md",
                 "harness/bin/",
                 "harness/commands/",
+                "harness/investigation-config/",
                 "harness/registries/",
                 "harness/reports/",
                 "harness/rules/",
@@ -921,10 +1176,17 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     )
 
 
-def copy_tree(source: Path, destination: Path) -> ScaffoldResult:
+def copy_tree(
+    source: Path,
+    destination: Path,
+    *,
+    excluded: tuple[Path, ...] = (),
+) -> ScaffoldResult:
     result = ScaffoldResult()
     for item in sorted(source.rglob("*")):
         relative = item.relative_to(source)
+        if any(relative == prefix or prefix in relative.parents for prefix in excluded):
+            continue
         target = destination / relative
         if item.is_dir():
             ensure_dir(target, result)
@@ -948,6 +1210,59 @@ def ensure_managed_resource_surfaces(root: Path, result: ScaffoldResult) -> None
         source_path = source_relative_path(source)
         if source_path.is_dir():
             result.extend(copy_tree(source_path, root / destination))
+    ensure_object_library_command_projection(root, result)
+
+
+def ensure_object_library_command_projection(root: Path, result: ScaffoldResult) -> None:
+    """Project the Python-registered library command into object discovery."""
+
+    command = next(entry for entry in command_entries() if entry["id"] == "object-library")
+    target = root / "lib" / "commands" / "root" / "object-library"
+    copy_file(source_relative_path(command["source"]), target / "command.md", result)
+    manifest = {
+        "api_version": "agentic-os-library-object/v1",
+        "kind": "command",
+        "id": "object-library",
+        "title": "Object Library",
+        "description": command["description"],
+        "status": "active",
+        "scope": {"level": "root", "domain": None, "project": None},
+        "owner": {"type": "package", "id": "genomes_agentic_os"},
+        "entrypoint": "command.md",
+        "tags": ["command", "object-library", "auto-dev"],
+        "dependencies": [],
+        "aliases": [command["source"]],
+        "runtime": {"root": "runtime/objects/commands/command/root/object-library"},
+        "validation": {"commands": ["agentic-os library --help"]},
+    }
+    write_file_once(
+        target / "object.yml",
+        yaml.safe_dump(manifest, sort_keys=False),
+        result,
+    )
+
+
+def ensure_auto_dev_program_alias(root: Path, result: ScaffoldResult) -> None:
+    """Expose the canonical library program at its historical routed path."""
+
+    canonical = root / "lib" / "programs" / "root" / "auto-dev"
+    alias = shared_factory_path(root, "00-programs", "auto_dev")
+    if not canonical.is_dir():
+        return
+    if alias.is_symlink():
+        if alias.resolve() == canonical.resolve():
+            result.skipped.append(alias)
+        else:
+            result.skipped.append(alias)
+        return
+    if alias.exists():
+        # Existing operator-owned physical folders are never removed during an
+        # additive update. ``library migrate`` can reconcile them explicitly.
+        result.skipped.append(alias)
+        return
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    alias.symlink_to("../../../lib/programs/root/auto-dev", target_is_directory=True)
+    result.created.append(alias)
 
 
 def ensure_visible_capability_directories(root: Path, result: ScaffoldResult) -> None:
@@ -1010,6 +1325,8 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     result = ScaffoldResult()
     harness_root = harness_source_dir()
     for directory in (
+        "artifact-config",
+        "investigation-config",
         "bin",
         "commands",
         "skills",
@@ -1023,7 +1340,16 @@ def mirror_visible_capability_assets(root: Path) -> ScaffoldResult:
     ):
         source = harness_root / directory
         if source.is_dir():
-            result.extend(copy_tree_missing(source, harness_path(root, directory)))
+            if directory == "shared_factory":
+                result.extend(
+                    copy_tree(
+                        source,
+                        harness_path(root, directory),
+                        excluded=(Path("00-programs/auto_dev"),),
+                    )
+                )
+            else:
+                result.extend(copy_tree_missing(source, harness_path(root, directory)))
     return result
 
 
@@ -1106,6 +1432,21 @@ After choosing a domain or narrower layer, change to that directory and read its
 {routing_rows}
 | `harness/shared_factory` | Shared OS templates, schemas, routers, reusable automations, runtime registries, cross-domain tools, and installed harness capabilities. | `harness/shared_factory/01-inbox/` |
 
+## SDLC Intent Routing
+
+| Intent | Canonical workflow |
+| --- | --- |
+| Bug, QA failure, ticket comment, log, alert, incident, suspected cause, or RCA | Auto-Dev Detective |
+| Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, report, or local artifact authoring | Auto-Dev Create Artifacts |
+| Take one tracker item through every applicable SDLC step | Auto-Dev Everything |
+| Renovate or Dependabot dependency-update pull request | Auto-Dev Dep Updater |
+| Our pull request through governed merge, release, and documentation | Auto-Dev Continuous Release |
+| Implement, review, validate, release, deploy, or close out code | Auto-Dev over Development Delivery |
+| Audit receipts and retire reconstructable local resources after verified delivery | Auto-Dev Health |
+
+Select these workflows by intent even when the user does not name Auto-Dev.
+Route to the domain/project before resolving its policy additions.
+
 ## Domain Classification
 
 - First identify the project, product, client, or life area named in the request.
@@ -1149,6 +1490,20 @@ This is the harness-neutral entry point for {scope}.
 4. Repeat the local read and routing loop until no narrower route applies.
 5. Act only after loading the final layer's context, rules, and tool registry.
 6. Record unclear routes, missing tools, and durable follow-up in the run log or closeout artifact.
+
+## Auto-Dev SDLC Routing
+
+Use Auto-Dev Detective for causal investigation, Auto-Dev Create Artifacts for
+governed provider output, and Auto-Dev over Development Delivery for coding
+through release. Invoke them by intent; the user does not need to remember the
+program name. Resolve root → domain → project → invocation Markdown policies
+before each workflow.
+
+Route Renovate or Dependabot pull requests through `auto-dev-dep-updater`.
+Route our own pull requests that should continue through merge, release, and
+documentation through `auto-dev-continuous-release`. Their authority comes
+from the routed project's `dep_updater`, `continuous_release`, and `release`
+policy blocks.
 
 ## Adaptive Observe Receipt
 
@@ -1237,6 +1592,9 @@ automations, projects, run logs, and archived material.
 | Shared template or skill work | `shared_factory/05-knowledge/` index files | relevant template, command, skill, or plan | active domain state |
 | Shell or runtime work | host tool registry under `shared_factory/05-knowledge/` | installed command docs | customer data |
 | Resume active domain work | routed domain `CONTEXT.md` and active work files | project status, workflow context pack, run logs | unrelated projects |
+| Investigate a signal | `investigation-config/`, then routed domain/project additions | deployed version and selected evidence adapters | unrelated product evidence |
+| Author an artifact | `artifact-config/`, then routed domain/project additions | provider target and readback tool | direct provider write before validation |
+| Deliver code | Auto-Dev program plus development/QA/gitflow policy planes | selected repository and deployed/release context | guessed repository or branch |
 
 ## Done Means
 
@@ -1272,6 +1630,14 @@ These root rules apply unless a narrower layer provides a stricter rule.
   worktrees, follow `harness/rules/os-authoring-rules.md`.
 - External source checkouts used for project work must be visible through the
   project `worktrees/` registry/link surface.
+
+## Auto-Dev Rules
+
+- Resolve and receipt root, domain, project, and invocation policy before SDLC execution.
+- Establish the affected environment's deployed version before causal code analysis.
+- Keep investigation facts, hypotheses, contradictions, gaps, and confidence distinct.
+- Pause and resume the same run for unavailable VPN, environment, provider, authentication, rate limit, or operator decision; do not create retry-failure storms.
+- Render and validate governed artifacts before approved external apply, then read back and receipt the provider result.
 
 ## Precedence
 
@@ -1310,6 +1676,30 @@ the source of truth by themselves.
 | `cockpit` | Build or open the local engineering cockpit over canonical OS state. | `shared_factory/05-knowledge/skills/cockpit/` |
 | `agentic-os-gui` | Open or build the domain/project-focused desktop conversation driver. | `shared_factory/05-knowledge/skills/agentic-os-gui/` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
+| `auto-dev` | Run a code change through the canonical SDLC family. | `skills/auto-dev/SKILL.md` |
+| `auto-dev-everything` | Run every applicable workflow against one resumable `autodev.json`. | `skills/auto-dev-everything/SKILL.md` |
+| `auto-dev-grooming` | Groom rough work into a source-backed implementation-ready specification. | `skills/auto-dev-grooming/SKILL.md` |
+| `auto-dev-create-artifacts` | Author a configured Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, report, or filesystem artifact. | `skills/auto-dev-create-artifacts/SKILL.md` |
+| `auto-dev-detective` | Investigate a bug, failed QA, log, incident, suspected cause, or RCA with versioned evidence. | `skills/auto-dev-detective/SKILL.md` |
+| `auto-dev-readiness` | Resolve tracker, repository, policy, worktree, and plan readiness. | `skills/auto-dev-readiness/SKILL.md` |
+| `auto-dev-implementation` | Own canonical implementation and local validation behind the Develop entrypoint. | `skills/auto-dev-implementation/SKILL.md` |
+| `auto-dev-develop` | Run the plain-English implementation and local-validation workflow. | `skills/auto-dev-develop/SKILL.md` |
+| `auto-dev-document` | Document code, issues, architecture, operations, QA, releases, or handoffs. | `skills/auto-dev-document/SKILL.md` |
+| `auto-dev-pr-create` | Resolve and create or reuse the complete pull-request family before review. | `skills/auto-dev-pr-create/SKILL.md` |
+| `gitflow-pr-create` | Compatibility alias for Auto-Dev PR Create family mode. | `skills/gitflow-pr-create/SKILL.md` |
+| `auto-dev-review-self` | Review and repair our own active delivery. | `skills/auto-dev-review-self/SKILL.md` |
+| `auto-dev-review-others` | Review another author's live pull request. | `skills/auto-dev-review-others/SKILL.md` |
+| `auto-dev-qa` | Run project-configured QA independently. | `skills/auto-dev-qa/SKILL.md` |
+| `auto-dev-review-repair` | Own canonical review and repair behind Review Self. | `skills/auto-dev-review-repair/SKILL.md` |
+| `auto-dev-finalize` | Converge our ticket's pull-request family and record merge readiness without merging. | `skills/auto-dev-finalize/SKILL.md` |
+| `auto-dev-merge` | Run the final live merge gate. | `skills/auto-dev-merge/SKILL.md` |
+| `auto-dev-release-propagation` | Run configured release, hotfix, backport, or forward-port propagation. | `skills/auto-dev-release-propagation/SKILL.md` |
+| `auto-dev-release` | Create and verify the project release. | `skills/auto-dev-release/SKILL.md` |
+| `auto-dev-deploy` | Deploy or monitor the exact artifact and verify behavior. | `skills/auto-dev-deploy/SKILL.md` |
+| `auto-dev-closeout` | Reconcile provider state and prove delivery complete. | `skills/auto-dev-closeout/SKILL.md` |
+| `auto-dev-health` | Audit final receipts, prune scoped local resources, and preserve the packet in the finished lane. | `skills/auto-dev-health/SKILL.md` |
+| `auto-dev-dep-updater` | Take one Renovate or Dependabot pull request through project-configured validation and governed merge. | `skills/auto-dev-dep-updater/SKILL.md` |
+| `auto-dev-continuous-release` | Take one of our pull requests through governed merge, project release, and documentation. | `skills/auto-dev-continuous-release/SKILL.md` |
 
 ## Commands
 
@@ -1326,6 +1716,31 @@ the source of truth by themselves.
 | `/auto-add-spec` | Create/update a spec packet for long OS-shaping requests. | Declared in `registries/commands.yml`. |
 | `/auto-add-feature` | Deprecated alias for `/auto-add-spec`. | Declared in `registries/commands.yml`. |
 | `/orchestrate` | Decompose, delegate, verify, and merge feature work. | Declared in `registries/commands.yml`. |
+| `/auto-dev` | Route to Everything or one named Auto-Dev workflow. | Selects by intent after project routing. |
+| `/auto-dev-everything` | Run every applicable stage against one `autodev.json`. | Stops at real gates and completes through Health. |
+| `/auto-dev-grooming` | Groom rough work into an implementation-ready source of truth. | Standalone stage. |
+| `/auto-dev-create-artifacts` | Resolve, render, validate, apply, and read back a governed artifact. | External apply remains explicit. |
+| `/auto-dev-detective` | Run a deployed-version-aware, resumable evidence investigation. | Investigation stays read-only. |
+| `/auto-dev-readiness` | Resolve tracker, repository, policy, worktree, and plan readiness. | Delivery-managed stage. |
+| `/auto-dev-implementation` | Invoke the canonical implementation owner directly. | Compatibility/manual expert entrypoint behind Develop. |
+| `/auto-dev-develop` | Implement and locally validate a planned task. | Friendly route to canonical implementation. |
+| `/auto-dev-document` | Create verified code and delivery documentation. | Standalone stage. |
+| `/auto-dev-pr-create` | Resolve and create or reuse the complete pull-request family. | Runs before Review Self. |
+| `/gitflow-pr-create` | Invoke PR Create with GitFlow-family compatibility defaults. | Alias only; owns no policy. |
+| `/auto-dev-review-self` | Review and repair our own change. | Friendly route to canonical review/repair. |
+| `/auto-dev-review-others` | Review another author's live pull request. | Uses canonical PR Review. |
+| `/auto-dev-qa` | Run project-configured QA independently. | Records exact-revision evidence. |
+| `/auto-dev-review-repair` | Invoke the canonical review-and-repair owner directly. | Compatibility/manual expert entrypoint behind Review Self. |
+| `/auto-dev-finalize` | Converge our ticket's pull-request family. | Leaves immutable merge readiness or an exact hold; never merges. |
+| `/auto-dev-merge` | Execute the final merge gate. | Requires PR-owner readiness and live provider readback. |
+| `/auto-dev-release-propagation` | Run PR Create family mode through the legacy name. | Compatibility alias. |
+| `/auto-dev-release` | Create and verify the project release. | Uses release policy and provider readback. |
+| `/auto-dev-deploy` | Deploy and verify the exact artifact. | Records deployed-version evidence or policy skip. |
+| `/auto-dev-closeout` | Reconcile provider state and prove delivery complete. | Lifecycle cleanup follows in Health. |
+| `/auto-dev-health` | Audit receipts, retire scoped local resources, and finish the preserved packet. | Existing state only; global prune is forbidden. |
+| `agentic-os artifacts` | Resolve, render, validate, apply, read back, or doctor artifact contracts. | Policies compose across root/domain/project/invocation. |
+| `agentic-os detective` | Resolve/start/status, record version/evidence, pause/resume, analyze/conclude/render, or doctor investigations. | Resume the same run after availability returns. |
+| `agentic-os develop` | Plan/start Development Delivery or explain dev/QA/gitflow policy. | Multi-repository projects require `--repository`. |
 | `agentic-os validate` | Validate the installed root. | Run before handoff after structural changes. |
 | `agentic-os route` | Route a request to a domain or workflow. | Use before creating new work. |
 | `agentic-os context build` | Build a deterministic context packet. | Use for handoffs and repeatable runs. |
@@ -1333,9 +1748,10 @@ the source of truth by themselves.
 | `harness/bin/agentic-os-quiet-run` | Run long local commands with file-backed state. | Use for tests, setup, watchers, and slow waits. |
 | `agentic-os cockpit snapshot/build/open` | Build or open the read-only local engineering cockpit. | Generates disposable JSON/HTML under the canonical report root. |
 | `agentic-os gui snapshot/transcript/open` | Inspect or open AgenticOSGui's native Claude/Codex conversation surface. | Provider stores remain read-only; interactive actions stay behind desktop IPC. |
-| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | `--remove-files` deletes merged-PR checkouts unless `REOPEN.md` is present. |
+| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Physical removal requires exact domain, project, worktree, packet-local Health preflight, and preflight-bound runtime receipt; failed or `REOPEN.md` cleanup remains registered. |
 | `agentic-os project work-item infer-complete` | Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity. | Use before `finalize-lingering` in cleanup workflows. |
 | `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and refresh the global active symlink container. | Use after closeout/stale-finalization cleanup. |
+| `agentic-os project work-item set` | Move one filesystem packet into the lane for an explicit lifecycle state. | Use before reconciling canonical SQLite `packet_path` after a governed move. |
 | `agentic-os project work-item sync-active` | Rebuild the root `00-control-plane/active/` symlink view. | Uses filesystem work-items, project worktrees, and active automations. |
 | `agentic-os thread stale-finalize --dry-run` | List work items untouched for more than 3 days before applying conservative closeout. | Dry-run by default. |
 | `agentic-os config doctor` | Check Codex config contracts. | Does not store secrets. |
@@ -1348,6 +1764,7 @@ the source of truth by themselves.
 | --- | --- | --- |
 | `execution_fabric` | Design or validate optional named queues, bounded worker pools, and explicit migration from the filesystem queue. Installed inactive by default. | `harness/shared_factory/00-programs/execution_fabric/` |
 | `spec_grooming` | Turn rough ideas into implementation-ready specs while preserving original intent, discovering existing capability, and projecting to filesystem, tracker, and Notion surfaces. | `harness/shared_factory/00-programs/spec_grooming/` |
+| `auto_dev` | One polymorphic SDLC family for investigation, artifact authoring, implementation, review, release, deployment, closeout, and lifecycle health. | `harness/shared_factory/00-programs/auto_dev/` |
 
 ## MCP Servers
 
@@ -1542,6 +1959,9 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Failure record | `06-runs-and-logs/failures/` |
 | Metrics | `07-metrics/` |
 | Archive | `08-archive/` |
+| Bug, failed QA, log, incident, or RCA | Auto-Dev Detective plus `investigation-config/` |
+| Jira, Linear, Notion, Confluence, GitHub, report, or RCA output | Auto-Dev Create Artifacts plus `artifact-config/` |
+| Code implementation through release | Auto-Dev plus the selected project development profile |
 
 ## Routing Rules
 
@@ -1564,6 +1984,8 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Resume active work | `active-now.json`, then `agentic-os work show` | Unrelated project folders |
 | Run a workflow | Matching workflow `quick-reference.md`, `context-pack.md`, `runbook.md` | Automation logs |
 | Review an automation | Matching automation spec, permissions, tests, logs | Workflow internals outside the linked process |
+| Investigate a signal | root/domain/project `investigation-config/` and deployed-version source | unrelated product evidence |
+| Author an artifact | root/domain/project `artifact-config/` and target provider tool | provider mutation before local validation |
 
 ## Approval Rules
 
@@ -1618,6 +2040,8 @@ This file teaches agents how work inside `{domain}` should be understood before 
 | Project work | active work row, `projects/<project>/status.md` | linked repo, linked tracker | unrelated projects | stable project packet |
 | Workflow run | selected library workflow entrypoint | runbook, examples, references | unrelated objects | `06-runs-and-logs/runs/` |
 | Automation review | selected library automation entrypoint | runtime receipts and failure evidence | unrelated objects | owning runtime path |
+| Investigation/RCA | Auto-Dev Detective and effective investigation policy | deployed version, selected sources | undeclared sources | routed investigation run |
+| Artifact authoring | Auto-Dev Create Artifacts and effective provider/type contract | verified provider target | copied formatting prompts | routed artifact receipts |
 
 ## Tools And Skills
 
@@ -1684,6 +2108,13 @@ workflow, or automation defines a stricter rule.
 - Preserve source links and validation evidence.
 - Keep secrets out of run logs, docs, prompts, and generated config.
 
+## Auto-Dev Rules
+
+- Add domain behavior through 1-N Markdown policy files; do not fork the shared workflow state machine.
+- Resolve deployed version before causal code claims and record evidence authority, freshness, and limitations.
+- Pause the same Detective run when a declared dependency is unavailable; resume only with availability evidence.
+- Validate and sanitize artifacts before approved external apply; verify target and read back the result.
+
 ## Precedence
 
 Narrower rules override these rules unless this file is stricter for safety,
@@ -1707,6 +2138,9 @@ libraries, and wrappers for `{domain}`.
 | `os-navigator` | Route domain work to the correct project, workflow, automation, or run log. | inherited from `harness/shared_factory` |
 | `workflow-builder` | Create or refine repeatable workflows. | inherited from `harness/shared_factory` |
 | `automation-qualifier` | Decide whether a repeatable process should become an automation. | inherited from `harness/shared_factory` |
+| `auto-dev` | Implement, review, release, deploy, and close out code through shared SDLC stages. | inherited from `harness/skills` |
+| `auto-dev-create-artifacts` | Author governed provider/type outputs with domain/project policy. | inherited from `harness/skills` |
+| `auto-dev-detective` | Investigate bugs, failed QA, logs, incidents, and RCA questions with versioned evidence. | inherited from `harness/skills` |
 
 ## Commands
 
@@ -1716,6 +2150,9 @@ libraries, and wrappers for `{domain}`.
 | `agentic-os workflow create` | Create a reusable workflow. | Use when the pattern should repeat. |
 | `agentic-os automation create` | Create a guarded automation spec. | Start in observe or prepare mode. |
 | `agentic-os validate` | Validate domain and root structure. | Run before handoff after structural changes. |
+| `agentic-os artifacts ...` | Resolve/render/validate/apply/readback/doctor artifact contracts. | External writes require target verification and approval. |
+| `agentic-os detective ...` | Resolve/start/status/version/evidence/pause/resume/analyze/conclude/render/doctor investigations. | Read-only and resumable. |
+| `agentic-os develop ...` | Plan/start code delivery or explain development policy. | Select a repository explicitly when the project catalog requires it. |
 
 ## MCP Servers
 
@@ -2199,6 +2636,7 @@ def create_domain_structure(
 
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
+    migrate_auto_dev_policy_directories(domain_root / "05-knowledge", result)
 
     write_file_once(domain_root / "00-programs" / "README.md", programs_readme(domain), result)
 
@@ -2219,6 +2657,43 @@ def create_domain_structure(
 
     write_file_once(domain_root / "03-workflows" / "README.md", workflows_readme(domain), result)
     write_file_once(domain_root / "04-automations" / "README.md", automations_readme(domain), result)
+    write_file_once(
+        domain_root / "05-knowledge" / "auto_dev" / "README.md",
+        f"""# Auto-Dev: {titleize_name(domain)}
+
+This directory is the domain policy layer between shared Auto-Dev behavior and
+project-specific behavior. `README.md` is an index and is not active policy.
+
+Create numbered Markdown addenda for every stage whose tracker, investigation,
+runtime, quality, release, deployment, documentation, or cleanup behavior is
+different in this domain. Write plain-English inputs, actions, guardrails,
+evidence, receipts, recovery, and done criteria. Do not leave the domain
+"configured" with only this README.
+
+Verify the effective root -> domain -> project selection with
+`agentic-os develop policy {domain} <project> --plane auto_dev --root <os-root> --json`.
+""",
+        result,
+    )
+    plane_guidance = {
+        "dev_standards": "coding, architecture, security, review, and documentation expectations",
+        "qa_gates": "test layers, acceptance evidence, regression gates, and QA handoff",
+        "gitflow_topology": "branch, worktree, pull-request, merge, and release topology",
+        "environment_access": "host ownership, VPN, identity, cloud/runtime access, mutation boundaries, and recovery",
+    }
+    for plane, guidance in plane_guidance.items():
+        write_file_once(
+            domain_root / "05-knowledge" / "auto_dev" / plane / "README.md",
+            f"""# {plane.replace("_", " ").title()}: {titleize_name(domain)}
+
+This is the domain layer for {guidance}. Add numbered, plain-English Markdown
+only when this domain differs from the shared Auto-Dev contract. Never store
+credentials, tokens, private keys, kubeconfig content, or customer data here.
+
+Verify selection with `agentic-os develop policy {domain} <project> --plane {plane} --root <os-root> --json`.
+""",
+            result,
+        )
 
     for lane in STANDARD_LANES:
         ensure_dir(domain_root / "03-workflows" / lane, result)
@@ -2353,6 +2828,20 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         )
     )
     ensure_managed_resource_surfaces(os_root, result)
+    migrate_auto_dev_policy_directories(
+        shared_factory_path(os_root, "05-knowledge"),
+        result,
+    )
+    # The package-owned Auto-Dev program is installed into the canonical
+    # object library above. Initialize and refresh that library here so every
+    # bootstrap path (init, domain/project creation, profile install, docs
+    # update) gets the same complete registry rather than a partial ``lib/``.
+    # Local import avoids the library module's import of ``expand_path`` while
+    # this module is loading.
+    from .library import init_library
+
+    init_library(os_root, dry_run=False)
+    ensure_auto_dev_program_alias(os_root, result)
     ensure_self_improvement_surface(os_root, result)
     return result
 
@@ -2744,12 +3233,13 @@ This registry names project-local capabilities for `domains/{domain}/projects/{p
 | `agentic-os project onboard` | Repair missing project layer files. | Additive; preserves local edits. |
 | `agentic-os project worktree create` | Create and register an isolated code worktree in any domain. | Reads `config/development.yml`; the global dated-name policy is inherited unless the project overrides it. |
 | `agentic-os project worktree add` | Register a visible worktree symlink and index entry. | Use for active branch-specific source checkouts. |
-| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | `--remove-files` deletes merged-PR checkouts unless `REOPEN.md` is present. |
+| `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Physical removal requires exact domain, project, worktree, packet-local Health preflight, and preflight-bound runtime receipt; failed or `REOPEN.md` cleanup remains registered. |
 | `agentic-os work upsert` | Capture or reconcile a tracker-backed project work item. | Writes canonical SQLite state; use a stable packet path when local evidence is needed. |
 | `agentic-os work show/set` | Read or change lifecycle, attention, context, blockers, and verification. | Folder movement is not a state transition. |
 | `agentic-os project work-item repair` | Backfill missing lifecycle packet files and log folders on legacy or partial work items. | Use before full validation when a `work-item.md`-only packet blocks the OS. |
 | `agentic-os project work-item infer-complete` | Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity. | Use before `finalize-lingering`; stale-only work stays active. |
 | `agentic-os project work-item finalize-lingering` | Legacy compatibility cleanup for pre-registry lane packets. | Do not use it as the normal state transition path. |
+| `agentic-os project work-item set` | Move one filesystem packet into the lane for an explicit lifecycle state. | Use before reconciling canonical SQLite `packet_path` after a governed move. |
 | `agentic-os project work-item sync-active` | Rebuild disposable active links from SQLite-active rows and their verified worktrees. | Use after canonical work-state changes. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
@@ -2870,6 +3360,11 @@ def project_config_file_content(
                         "archive": "work-items/99-archived",
                         "reopen_lookup_order": ["work-items", "work-items/99-archived"],
                     },
+                    "runtime": {
+                        "ownership": "not_managed",
+                        "provider": "none",
+                        "identity": "not-managed",
+                    },
                     "validation": {
                         "commands": [
                             "uv sync --extra dev",
@@ -2887,6 +3382,7 @@ def project_config_file_content(
                         },
                     },
                     "review": {
+                        "authorship": {"ours": ["github:configured_operator"]},
                         "opposing_harness": {
                             "required": False,
                             "preferred": "claude",
@@ -2906,7 +3402,7 @@ def project_config_file_content(
                         "target": "main",
                     },
                     "merge": {
-                        "policy": "auto_after_gates",
+                        "policy": "never_auto",
                         "method": "squash",
                         "required_approvals": 0,
                         "require_acceptance_evidence": True,
@@ -2967,12 +3463,18 @@ def project_config_file_content(
                     "date_prefix": "inherit",
                 },
                 "work_items": {"active_status": "building"},
+                "runtime": {
+                    "ownership": "not_managed",
+                    "provider": "none",
+                    "identity": "not-managed",
+                },
                 "validation": {
                     "commands": [],
                     "test_policy": "risk_based_triangle",
                     "ci_fallback_on_environment_failure": True,
                 },
                 "review": {
+                    "authorship": {"ours": []},
                     "opposing_harness": {
                         "required": True,
                         "preferred": "claude",
@@ -2984,6 +3486,43 @@ def project_config_file_content(
                 "release": {"fix_version_drives_targets": True},
                 "deployment": {"required": False, "monitor_after_merge": True},
                 "recovery": {"max_attempts": 3, "lease_minutes": 30, "stale_after_minutes": 45},
+                "policies": {
+                    "dev_standards": {
+                        "paths": [
+                            "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
+                            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+                            "config/auto_dev/dev_standards",
+                        ]
+                    },
+                    "qa_gates": {
+                        "paths": [
+                            "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
+                            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+                            "config/auto_dev/qa_gates",
+                        ]
+                    },
+                    "gitflow_topology": {
+                        "paths": [
+                            "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
+                            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+                            "config/auto_dev/gitflow_topology",
+                        ]
+                    },
+                    "auto_dev": {
+                        "paths": [
+                            "harness/shared_factory/05-knowledge/auto_dev",
+                            f"domains/{domain}/05-knowledge/auto_dev",
+                            "config/auto_dev",
+                        ]
+                    },
+                    "environment_access": {
+                        "paths": [
+                            "harness/shared_factory/05-knowledge/auto_dev/environment_access",
+                            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+                            "config/auto_dev/environment_access",
+                        ]
+                    },
+                },
                 "retention": {"raw_logs_days": 4, "merged_worktree_grace_days": 3},
             },
             sort_keys=False,
@@ -3004,6 +3543,13 @@ def project_config_file_content(
         )
         workflows = {
             "default_lane": lane_value,
+            "auto_dev": {
+                "full_workflow_skill": "auto-dev-everything",
+                "single_stage_skill_pattern": "auto-dev-<stage>",
+                "state_file": "autodev.json",
+                "policy_directory": "config/auto_dev",
+                "health_skill": "auto-dev-health",
+            },
             "feature_development": {
                 "artifacts_ref": "config/output-artifacts.yml",
                 "validation_ref": "config/validation.yml",
@@ -3249,6 +3795,60 @@ def ensure_project_code_settings_defaults(
     if "date_prefix" not in worktrees:
         worktrees["date_prefix"] = "inherit"
         changed = True
+    domain = project_root.parent.parent.name
+    policies = data.get("policies")
+    if policies is None:
+        policies = {}
+        data["policies"] = policies
+        changed = True
+    if not isinstance(policies, dict):
+        raise ValueError(f"project code setting policies must be a mapping: {path}")
+    conventional_policy_paths = {
+        "dev_standards": [
+            "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
+            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+            "config/auto_dev/dev_standards",
+        ],
+        "qa_gates": [
+            "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
+            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+            "config/auto_dev/qa_gates",
+        ],
+        "gitflow_topology": [
+            "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
+            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+            "config/auto_dev/gitflow_topology",
+        ],
+        "auto_dev": [
+            "harness/shared_factory/05-knowledge/auto_dev",
+            f"domains/{domain}/05-knowledge/auto_dev",
+            "config/auto_dev",
+        ],
+        "environment_access": [
+            "harness/shared_factory/05-knowledge/auto_dev/environment_access",
+            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+            "config/auto_dev/environment_access",
+        ],
+    }
+    legacy_policy_paths = {
+        plane: [
+            path.replace("/auto_dev", "")
+            for path in paths
+        ]
+        for plane, paths in conventional_policy_paths.items()
+        if plane != "auto_dev"
+    }
+    for plane, paths in conventional_policy_paths.items():
+        current = policies.get(plane)
+        if plane not in policies:
+            policies[plane] = {"paths": paths}
+            changed = True
+        elif (
+            isinstance(current, dict)
+            and current.get("paths") == legacy_policy_paths.get(plane)
+        ):
+            current["paths"] = paths
+            changed = True
     if not changed:
         return
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
@@ -3566,6 +4166,41 @@ def ensure_project_operating_surface(
     worklogs_dir = worklogs_dir_name(project_root)
     ensure_dir(project_root / "artifacts", result)
     ensure_dir(project_root / "config", result)
+    migrate_auto_dev_policy_directories(project_root / "config", result)
+    write_file_once(
+        project_root / "config" / "auto_dev" / "README.md",
+        f"""# Auto-Dev: {project}
+
+This project inherits shared and domain Auto-Dev policy. `README.md` is an index,
+not active policy. Add numbered Markdown files that describe the verified
+repository-specific behavior for each applicable stage: tracker and branches,
+architecture, implementation, tests, review, PR family, release/deploy,
+documentation, runtime cleanup, receipts, recovery, and done criteria.
+
+Do not call the project configured while this README is the only file. Verify
+selection with `agentic-os develop policy {domain} {project} --plane auto_dev
+--root <os-root> --json`.
+""",
+        result,
+    )
+    plane_guidance = {
+        "dev_standards": "repository-specific coding, architecture, security, review, and documentation expectations",
+        "qa_gates": "repository-specific tests, acceptance evidence, regression gates, and QA handoff",
+        "gitflow_topology": "repository-specific branch, worktree, pull-request, merge, and release topology",
+        "environment_access": "verified local runtime, item-owned resources, hosts, VPN, cloud access, readback, cleanup, and recovery",
+    }
+    for plane, guidance in plane_guidance.items():
+        write_file_once(
+            project_root / "config" / "auto_dev" / plane / "README.md",
+            f"""# {plane.replace("_", " ").title()}: {project}
+
+Add numbered, plain-English Markdown for {guidance}. Never store credentials or
+customer data here.
+
+Verify selection with `agentic-os develop policy {domain} {project} --plane {plane} --root <os-root> --json`.
+""",
+            result,
+        )
     ensure_dir(project_root / worklogs_dir, result)
     ensure_dir(project_root / "ideas", result)
     ensure_dir(project_root / "work-items", result)
@@ -4010,12 +4645,30 @@ def register_project_worktree(
 
     index_data = load_project_worktree_index(project_root, project)
     entries = [entry for entry in index_data.get("worktrees", []) if isinstance(entry, dict)]
+    branch_probe = subprocess.run(
+        ["git", "-C", str(target), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = branch_probe.stdout.strip() if branch_probe.returncode == 0 else ""
+    repository_settings = (
+        code_settings.get("repository")
+        if isinstance(code_settings.get("repository"), dict)
+        else {}
+    )
     entry = {
         "id": name,
         "path": str(target),
         "link": f"worktrees/{name}",
         "status": "active",
         "link_policy": "in_place_worktree" if in_place else "symlink_to_external_worktree",
+        **({"branch": branch} if branch else {}),
+        **(
+            {"base_branch": str(repository_settings.get("base_branch"))}
+            if repository_settings.get("base_branch")
+            else {}
+        ),
     }
     replaced = False
     for offset, existing in enumerate(entries):

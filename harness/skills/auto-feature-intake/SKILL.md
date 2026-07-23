@@ -8,3 +8,5 @@ description: Compatibility adapter for automatic Spec Engine capture with type f
 Load `harness/skills/spec-engine/SKILL.md` through `auto-spec-intake` and use
 `--type feature`. Do not create a separate feature packet, lifecycle, Notion
 queue row, or tracker sync.
+Delegate any requested provider projection to `$auto-dev-create-artifacts`
+through the canonical Spec Engine record.

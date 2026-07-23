@@ -5,17 +5,78 @@ tracker:
 repository:
   root: /absolute/path/to/canonical/repository
   base_branch: main
+  # Multi-repository alternative: remove root/base_branch, set
+  # selection_required: true, and declare catalog rows with id/root/base_branch.
+  # Per-repository validation or release behavior may be supplied under a row's
+  # profile_overrides mapping. `develop start` then requires --repository <id>.
 worktrees:
   directory: worktrees
   branch_template: feature/{ticket}-{slug}
 work_items:
   active_status: building
+auto_dev:
+  # Bare "auto-dev" uses this window and must include PR Create.
+  default:
+    start_stage: readiness
+    completion_stage: pr_create
+  # "auto-dev everything" is project-relative. Projects that release every
+  # change may leave Health here; release-event projects may stop at Merge.
+  everything:
+    start_stage: groom
+    completion_stage: health
+  # stage_order may be a full precedence-safe permutation of the shared stages.
+  stages:
+    document:
+      applicability: contextual
+    qa:
+      applicability: contextual
+# Auto-Dev Health tears down only a runtime explicitly registered here.
+# Projects without a per-worktree runtime keep this not-managed declaration.
+runtime:
+  ownership: not_managed
+  provider: none
+  identity: not-managed
 validation:
   commands:
     - python3 -m pytest tests -q
   test_policy: risk_based_triangle
   ci_fallback_on_environment_failure: true
+policies:
+  # Omit paths to use the conventional root -> domain -> project folders.
+  # Add or remove Markdown files inside a folder; the next run resolves them
+  # automatically and records the effective fingerprint.
+  dev_standards:
+    paths:
+      - harness/shared_factory/05-knowledge/auto_dev/dev_standards
+      - '{domain_root}/05-knowledge/auto_dev/dev_standards'
+      - config/auto_dev/dev_standards
+  qa_gates:
+    paths:
+      - harness/shared_factory/05-knowledge/auto_dev/qa_gates
+      - '{domain_root}/05-knowledge/auto_dev/qa_gates'
+      - config/auto_dev/qa_gates
+  gitflow_topology:
+    paths:
+      - harness/shared_factory/05-knowledge/auto_dev/gitflow_topology
+      - '{domain_root}/05-knowledge/auto_dev/gitflow_topology'
+      - config/auto_dev/gitflow_topology
+  auto_dev:
+    paths:
+      - harness/shared_factory/05-knowledge/auto_dev
+      - '{domain_root}/05-knowledge/auto_dev'
+      - config/auto_dev
+  environment_access:
+    paths:
+      - harness/shared_factory/05-knowledge/auto_dev/environment_access
+      - '{domain_root}/05-knowledge/auto_dev/environment_access'
+      - config/auto_dev/environment_access
 review:
+  # Provider-qualified identities that count as "our" pull requests.
+  # Keep this synchronized with the account used for provider readback.
+  authorship:
+    # Domain/project setup fills this with real provider identities.
+    # PR-authority stages fail closed while this list is empty.
+    ours: []
   opposing_harness:
     required: true
     preferred: claude

@@ -1,0 +1,55 @@
+{
+  "schema": "auto-dev-health-preflight/v1",
+  "mode": "apply",
+  "work_item_id": "FLYWL-1234",
+  "canonical_work_id": "los:los-app:flywl-1234",
+  "domain": "los",
+  "project": "los-app",
+  "packet_path": "/example/agentic-os/domains/los/02-projects/los-app/work-items/02-active/FLYWL-1234",
+  "task_state_ref": "/example/agentic-os/domains/los/02-projects/los-app/state/development-runs/FLYWL-1234/task.json",
+  "task_state_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "task_snapshot": {
+    "ref": "artifacts/auto-dev-health/snapshots/delivery-task-0123456789abcdef.json",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "subject_revision": "1234567890abcdef1234567890abcdef12345678",
+  "terminal_revision": "abcdef1234567890abcdef1234567890abcdef12",
+  "source_head_sha": "1234567890abcdef1234567890abcdef12345678",
+  "merge_sha": "abcdef1234567890abcdef1234567890abcdef12",
+  "merge_receipt_ref": "artifacts/auto-dev-health/receipts/terminal-authority.json",
+  "merge_receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "closeout_receipt_ref": "artifacts/auto-dev-health/receipts/closeout.json",
+  "closeout_receipt_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "resume_manifest": {
+    "ref": "artifacts/auto-dev-health/RESUME.md",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "packet_manifest": {
+    "ref": "artifacts/auto-dev-health/receipts/packet-manifest.json",
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "receipt_audit": {
+    "ref": "artifacts/auto-dev-health/receipts/pre-cleanup-receipt-audit.json",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "worktree": {
+    "identity": "072026-123-flywl-1234",
+    "path": "/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234",
+    "branch": "feature/FLYWL-1234"
+  },
+  "runtime": {
+    "identity": "los-los_app_los_django-072026-123-flywl-1234",
+    "ownership": "managed",
+    "provider": "los_fast_worktree",
+    "teardown_command": "/usr/bin/env AUTO_DEV_RUNTIME_ID=los-los_app_los_django-072026-123-flywl-1234 python3 /example/agentic-os/harness/bin/agentic-os-los-fast-worktree-health.py teardown --domain los --project los_app_los_django --repository-root \"/example/los-app-los-django\" --worktree 072026-123-flywl-1234 --worktree-path \"/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234\" --runtime-identity los-los_app_los_django-072026-123-flywl-1234",
+    "readback_command": "/usr/bin/env AUTO_DEV_RUNTIME_ID=los-los_app_los_django-072026-123-flywl-1234 python3 /example/agentic-os/harness/bin/agentic-os-los-fast-worktree-health.py readback --domain los --project los_app_los_django --repository-root \"/example/los-app-los-django\" --worktree 072026-123-flywl-1234 --worktree-path \"/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234\" --runtime-identity los-los_app_los_django-072026-123-flywl-1234"
+  },
+  "repository": {
+    "id": "git:github.com/example/los-app",
+    "base_branch": "main"
+  },
+  "dirty_disposition": "clean_only",
+  "residual_holds": [],
+  "safe_to_cleanup": true,
+  "prepared_at": "2026-07-20T20:01:00Z"
+}

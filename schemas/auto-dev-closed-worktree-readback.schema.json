@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-closed-worktree-readback.schema.json",
+  "title": "Auto-Dev closed worktree registry readback",
+  "type": "object",
+  "required": ["schema", "work_item_id", "canonical_work_id", "captured_at"],
+  "properties": {
+    "schema": {"const": "auto-dev-closed-worktree-readback/v1"},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "result": {"const": "not_managed"},
+    "entry": {
+      "type": "object",
+      "required": ["id", "path", "status", "terminal_revision", "health_preflight_ref"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "status": {"const": "closed"},
+        "terminal_revision": {"type": "string", "pattern": "^[0-9a-fA-F]{7,64}$"},
+        "health_preflight_ref": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "captured_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {"required": ["entry"], "not": {"required": ["result"]}},
+    {"required": ["result"], "not": {"required": ["entry"]}}
+  ]
+}

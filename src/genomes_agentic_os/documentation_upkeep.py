@@ -9,17 +9,13 @@ import hashlib
 
 import yaml
 
-from .scaffold import expand_path
+from .scaffold import expand_path, repo_root
 
 
 CONFIG_RELATIVE_PATH = Path("harness/shared_factory/00-control-plane/documentation-upkeep.yml")
 TEMPLATE_RELATIVE_PATH = Path("templates/runtime/documentation-upkeep.yml")
 INSTALLED_TEMPLATE_RELATIVE_PATH = Path("harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml")
 DEFAULT_RECEIPT_ROOT = Path("harness/shared_factory/06-runs-and-logs/documentation-upkeep/runs")
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -34,7 +30,7 @@ def documentation_upkeep_path(root: str | Path) -> Path:
 
 
 def documentation_upkeep_template_path() -> Path:
-    return _repo_root() / TEMPLATE_RELATIVE_PATH
+    return repo_root() / TEMPLATE_RELATIVE_PATH
 
 
 def installed_documentation_upkeep_template_path(root: str | Path) -> Path:

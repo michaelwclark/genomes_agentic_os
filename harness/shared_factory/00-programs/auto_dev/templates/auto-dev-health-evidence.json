@@ -1,0 +1,144 @@
+{
+  "schema": "auto-dev-health-evidence/v1",
+  "work_item_id": "replace-with-work-item-id",
+  "stage": "health",
+  "status": "completed",
+  "summary": "Schema-valid example: replace every sample value with live work-item evidence before recording Health.",
+  "subject_revision": "abcdef1234567890abcdef1234567890abcdef12",
+  "terminal_revision": "1234567890abcdef1234567890abcdef12345678",
+  "evidence": {
+    "preflight_ref": "artifacts/auto-dev-health/preflight.json",
+    "receipt_refs": [
+      "artifacts/auto-dev-health/preflight.json",
+      "artifacts/auto-dev-health/receipts/terminal-authority.json",
+      "artifacts/auto-dev-health/receipts/closeout.json",
+      "artifacts/auto-dev-health/receipts/pre-cleanup-receipt-audit.json",
+      "artifacts/auto-dev-health/RESUME.md",
+      "artifacts/auto-dev-health/receipts/packet-manifest.json",
+      "artifacts/auto-dev-health/receipts/resource-cleanup.json",
+      "artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+      "artifacts/auto-dev-health/receipts/closed-worktree-readback.json",
+      "artifacts/auto-dev-health/receipts/work-state.json",
+      "artifacts/auto-dev-health/receipts/active-index.json",
+      "artifacts/auto-dev-health/receipts/validation.json"
+    ],
+    "terminal_authority": {
+      "kind": "pull_request_merge",
+      "provider": "github",
+      "ref": "github:owner/repository#123",
+      "revision": "1234567890abcdef1234567890abcdef12345678",
+      "verified_at": "2026-01-01T00:00:00Z"
+    },
+    "receipt_audit": {
+      "required": [
+        "terminal_authority",
+        "closeout",
+        "receipt_audit",
+        "resume_manifest",
+        "packet_manifest",
+        "resource_cleanup",
+        "runtime_cleanup",
+        "work_state",
+        "active_index",
+        "validation"
+      ],
+      "present": [
+        {
+          "kind": "terminal_authority",
+          "ref": "artifacts/auto-dev-health/receipts/terminal-authority.json",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "kind": "closeout",
+          "ref": "artifacts/auto-dev-health/receipts/closeout.json",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "kind": "receipt_audit",
+          "ref": "artifacts/auto-dev-health/receipts/pre-cleanup-receipt-audit.json",
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        {
+          "kind": "resume_manifest",
+          "ref": "artifacts/auto-dev-health/RESUME.md",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        {
+          "kind": "packet_manifest",
+          "ref": "artifacts/auto-dev-health/receipts/packet-manifest.json",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "kind": "resource_cleanup",
+          "ref": "artifacts/auto-dev-health/receipts/resource-cleanup.json",
+          "sha256": "740dc4fd5ed0be25197e4ba532deee21afc6917503aa8bfa03211fc78393de03"
+        },
+        {
+          "kind": "runtime_cleanup",
+          "ref": "artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+          "sha256": "8816f79e87d81a46d0d99830e085bae7d082fcfe8d6036aa03357ae38d5b8701"
+        },
+        {
+          "kind": "resource_cleanup",
+          "ref": "artifacts/auto-dev-health/receipts/closed-worktree-readback.json",
+          "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        {
+          "kind": "work_state",
+          "ref": "artifacts/auto-dev-health/receipts/work-state.json",
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        {
+          "kind": "active_index",
+          "ref": "artifacts/auto-dev-health/receipts/active-index.json",
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+        },
+        {
+          "kind": "validation",
+          "ref": "artifacts/auto-dev-health/receipts/validation.json",
+          "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      ],
+      "missing": [],
+      "resume_ready": true
+    },
+    "resources": {
+      "worktree": {
+        "identity": "replace-with-registered-worktree",
+        "preflight": "Merged pull request verified; registered worktree was already absent on readback.",
+        "action": "none; already absent",
+        "result": "absent",
+        "receipt": "artifacts/auto-dev-health/receipts/resource-cleanup.json"
+      },
+      "runtime": {
+        "identity": "not-managed",
+        "preflight": "No target-local runtime was registered.",
+        "action": "none",
+        "result": "not_managed",
+        "receipt": "artifacts/auto-dev-health/receipts/resource-cleanup.json"
+      }
+    },
+    "work_state": {
+      "canonical_work_id": "work:replace-with-work-item-id",
+      "before": "delivery_complete",
+      "before_attention": "active",
+      "after": "finished",
+      "history_receipt": "artifacts/auto-dev-health/receipts/work-state.json",
+      "packet_old_path": "work-items/02-active/replace-with-work-item-id",
+      "packet_new_path": "work-items/03-complete/replace-with-work-item-id"
+    },
+    "closed_worktree_registry_ref": "artifacts/auto-dev-health/receipts/closed-worktree-readback.json",
+    "active_index_refs": [
+      "artifacts/auto-dev-health/receipts/active-index.json"
+    ],
+    "validation_results": [
+      {
+        "command": "agentic-os validate --root replace-with-os-root",
+        "result": "passed",
+        "ref": "artifacts/auto-dev-health/receipts/validation.json"
+      }
+    ],
+    "residual_holds": []
+  },
+  "verified_at": "2026-01-01T00:00:00Z"
+}

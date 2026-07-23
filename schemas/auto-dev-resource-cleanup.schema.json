@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-resource-cleanup.schema.json",
+  "title": "Auto-Dev atomic resource cleanup readback",
+  "type": "object",
+  "required": ["schema", "work_item_id", "canonical_work_id", "preflight_ref", "runtime_cleanup", "worktree", "runtime", "verified_at"],
+  "properties": {
+    "schema": {"const": "auto-dev-resource-cleanup/v1"},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "preflight_ref": {"type": "string", "minLength": 1},
+    "runtime_cleanup": {"$ref": "#/$defs/hashedRef"},
+    "worktree": {"$ref": "#/$defs/disposition"},
+    "runtime": {"$ref": "#/$defs/runtimeDisposition"},
+    "verified_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "hashedRef": {
+      "type": "object",
+      "required": ["ref", "sha256"],
+      "properties": {
+        "ref": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "disposition": {
+      "type": "object",
+      "required": ["identity", "path", "result", "readback_verified"],
+      "properties": {
+        "identity": {"type": "string", "minLength": 1},
+        "path": {"type": "string"},
+        "result": {"enum": ["removed", "absent", "not_managed"]},
+        "readback_verified": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "runtimeDisposition": {
+      "type": "object",
+      "required": [
+        "identity",
+        "ownership",
+        "provider",
+        "result",
+        "readback_verified"
+      ],
+      "properties": {
+        "identity": {"type": "string", "minLength": 1},
+        "ownership": {"enum": ["managed", "not_managed"]},
+        "provider": {"type": "string", "minLength": 1},
+        "result": {"enum": ["removed", "absent", "not_managed"]},
+        "readback_verified": {"const": true}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"ownership": {"const": "managed"}},
+            "required": ["ownership"]
+          },
+          "then": {
+            "properties": {
+              "identity": {"not": {"const": "not-managed"}},
+              "provider": {"not": {"const": "none"}},
+              "result": {"enum": ["removed", "absent"]}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"ownership": {"const": "not_managed"}},
+            "required": ["ownership"]
+          },
+          "then": {
+            "properties": {
+              "identity": {"const": "not-managed"},
+              "provider": {"const": "none"},
+              "result": {"const": "not_managed"}
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
+from jsonschema import Draft202012Validator
 
 from .artifact_naming import dated_name, load_artifact_naming_policy
 from .scaffold import (
@@ -391,7 +394,7 @@ def work_item_metadata(
         },
         "spec_destination": {
             "type": "local",
-            "path": "work-items/02-active",
+            "path": "work-items",
         },
         "external_tracker": {
             "type": "none",
@@ -419,7 +422,7 @@ def intake_spec_markdown(*, domain: str, project: str, work_id: str, title: str,
             "required_files": ["this file"],
             "conversation_logs": f"{work_id}.logs/conversations",
         },
-        "spec_destination": {"type": "local", "path": "work-items/02-active"},
+        "spec_destination": {"type": "local", "path": "work-items"},
         "external_tracker": {"type": "none"},
     }
     return f"""---
@@ -611,7 +614,7 @@ def repaired_work_item_metadata(record: WorkItemRecord, *, status: str, summary:
         }
     )
     payload["lifecycle"] = lifecycle
-    payload.setdefault("spec_destination", {"type": "local", "path": "work-items/02-active"})
+    payload.setdefault("spec_destination", {"type": "local", "path": "work-items"})
     payload.setdefault("external_tracker", {"type": "none"})
     return yaml.safe_dump(payload, sort_keys=False)
 
@@ -636,6 +639,7 @@ def create_project_work_item(
     status: str = "captured",
     work_id: str | None = None,
     item_format: str | None = None,
+    naming_time: datetime | date | str | None = None,
 ) -> ScaffoldResult:
     if status not in WORK_LIFECYCLE_STATES:
         raise ValueError(f"status must be one of {', '.join(WORK_LIFECYCLE_STATES)}: {status!r}")
@@ -652,7 +656,7 @@ def create_project_work_item(
     work_id = indexed_work_id(project_root, work_id or title)
     work_id = dated_name(
         work_id,
-        when=datetime.now(timezone.utc),
+        when=naming_time or datetime.now(timezone.utc),
         policy=load_artifact_naming_policy(os_root),
         scope="work_items",
     )
@@ -1706,17 +1710,8 @@ def worktree_pr_state(entry: dict[str, Any]) -> str:
     return normalized_status(value)
 
 
-def truthy_entry_value(entry: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> bool:
-    value = first_entry_value(entry, paths)
-    if isinstance(value, bool):
-        return value
-    return normalized_status(value) in {"true", "yes", "y", "1", "merged", "done"}
-
-
-def worktree_cleanup_reason(entry: dict[str, Any]) -> str | None:
-    jira_status = worktree_jira_status(entry)
-    if jira_status in TERMINAL_JIRA_STATUSES:
-        return f"jira_status:{jira_status}"
+def worktree_merge_verified(entry: dict[str, Any]) -> bool:
+    """Return true only for explicit pull-request merge evidence."""
     if truthy_entry_value(
         entry,
         (
@@ -1728,6 +1723,22 @@ def worktree_cleanup_reason(entry: dict[str, Any]) -> str | None:
             ("github", "pr", "merged"),
         ),
     ):
+        return True
+    return worktree_pr_state(entry) == "merged"
+
+
+def truthy_entry_value(entry: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> bool:
+    value = first_entry_value(entry, paths)
+    if isinstance(value, bool):
+        return value
+    return normalized_status(value) in {"true", "yes", "y", "1", "merged", "done"}
+
+
+def worktree_cleanup_reason(entry: dict[str, Any]) -> str | None:
+    jira_status = worktree_jira_status(entry)
+    if jira_status in TERMINAL_JIRA_STATUSES:
+        return f"jira_status:{jira_status}"
+    if worktree_merge_verified(entry):
         return "pr:merged"
     pr_state = worktree_pr_state(entry)
     if pr_state == "merged":
@@ -1760,7 +1771,15 @@ def write_worktree_registry(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
-def archive_worktree_entry(project_root: Path, entry: dict[str, Any], *, reason: str, source: Path) -> dict[str, Any]:
+def archive_worktree_entry(
+    project_root: Path,
+    entry: dict[str, Any],
+    *,
+    reason: str,
+    source: Path,
+    health_gate: Mapping[str, Any] | None = None,
+    health_preflight_ref: str | None = None,
+) -> dict[str, Any]:
     closed_path = project_root / "worktrees" / "closed.yml"
     payload = load_yaml_mapping(closed_path)
     payload.setdefault("project", project_root.name)
@@ -1773,6 +1792,11 @@ def archive_worktree_entry(project_root: Path, entry: dict[str, Any], *, reason:
     archived["closed_at"] = now_iso()
     archived["cleanup_reason"] = reason
     archived["cleanup_source"] = str(source)
+    if health_gate is not None:
+        archived["terminal_revision"] = str(health_gate.get("terminal_revision") or "")
+        archived["reviewed_revision"] = str(health_gate.get("subject_revision") or "")
+        archived["health_preflight_ref"] = str(health_preflight_ref or "")
+        archived["runtime_cleanup_verified"] = True
     key = (str(archived.get("id") or archived.get("name") or ""), str(archived.get("path") or ""))
     replaced = False
     for index, existing in enumerate(closed):
@@ -1789,7 +1813,483 @@ def archive_worktree_entry(project_root: Path, entry: dict[str, Any], *, reason:
     return {"path": str(closed_path), "entry": archived}
 
 
-def removable_git_checkout(path: Path, *, allow_dirty: bool = False) -> tuple[bool, str]:
+def _read_json_object(path: Path, label: str) -> dict[str, Any]:
+    if not path.is_file():
+        raise ValueError(f"{label} not found: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {path}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object: {path}")
+    return value
+
+
+def _verified_packet_hash(packet: Path, descriptor: Mapping[str, Any], label: str) -> Path:
+    raw = str(descriptor.get("ref") or "").strip()
+    expected = str(descriptor.get("sha256") or "").strip().lower()
+    relative = Path(raw)
+    if not raw or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"health preflight {label} must be packet-relative")
+    path = (packet / relative).resolve()
+    if packet.resolve() not in path.parents or not path.is_file():
+        raise ValueError(f"health preflight {label} is missing: {raw}")
+    if (
+        len(expected) != 64
+        or any(character not in "0123456789abcdef" for character in expected)
+        or hashlib.sha256(path.read_bytes()).hexdigest() != expected
+    ):
+        raise ValueError(f"health preflight {label} hash does not match")
+    return path
+
+
+def _same_json_object(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return json.dumps(left, sort_keys=True, separators=(",", ":")) == json.dumps(
+        right, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _task_receipt_payload(
+    task: Mapping[str, Any],
+    target_state: str,
+    *,
+    task_path: Path,
+    packet: Path,
+) -> dict[str, Any]:
+    """Read the canonical task receipt, including a moved-packet fallback."""
+
+    for row in reversed(task.get("receipts") or []):
+        if not isinstance(row, Mapping) or row.get("state") != target_state:
+            continue
+        raw = str(row.get("ref") or "").strip()
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        candidates = [candidate] if candidate.is_absolute() else [task_path.parent / candidate, packet / candidate]
+        if candidate.is_absolute() and packet.name in candidate.parts:
+            offset = candidate.parts.index(packet.name)
+            candidates.append(packet.joinpath(*candidate.parts[offset + 1 :]))
+        for receipt_path in candidates:
+            try:
+                resolved = receipt_path.resolve()
+            except OSError:
+                continue
+            if not resolved.is_file():
+                continue
+            expected_hash = str(row.get("sha256") or "").strip().lower()
+            if (
+                len(expected_hash) != 64
+                or hashlib.sha256(resolved.read_bytes()).hexdigest() != expected_hash
+            ):
+                raise ValueError(
+                    f"typed {target_state} task receipt lacks its immutable sha256 binding"
+                )
+            payload = _read_json_object(resolved, f"typed {target_state} task receipt")
+            if (
+                payload.get("schema") == "development-stage-evidence/v1"
+                and payload.get("state") == target_state
+            ):
+                return payload
+    raise ValueError(f"delivery task lacks a readable typed {target_state} receipt")
+
+
+def _validate_auto_dev_health_document(
+    document: Mapping[str, Any],
+    *,
+    schema_name: str,
+    context_path: Path,
+    label: str,
+    trusted_root: Path,
+) -> None:
+    """Validate a destructive Health input against installed or packaged schema."""
+
+    candidates = (
+        trusted_root / "harness" / "schemas" / schema_name,
+        trusted_root / "schemas" / schema_name,
+        Path(__file__).resolve().parent / "_resources" / "schemas" / schema_name,
+        Path(__file__).resolve().parents[2] / "schemas" / schema_name,
+    )
+    schema_path = next((path for path in candidates if path.is_file()), None)
+    if schema_path is None:
+        raise ValueError(f"{label} strict schema is unavailable")
+    schema = _read_json_object(schema_path, f"{label} strict schema")
+    findings = sorted(
+        Draft202012Validator(schema).iter_errors(dict(document)),
+        key=lambda item: list(item.absolute_path),
+    )
+    if findings:
+        first = findings[0]
+        location = ".".join(str(part) for part in first.absolute_path) or "root"
+        raise ValueError(
+            f"{label} violates its strict schema at {location}: {first.message}"
+        )
+
+
+def _health_cleanup_gate(
+    preflight_file: str | Path,
+    runtime_receipt_file: str | Path,
+    *,
+    domain: str,
+    project: str,
+    entry: Mapping[str, Any],
+    os_root: Path,
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    preflight_path = Path(preflight_file).expanduser().resolve()
+    preflight = _read_json_object(preflight_path, "Auto-Dev Health preflight")
+    _validate_auto_dev_health_document(
+        preflight,
+        schema_name="auto-dev-health-preflight.schema.json",
+        context_path=preflight_path,
+        label="Auto-Dev Health preflight",
+        trusted_root=os_root,
+    )
+    packet = Path(str(preflight.get("packet_path") or "")).expanduser().resolve()
+    worktree = preflight.get("worktree") if isinstance(preflight.get("worktree"), Mapping) else {}
+    runtime = preflight.get("runtime") if isinstance(preflight.get("runtime"), Mapping) else {}
+    entry_path = Path(str(entry.get("path") or "")).expanduser().resolve()
+    gate_path = Path(str(worktree.get("path") or "")).expanduser().resolve()
+    if not (
+        preflight.get("schema") == "auto-dev-health-preflight/v1"
+        and preflight.get("mode") == "apply"
+        and preflight.get("safe_to_cleanup") is True
+        and preflight.get("residual_holds") == []
+        and preflight.get("domain") == domain
+        and preflight.get("project") == project
+        and str(preflight.get("work_item_id") or "").strip()
+        and str(preflight.get("canonical_work_id") or "").strip()
+        and str(preflight.get("subject_revision") or "").strip()
+        and preflight.get("source_head_sha") == preflight.get("subject_revision")
+        and str(preflight.get("terminal_revision") or "").strip()
+        and preflight.get("merge_sha") == preflight.get("terminal_revision")
+        and gate_path == entry_path
+        and str(worktree.get("identity") or "")
+        in {
+            str(entry.get("id") or ""),
+            str(entry.get("name") or ""),
+            str(entry.get("path") or ""),
+            entry_path.name,
+        }
+    ):
+        raise ValueError("Health preflight does not match the exact worktree cleanup target")
+    if not packet.is_dir() or packet not in preflight_path.parents:
+        raise ValueError("Health preflight must live inside its durable work-item packet")
+    if (packet / "REOPEN.md").exists():
+        raise ValueError("Health cleanup is blocked by the packet root REOPEN.md hold")
+    task_state = Path(str(preflight.get("task_state_ref") or "")).expanduser().resolve()
+    task_hash = str(preflight.get("task_state_sha256") or "").lower()
+    if not task_state.is_file() or hashlib.sha256(task_state.read_bytes()).hexdigest() != task_hash:
+        raise ValueError("Health preflight task-state hash no longer matches")
+    task = _read_json_object(task_state, "Development Delivery task state")
+    task_snapshot_descriptor = preflight.get("task_snapshot")
+    if not isinstance(task_snapshot_descriptor, Mapping):
+        raise ValueError("Health preflight lacks its immutable task snapshot")
+    task_snapshot_path = _verified_packet_hash(
+        packet, task_snapshot_descriptor, "task snapshot"
+    )
+    task_snapshot = _read_json_object(task_snapshot_path, "Health task snapshot")
+    if not _same_json_object(task_snapshot, task):
+        raise ValueError("Health task snapshot no longer matches the live delivery task")
+    task_worktree = task.get("worktree") if isinstance(task.get("worktree"), Mapping) else {}
+    task_runtime = task.get("runtime") if isinstance(task.get("runtime"), Mapping) else {}
+    task_work_item = Path(str(task.get("work_item") or "")).expanduser().resolve()
+    if not (
+        task.get("state") == "delivery_complete"
+        and task.get("domain") == domain
+        and task.get("project") == project
+        and task.get("canonical_work_id") == preflight.get("canonical_work_id")
+        and task_work_item == packet
+        and task.get("subject_revision") == preflight.get("subject_revision")
+        and task.get("terminal_revision") == preflight.get("terminal_revision")
+        and not task.get("failure")
+        and str(task_worktree.get("name") or "") == str(worktree.get("identity") or "")
+        and Path(str(task_worktree.get("path") or "")).expanduser().resolve() == gate_path
+        and str(task_worktree.get("branch") or "") == str(worktree.get("branch") or "")
+        and dict(task_runtime) == dict(runtime)
+        and preflight.get("repository")
+        == {
+            "id": (
+                task.get("repository", {}).get("id")
+                if isinstance(task.get("repository"), Mapping)
+                else None
+            ),
+            "base_branch": (
+                str(task.get("repository", {}).get("base_branch") or "").strip()
+                if isinstance(task.get("repository"), Mapping)
+                else ""
+            ),
+        }
+    ):
+        raise ValueError("Health preflight does not match the canonical delivered task state")
+    merge_descriptor = {
+        "ref": preflight.get("merge_receipt_ref"),
+        "sha256": preflight.get("merge_receipt_sha256"),
+    }
+    closeout_descriptor = {
+        "ref": preflight.get("closeout_receipt_ref"),
+        "sha256": preflight.get("closeout_receipt_sha256"),
+    }
+    merge_path = _verified_packet_hash(packet, merge_descriptor, "merge receipt")
+    closeout_path = _verified_packet_hash(packet, closeout_descriptor, "Closeout receipt")
+    merge_receipt = _read_json_object(merge_path, "Health merge receipt snapshot")
+    closeout_receipt = _read_json_object(closeout_path, "Health Closeout receipt snapshot")
+    canonical_merge = _task_receipt_payload(
+        task, "merged", task_path=task_state, packet=packet
+    )
+    canonical_pr_open = _task_receipt_payload(
+        task, "pr_open", task_path=task_state, packet=packet
+    )
+    canonical_ready = _task_receipt_payload(
+        task, "ready_for_merge", task_path=task_state, packet=packet
+    )
+    canonical_closeout = _task_receipt_payload(
+        task, "delivery_complete", task_path=task_state, packet=packet
+    )
+    merge_evidence = (
+        merge_receipt.get("evidence")
+        if isinstance(merge_receipt.get("evidence"), Mapping)
+        else {}
+    )
+    closeout_evidence = (
+        closeout_receipt.get("evidence")
+        if isinstance(closeout_receipt.get("evidence"), Mapping)
+        else {}
+    )
+    pr_open_evidence = (
+        canonical_pr_open.get("evidence")
+        if isinstance(canonical_pr_open.get("evidence"), Mapping)
+        else {}
+    )
+    ready_evidence = (
+        canonical_ready.get("evidence")
+        if isinstance(canonical_ready.get("evidence"), Mapping)
+        else {}
+    )
+
+    from .auto_dev_orchestration import (
+        same_pull_request_authority,
+        validate_pull_request_authority,
+    )
+
+    try:
+        open_authority = validate_pull_request_authority(
+            task, pr_open_evidence, "Health pr_open receipt"
+        )
+        ready_authority = validate_pull_request_authority(
+            task, ready_evidence, "Health ready_for_merge receipt"
+        )
+        merge_authority = validate_pull_request_authority(
+            task, merge_evidence, "Health merged receipt"
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if not (
+        canonical_pr_open.get("status") in {"verified", "passed", "completed"}
+        and pr_open_evidence.get("readback_verified") is True
+        and canonical_ready.get("status") in {"verified", "passed", "completed"}
+        and ready_evidence.get("checks_verified") is True
+        and ready_evidence.get("reviews_verified") is True
+        and ready_evidence.get("readback_verified") is True
+        and ready_evidence.get("subject_revision") == preflight.get("subject_revision")
+        and same_pull_request_authority(open_authority, ready_authority)
+        and same_pull_request_authority(ready_authority, merge_authority)
+    ):
+        raise ValueError(
+            "Health cleanup authority is not bound to one reviewed provider pull request"
+        )
+    if not (
+        _same_json_object(merge_receipt, canonical_merge)
+        and merge_receipt.get("schema") == "development-stage-evidence/v1"
+        and merge_receipt.get("state") == "merged"
+        and merge_receipt.get("status") == "completed"
+        and merge_evidence.get("merge_sha") == preflight.get("terminal_revision")
+        and merge_evidence.get("source_head_sha") == preflight.get("subject_revision")
+        and str(merge_evidence.get("provider") or "").strip()
+        and str(merge_evidence.get("pull_request") or "").strip()
+        and merge_evidence.get("readback_verified") is True
+    ):
+        raise ValueError("Health merge snapshot is not the canonical typed merge authority")
+    if not (
+        _same_json_object(closeout_receipt, canonical_closeout)
+        and closeout_receipt.get("schema") == "development-stage-evidence/v1"
+        and closeout_receipt.get("state") == "delivery_complete"
+        and closeout_receipt.get("status") in {"verified", "passed", "completed"}
+        and closeout_evidence.get("closeout_verified") is True
+    ):
+        raise ValueError("Health Closeout snapshot is not the canonical typed Closeout receipt")
+
+    resume_descriptor = preflight.get("resume_manifest")
+    audit_descriptor = preflight.get("receipt_audit")
+    if not isinstance(resume_descriptor, Mapping) or not isinstance(audit_descriptor, Mapping):
+        raise ValueError("Health preflight lacks its resume manifest or receipt audit")
+    _verified_packet_hash(packet, resume_descriptor, "resume_manifest")
+    audit_path = _verified_packet_hash(packet, audit_descriptor, "receipt_audit")
+    audit = _read_json_object(audit_path, "Health pre-cleanup receipt audit")
+    audit_stages = audit.get("stages") if isinstance(audit.get("stages"), list) else []
+    from .auto_dev_orchestration import (
+        AUTO_DEV_STAGE_ORDER,
+        _validate_health_stage_source,
+        validate_auto_dev_packet_manifest,
+    )
+
+    expected_stages = list(AUTO_DEV_STAGE_ORDER[:-1])
+    if not (
+        audit.get("schema") == "auto-dev-health-receipt-audit/v1"
+        and audit.get("work_item_id") == preflight.get("work_item_id")
+        and audit.get("canonical_work_id") == preflight.get("canonical_work_id")
+        and audit.get("missing") == []
+        and audit.get("resume_ready") is True
+        and audit.get("terminal_authority") == merge_descriptor
+        and audit.get("closeout") == closeout_descriptor
+        and [row.get("stage") for row in audit_stages if isinstance(row, Mapping)]
+        == expected_stages
+        and len(audit_stages) == len(expected_stages)
+    ):
+        raise ValueError("Health pre-cleanup audit is incomplete or belongs to another item")
+    for row in audit_stages:
+        if not isinstance(row, Mapping) or row.get("status") not in {"completed", "not_required"}:
+            raise ValueError("Health pre-cleanup audit contains a non-terminal stage")
+        stage_path = _verified_packet_hash(packet, row, f"{row.get('stage')} stage receipt")
+        try:
+            _validate_health_stage_source(
+                packet,
+                str(row.get("stage") or ""),
+                str(row.get("status") or ""),
+                stage_path,
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+    try:
+        validate_auto_dev_packet_manifest(
+            preflight,
+            packet,
+            verify_live_files=True,
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    runtime_path = Path(runtime_receipt_file).expanduser().resolve()
+    runtime_receipt = _read_json_object(runtime_path, "Auto-Dev runtime cleanup receipt")
+    _validate_auto_dev_health_document(
+        runtime_receipt,
+        schema_name="auto-dev-runtime-cleanup.schema.json",
+        context_path=runtime_path,
+        label="Auto-Dev runtime cleanup receipt",
+        trusted_root=os_root,
+    )
+    preflight_hash = hashlib.sha256(preflight_path.read_bytes()).hexdigest()
+    try:
+        runtime_path.relative_to(packet)
+    except ValueError as exc:
+        raise ValueError("runtime cleanup receipt must live inside the durable packet") from exc
+    teardown_operation = runtime_receipt.get("teardown")
+    readback_operation = runtime_receipt.get("readback")
+    if not isinstance(teardown_operation, Mapping) or not isinstance(readback_operation, Mapping):
+        raise ValueError("runtime cleanup receipt lacks typed teardown/readback operations")
+    _verified_packet_hash(packet, teardown_operation, "runtime teardown operation")
+    _verified_packet_hash(packet, readback_operation, "runtime readback operation")
+    expected_teardown = (
+        str(runtime.get("teardown_command") or "")
+        if runtime.get("ownership") == "managed"
+        else "not_managed"
+    )
+    expected_readback = (
+        str(runtime.get("readback_command") or "")
+        if runtime.get("ownership") == "managed"
+        else "not_managed"
+    )
+    if not (
+        runtime_receipt.get("schema") == "auto-dev-runtime-cleanup/v1"
+        and runtime_receipt.get("work_item_id") == preflight.get("work_item_id")
+        and runtime_receipt.get("canonical_work_id") == preflight.get("canonical_work_id")
+        and runtime_receipt.get("runtime_identity") == runtime.get("identity")
+        and runtime_receipt.get("ownership") == runtime.get("ownership")
+        and runtime_receipt.get("provider") == runtime.get("provider")
+        and runtime_receipt.get("result") in {"removed", "absent", "not_managed"}
+        and runtime_receipt.get("readback_verified") is True
+        and runtime_receipt.get("preflight_sha256") == preflight_hash
+        and teardown_operation.get("command") == expected_teardown
+        and readback_operation.get("command") == expected_readback
+        and str(runtime_receipt.get("verified_at") or "").strip()
+    ):
+        raise ValueError("runtime cleanup receipt does not match the Health preflight")
+    if runtime.get("ownership") == "managed" and runtime_receipt.get("result") not in {
+        "removed",
+        "absent",
+    }:
+        raise ValueError("managed runtime cleanup must prove removed or absent")
+    if (
+        runtime.get("ownership") == "not_managed"
+        and runtime_receipt.get("result") != "not_managed"
+    ):
+        raise ValueError("not-managed runtime cleanup must use not_managed")
+
+    def parsed_time(value: Any, label: str) -> datetime:
+        raw = str(value or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{label} must be an ISO-8601 timestamp") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"{label} must include a timezone")
+        return parsed.astimezone(timezone.utc)
+
+    prepared_at = parsed_time(preflight.get("prepared_at"), "Health preflight prepared_at")
+    runtime_verified_at = parsed_time(
+        runtime_receipt.get("verified_at"), "runtime cleanup verified_at"
+    )
+    current_time = datetime.now(timezone.utc)
+    if runtime_verified_at < prepared_at:
+        raise ValueError("runtime cleanup receipt predates the Health preflight")
+    if runtime_verified_at > current_time + timedelta(minutes=2):
+        raise ValueError("runtime cleanup receipt timestamp is in the future")
+    if current_time - runtime_verified_at > timedelta(minutes=15):
+        raise ValueError(
+            "runtime cleanup readback is stale; recreate it immediately before cleanup"
+        )
+    if runtime.get("ownership") == "managed":
+        command = str(runtime.get("readback_command") or "").strip()
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            raise ValueError("registered runtime readback command is malformed") from exc
+        if not argv:
+            raise ValueError("registered runtime readback command is empty")
+        repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
+        working_directory = Path(str(repository.get("root") or "")).expanduser()
+        if not working_directory.is_dir():
+            raise ValueError(
+                "canonical repository root is unavailable for exact runtime readback"
+            )
+        try:
+            immediate = subprocess.run(
+                argv,
+                cwd=str(working_directory),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("exact runtime readback could not be executed") from exc
+        if immediate.returncode != 0:
+            raise ValueError(
+                "exact runtime readback did not prove the registered target absent"
+            )
+
+    if preflight.get("dirty_disposition") != "clean_only":
+        raise ValueError("unsupported Health dirty_disposition")
+    return preflight, runtime_receipt, preflight_path
+
+
+def _protected_worktree_branch(branch: str, base_branch: str | None) -> bool:
+    normalized = branch.strip().lower()
+    protected = {"main", "master", "develop"}
+    if base_branch:
+        protected.add(base_branch.strip().lower())
+    return normalized in protected or normalized.startswith(("release/", "hotfix/"))
+
+
+def removable_git_checkout(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return True, "missing"
     probe = subprocess.run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, check=False)
@@ -1804,13 +2304,16 @@ def removable_git_checkout(path: Path, *, allow_dirty: bool = False) -> tuple[bo
     if status.returncode != 0:
         return False, (status.stderr or status.stdout or "git status failed").strip()
     if status.stdout.strip():
-        if allow_dirty:
-            return True, "dirty ignored for merged PR cleanup"
         return False, "git checkout has uncommitted changes"
     return True, "clean"
 
 
-def remove_worktree_files(project_root: Path, entry: dict[str, Any]) -> tuple[bool, str]:
+def remove_worktree_files(
+    project_root: Path,
+    entry: dict[str, Any],
+    *,
+    health_gate: Mapping[str, Any] | None = None,
+) -> tuple[bool, str]:
     target = Path(str(entry.get("path") or "")).expanduser()
     if not target.exists():
         return True, "missing"
@@ -1823,15 +2326,99 @@ def remove_worktree_files(project_root: Path, entry: dict[str, Any]) -> tuple[bo
         return False, "target is outside project worktrees/"
     if (target_resolved / "REOPEN.md").exists():
         return False, "REOPEN.md present; ask before cleanup"
-    cleanup_reason = worktree_cleanup_reason(entry) or ""
-    allow_dirty = cleanup_reason.startswith("pr")
-    removable, reason = removable_git_checkout(target_resolved, allow_dirty=allow_dirty)
+    if health_gate is None:
+        return False, "physical removal requires a typed Auto-Dev Health preflight"
+    gate_worktree = (
+        health_gate.get("worktree")
+        if isinstance(health_gate.get("worktree"), Mapping)
+        else {}
+    )
+    expected_branch = str(gate_worktree.get("branch") or "").strip()
+    branch_probe = subprocess.run(
+        ["git", "-C", str(target_resolved), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    actual_branch = branch_probe.stdout.strip() if branch_probe.returncode == 0 else ""
+    gate_repository = (
+        health_gate.get("repository")
+        if isinstance(health_gate.get("repository"), Mapping)
+        else {}
+    )
+    canonical_base = str(gate_repository.get("base_branch") or "").strip()
+    entry_base = str(entry.get("base_branch") or "").strip()
+    if not canonical_base:
+        return False, "Health preflight lacks the canonical repository base branch"
+    if entry_base and entry_base != canonical_base:
+        return False, "registry base branch disagrees with the Health preflight"
+    base_branch = canonical_base
+    if not expected_branch or actual_branch != expected_branch:
+        return False, "worktree branch does not match the Health preflight"
+    expected_revision = str(health_gate.get("subject_revision") or "").strip()
+    head_probe = subprocess.run(
+        ["git", "-C", str(target_resolved), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    actual_revision = head_probe.stdout.strip() if head_probe.returncode == 0 else ""
+    if not expected_revision or actual_revision != expected_revision:
+        return False, "worktree HEAD does not match the reviewed Health subject_revision"
+    if _protected_worktree_branch(actual_branch, base_branch):
+        return False, "refusing to remove a default or protected branch"
+    removable, reason = removable_git_checkout(target_resolved)
     if not removable:
         return False, reason
-    shutil.rmtree(target_resolved)
-    if reason == "dirty ignored for merged PR cleanup":
-        return True, "removed dirty merged worktree"
-    return True, "removed"
+    listing = subprocess.run(
+        ["git", "-C", str(target_resolved), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listing.returncode != 0:
+        return False, (listing.stderr or listing.stdout or "git worktree list failed").strip()
+    registered = [
+        Path(line.removeprefix("worktree ")).expanduser().resolve()
+        for line in listing.stdout.splitlines()
+        if line.startswith("worktree ")
+    ]
+    if target_resolved not in registered:
+        return False, "checkout is not registered in git worktree metadata"
+    if not registered or registered[0] == target_resolved:
+        return False, "refusing to remove the primary git worktree"
+    primary = registered[0]
+    removal = subprocess.run(
+        ["git", "-C", str(primary), "worktree", "remove", str(target_resolved)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if removal.returncode != 0:
+        return False, (removal.stderr or removal.stdout or "git worktree remove failed").strip()
+    return True, "removed exact typed merged git worktree"
+
+
+def _validated_worktree_link(project_root: Path, entry: Mapping[str, Any]) -> Path | None:
+    """Return one exact project-owned link or fail before any registry mutation."""
+
+    link_value = str(entry.get("link") or "").strip()
+    if not link_value:
+        return None
+    relative = Path(link_value).expanduser()
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("selected worktree link must be a project-relative worktrees path")
+    link_path = (project_root / relative).absolute()
+    managed_links = (project_root / "worktrees").absolute()
+    if not link_path.is_relative_to(managed_links):
+        raise ValueError("selected worktree link is outside the project worktrees directory")
+    path_value = str(entry.get("path") or "").strip()
+    if not path_value:
+        raise ValueError("selected worktree registry entry with a link has no target path")
+    if link_path.exists() or link_path.is_symlink():
+        if link_path.resolve() != Path(path_value).expanduser().resolve():
+            raise ValueError("selected worktree link does not point to the exact cleanup target")
+    return link_path
 
 
 def cleanup_terminal_worktrees(
@@ -1839,16 +2426,81 @@ def cleanup_terminal_worktrees(
     *,
     domain: str | None = None,
     project: str | None = None,
+    worktree: str | None = None,
+    health_preflight: str | Path | None = None,
+    runtime_receipt: str | Path | None = None,
     apply: bool = False,
     remove_files: bool = False,
 ) -> dict[str, Any]:
     os_root = expand_path(root)
+    if apply and remove_files and not all(
+        (domain, project, worktree, health_preflight, runtime_receipt)
+    ):
+        raise ValueError(
+            "physical worktree removal requires --domain, --project, --worktree, "
+            "--health-preflight, and --runtime-receipt"
+        )
     candidates: list[dict[str, Any]] = []
     closed: list[dict[str, Any]] = []
     removed: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
     registry_paths = ("config/worktrees.yml", "worktrees/index.yml")
-    for project_root in root_project_dirs(os_root, domain=domain, project=project):
+    project_roots = list(root_project_dirs(os_root, domain=domain, project=project))
+    physical_target_paths: set[Path] = set()
+    physically_handled_paths: set[Path] = set()
+    archived_by_path: dict[Path, dict[str, Any]] = {}
+    if apply and remove_files:
+        selector = str(worktree or "").strip()
+        matched: list[tuple[Path, dict[str, Any]]] = []
+        for selected_project in project_roots:
+            for relative_registry in registry_paths:
+                registry_path = selected_project / relative_registry
+                if not registry_path.is_file():
+                    continue
+                _, entries, _ = worktree_registry_payload(registry_path)
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    path_value = str(entry.get("path") or "")
+                    link_value = str(entry.get("link") or "")
+                    values = {
+                        str(entry.get("id") or ""),
+                        str(entry.get("name") or ""),
+                        path_value,
+                        link_value,
+                        Path(path_value).name if path_value else "",
+                        Path(link_value).name if link_value else "",
+                    }
+                    selector_path_match = False
+                    if Path(selector).expanduser().is_absolute() and path_value:
+                        try:
+                            selector_path_match = (
+                                Path(selector).expanduser().resolve()
+                                == Path(path_value).expanduser().resolve()
+                            )
+                        except OSError:
+                            selector_path_match = False
+                    if selector not in values and not selector_path_match:
+                        continue
+                    if not path_value:
+                        raise ValueError("selected worktree registry entry has no path")
+                    _validated_worktree_link(selected_project, entry)
+                    matched.append((selected_project, entry))
+                    physical_target_paths.add(Path(path_value).expanduser().resolve())
+        if matched and len(physical_target_paths) != 1:
+            raise ValueError(
+                "worktree selector is ambiguous across active registries; refusing physical cleanup"
+            )
+        for selected_project, entry in matched:
+            _health_cleanup_gate(
+                health_preflight,
+                runtime_receipt,
+                domain=str(domain),
+                project=str(project),
+                entry=entry,
+                os_root=os_root,
+            )
+    for project_root in project_roots:
         record_domain = project_domain(project_root)
         for relative_registry in registry_paths:
             registry_path = project_root / relative_registry
@@ -1861,7 +2513,58 @@ def cleanup_terminal_worktrees(
                 if not isinstance(entry, dict):
                     kept_entries.append(entry)
                     continue
+                if worktree:
+                    selector = str(worktree).strip()
+                    path_value = str(entry.get("path") or "")
+                    link_value = str(entry.get("link") or "")
+                    entry_values = {
+                        str(entry.get("id") or ""),
+                        str(entry.get("name") or ""),
+                        path_value,
+                        link_value,
+                        Path(path_value).name if path_value else "",
+                        Path(link_value).name if link_value else "",
+                    }
+                    path_match = False
+                    selector_path = Path(selector).expanduser()
+                    if selector_path.is_absolute() and path_value:
+                        try:
+                            path_match = selector_path.resolve() == Path(path_value).expanduser().resolve()
+                        except OSError:
+                            path_match = False
+                    if selector not in entry_values and not path_match:
+                        kept_entries.append(entry)
+                        continue
+                gate: dict[str, Any] | None = None
+                gate_path: Path | None = None
+                if health_preflight or runtime_receipt:
+                    if not health_preflight or not runtime_receipt or not domain or not project:
+                        message = "Health cleanup gate requires domain, project, preflight, and runtime receipt"
+                        if apply and remove_files:
+                            raise ValueError(message)
+                        skipped.append({"path": str(entry.get("path") or ""), "reason": message})
+                        kept_entries.append(entry)
+                        continue
+                    try:
+                        gate, _, gate_path = _health_cleanup_gate(
+                            health_preflight,
+                            runtime_receipt,
+                            domain=domain,
+                            project=project,
+                            entry=entry,
+                            os_root=os_root,
+                        )
+                    except ValueError as exc:
+                        if apply and remove_files:
+                            raise
+                        skipped.append(
+                            {"path": str(entry.get("path") or ""), "reason": str(exc)}
+                        )
+                        kept_entries.append(entry)
+                        continue
                 reason = worktree_cleanup_reason(entry)
+                if gate is not None:
+                    reason = "pr:typed_merge"
                 if not reason:
                     kept_entries.append(entry)
                     continue
@@ -1880,20 +2583,49 @@ def cleanup_terminal_worktrees(
                 if not apply:
                     kept_entries.append(entry)
                     continue
-                archived = archive_worktree_entry(project_root, entry, reason=reason, source=registry_path)
-                closed.append({"id": candidate["id"], "closed_registry": archived["path"], "reason": reason})
-                link_value = str(entry.get("link") or "")
-                if link_value:
-                    link_path = project_root / link_value
-                    if link_path.is_symlink():
-                        link_path.unlink()
-                        removed.append({"path": str(link_path), "reason": "removed worktree symlink"})
+                validated_link = _validated_worktree_link(project_root, entry)
                 if remove_files:
-                    ok, removal_reason = remove_worktree_files(project_root, entry)
+                    resolved_path = Path(path_value).expanduser().resolve()
+                    if resolved_path in physically_handled_paths:
+                        ok, removal_reason = True, "removed exact typed merged git worktree"
+                    else:
+                        ok, removal_reason = remove_worktree_files(
+                            project_root, entry, health_gate=gate
+                        )
                     if ok:
+                        physically_handled_paths.add(resolved_path)
                         removed.append({"path": path_value, "reason": removal_reason})
                     else:
                         skipped.append({"path": path_value, "reason": removal_reason})
+                        kept_entries.append(entry)
+                        continue
+                resolved_path = Path(path_value).expanduser().resolve()
+                archived = archived_by_path.get(resolved_path)
+                if archived is None:
+                    archived = archive_worktree_entry(
+                        project_root,
+                        entry,
+                        reason=reason,
+                        source=registry_path,
+                        health_gate=gate,
+                        health_preflight_ref=(
+                            gate_path.relative_to(
+                                Path(str(gate.get("packet_path"))).expanduser().resolve()
+                            ).as_posix()
+                            if gate_path and gate
+                            else None
+                        ),
+                    )
+                    archived_by_path[resolved_path] = archived
+                closed.append({"id": candidate["id"], "closed_registry": archived["path"], "reason": reason})
+                if validated_link is not None and validated_link.is_symlink():
+                    validated_link.unlink()
+                    removed.append(
+                        {
+                            "path": str(validated_link),
+                            "reason": "removed exact project-owned worktree symlink",
+                        }
+                    )
                 changed = True
             if apply and changed:
                 if isinstance(payload.get("worktrees"), dict):
@@ -1907,6 +2639,9 @@ def cleanup_terminal_worktrees(
     return {
         "mode": "apply" if apply else "dry-run",
         "remove_files": remove_files,
+        "worktree_selector": worktree,
+        "health_preflight": str(health_preflight) if health_preflight else None,
+        "runtime_receipt": str(runtime_receipt) if runtime_receipt else None,
         "candidate_count": len(candidates),
         "candidates": candidates,
         "closed": closed,

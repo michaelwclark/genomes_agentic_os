@@ -1,0 +1,6 @@
+interface:
+  display_name: "Auto-Dev Implementation"
+  short_description: "Implement and locally validate a planned task"
+  default_prompt: "Use $auto-dev-implementation to implement this planned task under its effective engineering policy."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,14 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-readiness
+title: Auto-Dev Readiness
+description: Prepare tracker truth, repository/base, policy, worktree, and plan.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, readiness, sdlc]
+dependencies: []
+aliases: [harness/skills/auto-dev-readiness/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-readiness}
+validation: {commands: []}

@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from .scaffold import domain_path, expand_path, normalize_domain, validate_name
+from .scaffold import domain_path, expand_path, normalize_domain, repo_root, validate_name
 
 
 DEFAULT_SPEC_POLICY: dict[str, Any] = {
@@ -56,7 +56,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def shipped_policy_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "templates" / "runtime" / "spec-engine.yml"
+    return repo_root() / "templates" / "runtime" / "spec-engine.yml"
 
 
 def policy_paths(root: str | Path, *, domain: str | None = None, project: str | None = None) -> list[Path]:

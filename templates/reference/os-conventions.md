@@ -26,7 +26,7 @@ it.
   `<domain>/02-projects/<project>/work-items/01-intake/` as the single
   canonical Spec object.
 - Active work belongs in
-  `<domain>/02-projects/<project>/work-items/02-active/<index>_<slug>/`.
+  `<domain>/02-projects/<project>/work-items/<index>_<slug>/`.
 - The standard packet files are `SPEC.md`, `PLAN.md`, `WORKLOG.md`,
   `NEXT.md`, and optional `QUESTIONS.md`, `DECISIONS.md`, and artifact indexes.
 - Existing `IDEA.md` files are legacy capture aliases. New packets put raw

@@ -1,0 +1,24 @@
+{
+  "schema": "auto-dev-resource-cleanup/v1",
+  "work_item_id": "FLYWL-1234",
+  "canonical_work_id": "los:los-app:flywl-1234",
+  "preflight_ref": "artifacts/auto-dev-health/preflight.json",
+  "runtime_cleanup": {
+    "ref": "artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+    "sha256": "9bb4a61cfc5356a9864d63604b893e00dd0a01d0eb5fe7f1a4dd086bb03197ac"
+  },
+  "worktree": {
+    "identity": "072026-123-flywl-1234",
+    "path": "/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234",
+    "result": "removed",
+    "readback_verified": true
+  },
+  "runtime": {
+    "identity": "los-los_app_los_django-072026-123-flywl-1234",
+    "ownership": "managed",
+    "provider": "los_fast_worktree",
+    "result": "removed",
+    "readback_verified": true
+  },
+  "verified_at": "2026-07-20T20:03:00Z"
+}

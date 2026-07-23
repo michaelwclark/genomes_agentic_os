@@ -19,6 +19,7 @@ from genomes_agentic_os.validate import validate_root
 # Claude and Codex pick up the harness contract when a conversation starts at
 # the installed root. They are instruction surface, not domains.
 ROOT_ADAPTERS = {"AGENTS.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md"}
+INSTALL_ROOTS = {"domains", "harness", "lib"}
 
 
 def _top_level(root: Path) -> set[str]:
@@ -34,7 +35,7 @@ def test_arbitrary_domain_names_validate_and_update_additively(tmp_path: Path, c
 
     # Scaffold with operator-chosen names instead of the built-in defaults.
     assert main(["init", "--target", str(root), "--domains", "alpha_client,beta_ops"]) == 0
-    assert _top_level(root) == {"domains", "harness"}
+    assert _top_level(root) == INSTALL_ROOTS
     assert {path.name for path in (root / "domains").iterdir() if path.is_dir()} == {"alpha_client", "beta_ops"}
     assert validate_root(root).ok
     assert main(["validate", "--root", str(root)]) == 0
@@ -42,7 +43,7 @@ def test_arbitrary_domain_names_validate_and_update_additively(tmp_path: Path, c
     # Adding one more arbitrary domain stays additive: no default domains
     # appear alongside the operator's set.
     assert main(["domain", "create", "gamma_labs", "--root", str(root)]) == 0
-    assert _top_level(root) == {"domains", "harness"}
+    assert _top_level(root) == INSTALL_ROOTS
     assert {path.name for path in (root / "domains").iterdir() if path.is_dir()} == {
         "alpha_client",
         "beta_ops",
@@ -54,7 +55,7 @@ def test_arbitrary_domain_names_validate_and_update_additively(tmp_path: Path, c
     capsys.readouterr()
     assert main(["update", "apply", "--root", str(root)]) == 0
     capsys.readouterr()
-    assert _top_level(root) == {"domains", "harness"}
+    assert _top_level(root) == INSTALL_ROOTS
     assert {path.name for path in (root / "domains").iterdir() if path.is_dir()} == {
         "alpha_client",
         "beta_ops",
@@ -73,7 +74,7 @@ def test_legacy_personal_domain_names_keep_working_as_data(tmp_path: Path, capsy
     root = tmp_path / "agentic_os"
 
     assert main(["init", "--target", str(root), "--domains", "personal,clarks_consulting,los,archive"]) == 0
-    assert _top_level(root) == {"domains", "harness"}
+    assert _top_level(root) == INSTALL_ROOTS
     assert {path.name for path in (root / "domains").iterdir() if path.is_dir()} == {
         "personal",
         "clarks_consulting",
@@ -89,7 +90,7 @@ def test_legacy_personal_domain_names_keep_working_as_data(tmp_path: Path, capsy
 
     # Update stayed additive: the legacy names survive and the neutral
     # defaults were NOT planted next to them.
-    assert _top_level(root) == {"domains", "harness"}
+    assert _top_level(root) == INSTALL_ROOTS
     assert {path.name for path in (root / "domains").iterdir() if path.is_dir()} == {
         "personal",
         "clarks_consulting",

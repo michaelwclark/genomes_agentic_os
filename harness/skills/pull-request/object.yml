@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: pull-request
+title: Pull Request Compatibility Alias
+description: Compatibility alias that delegates PR review policy to canonical pr-review.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, review, compatibility_alias]
+dependencies: [skill:root:pr-review]
+aliases: [harness/skills/pull-request/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/pull-request}
+validation: {commands: ["python3 lib/skills/root/pull-request/tests/test_redirect.py"]}
+policy: {allow_implicit_invocation: true}

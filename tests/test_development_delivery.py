@@ -1,14 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import subprocess
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator
 
+import genomes_agentic_os.auto_dev_orchestration as auto_dev
 import genomes_agentic_os.development_delivery as delivery
+from genomes_agentic_os.auto_dev_orchestration import (
+    AUTO_DEV_HEALTH_EVIDENCE_SCHEMA,
+    AUTO_DEV_STAGE_ORDER,
+    AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+    AutoDevStateError,
+    prepare_auto_dev_health,
+    read_auto_dev_state,
+    record_auto_dev_stage,
+    sync_delivery_projection,
+    validate_auto_dev_packet_manifest,
+    validate_auto_dev_stage_order,
+)
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.development_delivery import (
     DevelopmentDeliveryError,
@@ -18,9 +33,15 @@ from genomes_agentic_os.development_delivery import (
     create_isolated_worktree,
     load_development_profile,
     required_test_layers,
+    run_development_stage,
+    select_development_repository,
     validate_workflow_contracts,
 )
+from genomes_agentic_os.lifecycle import sync_active_container
 from genomes_agentic_os.scaffold import create_project
+from genomes_agentic_os.state import work_items as canonical_work_items
+from genomes_agentic_os.state.db import connect as connect_state
+from genomes_agentic_os.state.db import default_db_path
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
@@ -30,6 +51,25 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     return completed.stdout.strip()
 
 
+def _work_item_packets(project: Path) -> list[Path]:
+    """Return packets across the canonical root, archive, and legacy lanes."""
+
+    work_items = project / "work-items"
+    packets: list[Path] = []
+    for child in work_items.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in {"01-intake", "02-active", "03-complete", "99-archived"}:
+            packets.extend(
+                packet
+                for packet in child.iterdir()
+                if packet.is_dir() and (packet / "work.yml").is_file()
+            )
+        elif (child / "work.yml").is_file():
+            packets.append(child)
+    return sorted(packets)
+
+
 def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
@@ -37,15 +77,23 @@ def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
         "version": 1,
         "enabled": True,
         "tracker": {"primary": "linear"},
-        "repository": {"root": str(repo), "base_branch": "main"},
+        "repository": {
+            "id": "github:acme/app",
+            "root": str(repo),
+            "base_branch": "main",
+        },
         "worktrees": {"directory": "worktrees", "branch_template": "feature/{ticket}-{slug}"},
         "work_items": {"active_status": "building"},
+        "runtime": {"ownership": "not_managed", "provider": "none", "identity": "not-managed"},
         "validation": {
             "commands": ["python3 -m pytest tests -q"],
             "test_policy": "risk_based_triangle",
             "ci_fallback_on_environment_failure": True,
         },
-        "review": {"opposing_harness": {"required": True}},
+        "review": {
+            "opposing_harness": {"required": True},
+            "authorship": {"ours": ["github:michaelwclark"]},
+        },
         "merge": {"policy": "never_auto"},
         "recovery": {"max_attempts": 3, "lease_minutes": 30, "stale_after_minutes": 45},
     }
@@ -97,6 +145,11 @@ def _state(tmp_path: Path, *, max_attempts: int = 3) -> TaskState:
                 "state": "discovered",
                 "attempts": {},
                 "max_attempts": max_attempts,
+                "repository": {
+                    "id": "github:acme/app",
+                    "base_branch": "main",
+                },
+                "authorship": {"ours": ["github:michaelwclark"]},
                 "lease": {"until": None},
                 "receipts": [],
                 "failure": None,
@@ -105,6 +158,417 @@ def _state(tmp_path: Path, *, max_attempts: int = 3) -> TaskState:
         encoding="utf-8",
     )
     return TaskState(path)
+
+
+def _stage_receipt(
+    tmp_path: Path,
+    state: str,
+    *,
+    evidence: dict | None = None,
+    status: str = "verified",
+) -> str:
+    path = tmp_path / "stage-receipts" / f"{state}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    structured = dict(evidence or {"receipt": f"proof:{state}"})
+    if state in {"pr_open", "ready_for_merge", "merged"}:
+        structured.setdefault("author_identity", "github:michaelwclark")
+        structured.setdefault("author_kind", "ours")
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "development-stage-evidence/v1",
+                "state": state,
+                "status": status,
+                "summary": f"Verified {state}",
+                "evidence": structured,
+                "verified_at": "2026-07-19T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def _set_reviewed_revision(
+    task: TaskState,
+    revision: str,
+    *,
+    pull_request: str = "github:acme/app#1",
+) -> None:
+    value = task.read()
+    value["subject_revision"] = revision
+    repository = value.get("repository") if isinstance(value.get("repository"), dict) else {}
+    scope = {
+        **({"repository": repository["id"]} if repository.get("id") else {}),
+        **({"base_branch": repository["base_branch"]} if repository.get("base_branch") else {}),
+    }
+    pr_open = _stage_receipt(
+        task.path.parent / "pr-authority",
+        "pr_open",
+        evidence={
+            "provider": "github",
+            "pull_request": pull_request,
+            "author_identity": "github:michaelwclark",
+            "author_kind": "ours",
+            "readback_verified": True,
+            **scope,
+        },
+    )
+    ready = _stage_receipt(
+        task.path.parent / "pr-authority",
+        "ready_for_merge",
+        evidence={
+            "provider": "github",
+            "pull_request": pull_request,
+            "author_identity": "github:michaelwclark",
+            "author_kind": "ours",
+            "checks_verified": True,
+            "reviews_verified": True,
+            "readback_verified": True,
+            "subject_revision": revision,
+            **scope,
+        },
+    )
+    value.setdefault("receipts", []).extend(
+        [
+            {
+                "state": "pr_open",
+                "ref": pr_open,
+                "sha256": hashlib.sha256(Path(pr_open).read_bytes()).hexdigest(),
+            },
+            {
+                "state": "ready_for_merge",
+                "ref": ready,
+                "sha256": hashlib.sha256(Path(ready).read_bytes()).hexdigest(),
+            },
+        ]
+    )
+    task.path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _packet_proof(work_item: Path, stage: str, *, label: str | None = None) -> Path:
+    """Create real, packet-local proof for one standalone Auto-Dev receipt."""
+
+    path = work_item / "artifacts" / "test-proofs" / f"{stage}-{label or 'proof'}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"Verified {stage}: {label or 'proof'}\n", encoding="utf-8")
+    return path
+
+
+def _provider_authority(
+    task: TaskState,
+    *,
+    pull_request: str,
+    author_identity: str = "github:michaelwclark",
+) -> dict[str, object]:
+    value = task.read()
+    repository = value["repository"]
+    ours = {str(item).lower() for item in value["authorship"]["ours"]}
+    return {
+        "provider": "github",
+        "pull_request": pull_request,
+        "repository": repository["id"],
+        "base_branch": repository["base_branch"],
+        "author_identity": author_identity,
+        "author_kind": "ours" if author_identity.lower() in ours else "others",
+        "readback_verified": True,
+    }
+
+
+def _record_standalone_stage(
+    task: TaskState,
+    stage: str,
+    *,
+    revision: str | None = None,
+    pull_request: str | None = None,
+    status: str = "completed",
+) -> dict[str, object]:
+    """Record strict standalone evidence using immutable packet-local inputs."""
+
+    value = task.read()
+    work_item = Path(value["work_item"])
+    evidence_path = work_item / "artifacts" / "test-stage-evidence" / f"{stage}.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    if status == "not_required":
+        policy_path = _policy_decision(task, stage)
+        structured: dict[str, object] = {"policy_ref": str(policy_path)}
+    else:
+        proof = _packet_proof(work_item, stage)
+        structured = {"receipt_refs": [str(proof)]}
+        if stage in {"review_others", "finalize"}:
+            assert pull_request is not None
+            structured.update(_provider_authority(task, pull_request=pull_request))
+            if stage == "finalize":
+                structured["readiness_decision"] = "ready_for_merge"
+            else:
+                structured.update(
+                    {"review_mode": "review_no_merge", "review_result": "clean"}
+                )
+    payload: dict[str, object] = {
+        "schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+        "stage": stage,
+        "status": status,
+        "summary": f"Verified {stage}",
+        "evidence": structured,
+        "verified_at": "2026-07-20T20:45:00Z",
+    }
+    if revision:
+        payload["subject_revision"] = revision
+    evidence_path.write_text(json.dumps(payload), encoding="utf-8")
+    return record_auto_dev_stage(
+        value["autodev_path"],
+        stage=stage,
+        evidence_file=evidence_path,
+        idempotency_key=f"{value['ticket']}:{stage}:{status}",
+    )
+
+
+def _policy_decision(task: TaskState, stage: str) -> Path:
+    """Create one strict decision bound to the task's frozen effective policy."""
+
+    value = task.read()
+    work_item = Path(value["work_item"])
+    policy_receipt = Path(value["policy_receipt"])
+    policy_path = work_item / "artifacts" / "test-stage-evidence" / f"{stage}-policy.json"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-stage-policy-decision/v1",
+                "work_item_id": work_item.name,
+                "canonical_work_id": value["canonical_work_id"],
+                "domain": value["domain"],
+                "project": value["project"],
+                "stage": stage,
+                "decision": "not_required",
+                "reason": f"Frozen effective policy makes {stage} unnecessary for this item.",
+                "decided_by": "test:project-policy",
+                "policy_fingerprint": value["policy_fingerprint"],
+                "policy_source": {
+                    "ref": str(policy_receipt),
+                    "sha256": hashlib.sha256(policy_receipt.read_bytes()).hexdigest(),
+                },
+                "verified_at": "2026-07-20T20:44:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return policy_path
+
+
+def _readiness_authority(
+    task: TaskState,
+    *,
+    subject_revision: str,
+    pull_request: str,
+    owner: str = "finalize",
+) -> dict[str, str]:
+    current = read_auto_dev_state(task.read()["autodev_path"])
+    work_item = Path(task.read()["work_item"])
+    ref = current["stages"][owner]["receipt_refs"][0]
+    path = work_item / ref
+    authority = _provider_authority(task, pull_request=pull_request)
+    return {
+        "owner": owner,
+        "ref": ref,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "provider": str(authority["provider"]),
+        "pull_request": str(authority["pull_request"]),
+        "repository": str(authority["repository"]),
+        "base_branch": str(authority["base_branch"]),
+        "subject_revision": subject_revision,
+        "author_identity": str(authority["author_identity"]),
+        "author_kind": str(authority["author_kind"]),
+    }
+
+
+def _complete_pre_merge_auto_dev(
+    task: TaskState,
+    *,
+    subject_revision: str,
+    pull_request: str,
+) -> dict[str, str]:
+    """Satisfy every canonical predecessor and return Finalize authority."""
+
+    for stage in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage)
+    _record_standalone_stage(
+        task,
+        "review_others",
+        revision=subject_revision,
+        status="not_required",
+    )
+    _record_standalone_stage(task, "qa", revision=subject_revision)
+    work_item = Path(task.read()["work_item"])
+    run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={
+            "release_propagation": _stage_receipt(
+                work_item / "artifacts" / "delivery",
+                "release_propagation",
+            )
+        },
+        idempotency_prefix=f"{task.read()['ticket']}:release-propagation",
+    )
+    _record_standalone_stage(
+        task,
+        "finalize",
+        revision=subject_revision,
+        pull_request=pull_request,
+    )
+    return _readiness_authority(
+        task,
+        subject_revision=subject_revision,
+        pull_request=pull_request,
+    )
+
+
+def _advance_auto_dev_task_to_ready(
+    task: TaskState,
+    *,
+    subject_revision: str,
+    pull_request: str,
+) -> None:
+    """Advance a generated task with typed, hash-bound milestone evidence."""
+
+    work_item = Path(task.read()["work_item"])
+    for state_name in delivery.FORWARD_STATES[
+        delivery.FORWARD_STATES.index("worktree_ready")
+        + 1 : delivery.FORWARD_STATES.index("ready_for_merge")
+        + 1
+    ]:
+        evidence: dict[str, object] = {"receipt": f"proof:{state_name}"}
+        if state_name in {"pr_open", "ready_for_merge"}:
+            evidence = _provider_authority(task, pull_request=pull_request)
+        if state_name == "ready_for_merge":
+            evidence.update(
+                {
+                    "checks_verified": True,
+                    "reviews_verified": True,
+                    "subject_revision": subject_revision,
+                }
+            )
+        task.transition(
+            state_name,
+            receipt=_stage_receipt(
+                work_item / "artifacts" / "delivery-setup" / state_name,
+                state_name,
+                evidence=evidence,
+            ),
+            idempotency_key=f"setup:{state_name}",
+        )
+    _set_reviewed_revision(task, subject_revision, pull_request=pull_request)
+    sync_delivery_projection(task.path)
+
+
+@pytest.mark.parametrize("schema_location", ["installed", "package"])
+def test_health_schema_resolves_installed_and_packaged_resources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_location: str,
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
+    work_item = (
+        root
+        / "domains"
+        / "acme"
+        / "02-projects"
+        / "app"
+        / "work-items"
+        / "02-active"
+        / "item"
+    )
+    work_item.mkdir(parents=True)
+    schema_name = "auto-dev-health-evidence.schema.json"
+    if schema_location == "installed":
+        schema_path = root / "harness" / "schemas" / schema_name
+    else:
+        package_root = tmp_path / "site-packages" / "genomes_agentic_os"
+        schema_path = package_root / "_resources" / "schemas" / schema_name
+        monkeypatch.setattr(auto_dev, "__file__", str(package_root / "auto_dev_orchestration.py"))
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(
+        json.dumps(
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "required": ["schema"],
+                "properties": {
+                    "schema": {"const": AUTO_DEV_HEALTH_EVIDENCE_SCHEMA},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    auto_dev._validate_health_schema(
+        {"schema": AUTO_DEV_HEALTH_EVIDENCE_SCHEMA},
+        work_item,
+        {"domain": "acme", "project": "app"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("domain", "project", "packet_parts"),
+    [
+        ("acme", "app", ("domains", "acme", "02-projects", "app", "work-items", "item")),
+        ("acme", "app", ("acme", "02-projects", "app", "work-items", "03-complete", "item")),
+        (
+            "shared_factory",
+            "genomes_agentic_lib",
+            (
+                "harness",
+                "shared_factory",
+                "02-projects",
+                "genomes_agentic_lib",
+                "work-items",
+                "99-archived",
+                "item",
+            ),
+        ),
+    ],
+)
+def test_health_root_uses_marked_owner_across_supported_project_layouts(
+    tmp_path: Path,
+    domain: str,
+    project: str,
+    packet_parts: tuple[str, ...],
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
+    work_item = root.joinpath(*packet_parts)
+    work_item.mkdir(parents=True)
+
+    assert auto_dev._health_os_root(
+        work_item, {"domain": domain, "project": project}
+    ) == root.resolve()
+
+
+def test_health_root_rejects_shared_factory_path_for_another_domain(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "os"
+    root.mkdir()
+    (root / ".agentic_root").write_text("", encoding="utf-8")
+    work_item = (
+        root
+        / "harness"
+        / "shared_factory"
+        / "02-projects"
+        / "app"
+        / "work-items"
+        / "item"
+    )
+    work_item.mkdir(parents=True)
+
+    with pytest.raises(AutoDevStateError, match="cannot derive"):
+        auto_dev._health_os_root(
+            work_item, {"domain": "acme", "project": "app"}
+        )
 
 
 def test_profile_prefers_canonical_and_translates_legacy(tmp_path: Path) -> None:
@@ -136,8 +600,234 @@ def test_profile_derives_safe_defaults_for_existing_project(tmp_path: Path) -> N
     assert profile["merge"]["policy"] == "never_auto"
 
 
-def test_transition_requires_receipt_is_forward_only_and_idempotent(tmp_path: Path) -> None:
+def test_repository_identity_strips_credentials_from_remote_url(tmp_path: Path) -> None:
+    repo, _ = _repository(tmp_path)
+    _git(
+        "remote",
+        "set-url",
+        "origin",
+        "https://operator:super-secret@github.com/acme/app.git",
+        cwd=repo,
+    )
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["repository"].pop("id")
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    plan = delivery.start_development_run(root, "acme", "app", ["CC-CREDS"])
+    serialized = json.dumps(plan, sort_keys=True)
+
+    assert plan["repository"]["id"] == "git:github.com/acme/app"
+    assert "operator" not in serialized
+    assert "super-secret" not in serialized
+
+
+def test_configured_stage_order_must_keep_health_last(tmp_path: Path) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    unsafe_order = list(AUTO_DEV_STAGE_ORDER)
+    unsafe_order[-2], unsafe_order[-1] = unsafe_order[-1], unsafe_order[-2]
+    profile["auto_dev"] = {"stage_order": unsafe_order}
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(DevelopmentDeliveryError, match="lifecycle precedence"):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-ORDER"],
+            auto_dev_mode="everything",
+        )
+
+
+@pytest.mark.parametrize(
+    ("stage", "after"),
+    [
+        ("release", "pr_create"),
+        ("pr_create", "deploy"),
+        ("finalize", "merge"),
+    ],
+)
+def test_configured_stage_order_rejects_lifecycle_deadlocks(stage: str, after: str) -> None:
+    order = list(AUTO_DEV_STAGE_ORDER)
+    order.remove(stage)
+    order.insert(order.index(after) + 1, stage)
+    with pytest.raises(AutoDevStateError, match="lifecycle precedence"):
+        validate_auto_dev_stage_order(order)
+
+
+def test_configured_stage_order_allows_safe_friendly_stage_reordering() -> None:
+    order = list(AUTO_DEV_STAGE_ORDER)
+    order[1], order[2] = order[2], order[1]
+    assert validate_auto_dev_stage_order(order) == order
+
+    order.remove("document")
+    order.insert(order.index("qa") + 1, "document")
+    assert validate_auto_dev_stage_order(order) == order
+
+
+def test_legacy_profile_stage_subset_upgrades_to_complete_auto_dev_order(
+    tmp_path: Path,
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    legacy = [
+        name
+        for name in AUTO_DEV_STAGE_ORDER
+        if name not in {"document", "review_others", "qa", "merge", "release", "deploy", "health"}
+    ]
+    profile["auto_dev"] = {"stage_order": legacy}
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    plan = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-LEGACY"],
+        auto_dev_mode="everything",
+        apply=False,
+    )
+
+    assert plan["auto_dev"]["stage_order"] == list(AUTO_DEV_STAGE_ORDER)
+
+
+@pytest.mark.parametrize("action", ["merge", "deploy", "closeout", "health"])
+def test_downstream_auto_dev_actions_require_existing_state(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], action: str
+) -> None:
+    assert main(
+        [
+            "auto-dev",
+            action,
+            "acme",
+            "app",
+            "CC-NEW",
+            "--root",
+            str(tmp_path),
+            "--apply",
+        ]
+    ) == 2
+    assert f"auto-dev {action} requires --state" in capsys.readouterr().err
+
+
+def test_auto_dev_health_help_describes_existing_state_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["auto-dev", "health", "--help"])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "existing work item" in output
+    assert "never creates a replacement packet or worktree" in output
+
+
+def test_multi_repository_profile_requires_and_receipts_explicit_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    selected_policy = project / "config/auto_dev/dev_standards-user-web/10_USER_WEB.md"
+    selected_policy.parent.mkdir(parents=True, exist_ok=True)
+    selected_policy.write_text("# User Web\n\nUse the selected web repository policy.\n", encoding="utf-8")
+    path = project / "config/development.yml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile["repository"] = {
+        "selection_required": True,
+        "catalog": [
+            {"id": "backend", "root": str(repo), "base_branch": "main"},
+            {
+                "id": "user_web",
+                "root": str(repo),
+                "base_branch": "main",
+                "profile_overrides": {
+                    "validation": {"commands": ["npm test"]},
+                    "policies": {
+                        "dev_standards": {"paths": ["config/auto_dev/dev_standards-user-web"]}
+                    },
+                },
+            },
+            {
+                "id": "invalid",
+                "root": str(repo),
+                "base_branch": "main",
+                "profile_overrides": {"validation": {"commands": "npm test"}},
+            },
+        ],
+    }
+    path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    loaded, _ = load_development_profile(root, "acme", "app")
+    with pytest.raises(DevelopmentDeliveryError, match="repository selection is required"):
+        select_development_repository(loaded, None)
+    selected = select_development_repository(loaded, "user_web")
+    assert selected["repository"]["id"] == "user_web"
+    assert selected["validation"]["commands"] == ["npm test"]
+
+    with pytest.raises(DevelopmentDeliveryError, match="invalid selected repository profile"):
+        delivery.start_development_run(
+            root, "acme", "app", ["CC-11"], repository_id="invalid", apply=False
+        )
+
+    with pytest.raises(DevelopmentDeliveryError, match="repository selection is required"):
+        delivery.start_development_run(root, "acme", "app", ["CC-12"], apply=False)
+    plan = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-12"],
+        repository_id="backend",
+        apply=False,
+    )
+    assert plan["repository"]["id"] == "backend"
+    assert main(
+        [
+            "develop",
+            "start",
+            "acme",
+            "app",
+            "CC-13",
+            "--repository",
+            "user_web",
+            "--root",
+            str(root),
+            "--json",
+        ]
+    ) == 0
+    user_web_plan = json.loads(capsys.readouterr().out)
+    assert user_web_plan["repository"]["id"] == "user_web"
+    assert user_web_plan["policy_sources"]["dev_standards"] == [
+        "domains/acme/02-projects/app/config/auto_dev/dev_standards-user-web/10_USER_WEB.md"
+    ]
+
+
+def test_transition_requires_receipt_is_forward_only_and_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     task = _state(tmp_path)
+    assert main(
+        [
+            "develop",
+            "transition",
+            str(task.path),
+            "--to",
+            "claimed",
+            "--receipt",
+            "untyped-string",
+            "--idempotency-key",
+            "unsafe",
+        ]
+    ) == 2
+    assert "direct lifecycle transitions are disabled" in capsys.readouterr().err
+    assert task.read()["state"] == "discovered"
     claimed = task.transition("claimed", receipt="tracker:CC-1", idempotency_key="claim")
     assert claimed["state"] == "claimed"
     replay = task.transition("claimed", receipt="tracker:CC-1", idempotency_key="claim")
@@ -146,6 +836,392 @@ def test_transition_requires_receipt_is_forward_only_and_idempotent(tmp_path: Pa
         task.transition("worktree_ready", receipt="worktree", idempotency_key="skip")
     with pytest.raises(DevelopmentDeliveryError, match="requires a receipt"):
         task.transition("groom_check", receipt="", idempotency_key="no-receipt")
+
+
+def test_manual_delivery_stages_require_each_receipt_and_are_idempotent(tmp_path: Path) -> None:
+    task = _state(tmp_path)
+    for state in ("claimed", "groom_check", "context_ready", "work_item_ready", "worktree_ready"):
+        task.transition(state, receipt=f"setup:{state}", idempotency_key=f"setup:{state}")
+    portfolio_path = task.path.parent.parent.parent / "portfolio.json"
+    portfolio_path.write_text(
+        json.dumps(
+            {
+                "schema": "development-portfolio/v1",
+                "run_id": "run-1",
+                "state": "dispatching",
+                "tasks": [{"ticket": "CC-1", "state_ref": str(task.path)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    readiness_receipts = {"planned": _stage_receipt(tmp_path, "planned")}
+    ready = run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts=readiness_receipts,
+        idempotency_prefix="run:readiness",
+    )
+    assert ready["state"] == "planned"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "planned"
+    assert run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={},
+        idempotency_prefix="run:readiness",
+    )["state"] == "planned"
+    stale_portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    stale_portfolio["state"] = "dispatching"
+    portfolio_path.write_text(json.dumps(stale_portfolio), encoding="utf-8")
+    assert run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={},
+        idempotency_prefix="run:readiness",
+    )["state"] == "planned"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "planned"
+    with pytest.raises(DevelopmentDeliveryError, match="local_validation"):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={"implementing": _stage_receipt(tmp_path, "implementing")},
+            idempotency_prefix="run:implementation",
+        )
+    assert task.read()["state"] == "planned"
+    complete = run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(tmp_path, "implementing"),
+            "local_validation": _stage_receipt(tmp_path, "local_validation"),
+        },
+        idempotency_prefix="run:implementation",
+    )
+    assert complete["state"] == "local_validation"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["state"] == "local_validation"
+
+
+def test_merge_deploy_and_closeout_are_independently_runnable_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, merge_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-merge-deploy",
+            "path": "/tmp/cc-merge-deploy",
+            "branch": "feature/cc-merge-deploy",
+            "base_sha": merge_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-2"],
+        run_id="merge-deploy-closeout",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task_path = Path(run["tasks"][0]["state_ref"])
+    task = TaskState(task_path)
+    pull_request = "github:acme/app#2"
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=merge_sha,
+        pull_request=pull_request,
+    )
+    readiness = _complete_pre_merge_auto_dev(
+        task,
+        subject_revision=merge_sha,
+        pull_request=pull_request,
+    )
+
+    with pytest.raises(DevelopmentDeliveryError, match="source_head_sha"):
+        run_development_stage(
+            task_path,
+            stage="merge",
+            receipts={
+                "merged": _stage_receipt(
+                    tmp_path,
+                    "merged",
+                    status="completed",
+                    evidence={
+                        "merge_sha": merge_sha,
+                        "source_head_sha": "d" * 40,
+                        **_provider_authority(task, pull_request=pull_request),
+                        "readiness_authority": readiness,
+                    },
+                )
+            },
+            idempotency_prefix="cc-2:merge-stale-review",
+        )
+    assert task.read()["state"] == "ready_for_merge"
+
+    merged = run_development_stage(
+        task_path,
+        stage="merge",
+        receipts={
+            "merged": _stage_receipt(
+                tmp_path,
+                "merged",
+                status="completed",
+                evidence={
+                    "merge_sha": merge_sha,
+                    "source_head_sha": merge_sha,
+                    **_provider_authority(task, pull_request=pull_request),
+                    "readiness_authority": readiness,
+                },
+            )
+        },
+        idempotency_prefix="cc-2:merge",
+    )
+    assert merged["state"] == "merged"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["merge"]["status"] == "completed"
+    assert projection["stages"]["deploy"]["status"] == "not_started"
+    assert projection["stages"]["closeout"]["status"] == "not_started"
+    _record_standalone_stage(task, "release", revision=merge_sha)
+
+    with pytest.raises(DevelopmentDeliveryError, match="exact merged deployed_revision"):
+        run_development_stage(
+            task_path,
+            stage="deploy",
+            receipts={
+                "deployment_pending": _stage_receipt(tmp_path, "deployment_pending"),
+                "deploying": _stage_receipt(tmp_path, "deploying"),
+                "post_deploy_validation": _stage_receipt(
+                    tmp_path,
+                    "post_deploy_validation",
+                    evidence={
+                        "deployed_revision": "deadbee",
+                        "artifact_ref": "registry.example/app@sha256:1234",
+                        "environment": "test",
+                        "readback_verified": True,
+                    },
+                ),
+            },
+            idempotency_prefix="cc-2:deploy-invalid",
+        )
+    assert task.read()["state"] == "merged"
+
+    deployed = run_development_stage(
+        task_path,
+        stage="deploy",
+        receipts={
+            "deployment_pending": _stage_receipt(tmp_path, "deployment_pending"),
+            "deploying": _stage_receipt(tmp_path, "deploying"),
+            "post_deploy_validation": _stage_receipt(
+                tmp_path,
+                "post_deploy_validation",
+                evidence={
+                    "deployed_revision": merge_sha,
+                    "artifact_ref": "registry.example/app@sha256:5678",
+                    "environment": "test",
+                    "readback_verified": True,
+                },
+            ),
+        },
+        idempotency_prefix="cc-2:deploy",
+    )
+    assert deployed["state"] == "post_deploy_validation"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["deploy"]["status"] == "completed"
+    assert projection["stages"]["closeout"]["status"] == "not_started"
+
+    closed = run_development_stage(
+        task_path,
+        stage="closeout",
+        receipts={
+            "delivery_complete": _stage_receipt(
+                tmp_path,
+                "delivery_complete",
+                evidence={"closeout_verified": True, "receipt_refs": ["tracker:CC-2"]},
+            )
+        },
+        idempotency_prefix="cc-2:closeout",
+    )
+    assert closed["state"] == "delivery_complete"
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    assert projection["stages"]["closeout"]["status"] == "completed"
+    assert projection["stages"]["health"]["status"] == "not_started"
+
+
+def test_policy_backed_no_deploy_flow_is_typed_and_cli_runnable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, merge_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-policy-deploy",
+            "path": "/tmp/cc-policy-deploy",
+            "branch": "feature/cc-policy-deploy",
+            "base_sha": merge_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-POLICY"],
+        run_id="policy-backed-no-deploy",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    pull_request = "github:acme/app#1"
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=merge_sha,
+        pull_request=pull_request,
+    )
+    readiness = _complete_pre_merge_auto_dev(
+        task,
+        subject_revision=merge_sha,
+        pull_request=pull_request,
+    )
+    merge_receipt = _stage_receipt(
+        tmp_path,
+        "merged",
+        status="completed",
+        evidence={
+            "merge_sha": merge_sha,
+            "source_head_sha": merge_sha,
+            **_provider_authority(task, pull_request=pull_request),
+            "readiness_authority": readiness,
+        },
+    )
+    assert main(
+        [
+            "develop",
+            "stage",
+            str(task.path),
+            "--stage",
+            "merge",
+            "--receipt",
+            f"merged={merge_receipt}",
+            "--idempotency-prefix",
+            "cc-1:merge",
+        ]
+    ) == 0
+    _record_standalone_stage(task, "release", revision=merge_sha)
+    deployment_policy = _policy_decision(task, "deploy")
+    pending = _stage_receipt(
+        tmp_path,
+        "deployment_pending",
+        status="not_required",
+        evidence={"policy_ref": str(deployment_policy)},
+    )
+    deploying = _stage_receipt(
+        tmp_path,
+        "deploying",
+        status="not_required",
+        evidence={"policy_ref": str(deployment_policy)},
+    )
+    validated = _stage_receipt(
+        tmp_path,
+        "post_deploy_validation",
+        status="not_required",
+        evidence={
+            "policy_ref": str(deployment_policy),
+            "deployment_applicable": False,
+        },
+    )
+    assert main(
+        [
+            "develop",
+            "stage",
+            str(task.path),
+            "--stage",
+            "deploy",
+            "--receipt",
+            f"deployment_pending={pending}",
+            "--receipt",
+            f"deploying={deploying}",
+            "--receipt",
+            f"post_deploy_validation={validated}",
+            "--idempotency-prefix",
+            "cc-1:deploy",
+        ]
+    ) == 0
+    current = task.read()
+    assert current["state"] == "post_deploy_validation"
+    assert current["terminal_revision"] == merge_sha
+    assert current["deployed_revision"] == merge_sha
+    assert current["deployment_applicable"] is False
+
+
+def test_merge_rejects_a_different_pull_request_with_the_same_reviewed_head(
+    tmp_path: Path,
+) -> None:
+    task = _state(tmp_path)
+    for state_name in delivery.FORWARD_STATES[
+        1 : delivery.FORWARD_STATES.index("ready_for_merge") + 1
+    ]:
+        task.transition(
+            state_name,
+            receipt=f"setup:{state_name}",
+            idempotency_key=f"setup:{state_name}",
+        )
+    reviewed_head = "a" * 40
+    _set_reviewed_revision(
+        task,
+        reviewed_head,
+        pull_request="github:acme/app#1",
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="must match ready_for_merge"):
+        run_development_stage(
+            task.path,
+            stage="merge",
+            receipts={
+                "merged": _stage_receipt(
+                    tmp_path,
+                    "merged",
+                    status="completed",
+                    evidence={
+                        "merge_sha": "b" * 40,
+                        "source_head_sha": reviewed_head,
+                        "provider": "github",
+                        "pull_request": "github:acme/app#2",
+                        "repository": "github:acme/app",
+                        "base_branch": "main",
+                        "author_identity": "github:michaelwclark",
+                        "author_kind": "ours",
+                        "readback_verified": True,
+                    },
+                )
+            },
+            idempotency_prefix="cc-1:wrong-pr",
+        )
+    assert task.read()["state"] == "ready_for_merge"
+
+
+def test_closeout_cannot_backfill_merge_or_deploy_from_ready_for_merge(
+    tmp_path: Path,
+) -> None:
+    task = _state(tmp_path)
+    for state_name in delivery.FORWARD_STATES[
+        1 : delivery.FORWARD_STATES.index("ready_for_merge") + 1
+    ]:
+        task.transition(
+            state_name,
+            receipt=f"setup:{state_name}",
+            idempotency_key=f"setup:{state_name}",
+        )
+    with pytest.raises(DevelopmentDeliveryError, match="post_deploy_validation through delivery_complete"):
+        run_development_stage(
+            task.path,
+            stage="closeout",
+            receipts={},
+            idempotency_prefix="cc-1:strict-closeout",
+        )
+    assert task.read()["state"] == "ready_for_merge"
 
 
 def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: Path) -> None:
@@ -162,6 +1238,9 @@ def test_failure_retries_then_blocks_and_recovery_resumes_owner_state(tmp_path: 
     assert replay["attempts"]["provider_unavailable"] == 1
     recovered = task.recover(receipt="provider healthy", idempotency_key="recover-1")
     assert recovered["state"] == "claimed"
+    recovered_replay = task.recover(receipt="ignored replay", idempotency_key="recover-1")
+    assert recovered_replay == recovered
+    assert len(recovered_replay["receipts"]) == 2
     blocked = task.fail(
         kind="provider_unavailable", detail="timeout", receipt="logs/timeout-2", idempotency_key="fail-2"
     )
@@ -203,6 +1282,114 @@ def test_risk_based_testing_and_environment_classification() -> None:
     assert classify_validation(returncode=0) == "passed"
     assert classify_validation(returncode=1) == "code_failed"
     assert classify_validation(returncode=1, environment_evidence="docker unavailable") == "environment_unavailable"
+
+
+def test_local_validation_ci_deferral_is_typed_and_profile_gated(tmp_path: Path) -> None:
+    task = _state(tmp_path)
+    profile = tmp_path / "development.yml"
+    profile.write_text(
+        yaml.safe_dump(
+            {
+                "validation": {
+                    "ci_fallback_on_environment_failure": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    value = task.read()
+    value["profile_source"] = str(profile)
+    task.path.write_text(json.dumps(value), encoding="utf-8")
+    for state in ("claimed", "groom_check", "context_ready", "work_item_ready", "worktree_ready"):
+        task.transition(state, receipt=f"setup:{state}", idempotency_key=f"setup:{state}")
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")},
+        idempotency_prefix="ci-fallback:readiness",
+    )
+    unavailable = {
+        "compileall": "passed",
+        "unavailable_check": {
+            "command": "pytest tests/test_changed_behavior.py",
+            "classification": "infrastructure",
+            "reason": "private test dependency is unavailable locally",
+        },
+    }
+    with pytest.raises(DevelopmentDeliveryError, match="must use status=deferred_to_ci"):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={
+                "implementing": _stage_receipt(tmp_path, "implementing"),
+                "local_validation": _stage_receipt(
+                    tmp_path,
+                    "local_validation",
+                    evidence=unavailable,
+                    status="passed",
+                ),
+            },
+            idempotency_prefix="ci-fallback:invalid-pass",
+        )
+    result = run_development_stage(
+        task.path,
+        stage="implementation",
+        receipts={
+            "implementing": _stage_receipt(tmp_path, "implementing"),
+            "local_validation": _stage_receipt(
+                tmp_path,
+                "local_validation",
+                evidence=unavailable,
+                status="deferred_to_ci",
+            ),
+        },
+        idempotency_prefix="ci-fallback:valid",
+    )
+    assert result["state"] == "local_validation"
+
+
+def test_local_validation_ci_deferral_blocks_without_profile_authority(tmp_path: Path) -> None:
+    task = _state(tmp_path)
+    profile = tmp_path / "development.yml"
+    profile.write_text(
+        yaml.safe_dump(
+            {"validation": {"ci_fallback_on_environment_failure": False}}
+        ),
+        encoding="utf-8",
+    )
+    value = task.read()
+    value["profile_source"] = str(profile)
+    task.path.write_text(json.dumps(value), encoding="utf-8")
+    for state in ("claimed", "groom_check", "context_ready", "work_item_ready", "worktree_ready"):
+        task.transition(state, receipt=f"setup:{state}", idempotency_key=f"setup:{state}")
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")},
+        idempotency_prefix="no-fallback:readiness",
+    )
+    with pytest.raises(DevelopmentDeliveryError, match="enables ci_fallback"):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={
+                "implementing": _stage_receipt(tmp_path, "implementing"),
+                "local_validation": _stage_receipt(
+                    tmp_path,
+                    "local_validation",
+                    evidence={
+                        "compileall": "passed",
+                        "unavailable_check": {
+                            "command": "pytest tests/test_changed_behavior.py",
+                            "classification": "environment_unavailable",
+                            "reason": "docker is unavailable",
+                        },
+                    },
+                    status="deferred_to_ci",
+                ),
+            },
+            idempotency_prefix="no-fallback:implementation",
+        )
 
 
 def test_real_worktree_uses_exact_remote_base_and_project_storage(tmp_path: Path) -> None:
@@ -284,6 +1471,2120 @@ def test_multi_ticket_provisioning_preserves_success_and_auto_recovers_retryable
     for state in resumed_states.values():
         receipt = Path(state["work_item"]) / "artifacts" / "development-delivery" / "run.json"
         assert json.loads(receipt.read_text(encoding="utf-8"))["run_id"] == "portfolio-recovery"
+
+
+def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    worktree_calls: list[str] = []
+
+    def provision(**kwargs):
+        ticket = str(kwargs["ticket"])
+        worktree_calls.append(ticket)
+        slug = ticket.lower()
+        return {
+            "name": slug,
+            "path": f"/tmp/{slug}",
+            "branch": f"feature/{slug}",
+            "base_sha": base_sha,
+        }
+
+    monkeypatch.setattr(delivery, "create_isolated_worktree", provision)
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-ONE", "CC-TWO"],
+        run_id="selected-member-resume",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    rows = {row["ticket"]: row for row in first["tasks"]}
+    selected_state = Path(rows["CC-ONE"]["state_ref"])
+    selected_packet = Path(TaskState(selected_state).read()["work_item"])
+    other_state = Path(rows["CC-TWO"]["state_ref"])
+    other_before = other_state.read_bytes()
+
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-ONE"],
+        run_id="selected-member-resume",
+        auto_dev_mode="single_stage",
+        requested_stage="document",
+        goal="document",
+        provision_worktree=False,
+        selected_work_item=selected_packet,
+        apply=True,
+    )
+
+    assert [row["ticket"] for row in resumed["tasks"]] == ["CC-ONE", "CC-TWO"]
+    assert Path(next(row for row in resumed["tasks"] if row["ticket"] == "CC-ONE")["state_ref"]) == selected_state
+    assert other_state.read_bytes() == other_before
+    assert worktree_calls == ["CC-ONE", "CC-TWO"]
+    selected_projection = read_auto_dev_state(selected_packet / "autodev.json")
+    assert selected_projection["requested_stage"] == "document"
+
+
+def test_start_creates_one_linked_auto_dev_projection_and_policy_planes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-44",
+            "path": "/tmp/cc-44",
+            "branch": "feature/cc-44",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-44"],
+        run_id="auto-dev-projection",
+        auto_dev_mode="everything",
+        goal="delivery_complete",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert Path(task["work_item"]) / "autodev.json" == Path(task["autodev_path"])
+    assert projection["schema"] == "auto-dev-work-item/v1"
+    assert projection["mode"] == "everything"
+    assert projection["delivery"]["task_state_ref"] == run["tasks"][0]["state_ref"]
+    assert projection["delivery"]["state"] == "worktree_ready"
+    assert task["runtime"] == {
+        "ownership": "not_managed",
+        "provider": "none",
+        "identity": "not-managed",
+    }
+    assert projection["delivery"]["runtime"] == task["runtime"]
+    assert {"auto_dev", "environment_access"} <= set(projection["delivery"]["policy_sources"])
+    assert projection["stages"]["develop"]["command"] == "/auto-dev-develop"
+    assert projection["stages"]["review_self"]["command"] == "/auto-dev-review-self"
+    assert projection["stages"]["review_others"]["command"] == "/auto-dev-review-others"
+    assert not (Path(task["work_item"]) / "artifacts" / "auto-dev" / "state.json").exists()
+
+
+def test_start_registers_exact_managed_runtime_from_project_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["runtime"] = {
+        "ownership": "managed",
+        "provider": "los_fast_worktree",
+        "identity_template": "{domain}-{project}-{worktree}",
+        "teardown_command": "make fast-down AUTO_DEV_RUNTIME_ID={runtime_identity}",
+        "readback_command": "make fast-status AUTO_DEV_RUNTIME_ID={runtime_identity}",
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-44-runtime",
+            "path": "/tmp/cc-44-runtime",
+            "branch": "feature/cc-44-runtime",
+            "base_sha": base_sha,
+        },
+    )
+
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-44R"],
+        run_id="managed-runtime-registration",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+
+    assert task["runtime"] == {
+        "ownership": "managed",
+        "provider": "los_fast_worktree",
+        "identity": "acme-app-cc-44-runtime",
+        "teardown_command": (
+            "make fast-down AUTO_DEV_RUNTIME_ID=acme-app-cc-44-runtime"
+        ),
+        "readback_command": (
+            "make fast-status AUTO_DEV_RUNTIME_ID=acme-app-cc-44-runtime"
+        ),
+    }
+
+
+def test_start_rejects_shared_managed_runtime_identity(
+    tmp_path: Path,
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["runtime"] = {
+        "ownership": "managed",
+        "provider": "los_fast_worktree",
+        "identity_template": "shared-dev",
+        "teardown_command": "make fast-down",
+        "readback_command": "make fast-status",
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match=r"must include \{domain\}, \{project\}, and \{worktree\}",
+    ):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-SHARED-RUNTIME"],
+            run_id="shared-runtime-rejected",
+            apply=False,
+        )
+
+
+def test_health_refuses_a_delivery_task_without_runtime_registration() -> None:
+    with pytest.raises(AutoDevStateError, match="explicit runtime registration"):
+        auto_dev._health_runtime_registration({"state": "delivery_complete"})
+
+
+def test_auto_dev_stage_receipt_is_typed_idempotent_and_does_not_transition_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-45",
+            "path": "/tmp/cc-45",
+            "branch": "feature/cc-45",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-45"],
+        run_id="auto-dev-record",
+        auto_dev_mode="single_stage",
+        requested_stage="document",
+        goal="document",
+        apply=True,
+    )
+    task_path = Path(run["tasks"][0]["state_ref"])
+    task_before = TaskState(task_path).read()
+    proof = _packet_proof(Path(task_before["work_item"]), "document")
+    evidence = tmp_path / "document-evidence.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+                "stage": "document",
+                "status": "completed",
+                "summary": "Updated operator documentation and verified the rendered target.",
+                "evidence": {"receipt_refs": [str(proof)]},
+                "verified_at": "2026-07-20T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    first = record_auto_dev_stage(
+        task_before["autodev_path"],
+        stage="document",
+        evidence_file=evidence,
+        idempotency_key="cc-45:document",
+    )
+    replay = record_auto_dev_stage(
+        task_before["autodev_path"],
+        stage="document",
+        evidence_file=evidence,
+        idempotency_key="cc-45:document",
+    )
+    assert first["receipt"] == replay["receipt"]
+    assert replay["state"]["stages"]["document"]["status"] == "completed"
+    assert TaskState(task_path).read()["state"] == task_before["state"]
+
+
+def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    assert main(["auto-dev", "everything", "acme", "app", "CC-46", "--root", str(root), "--json"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["auto_dev"]["goal"] == "delivery_complete"
+    assert output["auto_dev"]["mode"] == "everything"
+    assert output["auto_dev"]["requested_stage"] is None
+    assert set(output["auto_dev"]["stage_order"]) == set(delivery.AUTO_DEV_STAGE_ORDER)
+    assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
+
+
+def test_project_configures_default_and_everything_workflow_boundaries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "default": {"start_stage": "readiness", "completion_stage": "pr_create"},
+        "everything": {"start_stage": "groom", "completion_stage": "merge"},
+        "stages": {
+            "document": {
+                "applicability": "disabled",
+                "reason": "Project documentation is not required today.",
+            },
+            "qa": {
+                "applicability": "contextual",
+                "child_delivery": {
+                    "repository": "github:Lenders-Cooperative/los-qa-automation",
+                    "tracker": "jira_subtask",
+                },
+            },
+        },
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    assert main(
+        ["auto-dev", "default", "acme", "app", "CC-PR", "--root", str(root), "--json"]
+    ) == 0
+    default = json.loads(capsys.readouterr().out)["auto_dev"]
+    assert default["mode"] == "default"
+    assert default["start_stage"] == "readiness"
+    assert default["completion_stage"] == "pr_create"
+    assert default["goal"] == "pr_create"
+    assert default["stage_policies"]["document"]["applicability"] == "disabled"
+
+    assert main(
+        ["auto-dev", "everything", "acme", "app", "CC-ALL", "--root", str(root), "--json"]
+    ) == 0
+    everything = json.loads(capsys.readouterr().out)["auto_dev"]
+    assert everything["mode"] == "everything"
+    assert everything["completion_stage"] == "merge"
+    assert everything["goal"] == "merge"
+    assert everything["stage_policies"]["qa"]["child_delivery"]["tracker"] == "jira_subtask"
+
+    assert main(
+        ["auto-dev", "propagate", "acme", "app", "CC-46", "--root", str(root), "--json"]
+    ) == 0
+    propagated = json.loads(capsys.readouterr().out)
+    assert propagated["auto_dev"]["requested_stage"] == "pr_create"
+
+    assert main(
+        ["auto-dev", "health", "acme", "app", "CC-46", "--root", str(root), "--apply"]
+    ) == 2
+    assert "requires --state" in capsys.readouterr().err
+
+
+def test_default_auto_dev_cannot_stop_before_pr_create(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "default": {"start_stage": "readiness", "completion_stage": "develop"}
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    assert main(
+        ["auto-dev", "default", "acme", "app", "CC-NO-PR", "--root", str(root), "--json"]
+    ) == 2
+    assert "default Auto-Dev workflow must include PR Create" in capsys.readouterr().err
+
+
+def test_pr_create_requires_configured_jira_qa_assessment_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "everything": {"start_stage": "groom", "completion_stage": "merge"},
+        "stages": {
+            "qa": {
+                "applicability": "contextual",
+                "assessment": {"tracker": "jira", "always_create": True},
+            }
+        },
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-qa-assessment",
+            "path": "/tmp/cc-qa-assessment",
+            "branch": "feature/cc-qa-assessment",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-QA"],
+        run_id="qa-assessment",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#88",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    work_item = Path(task.read()["work_item"])
+
+    with pytest.raises(DevelopmentDeliveryError, match="QA Automation Assessment"):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={
+                "release_propagation": _stage_receipt(
+                    work_item / "artifacts" / "missing-assessment",
+                    "release_propagation",
+                )
+            },
+            idempotency_prefix="cc-qa:missing-assessment",
+        )
+
+    receipt = _stage_receipt(
+        work_item / "artifacts" / "with-assessment",
+        "release_propagation",
+        evidence={
+            "qa_automation_assessment": {
+                "schema": "auto-dev-qa-assessment/v1",
+                "tracker": "jira",
+                "issue_key": "CC-QA-1",
+                "parent_key": "CC-QA",
+                "readback_verified": True,
+            }
+        },
+    )
+    result = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": receipt},
+        idempotency_prefix="cc-qa:with-assessment",
+    )
+    assert result["stage"] == "release_propagation"
+
+
+def test_groom_initializes_state_without_worktree_or_false_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+
+    def unexpected_worktree(**kwargs):
+        raise AssertionError(f"groom must not create a worktree: {kwargs}")
+
+    monkeypatch.setattr(delivery, "create_isolated_worktree", unexpected_worktree)
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-47"],
+        run_id="groom-without-worktree",
+        requested_stage="groom",
+        goal="groom",
+        provision_worktree=False,
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert task["state"] == "work_item_ready"
+    assert task.get("worktree") is None
+    assert run["state"] == "work_item_ready"
+    assert projection["current_stage"] == "groom"
+    assert projection["stages"]["groom"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "out_of_scope"
+
+
+def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    calls = 0
+
+    def create_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "name": "cc-48",
+            "path": "/tmp/cc-48",
+            "branch": "feature/cc-48",
+            "base_sha": base_sha,
+        }
+
+    monkeypatch.setattr(delivery, "create_isolated_worktree", create_once)
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-48"],
+        run_id="resume-progressed",
+        auto_dev_mode="everything",
+        goal="delivery_complete",
+        apply=True,
+    )
+    task_path = Path(first["tasks"][0]["state_ref"])
+    run_development_stage(
+        task_path,
+        stage="readiness",
+        receipts={"planned": _stage_receipt(tmp_path, "planned")},
+        idempotency_prefix="cc-48:readiness",
+    )
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-48"],
+        run_id="resume-progressed",
+        requested_stage="document",
+        goal="document",
+        provision_worktree=False,
+        apply=True,
+    )
+    assert calls == 1
+    assert TaskState(task_path).read()["state"] == "planned"
+    assert resumed["state"] == "planned"
+    projection = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert projection["requested_stage"] == "document"
+    assert projection["current_stage"] == "document"
+
+    assert main(
+        [
+            "auto-dev",
+            "groom",
+            "--state",
+            TaskState(task_path).read()["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+    retargeted = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert retargeted["requested_stage"] == "groom"
+    assert retargeted["current_stage"] == "groom"
+    assert calls == 1
+
+
+def test_delivery_projection_failure_is_non_canonical_and_transition_still_succeeds(
+    tmp_path: Path,
+) -> None:
+    task = _state(tmp_path)
+    work_item = tmp_path / "work-item"
+    work_item.mkdir()
+    projection = work_item / "autodev.json"
+    projection.write_text("{broken", encoding="utf-8")
+    state = task.read()
+    state.update(
+        {
+            "work_item": str(work_item),
+            "autodev_path": str(projection),
+            "domain": "acme",
+            "project": "app",
+        }
+    )
+    task.path.write_text(json.dumps(state), encoding="utf-8")
+
+    transitioned = task.transition("claimed", receipt="tracker:CC-1", idempotency_key="claim")
+    assert transitioned["state"] == "claimed"
+    assert task.read()["state"] == "claimed"
+    events = [json.loads(line) for line in task.ledger.read_text(encoding="utf-8").splitlines()]
+    assert any(event["type"] == "development.autodev_projection.sync_failed" for event in events)
+
+
+@pytest.mark.parametrize("managed_stage", ["merge", "deploy", "closeout"])
+def test_delivery_managed_stages_cannot_be_completed_by_generic_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, managed_stage: str
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-49",
+            "path": "/tmp/cc-49",
+            "branch": "feature/cc-49",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root, "acme", "app", ["CC-49"], run_id="managed-stage", auto_dev_mode="everything", apply=True
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    evidence = tmp_path / f"{managed_stage}.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+                "stage": managed_stage,
+                "status": "completed",
+                "summary": "claimed merge",
+                "subject_revision": base_sha,
+                "evidence": {"receipt_refs": ["anything"]},
+                "verified_at": "2026-07-20T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AutoDevStateError, match="owned by Development Delivery"):
+        record_auto_dev_stage(
+            task["autodev_path"],
+            stage=managed_stage,
+            evidence_file=evidence,
+            idempotency_key=f"unsafe:{managed_stage}",
+        )
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert projection["status"] != "completed"
+    assert projection["delivery"]["state"] == "worktree_ready"
+
+
+def test_groom_and_qa_require_their_own_receipts_and_propagation_is_distinct(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-50",
+            "path": "/tmp/cc-50",
+            "branch": "feature/cc-50",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root, "acme", "app", ["CC-50"], run_id="stage-separation", auto_dev_mode="everything", apply=True
+    )
+    task_path = Path(run["tasks"][0]["state_ref"])
+    task = TaskState(task_path)
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#50",
+    )
+    stages = task_path.parent / "stages"
+    stages.mkdir(exist_ok=True)
+    (stages / "release-propagation.json").write_text(
+        json.dumps({"recorded_at": "2026-07-20T12:00:00Z"}), encoding="utf-8"
+    )
+    projection = sync_delivery_projection(task_path)
+    assert projection is not None
+    assert projection["stages"]["groom"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["review_self"]["status"] == "completed"
+    assert projection["stages"]["pr_create"]["status"] == "not_started"
+    (stages / "release-propagation.json").unlink()
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    _record_standalone_stage(
+        task,
+        "review_others",
+        revision=base_sha,
+        status="not_required",
+    )
+    _record_standalone_stage(task, "qa", revision=base_sha)
+    run_development_stage(
+        task_path,
+        stage="release_propagation",
+        receipts={
+            "release_propagation": _stage_receipt(tmp_path, "release_propagation")
+        },
+        idempotency_prefix="cc-50:release-propagation",
+    )
+    projection = sync_delivery_projection(task_path)
+    assert projection is not None
+    assert projection["stages"]["pr_create"]["status"] == "completed"
+    assert projection["stages"]["release"]["status"] == "not_started"
+
+
+def test_revision_sensitive_stage_receipts_can_supersede_stale_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-51",
+            "path": "/tmp/cc-51",
+            "branch": "feature/cc-51",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-51"],
+        run_id="revision-refresh",
+        requested_stage="qa",
+        goal="qa",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    evidence_paths: dict[str, Path] = {}
+    for suffix in ("a", "b"):
+        evidence = tmp_path / f"qa-{suffix}.json"
+        evidence_paths[suffix] = evidence
+        proof = _packet_proof(Path(task["work_item"]), "qa", label=suffix)
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
+                    "stage": "qa",
+                    "status": "completed",
+                    "summary": f"QA passed for revision {suffix}",
+                    "subject_revision": f"revision-{suffix}",
+                    "evidence": {"receipt_refs": [str(proof)]},
+                    "verified_at": "2026-07-20T12:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        record_auto_dev_stage(
+            task["autodev_path"],
+            stage="qa",
+            evidence_file=evidence,
+            idempotency_key=f"cc-51:qa:{suffix}",
+        )
+    stage_dir = Path(task["work_item"]) / "artifacts/auto-dev-orchestration/stages/qa"
+    versions = [path for path in stage_dir.glob("*.json") if path.name != "latest.json"]
+    assert len(versions) == 2
+    latest = json.loads((stage_dir / "latest.json").read_text(encoding="utf-8"))
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert latest["subject_revision"] == "revision-b"
+    assert latest.get("supersedes")
+    assert projection["subject_revision"] == "revision-b"
+    assert projection["stages"]["qa"]["status"] == "completed"
+    record_auto_dev_stage(
+        task["autodev_path"],
+        stage="qa",
+        evidence_file=evidence_paths["a"],
+        idempotency_key="cc-51:qa:a",
+    )
+    replayed_latest = json.loads((stage_dir / "latest.json").read_text(encoding="utf-8"))
+    replayed_projection = read_auto_dev_state(task["autodev_path"])
+    assert replayed_latest["subject_revision"] == "revision-b"
+    assert replayed_projection["subject_revision"] == "revision-b"
+
+
+def test_heartbeat_does_not_refresh_milestone_evidence_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-52",
+            "path": "/tmp/cc-52",
+            "branch": "feature/cc-52",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root, "acme", "app", ["CC-52"], run_id="heartbeat-provenance", apply=True
+    )
+    task_path = Path(run["tasks"][0]["state_ref"])
+    TaskState(task_path).transition("planned", receipt="plan:verified", idempotency_key="planned")
+    before = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    TaskState(task_path).heartbeat(owner="worker", lease_minutes=10, idempotency_key="heartbeat")
+    after = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
+    assert after["stages"]["readiness"]["last_verified_at"] == before["stages"]["readiness"]["last_verified_at"]
+    assert after["stages"]["readiness"]["receipt_refs"] == ["plan:verified"]
+
+
+def test_auto_dev_template_satisfies_strict_runtime_schema() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads((repository / "schemas/auto-dev-work-item.schema.json").read_text(encoding="utf-8"))
+    template = json.loads(
+        (
+            repository
+            / "harness/shared_factory/00-programs/auto_dev/templates/autodev.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(Draft202012Validator(schema).iter_errors(template)) == []
+    assert set(template["stage_order"]) == set(template["stages"])
+    assert template["stage_order"][-1] == "health"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-health-evidence.json",
+        "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-health-evidence.json",
+    ],
+)
+def test_shipped_auto_dev_health_examples_satisfy_strict_schema(
+    relative_path: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (repository / "schemas/auto-dev-health-evidence.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(document)) == []
+    structured = document["evidence"]
+    audited_refs = {item["ref"] for item in structured["receipt_audit"]["present"]}
+    assert audited_refs <= set(structured["receipt_refs"])
+    assert structured["terminal_authority"]["kind"] == "pull_request_merge"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-merge-evidence.json",
+        "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-merge-evidence.json",
+    ],
+)
+def test_shipped_auto_dev_merge_examples_include_provider_read_authority(
+    relative_path: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
+    assert document["schema"] == "development-stage-evidence/v1"
+    assert document["state"] == "merged"
+    assert document["status"] == "completed"
+    structured = document["evidence"]
+    assert {
+        "merge_sha",
+        "source_head_sha",
+        "provider",
+        "pull_request",
+        "readback_verified",
+    } <= set(structured)
+    assert structured["readback_verified"] is True
+    for field in ("merge_sha", "source_head_sha"):
+        revision = structured[field]
+        assert 7 <= len(revision) <= 64
+        assert all(character in "0123456789abcdefABCDEF" for character in revision)
+
+
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "health-preflight",
+        "runtime-cleanup",
+        "resource-cleanup",
+        "closed-worktree-readback",
+        "reopen",
+    ],
+)
+def test_shipped_health_intermediate_receipts_satisfy_their_schemas(stem: str) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (repository / "schemas" / f"auto-dev-{stem}.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    document = json.loads(
+        (
+            repository
+            / "harness/shared_factory/00-programs/auto_dev/templates"
+            / f"auto-dev-{stem}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(Draft202012Validator(schema).iter_errors(document)) == []
+
+
+@pytest.mark.parametrize(
+    ("schema_filename", "relative_path"),
+    [
+        (
+            "auto-dev-health-preflight.schema.json",
+            "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-health-preflight.json",
+        ),
+        (
+            "auto-dev-health-preflight.schema.json",
+            "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-health-preflight.json",
+        ),
+        (
+            "auto-dev-runtime-cleanup.schema.json",
+            "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-runtime-cleanup.json",
+        ),
+        (
+            "auto-dev-runtime-cleanup.schema.json",
+            "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-runtime-cleanup.json",
+        ),
+        (
+            "auto-dev-resource-cleanup.schema.json",
+            "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-resource-cleanup.json",
+        ),
+        (
+            "auto-dev-resource-cleanup.schema.json",
+            "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-resource-cleanup.json",
+        ),
+        (
+            "auto-dev-closed-worktree-readback.schema.json",
+            "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-closed-worktree-readback.json",
+        ),
+        (
+            "auto-dev-closed-worktree-readback.schema.json",
+            "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-closed-worktree-readback.json",
+        ),
+        (
+            "auto-dev-reopen.schema.json",
+            "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-reopen.json",
+        ),
+        (
+            "auto-dev-reopen.schema.json",
+            "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-reopen.json",
+        ),
+    ],
+)
+def test_shipped_auto_dev_health_intermediate_receipts_satisfy_strict_schemas(
+    schema_filename: str,
+    relative_path: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (repository / "schemas" / schema_filename).read_text(encoding="utf-8")
+    )
+    document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    assert list(Draft202012Validator(schema).iter_errors(document)) == []
+
+
+@pytest.mark.parametrize(
+    "relative_directory",
+    [
+        "harness/shared_factory/00-programs/auto_dev/templates",
+        "harness/shared_factory/05-knowledge/auto_dev/examples",
+    ],
+)
+def test_shipped_auto_dev_health_intermediate_receipt_bundle_is_consistent(
+    relative_directory: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    directory = repository / relative_directory
+    preflight_path = directory / "auto-dev-health-preflight.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    runtime = json.loads(
+        (directory / "auto-dev-runtime-cleanup.json").read_text(encoding="utf-8")
+    )
+    resource = json.loads(
+        (directory / "auto-dev-resource-cleanup.json").read_text(encoding="utf-8")
+    )
+    closed = json.loads(
+        (directory / "auto-dev-closed-worktree-readback.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    identifiers = {
+        (document["work_item_id"], document["canonical_work_id"])
+        for document in (preflight, runtime, resource, closed)
+    }
+    assert len(identifiers) == 1
+    assert runtime["preflight_sha256"] == hashlib.sha256(
+        preflight_path.read_bytes()
+    ).hexdigest()
+    assert preflight["source_head_sha"] == preflight["subject_revision"]
+    assert preflight["merge_sha"] == preflight["terminal_revision"]
+    assert runtime["runtime_identity"] == preflight["runtime"]["identity"]
+    assert resource["runtime"]["identity"] == runtime["runtime_identity"]
+    assert resource["runtime"]["result"] == runtime["result"]
+    assert resource["worktree"]["identity"] == preflight["worktree"]["identity"]
+    assert resource["worktree"]["path"] == preflight["worktree"]["path"]
+    assert resource["preflight_ref"] == "artifacts/auto-dev-health/preflight.json"
+    if "entry" in closed:
+        assert closed["entry"]["id"] == preflight["worktree"]["identity"]
+        assert closed["entry"]["path"] == preflight["worktree"]["path"]
+        assert closed["entry"]["terminal_revision"] == preflight["terminal_revision"]
+        assert closed["entry"]["health_preflight_ref"] == resource["preflight_ref"]
+    else:
+        assert closed["result"] == "not_managed"
+        assert resource["worktree"]["result"] == "not_managed"
+
+
+def test_health_relocation_semantic_hash_exempts_only_named_control_paths() -> None:
+    autodev = {
+        "updated_at": "2026-07-20T20:00:00Z",
+        "delivery": {"work_item": "/packet/02-active/item", "state": "delivery_complete"},
+        "compatibility": {"legacy_state_ref": None, "migration_mode": "not_present"},
+        "source": {"system": "tracker", "key": "CC-54"},
+        "stages": {"qa": {"receipt_refs": ["receipt:qa"]}},
+    }
+    autodev_digest = auto_dev._packet_relocation_semantic_sha256(
+        "autodev.json", autodev
+    )
+    relocated_autodev = json.loads(json.dumps(autodev))
+    relocated_autodev["updated_at"] = "2026-07-20T21:00:00Z"
+    relocated_autodev["delivery"]["work_item"] = "/packet/03-complete/item"
+    relocated_autodev["compatibility"]["legacy_state_ref"] = (
+        "/packet/03-complete/item/artifacts/auto-dev/state.json"
+    )
+    assert (
+        auto_dev._packet_relocation_semantic_sha256(
+            "autodev.json", relocated_autodev
+        )
+        == autodev_digest
+    )
+    for field, value in (
+        ("source", {"system": "tracker", "key": "CC-999"}),
+        ("stages", {"qa": {"receipt_refs": ["receipt:unauthorized"]}}),
+    ):
+        tampered = json.loads(json.dumps(relocated_autodev))
+        tampered[field] = value
+        assert (
+            auto_dev._packet_relocation_semantic_sha256("autodev.json", tampered)
+            != autodev_digest
+        )
+
+    work = {
+        "status": "validating",
+        "lane": "02-active",
+        "format": "folder",
+        "updated_at": "2026-07-20T20:00:00Z",
+        "lifecycle": {"state": "validating", "owner": "agent"},
+        "source": {"system": "tracker", "key": "CC-54"},
+        "receipts": ["receipt:qa"],
+        "summary": "Delivery is ready for Health.",
+        "history": [{"state": "validating", "receipt": "receipt:qa"}],
+    }
+    work_digest = auto_dev._packet_relocation_semantic_sha256("work.yml", work)
+    relocated_work = yaml.safe_load(yaml.safe_dump(work)) or {}
+    relocated_work.update(
+        {
+            "state": "finished",
+            "status": "finished",
+            "lane": "03-complete",
+            "format": "folder",
+            "updated_at": "2026-07-20T21:00:00Z",
+        }
+    )
+    relocated_work["lifecycle"]["state"] = "finished"
+    assert (
+        auto_dev._packet_relocation_semantic_sha256("work.yml", relocated_work)
+        == work_digest
+    )
+    for field, value in (
+        ("source", {"system": "tracker", "key": "CC-999"}),
+        ("receipts", ["receipt:qa", "receipt:unauthorized"]),
+        ("summary", "Unauthorized replacement summary."),
+        ("history", [{"state": "finished", "receipt": "receipt:unauthorized"}]),
+    ):
+        tampered = yaml.safe_load(yaml.safe_dump(relocated_work)) or {}
+        tampered[field] = value
+        assert (
+            auto_dev._packet_relocation_semantic_sha256("work.yml", tampered)
+            != work_digest
+        )
+
+
+def test_auto_dev_health_audits_then_relinks_finished_packet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    missing_worktree = project / "worktrees" / "cc-54"
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-54",
+            "path": str(missing_worktree),
+            "branch": "feature/cc-54",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-54"],
+        run_id="health-finished-packet",
+        auto_dev_mode="everything",
+        goal="delivery_complete",
+        apply=True,
+    )
+    task_path = Path(run["tasks"][0]["state_ref"])
+    task = TaskState(task_path)
+    work_item = Path(task.read()["work_item"])
+    reviewed_head = "a" * 40
+    pull_request = "github:acme/app#54"
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=reviewed_head,
+        pull_request=pull_request,
+    )
+    readiness = _complete_pre_merge_auto_dev(
+        task,
+        subject_revision=reviewed_head,
+        pull_request=pull_request,
+    )
+    run_development_stage(
+        task_path,
+        stage="merge",
+        receipts={
+            "merged": _stage_receipt(
+                work_item / "artifacts" / "delivery",
+                "merged",
+                status="completed",
+                evidence={
+                    "merge_sha": base_sha,
+                    "source_head_sha": reviewed_head,
+                    **_provider_authority(task, pull_request=pull_request),
+                    "readiness_authority": readiness,
+                },
+            )
+        },
+        idempotency_prefix="cc-54:merge",
+    )
+    _record_standalone_stage(task, "release", revision=base_sha)
+    run_development_stage(
+        task_path,
+        stage="deploy",
+        receipts={
+            "deployment_pending": _stage_receipt(tmp_path, "deployment_pending"),
+            "deploying": _stage_receipt(
+                work_item / "artifacts" / "delivery", "deploying"
+            ),
+            "post_deploy_validation": _stage_receipt(
+                work_item / "artifacts" / "delivery",
+                "post_deploy_validation",
+                evidence={
+                    "deployed_revision": base_sha,
+                    "artifact_ref": "registry.example/app@sha256:cc54",
+                    "environment": "test",
+                    "readback_verified": True,
+                },
+            ),
+        },
+        idempotency_prefix="cc-54:deploy",
+    )
+    run_development_stage(
+        task_path,
+        stage="closeout",
+        receipts={
+            "delivery_complete": _stage_receipt(
+                work_item / "artifacts" / "delivery",
+                "delivery_complete",
+                evidence={"closeout_verified": True, "receipt_refs": ["tracker:CC-54"]},
+            )
+        },
+        idempotency_prefix="cc-54:closeout",
+    )
+    before_health = read_auto_dev_state(work_item / "autodev.json")
+    canonical_work_id = "acme:app:cc-54"
+    assert task.read()["canonical_work_id"] == canonical_work_id
+    assert before_health["canonical_work_id"] == canonical_work_id
+    assert before_health["subject_revision"] == reviewed_head
+    assert before_health["terminal_revision"] == base_sha
+    assert before_health["current_stage"] == "health"
+
+    # Exercise the status-only metadata shape used by older work.yml packets.
+    active_work = yaml.safe_load((work_item / "work.yml").read_text(encoding="utf-8")) or {}
+    active_work.pop("state", None)
+    active_work["status"] = "validating"
+    active_work["source"] = {"system": "tracker", "key": "CC-54"}
+    active_work["receipts"] = ["tracker:CC-54"]
+    active_work["summary"] = "Delivery is ready for its final Health audit."
+    active_work["history"] = [{"state": "validating", "receipt": "tracker:CC-54"}]
+    (work_item / "work.yml").write_text(
+        yaml.safe_dump(active_work, sort_keys=False), encoding="utf-8"
+    )
+
+    dry_run = prepare_auto_dev_health(work_item / "autodev.json", apply=False)
+    assert dry_run["writes"] == []
+    assert dry_run["preflight"]["schema"] == "auto-dev-health-plan/v1"
+    assert dry_run["preflight"]["mode"] == "dry-run"
+    assert dry_run["preflight"]["safe_to_cleanup"] is True
+    assert dry_run["preflight"]["repository"] == {
+        "id": "github:acme/app",
+        "base_branch": "main",
+    }
+    assert not (work_item / "artifacts" / "auto-dev-health" / "preflight.json").exists()
+
+    qa_receipt = work_item / before_health["stages"]["qa"]["receipt_refs"][0]
+    qa_bytes = qa_receipt.read_bytes()
+    qa_receipt.unlink()
+    with pytest.raises(AutoDevStateError, match="every earlier stage"):
+        prepare_auto_dev_health(work_item / "autodev.json", apply=True)
+    assert not (work_item / "artifacts" / "auto-dev-health" / "preflight.json").exists()
+    qa_receipt.write_bytes(qa_bytes)
+
+    prepared = prepare_auto_dev_health(work_item / "autodev.json", apply=True)
+    preflight_path = Path(prepared["preflight_ref"])
+    resume_text = (
+        work_item / "artifacts" / "auto-dev-health" / "RESUME.md"
+    ).read_text(encoding="utf-8")
+    for required_resume_text in (
+        "Source ticket:",
+        "Tracker receipt:",
+        "Pull-request receipt:",
+        "Merge receipt:",
+        "QA receipt:",
+        "Release receipt:",
+        "Deployment receipt:",
+        "Closeout receipt:",
+        "Final decision:",
+        "Known follow-ups:",
+        "Residual risk:",
+        "Why cleanup is safe:",
+        "Exact worktree:",
+        "Exact runtime:",
+        "Cleanup plan:",
+        "Reopen command:",
+        "Receipt audit:",
+    ):
+        assert required_resume_text in resume_text
+    preflight_schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-health-preflight.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(
+        Draft202012Validator(preflight_schema).iter_errors(
+            json.loads(preflight_path.read_text(encoding="utf-8"))
+        )
+    ) == []
+    preflight_ref = preflight_path.relative_to(work_item).as_posix()
+    prepared_payload = json.loads(preflight_path.read_text(encoding="utf-8"))
+    packet_manifest = work_item / prepared_payload["packet_manifest"]["ref"]
+    packet_manifest_bytes = packet_manifest.read_bytes()
+    packet_manifest_payload = json.loads(packet_manifest_bytes)
+    manifest_controls = {
+        row["ref"]: row
+        for row in packet_manifest_payload["files"]
+        if row["ref"] in {"autodev.json", "work.yml"}
+    }
+    assert set(manifest_controls) == {"autodev.json", "work.yml"}
+    assert all(
+        len(row["relocation_semantic_sha256"]) == 64
+        for row in manifest_controls.values()
+    )
+    packet_manifest.unlink()
+    with pytest.raises(AutoDevStateError, match="packet_manifest"):
+        prepare_auto_dev_health(work_item / "autodev.json", apply=True)
+    packet_manifest.write_bytes(packet_manifest_bytes)
+    packet_manifest.write_bytes(packet_manifest_bytes + b"\n")
+    with pytest.raises(AutoDevStateError, match="packet_manifest hash"):
+        prepare_auto_dev_health(work_item / "autodev.json", apply=True)
+    packet_manifest.write_bytes(packet_manifest_bytes)
+    summary_bytes = (work_item / "SUMMARY.md").read_bytes()
+    (work_item / "SUMMARY.md").write_text("# Summary\n\nTampered after audit.\n", encoding="utf-8")
+    with pytest.raises(AutoDevStateError, match="packet file changed after audit: SUMMARY.md"):
+        prepare_auto_dev_health(work_item / "autodev.json", apply=True)
+    (work_item / "SUMMARY.md").write_bytes(summary_bytes)
+    runtime_receipt = (
+        work_item
+        / "artifacts"
+        / "auto-dev-health"
+        / "receipts"
+        / "runtime-cleanup.json"
+    )
+    teardown_operation = runtime_receipt.with_name("runtime-teardown-operation.txt")
+    readback_operation = runtime_receipt.with_name("runtime-readback-operation.txt")
+    teardown_operation.write_text("No managed runtime teardown was required.\n", encoding="utf-8")
+    readback_operation.write_text("Runtime remains explicitly not managed.\n", encoding="utf-8")
+
+    def operation_descriptor(path: Path) -> dict[str, str]:
+        return {
+            "command": "not_managed",
+            "ref": path.relative_to(work_item).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+    runtime_receipt.write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-runtime-cleanup/v1",
+                "work_item_id": work_item.name,
+                "canonical_work_id": canonical_work_id,
+                "runtime_identity": "not-managed",
+                "ownership": "not_managed",
+                "provider": "none",
+                "teardown": operation_descriptor(teardown_operation),
+                "readback": operation_descriptor(readback_operation),
+                "result": "not_managed",
+                "readback_verified": True,
+                "preflight_sha256": hashlib.sha256(preflight_path.read_bytes()).hexdigest(),
+                "verified_at": datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-runtime-cleanup.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(
+        Draft202012Validator(runtime_schema).iter_errors(
+            json.loads(runtime_receipt.read_text(encoding="utf-8"))
+        )
+    ) == []
+
+    worklog_bytes = (work_item / "WORKLOG.md").read_bytes()
+    next_bytes = (work_item / "NEXT.md").read_bytes()
+    assert main(
+        [
+            "project",
+            "work-item",
+            "set",
+            "acme",
+            "app",
+            work_item.name,
+            "--state",
+            "finished",
+            "--health-relocation",
+            "--note",
+            "Auto-Dev Health audit passed",
+            "--root",
+            str(root),
+        ]
+    ) == 0
+    relocation_output = yaml.safe_load(capsys.readouterr().out)
+    assert relocation_output["state"] == "finished"
+    assert relocation_output["health_relocation"] is True
+    finished = Path(relocation_output["path"])
+    assert finished == work_item
+    assert finished.parent == project / "work-items"
+    assert (finished / "WORKLOG.md").read_bytes() == worklog_bytes
+    assert (finished / "NEXT.md").read_bytes() == next_bytes
+    finished_work = yaml.safe_load((finished / "work.yml").read_text(encoding="utf-8")) or {}
+    assert finished_work["status"] == "finished"
+    assert "state" not in finished_work
+    if isinstance(finished_work.get("lifecycle"), dict) and "state" in finished_work["lifecycle"]:
+        assert finished_work["lifecycle"]["state"] == "finished"
+    relocation_preflight = json.loads(
+        (finished / preflight_ref).read_text(encoding="utf-8")
+    )
+    relocated_autodev = read_auto_dev_state(finished / "autodev.json")
+    relocated_autodev["updated_at"] = "2026-07-20T20:53:00Z"
+    relocated_autodev["delivery"]["work_item"] = str(finished)
+    (finished / "autodev.json").write_text(
+        json.dumps(relocated_autodev, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    validate_auto_dev_packet_manifest(
+        relocation_preflight,
+        finished,
+        current=relocated_autodev,
+        verify_live_files=False,
+    )
+
+    # The two relocation-mutable controls are not blanket exemptions.  Their
+    # semantic hashes reject changes to source, receipt, summary, and history
+    # content even when the files remain valid JSON/YAML.
+    relocated_autodev_bytes = (finished / "autodev.json").read_bytes()
+    tampered_autodev = json.loads(relocated_autodev_bytes)
+    tampered_autodev["source"]["key"] = "CC-999"
+    (finished / "autodev.json").write_text(
+        json.dumps(tampered_autodev, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        AutoDevStateError,
+        match="packet control changed outside relocation fields: autodev.json",
+    ):
+        validate_auto_dev_packet_manifest(
+            relocation_preflight,
+            finished,
+            current=relocated_autodev,
+            verify_live_files=False,
+        )
+    (finished / "autodev.json").write_bytes(relocated_autodev_bytes)
+
+    tampered_autodev = json.loads(relocated_autodev_bytes)
+    tampered_autodev["stages"]["qa"]["receipt_refs"].append("receipt:unauthorized")
+    (finished / "autodev.json").write_text(
+        json.dumps(tampered_autodev, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        AutoDevStateError,
+        match="packet control changed outside relocation fields: autodev.json",
+    ):
+        validate_auto_dev_packet_manifest(
+            relocation_preflight,
+            finished,
+            current=relocated_autodev,
+            verify_live_files=False,
+        )
+    (finished / "autodev.json").write_bytes(relocated_autodev_bytes)
+
+    tampered_autodev = json.loads(relocated_autodev_bytes)
+    tampered_autodev["delivery"]["work_item"] = str(finished.parent / "other-item")
+    (finished / "autodev.json").write_text(
+        json.dumps(tampered_autodev, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AutoDevStateError, match="unexpected delivery.work_item path"):
+        validate_auto_dev_packet_manifest(
+            relocation_preflight,
+            finished,
+            current=relocated_autodev,
+            verify_live_files=False,
+        )
+    (finished / "autodev.json").write_bytes(relocated_autodev_bytes)
+
+    relocated_work_bytes = (finished / "work.yml").read_bytes()
+    for field, unauthorized_value in (
+        ("source", {"system": "tracker", "key": "CC-999"}),
+        ("receipts", ["tracker:CC-54", "receipt:unauthorized"]),
+        ("summary", "Unauthorized replacement summary."),
+        ("history", [{"state": "finished", "receipt": "receipt:unauthorized"}]),
+    ):
+        tampered_work = yaml.safe_load(relocated_work_bytes) or {}
+        tampered_work[field] = unauthorized_value
+        (finished / "work.yml").write_text(
+            yaml.safe_dump(tampered_work, sort_keys=False), encoding="utf-8"
+        )
+        with pytest.raises(
+            AutoDevStateError,
+            match="packet control changed outside relocation fields: work.yml",
+        ):
+            validate_auto_dev_packet_manifest(
+                relocation_preflight,
+                finished,
+                current=relocated_autodev,
+                verify_live_files=False,
+            )
+        (finished / "work.yml").write_bytes(relocated_work_bytes)
+
+    tampered_work = yaml.safe_load(relocated_work_bytes) or {}
+    tampered_work["status"] = "archived"
+    (finished / "work.yml").write_text(
+        yaml.safe_dump(tampered_work, sort_keys=False), encoding="utf-8"
+    )
+    with pytest.raises(
+        AutoDevStateError,
+        match="must record finished in every state field",
+    ):
+        validate_auto_dev_packet_manifest(
+            relocation_preflight,
+            finished,
+            current=relocated_autodev,
+            verify_live_files=False,
+        )
+    (finished / "work.yml").write_bytes(relocated_work_bytes)
+
+    finished_summary = finished / "SUMMARY.md"
+    finished_summary_bytes = finished_summary.read_bytes()
+    finished_summary.write_text("# Summary\n\nUnauthorized finished-packet mutation.\n", encoding="utf-8")
+    with pytest.raises(AutoDevStateError, match="packet file changed after audit: SUMMARY.md"):
+        validate_auto_dev_packet_manifest(
+            relocation_preflight,
+            finished,
+            current=relocated_autodev,
+            verify_live_files=False,
+        )
+    finished_summary.write_bytes(finished_summary_bytes)
+    receipt_root = finished / "artifacts" / "auto-dev-health" / "receipts"
+    preflight_path = finished / preflight_ref
+    runtime_receipt = receipt_root / "runtime-cleanup.json"
+    authority_receipt = receipt_root / "terminal-authority.json"
+    closeout_receipt = receipt_root / "closeout.json"
+    audit_receipt = receipt_root / "pre-cleanup-receipt-audit.json"
+    resume_receipt = finished / "artifacts" / "auto-dev-health" / "RESUME.md"
+    resource_receipt = receipt_root / "resource-cleanup.json"
+    work_state_receipt = receipt_root / "work-state.json"
+    active_index_receipt = receipt_root / "active-index.json"
+    validation_receipt = receipt_root / "validation.json"
+    registry_receipt = receipt_root / "closed-worktree-readback.json"
+    resource_receipt.write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-resource-cleanup/v1",
+                "work_item_id": finished.name,
+                "canonical_work_id": canonical_work_id,
+                "preflight_ref": preflight_ref,
+                "runtime_cleanup": {
+                    "ref": runtime_receipt.relative_to(finished).as_posix(),
+                    "sha256": hashlib.sha256(runtime_receipt.read_bytes()).hexdigest(),
+                },
+                "worktree": {
+                    "identity": "cc-54",
+                    "path": str(missing_worktree),
+                    "result": "absent",
+                    "readback_verified": True,
+                },
+                "runtime": {
+                    "identity": "not-managed",
+                    "ownership": "not_managed",
+                    "provider": "none",
+                    "result": "not_managed",
+                    "readback_verified": True,
+                },
+                "verified_at": "2026-07-20T20:54:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    resource_schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-resource-cleanup.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(
+        Draft202012Validator(resource_schema).iter_errors(
+            json.loads(resource_receipt.read_text(encoding="utf-8"))
+        )
+    ) == []
+    work_state_receipt.write_text(
+        json.dumps({"state": "finished", "packet": str(finished)}), encoding="utf-8"
+    )
+    active_index_receipt.write_text(
+        json.dumps({"canonical_work_id": canonical_work_id, "active": False}),
+        encoding="utf-8",
+    )
+    validation_receipt.write_text(
+        json.dumps({"command": "agentic-os validate", "passed": True}),
+        encoding="utf-8",
+    )
+
+    closed_entry = {
+        "id": "cc-54",
+        "path": str(missing_worktree),
+        "status": "closed",
+        "terminal_revision": base_sha,
+        "health_preflight_ref": preflight_ref,
+    }
+    registry_receipt.write_text(
+        json.dumps(
+            {
+                "schema": "auto-dev-closed-worktree-readback/v1",
+                "work_item_id": finished.name,
+                "canonical_work_id": canonical_work_id,
+                "entry": closed_entry,
+                "captured_at": "2026-07-20T20:56:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (project / "worktrees").mkdir(exist_ok=True)
+    (project / "worktrees" / "closed.yml").write_text(
+        yaml.safe_dump(
+            {
+                "project": "app",
+                "worktrees": [closed_entry],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_work_items.update(
+            connection,
+            canonical_work_id,
+            state="finished",
+            attention="closed",
+            packet_path=str(finished),
+            clear_worktree=True,
+            receipt_ref=work_state_receipt.relative_to(finished).as_posix(),
+            verified=True,
+            now="2026-07-20T20:57:00Z",
+        )
+        canonical_work_items.write_active_projection(connection, root)
+    finally:
+        connection.close()
+    sync_active_container(root)
+
+    receipt_paths = {
+        "terminal_authority": authority_receipt,
+        "closeout": closeout_receipt,
+        "receipt_audit": audit_receipt,
+        "resume_manifest": resume_receipt,
+        "packet_manifest": receipt_root / "packet-manifest.json",
+        "resource_cleanup": resource_receipt,
+        "runtime_cleanup": runtime_receipt,
+        "work_state": work_state_receipt,
+        "active_index": active_index_receipt,
+        "validation": validation_receipt,
+    }
+    receipt_rows = [
+        {
+            "kind": kind,
+            "ref": path.relative_to(finished).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for kind, path in receipt_paths.items()
+    ]
+    receipt_rows.append(
+        {
+            "kind": "resource_cleanup",
+            "ref": registry_receipt.relative_to(finished).as_posix(),
+            "sha256": hashlib.sha256(registry_receipt.read_bytes()).hexdigest(),
+        }
+    )
+    resource_ref = resource_receipt.relative_to(finished).as_posix()
+    work_state_ref = work_state_receipt.relative_to(finished).as_posix()
+    active_index_ref = active_index_receipt.relative_to(finished).as_posix()
+    validation_ref = validation_receipt.relative_to(finished).as_posix()
+    evidence = finished / "artifacts" / "auto-dev-health" / "evidence.json"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": AUTO_DEV_HEALTH_EVIDENCE_SCHEMA,
+                "work_item_id": finished.name,
+                "stage": "health",
+                "status": "completed",
+                "summary": "Audited receipts, removed reconstructable resources, and finished the packet.",
+                "subject_revision": reviewed_head,
+                "terminal_revision": base_sha,
+                "evidence": {
+                    "preflight_ref": preflight_ref,
+                    "receipt_refs": [preflight_ref, *[row["ref"] for row in receipt_rows]],
+                    "terminal_authority": {
+                        "kind": "pull_request_merge",
+                        "provider": "github",
+                        "ref": "github:acme/app#54",
+                        "revision": base_sha,
+                        "verified_at": "2026-07-20T20:55:00Z",
+                    },
+                    "receipt_audit": {
+                        "required": list(receipt_paths),
+                        "present": receipt_rows,
+                        "missing": [],
+                        "resume_ready": True,
+                    },
+                    "resources": {
+                        "worktree": {
+                            "preflight": "clean, merged, no REOPEN.md",
+                            "action": "none required; already absent",
+                            "result": "absent",
+                            "identity": "cc-54",
+                            "receipt": resource_ref,
+                        },
+                        "runtime": {
+                            "identity": "not-managed",
+                            "preflight": "no shared LOS resources",
+                            "action": "none required",
+                            "result": "not_managed",
+                            "receipt": resource_ref,
+                        },
+                    },
+                    "work_state": {
+                        "canonical_work_id": canonical_work_id,
+                        "before": "validating",
+                        "before_attention": "active",
+                        "after": "finished",
+                        "history_receipt": work_state_ref,
+                        "packet_old_path": str(work_item),
+                        "packet_new_path": str(finished),
+                    },
+                    "closed_worktree_registry_ref": registry_receipt.relative_to(finished).as_posix(),
+                    "active_index_refs": [active_index_ref],
+                    "validation_results": [
+                        {
+                            "command": "agentic-os validate --strict",
+                            "result": "passed",
+                            "ref": validation_ref,
+                        }
+                    ],
+                    "residual_holds": [],
+                },
+                "verified_at": "2026-07-20T21:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    health_schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-health-evidence.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(
+        Draft202012Validator(health_schema).iter_errors(
+            json.loads(evidence.read_text(encoding="utf-8"))
+        )
+    ) == []
+    preflight_payload = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight_bytes = preflight_path.read_bytes()
+    relocated_work = yaml.safe_load((finished / "work.yml").read_text(encoding="utf-8")) or {}
+    relocated_work["state"] = "finished"
+    relocated_work["status"] = "finished"
+    if isinstance(relocated_work.get("lifecycle"), dict):
+        relocated_work["lifecycle"]["state"] = "finished"
+    (finished / "work.yml").write_text(
+        yaml.safe_dump(relocated_work, sort_keys=False), encoding="utf-8"
+    )
+    precleanup_audit = json.loads(audit_receipt.read_text(encoding="utf-8"))
+    qa_snapshot_row = next(
+        row for row in precleanup_audit["stages"] if row["stage"] == "qa"
+    )
+    qa_snapshot = finished / qa_snapshot_row["ref"]
+    qa_snapshot_bytes = qa_snapshot.read_bytes()
+    qa_snapshot.unlink()
+    with pytest.raises(AutoDevStateError, match="stage snapshot"):
+        record_auto_dev_stage(
+            finished / "autodev.json",
+            stage="health",
+            evidence_file=evidence,
+            idempotency_key="cc-54:health",
+        )
+    qa_snapshot.write_bytes(qa_snapshot_bytes)
+    result = record_auto_dev_stage(
+        finished / "autodev.json",
+        stage="health",
+        evidence_file=evidence,
+        idempotency_key="cc-54:health",
+    )
+    after = task.read()
+    assert Path(after["work_item"]) == finished
+    assert Path(after["autodev_path"]) == finished / "autodev.json"
+    assert result["state"]["stages"]["health"]["status"] == "completed"
+    assert result["state"]["status"] == "completed"
+    assert result["state"]["current_stage"] is None
+    assert result["state"]["subject_revision"] == reviewed_head
+    assert result["state"]["terminal_revision"] == base_sha
+    for stage_name in ("qa", "finalize", "release"):
+        assert result["state"]["stages"][stage_name]["status"] == "completed"
+    assert result["state"]["stages"]["review_others"]["status"] == "not_required"
+    completed_projection_path = finished / "autodev.json"
+    completed_projection_bytes = completed_projection_path.read_bytes()
+    completed_projection = json.loads(completed_projection_bytes)
+    health_ref = completed_projection["stages"]["health"]["receipt_refs"][0]
+    health_wrapper = finished / health_ref
+    health_wrapper_bytes = health_wrapper.read_bytes()
+
+    copied_wrapper = health_wrapper.with_name("copied-health-wrapper.json")
+    copied_wrapper.write_bytes(health_wrapper_bytes)
+    copied_ref = copied_wrapper.relative_to(finished).as_posix()
+    copied_projection = json.loads(completed_projection_bytes)
+    copied_projection["stages"]["health"]["run_ref"] = copied_ref
+    copied_projection["stages"]["health"]["receipt_refs"] = [copied_ref]
+    completed_projection_path.write_text(
+        json.dumps(copied_projection, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AutoDevStateError, match="canonical evidence path"):
+        auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+    completed_projection_path.write_bytes(completed_projection_bytes)
+    copied_wrapper.unlink()
+
+    mismatched_wrapper = json.loads(health_wrapper_bytes)
+    mismatched_wrapper["receipt_ref"] = health_wrapper.with_name("latest.json").relative_to(
+        finished
+    ).as_posix()
+    health_wrapper.write_text(
+        json.dumps(mismatched_wrapper, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AutoDevStateError, match="receipt_ref does not bind"):
+        auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+    health_wrapper.write_bytes(health_wrapper_bytes)
+
+    for required_history_field in ("recorded_at", "idempotency_key"):
+        incomplete_wrapper = json.loads(health_wrapper_bytes)
+        incomplete_wrapper[required_history_field] = ""
+        health_wrapper.write_text(
+            json.dumps(incomplete_wrapper, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(
+            AutoDevStateError,
+            match="requires idempotency_key and recorded_at",
+        ):
+            auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+        health_wrapper.write_bytes(health_wrapper_bytes)
+
+    mismatched_projection = json.loads(completed_projection_bytes)
+    mismatched_projection["stages"]["health"]["last_verified_at"] = (
+        "2026-07-20T23:59:59Z"
+    )
+    completed_projection_path.write_text(
+        json.dumps(mismatched_projection, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AutoDevStateError, match="last_verified_at does not match"):
+        auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+    completed_projection_path.write_bytes(completed_projection_bytes)
+
+    # Canonical single-root lifecycle transitions do not rewrite the delivery
+    # task merely to change filesystem lanes.
+    assert hashlib.sha256(task_path.read_bytes()).hexdigest() == preflight_payload[
+        "task_state_sha256"
+    ]
+    task_snapshot = finished / preflight_payload["task_snapshot"]["ref"]
+    assert hashlib.sha256(task_snapshot.read_bytes()).hexdigest() == preflight_payload[
+        "task_snapshot"
+    ]["sha256"]
+    assert preflight_path.read_bytes() == preflight_bytes
+
+    finished_hashes = {
+        path.relative_to(finished).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in finished.rglob("*")
+        if path.is_file()
+    }
+    connection = connect_state(default_db_path(root))
+    try:
+        with pytest.raises(
+            canonical_work_items.WorkItemError,
+            match="cannot be reactivated directly",
+        ):
+            canonical_work_items.update(
+                connection,
+                canonical_work_id,
+                state="building",
+                attention="active",
+                context_summary="Unsafe manual reopen attempt.",
+                clear_worktree=True,
+                receipt_ref="test:unsafe-manual-reopen",
+                verified=True,
+            )
+    finally:
+        connection.close()
+    with pytest.raises(DevelopmentDeliveryError, match="immutable finished packet"):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-54"],
+            run_id="unsafe-manual-reopen",
+            auto_dev_mode="single_stage",
+            requested_stage="qa",
+            goal="qa",
+            apply=True,
+        )
+    assert not (project / "state" / "development-runs" / "unsafe-manual-reopen").exists()
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical_work_items.update(
+            connection,
+            canonical_work_id,
+            state="finished",
+            attention="closed",
+            packet_path=str(finished),
+            clear_worktree=True,
+            receipt_ref=work_state_receipt.relative_to(finished).as_posix(),
+            verified=True,
+            # A same-state verification refreshes mutable freshness without
+            # rewriting the immutable terminal transition history.
+            now="2026-07-20T21:05:00Z",
+        )
+        canonical_after_reverification = canonical_work_items.get(
+            connection, canonical_work_id
+        )
+        terminal_history = connection.execute(
+            """
+            SELECT changed_at, receipt_ref
+            FROM work_item_history
+            WHERE work_item_id = ? AND to_state = 'finished' AND to_attention = 'closed'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (canonical_work_id,),
+        ).fetchone()
+        assert canonical_after_reverification is not None
+        assert (
+            canonical_after_reverification["last_verified_at"]
+            == "2026-07-20T21:05:00Z"
+        )
+        assert terminal_history is not None
+        assert terminal_history["changed_at"] == "2026-07-20T20:57:00Z"
+        assert terminal_history["receipt_ref"] == work_state_receipt.relative_to(
+            finished
+        ).as_posix()
+
+        # Freshness may advance independently, but terminal history must remain
+        # bound to the exact packet-local receipt audited by Health.
+        auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+        connection.execute(
+            """
+            UPDATE work_item_history
+            SET receipt_ref = 'artifacts/auto-dev-health/receipts/wrong-work-state.json'
+            WHERE id = (
+                SELECT id
+                FROM work_item_history
+                WHERE work_item_id = ? AND to_state = 'finished' AND to_attention = 'closed'
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (canonical_work_id,),
+        )
+        connection.commit()
+        with pytest.raises(
+            AutoDevStateError,
+            match="final finished/closed history row",
+        ):
+            auto_dev.validate_recorded_auto_dev_health(completed_projection_path)
+        connection.execute(
+            """
+            UPDATE work_item_history
+            SET receipt_ref = ?
+            WHERE id = (
+                SELECT id
+                FROM work_item_history
+                WHERE work_item_id = ? AND to_state = 'finished' AND to_attention = 'closed'
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (work_state_receipt.relative_to(finished).as_posix(), canonical_work_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    fresh_worktree = project / "worktrees" / "cc-54-qa-reopen"
+    reopen_provision_attempts = {"count": 0}
+
+    def provision_reopened_worktree(**kwargs: object) -> dict[str, str]:
+        reopen_provision_attempts["count"] += 1
+        if reopen_provision_attempts["count"] == 1:
+            raise DevelopmentDeliveryError("synthetic retryable reopen provisioning failure")
+        return {
+            "name": "cc-54-qa-reopen",
+            "path": str(fresh_worktree),
+            "branch": "feature/cc-54-qa-reopen",
+            "base_sha": base_sha,
+        }
+
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        provision_reopened_worktree,
+    )
+    reopen_args = [
+        "auto-dev",
+        "reopen",
+        "--state",
+        str(finished),
+        "--run-id",
+        "cc-54-qa-reopen",
+        "--reason",
+        "QA found a follow-up after cleanup.",
+        "--stage",
+        "qa",
+        "--root",
+        str(root),
+        "--apply",
+        "--json",
+    ]
+    active_packets_before = set(_work_item_packets(project))
+    assert main(reopen_args) == 2
+    assert "durably staged but provisioning failed" in capsys.readouterr().err
+    active_packets_after_failure = set(_work_item_packets(project))
+    assert len(active_packets_after_failure - active_packets_before) == 1
+    assert {
+        path.relative_to(finished).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in finished.rglob("*")
+        if path.is_file()
+    } == finished_hashes
+
+    # The same request recovers the durable intent and packet; it never creates
+    # a second packet after a provisioning failure or crash boundary.
+    assert main(reopen_args) == 0
+    reopened = json.loads(capsys.readouterr().out)
+    assert reopened["status"] == "reopened"
+    active_packet = Path(reopened["active_packet"])
+    assert active_packet.parent == project / "work-items"
+    assert active_packet != finished
+    assert finished.is_dir()
+    assert (active_packet / "autodev.json").is_file()
+    reopen_receipt = json.loads(
+        (active_packet / "artifacts" / "auto-dev-reopen" / "reopen.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reopen_schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas/auto-dev-reopen.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert list(Draft202012Validator(reopen_schema).iter_errors(reopen_receipt)) == []
+    assert reopen_receipt["finished_packet"] == str(finished)
+    assert reopen_receipt["health_sha256"] == hashlib.sha256(
+        (finished / reopen_receipt["health_receipt"]).read_bytes()
+    ).hexdigest()
+    reopened_task = TaskState(
+        Path(reopened["delivery"]["tasks"][0]["state_ref"])
+    ).read()
+    assert Path(reopened_task["work_item"]) == active_packet
+    assert reopened_task["worktree"]["name"] == "cc-54-qa-reopen"
+    assert reopened_task["runtime"]["ownership"] == "not_managed"
+    assert {
+        path.relative_to(finished).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in finished.rglob("*")
+        if path.is_file()
+    } == finished_hashes
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, canonical_work_id)
+        assert canonical["state"] == "building"
+        assert Path(canonical["packet_path"]) == active_packet
+        assert Path(canonical["worktree_path"]) == fresh_worktree
+    finally:
+        connection.close()
+
+    packet_count = len(_work_item_packets(project))
+    assert main(reopen_args) == 0
+    replay = json.loads(capsys.readouterr().out)
+    assert replay["status"] == "already_reopened"
+    assert Path(replay["active_packet"]) == active_packet
+    assert len(_work_item_packets(project)) == packet_count
+
+    mismatched_reason = list(reopen_args)
+    mismatched_reason[mismatched_reason.index("QA found a follow-up after cleanup.")] = (
+        "A different follow-up reason."
+    )
+    assert main(mismatched_reason) == 2
+    assert "immutable-history request" in capsys.readouterr().err
+    mismatched_base = [*reopen_args[:-2], "--base-branch", "release/other", *reopen_args[-2:]]
+    assert main(mismatched_base) == 2
+    assert "immutable-history request" in capsys.readouterr().err
+    assert len(_work_item_packets(project)) == packet_count
+
+
+def test_auto_dev_health_rejects_cleanup_without_receipt_audit(tmp_path: Path) -> None:
+    state = (
+        tmp_path
+        / "os"
+        / "domains"
+        / "acme"
+        / "02-projects"
+        / "app"
+        / "work-items"
+        / "03-complete"
+        / "cc-55"
+        / "autodev.json"
+    )
+    state.parent.mkdir(parents=True)
+    (tmp_path / "os" / ".agentic_root").write_text("", encoding="utf-8")
+    template = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "harness/shared_factory/00-programs/auto_dev/templates/autodev.json"
+        ).read_text(encoding="utf-8")
+    )
+    template.update(
+        {
+            "work_item_id": "cc-55",
+            "domain": "acme",
+            "project": "app",
+            "mode": "single_stage",
+            "requested_stage": "health",
+            "current_stage": "health",
+            "terminal_revision": "abc1234",
+        }
+    )
+    merged_receipt = tmp_path / "merged.json"
+    merged_receipt.write_text(
+        json.dumps(
+            {
+                "schema": "development-stage-evidence/v1",
+                "state": "merged",
+                "status": "completed",
+                "summary": "Merged",
+                "evidence": {"merge_sha": "abc1234", "readback_verified": True},
+                "verified_at": "2026-07-20T20:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    task_path = tmp_path / "delivery-task.json"
+    task_path.write_text(
+        json.dumps(
+            {
+                "state": "delivery_complete",
+                "domain": "acme",
+                "project": "app",
+                "terminal_revision": "abc1234",
+                "receipts": [{"state": "merged", "ref": str(merged_receipt)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    template["delivery"] = {
+        "state": "delivery_complete",
+        "task_state_ref": str(task_path),
+        "terminal_revision": "abc1234",
+    }
+    state.write_text(json.dumps(template), encoding="utf-8")
+    evidence = tmp_path / "unsafe-health.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": AUTO_DEV_HEALTH_EVIDENCE_SCHEMA,
+                "work_item_id": "cc-55",
+                "stage": "health",
+                "status": "completed",
+                "summary": "Claimed cleanup without an audit.",
+                "subject_revision": "abc1234",
+                "evidence": {"receipt_refs": ["receipt:cleanup"]},
+                "verified_at": "2026-07-20T21:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AutoDevStateError, match="strict schema"):
+        record_auto_dev_stage(
+            state,
+            stage="health",
+            evidence_file=evidence,
+            idempotency_key="cc-55:unsafe-health",
+        )
+
+    (state.parent / "REOPEN.md").write_text("# Resume this item\n", encoding="utf-8")
+    with pytest.raises(AutoDevStateError, match="REOPEN.md"):
+        record_auto_dev_stage(
+            state,
+            stage="health",
+            evidence_file=evidence,
+            idempotency_key="cc-55:reopened-health",
+        )
 
 
 def test_workflow_docs_are_complete_and_shallow() -> None:

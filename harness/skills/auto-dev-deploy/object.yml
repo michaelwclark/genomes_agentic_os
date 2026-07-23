@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-deploy
+title: Auto-Dev Deploy
+description: Run and verify project-owned deployment for the exact merged artifact.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, deployment, validation, sdlc]
+dependencies: []
+aliases: [harness/skills/auto-dev-deploy/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-deploy}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

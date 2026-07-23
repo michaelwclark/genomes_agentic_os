@@ -110,6 +110,68 @@ All Spec commands emit YAML records or receipts. See
 [29 · Spec Engine](29-spec-engine.md) for exact forms, lifecycle semantics,
 adapter behavior, and compatibility commands.
 
+### Auto-Dev Artifact Authoring — `cli/artifacts.py`
+
+| Command | What it does |
+| --- | --- |
+| `artifacts` | Resolve, render, validate, and govern polymorphic SDLC artifacts. |
+| `artifacts resolve` | Compose root/domain/project/invocation provider/type contracts; `--explain` includes provenance and blocked safety overrides. |
+| `artifacts render` | Produce a local `rendered-artifact/v1` envelope, provider-adapter payload, evidence contract, semantic-validation contract, and render receipt. Jira payloads are ADF; other providers use normalized adapter inputs. |
+| `artifacts validate` | Enforce required sections, verified evidence receipts, semantic assertions, and external-output safety; write a validation receipt. |
+| `artifacts apply` | Atomically apply filesystem output or create an explicit external-provider handoff; external providers require matching `artifact-approval/v1` and `artifact-target-verification/v1` receipts plus `--execute`. |
+| `artifacts record-readback` | Close an external handoff from an `artifact-provider-readback/v1` receipt containing normalized live content; the engine verifies target identity, required fields, and content hash. |
+| `artifacts doctor` | Validate contract frontmatter, fallback coverage, and representative resolutions. |
+
+### Auto-Dev Detective — `cli/detective.py`
+
+| Command | What it does |
+| --- | --- |
+| `detective resolve` | Compose and explain the root/domain/project/invocation evidence plan. |
+| `detective start` | Create one idempotent request, policy, source-manifest, version-gate, event, and state packet. |
+| `detective status` | Read compact state, deployed version, source coverage, evidence count, and receipts. |
+| `detective record-version` | Pin the environment's exact version/ref/commit authority before code analysis. |
+| `detective record-evidence` | Append one bounded source receipt with facts, limitations, authority, and freshness. |
+| `detective source-status` | Explicitly disposition a declared source as unavailable, deferred, or not applicable; deferred sources still block conclusion. |
+| `detective pause` / `resume` | Suspend the same run for VPN/provider/environment availability and restore its prior state. |
+| `detective analyze` / `conclude` | Record competing hypotheses or write the evidence-backed final JSON/Markdown result. |
+| `detective render` | Render a concluded result through the common provider/type artifact contracts. |
+| `detective doctor` | Validate every installed investigation policy pack and representative trigger/output route. |
+
+### Development Delivery — `cli/develop.py`
+
+| Command | What it does |
+| --- | --- |
+| `develop start` | Plan or create a 1-N development portfolio with one active work item and isolated worktree per ticket; multi-repository projects require `--repository <id>`. |
+| `develop status` | Read portfolio and task state receipts. |
+| `develop transition` | Compatibility command that fails closed; direct string-receipt transitions are disabled. Use `develop stage`. |
+| `develop stage` | Preflight all typed `development-stage-evidence/v1` receipts for one named workflow stage, then apply its legal state transitions atomically. |
+| `develop fail` | Classify a failure and retry or block according to policy. |
+| `develop recover` | Resume a recorded recoverable failure. |
+| `develop heartbeat` | Renew a non-terminal task lease. |
+| `develop policy` | Resolve one of the five nested Auto-Dev Markdown planes: workflow behavior, environment access, development standards, QA gates, or gitflow topology. |
+
+See [42 · Auto-Dev Program](42-auto-dev-program.md) for how these groups compose.
+
+### Versioned Object Library — `cli/library.py`
+
+| Command | What it does |
+| --- | --- |
+| `library list` / `library show` | Read the installed compact registry and one canonical object. |
+| `library doctor` | Validate manifests, generated registries, dependencies, and source/install provenance. |
+| `library build` | Run the source-owned deterministic builder as an Auto-Dev Develop helper. |
+| `library validate` | Validate source or the exact receipt-bound archive as an Auto-Dev QA helper. |
+| `library release` | Prepare release evidence/notes; it does not bypass protected CI or operator publication authority. |
+| `library document` | Verify provider release readback and post-release documentation evidence; it does not publish. |
+| `library install` | Plan or atomically install a validated immutable revision from the canonical source repository; `--apply` performs the replacement. |
+| `library verify-install` | Compare the installed object count/content hash and doctor result with the durable install receipt. |
+| `library rollback-install` | Plan or atomically restore the retained prior projection together with its exact verification receipt. |
+| `library init` / `library create` | Bootstrap a library layout or manifest-backed object; these are migration/scaffolding tools, not normal installed authorship. |
+| `library migrate-legacy` | Plan or copy legacy definitions into manifest-backed form. |
+| `library refresh` | Rebuild generated registry projections from canonical manifests. |
+
+See [29 · Versioned Object Library](29-versioned-object-library.md) for the
+source-versus-installed boundary and Auto-Dev self-hosting lifecycle.
+
 ### Workflows & Programs — `cli/workflow.py`
 
 | Command | What it does |

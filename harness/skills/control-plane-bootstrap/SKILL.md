@@ -137,3 +137,12 @@ After bootstrapping:
 - Dry-run was reviewed before any write was applied.
 - Filesystem remains the source of truth.
 - `customer validate` exits 0 after bootstrap.
+
+## Canonical artifact projection
+
+This skill owns control-plane design, workspace verification, database
+creation, and reconciliation judgment. Render the bootstrap plan, database
+documentation, and operator handoff as `control-plane` artifacts through
+`$auto-dev-create-artifacts`; Doc Config supplies the verified destination and
+the Notion adapter supplies bounded mutation/readback. Never duplicate the
+content, approval, target-verification, or readback contract here.

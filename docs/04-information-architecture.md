@@ -13,14 +13,15 @@
 ## Layout-v2 compatibility note
 
 Current installs use `domains/<domain>/projects/<project>/` as the conventional
-address and a separately versioned `lib/` for reusable object definitions.
+address and a separately sourced, receipt-backed `lib/` projection for reusable
+object definitions.
 Mutable work truth lives in SQLite, not in a filesystem lane. The numbered
 domain layout documented below remains a supported compatibility/install shape
 while writers and older installs migrate; `domains/<domain>` and `projects`
 aliases let old and new routes resolve the same room without moving registered
 Git worktrees.
 
-See [29 · Versioned Installed Object Library](29-versioned-object-library.md)
+See [29 · Versioned Object Library](29-versioned-object-library.md)
 and `harness/rules/work-lifecycle-standard.md` for the binding layout-v2
 contracts.
 
@@ -59,6 +60,8 @@ Running `agentic-os init` (default target: `~/agentic_os`) produces:
     README.md
     registries/           ← capabilities.yml, commands.yml, skills.yml, …
     shared_factory/       ← shared patterns, templates, cross-domain knowledge (see 02 · Architecture)
+  lib/                    ← validated replaceable Object Library projection
+  runtime/                ← state, install receipts/backups, runs, and other mutable evidence
   domains/              ← the only canonical parent for operator domains
     personal/
     work/

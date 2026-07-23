@@ -1,0 +1,16 @@
+title: Concise outcome-oriented title
+summary: What the reader needs to know and why it matters
+sections:
+  Context: Verified context for the artifact
+  Evidence: Audience-safe evidence summary
+evidence_receipts:
+  source identity:
+    status: verified
+    value: TRACKER-123
+    evidence_ref: tracker-readback
+    captured_at: "2026-07-19T12:00:00Z"
+validation_assertions:
+  acceptance criteria are testable:
+    status: passed
+    evidence_ref: acceptance-review
+    checked_at: "2026-07-19T12:00:00Z"

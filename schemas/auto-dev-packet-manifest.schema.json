@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-packet-manifest.schema.json",
+  "title": "Auto-Dev durable packet manifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "work_item_id",
+    "canonical_work_id",
+    "files",
+    "directories",
+    "missing",
+    "resume_ready",
+    "verified_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-packet-manifest/v1"},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "files": {
+      "type": "array",
+      "minItems": 12,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["ref", "sha256", "size"],
+        "properties": {
+          "ref": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 0},
+          "relocation_semantic_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "ref": {"enum": ["autodev.json", "work.yml"]}
+              },
+              "required": ["ref"]
+            },
+            "then": {"required": ["relocation_semantic_sha256"]},
+            "else": {"not": {"required": ["relocation_semantic_sha256"]}}
+          }
+        ]
+      }
+    },
+    "directories": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": {"enum": ["artifacts", "logs", "logs/conversations"]}
+    },
+    "missing": {"type": "array", "maxItems": 0},
+    "resume_ready": {"const": true},
+    "verified_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

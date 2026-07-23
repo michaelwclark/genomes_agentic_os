@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: pr-review
+title: PR Review
+description: Canonical review, report, and guarded review-plus-merge workflow for other authors' pull requests.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, review, pull-request, sdlc]
+dependencies: [reference:root:gitflow-topology]
+aliases: [harness/skills/pr-review]
+runtime: {root: runtime/objects/skills/skill/root/pr-review}
+validation: {commands: ["python3 lib/skills/root/pr-review/tests/test_contract.py"]}
+policy: {allow_implicit_invocation: true}

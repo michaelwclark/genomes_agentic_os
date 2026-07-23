@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-everything
+title: Auto-Dev Everything
+description: Take tracker work through every applicable Auto-Dev workflow with one resumable state projection.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, orchestration, sdlc]
+dependencies: [skill:root:auto-dev-grooming, skill:root:auto-dev-readiness, skill:root:auto-dev-closeout, skill:root:auto-dev-health]
+aliases: [harness/skills/auto-dev-everything/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-everything}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

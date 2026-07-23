@@ -637,28 +637,36 @@ DEFAULT_RUNTIME_REGISTRY: dict[str, Any] = {
         },
         {
             "id": "closed_worktree_cleanup_0500",
-            "display_name": "Closed worktree cleanup 05:00",
-            "enabled": True,
-            "cadence": "daily",
+            "display_name": "Legacy closed worktree cleanup (former 05:00)",
+            "enabled": False,
+            "cadence": "manual",
             "timezone": "America/Chicago",
-            "local_time": "05:00",
             "execution_target": "script",
             "command": "agentic-os project worktree cleanup-closed --root <root> --apply",
             "outputs": ["00-control-plane/active/", "*/02-projects/*/worktrees/closed.yml"],
+            "disabled_note": (
+                "Retired for manual item-scoped Auto-Dev Health; do not enable unless the "
+                "caller uses the same autodev.json, receipt, exact-runtime, clean-worktree, "
+                "and finished-packet contract."
+            ),
             "notion_update": {"object": "OS Cleanup", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,
         },
         {
             "id": "closed_worktree_cleanup_2200",
-            "display_name": "Closed worktree cleanup 22:00",
-            "enabled": True,
-            "cadence": "daily",
+            "display_name": "Legacy closed worktree cleanup (former 22:00)",
+            "enabled": False,
+            "cadence": "manual",
             "timezone": "America/Chicago",
-            "local_time": "22:00",
             "execution_target": "script",
             "command": "agentic-os project worktree cleanup-closed --root <root> --apply",
             "outputs": ["00-control-plane/active/", "*/02-projects/*/worktrees/closed.yml"],
+            "disabled_note": (
+                "Retired for manual item-scoped Auto-Dev Health; do not enable unless the "
+                "caller uses the same autodev.json, receipt, exact-runtime, clean-worktree, "
+                "and finished-packet contract."
+            ),
             "notion_update": {"object": "OS Cleanup", "status_field": "Last Status"},
             "next_due_at": None,
             "last_queued_at": None,

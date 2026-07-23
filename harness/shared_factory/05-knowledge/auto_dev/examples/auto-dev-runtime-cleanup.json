@@ -1,0 +1,22 @@
+{
+  "schema": "auto-dev-runtime-cleanup/v1",
+  "work_item_id": "FLYWL-1234",
+  "canonical_work_id": "los:los-app:flywl-1234",
+  "runtime_identity": "los-los_app_los_django-072026-123-flywl-1234",
+  "ownership": "managed",
+  "provider": "los_fast_worktree",
+  "teardown": {
+    "command": "/usr/bin/env AUTO_DEV_RUNTIME_ID=los-los_app_los_django-072026-123-flywl-1234 python3 /example/agentic-os/harness/bin/agentic-os-los-fast-worktree-health.py teardown --domain los --project los_app_los_django --repository-root \"/example/los-app-los-django\" --worktree 072026-123-flywl-1234 --worktree-path \"/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234\" --runtime-identity los-los_app_los_django-072026-123-flywl-1234",
+    "ref": "artifacts/auto-dev-health/receipts/runtime-teardown.json",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "readback": {
+    "command": "/usr/bin/env AUTO_DEV_RUNTIME_ID=los-los_app_los_django-072026-123-flywl-1234 python3 /example/agentic-os/harness/bin/agentic-os-los-fast-worktree-health.py readback --domain los --project los_app_los_django --repository-root \"/example/los-app-los-django\" --worktree 072026-123-flywl-1234 --worktree-path \"/example/agentic-os/domains/los/02-projects/los-app/worktrees/072026-123-flywl-1234\" --runtime-identity los-los_app_los_django-072026-123-flywl-1234",
+    "ref": "artifacts/auto-dev-health/receipts/runtime-readback.json",
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "result": "removed",
+  "readback_verified": true,
+  "preflight_sha256": "bbdd3dff6922e72afd87470afb6b8549414438460623b9b4ca345b5e27119800",
+  "verified_at": "2026-07-20T20:02:00Z"
+}

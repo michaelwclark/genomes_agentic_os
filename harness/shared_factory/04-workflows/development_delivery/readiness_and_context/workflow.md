@@ -1,10 +1,19 @@
 # Readiness and Context
 
+## Flow
+
+![Auto-Dev Development Delivery stages](../../../00-programs/auto_dev/assets/development-delivery-stages.svg)
+
 ## What this does
 
 Turns a tracker item into verified implementation context. It prevents coding
 from starting when ownership, acceptance criteria, project configuration, or
 required data evidence is missing.
+
+## Manual run
+
+Use `/auto-dev-readiness`, then record verified work with
+`agentic-os develop stage <state.json> --stage readiness ...`.
 
 ## Inputs
 

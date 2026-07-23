@@ -452,9 +452,12 @@ def promote_project_work_item(
     *,
     state: str,
     note: str = "",
+    health_relocation: bool = False,
 ) -> dict[str, Any]:
     if state not in WORK_ITEM_STATES:
         raise ValueError(f"state must be one of {', '.join(WORK_ITEM_STATES)}: {state!r}")
+    if health_relocation and state != "finished":
+        raise ValueError("health_relocation is valid only for the finished state")
     project_root = project_root_for(root, validate_name(domain, "domain"), validate_name(project, "project"))
     work_root = work_item_root_for(project_root, work_item)
     if not work_root.is_dir():
@@ -477,10 +480,13 @@ def promote_project_work_item(
         work_root.rename(target_root)
         result.updated.append(target_root)
         work_root = target_root
-    if "state" in metadata or path.name == "work.yml":
-        metadata["state"] = state
-    else:
-        metadata["status"] = state
+    state_keys = [key for key in ("state", "status") if key in metadata]
+    if not state_keys:
+        state_keys = ["state" if path.name == "work.yml" else "status"]
+    for key in state_keys:
+        metadata[key] = state
+    if isinstance(metadata.get("lifecycle"), dict) and "state" in metadata["lifecycle"]:
+        metadata["lifecycle"]["state"] = state
     metadata["lane"] = lane_for_state(state)
     metadata["format"] = "folder"
     metadata["updated_at"] = timestamp
@@ -490,16 +496,17 @@ def promote_project_work_item(
     if before != after:
         path.write_text(after, encoding="utf-8")
         result.updated.append(path)
-    append_once(
-        work_root / "WORKLOG.md",
-        f"\n## {timestamp}\n\n- State: `{old_state}` -> `{state}`\n- Note: {note or 'No note provided.'}\n",
-        result,
-    )
-    append_once(
-        work_root / "NEXT.md",
-        f"\n## {timestamp}\n\n- Current state: `{state}`\n- Next action: {note or 'Define the next action before handoff.'}\n",
-        result,
-    )
+    if not health_relocation:
+        append_once(
+            work_root / "WORKLOG.md",
+            f"\n## {timestamp}\n\n- State: `{old_state}` -> `{state}`\n- Note: {note or 'No note provided.'}\n",
+            result,
+        )
+        append_once(
+            work_root / "NEXT.md",
+            f"\n## {timestamp}\n\n- Current state: `{state}`\n- Next action: {note or 'Define the next action before handoff.'}\n",
+            result,
+        )
     append_once(
         project_root / "status.md",
         f"\n## Work Item State: {work_item}\n\n- State: `{old_state}` -> `{state}`\n- Note: {note or 'No note provided.'}\n- Updated: {timestamp}\n",
@@ -520,6 +527,7 @@ def promote_project_work_item(
         "work_item": slugify_work_id(work_item),
         "old_state": old_state,
         "state": state,
+        "health_relocation": health_relocation,
         "path": str(work_root),
         "updated": [str(item) for item in result.updated],
         "skipped": [str(item) for item in result.skipped],

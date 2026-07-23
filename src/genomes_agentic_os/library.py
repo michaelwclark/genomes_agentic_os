@@ -1,11 +1,9 @@
-"""Versioned object library for an installed Agentic OS.
+"""Install and inspect the versioned Agentic OS object-library projection.
 
-The installed library is deliberately separate from the generic source package:
-the package owns this schema/compiler while <os-root>/lib owns the user's
-private programs, workflows, automations, commands, skills, hooks, and rules.
-
-Object manifests are canonical for writes. The unified JSON index and per-kind
-YAML registries are atomic, generated read projections.
+The configured external source repository owns durable definitions.
+``<os-root>/lib`` is a disposable, receipt-backed projection of one validated
+source revision.  The unified JSON index and per-kind YAML registries are
+atomic generated read surfaces, not independent authoring owners.
 """
 
 from __future__ import annotations
@@ -21,8 +19,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from typing import Any, Iterator, Mapping
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import yaml
@@ -37,6 +37,14 @@ REGISTRY_DIR = LIBRARY_DIR / "registry"
 UNIFIED_REGISTRY = REGISTRY_DIR / "objects.json"
 LOCK_PATH = LIBRARY_DIR / ".registry.lock"
 MANIFEST_NAME = "object.yml"
+LIBRARY_REPOSITORY_ENV = "AGENTIC_OS_LIBRARY_REPOSITORY"
+INSTALL_RECEIPT = Path("runtime/state/library-install.json")
+INSTALL_RECEIPT_DIR = Path("runtime/artifacts/library-installs")
+INSTALL_BACKUP_DIR = Path("runtime/backups/library")
+INSTALL_RECEIPT_BACKUP_DIR = Path("runtime/backups/library-receipts")
+INSTALL_JOURNAL = Path("runtime/state/library-install-transaction.json")
+INSTALL_LOCK = Path("runtime/locks/library-install.lock")
+INSTALL_JOURNAL_API_VERSION = "agentic-os-library-install-transaction/v1"
 
 OBJECT_KINDS = (
     "automation",
@@ -139,6 +147,7 @@ LEGACY_KIND_MAP = {
     "workflow_instance": "workflow",
 }
 _PROCESS_LOCK = threading.RLock()
+_INSTALL_PROCESS_LOCK = threading.RLock()
 
 
 class LibraryError(ValueError):
@@ -430,6 +439,121 @@ def build_registry(root: str | Path) -> dict[str, Any]:
     return candidate
 
 
+def _registry_projection_diagnostics(
+    root: Path,
+    payload: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Compare every generated registry byte-model with the manifest model."""
+
+    diagnostics: list[dict[str, str]] = []
+    current = _load_json(root / UNIFIED_REGISTRY)
+    if current is None:
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": "registry_missing",
+                "path": UNIFIED_REGISTRY.as_posix(),
+            }
+        )
+        return diagnostics
+    if current != dict(payload):
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": "registry_stale",
+                "path": UNIFIED_REGISTRY.as_posix(),
+                "message": "unified registry contents do not match object manifests",
+            }
+        )
+
+    for kind in OBJECT_KINDS:
+        plural = PLURAL_BY_KIND[kind]
+        relative = REGISTRY_DIR / f"{plural}.yml"
+        path = root / relative
+        if not path.is_file():
+            diagnostics.append(
+                {
+                    "severity": "error",
+                    "code": "type_registry_missing",
+                    "path": relative.as_posix(),
+                }
+            )
+            continue
+        try:
+            value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            value = None
+        expected = {
+            "api_version": REGISTRY_API_VERSION,
+            "generated_at": payload.get("generated_at"),
+            "content_sha256": payload.get("content_sha256"),
+            plural: [
+                item
+                for item in payload.get("objects", [])
+                if isinstance(item, Mapping) and item.get("kind") == kind
+            ],
+        }
+        if value != expected:
+            diagnostics.append(
+                {
+                    "severity": "error",
+                    "code": "type_registry_stale",
+                    "path": relative.as_posix(),
+                    "message": f"{plural} registry contents do not match object manifests",
+                }
+            )
+    return diagnostics
+
+
+def _projection_sha256(path: Path) -> str:
+    """Hash the complete installed projection, excluding operational metadata."""
+
+    digest = hashlib.sha256()
+    if path.is_symlink():
+        digest.update(b"root-symlink\0")
+        digest.update(os.readlink(path).encode("utf-8"))
+        return digest.hexdigest()
+    if not path.is_dir():
+        raise LibraryError(f"library projection is not a directory: {path}")
+    try:
+        paths = sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix())
+        for item in paths:
+            relative = item.relative_to(path)
+            # Git metadata is deliberately removed from installed projections.
+            # The registry lock is an operational mutex, not source content.
+            if relative.parts[0] == ".git" or relative == Path(".registry.lock"):
+                continue
+            digest.update(relative.as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            mode = os.lstat(item).st_mode
+            if item.is_symlink():
+                digest.update(b"symlink\0")
+                digest.update(os.readlink(item).encode("utf-8"))
+            elif item.is_file():
+                digest.update(b"file+x\0" if mode & 0o111 else b"file\0")
+                with item.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            elif item.is_dir():
+                digest.update(b"directory\0")
+            else:
+                raise LibraryError(
+                    f"unsupported file type in library projection: {relative.as_posix()}"
+                )
+            digest.update(b"\0")
+    except OSError as exc:
+        raise LibraryError(f"could not hash library projection {path}: {exc}") from exc
+    return digest.hexdigest()
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid4().hex}.tmp")
@@ -439,6 +563,7 @@ def _atomic_write(path: Path, content: bytes) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(path)
+        _fsync_directory(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -490,12 +615,7 @@ def refresh_registry(root: str | Path, *, dry_run: bool = True) -> dict[str, Any
                 os_root / REGISTRY_DIR / f"{plural}.yml",
                 yaml.safe_dump(kind_payload, sort_keys=False).encode("utf-8"),
             )
-    readback = _load_json(os_root / UNIFIED_REGISTRY)
-    result["readback_ok"] = bool(
-        readback
-        and readback.get("content_sha256") == payload["content_sha256"]
-        and readback.get("object_count") == payload["object_count"]
-    )
+    result["readback_ok"] = not _registry_projection_diagnostics(os_root, payload)
     if not result["readback_ok"]:
         raise LibraryError("library registry readback did not match generated content")
     return result
@@ -638,7 +758,7 @@ def library_doctor(root: str | Path) -> dict[str, Any]:
     os_root = expand_path(root)
     diagnostics: list[dict[str, str]] = []
     lib = os_root / LIBRARY_DIR
-    if not lib.is_dir():
+    if lib.is_symlink() or not lib.is_dir():
         diagnostics.append(
             {"severity": "error", "code": "library_missing", "path": LIBRARY_DIR.as_posix()}
         )
@@ -648,10 +768,6 @@ def library_doctor(root: str | Path) -> dict[str, Any]:
             "object_count": 0,
             "diagnostics": diagnostics,
         }
-    if not (lib / ".git").exists():
-        diagnostics.append(
-            {"severity": "warning", "code": "git_missing", "path": "lib/.git"}
-        )
     try:
         payload = build_registry(os_root)
     except LibraryError as exc:
@@ -664,33 +780,64 @@ def library_doctor(root: str | Path) -> dict[str, Any]:
             "object_count": 0,
             "diagnostics": diagnostics,
         }
-    current = _load_json(os_root / UNIFIED_REGISTRY)
-    if not current:
+    try:
+        projection_sha256 = _projection_sha256(lib)
+    except LibraryError as exc:
+        projection_sha256 = None
         diagnostics.append(
             {
                 "severity": "error",
-                "code": "registry_missing",
-                "path": UNIFIED_REGISTRY.as_posix(),
+                "code": "projection_unreadable",
+                "path": LIBRARY_DIR.as_posix(),
+                "message": str(exc),
             }
         )
-    elif current.get("content_sha256") != payload.get("content_sha256"):
+    diagnostics.extend(_registry_projection_diagnostics(os_root, payload))
+
+    receipt_path = os_root / INSTALL_RECEIPT
+    install_receipt = _load_json(receipt_path)
+    if receipt_path.is_file() and install_receipt is None:
         diagnostics.append(
             {
                 "severity": "error",
-                "code": "registry_stale",
-                "path": UNIFIED_REGISTRY.as_posix(),
+                "code": "install_receipt_invalid",
+                "path": INSTALL_RECEIPT.as_posix(),
             }
         )
-    for kind in OBJECT_KINDS:
-        path = os_root / REGISTRY_DIR / f"{PLURAL_BY_KIND[kind]}.yml"
-        if not path.is_file():
+    elif install_receipt and install_receipt.get("status") == "installed":
+        if (lib / ".git").exists() or (lib / ".git").is_symlink():
             diagnostics.append(
                 {
                     "severity": "error",
-                    "code": "type_registry_missing",
-                    "path": path.relative_to(os_root).as_posix(),
+                    "code": "installed_git_metadata_present",
+                    "path": "lib/.git",
+                    "message": "installed projections must not regain Git metadata",
                 }
             )
+        receipt_matches = bool(
+            projection_sha256
+            and install_receipt.get("content_sha256") == payload.get("content_sha256")
+            and install_receipt.get("object_count") == payload.get("object_count")
+            and install_receipt.get("projection_sha256") == projection_sha256
+        )
+        if not receipt_matches:
+            diagnostics.append(
+                {
+                    "severity": "error",
+                    "code": "installed_projection_drift",
+                    "path": LIBRARY_DIR.as_posix(),
+                    "message": "installed projection does not match its install receipt",
+                }
+            )
+    elif not (lib / ".git").exists():
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "code": "git_missing",
+                "path": "lib/.git",
+                "message": "installed libraries require a matching external install receipt",
+            }
+        )
     return {
         "api_version": API_VERSION,
         "status": "failed"
@@ -698,20 +845,794 @@ def library_doctor(root: str | Path) -> dict[str, Any]:
         else ("warning" if diagnostics else "healthy"),
         "object_count": payload["object_count"],
         "content_sha256": payload["content_sha256"],
+        "projection_sha256": projection_sha256,
         "diagnostics": diagnostics,
     }
+
+
+def _safe_repository(value: str) -> str:
+    """Return a receipt-safe repository location without URL credentials."""
+
+    if "://" not in value:
+        scp_remote = re.fullmatch(
+            r"(?P<userinfo>[^/@]+)@(?P<host>\[[^\]]+\]|[^/:]+):(?P<path>.+)",
+            value,
+        )
+        if scp_remote:
+            return f"{scp_remote.group('host')}:{scp_remote.group('path')}"
+        return value
+    parsed = urlsplit(value)
+    hostname = parsed.hostname or ""
+    if parsed.port:
+        hostname = f"{hostname}:{parsed.port}"
+    return urlunsplit((parsed.scheme, hostname, parsed.path, "", ""))
+
+
+def _git_output(*args: str, cwd: Path | None = None) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    return completed.stdout.strip()
+
+
+def _installed_git_state(lib: Path) -> dict[str, Any]:
+    if not (lib / ".git").exists():
+        return {"present": False, "dirty_count": 0, "linked_worktrees": []}
+    status = _git_output("-C", str(lib), "status", "--porcelain=v1")
+    worktree_output = _git_output("-C", str(lib), "worktree", "list", "--porcelain")
+    worktrees = [
+        line.removeprefix("worktree ")
+        for line in worktree_output.splitlines()
+        if line.startswith("worktree ")
+    ]
+    linked = [
+        path
+        for path in worktrees
+        if Path(path).expanduser().resolve() != lib.resolve()
+    ]
+    return {
+        "present": True,
+        "dirty_count": len([line for line in status.splitlines() if line]),
+        "linked_worktrees": linked,
+    }
+
+
+def _remove_git_metadata(path: Path) -> None:
+    git = path / ".git"
+    if git.is_dir():
+        shutil.rmtree(git)
+    elif git.exists() or git.is_symlink():
+        git.unlink()
+
+
+@contextmanager
+def _install_lock(root: Path) -> Iterator[None]:
+    path = root / INSTALL_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _INSTALL_PROCESS_LOCK, path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _atomic_unlink(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    path.unlink()
+    _fsync_directory(path.parent)
+
+
+def _write_install_journal(root: Path, journal: Mapping[str, Any]) -> None:
+    _atomic_write(
+        root / INSTALL_JOURNAL,
+        (json.dumps(dict(journal), indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
+
+
+def _load_install_journal(root: Path) -> dict[str, Any] | None:
+    path = root / INSTALL_JOURNAL
+    if not path.exists():
+        return None
+    journal = _load_json(path)
+    if journal is None or journal.get("api_version") != INSTALL_JOURNAL_API_VERSION:
+        raise LibraryError(
+            f"invalid interrupted library install journal: {INSTALL_JOURNAL.as_posix()}"
+        )
+    return journal
+
+
+def _journal_path(
+    root: Path,
+    journal: Mapping[str, Any],
+    key: str,
+    parent: Path,
+    *,
+    optional: bool = False,
+) -> Path | None:
+    raw = journal.get(key)
+    if raw is None and optional:
+        return None
+    relative = Path(str(raw or ""))
+    if not str(relative) or relative.is_absolute() or ".." in relative.parts:
+        raise LibraryError(f"invalid {key} in interrupted library install journal")
+    candidate = (root / relative).resolve()
+    allowed = (root / parent).resolve()
+    try:
+        candidate.relative_to(allowed)
+    except ValueError as exc:
+        raise LibraryError(f"unsafe {key} in interrupted library install journal") from exc
+    return candidate
+
+
+def _finish_install_transaction(root: Path, journal: Mapping[str, Any]) -> None:
+    staging_root = _journal_path(root, journal, "staging_root", Path("runtime/tmp"))
+    if staging_root is not None:
+        _remove_path(staging_root)
+    _atomic_unlink(root / INSTALL_JOURNAL)
+
+
+def _recover_install_transaction(root: Path) -> dict[str, Any] | None:
+    """Finalize a committed install or restore the exact pre-swap state."""
+
+    journal = _load_install_journal(root)
+    if journal is None:
+        return None
+    target = root / LIBRARY_DIR
+    backup = _journal_path(root, journal, "backup", INSTALL_BACKUP_DIR)
+    staging_root = _journal_path(root, journal, "staging_root", Path("runtime/tmp"))
+    previous_receipt_backup = _journal_path(
+        root,
+        journal,
+        "previous_receipt_backup",
+        INSTALL_RECEIPT_BACKUP_DIR,
+        optional=True,
+    )
+    success_receipt = _journal_path(
+        root,
+        journal,
+        "success_receipt",
+        INSTALL_RECEIPT_DIR,
+    )
+    phase = str(journal.get("phase") or "")
+    if phase == "committed" and verify_library_install(root).get("status") == "verified":
+        _finish_install_transaction(root, journal)
+        return {"status": "finalized", "run_id": journal.get("run_id")}
+
+    had_previous_target = journal.get("had_previous_target") is True
+    if backup is not None and (backup.exists() or backup.is_symlink()):
+        _remove_path(target)
+        backup.replace(target)
+        _fsync_directory(target.parent)
+        _fsync_directory(backup.parent)
+    elif not had_previous_target:
+        _remove_path(target)
+    elif not target.exists() and not target.is_symlink():
+        raise LibraryError(
+            "interrupted library install cannot restore its missing previous projection"
+        )
+
+    receipt_path = root / INSTALL_RECEIPT
+    if journal.get("had_previous_receipt") is True:
+        if previous_receipt_backup is None or not previous_receipt_backup.is_file():
+            raise LibraryError(
+                "interrupted library install is missing its previous receipt backup"
+            )
+        _atomic_write(receipt_path, previous_receipt_backup.read_bytes())
+    else:
+        _atomic_unlink(receipt_path)
+
+    previous_projection_sha256 = journal.get("previous_projection_sha256")
+    if had_previous_target and previous_projection_sha256:
+        restored_sha256 = _projection_sha256(target)
+        if restored_sha256 != previous_projection_sha256:
+            raise LibraryError(
+                "interrupted library install restored a different previous projection"
+            )
+
+    if success_receipt is not None and journal.get("success_receipt_created") is True:
+        _remove_path(success_receipt)
+    if staging_root is not None:
+        _remove_path(staging_root)
+    if previous_receipt_backup is not None:
+        _remove_path(previous_receipt_backup)
+    _atomic_unlink(root / INSTALL_JOURNAL)
+    return {"status": "rolled_back", "run_id": journal.get("run_id")}
+
+
+def _installed_projection_state(root: Path, target: Path) -> dict[str, Any]:
+    present = target.exists() or target.is_symlink()
+    if target.is_symlink():
+        git_state = {"present": False, "dirty_count": 0, "linked_worktrees": []}
+    else:
+        git_state = _installed_git_state(target) if present else {
+            "present": False,
+            "dirty_count": 0,
+            "linked_worktrees": [],
+        }
+    projection_sha256: str | None = None
+    projection_error: str | None = None
+    if present:
+        try:
+            projection_sha256 = _projection_sha256(target)
+        except LibraryError as exc:
+            projection_error = str(exc)
+    receipt = _load_json(root / INSTALL_RECEIPT)
+    receipt_projection_sha256 = (
+        receipt.get("projection_sha256")
+        if receipt and receipt.get("status") == "installed"
+        else None
+    )
+    unexpected_git = bool(receipt_projection_sha256 and git_state["present"])
+    receipt_backed = bool(
+        projection_sha256
+        and receipt_projection_sha256 == projection_sha256
+        and not unexpected_git
+    )
+    projection_dirty = bool(
+        present
+        and (
+            projection_error
+            or unexpected_git
+            or (not git_state["present"] and not receipt_backed)
+        )
+    )
+    return {
+        **git_state,
+        "projection_sha256": projection_sha256,
+        "receipt_projection_sha256": receipt_projection_sha256,
+        "receipt_backed": receipt_backed,
+        "projection_dirty": projection_dirty,
+        "projection_error": projection_error,
+    }
+
+
+def verify_library_install(root: str | Path) -> dict[str, Any]:
+    os_root = expand_path(root)
+    receipt = _load_json(os_root / INSTALL_RECEIPT)
+    doctor = library_doctor(os_root)
+    matches = bool(
+        receipt
+        and receipt.get("status") == "installed"
+        and receipt.get("content_sha256") == doctor.get("content_sha256")
+        and receipt.get("object_count") == doctor.get("object_count")
+        and receipt.get("projection_sha256") == doctor.get("projection_sha256")
+        and doctor.get("status") == "healthy"
+    )
+    return {
+        "api_version": API_VERSION,
+        "action": "library.verify-install",
+        "status": "verified" if matches else "failed",
+        "receipt": INSTALL_RECEIPT.as_posix(),
+        "source_revision": receipt.get("source_revision") if receipt else None,
+        "object_count": doctor.get("object_count", 0),
+        "content_sha256": doctor.get("content_sha256"),
+        "projection_sha256": doctor.get("projection_sha256"),
+        "doctor_status": doctor.get("status"),
+        "diagnostics": doctor.get("diagnostics", []),
+    }
+
+
+def install_library(
+    root: str | Path,
+    *,
+    repository: str | None = None,
+    ref: str = "main",
+    replace_dirty: bool = False,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Install an exact validated source revision as a disposable projection."""
+
+    os_root = expand_path(root)
+    repository = str(repository or os.environ.get(LIBRARY_REPOSITORY_ENV) or "").strip()
+    if dry_run:
+        if (os_root / INSTALL_JOURNAL).exists():
+            return {
+                "api_version": API_VERSION,
+                "action": "library.install",
+                "status": "blocked",
+                "dry_run": True,
+                "repository": _safe_repository(repository) if repository else None,
+                "ref": ref,
+                "target": LIBRARY_DIR.as_posix(),
+                "replace_dirty": replace_dirty,
+                "receipt": INSTALL_RECEIPT.as_posix(),
+                "blocker": (
+                    "an interrupted library install requires rollback or finalization; "
+                    "rerun with --apply under the install lock"
+                ),
+            }
+        return _install_library_locked(
+            os_root,
+            repository=repository,
+            ref=ref,
+            replace_dirty=replace_dirty,
+            dry_run=True,
+            recovery=None,
+        )
+    with _install_lock(os_root):
+        recovery = _recover_install_transaction(os_root)
+        return _install_library_locked(
+            os_root,
+            repository=repository,
+            ref=ref,
+            replace_dirty=replace_dirty,
+            dry_run=False,
+            recovery=recovery,
+        )
+
+
+def _install_library_locked(
+    os_root: Path,
+    *,
+    repository: str,
+    ref: str,
+    replace_dirty: bool,
+    dry_run: bool,
+    recovery: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    target = os_root / LIBRARY_DIR
+    installed_state = _installed_projection_state(os_root, target)
+    plan = {
+        "api_version": API_VERSION,
+        "action": "library.install",
+        "status": "planned",
+        "dry_run": dry_run,
+        "repository": _safe_repository(repository) if repository else None,
+        "ref": ref,
+        "target": LIBRARY_DIR.as_posix(),
+        "existing": installed_state,
+        "replace_dirty": replace_dirty,
+        "receipt": INSTALL_RECEIPT.as_posix(),
+        "recovery": dict(recovery) if recovery else None,
+    }
+    if not repository:
+        plan["status"] = "blocked"
+        plan["blocker"] = (
+            "library source repository is required; pass --repository or set "
+            f"{LIBRARY_REPOSITORY_ENV}"
+        )
+        return plan
+    if installed_state["linked_worktrees"]:
+        plan["status"] = "blocked"
+        plan["blocker"] = (
+            "installed lib owns linked Git worktrees; re-home or close them before replacement"
+        )
+        return plan
+    if installed_state["dirty_count"] and not replace_dirty:
+        plan["status"] = "blocked"
+        plan["blocker"] = (
+            "installed lib has uncommitted changes; capture them in source or use "
+            "--replace-dirty only for a receipt-backed migration"
+        )
+        return plan
+    if installed_state["projection_dirty"] and not replace_dirty:
+        plan["status"] = "blocked"
+        plan["blocker"] = (
+            "installed lib has uncaptured changes or does not match its install receipt; "
+            "capture them in source or use --replace-dirty only for a receipt-backed migration"
+        )
+        return plan
+    if dry_run:
+        return plan
+
+    run_id = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+    staging_root = os_root / "runtime" / "tmp" / f"library-install-{run_id}"
+    staged_lib = staging_root / LIBRARY_DIR
+    backup = os_root / INSTALL_BACKUP_DIR / run_id
+    previous_receipt_backup = os_root / INSTALL_RECEIPT_BACKUP_DIR / f"{run_id}.json"
+    success_receipt = os_root / INSTALL_RECEIPT_DIR / f"{run_id}.json"
+    staging_root.parent.mkdir(parents=True, exist_ok=True)
+    staging_root.mkdir(parents=True, exist_ok=False)
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path = os_root / INSTALL_RECEIPT
+    had_previous_receipt = receipt_path.is_file()
+    previous_receipt_bytes = receipt_path.read_bytes() if had_previous_receipt else None
+    if had_previous_receipt:
+        assert previous_receipt_bytes is not None
+        _atomic_write(previous_receipt_backup, previous_receipt_bytes)
+    previous_payload: dict[str, Any] | None = None
+    if target.is_dir():
+        try:
+            previous_payload = build_registry(os_root)
+        except LibraryError:
+            previous_payload = None
+    had_previous_target = target.exists() or target.is_symlink()
+    journal: dict[str, Any] = {
+        "api_version": INSTALL_JOURNAL_API_VERSION,
+        "action": "library.install-transaction",
+        "run_id": run_id,
+        "phase": "staging",
+        "repository": _safe_repository(repository),
+        "requested_ref": ref,
+        "staging_root": staging_root.relative_to(os_root).as_posix(),
+        "backup": backup.relative_to(os_root).as_posix(),
+        "previous_receipt_backup": (
+            previous_receipt_backup.relative_to(os_root).as_posix()
+            if had_previous_receipt
+            else None
+        ),
+        "success_receipt": success_receipt.relative_to(os_root).as_posix(),
+        "success_receipt_created": True,
+        "had_previous_target": had_previous_target,
+        "had_previous_receipt": had_previous_receipt,
+        "previous_projection_sha256": installed_state.get("projection_sha256"),
+    }
+    try:
+        _write_install_journal(os_root, journal)
+        _git_output("clone", "--filter=blob:none", repository, str(staged_lib))
+        try:
+            source_revision = _git_output(
+                "-C",
+                str(staged_lib),
+                "rev-parse",
+                "--verify",
+                f"{ref}^{{commit}}",
+            )
+        except subprocess.CalledProcessError:
+            source_revision = _git_output(
+                "-C",
+                str(staged_lib),
+                "rev-parse",
+                "--verify",
+                f"origin/{ref}^{{commit}}",
+            )
+        _git_output("-C", str(staged_lib), "checkout", "--detach", source_revision)
+        source_status = _git_output(
+            "-C",
+            str(staged_lib),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
+        if source_status:
+            raise LibraryError("staged library checkout is unexpectedly dirty")
+        staged_doctor = library_doctor(staging_root)
+        if staged_doctor["status"] != "healthy":
+            raise LibraryError(
+                "staged library failed doctor: "
+                + json.dumps(staged_doctor.get("diagnostics", []), sort_keys=True)
+            )
+        validator = staged_lib / "scripts" / "validate_library.py"
+        if validator.is_file():
+            validation = subprocess.run(
+                [sys.executable, str(validator), "--repo", str(staged_lib)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if validation.returncode:
+                raise LibraryError("staged standalone library validation failed")
+        # Standalone validators may write declared ignored build evidence such
+        # as dist/ receipts.  The install projection must still be the clean
+        # Git revision, so discard ignored validator output inside this fresh
+        # staging clone before the exact cleanliness/readback check.  Tracked
+        # changes and non-ignored untracked files remain visible and blocking.
+        _git_output("-C", str(staged_lib), "clean", "-fdX")
+        source_status = _git_output(
+            "-C",
+            str(staged_lib),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
+        if source_status:
+            raise LibraryError("staged library validation changed the source checkout")
+        _remove_git_metadata(staged_lib)
+        staged_projection_sha256 = _projection_sha256(staged_lib)
+        journal["phase"] = "validated"
+        journal["source_revision"] = source_revision
+        journal["new_projection_sha256"] = staged_projection_sha256
+        _write_install_journal(os_root, journal)
+
+        journal["phase"] = "replacing"
+        _write_install_journal(os_root, journal)
+        if had_previous_target:
+            target.replace(backup)
+            _fsync_directory(target.parent)
+            _fsync_directory(backup.parent)
+        staged_lib.replace(target)
+        _fsync_directory(target.parent)
+        _fsync_directory(staging_root)
+        journal["phase"] = "swapped"
+        _write_install_journal(os_root, journal)
+
+        readback = build_registry(os_root)
+        if (
+            readback.get("content_sha256") != staged_doctor.get("content_sha256")
+            or readback.get("object_count") != staged_doctor.get("object_count")
+            or _registry_projection_diagnostics(os_root, readback)
+            or _projection_sha256(target) != staged_projection_sha256
+        ):
+            raise LibraryError("installed library readback differs from staged validation")
+        receipt = {
+            "api_version": API_VERSION,
+            "action": "library.install",
+            "status": "installed",
+            "installed_at": _now(),
+            "repository": _safe_repository(repository),
+            "requested_ref": ref,
+            "run_id": run_id,
+            "source_revision": source_revision,
+            "object_count": readback["object_count"],
+            "content_sha256": readback["content_sha256"],
+            "projection_sha256": staged_projection_sha256,
+            "replaced_git_dirty_count": installed_state["dirty_count"],
+            "replaced_projection_drift": installed_state["projection_dirty"],
+            "previous_content_sha256": (
+                previous_payload.get("content_sha256") if previous_payload else None
+            ),
+            "previous_projection_sha256": installed_state.get("projection_sha256"),
+            "rollback_path": (
+                backup.relative_to(os_root).as_posix() if had_previous_target else None
+            ),
+            "rollback_receipt": (
+                previous_receipt_backup.relative_to(os_root).as_posix()
+                if had_previous_target and previous_receipt_bytes is not None
+                else None
+            ),
+            "rollback_receipt_sha256": (
+                hashlib.sha256(previous_receipt_bytes).hexdigest()
+                if had_previous_target and previous_receipt_bytes is not None
+                else None
+            ),
+            "rollback_available": bool(
+                had_previous_target and previous_receipt_bytes is not None
+            ),
+            "success_receipt": success_receipt.relative_to(os_root).as_posix(),
+        }
+        receipt_bytes = (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        _atomic_write(os_root / INSTALL_RECEIPT, receipt_bytes)
+        journal["phase"] = "receipt_written"
+        _write_install_journal(os_root, journal)
+        verification = verify_library_install(os_root)
+        if verification["status"] != "verified":
+            raise LibraryError("installed library did not pass receipt-backed verification")
+        journal["phase"] = "verified"
+        _write_install_journal(os_root, journal)
+        _atomic_write(success_receipt, receipt_bytes)
+        journal["phase"] = "committed"
+        _write_install_journal(os_root, journal)
+        _finish_install_transaction(os_root, journal)
+        return {
+            **plan,
+            **receipt,
+            "dry_run": False,
+            "verification": verification,
+        }
+    except BaseException as exc:
+        try:
+            if (os_root / INSTALL_JOURNAL).exists():
+                _recover_install_transaction(os_root)
+            else:
+                _remove_path(staging_root)
+                _remove_path(previous_receipt_backup)
+        except Exception as recovery_exc:
+            raise LibraryError(
+                "library install failed and automatic recovery could not complete; "
+                f"inspect {INSTALL_JOURNAL.as_posix()}"
+            ) from recovery_exc
+        if isinstance(exc, subprocess.SubprocessError):
+            raise LibraryError(
+                "library source command failed for " + _safe_repository(repository)
+            ) from None
+        raise
+
+
+def _rollback_candidate(root: Path) -> dict[str, Any]:
+    current_receipt = _load_json(root / INSTALL_RECEIPT)
+    if not current_receipt or current_receipt.get("status") != "installed":
+        raise LibraryError("current installed library receipt is missing or invalid")
+    if verify_library_install(root).get("status") != "verified":
+        raise LibraryError("current installed projection is not verified; rollback is blocked")
+    if current_receipt.get("rollback_available") is not True:
+        raise LibraryError("current install has no receipt-backed rollback generation")
+    backup = _journal_path(root, current_receipt, "rollback_path", INSTALL_BACKUP_DIR)
+    rollback_receipt_path = _journal_path(
+        root,
+        current_receipt,
+        "rollback_receipt",
+        INSTALL_RECEIPT_BACKUP_DIR,
+    )
+    if backup is None or backup.is_symlink() or not backup.is_dir():
+        raise LibraryError("retained rollback projection is missing or invalid")
+    if rollback_receipt_path is None or not rollback_receipt_path.is_file():
+        raise LibraryError("retained rollback receipt is missing")
+    rollback_receipt_bytes = rollback_receipt_path.read_bytes()
+    if hashlib.sha256(rollback_receipt_bytes).hexdigest() != current_receipt.get(
+        "rollback_receipt_sha256"
+    ):
+        raise LibraryError("retained rollback receipt hash does not match current receipt")
+    try:
+        rollback_receipt = json.loads(rollback_receipt_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LibraryError("retained rollback receipt is invalid JSON") from exc
+    if not isinstance(rollback_receipt, dict) or rollback_receipt.get("status") != "installed":
+        raise LibraryError("retained rollback receipt is not an installed receipt")
+    backup_sha256 = _projection_sha256(backup)
+    expected_sha256 = current_receipt.get("previous_projection_sha256")
+    if (
+        not expected_sha256
+        or backup_sha256 != expected_sha256
+        or rollback_receipt.get("projection_sha256") != expected_sha256
+    ):
+        raise LibraryError("retained rollback projection does not match its prior receipt")
+    historical_receipt = _journal_path(
+        root,
+        rollback_receipt,
+        "success_receipt",
+        INSTALL_RECEIPT_DIR,
+    )
+    if historical_receipt is None or not historical_receipt.is_file():
+        raise LibraryError("prior generation historical success receipt is missing")
+    if historical_receipt.read_bytes() != rollback_receipt_bytes:
+        raise LibraryError("retained rollback receipt differs from historical success receipt")
+    return {
+        "current_receipt": current_receipt,
+        "backup": backup,
+        "rollback_receipt_path": rollback_receipt_path,
+        "rollback_receipt": rollback_receipt,
+        "rollback_receipt_bytes": rollback_receipt_bytes,
+        "historical_receipt": historical_receipt,
+        "projection_sha256": backup_sha256,
+    }
+
+
+def rollback_library_install(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Restore the retained prior projection and its exact verified receipt."""
+
+    os_root = expand_path(root)
+    base = {
+        "api_version": API_VERSION,
+        "action": "library.rollback-install",
+        "status": "planned",
+        "dry_run": dry_run,
+        "target": LIBRARY_DIR.as_posix(),
+        "receipt": INSTALL_RECEIPT.as_posix(),
+    }
+    if dry_run and (os_root / INSTALL_JOURNAL).exists():
+        return {
+            **base,
+            "status": "blocked",
+            "blocker": "an interrupted library transaction must be recovered before rollback",
+        }
+
+    def planned(candidate: Mapping[str, Any], recovery: Mapping[str, Any] | None) -> dict[str, Any]:
+        rollback_receipt = candidate["rollback_receipt"]
+        return {
+            **base,
+            "recovery": dict(recovery) if recovery else None,
+            "rollback_path": candidate["backup"].relative_to(os_root).as_posix(),
+            "rollback_receipt": candidate["rollback_receipt_path"]
+            .relative_to(os_root)
+            .as_posix(),
+            "source_revision": rollback_receipt.get("source_revision"),
+            "object_count": rollback_receipt.get("object_count"),
+            "content_sha256": rollback_receipt.get("content_sha256"),
+            "projection_sha256": candidate["projection_sha256"],
+        }
+
+    if dry_run:
+        try:
+            return planned(_rollback_candidate(os_root), None)
+        except LibraryError as exc:
+            return {**base, "status": "blocked", "blocker": str(exc)}
+
+    with _install_lock(os_root):
+        recovery = _recover_install_transaction(os_root)
+        try:
+            candidate = _rollback_candidate(os_root)
+        except LibraryError as exc:
+            return {
+                **base,
+                "status": "blocked",
+                "dry_run": False,
+                "recovery": recovery,
+                "blocker": str(exc),
+            }
+        plan = planned(candidate, recovery)
+        run_id = f"rollback-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+        staging_root = os_root / "runtime" / "tmp" / f"library-install-{run_id}"
+        staged_lib = staging_root / LIBRARY_DIR
+        replaced_backup = os_root / INSTALL_BACKUP_DIR / run_id
+        replaced_receipt = os_root / INSTALL_RECEIPT_BACKUP_DIR / f"{run_id}.json"
+        current_receipt_bytes = (os_root / INSTALL_RECEIPT).read_bytes()
+        staging_root.parent.mkdir(parents=True, exist_ok=True)
+        staging_root.mkdir(parents=True, exist_ok=False)
+        shutil.copytree(candidate["backup"], staged_lib, symlinks=True)
+        if _projection_sha256(staged_lib) != candidate["projection_sha256"]:
+            _remove_path(staging_root)
+            raise LibraryError("staged rollback projection changed during copy")
+        _atomic_write(replaced_receipt, current_receipt_bytes)
+        journal: dict[str, Any] = {
+            "api_version": INSTALL_JOURNAL_API_VERSION,
+            "action": "library.rollback-install-transaction",
+            "run_id": run_id,
+            "phase": "validated",
+            "staging_root": staging_root.relative_to(os_root).as_posix(),
+            "backup": replaced_backup.relative_to(os_root).as_posix(),
+            "previous_receipt_backup": replaced_receipt.relative_to(os_root).as_posix(),
+            "success_receipt": candidate["historical_receipt"]
+            .relative_to(os_root)
+            .as_posix(),
+            "success_receipt_created": False,
+            "had_previous_target": True,
+            "had_previous_receipt": True,
+            "previous_projection_sha256": candidate["current_receipt"].get(
+                "projection_sha256"
+            ),
+            "new_projection_sha256": candidate["projection_sha256"],
+        }
+        try:
+            _write_install_journal(os_root, journal)
+            journal["phase"] = "replacing"
+            _write_install_journal(os_root, journal)
+            (os_root / LIBRARY_DIR).replace(replaced_backup)
+            _fsync_directory(os_root)
+            _fsync_directory(replaced_backup.parent)
+            staged_lib.replace(os_root / LIBRARY_DIR)
+            _fsync_directory(os_root)
+            _fsync_directory(staging_root)
+            journal["phase"] = "swapped"
+            _write_install_journal(os_root, journal)
+            if _projection_sha256(os_root / LIBRARY_DIR) != candidate["projection_sha256"]:
+                raise LibraryError("rollback projection readback differs from retained generation")
+            _atomic_write(os_root / INSTALL_RECEIPT, candidate["rollback_receipt_bytes"])
+            journal["phase"] = "receipt_written"
+            _write_install_journal(os_root, journal)
+            verification = verify_library_install(os_root)
+            if verification.get("status") != "verified":
+                raise LibraryError("restored library did not pass receipt-backed verification")
+            journal["phase"] = "committed"
+            _write_install_journal(os_root, journal)
+            _finish_install_transaction(os_root, journal)
+            return {
+                **plan,
+                "status": "rolled_back",
+                "dry_run": False,
+                "run_id": run_id,
+                "replaced_backup_path": replaced_backup.relative_to(os_root).as_posix(),
+                "replaced_receipt_path": replaced_receipt.relative_to(os_root).as_posix(),
+                "verification": verification,
+            }
+        except BaseException:
+            if (os_root / INSTALL_JOURNAL).exists():
+                _recover_install_transaction(os_root)
+            else:
+                _remove_path(staging_root)
+                _remove_path(replaced_receipt)
+            raise
 
 
 def _library_readme() -> str:
     return """# Agentic OS Object Library
 
-This repository is the canonical installed definition store for programs,
-hooks, workflows, automations, commands, skills, rules, templates, and toolkits.
-Durable domain knowledge is stored as scoped reference objects.
+This directory is an installed projection of the canonical
+external source repository. Do not author durable changes here;
+use the registered source project and reinstall an exact validated revision.
 
 Each object owns an object.yml manifest. Do not edit generated files under
-registry/ directly. Use agentic-os library refresh --apply after an object
-change and agentic-os library doctor before committing.
+registry/ directly. Use `agentic-os library verify-install` to confirm source
+revision, registry digest, and object-count provenance.
 
 Runtime logs, state, worktrees, receipts, caches, secrets, and generated outputs
 are not versioned here.
@@ -761,10 +1682,15 @@ def _gitignore() -> str:
 def _precommit_hook() -> str:
     return """#!/bin/sh
 set -eu
-root=$(cd "$(git rev-parse --show-toplevel)/.." && pwd)
-agentic-os library refresh --root "$root" --apply >/dev/null
-agentic-os library doctor --root "$root" >/dev/null
-git diff --exit-code -- registry
+repo=$(git rev-parse --show-toplevel)
+if [ -f "$repo/scripts/validate_library.py" ]; then
+  python3 "$repo/scripts/validate_library.py" --repo "$repo" >/dev/null
+else
+  root=$(cd "$repo/.." && pwd)
+  agentic-os library refresh --root "$root" --apply >/dev/null
+  agentic-os library doctor --root "$root" >/dev/null
+  git diff --exit-code -- registry
+fi
 """
 
 

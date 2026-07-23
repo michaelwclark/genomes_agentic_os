@@ -13,6 +13,7 @@ from ..lifecycle import (
     repair_project_work_item,
 )
 from ..lifecycle import finalize_lingering_work_items, sync_active_container
+from ..work_lifecycle import promote_project_work_item
 from ..spec_engine import SPEC_STATUSES, SPEC_TYPES
 from ..scaffold import (
     create_project,
@@ -206,6 +207,9 @@ def handle_project_worktree_cleanup_closed(args: argparse.Namespace) -> int:
                 args.root,
                 domain=args.domain,
                 project=args.project,
+                worktree=args.worktree,
+                health_preflight=args.health_preflight,
+                runtime_receipt=args.runtime_receipt,
                 apply=args.apply,
                 remove_files=args.remove_files,
             )
@@ -257,6 +261,23 @@ def handle_project_work_item_repair(args: argparse.Namespace) -> int:
             args.project,
             work_item=args.work_item,
             all_items=args.all,
+        )
+    )
+    return 0
+
+
+def handle_project_work_item_set(args: argparse.Namespace) -> int:
+    print(
+        yaml_dump(
+            promote_project_work_item(
+                args.root,
+                args.domain,
+                args.project,
+                args.work_item,
+                state=args.state,
+                note=args.note,
+                health_relocation=args.health_relocation,
+            )
         )
     )
     return 0
@@ -399,13 +420,25 @@ def register(subparsers) -> None:
     )
     project_worktree_cleanup_closed.add_argument("--domain", help="Limit cleanup to a domain.")
     project_worktree_cleanup_closed.add_argument("--project", help="Limit cleanup to a project.")
+    project_worktree_cleanup_closed.add_argument(
+        "--worktree",
+        help="Limit cleanup to one exact registered worktree id, name, or path.",
+    )
+    project_worktree_cleanup_closed.add_argument(
+        "--health-preflight",
+        help="Typed item-scoped Auto-Dev Health preflight required for physical removal.",
+    )
+    project_worktree_cleanup_closed.add_argument(
+        "--runtime-receipt",
+        help="Typed target-local runtime teardown readback required before physical removal.",
+    )
     cleanup_mode = project_worktree_cleanup_closed.add_mutually_exclusive_group()
     cleanup_mode.add_argument("--dry-run", action="store_true", default=True, help="Show cleanup candidates without writing.")
     cleanup_mode.add_argument("--apply", action="store_true", help="Move matching registry entries to worktrees/closed.yml.")
     project_worktree_cleanup_closed.add_argument(
         "--remove-files",
         action="store_true",
-        help="Also remove in-project worktree directories after closing their registry entries; merged PR dirt is ignored unless REOPEN.md is present.",
+        help="Remove one typed-merge-verified, runtime-cleaned, non-primary managed git worktree; requires the exact selector and Health gate receipts.",
     )
     project_worktree_cleanup_closed.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_worktree_cleanup_closed.set_defaults(handler=handle_project_worktree_cleanup_closed)
@@ -435,6 +468,21 @@ def register(subparsers) -> None:
     project_work_item_repair.add_argument("--all", action="store_true", help="Repair every folder-format project work item.")
     project_work_item_repair.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     project_work_item_repair.set_defaults(handler=handle_project_work_item_repair)
+    project_work_item_set = project_work_item_subparsers.add_parser(
+        "set", help="Move one filesystem packet to the lane for a lifecycle state and update its metadata."
+    )
+    project_work_item_set.add_argument("domain")
+    project_work_item_set.add_argument("project")
+    project_work_item_set.add_argument("work_item")
+    project_work_item_set.add_argument("--state", required=True, choices=WORK_LIFECYCLE_STATES)
+    project_work_item_set.add_argument("--note", default="")
+    project_work_item_set.add_argument(
+        "--health-relocation",
+        action="store_true",
+        help="Move a Health-audited packet to finished without rewriting packet-local WORKLOG.md or NEXT.md.",
+    )
+    project_work_item_set.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    project_work_item_set.set_defaults(handler=handle_project_work_item_set)
     project_work_item_sync_active = project_work_item_subparsers.add_parser(
         "sync-active",
         help="Rebuild the root global active-work symlink container from work items, worktrees, and automations.",

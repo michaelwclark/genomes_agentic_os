@@ -116,6 +116,9 @@ belong in `scaffold.py`, not a new `utils.py`.
 | `context_contracts.py` | — | **Context inheritance.** Versioned manifest parsing, parent/source provenance, duplicate suppression, and central provider-route resolution. |
 | `context_compaction.py` | — | **Context migration analysis.** Bounded duplicate scans plus deterministic dry-run and rollback plans; never deletes. |
 | `report_engine.py` | — | **First-class reports.** Versioned definition/run/artifact registries, rich sections, explicit source/projection evidence, governed lifecycle/run actions, and consolidation plans. |
+| `policy_plane.py` | — | **Composable Markdown policy discovery.** Ordered 1-N folders, safe frontmatter parsing, provenance, and stable fingerprints shared by workflow-specific resolvers. |
+| `artifact_contracts.py` | — | **Polymorphic artifact authoring.** Root/domain/project provider-type composition, monotonic safety, native rendering, validation, explicit apply/handoff, readback, and receipts. |
+| `development_delivery.py` | — | **Auto-Dev execution engine.** Project profiles, dynamic dev/QA/gitflow policy snapshots, 1-N task state, isolated worktrees, recovery, and delivery receipts. |
 | `automation_ops.py` | 282 | **Automation maturity.** Readiness checks + the `observe→prepare→propose→execute_approved→execute_guarded` ladder + project attachment. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit writes. |
 | `workflow_engine.py` | — | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, drift-safe create/update/publish, exact readback, rollback, and queue-only run requests. |
@@ -227,6 +230,12 @@ Adding a **new command**:
 Adding a **new domain/lane/workflow/automation**: use the CLI (`domain create`,
 `project create`, the `templates/workflow/*` and `templates/automation/*` files),
 never hand-roll a divergent folder shape — `doctor` and `validate` will flag drift.
+
+Adding **polymorphic workflow behavior**: prefer a versioned Markdown policy
+file in the workflow's conventional root/domain/project plane. Reuse
+`policy_plane.py` for ordered discovery/provenance and keep semantic merge rules
+inside the owning workflow module. Do not copy domain/provider rules into a
+shared skill prompt or add a code conditional for every new artifact type.
 
 **Anti-patterns to reject:** a new `utils.py` dumping ground; an in-process event
 bus; a module-level singleton or import-time side effect; reading config deep in

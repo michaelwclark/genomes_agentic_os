@@ -197,10 +197,111 @@ skills:
   source: harness/skills/aos-product-orchestrator/SKILL.md
 - id: auto-dev
   name: Auto Dev
-  description: Run a Jira or Linear tracker item through project-aware SDLC orchestration,
-    state-machine receipts, finishing review, PR/CI/Copilot loops, and safe merge
-    or merge-blocked closeout.
+  description: Route programming work through the canonical polymorphic investigation,
+    artifact, delivery, review, release, deployment, and closeout family.
   source: harness/skills/auto-dev/SKILL.md
+- id: auto-dev-everything
+  name: Auto-Dev Everything
+  description: Take tracker work through every applicable Auto-Dev workflow using
+    one resumable state projection.
+  source: harness/skills/auto-dev-everything/SKILL.md
+- id: auto-dev-grooming
+  name: Auto-Dev Grooming
+  description: Groom rough work into a source-backed implementation-ready specification
+    and provider backlog.
+  source: harness/skills/auto-dev-grooming/SKILL.md
+- id: auto-dev-create-artifacts
+  name: Auto-Dev Create Artifacts
+  description: Resolve root, domain, project, and invocation artifact contracts;
+    render provider-native Jira, Linear, Notion, Confluence, GitHub, Slack, or
+    filesystem drafts; validate safety; and complete explicit apply with readback receipts.
+  source: harness/skills/auto-dev-create-artifacts/SKILL.md
+- id: auto-dev-detective
+  name: Auto-Dev Detective
+  description: Investigate bugs, failed QA, ticket comments, logs, alerts, incidents,
+    and RCA questions with deployed-version awareness, polymorphic evidence sources,
+    pause/resume, and durable receipts.
+  source: harness/skills/auto-dev-detective/SKILL.md
+- id: auto-dev-readiness
+  name: Auto-Dev Readiness
+  description: Prepare tracker truth, repository/base, policy, worktree, and plan.
+  source: harness/skills/auto-dev-readiness/SKILL.md
+- id: auto-dev-implementation
+  name: Auto-Dev Implementation
+  description: Implement and locally validate a planned task under effective policy.
+  source: harness/skills/auto-dev-implementation/SKILL.md
+- id: auto-dev-develop
+  name: Auto-Dev Develop
+  description: Provide the friendly single-step entrypoint for canonical implementation
+    and local validation.
+  source: harness/skills/auto-dev-develop/SKILL.md
+- id: auto-dev-document
+  name: Auto-Dev Document
+  description: Create source-backed code, issue, architecture, operational, QA,
+    release, and handoff documentation.
+  source: harness/skills/auto-dev-document/SKILL.md
+- id: auto-dev-review-repair
+  name: Auto-Dev Review and Repair
+  description: Review, create the governed PR, repair checks/findings, and prove readiness.
+  source: harness/skills/auto-dev-review-repair/SKILL.md
+- id: auto-dev-review-self
+  name: Auto-Dev Review Self
+  description: Review and repair our own change through the canonical independent
+    merge-readiness path.
+  source: harness/skills/auto-dev-review-self/SKILL.md
+- id: auto-dev-review-others
+  name: Auto-Dev Review Others
+  description: Review another author's live pull request through the canonical PR Review owner.
+  source: harness/skills/auto-dev-review-others/SKILL.md
+- id: auto-dev-pr-create
+  name: Auto-Dev PR Create
+  description: Resolve and create or reuse the complete project-specific pull-request family before review.
+  source: harness/skills/auto-dev-pr-create/SKILL.md
+- id: gitflow-pr-create
+  name: GitFlow PR Create
+  description: Compatibility alias for Auto-Dev PR Create family mode.
+  source: harness/skills/gitflow-pr-create/SKILL.md
+- id: auto-dev-qa
+  name: Auto-Dev QA
+  description: Run project-configured risk-based QA as a standalone receipt-backed workflow.
+  source: harness/skills/auto-dev-qa/SKILL.md
+- id: auto-dev-finalize
+  name: Auto-Dev Finalize
+  description: Converge our tracker pull-request family and record immutable merge
+    readiness without merging.
+  source: harness/skills/auto-dev-finalize/SKILL.md
+- id: auto-dev-merge
+  name: Auto-Dev Merge
+  description: Execute the final authorized live merge from a pull-request-owner readiness receipt.
+  source: harness/skills/auto-dev-merge/SKILL.md
+- id: auto-dev-release-propagation
+  name: Auto-Dev Release Propagation
+  description: Operate configured release and hotfix branch families with exact receipts.
+  source: harness/skills/auto-dev-release-propagation/SKILL.md
+- id: auto-dev-release
+  name: Auto-Dev Release
+  description: Create and verify project versions, tags, packages, changelogs,
+    and provider releases.
+  source: harness/skills/auto-dev-release/SKILL.md
+- id: auto-dev-deploy
+  name: Auto-Dev Deploy
+  description: Deploy or monitor an exact artifact and verify deployed behavior.
+  source: harness/skills/auto-dev-deploy/SKILL.md
+- id: auto-dev-closeout
+  name: Auto-Dev Closeout
+  description: Reconcile tracker, pull-request, release, and deployment truth and
+    prove delivery complete before Health lifecycle cleanup.
+  source: harness/skills/auto-dev-closeout/SKILL.md
+- id: auto-dev-health
+  name: Auto-Dev Health
+  description: Audit final receipts, remove reconstructable local resources, and
+    finish the preserved work packet.
+  source: harness/skills/auto-dev-health/SKILL.md
+- id: object-library
+  name: Object Library
+  description: Route reusable object-library changes through source, exact-artifact
+    validation, release, install readback, and post-release documentation.
+  source: harness/skills/object-library/SKILL.md
 - id: auto-dev-dep-updater
   name: Auto-Dev Dep Updater
   description: 'Operate one repository''s dependency-update lane: one Renovate

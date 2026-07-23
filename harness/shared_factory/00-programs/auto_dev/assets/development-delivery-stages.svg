@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="560" viewBox="0 0 1440 560" role="img" aria-labelledby="title desc">
+  <title id="title">Auto-Dev Development Delivery stages</title>
+  <desc id="desc">Five receipt-gated stages from readiness through delivery closeout, with pause and repair loops.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#020617" flood-opacity=".35"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#93c5fd"/>
+    </marker>
+    <style>
+      .title{font:700 34px system-ui,-apple-system,sans-serif;fill:#f8fafc}
+      .sub{font:400 17px system-ui,-apple-system,sans-serif;fill:#bfdbfe}
+      .stage{filter:url(#shadow);stroke-width:2}
+      .n{font:700 15px system-ui,-apple-system,sans-serif;fill:#dbeafe;letter-spacing:.08em}
+      .h{font:700 22px system-ui,-apple-system,sans-serif;fill:#fff}
+      .p{font:400 15px system-ui,-apple-system,sans-serif;fill:#e2e8f0}
+      .gate{font:600 14px system-ui,-apple-system,sans-serif;fill:#bae6fd}
+      .line{fill:none;stroke:#93c5fd;stroke-width:3;marker-end:url(#arrow)}
+      .loop{fill:none;stroke:#fbbf24;stroke-width:2.5;stroke-dasharray:8 7;marker-end:url(#arrow)}
+      .note{font:600 15px system-ui,-apple-system,sans-serif;fill:#fde68a}
+    </style>
+  </defs>
+  <rect width="1440" height="560" rx="28" fill="url(#bg)"/>
+  <text x="70" y="68" class="title">Development Delivery</text>
+  <text x="70" y="98" class="sub">The skill performs the work; the engine records only typed, evidence-backed transitions.</text>
+
+  <path class="line" d="M300 275 H330"/>
+  <path class="line" d="M560 275 H590"/>
+  <path class="line" d="M820 275 H850"/>
+  <path class="line" d="M1080 275 H1110"/>
+
+  <g class="stage">
+    <rect x="70" y="155" width="230" height="240" rx="22" fill="#1d4ed8" stroke="#60a5fa"/>
+    <text x="94" y="190" class="n">01 · READINESS</text>
+    <text x="94" y="227" class="h">Context + isolation</text>
+    <text x="94" y="263" class="p">Live tracker truth</text>
+    <text x="94" y="289" class="p">Repository + base branch</text>
+    <text x="94" y="315" class="p">Policy snapshot</text>
+    <text x="94" y="341" class="p">Work item + worktree</text>
+    <text x="94" y="375" class="gate">Gate: planned</text>
+  </g>
+  <g class="stage">
+    <rect x="330" y="155" width="230" height="240" rx="22" fill="#0f766e" stroke="#5eead4"/>
+    <text x="354" y="190" class="n">02 · IMPLEMENT</text>
+    <text x="354" y="227" class="h">Small safe change</text>
+    <text x="354" y="263" class="p">Trace behavior</text>
+    <text x="354" y="289" class="p">Code + tests together</text>
+    <text x="354" y="315" class="p">Local validation</text>
+    <text x="354" y="341" class="p">Failure classification</text>
+    <text x="354" y="375" class="gate">Gate: local validation</text>
+  </g>
+  <g class="stage">
+    <rect x="590" y="155" width="230" height="240" rx="22" fill="#7c3aed" stroke="#c4b5fd"/>
+    <text x="614" y="190" class="n">03 · PR CREATE</text>
+    <text x="614" y="227" class="h">Target family</text>
+    <text x="614" y="263" class="p">Finishing review</text>
+    <text x="614" y="289" class="p">PR target readback</text>
+    <text x="614" y="315" class="p">CI + reviewer repair</text>
+    <text x="614" y="341" class="p">Opposing-harness check</text>
+    <text x="614" y="375" class="gate">Gate: ready for merge</text>
+  </g>
+  <g class="stage">
+    <rect x="850" y="155" width="230" height="240" rx="22" fill="#b45309" stroke="#fbbf24"/>
+    <text x="874" y="190" class="n">04 · REVIEW</text>
+    <text x="874" y="227" class="h">Review + repair loop</text>
+    <text x="874" y="263" class="p">Resolve target branches</text>
+    <text x="874" y="289" class="p">Create sibling work</text>
+    <text x="874" y="315" class="p">Verify PR family</text>
+    <text x="874" y="341" class="p">Record applicability</text>
+    <text x="874" y="375" class="gate">Gate: propagation receipt</text>
+  </g>
+  <g class="stage">
+    <rect x="1110" y="155" width="260" height="240" rx="22" fill="#be123c" stroke="#fda4af"/>
+    <text x="1134" y="190" class="n">05 · CLOSEOUT</text>
+    <text x="1134" y="227" class="h">Merge → deploy → closeout</text>
+    <text x="1134" y="263" class="p">Authoritative merge readback</text>
+    <text x="1134" y="289" class="p">Deployment when required</text>
+    <text x="1134" y="315" class="p">Post-deploy validation</text>
+    <text x="1134" y="341" class="p">Cleanup decision + learning</text>
+    <text x="1134" y="375" class="gate">Gate: delivery complete</text>
+  </g>
+
+  <path class="loop" d="M795 418 C795 505 610 505 610 410"/>
+  <text x="642" y="495" class="note">failed checks or review findings return to repair with new evidence</text>
+  <path class="loop" d="M235 420 C235 500 95 500 95 405"/>
+  <text x="82" y="525" class="note">unavailable provider pauses; resume the same run</text>
+</svg>

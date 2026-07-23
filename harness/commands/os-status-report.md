@@ -82,7 +82,7 @@ Default window is the prior day at 5:00 AM local time through now.
 Default full report:
 
 ```text
-/Users/genome/agentic_os/clarks_consulting/02-projects/genomes_agentic_os/worklogs/status-reports/<YYYY-MM-DD-HHMM>-status-report.md
+/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/worklogs/status-reports/<YYYY-MM-DD-HHMM>-status-report.md
 ```
 
 Default artifacts:
@@ -90,6 +90,13 @@ Default artifacts:
 ```text
 <os-root>/<domain>/02-projects/genomes_agentic_os/work-items/<date>-011_status_report_workflow/artifacts/status-reports/<run-id>/
 ```
+
+Resolve the existing `011_status_report_workflow` packet before writing. The
+installed legacy packet may still live at
+`/Users/genome/agentic_os/domains/clarks_consulting/02-projects/genomes_agentic_os/work-items/02-active/011_status_report_workflow/`;
+it remains a read/resume surface. New packets live directly under `work-items/`,
+and a returned packet may have moved to `work-items/99-archived/`. Do not create
+a duplicate in a legacy numbered lane.
 
 ## Safety
 

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Auto-Dev Readiness"
+  short_description: "Prepare ticket, policy, repo, worktree, and plan"
+  default_prompt: "Use $auto-dev-readiness to prepare this programming task in the canonical Development Delivery run."
+policy:
+  allow_implicit_invocation: true

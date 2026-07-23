@@ -134,3 +134,12 @@ and sprint identifiers rather than hard-coding them.
   adapter.
 - Completion requires Spec id, canonical status/type, scope, selected authority,
   adapter receipt, external URL when present, and next action.
+
+## Artifact Producer Contract
+
+Spec Engine owns intent, lifecycle, deduplication, hierarchy, and adapter
+selection. Before any Jira, Linear, Notion, comment, or human-facing filesystem
+projection, delegate rendering/validation/apply/readback to
+`$auto-dev-create-artifacts` using the mapped `planning-spec`, `bug`, `issue`,
+`story`, `epic`, `initiative`, or `comment` type. Do not hand-build provider
+descriptions in this skill or its adapters.

@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-dep-updater
+title: Auto-Dev Dep Updater
+description: Take one dependency-update pull request through project-configured validation, repair when needed, and governed merge.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, dependencies, automation, merge, sdlc]
+dependencies: [skill:root:auto-dev-review-repair, skill:root:auto-dev-merge]
+aliases: [harness/skills/auto-dev-dep-updater/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-dep-updater}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

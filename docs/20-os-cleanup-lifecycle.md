@@ -13,31 +13,39 @@ GitHub pull request is merged.
 | Surface | Path |
 | --- | --- |
 | Workflow | `/Users/genome/agentic_os/harness/shared_factory/03-workflows/engineering/os_cleanup/` |
-| Automation | `/Users/genome/agentic_os/harness/shared_factory/04-automations/engineering/closed_worktree_cleanup/` |
 | Command doc | `harness/commands/os-clean-worktrees.md` |
 | Skill | `harness/skills/os-cleaner/SKILL.md` |
 | Codex adapter | `.agents/skills/os-cleaner/SKILL.md` |
-| Runtime schedules | `closed_worktree_cleanup_0500` and `closed_worktree_cleanup_2200` in `harness/shared_factory/00-control-plane/runtime-registry.yml` |
 
-The installed runtime schedules run daily at 05:00 and 22:00
-`America/Chicago`. They remain registry-only cleanup schedules and must not pass
-`--remove-files`.
+Auto-Dev Health is manual and item-scoped. It does not install or enable a
+schedule, run a host-wide/all-resource cleanup, or inherit physical-delete authority from
+any general registry-maintenance schedule. A future monitor must invoke the
+same item state and receipt gates explicitly.
 
 ## Primary Command
 
 ```sh
 agentic-os project worktree cleanup-closed --root <os-root> --dry-run
 agentic-os project worktree cleanup-closed --root <os-root> --apply
-agentic-os project worktree cleanup-closed --root <os-root> --apply --remove-files
+agentic-os project worktree cleanup-closed --root <os-root> \
+  --domain <domain> --project <project> --worktree <exact-id-or-path> \
+  --health-preflight <packet>/artifacts/auto-dev-health/preflight.json \
+  --runtime-receipt <packet>/artifacts/auto-dev-health/receipts/runtime-cleanup.json \
+  --apply --remove-files
 agentic-os project work-item infer-complete --root <os-root> --dry-run
 agentic-os project work-item infer-complete --root <os-root> --apply
 ```
 
 Use `--dry-run` first. Use `--apply` to move eligible registry entries out of
 active state. Use `--remove-files` only after explicit approval or a written
-guarded automation rule because it can delete local checkout directories. For
-confirmed merged PR cleanup, local dirt is allowed unless root `REOPEN.md` is
-present.
+guarded automation rule because it can delete local checkout directories.
+Physical removal is always one-item scoped and requires domain, project,
+worktree, packet-local Health preflight, and a runtime receipt bound to that
+preflight SHA-256. The checkout must have a clean `git status --porcelain` at
+the moment of removal. A dirty checkout always blocks Health physical cleanup;
+merge proof and copied receipts do not waive that gate. Preserve or reconcile
+the changes through a separate operator workflow, verify the checkout is clean,
+then rerun Health from a fresh preflight.
 
 Use `infer-complete` before `finalize-lingering` when active work items appear
 finished but still marked active in lifecycle state. The command treats stale-only work as
@@ -101,23 +109,58 @@ agentic-os validate --root /Users/genome/agentic_os
 Physical removal is intentionally separate:
 
 ```sh
-agentic-os project worktree cleanup-closed --root /Users/genome/agentic_os --apply --remove-files
+agentic-os project worktree cleanup-closed --root <os-root> \
+  --domain <domain> --project <project> --worktree <exact-id-or-path> \
+  --health-preflight <packet>/artifacts/auto-dev-health/preflight.json \
+  --runtime-receipt <packet>/artifacts/auto-dev-health/receipts/runtime-cleanup.json \
+  --apply --remove-files
 ```
 
 File removal only succeeds when all of these are true:
 
 - The user or automation approval record explicitly allows file removal.
+- `auto-dev-health-preflight/v1` is packet-local, current, and matches the
+  exact domain, project, work item, worktree, merged revision, and receipt hashes.
+- `auto-dev-runtime-cleanup/v1` is packet-local, matches the runtime identity,
+  records verified readback, and binds `preflight_sha256`. Managed runtime
+  identity contains domain/project/worktree and both commands are identity-
+  bound. The receipt is newer than the preflight and at most 15 minutes old;
+  the gate immediately executes the readback again, where exit 0 means the
+  exact registered worktree runtime is absent.
 - The target path exists under the owning project's `worktrees/` directory.
 - The target is a Git checkout.
-- The cleanup reason is a confirmed merged PR, or `git status --porcelain` is
-  clean.
+- Registered worktree id, path, branch, and current HEAD all match the task;
+  HEAD equals the reviewed `subject_revision`.
+- The provider-backed Health preflight proves a merged pull request and exact
+  merge revision; a clean status is not merge authority.
+- `git status --porcelain` is clean.
 - Root `REOPEN.md` is absent.
 
-The command removes dirty merged-PR checkouts when `REOPEN.md` is absent.
-Known disposable merged-PR dirt includes `.cursor/`, `.claude/`, `.features/`,
-watch folders, `peak-styles.css`, and submodule state. The command skips dirty
-unknown/unmerged checkouts and external paths. External checkouts can be closed
-in the registry, but they are not deleted.
+The command does not infer that dirt is disposable from merge state or filename.
+It always skips dirty checkouts. The operator must preserve or reconcile those
+changes separately, make the checkout clean, and rerun Health with a newly
+generated preflight. It also skips unmerged and external paths. External
+checkouts can be closed in the registry, but they are not deleted.
+
+Persist final worktree and runtime dispositions together in one packet-local
+`auto-dev-resource-cleanup/v1` receipt. A later Health record points both
+resource entries to that same atomic readback. Also preserve one packet-local
+`auto-dev-closed-worktree-readback/v1` receipt: either the exact closed registry
+row or `result: not_managed`. Final Health audits it as `resource_cleanup` and,
+for a managed worktree, compares it with the live project
+`worktrees/closed.yml` entry before completion.
+
+Health also preserves a full pre-cleanup packet manifest. It hashes every
+required, declared, and other durable packet file outside Health output. After
+the finished-lane move every hash must match except semantic `work.yml` and
+`autodev.json` state/path updates, which are parsed again. Final Health audits
+ten exact kinds: `terminal_authority`, `closeout`, `receipt_audit`,
+`resume_manifest`, `packet_manifest`, `resource_cleanup`, `runtime_cleanup`,
+`work_state`, `active_index`, and `validation`.
+
+Physical removal has no `--force`, Git metadata sweep, host-wide container-
+resource operation, all-resource selector, guessed identity, or shared-runtime
+path.
 
 ## Operator Runbook
 
@@ -155,6 +198,7 @@ The initial installed dry-run completed with `candidate_count=0`. That means no
 registered worktree entry currently had cached terminal Jira or merged PR
 metadata. It does not prove that every stale worktree is already clean.
 
-The runtime entries are enabled for 05:00 and 22:00 `America/Chicago`, but they
-only use registry cleanup. Capture reviewed dry-run evidence after the metadata
-refresh step is wired for the projects that own the worktree registries.
+Auto-Dev Health remains manual, exact-item scoped, and receipt gated. It has no
+scheduled or host-wide/all-resource mode. Runtime teardown is limited to the
+exact registered item-local identity. A completed packet is immutable; follow-
+up QA uses a receipt-backed canonical reopen and a new delivery run.

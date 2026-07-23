@@ -13,7 +13,7 @@ import shutil
 
 import yaml
 
-from .scaffold import domain_path, expand_path, titleize_name, validate_name
+from .scaffold import domain_path, expand_path, repo_root, titleize_name, validate_name
 
 
 CONFIG_RELATIVE_PATH = Path("harness/shared_factory/00-control-plane/doc-config.yml")
@@ -27,10 +27,6 @@ class DocConfigBucket:
     create_policy: str
     aliases: list[str]
     purpose: str
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -51,7 +47,7 @@ def project_doc_config_path(root: str | Path, domain: str, project: str) -> Path
 
 
 def doc_config_template_path() -> Path:
-    return _repo_root() / TEMPLATE_RELATIVE_PATH
+    return repo_root() / TEMPLATE_RELATIVE_PATH
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

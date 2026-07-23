@@ -1,0 +1,17 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-pr-create
+title: Auto-Dev PR Create
+description: Resolve and create the complete project-specific pull-request family before review.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [auto-dev, pull-request, gitflow, delivery]
+dependencies:
+  - skill:root:auto-dev-create-artifacts
+aliases: [harness/skills/auto-dev-pr-create/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-pr-create}
+validation:
+  commands:
+    - python3 -m pytest tests/test_development_delivery.py tests/test_auto_dev_state_reconciliation.py -q

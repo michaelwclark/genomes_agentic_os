@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/auto-dev-runtime-cleanup.schema.json",
+  "title": "Auto-Dev target-local runtime cleanup receipt",
+  "type": "object",
+  "required": [
+    "schema",
+    "work_item_id",
+    "canonical_work_id",
+    "runtime_identity",
+    "ownership",
+    "provider",
+    "teardown",
+    "readback",
+    "result",
+    "readback_verified",
+    "preflight_sha256",
+    "verified_at"
+  ],
+  "properties": {
+    "schema": {"const": "auto-dev-runtime-cleanup/v1"},
+    "work_item_id": {"type": "string", "minLength": 1},
+    "canonical_work_id": {"type": "string", "minLength": 1},
+    "runtime_identity": {"type": "string", "minLength": 1},
+    "ownership": {"enum": ["managed", "not_managed"]},
+    "provider": {"type": "string", "minLength": 1},
+    "teardown": {"$ref": "#/$defs/operation"},
+    "readback": {"$ref": "#/$defs/operation"},
+    "result": {"enum": ["removed", "absent", "not_managed"]},
+    "readback_verified": {"const": true},
+    "preflight_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "verified_at": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "required": ["command", "ref", "sha256"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "ref": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"ownership": {"const": "managed"}},
+        "required": ["ownership"]
+      },
+      "then": {
+        "properties": {
+          "runtime_identity": {"not": {"const": "not-managed"}},
+          "provider": {"not": {"const": "none"}},
+          "result": {"enum": ["removed", "absent"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"ownership": {"const": "not_managed"}},
+        "required": ["ownership"]
+      },
+      "then": {
+        "properties": {
+          "runtime_identity": {"const": "not-managed"},
+          "provider": {"const": "none"},
+          "result": {"const": "not_managed"}
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from .artifact_contracts import artifact_contract_doctor
+from .investigation_contracts import investigation_contract_doctor
 from .runtime_backend import runtime_queue_items
 from .artifact_naming import CONFIG_RELATIVE_PATH, load_artifact_naming_policy
 from .capability_registry import CAPABILITY_COLLECTIONS, REGISTRY_FILES, VISIBLE_CAPABILITY_DIRECTORIES, load_registry
@@ -79,6 +81,7 @@ LEGACY_ROOT_FOLDERS = (
     "templates",
     "lenders",
     "shared_factory",
+    "artifact-config",
     "bin",
     "commands",
     "skills",
@@ -86,6 +89,7 @@ LEGACY_ROOT_FOLDERS = (
     "plugins",
     "libraries",
     "hooks",
+    "investigation-config",
     "reports",
     "rules",
     "registries",
@@ -391,6 +395,99 @@ def validate_project_code_settings(project_root: Path, result: ValidationResult)
             branch_template.format(ticket="ticket", slug="slug")
         except (KeyError, ValueError) as exc:
             result.errors.append(f"invalid project code setting worktrees.branch_template in {path}: {exc}")
+    runtime = data.get("runtime")
+    if not isinstance(runtime, dict):
+        result.errors.append(f"project code setting runtime must be a mapping: {path}")
+        return
+    ownership = str(runtime.get("ownership") or "").strip()
+    provider = str(runtime.get("provider") or "").strip()
+    if ownership == "not_managed":
+        if provider != "none":
+            result.errors.append(
+                f"project code setting runtime.provider must be none when ownership is not_managed: {path}"
+            )
+        if runtime.get("identity") != "not-managed":
+            result.errors.append(
+                f"project code setting runtime.identity must be not-managed when ownership is not_managed: {path}"
+            )
+    elif ownership == "managed":
+        identity_template = str(runtime.get("identity_template") or "").strip()
+        if not provider or provider == "none":
+            result.errors.append(
+                f"project code setting managed runtime.provider must name the provider: {path}"
+            )
+        if not identity_template:
+            result.errors.append(
+                f"project code setting managed runtime.identity_template is required: {path}"
+            )
+        else:
+            required_fields = ("{domain}", "{project}", "{worktree}")
+            if not all(field in identity_template for field in required_fields):
+                result.errors.append(
+                    "project code setting managed runtime.identity_template must include "
+                    f"{{domain}}, {{project}}, and {{worktree}} for globally item-unique ownership: {path}"
+                )
+            try:
+                resolved_identity = identity_template.format(
+                    domain="domain",
+                    project="project",
+                    worktree="worktree",
+                    worktree_path="/worktree/path",
+                    ticket="ticket",
+                )
+                if not resolved_identity.strip() or resolved_identity == "not-managed":
+                    result.errors.append(
+                        f"project code setting managed runtime.identity_template must resolve to a managed identity: {path}"
+                    )
+            except (KeyError, ValueError) as exc:
+                result.errors.append(
+                    f"invalid project code setting managed runtime.identity_template in {path}: {exc}"
+                )
+        for field in ("teardown_command", "readback_command"):
+            command = str(runtime.get(field) or "").strip()
+            if not command:
+                result.errors.append(
+                    f"project code setting managed runtime.{field} is required: {path}"
+                )
+            elif "{runtime_identity}" not in command:
+                result.errors.append(
+                    f"project code setting managed runtime.{field} must include "
+                    f"{{runtime_identity}} for exact-target execution: {path}"
+                )
+            elif any(
+                forbidden in command.lower()
+                for forbidden in (
+                    "system prune",
+                    "container prune",
+                    "volume prune",
+                    "worktree prune",
+                    "--all",
+                    "delete all",
+                )
+            ):
+                result.errors.append(
+                    f"project code setting managed runtime.{field} contains a forbidden global cleanup operation: {path}"
+                )
+    else:
+        result.errors.append(
+            f"project code setting runtime.ownership must be managed or not_managed: {path}"
+        )
+    review = data.get("review") if isinstance(data.get("review"), dict) else {}
+    authorship = review.get("authorship") if isinstance(review.get("authorship"), dict) else {}
+    ours = authorship.get("ours")
+    if not (
+        isinstance(ours, list)
+        and all(isinstance(identity, str) and identity.strip() and ":" in identity for identity in ours)
+    ):
+        result.errors.append(
+            "project code setting review.authorship.ours must contain only "
+            f"provider-qualified identities: {path}"
+        )
+    elif not ours:
+        result.warnings.append(
+            "project review.authorship.ours is empty; PR-authority Auto-Dev stages "
+            f"will fail closed until domain/project setup records a real identity: {path}"
+        )
 
 
 def validate_project_layer(project_root: Path, result: ValidationResult) -> None:
@@ -854,6 +951,30 @@ def _registry_ids(root: Path, registry_name: str, collection: str) -> set[str]:
     return {str(entry.get("id") or "") for entry in load_registry(path, collection)}
 
 
+def _library_registry_aliases(root: Path, *, kind: str) -> set[str]:
+    """Return visible adapter paths owned by manifest-backed library objects."""
+
+    path = root / "lib/registry/objects.json"
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    objects = payload.get("objects") if isinstance(payload, dict) else None
+    if not isinstance(objects, list):
+        return set()
+    aliases: set[str] = set()
+    for item in objects:
+        if not isinstance(item, dict) or item.get("kind") != kind:
+            continue
+        raw_aliases = item.get("aliases")
+        if not isinstance(raw_aliases, list):
+            continue
+        aliases.update(alias for alias in raw_aliases if isinstance(alias, str) and alias)
+    return aliases
+
+
 def validate_command_skill_registry_coverage(root: Path, result: ValidationResult) -> None:
     command_sources = _registry_sources(root, "commands", "commands")
     command_ids = _registry_ids(root, "commands", "commands")
@@ -865,9 +986,10 @@ def validate_command_skill_registry_coverage(root: Path, result: ValidationResul
             result.errors.append(f"command doc missing registry entry: {relative}")
 
     skill_sources = _registry_sources(root, "skills", "skills")
+    library_skill_aliases = _library_registry_aliases(root, kind="skill")
     for skill_doc in sorted(harness_path(root, "skills").glob("*/SKILL.md")):
         relative = skill_doc.relative_to(root).as_posix()
-        if relative not in skill_sources:
+        if relative not in skill_sources and relative not in library_skill_aliases:
             result.errors.append(f"skill doc missing registry entry: {relative}")
 
 
@@ -1198,6 +1320,31 @@ def validate_update_backup_contract(root: Path, result: ValidationResult) -> Non
 _SCHEMA_DIR = Path(__file__).parent.parent.parent / "schemas"
 
 SCHEMA_TARGETS: dict[str, list[str]] = {
+    "auto-dev-work-item.schema.json": [
+        "domains/*/02-projects/*/work-items/*/autodev.json",
+        "domains/*/02-projects/*/work-items/*/*/autodev.json",
+    ],
+    "auto-dev-health-evidence.schema.json": [
+        "domains/*/02-projects/*/work-items/*/*/artifacts/auto-dev-health/evidence.json",
+    ],
+    "auto-dev-health-preflight.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/preflight.json",
+    ],
+    "auto-dev-packet-manifest.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/receipts/packet-manifest.json",
+    ],
+    "auto-dev-resource-cleanup.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/receipts/resource-cleanup.json",
+    ],
+    "auto-dev-runtime-cleanup.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+    ],
+    "auto-dev-reopen.schema.json": [
+        "**/work-items/02-active/*/artifacts/auto-dev-reopen/reopen.json",
+    ],
+    "auto-dev-stage-policy-decision.schema.json": [
+        "**/work-items/*/*/artifacts/auto-dev-orchestration/proofs/*/policy-decision-*.json",
+    ],
     "analytics-metrics.schema.json": ["harness/registries/analytics-metrics.yml"],
     "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
     "command-registry.schema.json": [REGISTRY_FILES["commands"]],
@@ -1639,6 +1786,38 @@ def validate_root(root: str | Path) -> ValidationResult:
     validate_work_state(os_root, result)
     validate_required_runtime_integrations(os_root, result)
     validate_update_backup_contract(os_root, result)
+    artifact_config = os_root / "harness" / "artifact-config"
+    if artifact_config.is_dir():
+        artifact_health = artifact_contract_doctor(os_root)
+        for finding in artifact_health["diagnostics"]:
+            message = (
+                f"artifact contract {finding.get('code')}: "
+                f"{finding.get('source_ref') or finding.get('provider') or 'unknown'}: {finding.get('message')}"
+            )
+            if finding.get("severity") == "error":
+                result.errors.append(message)
+            elif finding.get("severity") == "warning":
+                result.warnings.append(message)
+    else:
+        result.warnings.append(
+            "artifact contract library is not installed; run `agentic-os update apply` or install current docs/assets"
+        )
+    investigation_config = os_root / "harness" / "investigation-config"
+    if investigation_config.is_dir():
+        investigation_health = investigation_contract_doctor(os_root)
+        for finding in investigation_health["findings"]:
+            message = (
+                f"investigation contract {finding.get('code')}: "
+                f"{finding.get('source_ref') or 'unknown'}: {finding.get('message')}"
+            )
+            if finding.get("severity") == "error":
+                result.errors.append(message)
+            elif finding.get("severity") == "warning":
+                result.warnings.append(message)
+    else:
+        result.warnings.append(
+            "investigation contract library is not installed; run `agentic-os update apply` or install current docs/assets"
+        )
     context_check = check_context_contracts(os_root)
     result.errors.extend(context_check.errors)
     if context_check.legacy_fallbacks or context_check.duplicate_groups:

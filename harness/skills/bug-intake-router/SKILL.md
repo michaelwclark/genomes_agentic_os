@@ -9,3 +9,7 @@ Load `harness/skills/spec-engine/SKILL.md` and execute its add flow with
 `--type bug`. Preserve severity, current behavior, expected behavior,
 reproduction/evidence, and the next validation step in the canonical Spec. Do
 not create a separate bug packet or intake lifecycle.
+
+Any Jira, Linear, Notion, or durable human-facing bug projection must use
+`$auto-dev-create-artifacts` with artifact type `bug`; this adapter owns only
+capture and routing.

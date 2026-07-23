@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-merge
+title: Auto-Dev Merge
+description: Route a live merge decision to the correct review owner and preserve approval/readback gates.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, merge, routing, sdlc]
+dependencies: [skill:root:auto-dev-finalize, skill:root:auto-dev-review-others]
+aliases: [harness/skills/auto-dev-merge/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-merge}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

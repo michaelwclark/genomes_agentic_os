@@ -1,0 +1,12 @@
+id: auto_dev_detective
+version: 1
+owner: auto_dev
+command: /auto-dev-detective
+inputs: [signal, trigger, domain, project, environment, tenant, time_window, output_type]
+outputs: [request_receipt, policy_resolution, source_manifest, deployed_version, evidence_ledger, analysis, result, rendered_artifact]
+states: [requested, version_pending, evidence_planned, gathering, analyzing, conclusion_ready, paused, complete, blocked, cancelled]
+steps: [normalize_signal, resolve_policy, create_run, resolve_version, gather_declared_evidence, disposition_sources, analyze_hypotheses, conclude, render_artifact]
+validations: [typed_version_authority, declared_source_only, source_authority, prerequisites, freshness, complete_source_coverage, evidence_id_citations, disconfirming_evidence, read_only, confidence_calibration]
+failure_modes: [version_unknown, vpn_unavailable, environment_unavailable, provider_unavailable, stale_source, conflicting_evidence, insufficient_evidence]
+events: [investigation.started, investigation.version_resolved, investigation.evidence_recorded, investigation.paused, investigation.resumed, investigation.analysis_updated, investigation.concluded, investigation.artifact_rendered]
+receipts: [request.json, policy-resolution.json, source-manifest.json, deployed-version.json, version-authority.json, evidence.jsonl, source-dispositions, availability-probe.json, hypotheses.json, events.jsonl, run.json, result.json, result.md]

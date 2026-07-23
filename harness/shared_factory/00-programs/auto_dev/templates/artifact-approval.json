@@ -1,0 +1,10 @@
+{
+  "schema": "artifact-approval/v1",
+  "status": "approved",
+  "provider": "jira",
+  "artifact_type": "bug",
+  "contract_fingerprint": "replace-with-rendered-contract-fingerprint",
+  "target": "project:EXAMPLE",
+  "approved_by": "explicit-user-or-governance-authority",
+  "approved_at": "2026-07-19T12:00:00Z"
+}

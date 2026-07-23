@@ -1,0 +1,31 @@
+schema_version: 1
+kind: workflow
+inherits:
+  - domain
+read:
+  first:
+    - workflow.md
+    - quick-reference.md
+    - context-pack.md
+    - approval-rules.md
+    - runbook.md
+  deferred:
+    - outcome-brief.md
+    - alignment-questions.md
+    - prd.md
+    - implementation-plan.md
+    - dispatch-handoff.md
+    - state-machine.md
+    - output-contract.md
+    - progress.md
+  exclude:
+    - examples/**
+    - runs/**
+    - artifacts/**
+    - snapshots/**
+capabilities:
+  - auto-dev-health
+  - os-cleaner
+providers: {}
+overrides:
+  rules: []

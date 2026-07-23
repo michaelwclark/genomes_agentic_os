@@ -1,0 +1,14 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-closeout
+title: Auto-Dev Closeout
+description: Reconcile providers and close canonical delivery after merge and deployment decisions have verified receipts.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, closeout, sdlc]
+dependencies: [skill:root:auto-dev-create-artifacts]
+aliases: [harness/skills/auto-dev-closeout/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-closeout}
+validation: {commands: []}

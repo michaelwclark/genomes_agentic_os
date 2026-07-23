@@ -1,0 +1,24 @@
+{
+  "schema": "auto-dev-resource-cleanup/v1",
+  "work_item_id": "replace-with-work-item-id",
+  "canonical_work_id": "work:replace-with-work-item-id",
+  "preflight_ref": "artifacts/auto-dev-health/preflight.json",
+  "runtime_cleanup": {
+    "ref": "artifacts/auto-dev-health/receipts/runtime-cleanup.json",
+    "sha256": "8816f79e87d81a46d0d99830e085bae7d082fcfe8d6036aa03357ae38d5b8701"
+  },
+  "worktree": {
+    "identity": "not-managed",
+    "path": "",
+    "result": "not_managed",
+    "readback_verified": true
+  },
+  "runtime": {
+    "identity": "not-managed",
+    "ownership": "not_managed",
+    "provider": "none",
+    "result": "not_managed",
+    "readback_verified": true
+  },
+  "verified_at": "2026-01-01T00:00:00Z"
+}

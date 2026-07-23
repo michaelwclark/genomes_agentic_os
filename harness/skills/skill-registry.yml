@@ -482,3 +482,245 @@ skills:
     purpose: >
       Retrieve bounded, evidence-backed project-domain context and emit the
       receipt consumed by grooming, planning, coding, review, or upkeep.
+  - id: auto-dev
+    title: Auto Dev
+    source_path: harness/skills/auto-dev
+    installed_path: shared_factory/05-knowledge/skills/auto-dev
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Route and operate the canonical Auto-Dev SDLC family over the durable
+      Development Delivery engine.
+  - id: auto-dev-everything
+    title: Auto-Dev Everything
+    source_path: harness/skills/auto-dev-everything
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-everything
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Take one tracker item through every applicable Auto-Dev workflow using one resumable state projection.
+  - id: auto-dev-grooming
+    title: Auto-Dev Grooming
+    source_path: harness/skills/auto-dev-grooming
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-grooming
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Groom rough work into a source-backed, implementation-ready specification and provider backlog.
+  - id: develop
+    title: Develop
+    source_path: harness/skills/develop
+    installed_path: shared_factory/05-knowledge/skills/develop
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Run one or many programming tasks through project-configured, isolated,
+      receipt-backed development delivery.
+  - id: auto-dev-create-artifacts
+    title: Auto-Dev Create Artifacts
+    source_path: harness/skills/auto-dev-create-artifacts
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-create-artifacts
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Resolve polymorphic artifact contracts and govern provider-native render,
+      validation, apply, readback, and receipts.
+  - id: auto-dev-detective
+    title: Auto-Dev Detective
+    source_path: harness/skills/auto-dev-detective
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-detective
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: >
+      Investigate bugs and causal questions with deployed-version gates,
+      polymorphic evidence plans, pause/resume, analysis, and receipts.
+  - id: auto-dev-readiness
+    title: Auto-Dev Readiness
+    source_path: harness/skills/auto-dev-readiness
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-readiness
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Prepare tracker, repository/base, policy, worktree, and plan.
+  - id: auto-dev-implementation
+    title: Auto-Dev Implementation
+    source_path: harness/skills/auto-dev-implementation
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-implementation
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Implement and locally validate a planned task.
+  - id: auto-dev-develop
+    title: Auto-Dev Develop
+    source_path: harness/skills/auto-dev-develop
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-develop
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Provide the friendly single-step entrypoint for canonical implementation and local validation.
+  - id: auto-dev-document
+    title: Auto-Dev Document
+    source_path: harness/skills/auto-dev-document
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-document
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Create source-backed code, issue, architecture, operational, QA, release, and handoff documentation.
+  - id: auto-dev-review-repair
+    title: Auto-Dev Review and Repair
+    source_path: harness/skills/auto-dev-review-repair
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-review-repair
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Review, open the governed PR, repair checks and findings, and prove readiness.
+  - id: auto-dev-review-self
+    title: Auto-Dev Review Self
+    source_path: harness/skills/auto-dev-review-self
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-review-self
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Review and repair our own change through the canonical independent merge-readiness path.
+  - id: auto-dev-review-others
+    title: Auto-Dev Review Others
+    source_path: harness/skills/auto-dev-review-others
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-review-others
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Review another author's live pull request through the canonical PR Review owner.
+  - id: auto-dev-qa
+    title: Auto-Dev QA
+    source_path: harness/skills/auto-dev-qa
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-qa
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Run project-configured risk-based QA as a standalone receipt-backed workflow.
+  - id: auto-dev-finalize
+    title: Auto-Dev Finalize
+    source_path: harness/skills/auto-dev-finalize
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-finalize
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Converge our tracker pull-request family and record immutable merge readiness without merging.
+  - id: auto-dev-merge
+    title: Auto-Dev Merge
+    source_path: harness/skills/auto-dev-merge
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-merge
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Execute the final authorized live merge from a pull-request-owner readiness receipt.
+  - id: auto-dev-release-propagation
+    title: Auto-Dev Release Propagation
+    source_path: harness/skills/auto-dev-release-propagation
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-release-propagation
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Operate configured release and hotfix branch families.
+  - id: auto-dev-pr-create
+    title: Auto-Dev PR Create
+    source_path: harness/skills/auto-dev-pr-create
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-pr-create
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Resolve and create or reuse the complete pull-request family before review.
+  - id: gitflow-pr-create
+    title: GitFlow PR Create
+    source_path: harness/skills/gitflow-pr-create
+    installed_path: shared_factory/05-knowledge/skills/gitflow-pr-create
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Preserve legacy GitFlow PR creation invocations through Auto-Dev PR Create.
+  - id: auto-dev-release
+    title: Auto-Dev Release
+    source_path: harness/skills/auto-dev-release
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-release
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Create and verify project versions, tags, packages, changelogs, and provider releases.
+  - id: auto-dev-deploy
+    title: Auto-Dev Deploy
+    source_path: harness/skills/auto-dev-deploy
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-deploy
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Deploy or monitor an exact artifact and verify deployed behavior.
+  - id: auto-dev-closeout
+    title: Auto-Dev Closeout
+    source_path: harness/skills/auto-dev-closeout
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-closeout
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Reconcile tracker, pull-request, release, and deployment truth and prove delivery complete before Health lifecycle cleanup.
+  - id: auto-dev-health
+    title: Auto-Dev Health
+    source_path: harness/skills/auto-dev-health
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-health
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Audit final receipts, remove reconstructable local resources, and finish the preserved work packet.
+  - id: auto-dev-dep-updater
+    title: Auto-Dev Dep Updater
+    source_path: harness/skills/auto-dev-dep-updater
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-dep-updater
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Take one dependency-update pull request through project-configured validation and governed merge.
+  - id: auto-dev-continuous-release
+    title: Auto-Dev Continuous Release
+    source_path: harness/skills/auto-dev-continuous-release
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-continuous-release
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Take one operator-owned pull request through governed merge, project release, and documentation.
+  - id: object-library
+    title: Object Library
+    source_path: harness/skills/object-library
+    installed_path: shared_factory/05-knowledge/skills/object-library
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Route reusable object-library changes through source, exact-artifact validation, release, install readback, and post-release documentation.

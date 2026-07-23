@@ -1,0 +1,236 @@
+api_version: agentic-os-program-components/v1
+program: auto-dev
+status: active
+operator_surface: auto_dev
+execution_engine: development_delivery
+commands:
+  - id: auto-dev
+    path: harness/commands/auto-dev.md
+  - id: auto-dev-everything
+    path: harness/commands/auto-dev-everything.md
+  - id: auto-dev-grooming
+    path: harness/commands/auto-dev-grooming.md
+  - id: auto-dev-create-artifacts
+    path: harness/commands/auto-dev-create-artifacts.md
+  - id: auto-dev-detective
+    path: harness/commands/auto-dev-detective.md
+  - id: develop
+    path: harness/commands/develop.md
+  - id: auto-dev-readiness
+    path: harness/commands/auto-dev-readiness.md
+  - id: auto-dev-implementation
+    path: harness/commands/auto-dev-implementation.md
+  - id: auto-dev-develop
+    path: harness/commands/auto-dev-develop.md
+  - id: auto-dev-document
+    path: harness/commands/auto-dev-document.md
+  - id: auto-dev-pr-create
+    path: harness/commands/auto-dev-pr-create.md
+  - id: gitflow-pr-create
+    path: harness/commands/gitflow-pr-create.md
+  - id: auto-dev-qa
+    path: harness/commands/auto-dev-qa.md
+  - id: auto-dev-review-repair
+    path: harness/commands/auto-dev-review-repair.md
+  - id: auto-dev-review-self
+    path: harness/commands/auto-dev-review-self.md
+  - id: auto-dev-review-others
+    path: harness/commands/auto-dev-review-others.md
+  - id: auto-dev-finalize
+    path: harness/commands/auto-dev-finalize.md
+  - id: auto-dev-merge
+    path: harness/commands/auto-dev-merge.md
+  - id: auto-dev-release-propagation
+    path: harness/commands/auto-dev-release-propagation.md
+  - id: auto-dev-release
+    path: harness/commands/auto-dev-release.md
+  - id: auto-dev-deploy
+    path: harness/commands/auto-dev-deploy.md
+  - id: auto-dev-closeout
+    path: harness/commands/auto-dev-closeout.md
+  - id: auto-dev-health
+    path: harness/commands/auto-dev-health.md
+  - id: object-library
+    path: harness/commands/os-library.md
+skills:
+  - id: auto-dev
+    path: harness/skills/auto-dev/SKILL.md
+  - id: auto-dev-everything
+    path: harness/skills/auto-dev-everything/SKILL.md
+  - id: auto-dev-grooming
+    path: harness/skills/auto-dev-grooming/SKILL.md
+  - id: auto-dev-create-artifacts
+    path: harness/skills/auto-dev-create-artifacts/SKILL.md
+  - id: auto-dev-detective
+    path: harness/skills/auto-dev-detective/SKILL.md
+  - id: auto-dev-readiness
+    path: harness/skills/auto-dev-readiness/SKILL.md
+  - id: auto-dev-implementation
+    path: harness/skills/auto-dev-implementation/SKILL.md
+  - id: auto-dev-develop
+    path: harness/skills/auto-dev-develop/SKILL.md
+  - id: auto-dev-document
+    path: harness/skills/auto-dev-document/SKILL.md
+  - id: auto-dev-pr-create
+    path: harness/skills/auto-dev-pr-create/SKILL.md
+  - id: gitflow-pr-create
+    path: harness/skills/gitflow-pr-create/SKILL.md
+  - id: auto-dev-qa
+    path: harness/skills/auto-dev-qa/SKILL.md
+  - id: auto-dev-review-repair
+    path: harness/skills/auto-dev-review-repair/SKILL.md
+  - id: auto-dev-review-self
+    path: harness/skills/auto-dev-review-self/SKILL.md
+  - id: auto-dev-review-others
+    path: harness/skills/auto-dev-review-others/SKILL.md
+  - id: auto-dev-finalize
+    path: harness/skills/auto-dev-finalize/SKILL.md
+  - id: auto-dev-merge
+    path: harness/skills/auto-dev-merge/SKILL.md
+  - id: auto-dev-release-propagation
+    path: harness/skills/auto-dev-release-propagation/SKILL.md
+  - id: auto-dev-release
+    path: harness/skills/auto-dev-release/SKILL.md
+  - id: auto-dev-deploy
+    path: harness/skills/auto-dev-deploy/SKILL.md
+  - id: auto-dev-closeout
+    path: harness/skills/auto-dev-closeout/SKILL.md
+  - id: auto-dev-health
+    path: harness/skills/auto-dev-health/SKILL.md
+  - id: auto-dev-dep-updater
+    path: harness/skills/auto-dev-dep-updater/SKILL.md
+  - id: auto-dev-continuous-release
+    path: harness/skills/auto-dev-continuous-release/SKILL.md
+  - id: object-library
+    path: harness/skills/object-library/SKILL.md
+workflows:
+  - id: auto_dev_detective
+    status: active
+    path: ../../04-workflows/auto_dev/detective
+  - id: auto_dev_create_artifacts
+    status: active
+    path: ../../04-workflows/auto_dev/create_artifacts
+  - id: library_self_hosting
+    status: active
+    path: ../../04-workflows/auto_dev/library_self_hosting
+  - id: readiness_and_context
+    status: active
+    path: ../../04-workflows/development_delivery/readiness_and_context
+  - id: isolated_implementation
+    status: active
+    path: ../../04-workflows/development_delivery/isolated_implementation
+  - id: pr_create
+    status: active
+    path: ../../04-workflows/development_delivery/pr_create
+  - id: testing_review_and_pr_repair
+    status: active
+    path: ../../04-workflows/development_delivery/testing_review_and_pr_repair
+  - id: release_propagation
+    status: active
+    path: ../../04-workflows/development_delivery/release_propagation
+  - id: merge_deployment_and_cleanup
+    status: active
+    path: ../../04-workflows/development_delivery/merge_deployment_and_cleanup
+  - id: os_cleanup
+    status: delegated
+    path: ../../03-workflows/engineering/os_cleanup
+policy_planes:
+  # These are the five nested Auto-Dev planes. Artifact and investigation
+  # contracts are adjacent consumers, not additional development planes.
+  auto_dev: harness/shared_factory/05-knowledge/auto_dev
+  environment_access: harness/shared_factory/05-knowledge/auto_dev/environment_access
+  dev_standards: harness/shared_factory/05-knowledge/auto_dev/dev_standards
+  qa_gates: harness/shared_factory/05-knowledge/auto_dev/qa_gates
+  gitflow_topology: harness/shared_factory/05-knowledge/auto_dev/gitflow_topology
+supporting_contracts:
+  artifacts: harness/artifact-config
+  investigations: harness/investigation-config
+self_hosting_profiles:
+  object_library:
+    source_repository: michaelwclark/genomes_agentic_lib
+    installed_projection: <os-root>/lib
+    command: harness/commands/os-library.md
+    skill: harness/skills/object-library/SKILL.md
+    workflow: ../../04-workflows/auto_dev/library_self_hosting
+    stage_mapping:
+      develop: build
+      qa: validate_exact_artifact
+      release: publish
+      deploy: install_and_readback
+      document_rerun: post_release_documentation
+runtime_adapters:
+  - id: los_fast_worktree_health
+    owner: auto-dev-health
+    path: harness/bin/agentic-os-los-fast-worktree-health.py
+    config_example: harness/shared_factory/00-programs/auto_dev/config/examples/los/los_app_los_django/development-runtime.yml
+    validation: tests/test_los_fast_worktree_health.py
+receipts:
+  development: <project>/state/development-runs/<run-id>
+  artifacts: <work-item-or-run>/artifacts/auto-dev-create-artifacts/<run-id>
+  investigations:
+    project: <project>/state/investigation-runs/<run-id>
+    domain: <domain>/06-runs-and-logs/investigations/<run-id>
+    root: harness/shared_factory/06-runs-and-logs/investigations/<run-id>
+  schemas:
+    auto_dev_work_item: auto-dev-work-item/v1
+    auto_dev_stage: auto-dev-stage-evidence/v1
+    auto_dev_health: auto-dev-health-evidence/v1
+    auto_dev_health_preflight: auto-dev-health-preflight/v1
+    auto_dev_runtime_cleanup: auto-dev-runtime-cleanup/v1
+    auto_dev_packet_manifest: auto-dev-packet-manifest/v1
+    auto_dev_stage_policy_decision: auto-dev-stage-policy-decision/v1
+    auto_dev_resource_cleanup: auto-dev-resource-cleanup/v1
+    auto_dev_closed_worktree_readback: auto-dev-closed-worktree-readback/v1
+    auto_dev_reopen: auto-dev-reopen/v1
+    development_stage: development-stage-evidence/v1
+    version_authority: investigation-version-authority/v1
+    availability: investigation-availability/v1
+    investigation_evidence: investigation-evidence/v1
+    artifact_approval: artifact-approval/v1
+    artifact_target: artifact-target-verification/v1
+    artifact_readback: artifact-provider-readback/v1
+compatibility:
+  map: ARCHIVE_SOON.md
+  trigger_adapters:
+    - domains/los/00-programs/auto_dev_queue
+documentation:
+  - program.md
+  - documentation.md
+  - runbook.md
+  - ARCHIVE_SOON.md
+  - worklog.md
+  - docs/29-versioned-object-library.md
+diagrams:
+  - assets/auto-dev-program.svg
+  - assets/auto-dev-health.svg
+  - assets/auto-dev-create-artifacts.svg
+  - assets/auto-dev-detective.svg
+  - assets/development-delivery-stages.svg
+templates:
+  - templates/autodev.json
+  - templates/auto-dev-stage-evidence.json
+  - templates/auto-dev-health-evidence.json
+  - templates/auto-dev-health-preflight.json
+  - templates/auto-dev-runtime-cleanup.json
+  - templates/auto-dev-stage-policy-decision.json
+  - templates/auto-dev-resource-cleanup.json
+  - templates/auto-dev-closed-worktree-readback.json
+  - templates/auto-dev-reopen.json
+  - templates/auto-dev-merge-evidence.json
+  - templates/development-stage-evidence.json
+  - templates/artifact-evidence.yml
+  - templates/artifact-approval.json
+  - templates/artifact-target-verification.json
+  - templates/artifact-provider-readback.json
+  - templates/investigation-version-authority.json
+  - templates/investigation-availability.json
+  - templates/investigation-analysis.yml
+examples:
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-merge-evidence.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-health-evidence.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-health-preflight.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-runtime-cleanup.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-stage-policy-decision.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-resource-cleanup.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-closed-worktree-readback.json
+  - harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-reopen.json

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes.dev/schemas/auto-dev-folder.schema.json",
+  "title": "Portable Auto-Dev folder profile",
+  "type": "object",
+  "required": [
+    "api_version",
+    "kind",
+    "name",
+    "identity",
+    "lifecycle"
+  ],
+  "properties": {
+    "api_version": {
+      "const": "auto-dev-folder/v1"
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "plain_english_goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "domain",
+        "project",
+        "repository",
+        "registration_required"
+      ],
+      "properties": {
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "registration_required": {
+          "const": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object"
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": [
+        "build",
+        "validate",
+        "release",
+        "install",
+        "document"
+      ],
+      "properties": {
+        "build": {
+          "$ref": "#/$defs/stage"
+        },
+        "validate": {
+          "$ref": "#/$defs/stage"
+        },
+        "release": {
+          "$ref": "#/$defs/stage"
+        },
+        "install": {
+          "$ref": "#/$defs/stage"
+        },
+        "document": {
+          "$ref": "#/$defs/stage"
+        }
+      },
+      "additionalProperties": true
+    },
+    "stage_outcomes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "minProperties": 1
+    }
+  },
+  "additionalProperties": true
+}

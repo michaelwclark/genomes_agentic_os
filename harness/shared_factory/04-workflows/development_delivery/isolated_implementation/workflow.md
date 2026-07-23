@@ -1,10 +1,19 @@
 # Isolated Implementation
 
+## Flow
+
+![Auto-Dev Development Delivery stages](../../../00-programs/auto_dev/assets/development-delivery-stages.svg)
+
 ## What this does
 
 Creates durable task ownership and a clean, project-configured worktree, then
 implements the scoped change with maintainable code and proportionate local
 validation.
+
+## Manual run
+
+Use `/auto-dev-implementation`, then record verified work with
+`agentic-os develop stage <state.json> --stage implementation ...`.
 
 ## Inputs
 

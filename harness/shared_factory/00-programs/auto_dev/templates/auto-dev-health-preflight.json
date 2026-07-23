@@ -1,0 +1,53 @@
+{
+  "schema": "auto-dev-health-preflight/v1",
+  "mode": "apply",
+  "work_item_id": "replace-with-work-item-id",
+  "canonical_work_id": "work:replace-with-work-item-id",
+  "domain": "replace-with-domain",
+  "project": "replace-with-project",
+  "packet_path": "/replace/with/work-item-packet",
+  "task_state_ref": "/replace/with/development-task.json",
+  "task_state_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "task_snapshot": {
+    "ref": "artifacts/auto-dev-health/snapshots/delivery-task-0000000000000000.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "subject_revision": "abcdef1234567890",
+  "terminal_revision": "1234567890abcdef",
+  "source_head_sha": "abcdef1234567890",
+  "merge_sha": "1234567890abcdef",
+  "merge_receipt_ref": "artifacts/auto-dev-health/receipts/terminal-authority.json",
+  "merge_receipt_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "closeout_receipt_ref": "artifacts/auto-dev-health/receipts/closeout.json",
+  "closeout_receipt_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "resume_manifest": {
+    "ref": "artifacts/auto-dev-health/RESUME.md",
+    "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "packet_manifest": {
+    "ref": "artifacts/auto-dev-health/receipts/packet-manifest.json",
+    "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "receipt_audit": {
+    "ref": "artifacts/auto-dev-health/receipts/pre-cleanup-receipt-audit.json",
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "worktree": {
+    "identity": "not-managed",
+    "path": "",
+    "branch": ""
+  },
+  "runtime": {
+    "identity": "not-managed",
+    "ownership": "not_managed",
+    "provider": "none"
+  },
+  "repository": {
+    "id": "git:github.com/example/repository",
+    "base_branch": "main"
+  },
+  "dirty_disposition": "clean_only",
+  "residual_holds": [],
+  "safe_to_cleanup": true,
+  "prepared_at": "2026-01-01T00:00:00Z"
+}

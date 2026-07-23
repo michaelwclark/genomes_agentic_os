@@ -52,10 +52,12 @@ LEGACY_ROOT_FILES = (
     "config.toml",
 )
 LEGACY_ROOT_CAPABILITY_DIRS = (
+    "artifact-config",
     "bin",
     "commands",
     "config",
     "hooks",
+    "investigation-config",
     "libraries",
     "logs",
     "mcp",
@@ -69,13 +71,16 @@ LEGACY_ROOT_CAPABILITY_DIRS = (
 )
 CRITICAL_BACKUP_PATHS = (
     ".agentic_root",
+    "lib/",
     "harness/AGENTS.md",
+    "harness/artifact-config/",
     "harness/ROUTER.md",
     "harness/CONTEXT.md",
     "harness/RULES.md",
     "harness/TOOLS.md",
     "harness/bin/",
     "harness/commands/",
+    "harness/investigation-config/",
     "harness/registries/",
     "harness/reports/",
     "harness/rules/",

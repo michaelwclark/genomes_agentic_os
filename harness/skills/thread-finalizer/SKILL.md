@@ -87,3 +87,9 @@ Keep the user response short:
 - receipt paths or identifiers;
 - next action or `None`;
 - known risks or dirty state intentionally left alone.
+
+## Artifact Producer Contract
+
+Lifecycle reconciliation remains here. A durable closeout, status, handoff, or
+external comment must be rendered through `$auto-dev-create-artifacts` with the
+matching type; provider formatting and readback do not belong to finalization.

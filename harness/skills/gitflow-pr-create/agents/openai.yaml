@@ -1,0 +1,4 @@
+interface:
+  display_name: GitFlow PR Create
+  short_description: Compatibility alias for Auto-Dev PR Create.
+  default_prompt: "Use $auto-dev-pr-create in GitFlow-family mode; preserve legacy arguments but emit only canonical PR Create receipts."

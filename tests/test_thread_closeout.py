@@ -702,7 +702,9 @@ def test_cleanup_closed_worktrees_moves_terminal_entries_to_closed_bucket(tmp_pa
     assert [entry["id"] for entry in active_index["worktrees"]] == ["feature-active"]
 
 
-def test_cleanup_closed_worktrees_removes_merged_project_checkouts_unless_reopened(tmp_path: Path, capsys) -> None:
+def test_cleanup_closed_worktrees_preserves_primary_reopened_and_external_checkouts(
+    tmp_path: Path, capsys
+) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
     assert main(["project", "create", "shared_factory", "genomes_agentic_os", "--root", str(root)]) == 0
@@ -778,18 +780,20 @@ def test_cleanup_closed_worktrees_removes_merged_project_checkouts_unless_reopen
                 "--remove-files",
             ]
         )
-        == 0
+        == 2
     )
-    applied = yaml.safe_load(capsys.readouterr().out)
-    assert applied["candidate_count"] == 4
-    assert not clean_worktree.exists()
-    assert not dirty_worktree.exists()
+    assert "--health-preflight" in capsys.readouterr().err
+    assert clean_worktree.is_dir()
+    assert dirty_worktree.is_dir()
     assert reopened_worktree.is_dir()
     assert external_worktree.is_dir()
-    assert applied["skipped"] == [
-        {"path": str(reopened_worktree), "reason": "REOPEN.md present; ask before cleanup"},
-        {"path": str(external_worktree), "reason": "target is outside project worktrees/"},
-    ]
+    preserved = yaml.safe_load(index_path.read_text(encoding="utf-8"))["worktrees"]
+    assert {entry["id"] for entry in preserved} == {
+        "clean-merged",
+        "dirty-merged",
+        "reopened-merged",
+        "external-merged",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -8,3 +8,5 @@ description: Compatibility adapter for spec-engine add with type feature. Use fo
 Load `harness/skills/spec-engine/SKILL.md` and execute its add flow with
 `--type feature`. `/new-idea` also defaults to `--status idea`. Do not create a
 separate feature/idea packet, lifecycle, Notion queue row, or tracker sync.
+Delegate provider/type output to `$auto-dev-create-artifacts`; this legacy name
+does not retain a renderer, target resolver, or readback contract.

@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Auto-Dev program flow</title>
+  <desc id="desc">Signals and ideas flow through the canonical sixteen receipt-gated Auto-Dev stages, ending with item-scoped Auto-Dev Health after Closeout.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#020617" flood-opacity="0.35"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#93C5FD"/>
+    </marker>
+    <marker id="stageArrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#93C5FD"/>
+    </marker>
+    <style>
+      .title{font:700 42px Inter,Arial,sans-serif;fill:#F8FAFC}
+      .subtitle{font:400 20px Inter,Arial,sans-serif;fill:#CBD5E1}
+      .label{font:700 19px Inter,Arial,sans-serif;fill:#F8FAFC}
+      .body{font:400 15px Inter,Arial,sans-serif;fill:#DCE7F5}
+      .stage{font:700 15px Inter,Arial,sans-serif;fill:#F8FAFC}
+      .stagebody{font:400 12px Inter,Arial,sans-serif;fill:#DCE7F5}
+      .small{font:600 14px Inter,Arial,sans-serif;fill:#BFDBFE;letter-spacing:.06em}
+      .line{stroke:#93C5FD;stroke-width:4;fill:none;marker-end:url(#arrow)}
+      .stageline{stroke:#93C5FD;stroke-width:2;fill:none;marker-end:url(#stageArrow)}
+      .soft{stroke:#60A5FA;stroke-width:2;fill:none;stroke-dasharray:8 8}
+    </style>
+  </defs>
+  <rect width="1600" height="900" rx="34" fill="url(#bg)"/>
+  <text x="80" y="82" class="title">Auto-Dev: one polymorphic SDLC</text>
+  <text x="80" y="118" class="subtitle">Shared engine • root → domain → project behavior • receipt-backed handoffs</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="185" width="230" height="120" rx="22" fill="#334155" stroke="#64748B" stroke-width="2"/>
+    <text x="110" y="225" class="small">STARTING SIGNAL</text>
+    <text x="110" y="258" class="label">Idea, ticket, QA,</text>
+    <text x="110" y="285" class="label">log, alert, comment</text>
+
+    <rect x="390" y="165" width="250" height="160" rx="22" fill="#4338CA" stroke="#818CF8" stroke-width="2"/>
+    <text x="420" y="207" class="small">EVIDENCE</text>
+    <text x="420" y="242" class="label">Detective</text>
+    <text x="420" y="272" class="body">Version-first investigation</text>
+    <text x="420" y="296" class="body">Facts, hypotheses, gaps</text>
+
+    <rect x="720" y="165" width="250" height="160" rx="22" fill="#0F766E" stroke="#5EEAD4" stroke-width="2"/>
+    <text x="750" y="207" class="small">COMMUNICATION</text>
+    <text x="750" y="242" class="label">Create Artifacts</text>
+    <text x="750" y="272" class="body">Provider/type contracts</text>
+    <text x="750" y="296" class="body">Native render + readback</text>
+
+    <rect x="1050" y="185" width="450" height="120" rx="22" fill="#7C2D12" stroke="#FDBA74" stroke-width="2"/>
+    <text x="1080" y="225" class="small">VERIFIED OUTCOME</text>
+    <text x="1080" y="258" class="label">Decision, ticket, RCA, or delivery</text>
+    <text x="1080" y="285" class="body">Audience-safe artifact with source and readback receipts</text>
+  </g>
+
+  <path d="M310 245 H380" class="line"/>
+  <path d="M640 245 H710" class="line"/>
+  <path d="M970 245 H1040" class="line"/>
+
+  <text x="80" y="388" class="small">CANONICAL 16-STAGE AUTO-DEV LIFECYCLE — EVERY STAGE IS INDIVIDUALLY CALLABLE</text>
+  <g filter="url(#shadow)">
+    <rect x="80" y="415" width="165" height="100" rx="16" fill="#312E81" stroke="#818CF8" stroke-width="2"/>
+    <text x="96" y="449" class="stage">1. Groom</text><text x="96" y="477" class="stagebody">Make work ready</text>
+    <rect x="260" y="415" width="165" height="100" rx="16" fill="#3730A3" stroke="#818CF8" stroke-width="2"/>
+    <text x="276" y="449" class="stage">2. Detective</text><text x="276" y="477" class="stagebody">Investigate facts</text>
+    <rect x="440" y="415" width="165" height="100" rx="16" fill="#4338CA" stroke="#A5B4FC" stroke-width="2"/>
+    <text x="456" y="449" class="stage">3. Create Artifacts</text><text x="456" y="477" class="stagebody">Publish + read back</text>
+    <rect x="620" y="415" width="165" height="100" rx="16" fill="#1E3A8A" stroke="#60A5FA" stroke-width="2"/>
+    <text x="636" y="449" class="stage">4. Readiness</text><text x="636" y="477" class="stagebody">Context + plan</text>
+    <rect x="800" y="415" width="165" height="100" rx="16" fill="#1E40AF" stroke="#60A5FA" stroke-width="2"/>
+    <text x="816" y="449" class="stage">5. Develop</text><text x="816" y="477" class="stagebody">Code + local proof</text>
+    <rect x="980" y="415" width="165" height="100" rx="16" fill="#1D4ED8" stroke="#93C5FD" stroke-width="2"/>
+    <text x="996" y="449" class="stage">6. Document</text><text x="996" y="477" class="stagebody">Code + issue truth</text>
+    <rect x="1160" y="415" width="165" height="100" rx="16" fill="#0369A1" stroke="#7DD3FC" stroke-width="2"/>
+    <text x="1176" y="449" class="stage">7. PR Create</text><text x="1176" y="477" class="stagebody">Resolve target family</text>
+    <rect x="1340" y="415" width="165" height="100" rx="16" fill="#0E7490" stroke="#67E8F9" stroke-width="2"/>
+    <text x="1356" y="449" class="stage">8. Review Self</text><text x="1356" y="477" class="stagebody">Repair our PRs</text>
+
+    <rect x="80" y="570" width="165" height="100" rx="16" fill="#0F766E" stroke="#5EEAD4" stroke-width="2"/>
+    <text x="96" y="604" class="stage">9. Review Others</text><text x="96" y="632" class="stagebody">Review, never merge</text>
+    <rect x="260" y="570" width="165" height="100" rx="16" fill="#047857" stroke="#6EE7B7" stroke-width="2"/>
+    <text x="276" y="604" class="stage">10. QA</text><text x="276" y="632" class="stagebody">Holdout + behavior</text>
+    <rect x="440" y="570" width="165" height="100" rx="16" fill="#065F46" stroke="#6EE7B7" stroke-width="2"/>
+    <text x="456" y="604" class="stage">11. Finalize</text><text x="456" y="632" class="stagebody">Readiness only</text>
+    <rect x="620" y="570" width="165" height="100" rx="16" fill="#115E59" stroke="#5EEAD4" stroke-width="2"/>
+    <text x="636" y="604" class="stage">12. Merge</text><text x="636" y="632" class="stagebody">Explicit authority</text>
+    <rect x="800" y="570" width="165" height="100" rx="16" fill="#155E75" stroke="#67E8F9" stroke-width="2"/>
+    <text x="816" y="604" class="stage">13. Release</text><text x="816" y="632" class="stagebody">Version + publish</text>
+    <rect x="980" y="570" width="165" height="100" rx="16" fill="#164E63" stroke="#67E8F9" stroke-width="2"/>
+    <text x="996" y="604" class="stage">14. Deploy</text><text x="996" y="632" class="stagebody">Environment readback</text>
+    <rect x="1160" y="570" width="165" height="100" rx="16" fill="#0E7490" stroke="#67E8F9" stroke-width="2"/>
+    <text x="1176" y="604" class="stage">15. Closeout</text><text x="1176" y="632" class="stagebody">Reconcile delivery</text>
+    <rect x="1340" y="570" width="165" height="100" rx="16" fill="#0F766E" stroke="#5EEAD4" stroke-width="2"/>
+    <text x="1356" y="604" class="stage">16. Health</text><text x="1356" y="632" class="stagebody">Preserve + retire</text>
+  </g>
+  <path d="M245 465 H258" class="stageline"/><path d="M425 465 H438" class="stageline"/><path d="M605 465 H618" class="stageline"/>
+  <path d="M785 465 H798" class="stageline"/><path d="M965 465 H978" class="stageline"/><path d="M1145 465 H1158" class="stageline"/><path d="M1325 465 H1338" class="stageline"/>
+  <path d="M1422 515 V540 H60 V620 H78" class="stageline"/>
+  <path d="M245 620 H258" class="stageline"/><path d="M425 620 H438" class="stageline"/><path d="M605 620 H618" class="stageline"/>
+  <path d="M785 620 H798" class="stageline"/><path d="M965 620 H978" class="stageline"/><path d="M1145 620 H1158" class="stageline"/><path d="M1325 620 H1338" class="stageline"/>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="720" width="1440" height="120" rx="24" fill="#111827" stroke="#475569" stroke-width="2"/>
+    <text x="115" y="755" class="small">DYNAMIC POLICY PLANE — LOADED, FROZEN, AND FINGERPRINTED ON EVERY RUN</text>
+    <rect x="115" y="780" width="310" height="42" rx="12" fill="#312E81"/><text x="136" y="807" class="body">Root: universal SDLC standards</text>
+    <text x="451" y="807" class="label">+</text>
+    <rect x="480" y="780" width="310" height="42" rx="12" fill="#115E59"/><text x="501" y="807" class="body">Domain: LOS, Kanga, others</text>
+    <text x="816" y="807" class="label">+</text>
+    <rect x="845" y="780" width="310" height="42" rx="12" fill="#9A3412"/><text x="866" y="807" class="body">Project: exact code and providers</text>
+    <text x="1181" y="807" class="label">+</text>
+    <rect x="1210" y="780" width="275" height="42" rx="12" fill="#374151"/><text x="1231" y="807" class="body">Invocation: bounded overlay</text>
+  </g>
+</svg>

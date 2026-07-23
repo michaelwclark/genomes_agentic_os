@@ -1,9 +1,18 @@
 # Release Propagation
 
+## Flow
+
+![Auto-Dev Development Delivery stages](../../../00-programs/auto_dev/assets/development-delivery-stages.svg)
+
 ## What this does
 
 Translates tracker fix-version/release policy into the required target branches
 and cherry-pick PRs without silently inventing release scope.
+
+## Manual run
+
+Use `/auto-dev-release-propagation`, then record verified work with
+`agentic-os develop stage <state.json> --stage release_propagation ...`.
 
 ## Inputs
 
