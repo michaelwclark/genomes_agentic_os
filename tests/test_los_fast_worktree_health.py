@@ -37,6 +37,19 @@ def test_los_runtime_config_example_is_a_valid_identity_bound_profile() -> None:
     ].replace("__AGENTIC_OS_ROOT__", "/example/agentic-os")
 
     assert validate_profile(profile) == []
+    assert overlay["review"]["self"]["family_scope"] == "required_targets"
+    assert overlay["review"]["self"]["finding_propagation"] == {
+        "copilot": "all_required_targets",
+        "blocking": "all_required_targets",
+    }
+    assert set(overlay["review"]["self"]["dev_standards"].values()) == {"required"}
+    assert overlay["review"]["self"]["threads"]["human"] == "never_auto_resolve"
+    assert overlay["merge"]["ours"] == {
+        "strategy": "squash",
+        "provider_authority": "admin_bypass",
+        "family_gate": "all_required_targets_ready",
+        "order": ["hotfix", "release", "develop"],
+    }
     context = {
         "domain": "los",
         "project": "los_app_los_django",

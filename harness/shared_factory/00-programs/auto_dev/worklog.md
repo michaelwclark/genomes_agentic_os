@@ -1,5 +1,15 @@
 # Auto-Dev Worklog
 
+## 2026-07-23
+
+- Made own-work review explicitly family-scoped: live Jira/acceptance proof,
+  dev-standard checks, and Copilot/blocking findings now apply across every
+  required target unless target-specific evidence says otherwise.
+- Documented project-configured merge strategy, provider authority, and target
+  order. The LOS example selects Fable 5 via Claude CLI and authorizes
+  squash/admin merge only after the full hotfix, release, and develop family is
+  ready.
+
 ## 2026-07-21 — Object Library self-hosting
 
 - Defined one plain-English source/install topology: reusable definitions are

@@ -38,6 +38,13 @@ the frozen slice from its configured start through completion; stages outside
 that slice are `out_of_scope`. A single-stage run uses the same predecessor
 gates.
 
+Review Self consumes the complete PR Create family. Project policy decides the
+opposing reviewer, family propagation rules, tracker/acceptance gates,
+dev-standard gates, and bot/human thread handling. Merge consumes only a
+whole-family Finalize receipt and applies the configured strategy, provider
+authority, and target order; elevated provider authority never relaxes review
+or readiness gates.
+
 When a stage permits `not_required`, use
 `auto-dev-stage-policy-decision/v1`. It binds work-item/canonical identity,
 domain/project/stage, decision maker, reason, timestamp, the frozen delivery

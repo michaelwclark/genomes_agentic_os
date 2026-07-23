@@ -30,7 +30,7 @@ specialize each workflow without forking shared code.
 | 5 | Develop | work item/worktree/code/local checks | `/auto-dev-develop` | `local_validation` |
 | 6 | Document | code, issue, architecture, operations, QA, release, or handoff docs | `/auto-dev-document` | verified documentation receipt |
 | 7 | PR Create | resolve and create or reuse the complete 1-N PR family | `/auto-dev-pr-create`; GitFlow and Release Propagation are aliases | provider-read family receipt |
-| 8 | Review Self | opposing review, CI, and repair loops over the exact PR family | `/auto-dev-review-self` | `ready_for_merge` |
+| 8 | Review Self | opposing review, Jira/AC and dev-standard validation, family-wide finding propagation, CI, and repair loops over the exact PR family | `/auto-dev-review-self` | `ready_for_merge` |
 | 9 | Review Others | review another author's live PR without merging | `/auto-dev-review-others` | clean review-only receipt or typed policy decision |
 | 10 | QA | independently callable risk-based validation | `/auto-dev-qa` | QA receipt for the exact reviewed revision |
 | 11 | Finalize | converge our PR family and record readiness without merging | `/auto-dev-finalize` | immutable readiness receipt or typed policy decision |
@@ -220,6 +220,13 @@ active workflow.
 The LOS Django project stops Auto-Dev Everything at Merge; Release and Deploy
 belong to the separate LOS release event. Ticket-level Document is currently
 disabled by project policy but remains available to enable later.
+
+For Michael's own LOS PRs, the project profile treats all hotfix, release, and
+develop targets as one review and merge unit. Fable 5 runs through authenticated
+Claude CLI when available. Copilot and blocking findings propagate across the
+family, every target must satisfy Jira acceptance and effective dev standards,
+and Merge uses squash plus provider admin authority only after the entire family
+is green.
 
 When the application PR opens, Auto-Dev always creates a Jira QA Automation
 Assessment subtask under the root Jira. The assessment may end in a typed skip

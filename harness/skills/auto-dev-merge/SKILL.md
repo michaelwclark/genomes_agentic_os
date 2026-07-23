@@ -13,11 +13,17 @@ description: Execute and record the final live merge only from an immutable Fina
    receipt. If either is absent, return to that owner without merging.
 3. Immediately before mutation, re-read head SHA, target branch, checks,
    required reviews, unresolved threads, mergeability, and explicit authority.
-4. Merge through the configured provider mechanism, then read the pull request
-   back from that provider. Capture both the resulting merge SHA and the
-   provider-reported source head SHA; the latter must exactly equal the
-   `subject_revision` accepted by the `ready_for_merge` receipt.
-5. Write a `development-stage-evidence/v1` receipt for `merged` with
+4. For a PR family, require every configured target to be ready before merging
+   the first member. Use the project-configured strategy, provider authority,
+   and target order. A project may authorize squash plus provider admin bypass
+   for its own PRs; that authority never waives current checks, review,
+   acceptance, thread, or family-parity gates.
+5. Merge through the configured provider mechanism, then read each pull request
+   back from that provider before continuing to the next configured target.
+   Capture both the resulting merge SHA and the provider-reported source head
+   SHA; the latter must exactly equal the `subject_revision` accepted by the
+   `ready_for_merge` receipt.
+6. Write a `development-stage-evidence/v1` receipt for `merged` with
    `status: completed` and all of these fields under `evidence`:
    `merge_sha`, `source_head_sha`, `provider`, `pull_request`, `repository`,
    `base_branch`, `author_identity`, `author_kind`, and

@@ -84,8 +84,31 @@ review:
     unavailable_policy: continue_with_receipt
   copilot:
     require_no_actionable_threads: true
+  self:
+    family_scope: required_targets
+    finding_propagation:
+      copilot: all_required_targets
+      blocking: all_required_targets
+    acceptance:
+      jira_current: required
+      acceptance_criteria: required
+      implementation_effectiveness: required
+    dev_standards:
+      reuse_existing_utilities: required
+      security: required
+      readability: required
+      bugfix_why_comments: required
+      acceptance_path_tests: required
+    threads:
+      bot: fix_or_factual_reply_then_resolve
+      human: never_auto_resolve
+    readiness: all_required_targets
 merge:
   policy: never_auto
+  ours:
+    strategy: project_configured
+    provider_authority: standard
+    family_gate: all_required_targets_ready
 release:
   fix_version_drives_targets: true
 deployment:
