@@ -18,3 +18,10 @@ This workflow can run at any point.
    rendered result. Never expose local paths, secrets, or private links.
 6. Record `document` evidence in `autodev.json`, including freshness owner and
    the verified output reference.
+
+The canonical program projection is **Auto-Dev — Canonical SDLC Program** in
+Genome's Notion (page id `3a3683b48dab81b88875f5ec875dab3e`). Project policy
+may disable ticket-level Document today while keeping this program projection
+configured for future use. A program-contract change still updates the
+canonical projection; a disabled ticket stage does not suppress program
+documentation upkeep.

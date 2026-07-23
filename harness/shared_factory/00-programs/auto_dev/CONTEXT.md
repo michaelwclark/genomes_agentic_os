@@ -2,10 +2,9 @@
 
 ## Purpose
 
-Provide one discoverable SDLC front door from a signal or idea through evidence,
-excellent artifacts, implementation, review/repair, release/deploy, delivery
-closeout, and receipt-backed lifecycle hygiene that leaves a resumable finished
-packet.
+Provide one discoverable SDLC front door whose project profile can stop at a
+mergeable or merged pull request or continue through release/deploy, closeout,
+and receipt-backed lifecycle hygiene, while leaving a resumable work packet.
 
 ## Source hierarchy
 

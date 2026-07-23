@@ -50,12 +50,15 @@ Auto Dev
 └── Health
 ```
 
-The stage child-page sequence is the canonical executable order: Groom,
+The stage child-page sequence is the shared safe order: Groom,
 Detective, Create Artifacts, Readiness, Develop, Document, PR Create, Review
 Self, Review Others, QA, Finalize, Merge, Release, Deploy, Closeout, Health.
 Everything explains the orchestration across those pages; it is not a
-seventeenth stage. Single-stage commands use the same order and predecessor
-receipts.
+seventeenth stage. Project profiles define Default and Everything start/end
+boundaries and may supply a full alternative order that preserves required
+lifecycle precedence. Bare Auto-Dev uses Default and must include PR Create.
+Stages outside a run boundary are `out_of_scope`. Single-stage commands use the
+same predecessor receipts.
 
 Object Library Self-Hosting is also a profile, not a stage. It must show the
 canonical source repository versus installed projection boundary and map build
@@ -111,14 +114,17 @@ substitute.
 Every page that permits `not_required` must show the strict
 `auto-dev-stage-policy-decision/v1` fields and explain that `policy_source` is
 the exact frozen delivery policy receipt plus SHA-256. Recording materializes
-the policy and decision into packet-local immutable proof. Standalone
-`not_required` is limited to Detective, Create Artifacts, Review Others,
-Finalize, and Release; Release Propagation and Deploy route the same typed
-decision through Development Delivery. The other stages must complete.
+the policy and decision into packet-local immutable proof. The frozen stage
+policy marks each stage required, contextual, or disabled. Contextual or
+disabled Detective, Create Artifacts, Document, Review Others, QA, Finalize,
+and Release may use `not_required`; delivery-managed stages route their typed
+decision through Development Delivery. Required stages must complete.
 
 The work-item page must explain `autodev.json` as a projection over canonical
-delivery state, not an independent state machine. It must show Everything and
-single-stage invocation, typed completion/not-required receipts, and resume.
+delivery state, not an independent state machine. It must show Default,
+Everything, and single-stage invocation, configurable boundaries/order,
+required/contextual/disabled applicability, typed completion/not-required
+receipts, and resume.
 For a multi-ticket invocation, it must show one packet and `autodev.json` per
 ticket and ticket-local `--state` resume. Finished packets are immutable: an
 explicit receipt-backed canonical work-item reopen starts a new delivery run

@@ -81,8 +81,8 @@ def _overlays(values: list[str] | None) -> dict[str, list[str]]:
 
 def handle_launch(args: argparse.Namespace) -> int:
     action = args.auto_dev_action
-    mode = "everything" if action == "everything" else "single_stage"
-    requested_stage = None if mode == "everything" else ACTION_TO_STAGE[action]
+    mode = action if action in {"default", "everything"} else "single_stage"
+    requested_stage = None if mode in {"default", "everything"} else ACTION_TO_STAGE[action]
     domain = args.domain
     project = args.project
     tickets = list(args.tickets or [])
@@ -137,8 +137,8 @@ def handle_launch(args: argparse.Namespace) -> int:
         policy_overlays=_overlays(args.policy_overlay),
         auto_dev_mode=mode,
         requested_stage=requested_stage,
-        goal="delivery_complete" if mode == "everything" else requested_stage,
-        provision_worktree=(mode == "everything" or requested_stage in WORKTREE_REQUIRED_STAGES),
+        goal=None if mode in {"default", "everything"} else requested_stage,
+        provision_worktree=(mode in {"default", "everything"} or requested_stage in WORKTREE_REQUIRED_STAGES),
         selected_work_item=selected_work_item,
         existing_state_only=action in EXISTING_STATE_REQUIRED_ACTIONS,
         apply=args.apply,
@@ -255,6 +255,11 @@ def register(subparsers) -> None:
         ),
     )
     sub = parser.add_subparsers(dest="auto_dev_action", required=True)
+    _launch_parser(
+        sub,
+        "default",
+        "Run the project-defined default development workflow through PR creation or later.",
+    )
     _launch_parser(sub, "everything", "Take each ticket through every applicable workflow and approval gate.")
     for action, stage in ACTION_TO_STAGE.items():
         _launch_parser(sub, action, f"Start or resume only the {stage.replace('_', ' ')} workflow.")

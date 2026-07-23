@@ -2,7 +2,8 @@
 
 | User intent or signal | Workflow | Manual entrypoint |
 | --- | --- | --- |
-| Take a ticket all the way | Everything | `/auto-dev-everything` |
+| Bare "auto-dev" for one or more tickets | Default | `/auto-dev`; `agentic-os auto-dev default ...` |
+| Take a ticket all the way / Auto-Dev Everything | Everything | `/auto-dev-everything` |
 | Idea/spec grooming before implementation | Groom | `/auto-dev-grooming` |
 | Reported bug, QA failure, log/error, ticket comment, alert, “why is this happening?”, or RCA | Detective | `/auto-dev-detective` |
 | Create/update Jira, Linear, Notion, Confluence, GitHub, Slack, PR text, RCA, report, or local artifact | Create Artifacts | `/auto-dev-create-artifacts` |

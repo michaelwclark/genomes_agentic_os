@@ -1,6 +1,63 @@
-# Copy this runtime mapping into the installed LOS project's
+# Copy this policy and runtime mapping into the installed LOS project's
 # config/development.yml. Replace __AGENTIC_OS_ROOT__ with that installation's
 # absolute Agentic OS root before starting a new Development Delivery run.
+auto_dev:
+  default:
+    start_stage: readiness
+    completion_stage: pr_create
+  everything:
+    start_stage: groom
+    completion_stage: merge
+  stages:
+    document:
+      applicability: disabled
+      reason: Ticket-level documentation is not required for LOS today.
+    qa:
+      applicability: contextual
+      decision_point: after_pr_create
+      assessment:
+        tracker: jira
+        issue_type: Sub-task
+        always_create: true
+        parent: root_jira
+        summary_template: 'QA Automation Assessment: {parent_key}'
+        skip_requires: typed_policy_decision
+      child_delivery:
+        repository: github:Lenders-Cooperative/los-qa-automation
+        repository_url: https://github.com/Lenders-Cooperative/los-qa-automation
+        base_branch: main
+        branch_template: 'feature/{subtask_key}-{slug}'
+        workflow: auto_dev_default
+        completion_stage: merge
+        parent_gate: child_merged_or_typed_skip
+        skill_source: .agents/skills/qa-analysis/SKILL.md
+        pull_request_required: true
+        direct_default_branch_push: false
+        required_plan:
+          - 'tests/jira/{parent_key}/{feature}.spec.ts'
+          - 'tests/jira/{parent_key}/README.md'
+          - reusable pages, helpers, and fixtures
+          - tags, environment, evidence, and exact validation command
+        validation_command: 'npx playwright test tests/jira/{parent_key}/'
+review:
+  opposing_harness:
+    required: true
+    preferred: fable
+    model: claude-fable-5
+    transport: claude_cli
+    unavailable_policy: continue_with_receipt
+merge:
+  policy: auto_after_gates
+  require_checks: true
+  require_opposing_review_or_unavailable_receipt: true
+documentation:
+  ticket_stage_required: false
+  program_projection:
+    provider: notion
+    workspace: Genome's Notion
+    page_id: 3a3683b48dab81b88875f5ec875dab3e
+    update_on:
+      - auto_dev_program_change
 runtime:
   ownership: managed
   provider: los_fast_worktree

@@ -635,7 +635,7 @@ def test_configured_stage_order_must_keep_health_last(tmp_path: Path) -> None:
     profile["auto_dev"] = {"stage_order": unsafe_order}
     profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
 
-    with pytest.raises(DevelopmentDeliveryError, match="canonical and cannot be reordered"):
+    with pytest.raises(DevelopmentDeliveryError, match="lifecycle precedence"):
         delivery.start_development_run(
             root,
             "acme",
@@ -657,8 +657,18 @@ def test_configured_stage_order_rejects_lifecycle_deadlocks(stage: str, after: s
     order = list(AUTO_DEV_STAGE_ORDER)
     order.remove(stage)
     order.insert(order.index(after) + 1, stage)
-    with pytest.raises(AutoDevStateError, match="canonical and cannot be reordered"):
+    with pytest.raises(AutoDevStateError, match="lifecycle precedence"):
         validate_auto_dev_stage_order(order)
+
+
+def test_configured_stage_order_allows_safe_friendly_stage_reordering() -> None:
+    order = list(AUTO_DEV_STAGE_ORDER)
+    order[1], order[2] = order[2], order[1]
+    assert validate_auto_dev_stage_order(order) == order
+
+    order.remove("document")
+    order.insert(order.index("qa") + 1, "document")
+    assert validate_auto_dev_stage_order(order) == order
 
 
 def test_legacy_profile_stage_subset_upgrades_to_complete_auto_dev_order(
@@ -1725,6 +1735,53 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert set(output["auto_dev"]["stage_order"]) == set(delivery.AUTO_DEV_STAGE_ORDER)
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
 
+
+def test_project_configures_default_and_everything_workflow_boundaries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "default": {"start_stage": "readiness", "completion_stage": "pr_create"},
+        "everything": {"start_stage": "groom", "completion_stage": "merge"},
+        "stages": {
+            "document": {
+                "applicability": "disabled",
+                "reason": "Project documentation is not required today.",
+            },
+            "qa": {
+                "applicability": "contextual",
+                "child_delivery": {
+                    "repository": "github:Lenders-Cooperative/los-qa-automation",
+                    "tracker": "jira_subtask",
+                },
+            },
+        },
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    assert main(
+        ["auto-dev", "default", "acme", "app", "CC-PR", "--root", str(root), "--json"]
+    ) == 0
+    default = json.loads(capsys.readouterr().out)["auto_dev"]
+    assert default["mode"] == "default"
+    assert default["start_stage"] == "readiness"
+    assert default["completion_stage"] == "pr_create"
+    assert default["goal"] == "pr_create"
+    assert default["stage_policies"]["document"]["applicability"] == "disabled"
+
+    assert main(
+        ["auto-dev", "everything", "acme", "app", "CC-ALL", "--root", str(root), "--json"]
+    ) == 0
+    everything = json.loads(capsys.readouterr().out)["auto_dev"]
+    assert everything["mode"] == "everything"
+    assert everything["completion_stage"] == "merge"
+    assert everything["goal"] == "merge"
+    assert everything["stage_policies"]["qa"]["child_delivery"]["tracker"] == "jira_subtask"
+
     assert main(
         ["auto-dev", "propagate", "acme", "app", "CC-46", "--root", str(root), "--json"]
     ) == 0
@@ -1735,6 +1792,107 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
         ["auto-dev", "health", "acme", "app", "CC-46", "--root", str(root), "--apply"]
     ) == 2
     assert "requires --state" in capsys.readouterr().err
+
+
+def test_default_auto_dev_cannot_stop_before_pr_create(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "default": {"start_stage": "readiness", "completion_stage": "develop"}
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    assert main(
+        ["auto-dev", "default", "acme", "app", "CC-NO-PR", "--root", str(root), "--json"]
+    ) == 2
+    assert "default Auto-Dev workflow must include PR Create" in capsys.readouterr().err
+
+
+def test_pr_create_requires_configured_jira_qa_assessment_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "everything": {"start_stage": "groom", "completion_stage": "merge"},
+        "stages": {
+            "qa": {
+                "applicability": "contextual",
+                "assessment": {"tracker": "jira", "always_create": True},
+            }
+        },
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-qa-assessment",
+            "path": "/tmp/cc-qa-assessment",
+            "branch": "feature/cc-qa-assessment",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-QA"],
+        run_id="qa-assessment",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _advance_auto_dev_task_to_ready(
+        task,
+        subject_revision=base_sha,
+        pull_request="github:acme/app#88",
+    )
+    for stage_name in ("groom", "detective", "create_artifacts", "document"):
+        _record_standalone_stage(task, stage_name)
+    work_item = Path(task.read()["work_item"])
+
+    with pytest.raises(DevelopmentDeliveryError, match="QA Automation Assessment"):
+        run_development_stage(
+            task.path,
+            stage="release_propagation",
+            receipts={
+                "release_propagation": _stage_receipt(
+                    work_item / "artifacts" / "missing-assessment",
+                    "release_propagation",
+                )
+            },
+            idempotency_prefix="cc-qa:missing-assessment",
+        )
+
+    receipt = _stage_receipt(
+        work_item / "artifacts" / "with-assessment",
+        "release_propagation",
+        evidence={
+            "qa_automation_assessment": {
+                "schema": "auto-dev-qa-assessment/v1",
+                "tracker": "jira",
+                "issue_key": "CC-QA-1",
+                "parent_key": "CC-QA",
+                "readback_verified": True,
+            }
+        },
+    )
+    result = run_development_stage(
+        task.path,
+        stage="release_propagation",
+        receipts={"release_propagation": receipt},
+        idempotency_prefix="cc-qa:with-assessment",
+    )
+    assert result["stage"] == "release_propagation"
 
 
 def test_groom_initializes_state_without_worktree_or_false_completion(
@@ -1766,7 +1924,7 @@ def test_groom_initializes_state_without_worktree_or_false_completion(
     assert run["state"] == "work_item_ready"
     assert projection["current_stage"] == "groom"
     assert projection["stages"]["groom"]["status"] == "not_started"
-    assert projection["stages"]["qa"]["status"] == "not_started"
+    assert projection["stages"]["qa"]["status"] == "out_of_scope"
 
 
 def test_progressed_run_resumes_and_single_stage_retargets_same_projection(

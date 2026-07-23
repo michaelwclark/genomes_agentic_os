@@ -1,6 +1,6 @@
 ---
 name: auto-dev-everything
-description: Take one or many tracker items through every applicable Auto-Dev workflow, resuming the same autodev.json and stopping only at real approval, access, provider, product, security, or infrastructure gates.
+description: Take one or many tracker items through the owning project's configured Auto-Dev Everything boundary, resuming the same autodev.json and stopping only at that boundary or a real gate.
 ---
 
 # Auto-Dev Everything
@@ -13,25 +13,26 @@ existing owners, not a second implementation or PR engine.
    <ticket> --apply`. Read the resulting work item `autodev.json`.
 3. Resolve `auto_dev`, `environment_access`, `dev_standards`, `qa_gates`, and
    `gitflow_topology` policy plus artifact/investigation contracts.
-4. Run the first eligible incomplete workflow in this exact order: Groom,
-   Detective, Create Artifacts, Readiness, Develop, Document, Review Self,
-   Review Others, QA, Release Propagation, Finalize, Merge, Release, Deploy,
-   Closeout, Health. Use the named skill in `autodev.json`; do the work before
-   recording evidence. Do not reorder stages for convenience.
+4. Read the frozen `everything.start_stage`, `everything.completion_stage`,
+   `stage_order`, and stage applicability from the project profile. Run the
+   first eligible incomplete workflow in that active window. The configured
+   order may vary only when it preserves required lifecycle precedence. Use the
+   named skill in `autodev.json`; do the work before recording evidence.
 5. Record standalone outcomes with `auto-dev-stage-evidence/v1`, delivery-owned
    milestones through `agentic-os develop stage`, and the final cleanup through
    strict `auto-dev-health-evidence/v1`. `not_required` uses the typed
    `auto-dev-stage-policy-decision/v1` identity, reason, decision-maker,
    fingerprint, exact frozen policy source, SHA-256, and timestamp; recording
    materializes the decision and policy into packet-local immutable proof.
-6. Continue through Closeout until `delivery_complete`; then run
-   `$auto-dev-health`. Health audits receipts first, writes the resume manifest,
-   removes only reconstructable item-local resources, and preserves the packet
-   in the finished lane.
-7. Re-sync and stop only when Health is completed, or when a blocker names one
-   exact owner action. Health always audits, even when cleanup is a no-op; it
-   cannot be `not_required`. Do not
-   silently stop after local validation, PR creation, merge, or Closeout.
+6. Continue until the configured completion stage is receipt-backed. Run
+   Closeout and Health only when they are inside the active window. Health
+   audits receipts first, writes the resume manifest, removes only
+   reconstructable item-local resources, and preserves the packet.
+7. Re-sync and stop only at the configured completion stage or when a blocker
+   names one exact owner action. Stages outside the window are `out_of_scope`.
+   Required stages cannot be skipped; contextual or disabled stages require a
+   typed `not_required` policy decision when they are inside the active window.
+   Health cannot be `not_required`.
 
 Local validation has three dispositions: `passed`, `deferred_to_ci`, or failed.
 Use `deferred_to_ci` only for a typed environment/infrastructure failure when

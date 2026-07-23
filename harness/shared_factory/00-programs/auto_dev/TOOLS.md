@@ -4,7 +4,8 @@
 
 | Need | Command or skill | Result |
 | --- | --- | --- |
-| Full implementation delivery | `/auto-dev-everything` or `agentic-os auto-dev everything ...` | one `autodev.json` plus delivery/provider receipts |
+| Bare Auto-Dev development delivery | `/auto-dev` or `agentic-os auto-dev default ...` | project Default window, always through PR Create or later |
+| Project-relative full delivery | `/auto-dev-everything` or `agentic-os auto-dev everything ...` | configured Everything window and one `autodev.json` plus delivery/provider receipts |
 | One named workflow | `agentic-os auto-dev <verb> ...` and the matching skill | resumable single-stage state |
 | Grooming | `/auto-dev-grooming` | implementation-ready source of truth |
 | Deep bug/RCA investigation | `/auto-dev-detective` or `agentic-os detective ...` | versioned evidence packet and report |

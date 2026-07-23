@@ -29,6 +29,7 @@ from .auto_dev_orchestration import (
     AUTO_DEV_MODES,
     AUTO_DEV_STAGE_ORDER,
     AutoDevStateError,
+    auto_dev_workflow_window,
     materialize_auto_dev_policy_decision,
     read_auto_dev_state,
     require_auto_dev_predecessors,
@@ -37,6 +38,7 @@ from .auto_dev_orchestration import (
     validate_recorded_auto_dev_health,
     validate_auto_dev_readiness_authority,
     validate_auto_dev_stage_order,
+    validate_auto_dev_stage_policies,
     validate_pull_request_authority,
 )
 from .artifact_naming import dated_name, load_artifact_naming_policy
@@ -1839,7 +1841,7 @@ def start_development_run(
     policy_overlays: Mapping[str, Sequence[str | Path]] | None = None,
     auto_dev_mode: str = "single_stage",
     requested_stage: str | None = None,
-    goal: str = "ready_for_merge",
+    goal: str | None = None,
     provision_worktree: bool = True,
     selected_work_item: str | Path | None = None,
     adopt_existing: bool = False,
@@ -1858,7 +1860,7 @@ def start_development_run(
             )
     if auto_dev_mode == "single_stage" and not requested_stage:
         requested_stage = "develop"
-    if auto_dev_mode == "everything":
+    if auto_dev_mode in {"default", "everything"}:
         requested_stage = None
     selected_packet = (
         Path(selected_work_item).expanduser().resolve() if selected_work_item is not None else None
@@ -1924,6 +1926,44 @@ def start_development_run(
             auto_dev_stage_order = validate_auto_dev_stage_order(configured_stage_order)
         except AutoDevStateError as exc:
             raise DevelopmentDeliveryError(str(exc)) from exc
+    workflow_policy = (
+        profile_auto_dev.get(auto_dev_mode)
+        if isinstance(profile_auto_dev.get(auto_dev_mode), Mapping)
+        else {}
+    )
+    if auto_dev_mode == "single_stage":
+        auto_dev_start_stage = str(requested_stage)
+        auto_dev_completion_stage = str(requested_stage)
+    else:
+        default_start = "readiness" if auto_dev_mode == "default" else auto_dev_stage_order[0]
+        default_completion = "pr_create" if auto_dev_mode == "default" else auto_dev_stage_order[-1]
+        auto_dev_start_stage = str(workflow_policy.get("start_stage") or default_start)
+        auto_dev_completion_stage = str(
+            workflow_policy.get("completion_stage") or default_completion
+        )
+    try:
+        workflow_window = auto_dev_workflow_window(
+            auto_dev_stage_order,
+            auto_dev_start_stage,
+            auto_dev_completion_stage,
+        )
+        if auto_dev_mode == "default" and "pr_create" not in workflow_window:
+            raise AutoDevStateError(
+                "The default Auto-Dev workflow must include PR Create; "
+                "configure completion_stage as pr_create or a later stage"
+            )
+        auto_dev_stage_policies = validate_auto_dev_stage_policies(
+            profile_auto_dev.get("stages")
+            if isinstance(profile_auto_dev.get("stages"), Mapping)
+            else {}
+        )
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(str(exc)) from exc
+    goal = goal or (
+        "delivery_complete"
+        if auto_dev_completion_stage == "health"
+        else auto_dev_completion_stage
+    )
     if base_branch is not None:
         requested_base = str(base_branch).strip()
         if not requested_base or requested_base.startswith("-") or any(character.isspace() for character in requested_base):
@@ -1960,7 +2000,7 @@ def start_development_run(
                 project=project,
                 ticket=str(tickets[0]),
             )
-    authorship_required = auto_dev_mode == "everything" or requested_stage in {
+    authorship_required = auto_dev_mode in {"default", "everything"} or requested_stage in {
         "review_self",
         "review_others",
         "qa",
@@ -2080,6 +2120,9 @@ def start_development_run(
             "requested_stage": requested_stage,
             "goal": goal,
             "stage_order": auto_dev_stage_order,
+            "start_stage": auto_dev_start_stage,
+            "completion_stage": auto_dev_completion_stage,
+            "stage_policies": auto_dev_stage_policies,
             "provision_worktree": provision_worktree,
         },
     }
@@ -2177,12 +2220,42 @@ def start_development_run(
                 raise DevelopmentDeliveryError(
                     f"recorded auto_dev.stage_order is unsafe: {exc}"
                 ) from exc
+        if auto_dev_mode in {"default", "everything"}:
+            auto_dev_start_stage = str(
+                recorded_auto_dev.get("start_stage") or auto_dev_start_stage
+            )
+            auto_dev_completion_stage = str(
+                recorded_auto_dev.get("completion_stage") or auto_dev_completion_stage
+            )
+            try:
+                auto_dev_workflow_window(
+                    auto_dev_stage_order,
+                    auto_dev_start_stage,
+                    auto_dev_completion_stage,
+                )
+                auto_dev_stage_policies = validate_auto_dev_stage_policies(
+                    recorded_auto_dev.get("stage_policies")
+                    if isinstance(recorded_auto_dev.get("stage_policies"), Mapping)
+                    else auto_dev_stage_policies
+                )
+            except AutoDevStateError as exc:
+                raise DevelopmentDeliveryError(
+                    f"recorded Auto-Dev workflow policy is unsafe: {exc}"
+                ) from exc
+            goal = (
+                "delivery_complete"
+                if auto_dev_completion_stage == "health"
+                else auto_dev_completion_stage
+            )
     if selected_packet is None or recorded_auto_dev is None:
         plan["auto_dev"] = {
             "mode": auto_dev_mode,
             "requested_stage": requested_stage,
             "goal": goal,
             "stage_order": auto_dev_stage_order,
+            "start_stage": auto_dev_start_stage,
+            "completion_stage": auto_dev_completion_stage,
+            "stage_policies": auto_dev_stage_policies,
             "provision_worktree": provision_worktree,
             "requested_at": utc_now(),
         }
@@ -2334,6 +2407,9 @@ def start_development_run(
                     "requested_stage": requested_stage,
                     "goal": goal,
                     "auto_dev_stage_order": auto_dev_stage_order,
+                    "auto_dev_start_stage": auto_dev_start_stage,
+                    "auto_dev_completion_stage": auto_dev_completion_stage,
+                    "auto_dev_stage_policies": auto_dev_stage_policies,
                     "profile_source": str(source),
                     "policy_receipt": str(run_dir / "effective-policies.json"),
                     "policy_fingerprint": run_policies["fingerprint"],
@@ -2451,6 +2527,9 @@ def start_development_run(
                     "requested_stage": requested_stage,
                     "goal": goal,
                     "auto_dev_stage_order": auto_dev_stage_order,
+                    "auto_dev_start_stage": auto_dev_start_stage,
+                    "auto_dev_completion_stage": auto_dev_completion_stage,
+                    "auto_dev_stage_policies": auto_dev_stage_policies,
                     "profile_source": str(source),
                     "policy_receipt": str(run_dir / "effective-policies.json"),
                     "policy_fingerprint": run_policies["fingerprint"],
@@ -3579,6 +3658,36 @@ def run_development_stage(
                 "release_propagation requires --receipt release_propagation=<ref>"
             )
         receipt, receipt_payload = validate_receipt("release_propagation", raw_receipt)
+        qa_stage_policy = (
+            current.get("auto_dev_stage_policies", {}).get("qa", {})
+            if isinstance(current.get("auto_dev_stage_policies"), Mapping)
+            else {}
+        )
+        assessment_policy = (
+            qa_stage_policy.get("assessment", {})
+            if isinstance(qa_stage_policy, Mapping)
+            and isinstance(qa_stage_policy.get("assessment"), Mapping)
+            else {}
+        )
+        if assessment_policy.get("always_create") is True:
+            receipt_evidence = (
+                receipt_payload.get("evidence")
+                if isinstance(receipt_payload.get("evidence"), Mapping)
+                else {}
+            )
+            assessment = receipt_evidence.get("qa_automation_assessment")
+            if not (
+                isinstance(assessment, Mapping)
+                and assessment.get("schema") == "auto-dev-qa-assessment/v1"
+                and assessment.get("tracker") == "jira"
+                and str(assessment.get("issue_key") or "").strip()
+                and str(assessment.get("parent_key") or "").strip()
+                and assessment.get("readback_verified") is True
+            ):
+                raise DevelopmentDeliveryError(
+                    "PR creation requires a provider-read Jira QA Automation "
+                    "Assessment subtask receipt for this project"
+                )
         work_item_raw = str(current.get("work_item") or "").strip()
         if work_item_raw:
             work_item = Path(work_item_raw).expanduser().resolve()
