@@ -1037,6 +1037,18 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/auto-dev-health/SKILL.md",
         },
         {
+            "id": "auto-dev-dep-updater",
+            "name": "Auto-Dev Dep Updater",
+            "description": "Operate one repository's dependency-update lane: one Renovate PR per run, proven against the dependency contract suites, merged under written per-repo authority or repaired to green first.",
+            "source": "harness/skills/auto-dev-dep-updater/SKILL.md",
+        },
+        {
+            "id": "auto-dev-continuous-release",
+            "name": "Auto-Dev Continuous Release",
+            "description": "Operate one project's own-PR continuous-delivery loop: one operator PR per run through review, finalize, and merge, then the project release program and documentation run.",
+            "source": "harness/skills/auto-dev-continuous-release/SKILL.md",
+        },
+        {
             "id": "develop",
             "name": "Develop",
             "description": "Run one or many programming tasks through the canonical project-configured development-delivery program.",

@@ -34,6 +34,21 @@ Auto-Dev over the Development Delivery engine; bug/RCA/QA/log investigation
 uses `auto-dev-detective`. Before each workflow, load its ordered
 root/domain/project Markdown policy sources and retain the effective fingerprint.
 
+## Auto-Dev Dependency Updates
+
+Route Renovate or Dependabot dependency-update pull requests to
+`auto-dev-dep-updater` even when the user does not name it. Merge authority
+and contract-suite gating come from the project's `dep_updater:` profile
+block; see `harness/shared_factory/04-workflows/auto-dev-project-profile.md`.
+
+## Auto-Dev Continuous Release
+
+Route an operator's own pull request toward a governed merge-and-release
+loop through `auto-dev-continuous-release` even when the user does not name
+it. Merge, release, and documentation authority come from the project's
+`continuous_release:` and `release:` profile blocks; see
+`harness/shared_factory/04-workflows/auto-dev-project-profile.md`.
+
 ## Notification Contract
 
 Use `/notify` or the `notification-operator` skill only for a bounded,

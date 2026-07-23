@@ -1,0 +1,151 @@
+/**
+ * Agentic OS Command Center — design tokens.
+ *
+ * This file is the single source of truth for color, type, spacing, radius,
+ * elevation, motion, and layout constants across the app. It consolidates
+ * the drift that accumulated in src/renderer/styles.css (~150 ad hoc hex /
+ * px values) into one canonical `:root` scale.
+ *
+ * RULE: new styles use tokens, never raw hex/px literals. If a value you
+ * need is not here, it belongs in this file (extend a scale, don't hardcode
+ * around it) — bring it to review rather than inlining a one-off.
+ *
+ * The five legacy custom properties (--border, --muted, --panel,
+ * --panel-raised, --focus) are kept as compatibility aliases at the bottom
+ * so this sheet can be imported without breaking existing rules in
+ * styles.css. A later pass migrates styles.css onto the canonical names and
+ * retires the aliases.
+ *
+ * Full rationale, contrast ratios, consolidation map (legacy hex → token),
+ * component conventions, and data-viz standards: docs/DESIGN-SYSTEM.md
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---------------------------------------------------------------------
+   * Color — canonical scale
+   * Depths (bg-0 darkest chrome → bg-3) are for page/structural backgrounds.
+   * surface / surface-raised are for panels and cards drawn on top of a depth.
+   * Per-conversation model accents (openai/anthropic/unknown) are NOT here —
+   * they're computed at runtime via modelColor() in src/shared/presentation.ts
+   * as oklch(L C H) with hue 165/40/255. These tokens are the static system.
+   * ------------------------------------------------------------------- */
+  --color-bg-0: #090c11;
+  --color-bg-1: #0b0e13;
+  --color-bg-2: #0e1219;
+  --color-bg-3: #10151d;
+  --color-surface: #111720;
+  --color-surface-raised: #151b25;
+
+  --color-border-subtle: #242b36;
+  --color-border-default: #2c3541;
+  --color-border-strong: #313a47;
+
+  --color-text-primary: #edf1f7;
+  --color-text-secondary: #c6ced8;
+  --color-text-muted: #8e99a9;
+
+  --color-accent: #55d5a9;
+  --color-accent-strong: #7fe3c3;
+  --color-accent-muted: #78dbba;
+  --color-accent-soft: #83dbc0;
+
+  --color-warn: #edc568;
+  --color-warn-soft: #ffe0a3;
+
+  --color-danger: #ff8075;
+  --color-danger-soft: #ff9889;
+
+  --color-focus: var(--color-accent-strong);
+
+  /* ---------------------------------------------------------------------
+   * Typography
+   * ------------------------------------------------------------------- */
+  --font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  /* ---------------------------------------------------------------------
+   * Spacing — 4px base
+   * ------------------------------------------------------------------- */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-px-2: 2px; /* escape hatch for hairline gaps below the 4px grid */
+
+  /* ---------------------------------------------------------------------
+   * Radius
+   * ------------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* ---------------------------------------------------------------------
+   * Elevation / borders
+   * Shadows are black-alpha drop shadows for floating chrome (modals,
+   * palettes, composer). Colored glows (status dots, live indicators) are
+   * NOT tokens — use color-mix(in oklch, var(--color-accent) 50%, transparent)
+   * against the same color as the fill, matching the existing convention
+   * already used for --model-accent (see styles.css .model-rail).
+   * ------------------------------------------------------------------- */
+  --shadow-1: 0 16px 40px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 24px 80px rgba(0, 0, 0, 0.73);
+  --scrim: rgba(2, 5, 9, 0.55);
+
+  /* ---------------------------------------------------------------------
+   * Focus
+   * ------------------------------------------------------------------- */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* ---------------------------------------------------------------------
+   * Motion — restrained, no bounce
+   * ------------------------------------------------------------------- */
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---------------------------------------------------------------------
+   * Layout / sash
+   * ------------------------------------------------------------------- */
+  --sash-size: 6px;
+  --sash-hover: #7fe3c34d; /* --color-accent-strong @ ~30% alpha — matches the shipped resizable-shell code; see DESIGN-SYSTEM.md §2.13 */
+
+  /* ---------------------------------------------------------------------
+   * Z-index ladder
+   * ------------------------------------------------------------------- */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-overlay: 100;
+  --z-palette: 200;
+  --z-toast: 300;
+
+  /* ---------------------------------------------------------------------
+   * Compatibility aliases — legacy names used throughout styles.css today.
+   * Each resolves to the exact hex it already held, so importing this sheet
+   * changes zero pixels until styles.css is migrated to the canonical names.
+   * ------------------------------------------------------------------- */
+  --border: var(--color-border-subtle);       /* was #242b36 */
+  --muted: var(--color-text-muted);           /* was #8e99a9 */
+  --panel: var(--color-bg-3);                 /* was #10151d */
+  --panel-raised: var(--color-surface-raised);/* was #151b25 */
+  --focus: var(--color-focus);                /* was #7fe3c3 */
+}

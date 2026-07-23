@@ -9,12 +9,14 @@
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:contracts": "vitest run --config vitest.contracts.config.ts",
+    "check:contracts-coverage": "node scripts/check-contract-coverage.mjs",
     "build": "electron-vite build",
     "package:mac": "pnpm build && electron-builder --mac dir --arm64"
   },
   "dependencies": {
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
@@ -23,11 +25,11 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.2.0",
-    "electron": "43.1.1",
+    "electron": "43.2.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "typescript": "5.9.3",
-    "vite": "7.3.6",
+    "vite": "8.1.5",
     "vitest": "4.1.10"
   },
   "build": {

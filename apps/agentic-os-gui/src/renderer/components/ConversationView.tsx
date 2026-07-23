@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ConversationSummary, ConversationTranscript, StreamEvent } from "../../shared/contracts";
 import { formatMessageDate } from "../../shared/presentation";
+import { layoutBounds } from "../layout/layoutState";
+import { Sash } from "../layout/Sash";
 import { MetadataPanel } from "./MetadataPanel";
 
 interface Props {
@@ -13,6 +15,8 @@ interface Props {
   sending: boolean;
   operatorLabel: string;
   showMetadata: boolean;
+  railWidth: number;
+  onRailResize(next: number): void;
   sendMessage(prompt: string): Promise<void>;
   cancelMessage(): Promise<void>;
   openExternal(url: string): void;
@@ -35,7 +39,7 @@ function MarkdownMessage({ content, openExternal }: { content: string; openExter
   );
 }
 
-export function ConversationView({ conversation, transcript, loading, streamEvents, sending, operatorLabel, showMetadata, sendMessage, cancelMessage, openExternal }: Props) {
+export function ConversationView({ conversation, transcript, loading, streamEvents, sending, operatorLabel, showMetadata, railWidth, onRailResize, sendMessage, cancelMessage, openExternal }: Props) {
   const [prompt, setPrompt] = useState("");
   const liveText = useMemo(
     () => streamEvents.filter((event) => event.kind === "delta" && event.content).map((event) => event.content).join(""),
@@ -103,6 +107,17 @@ export function ConversationView({ conversation, transcript, loading, streamEven
             </div>
           </div>
         </section>
+        {showMetadata && (
+          <Sash
+            label="Resize linked work panel"
+            value={railWidth}
+            min={layoutBounds.railWidth.min}
+            max={layoutBounds.railWidth.max}
+            invert
+            onChange={onRailResize}
+            onReset={() => onRailResize(layoutBounds.railWidth.default)}
+          />
+        )}
         {showMetadata && <MetadataPanel conversation={conversation} onOpen={openExternal} />}
       </div>
     </main>
