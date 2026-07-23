@@ -1,0 +1,20 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-continuous-release
+title: Auto-Dev Continuous Release
+description: Take one operator-owned pull request through governed review, merge, project release, and documentation.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, development, continuous-delivery, release, documentation, sdlc]
+dependencies:
+  - skill:root:auto-dev-review-self
+  - skill:root:auto-dev-finalize
+  - skill:root:auto-dev-merge
+  - skill:root:auto-dev-release
+  - skill:root:auto-dev-document
+aliases: [harness/skills/auto-dev-continuous-release/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-continuous-release}
+validation: {commands: []}
+policy: {allow_implicit_invocation: true}

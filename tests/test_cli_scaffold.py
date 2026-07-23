@@ -545,6 +545,8 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
         "auto-dev-deploy",
         "auto-dev-closeout",
         "auto-dev-health",
+        "auto-dev-dep-updater",
+        "auto-dev-continuous-release",
         "os-cleaner",
         "pr-review",
         "pull-request",
@@ -568,6 +570,11 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
     installed_router = (root / "harness/ROUTER.md").read_text(encoding="utf-8")
     assert "Auto-Dev Everything" in installed_router
     assert "Auto-Dev Health" in installed_router
+    assert "Auto-Dev Dep Updater" in installed_router
+    assert "Auto-Dev Continuous Release" in installed_router
+    installed_agents = (root / "harness/AGENTS.md").read_text(encoding="utf-8")
+    assert "`auto-dev-dep-updater`" in installed_agents
+    assert "`auto-dev-continuous-release`" in installed_agents
     for skill_id in expected_skill_ids:
         assert (root / "lib/skills/root" / skill_id / "object.yml").is_file()
     library_registry = json.loads((root / "lib/registry/objects.json").read_text(encoding="utf-8"))
@@ -603,6 +610,10 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
         item for item in library_registry["objects"] if item["object_id"] == "program:root:auto-dev"
     )
     assert set(program["dependencies"]) <= object_ids
+    assert {
+        "skill:root:auto-dev-dep-updater",
+        "skill:root:auto-dev-continuous-release",
+    } <= set(program["dependencies"])
     doctor = artifact_contract_doctor(root)
     assert doctor["ok"] is True
     assert doctor["counts"]["files"] >= 25

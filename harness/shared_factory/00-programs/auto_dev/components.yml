@@ -97,6 +97,10 @@ skills:
     path: harness/skills/auto-dev-closeout/SKILL.md
   - id: auto-dev-health
     path: harness/skills/auto-dev-health/SKILL.md
+  - id: auto-dev-dep-updater
+    path: harness/skills/auto-dev-dep-updater/SKILL.md
+  - id: auto-dev-continuous-release
+    path: harness/skills/auto-dev-continuous-release/SKILL.md
   - id: object-library
     path: harness/skills/object-library/SKILL.md
 workflows:

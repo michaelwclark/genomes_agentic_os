@@ -41,6 +41,8 @@ dependencies:
   - skill:root:auto-dev-deploy
   - skill:root:auto-dev-closeout
   - skill:root:auto-dev-health
+  - skill:root:auto-dev-dep-updater
+  - skill:root:auto-dev-continuous-release
   - skill:root:object-library
   - workflow:root:library_self_hosting
 aliases:

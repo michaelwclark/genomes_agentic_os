@@ -31,6 +31,8 @@ dependencies:
   - skill:root:auto-dev-deploy
   - skill:root:auto-dev-closeout
   - skill:root:auto-dev-health
+  - skill:root:auto-dev-dep-updater
+  - skill:root:auto-dev-continuous-release
 aliases: [harness/skills/auto-dev/SKILL.md]
 runtime: {root: runtime/objects/skills/skill/root/auto-dev}
 validation: {commands: []}

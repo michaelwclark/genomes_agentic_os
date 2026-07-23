@@ -353,6 +353,14 @@ MANAGED_RESOURCE_TREES = (
         "lib/skills/root/auto-dev-health",
     ),
     (
+        "harness/skills/auto-dev-dep-updater",
+        "lib/skills/root/auto-dev-dep-updater",
+    ),
+    (
+        "harness/skills/auto-dev-continuous-release",
+        "lib/skills/root/auto-dev-continuous-release",
+    ),
+    (
         "harness/skills/os-cleaner",
         "lib/skills/root/os-cleaner",
     ),
@@ -1431,6 +1439,8 @@ After choosing a domain or narrower layer, change to that directory and read its
 | Bug, QA failure, ticket comment, log, alert, incident, suspected cause, or RCA | Auto-Dev Detective |
 | Jira, Linear, Notion, Confluence, GitHub, Slack, RCA, report, or local artifact authoring | Auto-Dev Create Artifacts |
 | Take one tracker item through every applicable SDLC step | Auto-Dev Everything |
+| Renovate or Dependabot dependency-update pull request | Auto-Dev Dep Updater |
+| Our pull request through governed merge, release, and documentation | Auto-Dev Continuous Release |
 | Implement, review, validate, release, deploy, or close out code | Auto-Dev over Development Delivery |
 | Audit receipts and retire reconstructable local resources after verified delivery | Auto-Dev Health |
 
@@ -1488,6 +1498,12 @@ governed provider output, and Auto-Dev over Development Delivery for coding
 through release. Invoke them by intent; the user does not need to remember the
 program name. Resolve root → domain → project → invocation Markdown policies
 before each workflow.
+
+Route Renovate or Dependabot pull requests through `auto-dev-dep-updater`.
+Route our own pull requests that should continue through merge, release, and
+documentation through `auto-dev-continuous-release`. Their authority comes
+from the routed project's `dep_updater`, `continuous_release`, and `release`
+policy blocks.
 
 ## Adaptive Observe Receipt
 
@@ -1682,6 +1698,8 @@ the source of truth by themselves.
 | `auto-dev-deploy` | Deploy or monitor the exact artifact and verify behavior. | `skills/auto-dev-deploy/SKILL.md` |
 | `auto-dev-closeout` | Reconcile provider state and prove delivery complete. | `skills/auto-dev-closeout/SKILL.md` |
 | `auto-dev-health` | Audit final receipts, prune scoped local resources, and preserve the packet in the finished lane. | `skills/auto-dev-health/SKILL.md` |
+| `auto-dev-dep-updater` | Take one Renovate or Dependabot pull request through project-configured validation and governed merge. | `skills/auto-dev-dep-updater/SKILL.md` |
+| `auto-dev-continuous-release` | Take one of our pull requests through governed merge, project release, and documentation. | `skills/auto-dev-continuous-release/SKILL.md` |
 
 ## Commands
 

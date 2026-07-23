@@ -697,6 +697,24 @@ skills:
     builtin: true
     bootstrap: false
     purpose: Audit final receipts, remove reconstructable local resources, and finish the preserved work packet.
+  - id: auto-dev-dep-updater
+    title: Auto-Dev Dep Updater
+    source_path: harness/skills/auto-dev-dep-updater
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-dep-updater
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Take one dependency-update pull request through project-configured validation and governed merge.
+  - id: auto-dev-continuous-release
+    title: Auto-Dev Continuous Release
+    source_path: harness/skills/auto-dev-continuous-release
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-continuous-release
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Take one operator-owned pull request through governed merge, project release, and documentation.
   - id: object-library
     title: Object Library
     source_path: harness/skills/object-library
