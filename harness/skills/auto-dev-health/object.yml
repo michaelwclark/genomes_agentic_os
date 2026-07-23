@@ -18,4 +18,3 @@ interface:
   default_prompt: "Use $auto-dev-health on this existing delivered work item to audit receipts, preserve its resume manifest, remove only reconstructable local resources, and finish the packet."
 policy:
   allow_implicit_invocation: true
-

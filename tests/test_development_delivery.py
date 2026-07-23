@@ -1392,6 +1392,371 @@ def test_local_validation_ci_deferral_blocks_without_profile_authority(tmp_path:
         )
 
 
+@pytest.mark.parametrize(
+    ("base_allows", "selected_allows"),
+    [(True, False), (False, True)],
+)
+def test_ci_deferral_uses_frozen_selected_repository_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_allows: bool,
+    selected_allows: bool,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["validation"]["ci_fallback_on_environment_failure"] = base_allows
+    profile["repository"] = {
+        "selection_required": True,
+        "catalog": [
+            {
+                "id": "selected",
+                "root": str(repo),
+                "base_branch": "main",
+                "profile_overrides": {
+                    "validation": {
+                        "ci_fallback_on_environment_failure": selected_allows
+                    }
+                },
+            }
+        ],
+    }
+    profile_path.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "ci-selected",
+            "path": "/tmp/ci-selected",
+            "branch": "feature/ci-selected",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-CI-SELECTED"],
+        run_id=f"ci-selected-{base_allows}-{selected_allows}",
+        repository_id="selected",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    frozen = json.loads(Path(task.read()["policy_receipt"]).read_text(encoding="utf-8"))
+    assert (
+        frozen["selected_profile"]["validation"][
+            "ci_fallback_on_environment_failure"
+        ]
+        is selected_allows
+    )
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={
+            "planned": _stage_receipt(
+                tmp_path / f"readiness-{base_allows}-{selected_allows}",
+                "planned",
+            )
+        },
+        idempotency_prefix=f"ci-selected:{base_allows}:{selected_allows}:readiness",
+    )
+
+    # Drift both the base and selected override after launch. The immutable
+    # effective-policy receipt, not this mutable YAML, remains authoritative.
+    profile["validation"]["ci_fallback_on_environment_failure"] = not selected_allows
+    profile["repository"]["catalog"][0]["profile_overrides"]["validation"][
+        "ci_fallback_on_environment_failure"
+    ] = not selected_allows
+    profile_path.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
+    unavailable = {
+        "compileall": "passed",
+        "unavailable_check": {
+            "command": "pytest tests/test_changed_behavior.py",
+            "classification": "infrastructure",
+            "reason": "private test dependency is unavailable locally",
+        },
+    }
+    receipts = {
+        "implementing": _stage_receipt(
+            tmp_path / f"implementation-{base_allows}-{selected_allows}",
+            "implementing",
+        ),
+        "local_validation": _stage_receipt(
+            tmp_path / f"implementation-{base_allows}-{selected_allows}",
+            "local_validation",
+            evidence=unavailable,
+            status="deferred_to_ci",
+        ),
+    }
+    if selected_allows:
+        result = run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts=receipts,
+            idempotency_prefix=(
+                f"ci-selected:{base_allows}:{selected_allows}:implementation"
+            ),
+        )
+        assert result["state"] == "local_validation"
+    else:
+        with pytest.raises(DevelopmentDeliveryError, match="enables ci_fallback"):
+            run_development_stage(
+                task.path,
+                stage="implementation",
+                receipts=receipts,
+                idempotency_prefix=(
+                    f"ci-selected:{base_allows}:{selected_allows}:implementation"
+                ),
+            )
+
+
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    [
+        ("missing", "pinned effective policy receipt is missing"),
+        ("missing_ref", "pinned effective policy receipt reference is missing"),
+        ("inner_tamper", "fingerprint does not match its contents"),
+        ("empty_validation", "enables ci_fallback"),
+    ],
+)
+def test_ci_deferral_fails_closed_for_frozen_policy_corruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    corruption: str,
+    message: str,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["validation"]["ci_fallback_on_environment_failure"] = True
+    profile["repository"] = {
+        "selection_required": True,
+        "catalog": [
+            {
+                "id": "selected",
+                "root": str(repo),
+                "base_branch": "main",
+                "profile_overrides": {
+                    "validation": {
+                        "ci_fallback_on_environment_failure": False
+                    }
+                },
+            }
+        ],
+    }
+    profile_path.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "ci-corruption",
+            "path": "/tmp/ci-corruption",
+            "branch": "feature/ci-corruption",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        [f"CC-CI-{corruption}"],
+        run_id=f"ci-corruption-{corruption}",
+        repository_id="selected",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    run_development_stage(
+        task.path,
+        stage="readiness",
+        receipts={
+            "planned": _stage_receipt(
+                tmp_path / f"corruption-{corruption}", "planned"
+            )
+        },
+        idempotency_prefix=f"ci-corruption:{corruption}:readiness",
+    )
+    policy_path = Path(task.read()["policy_receipt"])
+    if corruption == "missing":
+        policy_path.unlink()
+    elif corruption == "missing_ref":
+        task_value = task.read()
+        task_value["policy_receipt"] = ""
+        task.path.write_text(
+            json.dumps(task_value, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        frozen = json.loads(policy_path.read_text(encoding="utf-8"))
+        frozen["selected_profile"]["validation"] = (
+            {"ci_fallback_on_environment_failure": True}
+            if corruption == "inner_tamper"
+            else {}
+        )
+        selected_payload = {
+            key: value
+            for key, value in frozen["selected_profile"].items()
+            if key != "sha256"
+        }
+        frozen["selected_profile"]["sha256"] = delivery._json_sha256(
+            selected_payload
+        )
+        if corruption == "empty_validation":
+            frozen["fingerprint"] = delivery._effective_policy_snapshot_fingerprint(
+                frozen
+            )
+            task_value = task.read()
+            task_value["policy_fingerprint"] = frozen["fingerprint"]
+            task.path.write_text(
+                json.dumps(task_value, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        policy_path.write_text(
+            json.dumps(frozen, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    unavailable = {
+        "compileall": "passed",
+        "unavailable_check": {
+            "command": "pytest tests/test_changed_behavior.py",
+            "classification": "infrastructure",
+            "reason": "private test dependency is unavailable locally",
+        },
+    }
+    with pytest.raises(DevelopmentDeliveryError, match=message):
+        run_development_stage(
+            task.path,
+            stage="implementation",
+            receipts={
+                "implementing": _stage_receipt(
+                    tmp_path / f"corruption-{corruption}", "implementing"
+                ),
+                "local_validation": _stage_receipt(
+                    tmp_path / f"corruption-{corruption}",
+                    "local_validation",
+                    evidence=unavailable,
+                    status="deferred_to_ci",
+                ),
+            },
+            idempotency_prefix=f"ci-corruption:{corruption}:implementation",
+        )
+
+
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    [
+        ("selected_profile", "fingerprint does not match its contents"),
+        ("policy_body", "changed auto_dev content"),
+        (
+            "folder_profile",
+            "changed repository folder profile content",
+        ),
+    ],
+)
+def test_resume_rejects_corrupted_effective_policy_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    corruption: str,
+    message: str,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    policy_source = project / "config" / "auto_dev" / "00-frozen-policy.md"
+    policy_source.parent.mkdir(parents=True, exist_ok=True)
+    policy_source.write_text(
+        "# Frozen Auto-Dev policy\n\nPreserve this exact body.\n",
+        encoding="utf-8",
+    )
+    folder_profile = repo / "auto_dev" / "profile.yml"
+    folder_profile.parent.mkdir(parents=True, exist_ok=True)
+    folder_profile.write_text(
+        yaml.safe_dump(
+            {
+                "api_version": "auto-dev-folder/v1",
+                "identity": {"domain": "acme", "project": "app"},
+                "lifecycle": {
+                    "build": {"command": "make build"},
+                    "validate": {"commands": ["make test"]},
+                    "release": {"required": True},
+                    "document": {"required": True},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "policy-resume",
+            "path": "/tmp/policy-resume",
+            "branch": "feature/policy-resume",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-POLICY-RESUME"],
+        run_id="policy-resume",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    policy_path = Path(task.read()["policy_receipt"])
+    frozen = json.loads(policy_path.read_text(encoding="utf-8"))
+    if corruption == "selected_profile":
+        frozen["selected_profile"]["validation"][
+            "ci_fallback_on_environment_failure"
+        ] = False
+        frozen["selected_profile"]["sha256"] = delivery._json_sha256(
+            {
+                key: value
+                for key, value in frozen["selected_profile"].items()
+                if key != "sha256"
+            }
+        )
+    elif corruption == "policy_body":
+        frozen["planes"]["auto_dev"]["sources"][0]["body_markdown"] = (
+            "Tampered policy body.\n"
+        )
+    else:
+        frozen["folder_profile"]["lifecycle"]["build"]["command"] = (
+            "make unreviewed-package"
+        )
+    policy_path.write_text(
+        json.dumps(frozen, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match=message,
+    ):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-POLICY-RESUME"],
+            run_id="policy-resume",
+            auto_dev_mode="everything",
+            selected_work_item=Path(task.read()["work_item"]),
+            apply=True,
+        )
+
+
 def test_real_worktree_uses_exact_remote_base_and_project_storage(tmp_path: Path) -> None:
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
@@ -1813,6 +2178,69 @@ def test_default_auto_dev_cannot_stop_before_pr_create(
     assert "default Auto-Dev workflow must include PR Create" in capsys.readouterr().err
 
 
+def test_same_mode_resume_keeps_frozen_workflow_boundary_after_profile_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["auto_dev"] = {
+        "everything": {
+            "start_stage": "readiness",
+            "completion_stage": "health",
+        }
+    }
+    profile_path.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "frozen-boundary",
+            "path": "/tmp/frozen-boundary",
+            "branch": "feature/frozen-boundary",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-FROZEN-BOUNDARY"],
+        run_id="frozen-boundary",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    profile["auto_dev"]["everything"]["start_stage"] = "groom"
+    profile_path.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
+
+    delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-FROZEN-BOUNDARY"],
+        run_id="frozen-boundary",
+        auto_dev_mode="everything",
+        selected_work_item=Path(task.read()["work_item"]),
+        apply=True,
+    )
+    projection = read_auto_dev_state(task.read()["autodev_path"])
+    portfolio = json.loads(
+        (task.path.parents[2] / "portfolio.json").read_text(encoding="utf-8")
+    )
+    assert projection["start_stage"] == "readiness"
+    assert projection["completion_stage"] == "health"
+    assert portfolio["auto_dev"]["start_stage"] == "readiness"
+    assert portfolio["auto_dev"]["completion_stage"] == "health"
+
+
 def test_pr_create_requires_configured_jira_qa_assessment_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1963,6 +2391,7 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
         receipts={"planned": _stage_receipt(tmp_path, "planned")},
         idempotency_prefix="cc-48:readiness",
     )
+    before_resume = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
     resumed = delivery.start_development_run(
         root,
         "acme",
@@ -1980,6 +2409,14 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     projection = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
     assert projection["requested_stage"] == "document"
     assert projection["current_stage"] == "document"
+    assert projection["start_stage"] == before_resume["start_stage"]
+    assert projection["completion_stage"] == before_resume["completion_stage"]
+    assert projection["stage_policies"] == before_resume["stage_policies"]
+    assert projection["stages"]["readiness"]["status"] == "completed"
+    assert (
+        projection["stages"]["readiness"]["receipt_refs"]
+        == before_resume["stages"]["readiness"]["receipt_refs"]
+    )
 
     assert main(
         [
@@ -1997,7 +2434,162 @@ def test_progressed_run_resumes_and_single_stage_retargets_same_projection(
     retargeted = read_auto_dev_state(TaskState(task_path).read()["autodev_path"])
     assert retargeted["requested_stage"] == "groom"
     assert retargeted["current_stage"] == "groom"
+    assert retargeted["start_stage"] == before_resume["start_stage"]
+    assert retargeted["completion_stage"] == before_resume["completion_stage"]
+    assert retargeted["stages"]["readiness"]["status"] == "completed"
+    assert (
+        retargeted["stages"]["readiness"]["receipt_refs"]
+        == before_resume["stages"]["readiness"]["receipt_refs"]
+    )
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("action", "target"),
+    [
+        ("pr-create", "pr_create"),
+        ("merge", "merge"),
+        ("deploy", "deploy"),
+        ("closeout", "closeout"),
+    ],
+)
+def test_single_stage_external_action_preserves_window_and_predecessor_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+    target: str,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-stage-gate",
+            "path": "/tmp/cc-stage-gate",
+            "branch": "feature/cc-stage-gate",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-STAGE-GATE"],
+        run_id=f"single-stage-gate-{target}",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _record_standalone_stage(task, "groom")
+    state_ref = task.read()["autodev_path"]
+    before = read_auto_dev_state(state_ref)
+
+    assert main(
+        [
+            "auto-dev",
+            action,
+            "--state",
+            state_ref,
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+    after = read_auto_dev_state(state_ref)
+    assert after["start_stage"] == before["start_stage"]
+    assert after["completion_stage"] == before["completion_stage"]
+    assert after["stages"]["groom"]["status"] == "completed"
+    assert (
+        after["stages"]["groom"]["receipt_refs"]
+        == before["stages"]["groom"]["receipt_refs"]
+    )
+    with pytest.raises(AutoDevStateError, match="detective"):
+        auto_dev.require_auto_dev_predecessors(state_ref, target)
+
+
+def test_legacy_target_only_single_stage_expands_before_external_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "legacy-target-only",
+            "path": "/tmp/legacy-target-only",
+            "branch": "feature/legacy-target-only",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-LEGACY-TARGET"],
+        run_id="legacy-target-only",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    _record_standalone_stage(task, "groom")
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"].update(
+        {
+            "mode": "single_stage",
+            "requested_stage": "document",
+            "start_stage": "document",
+            "completion_stage": "document",
+        }
+    )
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    task_value = task.read()
+    task_value.update(
+        {
+            "auto_dev_mode": "single_stage",
+            "requested_stage": "document",
+            "auto_dev_start_stage": "document",
+            "auto_dev_completion_stage": "document",
+        }
+    )
+    task.path.write_text(
+        json.dumps(task_value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    sync_delivery_projection(task.path)
+
+    assert main(
+        [
+            "auto-dev",
+            "merge",
+            "--state",
+            task.read()["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    capsys.readouterr()
+    repaired = read_auto_dev_state(task.read()["autodev_path"])
+    assert repaired["start_stage"] == list(AUTO_DEV_STAGE_ORDER)[0]
+    assert repaired["completion_stage"] == "merge"
+    with pytest.raises(AutoDevStateError, match="detective"):
+        auto_dev.require_auto_dev_predecessors(
+            task.read()["autodev_path"], "merge"
+        )
 
 
 def test_delivery_projection_failure_is_non_canonical_and_transition_still_succeeds(
@@ -2524,6 +3116,20 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
     project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    safe_order = list(AUTO_DEV_STAGE_ORDER)
+    safe_order[1], safe_order[2] = safe_order[2], safe_order[1]
+    profile["auto_dev"] = {
+        "stage_order": safe_order,
+        "everything": {
+            "start_stage": "readiness",
+            "completion_stage": "health",
+        },
+    }
+    profile_path.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
     missing_worktree = project / "worktrees" / "cc-54"
     monkeypatch.setattr(
         delivery,
@@ -2645,13 +3251,56 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
 
     qa_receipt = work_item / before_health["stages"]["qa"]["receipt_refs"][0]
     qa_bytes = qa_receipt.read_bytes()
+    projection_path = work_item / "autodev.json"
+    configured_projection_bytes = projection_path.read_bytes()
+    legacy_target_only = json.loads(configured_projection_bytes)
+    legacy_target_only.update(
+        {
+            "mode": "single_stage",
+            "requested_stage": "health",
+            "start_stage": "health",
+            "completion_stage": "health",
+        }
+    )
+    projection_path.write_text(
+        json.dumps(legacy_target_only, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     qa_receipt.unlink()
     with pytest.raises(AutoDevStateError, match="every earlier stage"):
         prepare_auto_dev_health(work_item / "autodev.json", apply=True)
     assert not (work_item / "artifacts" / "auto-dev-health" / "preflight.json").exists()
     qa_receipt.write_bytes(qa_bytes)
+    projection_path.write_bytes(configured_projection_bytes)
 
-    prepared = prepare_auto_dev_health(work_item / "autodev.json", apply=True)
+    statuses_before_health = {
+        stage: {
+            "status": before_health["stages"][stage]["status"],
+            "receipt_refs": before_health["stages"][stage]["receipt_refs"],
+        }
+        for stage in AUTO_DEV_STAGE_ORDER
+        if stage != "health"
+    }
+    assert main(
+        [
+            "auto-dev",
+            "health",
+            "--state",
+            str(work_item / "autodev.json"),
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    prepared = json.loads(capsys.readouterr().out)
+    projected_after_health_launch = read_auto_dev_state(work_item / "autodev.json")
+    for stage, expected in statuses_before_health.items():
+        assert projected_after_health_launch["stages"][stage]["status"] == expected["status"]
+        assert (
+            projected_after_health_launch["stages"][stage]["receipt_refs"]
+            == expected["receipt_refs"]
+        )
     preflight_path = Path(prepared["preflight_ref"])
     resume_text = (
         work_item / "artifacts" / "auto-dev-health" / "RESUME.md"
@@ -2689,6 +3338,20 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     ) == []
     preflight_ref = preflight_path.relative_to(work_item).as_posix()
     prepared_payload = json.loads(preflight_path.read_text(encoding="utf-8"))
+    audit_stages = [
+        row["stage"]
+        for row in json.loads(
+            (
+                work_item
+                / prepared_payload["receipt_audit"]["ref"]
+            ).read_text(encoding="utf-8")
+        )["stages"]
+    ]
+    assert audit_stages == [
+        stage
+        for stage in safe_order[safe_order.index("readiness") :]
+        if stage != "health"
+    ]
     packet_manifest = work_item / prepared_payload["packet_manifest"]["ref"]
     packet_manifest_bytes = packet_manifest.read_bytes()
     packet_manifest_payload = json.loads(packet_manifest_bytes)

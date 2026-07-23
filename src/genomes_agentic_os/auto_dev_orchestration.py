@@ -342,6 +342,26 @@ def auto_dev_workflow_window(
     return order[start : completion + 1]
 
 
+def configured_auto_dev_workflow_stages(
+    current: Mapping[str, Any], *, include_health: bool = True
+) -> list[str]:
+    """Return the frozen configured workflow slice for one projected item."""
+
+    stage_order = list(current.get("stage_order") or AUTO_DEV_STAGE_ORDER)
+    active = auto_dev_workflow_window(
+        stage_order,
+        str(current.get("start_stage") or stage_order[0]),
+        str(current.get("completion_stage") or stage_order[-1]),
+    )
+    if current.get("mode") == "single_stage" and len(active) == 1:
+        # PR83 preview state could persist health -> health and thereby make
+        # Health audit an empty predecessor set. Treat every target-only
+        # single-stage window as legacy state whose safe lower bound is the
+        # first frozen stage.
+        active = stage_order[: stage_order.index(active[0]) + 1]
+    return active if include_health else [stage for stage in active if stage != "health"]
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -732,7 +752,10 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
         for name, row in stages.items():
             policy = stage_policies.get(name, {"applicability": "required"})
             row["applicability"] = policy["applicability"]
-            if name not in active_stages:
+            if name not in active_stages and not (
+                row.get("status") in TERMINAL_STAGE_STATUSES
+                and row.get("receipt_refs")
+            ):
                 row.update({"status": "out_of_scope", "next_action": None})
             elif (
                 row.get("status") not in TERMINAL_STAGE_STATUSES
@@ -1701,6 +1724,14 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
         str(current.get("start_stage") or stage_order[0]),
         str(current.get("completion_stage") or stage_order[-1]),
     )
+    if (
+        current.get("mode") == "single_stage"
+        and active_order == [name]
+    ):
+        # Defense in depth for unsafe v2 previews that persisted target-only
+        # bounds. A named external mutation never gets a vacuous predecessor
+        # slice merely because old state collapsed its durable window.
+        active_order = stage_order[: stage_order.index(name) + 1]
     if name not in active_order:
         raise AutoDevStateError(f"{name} is outside this Auto-Dev workflow boundary")
     for predecessor in active_order[: active_order.index(name)]:
@@ -1995,7 +2026,10 @@ def _validate_health_precleanup_audit(
         raise AutoDevStateError("health preflight receipt_audit hash no longer matches")
     audit = _read_json(path)
     stages = audit.get("stages") if isinstance(audit.get("stages"), list) else []
-    expected_stages = list(AUTO_DEV_STAGE_ORDER[:-1])
+    current = read_auto_dev_state(work_item / "autodev.json")
+    expected_stages = configured_auto_dev_workflow_stages(
+        current, include_health=False
+    )
     merge_descriptor = {
         "ref": preflight.get("merge_receipt_ref"),
         "sha256": preflight.get("merge_receipt_sha256"),
@@ -2024,7 +2058,7 @@ def _validate_health_precleanup_audit(
     validate_auto_dev_packet_manifest(
         preflight,
         work_item,
-        current=read_auto_dev_state(work_item / "autodev.json"),
+        current=current,
         verify_live_files=verify_packet_files,
     )
     for row in stages:
@@ -2423,9 +2457,9 @@ def prepare_auto_dev_health(
     stages = current.get("stages") if isinstance(current.get("stages"), Mapping) else {}
     missing_stages: list[str] = []
     stage_sources: list[tuple[str, str, Path]] = []
-    for stage in current.get("stage_order") or AUTO_DEV_STAGE_ORDER:
-        if stage == "health":
-            continue
+    for stage in configured_auto_dev_workflow_stages(
+        current, include_health=False
+    ):
         row = stages.get(stage) if isinstance(stages.get(stage), Mapping) else {}
         status = str(row.get("status") or "")
         if status not in TERMINAL_STAGE_STATUSES:
@@ -2820,9 +2854,10 @@ def _validate_health_evidence(
     stages = current.get("stages") if isinstance(current.get("stages"), Mapping) else {}
     incomplete = [
         str(stage)
-        for stage in current.get("stage_order") or AUTO_DEV_STAGE_ORDER
-        if stage != "health"
-        and (
+        for stage in configured_auto_dev_workflow_stages(
+            current, include_health=False
+        )
+        if (
             not isinstance(stages.get(stage), Mapping)
             or stages[stage].get("status") not in TERMINAL_STAGE_STATUSES
             or not stages[stage].get("receipt_refs")

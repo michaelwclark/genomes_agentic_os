@@ -2126,12 +2126,16 @@ def _health_cleanup_gate(
     audit = _read_json_object(audit_path, "Health pre-cleanup receipt audit")
     audit_stages = audit.get("stages") if isinstance(audit.get("stages"), list) else []
     from .auto_dev_orchestration import (
-        AUTO_DEV_STAGE_ORDER,
+        configured_auto_dev_workflow_stages,
+        read_auto_dev_state,
         _validate_health_stage_source,
         validate_auto_dev_packet_manifest,
     )
 
-    expected_stages = list(AUTO_DEV_STAGE_ORDER[:-1])
+    projected = read_auto_dev_state(packet / "autodev.json")
+    expected_stages = configured_auto_dev_workflow_stages(
+        projected, include_health=False
+    )
     if not (
         audit.get("schema") == "auto-dev-health-receipt-audit/v1"
         and audit.get("work_item_id") == preflight.get("work_item_id")

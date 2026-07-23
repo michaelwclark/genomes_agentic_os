@@ -112,6 +112,8 @@ def _health_gate(
     *,
     managed_runtime: bool = False,
     runtime_collision: bool = False,
+    stage_order: list[str] | None = None,
+    start_stage: str | None = None,
 ) -> tuple[Path, Path]:
     packet = (
         root
@@ -284,6 +286,7 @@ def _health_gate(
             "identity": "not-managed",
         }
     )
+    configured_order = list(stage_order or AUTO_DEV_STAGE_ORDER)
     task_state.write_text(
         json.dumps(
             {
@@ -296,7 +299,9 @@ def _health_gate(
                 "goal": "delivery_complete",
                 "auto_dev_mode": "everything",
                 "requested_stage": None,
-                "auto_dev_stage_order": list(AUTO_DEV_STAGE_ORDER),
+                "auto_dev_stage_order": configured_order,
+                "auto_dev_start_stage": start_stage or configured_order[0],
+                "auto_dev_completion_stage": "health",
                 "work_item": str(packet),
                 "autodev_path": str(packet / "autodev.json"),
                 "subject_revision": subject_revision,
@@ -540,6 +545,35 @@ def test_merged_cleanup_uses_exact_git_worktree_removal(tmp_path: Path) -> None:
         text=True,
     ).stdout
     assert str(worktree) not in listed
+
+
+def test_cleanup_accepts_configured_later_health_window_and_safe_order(
+    tmp_path: Path,
+) -> None:
+    root, _, worktree = _cleanup_fixture(tmp_path, {"pr_state": "merged"})
+    safe_order = list(AUTO_DEV_STAGE_ORDER)
+    safe_order[1], safe_order[2] = safe_order[2], safe_order[1]
+    preflight, runtime = _health_gate(
+        root,
+        worktree,
+        stage_order=safe_order,
+        start_stage="readiness",
+    )
+
+    result = cleanup_terminal_worktrees(
+        root,
+        domain="acme",
+        project="app",
+        worktree="feature",
+        health_preflight=preflight,
+        runtime_receipt=runtime,
+        apply=True,
+        remove_files=True,
+    )
+
+    assert not worktree.exists()
+    assert _registered(root) == []
+    assert len(result["closed"]) == 1
 
 
 def test_clean_worktree_with_diverged_head_blocks_physical_cleanup(tmp_path: Path) -> None:
