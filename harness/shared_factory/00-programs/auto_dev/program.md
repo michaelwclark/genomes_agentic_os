@@ -2,10 +2,10 @@
 
 ![Auto-Dev program flow](assets/auto-dev-program.svg)
 
-> **Outcome:** one polymorphic SDLC program—from signal or idea to verified
-> evidence, excellent artifacts, production-quality implementation, clean
-> review, release/deployment proof, delivery closeout, and a preserved finished
-> packet after conservative lifecycle cleanup.
+> **Outcome:** one polymorphic SDLC program whose project profile defines how
+> far Default and Everything run—from implementation plus a PR at minimum to a
+> complete versioned production release—while preserving typed evidence and a
+> resumable work packet.
 
 Operator documentation: [Auto-Dev — Canonical SDLC Program](https://www.notion.so/3a3683b48dab81b88875f5ec875dab3e)
 in Genome's Notion. Local definitions and typed receipts remain authoritative.
@@ -22,7 +22,7 @@ specialize each workflow without forking shared code.
 
 | Order | Workflow | Use it for | Manual entrypoint | Terminal handoff |
 | --- | --- | --- | --- | --- |
-| all | Everything | take each ticket through the full ordered lifecycle | `/auto-dev-everything` | Health receipt after `delivery_complete`, or exact blocker |
+| all | Everything | take each ticket through the project's configured workflow boundary | `/auto-dev-everything` | configured completion-stage receipt, or exact blocker |
 | 1 | Groom | turn intent into implementation-ready truth | `/auto-dev-grooming` | groom receipt |
 | 2 | Detective | bug, QA/log/alert/ticket-comment analysis and RCA | `/auto-dev-detective` | evidence packet, investigation report, or typed policy decision |
 | 3 | Create Artifacts | Jira/Linear/Notion/Confluence/GitHub/Slack/filesystem output | `/auto-dev-create-artifacts` | validated/read-back artifact or typed policy decision |
@@ -40,11 +40,18 @@ specialize each workflow without forking shared code.
 | 15 | Closeout | reconcile provider and delivery state | `/auto-dev-closeout` | `delivery_complete` |
 | 16 | Health | audit receipts, remove exact reconstructable resources, and preserve the finished packet | `/auto-dev-health` | Health receipt and resume manifest |
 
-This order is exact and cannot be reordered by a domain, project, invocation,
-or automation. Any workflow may still be called by itself, but when it belongs
-to an Auto-Dev item its predecessors must already be terminal and
-receipt-backed. Everything records a terminal result for every stage before
-Health; it does not omit an inapplicable row.
+This is the shared safe order. A project may reorder it only when all required
+lifecycle precedence edges remain intact. Any workflow may still be called by
+itself, but when it belongs to an Auto-Dev item its active predecessors must
+already be terminal and receipt-backed. Stages outside the configured
+start/completion boundary are recorded as `out_of_scope`, not invented as
+complete.
+
+Each project declares stage applicability as `required`, `contextual`, or
+`disabled`. Required stages must complete. Contextual and disabled stages that
+fall inside the active workflow need a typed policy decision before they can be
+`not_required`. This makes today's skip explicit and lets the project enable the
+stage later without changing the shared program.
 
 ## Object Library self-hosting profile
 
@@ -86,6 +93,12 @@ next run and appears in the fingerprint.
 ## Invocation model
 
 - **Implicit chat route:** intent phrases in `ROUTER.md` select the workflow.
+- **Bare Auto-Dev:** `agentic-os auto-dev default ...` starts the project's
+  Default window. The shared default is Readiness through PR Create, and a
+  project cannot configure it to stop before PR Create.
+- **Everything:** `agentic-os auto-dev everything ...` starts the project's
+  Everything window. Everything is project-relative; release and deploy run
+  only when they are inside that configured window.
 - **Manual:** every workflow exposes a named command/skill and resumes the same
   task state/run packet. `agentic-os auto-dev <verb>` is the CLI grammar.
 - **Sub-workflow:** programs pass explicit evidence and receipt references.
@@ -195,10 +208,29 @@ and derived author kind to match the open/ready/merged provider chain.
 domain, project, stage, reason, decision maker, policy fingerprint, timestamp,
 and a SHA-256 reference to the delivery run's exact frozen effective-policy
 receipt. Recording copies both the policy source and decision into immutable,
-packet-local hashed proof. Standalone `not_required` is limited to Detective,
-Create Artifacts, Review Others, Finalize, and Release; Release Propagation and
-Deploy use the same typed decision through Development Delivery. Every other
-stage must complete.
+packet-local hashed proof. The frozen project stage policy determines whether
+`not_required` is legal. Detective, Create Artifacts, Document, Review Others,
+QA, Finalize, and Release may be contextual or disabled. Delivery-managed
+stages retain their own typed decision path. Develop, PR Create, Review Self,
+Merge, Closeout, and Health are never silently skipped when they are inside the
+active workflow.
+
+## LOS Django QA child delivery
+
+The LOS Django project stops Auto-Dev Everything at Merge; Release and Deploy
+belong to the separate LOS release event. Ticket-level Document is currently
+disabled by project policy but remains available to enable later.
+
+When the application PR opens, Auto-Dev always creates a Jira QA Automation
+Assessment subtask under the root Jira. The assessment may end in a typed skip
+when browser automation adds no meaningful coverage. When it is required, the
+subtask owns a child Auto-Dev delivery in
+`Lenders-Cooperative/los-qa-automation`: analyze the application diff and the
+Django `qa-analysis` skill, name the exact `tests/jira/<PARENT>/` spec and
+README plus any pages/helpers/fixtures, create a branch and PR, run Playwright,
+and bind the child PR and checks back to the parent. Direct pushes to `main` are
+not part of this delivery. The parent QA gate waits for the configured child
+completion or the accepted typed skip.
 
 Once Health finishes, the completed packet is immutable history. A QA follow-up
 does not edit it or reuse its old worktree/runtime. Run `agentic-os auto-dev

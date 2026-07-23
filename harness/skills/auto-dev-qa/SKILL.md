@@ -15,3 +15,25 @@ description: Run the project-configured risk-based QA gates as a standalone Auto
    Use CI fallback only when project policy permits it and record why.
 5. Map every acceptance criterion to evidence or a gap. Record `qa` as
    completed only after evidence is current for the exact revision.
+
+## LOS Django child delivery
+
+For `Lenders-Cooperative/los-app-los-django`, create a Jira QA Automation
+Assessment subtask under the root Jira when the application PR is opened. The
+subtask is always created; Playwright implementation is contextual.
+
+- If automation adds no meaningful coverage or is genuinely infeasible, close
+  the assessment with a typed policy decision and concrete reason.
+- If automation is required, treat the subtask as a child Auto-Dev delivery in
+  `Lenders-Cooperative/los-qa-automation`. Use a feature branch and PR; do not
+  push the delivery directly to `main`.
+- Analyze the application diff, acceptance criteria, existing Jira tests, and
+  `.agents/skills/qa-analysis/SKILL.md` in the Django repository before naming
+  files. The plan normally includes
+  `tests/jira/<PARENT>/<feature>.spec.ts`,
+  `tests/jira/<PARENT>/README.md`, any reusable `pages/**`, `helpers/**`, or
+  fixture changes, required tags/environment, evidence, and the exact
+  validation command.
+- Bind the child Jira, repository, PR, revision, checks, and outcome back to the
+  parent work item. The parent QA gate is terminal only when the child reaches
+  the project-configured completion boundary or the typed skip is accepted.

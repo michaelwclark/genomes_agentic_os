@@ -46,7 +46,7 @@ AUTO_DEV_STAGE_ORDER = (
     "closeout",
     "health",
 )
-AUTO_DEV_MODES = ("everything", "single_stage")
+AUTO_DEV_MODES = ("default", "everything", "single_stage")
 AUTO_DEV_STAGE_COMMANDS = {
     "groom": "/auto-dev-grooming",
     "detective": "/auto-dev-detective",
@@ -66,10 +66,14 @@ AUTO_DEV_STAGE_COMMANDS = {
     "health": "/auto-dev-health",
 }
 TERMINAL_STAGE_STATUSES = {"completed", "not_required"}
+NON_ACTIONABLE_STAGE_STATUSES = TERMINAL_STAGE_STATUSES | {"out_of_scope"}
+AUTO_DEV_STAGE_APPLICABILITY = {"required", "contextual", "disabled"}
 NOT_REQUIRED_ALLOWED_STAGES = {
     "detective",
     "create_artifacts",
+    "document",
     "review_others",
+    "qa",
     "finalize",
     "release",
 }
@@ -157,6 +161,12 @@ ORDERED_DELIVERY_STAGES = (
 # These workflows have lifecycle preconditions that make their relative
 # position non-negotiable even when a project customizes the friendly order.
 REQUIRED_STAGE_PRECEDENCE = (
+    ("groom", "readiness"),
+    ("detective", "readiness"),
+    ("create_artifacts", "readiness"),
+    ("readiness", "develop"),
+    ("develop", "document"),
+    ("develop", "pr_create"),
     ("pr_create", "review_self"),
     ("review_self", "review_others"),
     ("review_others", "qa"),
@@ -166,6 +176,7 @@ REQUIRED_STAGE_PRECEDENCE = (
     ("merge", "release"),
     ("release", "deploy"),
     ("deploy", "closeout"),
+    ("document", "closeout"),
     ("closeout", "health"),
 )
 
@@ -260,7 +271,7 @@ def same_pull_request_authority(
 
 
 def validate_auto_dev_stage_order(stage_order: list[str] | tuple[str, ...]) -> list[str]:
-    """Require the one canonical order used by execution and Health audits."""
+    """Allow project ordering without violating lifecycle dependencies."""
 
     value = [str(name) for name in stage_order]
     if len(value) != len(AUTO_DEV_STAGE_ORDER) or len(value) != len(set(value)):
@@ -271,12 +282,64 @@ def validate_auto_dev_stage_order(stage_order: list[str] | tuple[str, ...]) -> l
         raise AutoDevStateError(
             "Auto-Dev stage order must contain every canonical stage exactly once"
         )
-    if tuple(value) != AUTO_DEV_STAGE_ORDER:
+    positions = {name: index for index, name in enumerate(value)}
+    violations = [
+        f"{before} before {after}"
+        for before, after in REQUIRED_STAGE_PRECEDENCE
+        if positions[before] >= positions[after]
+    ]
+    if violations:
         raise AutoDevStateError(
-            "Auto-Dev stage order is canonical and cannot be reordered: "
-            + " -> ".join(AUTO_DEV_STAGE_ORDER)
+            "Auto-Dev stage order violates required lifecycle precedence: "
+            + ", ".join(violations)
         )
     return value
+
+
+def validate_auto_dev_stage_policies(value: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Validate project stage applicability while preserving policy metadata."""
+
+    policies: dict[str, dict[str, Any]] = {
+        name: {
+            "applicability": (
+                "contextual" if name in NOT_REQUIRED_ALLOWED_STAGES else "required"
+            )
+        }
+        for name in AUTO_DEV_STAGE_ORDER
+    }
+    for raw_name, raw_policy in (value or {}).items():
+        name = str(raw_name).strip().lower().replace("-", "_")
+        if name not in AUTO_DEV_STAGE_ORDER:
+            raise AutoDevStateError(f"unknown Auto-Dev stage policy: {name}")
+        if not isinstance(raw_policy, Mapping):
+            raise AutoDevStateError(f"Auto-Dev stage policy must be an object: {name}")
+        policy = dict(raw_policy)
+        applicability = str(policy.get("applicability") or "required").strip().lower()
+        if applicability not in AUTO_DEV_STAGE_APPLICABILITY:
+            raise AutoDevStateError(
+                f"Auto-Dev {name} applicability must be one of: "
+                + ", ".join(sorted(AUTO_DEV_STAGE_APPLICABILITY))
+            )
+        if applicability != "required" and name not in NOT_REQUIRED_ALLOWED_STAGES:
+            raise AutoDevStateError(f"Auto-Dev {name} cannot be optional or disabled")
+        policy["applicability"] = applicability
+        policies[name] = policy
+    return policies
+
+
+def auto_dev_workflow_window(
+    stage_order: list[str] | tuple[str, ...], start_stage: str, completion_stage: str
+) -> list[str]:
+    """Return the configured inclusive workflow window."""
+
+    order = validate_auto_dev_stage_order(stage_order)
+    if start_stage not in order or completion_stage not in order:
+        raise AutoDevStateError("Auto-Dev workflow boundaries must name canonical stages")
+    start = order.index(start_stage)
+    completion = order.index(completion_stage)
+    if start > completion:
+        raise AutoDevStateError("Auto-Dev start_stage must not follow completion_stage")
+    return order[start : completion + 1]
 
 
 def _utc_now() -> str:
@@ -582,10 +645,19 @@ def _next_stage(
     stages: Mapping[str, Mapping[str, Any]],
     requested_stage: str | None,
     stage_order: tuple[str, ...] | list[str] = AUTO_DEV_STAGE_ORDER,
+    *,
+    start_stage: str | None = None,
+    completion_stage: str | None = None,
 ) -> str | None:
-    names = (requested_stage,) if requested_stage else stage_order
+    names = (requested_stage,) if requested_stage else (
+        auto_dev_workflow_window(
+            stage_order,
+            start_stage or str(stage_order[0]),
+            completion_stage or str(stage_order[-1]),
+        )
+    )
     for name in names:
-        if name and stages[name].get("status") not in TERMINAL_STAGE_STATUSES:
+        if name and stages[name].get("status") not in NON_ACTIONABLE_STAGE_STATUSES:
             return name
     return None
 
@@ -624,6 +696,26 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
         ):
             stage_order = list(AUTO_DEV_STAGE_ORDER)
         stage_order = validate_auto_dev_stage_order(stage_order)
+        start_stage = str(
+            task.get("auto_dev_start_stage")
+            or existing.get("start_stage")
+            or (requested_stage if requested_stage else stage_order[0])
+        )
+        completion_stage = str(
+            task.get("auto_dev_completion_stage")
+            or existing.get("completion_stage")
+            or (requested_stage if requested_stage else stage_order[-1])
+        )
+        stage_policies = validate_auto_dev_stage_policies(
+            task.get("auto_dev_stage_policies")
+            if isinstance(task.get("auto_dev_stage_policies"), Mapping)
+            else existing.get("stage_policies")
+            if isinstance(existing.get("stage_policies"), Mapping)
+            else {}
+        )
+        active_stages = set(
+            auto_dev_workflow_window(stage_order, start_stage, completion_stage)
+        )
         stages = {name: _stage_row(name) for name in AUTO_DEV_STAGE_ORDER}
         task_view = {**task, "task_state_ref": str(task_path)}
         _complete_from_delivery(stages, task_view)
@@ -637,19 +729,31 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             subject_revision=subject_revision,
             terminal_revision=terminal_revision,
         )
+        for name, row in stages.items():
+            policy = stage_policies.get(name, {"applicability": "required"})
+            row["applicability"] = policy["applicability"]
+            if name not in active_stages:
+                row.update({"status": "out_of_scope", "next_action": None})
+            elif (
+                row.get("status") not in TERMINAL_STAGE_STATUSES
+                and policy["applicability"] == "disabled"
+            ):
+                row["next_action"] = (
+                    f"Record typed not_required policy evidence for {name}"
+                )
         current_stage = _next_stage(
             stages,
             str(requested_stage) if requested_stage else None,
             stage_order,
+            start_stage=start_stage,
+            completion_stage=completion_stage,
         )
         failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else None
         if str(task.get("state")) == "blocked":
             status = "blocked"
         elif failure and failure.get("recoverable"):
             status = "paused"
-        elif current_stage is None and (
-            mode != "everything" or str(task.get("state")) == "delivery_complete"
-        ):
+        elif current_stage is None:
             status = "completed"
         elif any(row.get("status") == "running" for row in stages.values()):
             status = "running"
@@ -669,11 +773,14 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             },
             "mode": mode,
             "requested_stage": requested_stage,
+            "start_stage": start_stage,
+            "completion_stage": completion_stage,
             "subject_revision": subject_revision,
             "terminal_revision": terminal_revision,
             "status": status,
             "current_stage": current_stage,
             "stage_order": stage_order,
+            "stage_policies": stage_policies,
             "stages": stages,
         "delivery": {
                 "engine": "development_delivery",
@@ -1577,7 +1684,7 @@ def validate_recorded_auto_dev_health(
 
 
 def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[str, Any]:
-    """Fail before an external stage unless every canonical predecessor is terminal."""
+    """Fail unless every in-scope configured predecessor is terminal."""
 
     current = read_auto_dev_state(state_file)
     name = stage.strip().lower().replace("-", "_")
@@ -1588,7 +1695,15 @@ def require_auto_dev_predecessors(state_file: str | Path, stage: str) -> dict[st
     if work_item.is_file():
         work_item = work_item.parent
     missing: list[str] = []
-    for predecessor in AUTO_DEV_STAGE_ORDER[: AUTO_DEV_STAGE_ORDER.index(name)]:
+    stage_order = list(current.get("stage_order") or AUTO_DEV_STAGE_ORDER)
+    active_order = auto_dev_workflow_window(
+        stage_order,
+        str(current.get("start_stage") or stage_order[0]),
+        str(current.get("completion_stage") or stage_order[-1]),
+    )
+    if name not in active_order:
+        raise AutoDevStateError(f"{name} is outside this Auto-Dev workflow boundary")
+    for predecessor in active_order[: active_order.index(name)]:
         row = stages.get(predecessor)
         if (
             not isinstance(row, Mapping)
@@ -3424,6 +3539,20 @@ def record_auto_dev_stage(
     if status == "not_required":
         if name not in NOT_REQUIRED_ALLOWED_STAGES:
             raise AutoDevStateError(f"{name} cannot be marked not_required")
+        stage_policies = (
+            current.get("stage_policies")
+            if isinstance(current.get("stage_policies"), Mapping)
+            else {}
+        )
+        stage_policy = (
+            stage_policies.get(name)
+            if isinstance(stage_policies.get(name), Mapping)
+            else {"applicability": "required"}
+        )
+        if stage_policy.get("applicability") == "required":
+            raise AutoDevStateError(
+                f"{name} is required by the frozen project Auto-Dev policy"
+            )
         policy_source = _stage_source_path(
             structured.get("policy_ref"), evidence_path, work_item, f"{name} policy_ref"
         )
@@ -3626,13 +3755,15 @@ def record_auto_dev_stage(
             }
         )
         current["current_stage"] = _next_stage(
-            current["stages"], current.get("requested_stage"), current["stage_order"]
+            current["stages"],
+            current.get("requested_stage"),
+            current["stage_order"],
+            start_stage=current.get("start_stage"),
+            completion_stage=current.get("completion_stage"),
         )
-        delivery_complete = current.get("delivery", {}).get("state") == "delivery_complete"
         current["status"] = (
             "completed"
             if current["current_stage"] is None
-            and (current.get("mode") != "everything" or delivery_complete)
             else "ready"
         )
         current["next_action"] = (

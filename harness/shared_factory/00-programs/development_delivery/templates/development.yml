@@ -14,6 +14,22 @@ worktrees:
   branch_template: feature/{ticket}-{slug}
 work_items:
   active_status: building
+auto_dev:
+  # Bare "auto-dev" uses this window and must include PR Create.
+  default:
+    start_stage: readiness
+    completion_stage: pr_create
+  # "auto-dev everything" is project-relative. Projects that release every
+  # change may leave Health here; release-event projects may stop at Merge.
+  everything:
+    start_stage: groom
+    completion_stage: health
+  # stage_order may be a full precedence-safe permutation of the shared stages.
+  stages:
+    document:
+      applicability: contextual
+    qa:
+      applicability: contextual
 # Auto-Dev Health tears down only a runtime explicitly registered here.
 # Projects without a per-worktree runtime keep this not-managed declaration.
 runtime:

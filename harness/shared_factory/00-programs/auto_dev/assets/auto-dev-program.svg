@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
   <title id="title">Auto-Dev program flow</title>
-  <desc id="desc">Signals and ideas flow through the canonical sixteen receipt-gated Auto-Dev stages, ending with item-scoped Auto-Dev Health after Closeout.</desc>
+  <desc id="desc">Signals and ideas flow through a project-configured, precedence-safe window of sixteen receipt-gated Auto-Dev stages.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0B1020"/>
@@ -30,7 +30,7 @@
   </defs>
   <rect width="1600" height="900" rx="34" fill="url(#bg)"/>
   <text x="80" y="82" class="title">Auto-Dev: one polymorphic SDLC</text>
-  <text x="80" y="118" class="subtitle">Shared engine • root → domain → project behavior • receipt-backed handoffs</text>
+  <text x="80" y="118" class="subtitle">Shared engine • configurable Default/Everything boundaries • receipt-backed handoffs</text>
 
   <g filter="url(#shadow)">
     <rect x="80" y="185" width="230" height="120" rx="22" fill="#334155" stroke="#64748B" stroke-width="2"/>

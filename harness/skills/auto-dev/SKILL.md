@@ -48,7 +48,13 @@ but non-blocking when its receipt records that the reviewer was unavailable.
   status, or closeout output: use `$auto-dev-create-artifacts`.
 - Code delivery: start/resume `agentic-os develop`, then use the matching stage
   skill below.
-- Full delivery: use `$auto-dev-everything`.
+- A bare request to "auto-dev" one or more tickets uses the project's default
+  workflow with `agentic-os auto-dev default ...`. The shared default starts at
+  Readiness and ends at PR Create. A project may extend that boundary, but the
+  default workflow may never stop before PR Create.
+- A request for "everything" or "all the way" uses `$auto-dev-everything`.
+  Everything means the project's configured workflow boundary, not a universal
+  promise to release or deploy.
 - One friendly stage: `agentic-os auto-dev groom|investigate|create|readiness|
   develop|document|pr-create|review-self|review-others|qa|finalize|merge|release|
   deploy|closeout|health ...` and the same-named skill. `release-propagation` is
@@ -73,10 +79,13 @@ but non-blocking when its receipt records that the reviewer was unavailable.
 15. `$auto-dev-closeout`
 16. `$auto-dev-health`
 
-That order is exact. Every stage is independently callable, but a later
-external stage on an Auto-Dev item requires all predecessors to be terminal and
-receipt-backed. Everything records all sixteen rows; policy-backed
-inapplicability is a typed terminal decision, not an omitted step.
+This is the shared safe order. A project may reorder stages when every required
+lifecycle precedence edge remains intact. Every stage is independently
+callable, but a later external stage on an Auto-Dev item requires all active
+predecessors to be terminal and receipt-backed. Stages outside the configured
+start/completion boundary are recorded as `out_of_scope`. An in-scope
+contextual or disabled stage needs a typed policy decision; it is never silently
+omitted.
 
 Each stage is manually callable from chat and performs the work before
 `agentic-os develop stage` records typed, preflighted receipts. The stage

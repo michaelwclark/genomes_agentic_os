@@ -25,10 +25,16 @@ policy or review behavior.
 5. Render and apply GitHub artifacts through `$auto-dev-create-artifacts`.
    Re-read the provider immediately before every write and after every result.
    Existing open or merged equivalents are idempotent success.
-6. Default to plan-only. `--apply` authorizes only the computed branch pushes
-   and PR creations; it never authorizes review approval, merge, release, or
-   deployment.
-7. Store the canonical receipt family under
+6. When `qa.assessment.always_create` is enabled, create or reuse one Jira QA
+   Automation Assessment subtask under the root Jira after the application PR
+   opens. Read it back and bind an `auto-dev-qa-assessment/v1` receipt—with Jira
+   issue key, root parent key, and `readback_verified: true`—inside the PR-family
+   evidence. PR Create cannot finish without that receipt. This creates the
+   assessment, not an automatic claim that Playwright is required.
+7. Default to plan-only. `--apply` authorizes only the computed branch pushes,
+   PR creations, and the configured QA assessment subtask; it never authorizes
+   review approval, merge, release, or deployment.
+8. Store the canonical receipt family under
    `artifacts/auto-dev-pr-create/`, then record the compatibility delivery
    receipt with:
 

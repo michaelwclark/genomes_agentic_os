@@ -25,13 +25,16 @@
     "domain": {"type": ["string", "null"]},
     "project": {"type": ["string", "null"]},
     "source": {"type": "object"},
-    "mode": {"enum": ["everything", "single_stage"]},
+    "mode": {"enum": ["default", "everything", "single_stage"]},
     "requested_stage": {
       "type": ["string", "null"],
       "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]
     },
     "subject_revision": {"type": ["string", "null"]},
     "terminal_revision": {"type": ["string", "null"]},
+    "start_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
+    "completion_stage": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
+    "stage_policies": {"type": "object"},
     "status": {"enum": ["ready", "running", "paused", "blocked", "completed"]},
     "current_stage": {
       "type": ["string", "null"],
@@ -40,24 +43,6 @@
     "stage_order": {
       "type": "array",
       "items": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
-      "prefixItems": [
-        {"const": "groom"},
-        {"const": "detective"},
-        {"const": "create_artifacts"},
-        {"const": "readiness"},
-        {"const": "develop"},
-        {"const": "document"},
-        {"const": "pr_create"},
-        {"const": "review_self"},
-        {"const": "review_others"},
-        {"const": "qa"},
-        {"const": "finalize"},
-        {"const": "merge"},
-        {"const": "release"},
-        {"const": "deploy"},
-        {"const": "closeout"},
-        {"const": "health"}
-      ],
       "minItems": 16,
       "maxItems": 16,
       "uniqueItems": true
@@ -98,7 +83,8 @@
       "type": "object",
       "required": ["status", "owner", "command", "run_ref", "receipt_refs", "last_verified_at", "next_action"],
       "properties": {
-        "status": {"enum": ["not_started", "ready", "running", "paused", "blocked", "completed", "not_required"]},
+        "status": {"enum": ["not_started", "ready", "running", "paused", "blocked", "completed", "not_required", "out_of_scope"]},
+        "applicability": {"enum": ["required", "contextual", "disabled"]},
         "owner": {"type": "string"},
         "command": {"type": "string", "minLength": 1},
         "run_ref": {"type": ["string", "null"]},
@@ -113,7 +99,7 @@
         {"$ref": "#/$defs/stage"},
         {
           "properties": {
-            "status": {"enum": ["not_started", "ready", "running", "paused", "blocked", "completed"]}
+            "status": {"enum": ["not_started", "ready", "running", "paused", "blocked", "completed", "out_of_scope"]}
           }
         }
       ]

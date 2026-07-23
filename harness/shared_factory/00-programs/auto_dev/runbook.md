@@ -7,9 +7,12 @@
 3. Run its resolver/status command before mutation.
 4. Start or resume one run id; verify its policy fingerprint and source list.
 
-For a full run, `agentic-os auto-dev everything <domain> <project> <ticket>
---apply` provisions the canonical work item, worktree, delivery task, and
-`autodev.json`. A single verb uses `agentic-os auto-dev <verb> ...`; branch
+For a bare Auto-Dev request, `agentic-os auto-dev default <domain> <project>
+<ticket> --apply` uses the project's Default boundary and always includes PR
+Create. `agentic-os auto-dev everything ...` uses the project's configured
+Everything boundary; it is not inherently a release or deploy request. Both
+provision the canonical work item, worktree, delivery task, and `autodev.json`.
+A single verb uses `agentic-os auto-dev <verb> ...`; branch
 PR creation is `auto-dev pr-create`; `auto-dev propagate` and
 `auto-dev release-propagation` are compatibility aliases
 and release publication remains `auto-dev release`. Run the
@@ -27,20 +30,23 @@ adoption stops before writing the run, packet, task, or canonical work state;
 repair the registration and rerun the same command. It never creates a
 replacement packet or worktree.
 
-Everything advances only in this exact order: Groom, Detective, Create
-Artifacts, Readiness, Develop, Document, PR Create, Review Self, Review Others,
-QA, Finalize, Merge, Release, Deploy, Closeout, Health. A
-single-stage run uses the same predecessor gates. Do not reorder the list in a
-project or invocation overlay.
+The shared safe order is Groom, Detective, Create Artifacts, Readiness,
+Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Merge,
+Release, Deploy, Closeout, Health. A project may declare a full alternative
+order only when it preserves required lifecycle precedence. Everything runs
+the frozen slice from its configured start through completion; stages outside
+that slice are `out_of_scope`. A single-stage run uses the same predecessor
+gates.
 
 When a stage permits `not_required`, use
 `auto-dev-stage-policy-decision/v1`. It binds work-item/canonical identity,
 domain/project/stage, decision maker, reason, timestamp, the frozen delivery
 policy fingerprint, and the exact policy receipt plus SHA-256. Recording copies
-the policy source and decision into immutable packet-local proof. Standalone
-allowances are Detective, Create Artifacts, Review Others, Finalize, and
-Release; PR Create and Deploy record the same typed decision through
-Development Delivery. Every other stage must complete.
+the policy source and decision into immutable packet-local proof. Frozen stage
+applicability controls the decision: required stages must complete, while
+contextual or disabled Detective, Create Artifacts, Document, Review Others,
+QA, Finalize, and Release stages may use the typed decision. Delivery-managed
+stages use their existing typed path. No in-scope stage is silently omitted.
 
 Several positional tickets produce several independent task/packet/worktree/
 `autodev.json` records under one run. Resume only the selected ticket with its
