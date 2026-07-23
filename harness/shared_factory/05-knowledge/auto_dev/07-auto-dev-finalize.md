@@ -24,13 +24,15 @@ manufacture Finalize authority.
    identity, not title similarity alone.
 2. Re-read each live head, target, mergeability result, required check, review,
    automated finding, human thread, and branch-protection gate.
-3. Verify the intended fix and required tests are present on every sibling.
+3. Re-read the live tracker and verify the intended fix, acceptance behavior,
+   dev-standard evidence, and required tests are present on every sibling.
 4. Check propagation order, migration numbering/order, dependency compatibility,
    generated artifacts, and target-branch-specific behavior.
 5. Confirm every actionable finding is fixed and read back as resolved on the
    exact reviewed revision. Do not treat a dismissed or stale thread as proof.
 6. Obtain the independent review required by project policy and preserve its
-   result. Actual findings always block readiness.
+   result. When the project selects Claude CLI Fable, preserve its model and
+   session receipt. Actual findings always block readiness.
 7. Re-read provider state after the last push or thread resolution so the final
    decision is based on current truth.
 
@@ -53,6 +55,11 @@ its SHA-256 so Merge can verify the exact authority without translation.
 Finalize completes as `ready_for_merge` only when the entire required family is
 converged at the recorded revisions. Otherwise it records `changes_required` or
 an exact provider/policy/approval blocker with the next action.
+
+Merge then applies the project's configured strategy, authority, and target
+order. A project-authorized admin bypass can supply provider merge authority;
+it cannot bypass checks, acceptance proof, review findings, unresolved threads,
+or family parity.
 
 Finalize does not merge, deploy, release, update the tracker to delivered, or
 perform lifecycle cleanup. Those authorities belong to later stages.

@@ -40,6 +40,25 @@ auto_dev:
           - tags, environment, evidence, and exact validation command
         validation_command: 'npx playwright test tests/jira/{parent_key}/'
 review:
+  self:
+    family_scope: required_targets
+    finding_propagation:
+      copilot: all_required_targets
+      blocking: all_required_targets
+    acceptance:
+      jira_current: required
+      acceptance_criteria: required
+      implementation_effectiveness: required
+    dev_standards:
+      reuse_existing_utilities: required
+      security: required
+      readability: required
+      bugfix_why_comments: required
+      acceptance_path_tests: required
+    threads:
+      bot: fix_or_factual_reply_then_resolve
+      human: never_auto_resolve
+    readiness: all_required_targets
   opposing_harness:
     required: true
     preferred: fable
@@ -50,6 +69,14 @@ merge:
   policy: auto_after_gates
   require_checks: true
   require_opposing_review_or_unavailable_receipt: true
+  ours:
+    strategy: squash
+    provider_authority: admin_bypass
+    family_gate: all_required_targets_ready
+    order:
+      - hotfix
+      - release
+      - develop
 documentation:
   ticket_stage_required: false
   program_projection:

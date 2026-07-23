@@ -15,8 +15,11 @@ for Finalize or an explicit blocker remains.
 ## Review and repair loop
 
 1. Review the complete diff as if it came from another author. Check behavior,
-   edge cases, security, data/migrations, compatibility, failure handling,
-   observability, tests, docs, and accidental changes.
+   live tracker acceptance criteria, actual implementation effectiveness,
+   existing-utility reuse, edge cases, security, readability,
+   data/migrations, compatibility, failure handling, observability,
+   acceptance-path tests, bug-fix what/why comments, docs, and accidental
+   changes.
 2. Run the configured local tests and quality gates and record exact outcomes.
 3. Obtain the required independent or opposing-model review. A reviewer that is
    unavailable is recorded according to project policy; actual findings remain
@@ -41,7 +44,10 @@ surface only terminal check results or blocker-grade summaries in chat.
 When project GitFlow requires more than one pull request, verify every sibling
 has the correct source and target, equivalent intended fix, compatible
 migration/dependency order, and its own live checks. Do not assume one green
-pull request proves its siblings.
+pull request proves its siblings. An actionable Copilot finding or blocking
+reviewer finding applies to every required sibling unless target-specific
+evidence proves otherwise. The entire family remains unready while any member
+is missing the repair or current proof.
 
 ## Done criteria
 
