@@ -975,6 +975,61 @@ def _json_sha256(value: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
+def _legacy_policy_source_content_is_bound(source: Mapping[str, Any]) -> bool:
+    """Validate the only legacy policy shape whose raw digest is recoverable.
+
+    Early effective-policy receipts stored the parsed Markdown body beside the
+    SHA-256 of the raw source, but did not bind the whole plane.  Empty
+    frontmatter lets us recover the raw content exactly apart from the one
+    trailing-newline normalization used by the parser.  Any richer legacy
+    shape must fail closed instead of pretending its body is immutable.
+    """
+
+    frontmatter = source.get("frontmatter")
+    body = source.get("body_markdown")
+    expected = str(source.get("sha256") or "")
+    if not (
+        isinstance(frontmatter, Mapping)
+        and not frontmatter
+        and isinstance(body, str)
+        and re.fullmatch(r"[a-f0-9]{64}", expected)
+    ):
+        return False
+    candidates = (body, f"{body}\n")
+    return any(
+        hashlib.sha256(candidate.encode("utf-8")).hexdigest() == expected
+        for candidate in candidates
+    )
+
+
+def _explicit_auto_dev_boundary(
+    value: Mapping[str, Any] | None,
+    *,
+    mode_key: str,
+    start_key: str,
+    completion_key: str,
+    label: str,
+) -> tuple[str, str, str] | None:
+    """Return one complete durable boundary, rejecting partial state."""
+
+    if not isinstance(value, Mapping):
+        return None
+    start = str(value.get(start_key) or "").strip()
+    completion = str(value.get(completion_key) or "").strip()
+    if bool(start) != bool(completion):
+        raise DevelopmentDeliveryError(
+            f"{label} has an incomplete Auto-Dev workflow boundary"
+        )
+    if not start:
+        return None
+    mode = str(value.get(mode_key) or "").strip()
+    if not mode:
+        raise DevelopmentDeliveryError(
+            f"{label} has an Auto-Dev workflow boundary without a mode"
+        )
+    return mode, start, completion
+
+
 def _selected_profile_policy_authority(
     profile: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1113,6 +1168,14 @@ def _validate_effective_policy_snapshot(
                 raise DevelopmentDeliveryError(
                     f"effective policy receipt has changed {name} content"
                 )
+        elif not all(
+            isinstance(source, Mapping)
+            and _legacy_policy_source_content_is_bound(source)
+            for source in sources
+        ):
+            raise DevelopmentDeliveryError(
+                f"effective policy receipt has unbound legacy {name} content"
+            )
     folder_profile = snapshot.get("folder_profile")
     if "folder_profile" in snapshot:
         if (
@@ -1146,6 +1209,10 @@ def _validate_effective_policy_snapshot(
                 raise DevelopmentDeliveryError(
                     "effective policy receipt has changed repository folder profile content"
                 )
+        elif folder_profile.get("status") == "loaded":
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has unbound legacy repository folder profile content"
+            )
     selected_profile = snapshot.get("selected_profile")
     if selected_profile is None:
         if require_selected_profile:
@@ -2348,6 +2415,7 @@ def start_development_run(
     if not apply:
         return plan
     portfolio_path = run_dir / "portfolio.json"
+    portfolio_existed = portfolio_path.is_file()
     if run_dir.exists() and not portfolio_path.is_file():
         raise DevelopmentDeliveryError(f"run directory exists without a portfolio receipt: {run_dir}")
     if portfolio_path.is_file():
@@ -2464,6 +2532,14 @@ def start_development_run(
         },
     )
     recorded_auto_dev = plan.get("auto_dev") if isinstance(plan.get("auto_dev"), Mapping) else None
+    recorded_portfolio_boundary = _explicit_auto_dev_boundary(
+        recorded_auto_dev,
+        mode_key="mode",
+        start_key="start_stage",
+        completion_key="completion_stage",
+        label="development portfolio",
+    )
+    recorded_mode = auto_dev_mode
     durable_auto_dev_mode = auto_dev_mode
     if recorded_auto_dev:
         recorded_mode = str(recorded_auto_dev.get("mode") or auto_dev_mode)
@@ -2482,11 +2558,15 @@ def start_development_run(
                 raise DevelopmentDeliveryError(
                     f"recorded auto_dev.stage_order is unsafe: {exc}"
                 ) from exc
-        recorded_start = str(
-            recorded_auto_dev.get("start_stage") or auto_dev_start_stage
+        recorded_start = (
+            recorded_portfolio_boundary[1]
+            if recorded_portfolio_boundary is not None
+            else auto_dev_start_stage
         )
-        recorded_completion = str(
-            recorded_auto_dev.get("completion_stage") or auto_dev_completion_stage
+        recorded_completion = (
+            recorded_portfolio_boundary[2]
+            if recorded_portfolio_boundary is not None
+            else auto_dev_completion_stage
         )
         if (
             recorded_mode == "single_stage"
@@ -2587,7 +2667,8 @@ def start_development_run(
         work_id = f"{repository_prefix}{_slug(ticket).replace('-', '_')}_{_slug(title).replace('-', '_')}"
         task_dir = run_dir / "tasks" / _slug(ticket)
         state_path = task_dir / "state.json"
-        if not state_path.is_file():
+        state_created = not state_path.is_file()
+        if state_created:
             _write_task_state(
                 state_path,
                 run_id=run_id,
@@ -2596,6 +2677,19 @@ def start_development_run(
                 lease_minutes=int(recovery.get("lease_minutes") or 30),
                 rollup_ledger=rollup_ledger,
             )
+            seeded_state = TaskState(state_path).read()
+            seeded_state.update(
+                {
+                    "auto_dev_mode": durable_auto_dev_mode,
+                    "requested_stage": requested_stage,
+                    "goal": goal,
+                    "auto_dev_stage_order": auto_dev_stage_order,
+                    "auto_dev_start_stage": auto_dev_start_stage,
+                    "auto_dev_completion_stage": auto_dev_completion_stage,
+                    "auto_dev_stage_policies": auto_dev_stage_policies,
+                }
+            )
+            _atomic_json(state_path, seeded_state)
         task_state = TaskState(state_path)
         current = task_state.read()
         failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
@@ -2608,6 +2702,7 @@ def start_development_run(
         elif current.get("state") == "blocked":
             task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), "error": failure}))
             continue
+        selected_projection: Mapping[str, Any] = {}
         if selected_packet is not None:
             work_items_root = (project_path / "work-items").resolve()
             try:
@@ -2676,6 +2771,42 @@ def start_development_run(
             if not current.get("canonical_work_id") and selected_projection.get("canonical_work_id"):
                 current["canonical_work_id"] = selected_projection["canonical_work_id"]
             _atomic_json(state_path, current)
+        elif current.get("autodev_path"):
+            projection_path = Path(str(current["autodev_path"])).expanduser()
+            if projection_path.is_file():
+                selected_projection = _read_mapping(projection_path)
+        if portfolio_existed and not state_created:
+            task_boundary = _explicit_auto_dev_boundary(
+                current,
+                mode_key="auto_dev_mode",
+                start_key="auto_dev_start_stage",
+                completion_key="auto_dev_completion_stage",
+                label=f"delivery task {ticket}",
+            )
+            projection_boundary = _explicit_auto_dev_boundary(
+                selected_projection,
+                mode_key="mode",
+                start_key="start_stage",
+                completion_key="completion_stage",
+                label=f"Auto-Dev projection {ticket}",
+            )
+            task_mode = str(current.get("auto_dev_mode") or "").strip()
+            projection_mode = str(selected_projection.get("mode") or "").strip()
+            if (
+                (task_mode and task_mode != recorded_mode)
+                or task_boundary != recorded_portfolio_boundary
+                or (
+                    current.get("work_item")
+                    and (
+                        (projection_mode and projection_mode != recorded_mode)
+                        or projection_boundary != recorded_portfolio_boundary
+                    )
+                )
+            ):
+                raise DevelopmentDeliveryError(
+                    "recorded Auto-Dev workflow boundary differs between "
+                    "portfolio, task, and projection"
+                )
         existing_work_item_raw = current.get("work_item")
         existing_work_item = Path(str(existing_work_item_raw)).expanduser() if existing_work_item_raw else None
         current_name = str(current.get("state") or "")
@@ -2719,7 +2850,7 @@ def start_development_run(
                         "url": current_source.get("url"),
                     },
                     "autodev_path": str(existing_work_item / "autodev.json"),
-                    "auto_dev_mode": auto_dev_mode,
+                    "auto_dev_mode": durable_auto_dev_mode,
                     "requested_stage": requested_stage,
                     "goal": goal,
                     "auto_dev_stage_order": auto_dev_stage_order,
@@ -2839,7 +2970,7 @@ def start_development_run(
                     "source": {"system": profile_tracker, "key": ticket, "url": None},
                     "work_item": str(work_item),
                     "autodev_path": str(work_item / "autodev.json"),
-                    "auto_dev_mode": auto_dev_mode,
+                    "auto_dev_mode": durable_auto_dev_mode,
                     "requested_stage": requested_stage,
                     "goal": goal,
                     "auto_dev_stage_order": auto_dev_stage_order,

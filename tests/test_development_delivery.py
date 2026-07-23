@@ -1757,6 +1757,95 @@ def test_resume_rejects_corrupted_effective_policy_snapshot(
         )
 
 
+def _legacy_effective_policy_snapshot() -> dict:
+    planes: dict[str, dict] = {}
+    for index, name in enumerate(delivery.DEVELOPMENT_POLICY_PLANES):
+        body = f"# Frozen {name}\n\nKeep this policy exact.\n"
+        raw = body if index % 2 == 0 else f"{body}\n"
+        source = {
+            "scope": "root",
+            "rank": 0,
+            "source_ref": f"legacy/{name}.md",
+            "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+            "frontmatter": {},
+            "body_markdown": body,
+        }
+        digest_input = [
+            {
+                "scope": source["scope"],
+                "rank": source["rank"],
+                "source_ref": source["source_ref"],
+                "sha256": source["sha256"],
+            }
+        ]
+        planes[name] = {
+            "schema": "markdown-policy-plane/v1",
+            "plane": name,
+            "sources": [source],
+            "fingerprint": hashlib.sha256(
+                json.dumps(
+                    digest_input,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+    snapshot = {
+        "schema": "development-effective-policies/v1",
+        "domain": "acme",
+        "project": "app",
+        "planes": planes,
+    }
+    snapshot["fingerprint"] = delivery._effective_policy_snapshot_fingerprint(
+        snapshot
+    )
+    return snapshot
+
+
+def test_legacy_policy_snapshot_self_authenticates_bodies_and_rejects_tamper() -> None:
+    snapshot = _legacy_effective_policy_snapshot()
+    assert (
+        delivery._validate_effective_policy_snapshot(
+            snapshot,
+            require_selected_profile=False,
+        )
+        is None
+    )
+    snapshot["planes"]["auto_dev"]["sources"][0]["body_markdown"] = (
+        "# Rewritten policy\n"
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="unbound legacy auto_dev content",
+    ):
+        delivery._validate_effective_policy_snapshot(
+            snapshot,
+            require_selected_profile=False,
+        )
+
+
+def test_legacy_loaded_folder_profile_without_content_binding_fails_closed() -> None:
+    snapshot = _legacy_effective_policy_snapshot()
+    snapshot["folder_profile"] = {
+        "schema": "auto-dev-folder-profile/v1",
+        "status": "loaded",
+        "source_ref": "auto_dev/profile.yml",
+        "sha256": "a" * 64,
+        "lifecycle": {"build": {"command": "make build"}},
+    }
+    snapshot["fingerprint"] = delivery._effective_policy_snapshot_fingerprint(
+        snapshot
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="unbound legacy repository folder profile content",
+    ):
+        delivery._validate_effective_policy_snapshot(
+            snapshot,
+            require_selected_profile=False,
+        )
+
+
 def test_real_worktree_uses_exact_remote_base_and_project_storage(tmp_path: Path) -> None:
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
@@ -2239,6 +2328,110 @@ def test_same_mode_resume_keeps_frozen_workflow_boundary_after_profile_drift(
     assert projection["completion_stage"] == "health"
     assert portfolio["auto_dev"]["start_stage"] == "readiness"
     assert portfolio["auto_dev"]["completion_stage"] == "health"
+
+
+def test_resume_rejects_portfolio_only_auto_dev_boundary_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "boundary-drift",
+            "path": "/tmp/boundary-drift",
+            "branch": "feature/boundary-drift",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-BOUNDARY-DRIFT"],
+        run_id="boundary-drift",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["start_stage"] = "merge"
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="workflow boundary differs between portfolio, task, and projection",
+    ):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-BOUNDARY-DRIFT"],
+            run_id="boundary-drift",
+            auto_dev_mode="everything",
+            selected_work_item=Path(task.read()["work_item"]),
+            apply=True,
+        )
+
+
+def test_retry_rejects_portfolio_boundary_drift_before_work_item_provisioning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+
+    def unavailable_work_item(*args, **kwargs):
+        raise OSError("work-item provider unavailable")
+
+    monkeypatch.setattr(
+        delivery,
+        "create_project_work_item",
+        unavailable_work_item,
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-EARLY-BOUNDARY"],
+        run_id="early-boundary",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"]))
+    task_value = task.read()
+    assert not task_value.get("work_item")
+    assert task_value["auto_dev_start_stage"] == "groom"
+    assert task_value["auto_dev_completion_stage"] == "health"
+
+    portfolio_path = task.path.parents[2] / "portfolio.json"
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    portfolio["auto_dev"]["start_stage"] = "merge"
+    portfolio_path.write_text(
+        json.dumps(portfolio, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        DevelopmentDeliveryError,
+        match="workflow boundary differs between portfolio, task, and projection",
+    ):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["CC-EARLY-BOUNDARY"],
+            run_id="early-boundary",
+            auto_dev_mode="everything",
+            apply=True,
+        )
 
 
 def test_pr_create_requires_configured_jira_qa_assessment_receipt(
