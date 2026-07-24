@@ -54,9 +54,10 @@
 
 - Added the `agentic-os auto-dev` plain-English facade, `/auto-dev-everything`,
   and the exact ordered family: Groom, Detective, Create Artifacts, Readiness,
-  Develop, Document, Review Self, Review Others, QA, Release Propagation,
-  Finalize, Merge, Release, Deploy, Closeout, and Health. Every workflow keeps
-  an independently callable command and skill.
+  Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Merge,
+  Release, Deploy, Closeout, and Health. Every workflow keeps an independently
+  callable command and skill. The lower-level `release_propagation` recorder and
+  legacy command remain compatibility surfaces for PR Create, not another stage.
 - Added `<work-item>/autodev.json` as an atomic cross-workflow projection over
   Development Delivery, typed standalone workflow receipts, sync/readback, and
   legacy read-only references.

@@ -16,6 +16,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from genomes_agentic_os import runtime_ops
+from genomes_agentic_os.auto_dev_orchestration import AUTO_DEV_STAGE_ORDER
 from genomes_agentic_os.artifact_contracts import artifact_contract_doctor
 from genomes_agentic_os.investigation_contracts import investigation_contract_doctor
 from genomes_agentic_os.cli import main
@@ -564,9 +565,33 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
     assert auto_dev_family_ids <= {
         entry["id"] for entry in first_class_skill_registry["skills"]
     }
+    shared_release_alias = next(
+        entry
+        for entry in shared_skill_registry["skills"]
+        if entry["id"] == "auto-dev-release-propagation"
+    )
+    first_class_release_alias = next(
+        entry
+        for entry in first_class_skill_registry["skills"]
+        if entry["id"] == "auto-dev-release-propagation"
+    )
+    assert "Compatibility alias for Auto-Dev PR Create" in shared_release_alias[
+        "purpose"
+    ]
+    assert "Compatibility alias for Auto-Dev PR Create" in first_class_release_alias[
+        "description"
+    ]
     installed_tools = (root / "harness/TOOLS.md").read_text(encoding="utf-8")
     for skill_id in auto_dev_family_ids:
         assert f"`{skill_id}`" in installed_tools
+    assert "Compatibility alias for Auto-Dev PR Create" in installed_tools
+    for command_name in ("auto-dev.md", "auto-dev-everything.md"):
+        command = (root / "harness/commands" / command_name).read_text(
+            encoding="utf-8"
+        )
+        normalized_command = " ".join(command.split())
+        assert "Document, PR Create, Review Self, Review Others, QA" in normalized_command
+        assert "compatibility recorder/alias for PR Create" in normalized_command
     installed_router = (root / "harness/ROUTER.md").read_text(encoding="utf-8")
     assert "Auto-Dev Everything" in installed_router
     assert "Auto-Dev Health" in installed_router
@@ -4782,7 +4807,9 @@ def test_genomes_agentic_os_project_gets_full_auto_dev_policy(tmp_path: Path) ->
     assert development["merge"]["policy"] == "never_auto"
     assert development["release"]["required"] is True
     assert development["documentation"]["required_after_release"] is True
-    assert len(workflows["workflows"]["auto_dev_everything"]["stages"]) == 16
+    assert workflows["workflows"]["auto_dev_everything"]["stages"] == list(
+        AUTO_DEV_STAGE_ORDER
+    )
     assert project_config["auto_dev"]["projection"]["notion_operator_projection"] == "required"
 
 

@@ -642,7 +642,7 @@ skills:
     status: active
     builtin: true
     bootstrap: false
-    purpose: Operate configured release and hotfix branch families.
+    purpose: Compatibility alias for Auto-Dev PR Create family mode and its lower-level release_propagation recorder.
   - id: auto-dev-pr-create
     title: Auto-Dev PR Create
     source_path: harness/skills/auto-dev-pr-create

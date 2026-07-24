@@ -3089,6 +3089,14 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         everything.split()
     )
 
+    for command_name in ("auto-dev.md", "auto-dev-everything.md"):
+        command = (
+            repository / "harness" / "commands" / command_name
+        ).read_text(encoding="utf-8")
+        normalized_command = " ".join(command.split())
+        assert "Document, PR Create, Review Self, Review Others, QA" in normalized_command
+        assert "compatibility recorder/alias for PR Create" in normalized_command
+
 
 @pytest.mark.parametrize(
     "relative_path",

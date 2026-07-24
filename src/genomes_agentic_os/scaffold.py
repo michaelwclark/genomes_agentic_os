@@ -3533,8 +3533,8 @@ def project_config_file_content(
                 "tracker": "linear",
                 "stages": [
                     "groom", "detective", "create_artifacts", "readiness", "develop", "document",
-                    "review_self", "review_others", "qa", "release_propagation", "finalize", "merge",
-                    "release", "deploy", "closeout", "health",
+                    "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release",
+                    "deploy", "closeout", "health",
                 ],
                 "completion": "delivery_complete",
             }

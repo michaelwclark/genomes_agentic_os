@@ -4,7 +4,7 @@ id: auto-dev
 title: Auto-Dev
 description: >-
   Canonical polymorphic SDLC family for evidence investigation, governed
-  artifact authoring, implementation, review and repair, release propagation,
+  artifact authoring, implementation, pull-request family creation, review and repair,
   deployment, delivery closeout, receipt audit, lifecycle cleanup, and durable
   finished-state handoff.
 status: active

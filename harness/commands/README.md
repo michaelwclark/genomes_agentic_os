@@ -22,7 +22,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`auto-dev-pr-create.md`](auto-dev-pr-create.md) | Resolve and create or reuse the complete PR target family before review. |
 | [`auto-dev-qa.md`](auto-dev-qa.md) | Run and receipt project-configured QA gates as a standalone step. |
 | [`auto-dev-readiness.md`](auto-dev-readiness.md) | Manually run context, policy, isolation, and planning readiness. |
-| [`auto-dev-release-propagation.md`](auto-dev-release-propagation.md) | Manually run release/backport/forward-port propagation. |
+| [`auto-dev-release-propagation.md`](auto-dev-release-propagation.md) | Compatibility alias for Auto-Dev PR Create family mode and its lower-level recorder. |
 | [`auto-dev-release.md`](auto-dev-release.md) | Create and verify a version, tag, package, changelog, or provider release. |
 | [`auto-dev-review-others.md`](auto-dev-review-others.md) | Review another author's PR through the canonical PR Review owner. |
 | [`auto-dev-review-repair.md`](auto-dev-review-repair.md) | Manually run tests, opposing review, PR, CI, and repair convergence. |
