@@ -584,7 +584,21 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
     installed_tools = (root / "harness/TOOLS.md").read_text(encoding="utf-8")
     for skill_id in auto_dev_family_ids:
         assert f"`{skill_id}`" in installed_tools
-    assert "Compatibility alias for Auto-Dev PR Create" in installed_tools
+    release_alias_skill_rows = [
+        line
+        for line in installed_tools.splitlines()
+        if line.startswith("| `auto-dev-release-propagation` |")
+    ]
+    release_alias_command_rows = [
+        line
+        for line in installed_tools.splitlines()
+        if line.startswith("| `/auto-dev-release-propagation` |")
+    ]
+    assert len(release_alias_skill_rows) == 1
+    assert "Compatibility alias" in release_alias_skill_rows[0]
+    assert "Run configured release" not in release_alias_skill_rows[0]
+    assert len(release_alias_command_rows) == 1
+    assert "Compatibility alias" in release_alias_command_rows[0]
     for command_name in ("auto-dev.md", "auto-dev-everything.md"):
         command = (root / "harness/commands" / command_name).read_text(
             encoding="utf-8"
@@ -592,6 +606,24 @@ def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> Non
         normalized_command = " ".join(command.split())
         assert "Document, PR Create, Review Self, Review Others, QA" in normalized_command
         assert "compatibility recorder/alias for PR Create" in normalized_command
+    installed_auto_dev_skill = (
+        root / "harness/skills/auto-dev/SKILL.md"
+    ).read_text(encoding="utf-8")
+    installed_numbered_stages = [
+        line
+        for line in installed_auto_dev_skill.splitlines()
+        if re.match(r"^\d+\. ", line)
+    ]
+    assert len(installed_numbered_stages) == 16
+    assert installed_numbered_stages[6] == "7. `$auto-dev-pr-create`"
+    assert "$auto-dev-review-self" in installed_numbered_stages[7]
+    assert installed_numbered_stages[9] == "10. `$auto-dev-qa`"
+    assert installed_numbered_stages[10] == "11. `$auto-dev-finalize`"
+    assert not any(
+        "$auto-dev-release-propagation" in line
+        for line in installed_numbered_stages
+    )
+    assert "is not counted in this list" in installed_auto_dev_skill
     installed_router = (root / "harness/ROUTER.md").read_text(encoding="utf-8")
     assert "Auto-Dev Everything" in installed_router
     assert "Auto-Dev Health" in installed_router

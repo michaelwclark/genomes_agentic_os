@@ -8,5 +8,6 @@ description: Compatibility alias for Auto-Dev PR Create family mode. Use for leg
 Delegate to `$auto-dev-pr-create` in family/propagation mode. Preserve the
 legacy command name and stable `release_propagation` Development Delivery
 receipt for active-packet compatibility, but do not resolve targets, create
-branches, render PRs, or maintain separate policy here. The Auto-Dev projection
-records the result as `pr_create`.
+branches, perform provider actions, render or retarget PRs, or maintain
+separate policy here. The Auto-Dev projection records the result as
+`pr_create`.

@@ -105,6 +105,7 @@ RETRYABLE_FAILURES = {
 WORKFLOW_NAMES = (
     "readiness_and_context",
     "isolated_implementation",
+    "pr_create",
     "testing_review_and_pr_repair",
     "release_propagation",
     "merge_deployment_and_cleanup",
@@ -4136,7 +4137,8 @@ def run_development_stage(
                 raise DevelopmentDeliveryError(str(exc)) from exc
         if current.get("state") not in {"local_validation", "ready_for_merge", "merged"}:
             raise DevelopmentDeliveryError(
-                "PR creation requires local_validation, ready_for_merge, or merged state"
+                "PR Create compatibility recording requires local_validation, "
+                "ready_for_merge, or merged state"
             )
         raw_receipt = str(receipts.get("release_propagation") or "").strip()
         if not raw_receipt:
@@ -4171,8 +4173,8 @@ def run_development_stage(
                 and assessment.get("readback_verified") is True
             ):
                 raise DevelopmentDeliveryError(
-                    "PR creation requires a provider-read Jira QA Automation "
-                    "Assessment subtask receipt for this project"
+                    "PR Create family recording requires a provider-read Jira QA "
+                    "Automation Assessment subtask receipt for this project"
                 )
         work_item_raw = str(current.get("work_item") or "").strip()
         if work_item_raw:

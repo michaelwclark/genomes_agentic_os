@@ -7,10 +7,12 @@ workflows:
     path: ../../04-workflows/development_delivery/readiness_and_context
   - id: isolated_implementation
     path: ../../04-workflows/development_delivery/isolated_implementation
-  - id: testing_review_and_pr_repair
-    path: ../../04-workflows/development_delivery/testing_review_and_pr_repair
+  - id: pr_create
+    path: ../../04-workflows/development_delivery/pr_create
   - id: release_propagation
     path: ../../04-workflows/development_delivery/release_propagation
+  - id: testing_review_and_pr_repair
+    path: ../../04-workflows/development_delivery/testing_review_and_pr_repair
   - id: merge_deployment_and_cleanup
     path: ../../04-workflows/development_delivery/merge_deployment_and_cleanup
 state:

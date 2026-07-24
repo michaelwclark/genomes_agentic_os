@@ -1693,7 +1693,7 @@ the source of truth by themselves.
 | `auto-dev-review-repair` | Own canonical review and repair behind Review Self. | `skills/auto-dev-review-repair/SKILL.md` |
 | `auto-dev-finalize` | Converge our ticket's pull-request family and record merge readiness without merging. | `skills/auto-dev-finalize/SKILL.md` |
 | `auto-dev-merge` | Run the final live merge gate. | `skills/auto-dev-merge/SKILL.md` |
-| `auto-dev-release-propagation` | Run configured release, hotfix, backport, or forward-port propagation. | `skills/auto-dev-release-propagation/SKILL.md` |
+| `auto-dev-release-propagation` | Compatibility alias for Auto-Dev PR Create family mode and its lower-level recorder. | `skills/auto-dev-release-propagation/SKILL.md` |
 | `auto-dev-release` | Create and verify the project release. | `skills/auto-dev-release/SKILL.md` |
 | `auto-dev-deploy` | Deploy or monitor the exact artifact and verify behavior. | `skills/auto-dev-deploy/SKILL.md` |
 | `auto-dev-closeout` | Reconcile provider state and prove delivery complete. | `skills/auto-dev-closeout/SKILL.md` |

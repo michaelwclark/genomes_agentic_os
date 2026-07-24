@@ -1,16 +1,15 @@
 id: release_propagation
-version: 1
+version: 2
 owner: development_delivery
-inputs: [ready_pull_request, fix_version, release_profile, version_registry, source_sha]
-outputs: [release_decision, target_matrix, release_pull_requests, conflict_receipts]
-states: [release_evaluation, not_required, release_preparing, release_ready, blocked]
-steps: [read_fix_version, map_targets, deduplicate, cherry_pick, validate_targets, open_and_watch_release_prs]
-validations: [version_branch_agreement, one_pr_per_target, intent_preserved, target_tests_green, writeback_readback]
+inputs: [pr_create_family_receipt, task_state, autodev_projection, idempotency_key]
+outputs: [release_propagation_stage_receipt, pr_create_projection]
+states: [compatibility_validation, recorded, blocked]
+steps: [require_autodev_linkage, require_pr_create_predecessors, validate_family_receipt, snapshot_packet_evidence, record_compatibility_receipt, sync_pr_create_projection, read_back]
+validations: [exact_work_item_identity, allowed_delivery_state, packet_local_evidence, immutable_idempotency, evidence_sha256_match, no_provider_or_target_mutation]
 failure_modes:
-  fix_version_missing: block_for_grooming
-  target_mapping_missing: block_for_config_repair
-  cherry_pick_conflict: preserve_worktree_and_escalate_intent
-  target_checks_failed: repair_target_and_rewatch
-  partial_propagation: resume_missing_targets_idempotently
-events: [release.evaluated, release.not_required, release.target.started, release.pr.opened, release.target.failed, release.ready]
-receipts: [fix_version_snapshot, target_matrix, source_sha, cherry_pick_result, target_tests, pr_checks, conflicts]
+  pr_create_receipt_missing: return_to_pr_create
+  autodev_linkage_missing: reconcile_existing_work_item
+  identity_or_hash_mismatch: block_on_exact_mismatch
+  idempotency_collision: preserve_original_and_stop
+events: [development.stage.release_propagated]
+receipts: [pr_create_family_receipt, release_propagation_stage_receipt]

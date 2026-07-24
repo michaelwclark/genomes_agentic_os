@@ -25,8 +25,8 @@ manufacture Finalize authority.
 2. Re-read each live head, target, mergeability result, required check, review,
    automated finding, human thread, and branch-protection gate.
 3. Verify the intended fix and required tests are present on every sibling.
-4. Check propagation order, migration numbering/order, dependency compatibility,
-   generated artifacts, and target-branch-specific behavior.
+4. Check PR-family target order, migration numbering/order, dependency
+   compatibility, generated artifacts, and target-branch-specific behavior.
 5. Confirm every actionable finding is fixed and read back as resolved on the
    exact reviewed revision. Do not treat a dismissed or stale thread as proof.
 6. Obtain the independent review required by project policy and preserve its

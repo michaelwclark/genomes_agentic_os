@@ -12,7 +12,7 @@ outputs exist and which merged revision is eligible.
 - project versioning, changelog, signing, build, packaging, and release rules;
 - expected artifact names, registries/providers, target channels, and
   compatibility matrix;
-- required checks, approvals, and prior propagation state;
+- required checks, approvals, and the provider-read PR Create family state;
 - evidence that the proposed version/tag does not conflict with live provider
   state.
 

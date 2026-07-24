@@ -71,6 +71,11 @@ runs next.
 | 15 | Closeout | `17-auto-dev-closeout.md` |
 | 16 | Health | `14-auto-dev-health.md` |
 
+`16-auto-dev-release-propagation.md` is compatibility policy for the
+lower-level Development Delivery recorder and legacy command alias used by PR
+Create. It is intentionally outside this stage table and never adds a
+seventeenth workflow or moves PR creation after QA.
+
 Each workflow has a same-named command and skill and can be started directly.
 `/auto-dev-everything` coordinates all sixteen over one work item. A later
 external stage may not bypass missing predecessor evidence. When policy truly

@@ -25,7 +25,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`auto-dev-release-propagation.md`](auto-dev-release-propagation.md) | Compatibility alias for Auto-Dev PR Create family mode and its lower-level recorder. |
 | [`auto-dev-release.md`](auto-dev-release.md) | Create and verify a version, tag, package, changelog, or provider release. |
 | [`auto-dev-review-others.md`](auto-dev-review-others.md) | Review another author's PR through the canonical PR Review owner. |
-| [`auto-dev-review-repair.md`](auto-dev-review-repair.md) | Manually run tests, opposing review, PR, CI, and repair convergence. |
+| [`auto-dev-review-repair.md`](auto-dev-review-repair.md) | Verify the PR Create family, then run tests, opposing review, CI, and repair convergence. |
 | [`auto-dev-review-self.md`](auto-dev-review-self.md) | Run review and repair for our own change through evidence-backed merge readiness. |
 | [`gitflow-pr-create.md`](gitflow-pr-create.md) | Compatibility alias for Auto-Dev PR Create GitFlow-family mode. |
 | [`composio-debug-bundle.md`](composio-debug-bundle.md) | Capture a sanitized Composio diagnostics bundle. |

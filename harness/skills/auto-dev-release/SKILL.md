@@ -1,6 +1,6 @@
 ---
 name: auto-dev-release
-description: Create and verify a project release, version, tag, package, changelog, or provider release through the configured release owner; distinct from branch-family release propagation.
+description: Create and verify a project release, version, tag, package, changelog, or provider release through the configured release owner; distinct from PR Create branch-family work.
 ---
 
 # Auto-Dev Release

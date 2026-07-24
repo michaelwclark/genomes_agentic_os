@@ -1,13 +1,17 @@
 id: pr_create
-title: Auto-Dev PR Create
+version: 1
 owner: auto-dev-pr-create
-status: active
-inputs:
-  - tracker_release_authority
-  - effective_gitflow_topology
-  - source_branch_and_sha
-  - existing_provider_pull_requests
-outputs:
-  - target_matrix
-  - family_complete_receipt
+inputs: [predecessor_receipts, tracker_release_authority, effective_gitflow_topology, source_branch_and_sha, existing_provider_pull_requests, idempotency_key]
+outputs: [target_matrix, family_complete_receipt, release_propagation_stage_receipt, pr_create_projection]
+states: [target_resolution, planned, applying, provider_readback, family_complete, blocked]
+steps: [require_predecessors, snapshot_authority, resolve_target_matrix, deduplicate_existing_prs, plan_missing_targets, create_via_artifact_contract, read_back_family, store_family_receipt, record_compatibility_receipt, sync_pr_create_projection]
+validations: [predecessors_terminal, exact_source_identity, registry_fresh, target_matrix_complete, no_duplicate_prs, provider_readback_verified, packet_local_evidence, immutable_idempotency, external_text_scrubbed]
+failure_modes:
+  predecessor_missing: return_to_owning_stage
+  target_authority_missing_or_conflicting: block_on_exact_question
+  source_or_target_drift: refresh_and_replan
+  provider_unavailable: preserve_plan_and_resume_unverified_targets
+  partial_or_duplicate_family: repair_exact_mismatch_and_read_back
+events: [pr_create.planned, pr_create.target.created, pr_create.target.reused, pr_create.target.failed, pr_create.family.completed]
+receipts: [predecessor_receipts, authority_snapshots, target_matrix, provider_actions, provider_readbacks, family_complete_receipt, release_propagation_stage_receipt]
 compatibility_receipt_state: release_propagation
