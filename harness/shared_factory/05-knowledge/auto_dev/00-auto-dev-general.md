@@ -32,16 +32,22 @@ The runtime order is:
 4. Readiness
 5. Develop
 6. Document
-7. Review Self
-8. Review Others
-9. QA
-10. Release Propagation
+7. PR Create
+8. Review Self
+9. Review Others
+10. QA
 11. Finalize
 12. Merge
 13. Release
 14. Deploy
 15. Closeout
 16. Health
+
+PR Create is the only Auto-Dev stage that resolves and creates the required
+pull-request family. The lower-level Development Delivery recorder still uses
+`release_propagation` for compatibility, and `/auto-dev-release-propagation`
+delegates to PR Create. Neither compatibility surface adds another Auto-Dev
+stage or moves PR creation later in the lifecycle.
 
 The order is exact for an Auto-Dev item. A stage can be called independently,
 but a later external stage still requires every applicable predecessor to be

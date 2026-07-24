@@ -3035,6 +3035,81 @@ def test_auto_dev_template_satisfies_strict_runtime_schema() -> None:
     assert template["stage_order"][-1] == "health"
 
 
+def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    policy_root = repository / "harness/shared_factory/05-knowledge/auto_dev"
+    stage_labels = {
+        "groom": "Grooming",
+        "detective": "Detective",
+        "create_artifacts": "Create Artifacts",
+        "readiness": "Readiness",
+        "develop": "Develop",
+        "document": "Document",
+        "pr_create": "PR Create",
+        "review_self": "Review Self",
+        "review_others": "Review Others",
+        "qa": "QA",
+        "finalize": "Finalize",
+        "merge": "Merge",
+        "release": "Release",
+        "deploy": "Deploy",
+        "closeout": "Closeout",
+        "health": "Health",
+    }
+    expected = [stage_labels[stage] for stage in AUTO_DEV_STAGE_ORDER]
+
+    general = (policy_root / "00-auto-dev-general.md").read_text(encoding="utf-8")
+    general_lifecycle = general.split("## Canonical lifecycle", 1)[1].split(
+        "## Orchestration", 1
+    )[0]
+    numbered_stages = [
+        line.split(". ", 1)[1]
+        for line in general_lifecycle.splitlines()
+        if line.split(". ", 1)[0].isdigit()
+    ]
+
+    everything = (policy_root / "13-auto-dev-everything.md").read_text(
+        encoding="utf-8"
+    )
+    everything_order = everything.split("## Exact stage order", 1)[1].split(
+        "## Orchestration behavior", 1
+    )[0]
+    table_stages = []
+    for line in everything_order.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[0].isdigit():
+            table_stages.append(cells[1])
+
+    assert numbered_stages == expected
+    assert table_stages == expected
+    assert "Neither compatibility surface adds another Auto-Dev stage" in " ".join(
+        general.split()
+    )
+    assert "Neither compatibility surface is a separate Auto-Dev stage" in " ".join(
+        everything.split()
+    )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-stage-policy-decision.json",
+        "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-stage-policy-decision.json",
+    ],
+)
+def test_shipped_auto_dev_stage_policy_decisions_satisfy_strict_schema(
+    relative_path: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (
+            repository / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(document)) == []
+
+
 @pytest.mark.parametrize(
     "relative_path",
     [

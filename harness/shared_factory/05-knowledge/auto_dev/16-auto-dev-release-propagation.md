@@ -47,7 +47,8 @@ Propagation evidence lists the authoritative reason, method, source revision,
 expected targets, created/existing pull requests, target-specific revisions,
 conflicts, migrations/dependencies, tests, and provider readbacks.
 
-The stage completes when every required target has a verified pull request or a
-typed policy-backed `not_required` disposition. A created branch, local
-cherry-pick, or unverified URL is not enough. Propagation does not approve or merge the
-pull requests; Review Self, Finalize, and Merge retain those authorities.
+The PR Create boundary completes when every required target has a verified pull
+request or a typed policy-backed `not_required` disposition. A created branch,
+local cherry-pick, or unverified URL is not enough. This compatibility flow
+does not approve or merge pull requests; Review Self, Finalize, and Merge
+retain those authorities.

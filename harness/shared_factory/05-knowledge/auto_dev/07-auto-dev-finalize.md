@@ -9,7 +9,7 @@ stage. It never executes the merge.
 - the frozen task authorship list classifies the provider-read author identity
   as `ours`;
 - Review Self is terminal for the exact current revisions;
-- required QA and Release Propagation dispositions are present;
+- required PR Create and QA dispositions are present;
 - repository, base branch, tracker key, pull requests, and sibling relationships
   are unambiguous;
 - the effective policy fingerprint matches the active task or drift has been

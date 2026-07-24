@@ -1,9 +1,10 @@
 # Auto-Dev: release
 
 Use `/auto-dev-release` to publish or verify a version, tag, package, changelog,
-container/image, or provider release. Release Propagation is a separate stage
-for moving code across GitFlow branches. Project policy decides which outputs
-exist and which merged revision is eligible.
+container/image, or provider release. Pull-request family propagation belongs
+to the earlier PR Create stage; `release_propagation` remains only its
+lower-level compatibility recorder/alias. Project policy decides which release
+outputs exist and which merged revision is eligible.
 
 ## Inputs and authority
 
