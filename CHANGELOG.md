@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.3.0] - 2026-07-24
+
+### Added
+- Policy-composed Auto-Doctor host health reporting, repair planning,
+  provider-neutral report projections, and fail-closed workspace validation
+  (#71).
+
+### Fixed
+- Auto-Dev lifecycle gates, inherited PR-stage knowledge, and quiet PR
+  delivery checks (#87, #90, #91).
+- Long-running status waits now use bounded backoff with a final state reread
+  to avoid timing-related test failures (#86).
+
+### Changed
+- Consolidated Auto-Dev and version-object library installs (#74).
+
+### Dependencies
+- actions/setup-node v6 → v7 (#89); @vitejs/plugin-react v5 → v6 (#60).
+
 ## [0.2.0] - 2026-07-22
 
 ### Added
