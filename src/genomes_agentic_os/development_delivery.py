@@ -957,7 +957,7 @@ def resolve_auto_dev_folder_profile(
     validated_identity.update(
         {"domain": identity_domain, "project": identity_project}
     )
-    return {
+    result = {
         "status": "loaded",
         "schema": AUTO_DEV_FOLDER_PROFILE_VERSION,
         "source_ref": "auto_dev/profile.yml",
@@ -965,6 +965,290 @@ def resolve_auto_dev_folder_profile(
         "identity": validated_identity,
         "lifecycle": deepcopy(dict(lifecycle)),
     }
+    result["content_sha256"] = _json_sha256(result)
+    return result
+
+
+def _json_sha256(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _legacy_policy_source_content_is_bound(source: Mapping[str, Any]) -> bool:
+    """Validate the only legacy policy shape whose raw digest is recoverable.
+
+    Early effective-policy receipts stored the parsed Markdown body beside the
+    SHA-256 of the raw source, but did not bind the whole plane.  Empty
+    frontmatter lets us recover the raw content exactly apart from the one
+    trailing-newline normalization used by the parser.  Any richer legacy
+    shape must fail closed instead of pretending its body is immutable.
+    """
+
+    frontmatter = source.get("frontmatter")
+    body = source.get("body_markdown")
+    expected = str(source.get("sha256") or "")
+    if not (
+        isinstance(frontmatter, Mapping)
+        and not frontmatter
+        and isinstance(body, str)
+        and re.fullmatch(r"[a-f0-9]{64}", expected)
+    ):
+        return False
+    candidates = (body, f"{body}\n")
+    return any(
+        hashlib.sha256(candidate.encode("utf-8")).hexdigest() == expected
+        for candidate in candidates
+    )
+
+
+def _explicit_auto_dev_boundary(
+    value: Mapping[str, Any] | None,
+    *,
+    mode_key: str,
+    start_key: str,
+    completion_key: str,
+    label: str,
+) -> tuple[str, str, str] | None:
+    """Return one complete durable boundary, rejecting partial state."""
+
+    if not isinstance(value, Mapping):
+        return None
+    start = str(value.get(start_key) or "").strip()
+    completion = str(value.get(completion_key) or "").strip()
+    if bool(start) != bool(completion):
+        raise DevelopmentDeliveryError(
+            f"{label} has an incomplete Auto-Dev workflow boundary"
+        )
+    if not start:
+        return None
+    mode = str(value.get(mode_key) or "").strip()
+    if not mode:
+        raise DevelopmentDeliveryError(
+            f"{label} has an Auto-Dev workflow boundary without a mode"
+        )
+    return mode, start, completion
+
+
+def _selected_profile_policy_authority(
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    repository = (
+        profile.get("repository")
+        if isinstance(profile.get("repository"), Mapping)
+        else {}
+    )
+    validation = (
+        profile.get("validation")
+        if isinstance(profile.get("validation"), Mapping)
+        else {}
+    )
+    authority = {
+        "schema": "development-selected-profile/v1",
+        "repository_id": str(repository.get("id") or ""),
+        "validation": deepcopy(dict(validation)),
+    }
+    authority["sha256"] = _json_sha256(authority)
+    return authority
+
+
+def _effective_policy_snapshot_fingerprint(
+    snapshot: Mapping[str, Any],
+) -> str:
+    planes = (
+        snapshot.get("planes")
+        if isinstance(snapshot.get("planes"), Mapping)
+        else {}
+    )
+    digest_values = {
+        name: str(
+            (
+                planes.get(name)
+                if isinstance(planes.get(name), Mapping)
+                else {}
+            ).get("fingerprint")
+            or ""
+        )
+        for name in DEVELOPMENT_POLICY_PLANES
+    }
+    for name in DEVELOPMENT_POLICY_PLANES:
+        plane = planes.get(name)
+        if isinstance(plane, Mapping) and plane.get("content_sha256"):
+            digest_values[f"{name}_content"] = str(plane["content_sha256"])
+    folder_profile = (
+        snapshot.get("folder_profile")
+        if isinstance(snapshot.get("folder_profile"), Mapping)
+        else {}
+    )
+    if folder_profile.get("status") == "loaded":
+        digest_values["folder_profile"] = str(folder_profile.get("sha256") or "")
+        if folder_profile.get("content_sha256"):
+            digest_values["folder_profile_content"] = str(
+                folder_profile["content_sha256"]
+            )
+    selected_profile = snapshot.get("selected_profile")
+    if isinstance(selected_profile, Mapping):
+        digest_values["selected_profile"] = str(
+            selected_profile.get("sha256") or ""
+        )
+    return _json_sha256(digest_values)
+
+
+def _validate_effective_policy_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    require_selected_profile: bool,
+) -> Mapping[str, Any] | None:
+    """Verify every digest in an immutable development-policy snapshot."""
+
+    if snapshot.get("schema") != "development-effective-policies/v1":
+        raise DevelopmentDeliveryError("invalid effective policy receipt schema")
+    planes = (
+        snapshot.get("planes")
+        if isinstance(snapshot.get("planes"), Mapping)
+        else {}
+    )
+    for name in DEVELOPMENT_POLICY_PLANES:
+        plane = planes.get(name)
+        if not (
+            isinstance(plane, Mapping)
+            and re.fullmatch(r"[a-f0-9]{64}", str(plane.get("fingerprint") or ""))
+        ):
+            raise DevelopmentDeliveryError(
+                f"effective policy receipt has invalid {name} fingerprint"
+            )
+        sources = plane.get("sources")
+        if not isinstance(sources, list):
+            raise DevelopmentDeliveryError(
+                f"effective policy receipt has invalid {name} sources"
+            )
+        digest_input: list[dict[str, Any]] = []
+        for source in sources:
+            if not (
+                isinstance(source, Mapping)
+                and isinstance(source.get("scope"), str)
+                and isinstance(source.get("rank"), int)
+                and isinstance(source.get("source_ref"), str)
+                and re.fullmatch(
+                    r"[a-f0-9]{64}", str(source.get("sha256") or "")
+                )
+            ):
+                raise DevelopmentDeliveryError(
+                    f"effective policy receipt has invalid {name} source evidence"
+                )
+            digest_input.append(
+                {
+                    "scope": source["scope"],
+                    "rank": source["rank"],
+                    "source_ref": source["source_ref"],
+                    "sha256": source["sha256"],
+                }
+            )
+        if plane.get("fingerprint") != hashlib.sha256(
+            json.dumps(
+                digest_input,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest():
+            raise DevelopmentDeliveryError(
+                f"effective policy receipt has changed {name} source evidence"
+            )
+        content_hash = plane.get("content_sha256")
+        if content_hash is not None:
+            content_payload = {
+                key: deepcopy(value)
+                for key, value in plane.items()
+                if key != "content_sha256"
+            }
+            if not (
+                re.fullmatch(r"[a-f0-9]{64}", str(content_hash))
+                and content_hash == _json_sha256(content_payload)
+            ):
+                raise DevelopmentDeliveryError(
+                    f"effective policy receipt has changed {name} content"
+                )
+        elif not all(
+            isinstance(source, Mapping)
+            and _legacy_policy_source_content_is_bound(source)
+            for source in sources
+        ):
+            raise DevelopmentDeliveryError(
+                f"effective policy receipt has unbound legacy {name} content"
+            )
+    folder_profile = snapshot.get("folder_profile")
+    if "folder_profile" in snapshot:
+        if (
+            not isinstance(folder_profile, Mapping)
+            or folder_profile.get("status")
+            not in {"loaded", "not_configured"}
+        ):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has invalid repository folder profile"
+            )
+        if (
+            folder_profile.get("status") == "loaded"
+            and not re.fullmatch(
+                r"[a-f0-9]{64}", str(folder_profile.get("sha256") or "")
+            )
+        ):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has invalid repository folder profile hash"
+            )
+        folder_content_hash = folder_profile.get("content_sha256")
+        if folder_content_hash is not None:
+            folder_content_payload = {
+                key: deepcopy(value)
+                for key, value in folder_profile.items()
+                if key != "content_sha256"
+            }
+            if not (
+                re.fullmatch(r"[a-f0-9]{64}", str(folder_content_hash))
+                and folder_content_hash == _json_sha256(folder_content_payload)
+            ):
+                raise DevelopmentDeliveryError(
+                    "effective policy receipt has changed repository folder profile content"
+                )
+        elif folder_profile.get("status") == "loaded":
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has unbound legacy repository folder profile content"
+            )
+    selected_profile = snapshot.get("selected_profile")
+    if selected_profile is None:
+        if require_selected_profile:
+            raise DevelopmentDeliveryError(
+                "effective policy receipt lacks frozen selected repository authority"
+            )
+    elif not isinstance(selected_profile, Mapping):
+        raise DevelopmentDeliveryError(
+            "effective policy receipt has malformed selected repository authority"
+        )
+    else:
+        selected_payload = {
+            key: deepcopy(value)
+            for key, value in selected_profile.items()
+            if key != "sha256"
+        }
+        if not (
+            selected_profile.get("schema") == "development-selected-profile/v1"
+            and isinstance(selected_profile.get("validation"), Mapping)
+            and re.fullmatch(
+                r"[a-f0-9]{64}", str(selected_profile.get("sha256") or "")
+            )
+            and selected_profile.get("sha256") == _json_sha256(selected_payload)
+        ):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has invalid selected repository authority"
+            )
+    expected = _effective_policy_snapshot_fingerprint(snapshot)
+    if (
+        not re.fullmatch(r"[a-f0-9]{64}", str(snapshot.get("fingerprint") or ""))
+        or snapshot.get("fingerprint") != expected
+    ):
+        raise DevelopmentDeliveryError(
+            "effective policy receipt fingerprint does not match its contents"
+        )
+    return selected_profile if isinstance(selected_profile, Mapping) else None
 
 
 def resolve_development_policies(
@@ -1001,29 +1285,27 @@ def resolve_development_policies(
         )
         for plane in DEVELOPMENT_POLICY_PLANES
     }
+    for plane in planes.values():
+        plane["content_sha256"] = _json_sha256(plane)
     folder_profile = resolve_auto_dev_folder_profile(
         effective_profile,
         domain=domain,
         project=project,
     )
-    digest_values = {name: value["fingerprint"] for name, value in planes.items()}
-    if folder_profile["status"] == "loaded":
-        digest_values["folder_profile"] = folder_profile["sha256"]
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            digest_values,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    return {
+    selected_profile_authority = _selected_profile_policy_authority(
+        effective_profile
+    )
+    value = {
         "schema": "development-effective-policies/v1",
         "domain": normalize_domain(domain),
         "project": validate_name(project, "project"),
-        "fingerprint": fingerprint,
         "planes": planes,
         "folder_profile": folder_profile,
+        "selected_profile": selected_profile_authority,
     }
+    value["fingerprint"] = _effective_policy_snapshot_fingerprint(value)
+    _validate_effective_policy_snapshot(value, require_selected_profile=True)
+    return value
 
 
 def required_test_layers(risk: str, *, changed_behavior: bool = True) -> list[str]:
@@ -1932,7 +2214,11 @@ def start_development_run(
         else {}
     )
     if auto_dev_mode == "single_stage":
-        auto_dev_start_stage = str(requested_stage)
+        # A named workflow is the dispatch focus, not permission to erase its
+        # predecessors. New single-stage items therefore begin at the first
+        # frozen stage and end at the requested stage. Resumes widen this
+        # durable window below; they never collapse it to target -> target.
+        auto_dev_start_stage = auto_dev_stage_order[0]
         auto_dev_completion_stage = str(requested_stage)
     else:
         default_start = "readiness" if auto_dev_mode == "default" else auto_dev_stage_order[0]
@@ -2129,6 +2415,7 @@ def start_development_run(
     if not apply:
         return plan
     portfolio_path = run_dir / "portfolio.json"
+    portfolio_existed = portfolio_path.is_file()
     if run_dir.exists() and not portfolio_path.is_file():
         raise DevelopmentDeliveryError(f"run directory exists without a portfolio receipt: {run_dir}")
     if portfolio_path.is_file():
@@ -2173,13 +2460,53 @@ def start_development_run(
         policy_path = run_dir / "effective-policies.json"
         if policy_path.is_file():
             run_policies = json.loads(policy_path.read_text(encoding="utf-8"))
-            if not isinstance(run_policies, dict) or run_policies.get("schema") != "development-effective-policies/v1":
+            if not isinstance(run_policies, dict):
                 raise DevelopmentDeliveryError(f"invalid effective policy receipt: {policy_path}")
+            try:
+                frozen_selected_profile = _validate_effective_policy_snapshot(
+                    run_policies,
+                    require_selected_profile=False,
+                )
+            except DevelopmentDeliveryError as exc:
+                raise DevelopmentDeliveryError(
+                    f"invalid effective policy receipt: {policy_path}: {exc}"
+                ) from exc
+            recorded_fingerprint = str(existing.get("policy_fingerprint") or "")
+            if (
+                recorded_fingerprint
+                and run_policies.get("fingerprint") != recorded_fingerprint
+            ):
+                raise DevelopmentDeliveryError(
+                    "effective policy receipt no longer matches the portfolio fingerprint"
+                )
+            existing_repository = (
+                existing.get("repository")
+                if isinstance(existing.get("repository"), Mapping)
+                else {}
+            )
+            if not (
+                run_policies.get("domain") == existing.get("domain")
+                and run_policies.get("project") == existing.get("project")
+                and (
+                    frozen_selected_profile is None
+                    or frozen_selected_profile.get("repository_id")
+                    == existing_repository.get("id")
+                )
+            ):
+                raise DevelopmentDeliveryError(
+                    "effective policy receipt identity does not match its portfolio"
+                )
         else:
-            # Backfill early runs once. Resumes thereafter remain pinned to
-            # this immutable policy snapshot.
+            if existing.get("policy_fingerprint"):
+                raise DevelopmentDeliveryError(
+                    f"recorded effective policy receipt is missing: {policy_path}"
+                )
+            # Backfill only truly early runs that never recorded a policy
+            # fingerprint. Resumes thereafter remain pinned to this snapshot.
             run_policies = effective_policies
+            existing["policy_fingerprint"] = run_policies["fingerprint"]
             _atomic_json(policy_path, run_policies)
+            _atomic_json(portfolio_path, existing)
         if run_policies.get("fingerprint") != effective_policies.get("fingerprint"):
             plan["policy_drift"] = {
                 "run_fingerprint": run_policies.get("fingerprint"),
@@ -2205,7 +2532,18 @@ def start_development_run(
         },
     )
     recorded_auto_dev = plan.get("auto_dev") if isinstance(plan.get("auto_dev"), Mapping) else None
+    recorded_portfolio_boundary = _explicit_auto_dev_boundary(
+        recorded_auto_dev,
+        mode_key="mode",
+        start_key="start_stage",
+        completion_key="completion_stage",
+        label="development portfolio",
+    )
+    recorded_mode = auto_dev_mode
+    durable_auto_dev_mode = auto_dev_mode
     if recorded_auto_dev:
+        recorded_mode = str(recorded_auto_dev.get("mode") or auto_dev_mode)
+        durable_auto_dev_mode = recorded_mode
         recorded_order = list(recorded_auto_dev.get("stage_order") or auto_dev_stage_order)
         if (
             len(recorded_order) == len(set(recorded_order))
@@ -2220,34 +2558,79 @@ def start_development_run(
                 raise DevelopmentDeliveryError(
                     f"recorded auto_dev.stage_order is unsafe: {exc}"
                 ) from exc
-        if auto_dev_mode in {"default", "everything"}:
-            auto_dev_start_stage = str(
-                recorded_auto_dev.get("start_stage") or auto_dev_start_stage
+        recorded_start = (
+            recorded_portfolio_boundary[1]
+            if recorded_portfolio_boundary is not None
+            else auto_dev_start_stage
+        )
+        recorded_completion = (
+            recorded_portfolio_boundary[2]
+            if recorded_portfolio_boundary is not None
+            else auto_dev_completion_stage
+        )
+        if (
+            recorded_mode == "single_stage"
+            and recorded_start == recorded_completion
+        ):
+            # Normalize target-only state emitted by the PR83 preview. Keeping
+            # health -> health would make Health's predecessor audit empty.
+            recorded_start = auto_dev_stage_order[0]
+        try:
+            auto_dev_workflow_window(
+                auto_dev_stage_order,
+                recorded_start,
+                recorded_completion,
             )
-            auto_dev_completion_stage = str(
-                recorded_auto_dev.get("completion_stage") or auto_dev_completion_stage
+            auto_dev_stage_policies = validate_auto_dev_stage_policies(
+                recorded_auto_dev.get("stage_policies")
+                if isinstance(recorded_auto_dev.get("stage_policies"), Mapping)
+                else auto_dev_stage_policies
             )
-            try:
-                auto_dev_workflow_window(
-                    auto_dev_stage_order,
-                    auto_dev_start_stage,
-                    auto_dev_completion_stage,
+            recorded_start_index = auto_dev_stage_order.index(recorded_start)
+            recorded_completion_index = auto_dev_stage_order.index(recorded_completion)
+            if auto_dev_mode == "single_stage":
+                requested_index = auto_dev_stage_order.index(str(requested_stage))
+                start_index = min(recorded_start_index, requested_index)
+                completion_index = max(recorded_completion_index, requested_index)
+            elif (
+                auto_dev_mode == recorded_mode
+                or recorded_mode == "everything"
+            ):
+                # A same-mode resume consumes the frozen run slice even when
+                # development.yml has drifted. Default cannot narrow a run
+                # already promoted to Everything.
+                start_index = recorded_start_index
+                completion_index = recorded_completion_index
+            else:
+                # Explicitly promoting single-stage -> Default/Everything or
+                # Default -> Everything may widen the durable window once.
+                requested_start_index = auto_dev_stage_order.index(auto_dev_start_stage)
+                requested_completion_index = auto_dev_stage_order.index(
+                    auto_dev_completion_stage
                 )
-                auto_dev_stage_policies = validate_auto_dev_stage_policies(
-                    recorded_auto_dev.get("stage_policies")
-                    if isinstance(recorded_auto_dev.get("stage_policies"), Mapping)
-                    else auto_dev_stage_policies
+                start_index = min(recorded_start_index, requested_start_index)
+                completion_index = max(
+                    recorded_completion_index,
+                    requested_completion_index,
                 )
-            except AutoDevStateError as exc:
-                raise DevelopmentDeliveryError(
-                    f"recorded Auto-Dev workflow policy is unsafe: {exc}"
-                ) from exc
-            goal = (
-                "delivery_complete"
-                if auto_dev_completion_stage == "health"
-                else auto_dev_completion_stage
+                durable_auto_dev_mode = auto_dev_mode
+            auto_dev_start_stage = auto_dev_stage_order[start_index]
+            auto_dev_completion_stage = auto_dev_stage_order[completion_index]
+            auto_dev_workflow_window(
+                auto_dev_stage_order,
+                auto_dev_start_stage,
+                auto_dev_completion_stage,
             )
-    if selected_packet is None or recorded_auto_dev is None:
+        except (AutoDevStateError, ValueError) as exc:
+            raise DevelopmentDeliveryError(
+                f"recorded Auto-Dev workflow policy is unsafe: {exc}"
+            ) from exc
+        goal = (
+            "delivery_complete"
+            if auto_dev_completion_stage == "health"
+            else auto_dev_completion_stage
+        )
+    if recorded_auto_dev is None:
         plan["auto_dev"] = {
             "mode": auto_dev_mode,
             "requested_stage": requested_stage,
@@ -2258,6 +2641,19 @@ def start_development_run(
             "stage_policies": auto_dev_stage_policies,
             "provision_worktree": provision_worktree,
             "requested_at": utc_now(),
+        }
+    else:
+        # Portfolio state is the durable boundary. It may expand when a later
+        # named workflow is requested, but it must never shrink and erase
+        # receipt-backed history.
+        plan["auto_dev"] = {
+            **dict(recorded_auto_dev),
+            "mode": durable_auto_dev_mode,
+            "goal": goal,
+            "stage_order": auto_dev_stage_order,
+            "start_stage": auto_dev_start_stage,
+            "completion_stage": auto_dev_completion_stage,
+            "stage_policies": auto_dev_stage_policies,
         }
     recovery = profile["recovery"]
     rollup_ledger = expand_path(root) / "harness" / "shared_factory" / "00-control-plane" / "development-runs.jsonl"
@@ -2271,7 +2667,8 @@ def start_development_run(
         work_id = f"{repository_prefix}{_slug(ticket).replace('-', '_')}_{_slug(title).replace('-', '_')}"
         task_dir = run_dir / "tasks" / _slug(ticket)
         state_path = task_dir / "state.json"
-        if not state_path.is_file():
+        state_created = not state_path.is_file()
+        if state_created:
             _write_task_state(
                 state_path,
                 run_id=run_id,
@@ -2280,6 +2677,19 @@ def start_development_run(
                 lease_minutes=int(recovery.get("lease_minutes") or 30),
                 rollup_ledger=rollup_ledger,
             )
+            seeded_state = TaskState(state_path).read()
+            seeded_state.update(
+                {
+                    "auto_dev_mode": durable_auto_dev_mode,
+                    "requested_stage": requested_stage,
+                    "goal": goal,
+                    "auto_dev_stage_order": auto_dev_stage_order,
+                    "auto_dev_start_stage": auto_dev_start_stage,
+                    "auto_dev_completion_stage": auto_dev_completion_stage,
+                    "auto_dev_stage_policies": auto_dev_stage_policies,
+                }
+            )
+            _atomic_json(state_path, seeded_state)
         task_state = TaskState(state_path)
         current = task_state.read()
         failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
@@ -2292,6 +2702,7 @@ def start_development_run(
         elif current.get("state") == "blocked":
             task_rows.append(dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), "error": failure}))
             continue
+        selected_projection: Mapping[str, Any] = {}
         if selected_packet is not None:
             work_items_root = (project_path / "work-items").resolve()
             try:
@@ -2360,6 +2771,42 @@ def start_development_run(
             if not current.get("canonical_work_id") and selected_projection.get("canonical_work_id"):
                 current["canonical_work_id"] = selected_projection["canonical_work_id"]
             _atomic_json(state_path, current)
+        elif current.get("autodev_path"):
+            projection_path = Path(str(current["autodev_path"])).expanduser()
+            if projection_path.is_file():
+                selected_projection = _read_mapping(projection_path)
+        if portfolio_existed and not state_created:
+            task_boundary = _explicit_auto_dev_boundary(
+                current,
+                mode_key="auto_dev_mode",
+                start_key="auto_dev_start_stage",
+                completion_key="auto_dev_completion_stage",
+                label=f"delivery task {ticket}",
+            )
+            projection_boundary = _explicit_auto_dev_boundary(
+                selected_projection,
+                mode_key="mode",
+                start_key="start_stage",
+                completion_key="completion_stage",
+                label=f"Auto-Dev projection {ticket}",
+            )
+            task_mode = str(current.get("auto_dev_mode") or "").strip()
+            projection_mode = str(selected_projection.get("mode") or "").strip()
+            if (
+                (task_mode and task_mode != recorded_mode)
+                or task_boundary != recorded_portfolio_boundary
+                or (
+                    current.get("work_item")
+                    and (
+                        (projection_mode and projection_mode != recorded_mode)
+                        or projection_boundary != recorded_portfolio_boundary
+                    )
+                )
+            ):
+                raise DevelopmentDeliveryError(
+                    "recorded Auto-Dev workflow boundary differs between "
+                    "portfolio, task, and projection"
+                )
         existing_work_item_raw = current.get("work_item")
         existing_work_item = Path(str(existing_work_item_raw)).expanduser() if existing_work_item_raw else None
         current_name = str(current.get("state") or "")
@@ -2403,7 +2850,7 @@ def start_development_run(
                         "url": current_source.get("url"),
                     },
                     "autodev_path": str(existing_work_item / "autodev.json"),
-                    "auto_dev_mode": auto_dev_mode,
+                    "auto_dev_mode": durable_auto_dev_mode,
                     "requested_stage": requested_stage,
                     "goal": goal,
                     "auto_dev_stage_order": auto_dev_stage_order,
@@ -2523,7 +2970,7 @@ def start_development_run(
                     "source": {"system": profile_tracker, "key": ticket, "url": None},
                     "work_item": str(work_item),
                     "autodev_path": str(work_item / "autodev.json"),
-                    "auto_dev_mode": auto_dev_mode,
+                    "auto_dev_mode": durable_auto_dev_mode,
                     "requested_stage": requested_stage,
                     "goal": goal,
                     "auto_dev_stage_order": auto_dev_stage_order,
@@ -3374,18 +3821,57 @@ def run_development_stage(
                 )
             if status == "deferred_to_ci":
                 task_value = state.read()
-                profile_ref = str(task_value.get("profile_source") or "").strip()
-                profile_path = Path(profile_ref).expanduser() if profile_ref else None
-                profile = (
-                    _read_mapping(profile_path)
-                    if profile_path is not None and profile_path.is_file()
-                    else {}
-                )
-                validation = (
-                    profile.get("validation")
-                    if isinstance(profile.get("validation"), Mapping)
-                    else {}
-                )
+                validation: Mapping[str, Any] = {}
+                policy_ref = str(task_value.get("policy_receipt") or "").strip()
+                policy_path = Path(policy_ref).expanduser() if policy_ref else None
+                if policy_path is not None:
+                    if not policy_path.is_file():
+                        raise DevelopmentDeliveryError(
+                            "pinned effective policy receipt is missing"
+                        )
+                    frozen_policies = _read_mapping(policy_path)
+                    frozen_profile = _validate_effective_policy_snapshot(
+                        frozen_policies,
+                        require_selected_profile=True,
+                    )
+                    task_repository = (
+                        task_value.get("repository")
+                        if isinstance(task_value.get("repository"), Mapping)
+                        else {}
+                    )
+                    if not (
+                        isinstance(frozen_profile, Mapping)
+                        and frozen_profile.get("repository_id")
+                        == task_repository.get("id")
+                        and frozen_policies.get("fingerprint")
+                        == task_value.get("policy_fingerprint")
+                    ):
+                        raise DevelopmentDeliveryError(
+                            "pinned selected repository validation policy is invalid"
+                        )
+                    validation = frozen_profile["validation"]
+                else:
+                    # Compatibility is limited to tasks that predate policy
+                    # receipts entirely. A missing or legacy run receipt may
+                    # never fall through to mutable base repository policy.
+                    if task_value.get("policy_fingerprint"):
+                        raise DevelopmentDeliveryError(
+                            "pinned effective policy receipt reference is missing"
+                        )
+                    profile_ref = str(task_value.get("profile_source") or "").strip()
+                    profile_path = (
+                        Path(profile_ref).expanduser() if profile_ref else None
+                    )
+                    profile = (
+                        _read_mapping(profile_path)
+                        if profile_path is not None and profile_path.is_file()
+                        else {}
+                    )
+                    validation = (
+                        profile.get("validation")
+                        if isinstance(profile.get("validation"), Mapping)
+                        else {}
+                    )
                 if validation.get("ci_fallback_on_environment_failure") is not True:
                     raise DevelopmentDeliveryError(
                         "local_validation may defer to CI only when the pinned project "
