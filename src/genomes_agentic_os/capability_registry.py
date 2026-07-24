@@ -805,7 +805,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "watch-pr-quiet",
             "name": "Watch PR Quiet",
-            "description": "Monitor GitHub pull request checks through file-based watcher artifacts instead of repeated chat polling.",
+            "description": "Monitor exact-head GitHub pull request checks through file-based watcher artifacts instead of repeated chat polling.",
             "source": "harness/skills/watch-pr-quiet/SKILL.md",
         },
         {

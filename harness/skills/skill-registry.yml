@@ -169,7 +169,8 @@ skills:
     builtin: true
     bootstrap: false
     purpose: >
-      Monitor pull request checks through file-backed watcher artifacts.
+      Monitor exact-head pull request checks and required workflows through
+      file-backed watcher artifacts.
   - id: composio-cli
     title: Composio CLI
     source_path: harness/skills/composio-cli

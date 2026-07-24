@@ -17,6 +17,8 @@ python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scri
   --output-dir <OUTPUT_FOLDER> \
   --timeout-minutes <MINUTES> \
   --interval-minutes <MINUTES> \
+  [--expected-head-sha <FULL_SHA>] \
+  [--required-check <EXACT_CHECK_NAME>] \
   [--repo owner/name]
 ```
 
@@ -28,7 +30,9 @@ python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scri
   --repo thesummitgrp/los-app-los-django \
   --output-dir <os-root>/domains/los/02-projects/los_app_los_django/work-items/<date>-<id>/artifacts/pr-watch \
   --timeout-minutes 90 \
-  --interval-minutes 5
+  --interval-minutes 5 \
+  --expected-head-sha <FULL_SHA> \
+  --required-check "PR Smoke"
 ```
 
 The script prints nothing. It writes:
@@ -47,25 +51,47 @@ The script prints nothing. It writes:
 
 ## Orchestrator Pattern
 
-1. Put the watcher output in the task's durable artifact folder, not in `/tmp`.
-2. Start the watcher in the background when it will run longer than the current interaction should block.
-3. Schedule a heartbeat or reminder every 10 minutes to inspect `pr-<PR>-watch-state.json`.
-4. If `status` is `failure`, dispatch the applicable subagent with the state file path and PR number.
-5. If `status` is `success`, update the task tracker and stop watching.
-6. If `status` is `timeout` or `error`, inspect the summary file and decide whether to restart with a new timeframe.
+1. Resolve and record the exact current PR head SHA before starting a
+   delivery-grade watch.
+2. Name every workflow check required for the claimed outcome with repeatable
+   `--required-check` arguments. `--min-checks` alone cannot distinguish stale
+   or unrelated checks.
+3. Put the watcher output in the task's durable artifact folder, not in `/tmp`.
+4. For a watch expected to exceed two minutes, start it through
+   `agentic-os long-run`; direct background processes and raw `nohup` are not
+   permitted.
+5. Schedule a heartbeat or reminder every 10 minutes to inspect `pr-<PR>-watch-state.json`.
+6. If `status` is `failure`, dispatch the applicable subagent with the state file path and PR number.
+7. If `status` is `success`, verify `sha`, `expected_head_sha`,
+   `head_matches_expected`, and `missing_required_checks` before updating the
+   task tracker.
+8. If `status` is `timeout` or `error`, inspect the summary file and decide whether to restart with a new timeframe.
 
-## Background Start
+## Governed Long-Run Start
 
-Use shell redirection so the conversation does not receive polling output:
+Use the Agentic OS long-run control plane so the watcher is registered,
+bounded, recoverable, and quiet:
 
 ```bash
-nohup python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
+agentic-os long-run start \
+  --root "${AGENTIC_OS_ROOT:-$HOME/agentic_os}" \
+  --kind watcher \
+  --label "PR <PR_NUMBER> exact-head check watch" \
+  --work-dir <REPOSITORY_WORKTREE> \
+  --wall-clock-minutes 125 \
+  --no-progress-minutes 125 \
+  --max-log-mb 1 \
+  --log-rotations 1 \
+  --preflight-check "gh pr view <PR_NUMBER> --repo <owner/name> --json headRefOid >/dev/null" \
+  -- \
+  python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr <PR_NUMBER> \
   --output-dir <OUTPUT_FOLDER> \
   --timeout-minutes 120 \
   --interval-minutes 5 \
   --repo <owner/name> \
-  >/dev/null 2>&1 &
+  --expected-head-sha <FULL_SHA> \
+  --required-check <EXACT_CHECK_NAME>
 ```
 
 Record the PR number and output folder in the Agentic OS work item so future agents can resume by reading the watcher files.
@@ -74,5 +100,12 @@ Record the PR number and output folder in the Agentic OS work item so future age
 
 - Prefer GitHub-hosted checks when local worktree tests are unavailable, broken, or too slow for the current loop.
 - Local targeted tests are still useful when they run cleanly; GitHub is the source of truth for final PR readiness.
+- A delivery-grade success claim requires `--expected-head-sha` and at least
+  one `--required-check`. A watch without those arguments is observational
+  only and must not be used as a terminal PR receipt.
+- Checks from a head observed before the expected SHA are ignored. After the
+  expected SHA is observed, any head change is terminal failure.
+- A named required check passes only with an explicit `success` conclusion;
+  `neutral` and `skipped` are not delivery-grade success.
 - Never paste full polling logs into chat. Reference the summary/state files instead.
 - Do not use this watcher for unrelated production monitoring. It is for PR check status only.

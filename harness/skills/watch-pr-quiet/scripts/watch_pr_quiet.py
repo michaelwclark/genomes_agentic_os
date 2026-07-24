@@ -16,6 +16,7 @@ from typing import Any
 
 
 SUCCESS_CONCLUSIONS = {"success", "neutral", "skipped"}
+REQUIRED_SUCCESS_CONCLUSIONS = {"success"}
 FAILURE_CONCLUSIONS = {
     "action_required",
     "cancelled",
@@ -133,37 +134,65 @@ def summarize_checks(
     check_runs: list[dict[str, Any]],
     statuses: list[dict[str, Any]],
     min_checks: int,
+    expected_head_sha: str = "",
+    required_checks: list[str] | None = None,
+    expected_head_seen: bool = False,
 ) -> dict[str, Any]:
     """Classify the current PR check state."""
     sha = pr["head"]["sha"]
+    required_checks = required_checks or []
     observed_count = len(check_runs) + len(statuses)
     checks: list[dict[str, str | None]] = []
     failures: list[str] = []
     pending: list[str] = []
+    observed_names: set[str] = set()
+    required_check_names = set(required_checks)
 
     if pr.get("state") == "closed" and not pr.get("merged"):
         failures.append("PR is closed without merge")
+    if expected_head_sha and sha != expected_head_sha:
+        if expected_head_seen:
+            failures.append("PR head changed from expected SHA")
+        else:
+            pending.append("waiting for expected PR head SHA")
 
-    for run in check_runs:
+    classify_observed_checks = not expected_head_sha or sha == expected_head_sha
+    relevant_check_runs = check_runs if classify_observed_checks else []
+    relevant_statuses = statuses if classify_observed_checks else []
+    observed_count = len(relevant_check_runs) + len(relevant_statuses)
+
+    for run in relevant_check_runs:
         name = run.get("name") or run.get("app", {}).get("name") or "unnamed check"
+        observed_names.add(name)
         status = run.get("status")
         conclusion = run.get("conclusion")
         checks.append({"type": "check_run", "name": name, "status": status, "conclusion": conclusion})
         if status != "completed":
             pending.append(name)
+        elif name in required_check_names and conclusion not in REQUIRED_SUCCESS_CONCLUSIONS:
+            failures.append(f"required check did not pass: {name} ({conclusion or 'unknown'})")
         elif conclusion in FAILURE_CONCLUSIONS:
             failures.append(name)
         elif conclusion not in SUCCESS_CONCLUSIONS:
             pending.append(name)
 
-    for context in statuses:
+    for context in relevant_statuses:
         name = context.get("context") or "unnamed status"
+        observed_names.add(name)
         state = context.get("state")
         checks.append({"type": "status", "name": name, "status": state, "conclusion": state})
-        if state in FAILURE_STATUS_STATES:
+        if name in required_check_names and state not in SUCCESS_STATUS_STATES:
+            if state in FAILURE_STATUS_STATES:
+                failures.append(f"required check did not pass: {name} ({state or 'unknown'})")
+            else:
+                pending.append(name)
+        elif state in FAILURE_STATUS_STATES:
             failures.append(name)
         elif state not in SUCCESS_STATUS_STATES:
             pending.append(name)
+
+    missing_required_checks = sorted(set(required_checks) - observed_names)
+    pending.extend(f"required check not observed: {name}" for name in missing_required_checks)
 
     if failures:
         status = "failure"
@@ -178,11 +207,14 @@ def summarize_checks(
     return {
         "status": status,
         "sha": sha,
+        "expected_head_sha": expected_head_sha,
+        "head_matches_expected": not expected_head_sha or sha == expected_head_sha,
         "pr_state": pr.get("state"),
         "merged": bool(pr.get("merged")),
         "observed_count": observed_count,
         "failures": sorted(set(failures)),
         "pending": sorted(set(pending)),
+        "missing_required_checks": missing_required_checks,
         "checks": sorted(checks, key=lambda item: (item.get("type") or "", item.get("name") or "")),
     }
 
@@ -195,6 +227,7 @@ def build_summary(state: dict[str, Any]) -> str:
         f"- Repo: `{state['repo']}`",
         f"- Status: `{state['status']}`",
         f"- SHA: `{state.get('sha', '')}`",
+        f"- Expected SHA: `{state.get('expected_head_sha', '')}`",
         f"- Updated: {state['updated_at']}",
         f"- Deadline: {state['deadline_at']}",
         f"- Checks observed: {state.get('observed_count', 0)}",
@@ -247,6 +280,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--repo", default="", help="GitHub repo as owner/name; inferred from cwd when omitted")
     parser.add_argument("--cwd", default="", help="Repository working directory for gh auth/context")
     parser.add_argument("--min-checks", type=int, default=1, help="Minimum observed checks before success is allowed")
+    parser.add_argument(
+        "--expected-head-sha",
+        default="",
+        help="Exact PR head SHA that must be observed before success is allowed",
+    )
+    parser.add_argument(
+        "--required-check",
+        action="append",
+        default=[],
+        help="Exact check name that must appear before success; repeat for multiple checks",
+    )
     return parser.parse_args(argv)
 
 
@@ -259,6 +303,7 @@ def main(argv: list[str]) -> int:
     started_at = dt.datetime.now(dt.timezone.utc)
     deadline = started_at + dt.timedelta(minutes=args.timeout_minutes)
     repo = args.repo or infer_repo(cwd)
+    expected_head_seen = False
 
     while True:
         now = dt.datetime.now(dt.timezone.utc)
@@ -271,6 +316,7 @@ def main(argv: list[str]) -> int:
             "deadline_at": deadline.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "interval_minutes": args.interval_minutes,
             "timeout_minutes": args.timeout_minutes,
+            "required_checks": sorted(set(args.required_check)),
         }
 
         try:
@@ -278,7 +324,20 @@ def main(argv: list[str]) -> int:
             sha = pr["head"]["sha"]
             check_runs = get_check_runs(repo, sha, cwd)
             statuses = get_status_contexts(repo, sha, cwd)
-            state = {**base_state, **summarize_checks(pr, check_runs, statuses, args.min_checks)}
+            state = {
+                **base_state,
+                **summarize_checks(
+                    pr,
+                    check_runs,
+                    statuses,
+                    args.min_checks,
+                    expected_head_sha=args.expected_head_sha,
+                    required_checks=args.required_check,
+                    expected_head_seen=expected_head_seen,
+                ),
+            }
+            if args.expected_head_sha and sha == args.expected_head_sha:
+                expected_head_seen = True
         except Exception as exc:  # noqa: BLE001 - watcher must record all query failures quietly.
             state = {**base_state, "status": "error", "error": str(exc)}
 
