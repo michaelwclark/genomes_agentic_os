@@ -242,7 +242,8 @@ skills:
   source: harness/skills/auto-dev-document/SKILL.md
 - id: auto-dev-review-repair
   name: Auto-Dev Review and Repair
-  description: Review, create the governed PR, repair checks/findings, and prove readiness.
+  description: Review the exact PR Create family, repair checks/findings, and prove
+    readiness.
   source: harness/skills/auto-dev-review-repair/SKILL.md
 - id: auto-dev-review-self
   name: Auto-Dev Review Self
@@ -276,7 +277,8 @@ skills:
   source: harness/skills/auto-dev-merge/SKILL.md
 - id: auto-dev-release-propagation
   name: Auto-Dev Release Propagation
-  description: Operate configured release and hotfix branch families with exact receipts.
+  description: Compatibility alias for Auto-Dev PR Create family mode and its lower-level
+    release_propagation recorder.
   source: harness/skills/auto-dev-release-propagation/SKILL.md
 - id: auto-dev-release
   name: Auto-Dev Release
@@ -317,7 +319,8 @@ skills:
 - id: develop
   name: Develop
   description: Canonical 1-N programming delivery with project profiles, isolated
-    worktrees, quality and repair loops, release propagation, recovery, and cleanup.
+    worktrees, quality and repair loops, PR-family compatibility recording, recovery,
+    and cleanup.
   source: harness/skills/develop/SKILL.md
 - id: finishing-touches-review
   name: Finishing Touches Review

@@ -4,9 +4,10 @@ Route a request to `$auto-dev-everything` or one named Auto-Dev workflow. The
 same work item and `autodev.json` are reused throughout.
 
 Canonical order is Groom, Detective, Create Artifacts, Readiness, Develop,
-Document, Review Self, Review Others, QA, Release Propagation, Finalize, Merge,
-Release, Deploy, Closeout, Health. Each stage remains manually callable, but
-project policy cannot reorder this lifecycle.
+Document, PR Create, Review Self, Review Others, QA, Finalize, Merge, Release,
+Deploy, Closeout, Health. Each stage remains manually callable, but project
+policy cannot reorder this lifecycle. Release Propagation is the lower-level
+compatibility recorder/alias for PR Create, not another Auto-Dev stage.
 
 For an active packet created before `autodev.json`, use `agentic-os auto-dev
 adopt ... --state <exact-packet> --run-id <stable-id> --apply`. Adoption keeps

@@ -4,7 +4,7 @@
   "canonical_work_id": "work_example",
   "domain": "example_domain",
   "project": "example_project",
-  "stage": "release_propagation",
+  "stage": "pr_create",
   "decision": "not_required",
   "reason": "This project has no downstream configuration repository.",
   "decided_by": "operator:genome",

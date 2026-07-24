@@ -116,7 +116,7 @@ def command_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-review-repair",
             "command": "/auto-dev-review-repair",
-            "description": "Run review, governed PR creation, quiet CI/review repair, and merge-readiness validation.",
+            "description": "Review the exact PR Create family, run quiet CI/review repair, and validate merge readiness.",
             "source": "harness/commands/auto-dev-review-repair.md",
         },
         {
@@ -146,7 +146,7 @@ def command_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-release-propagation",
             "command": "/auto-dev-release-propagation",
-            "description": "Resolve and execute policy-backed release, hotfix, backport, or forward-port branch families.",
+            "description": "Compatibility alias for Auto-Dev PR Create family mode and its lower-level release_propagation recorder.",
             "source": "harness/commands/auto-dev-release-propagation.md",
         },
         {
@@ -967,7 +967,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-review-repair",
             "name": "Auto-Dev Review and Repair",
-            "description": "Review, create the governed PR, repair checks/findings, and prove merge readiness.",
+            "description": "Review the exact PR Create family, repair checks and findings, and prove merge readiness.",
             "source": "harness/skills/auto-dev-review-repair/SKILL.md",
         },
         {
@@ -997,7 +997,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "auto-dev-release-propagation",
             "name": "Auto-Dev Release Propagation",
-            "description": "Operate configured release and hotfix branch families with exact receipts.",
+            "description": "Compatibility alias for Auto-Dev PR Create family mode and its lower-level release_propagation recorder.",
             "source": "harness/skills/auto-dev-release-propagation/SKILL.md",
         },
         {

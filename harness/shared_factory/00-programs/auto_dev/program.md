@@ -40,6 +40,10 @@ specialize each workflow without forking shared code.
 | 15 | Closeout | reconcile provider and delivery state | `/auto-dev-closeout` | `delivery_complete` |
 | 16 | Health | audit receipts, remove exact reconstructable resources, and preserve the finished packet | `/auto-dev-health` | Health receipt and resume manifest |
 
+Release Propagation has no numbered row. Its legacy command delegates to PR
+Create, and Development Delivery retains `release_propagation` only as the
+lower-level compatibility recorder for the canonical PR Create family receipt.
+
 This is the shared safe order. A project may reorder it only when all required
 lifecycle precedence edges remain intact. Any workflow may still be called by
 itself, but when it belongs to an Auto-Dev item its active predecessors must

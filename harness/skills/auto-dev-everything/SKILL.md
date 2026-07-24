@@ -8,6 +8,12 @@ description: Take one or many tracker items through the owning project's configu
 Use this for “take this ticket all the way” work. It is an orchestrator over
 existing owners, not a second implementation or PR engine.
 
+The shared exact order is Groom, Detective, Create Artifacts, Readiness,
+Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Merge,
+Release, Deploy, Closeout, and Health. PR Create is stage 7. Release
+Propagation is only its lower-level compatibility recorder/legacy alias and
+does not add another Auto-Dev stage.
+
 1. Route to the exact domain/project and read the live tracker item.
 2. Start or resume with `agentic-os auto-dev everything <domain> <project>
    <ticket> --apply`. Read the resulting work item `autodev.json`.

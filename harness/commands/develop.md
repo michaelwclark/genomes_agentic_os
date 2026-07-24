@@ -71,11 +71,13 @@ In particular, a completed `merged` receipt requires `merge_sha`, provider-read
 Health later reuses that provider, PR reference, and merge revision exactly.
 
 Manual named stage skills are `/auto-dev-readiness`, `/auto-dev-develop`,
-`/auto-dev-review-self`, `/auto-dev-release-propagation`, `/auto-dev-merge`,
+`/auto-dev-pr-create`, `/auto-dev-review-self`, `/auto-dev-merge`,
 `/auto-dev-deploy`, and `/auto-dev-closeout`. Develop delegates to
 `/auto-dev-implementation`, and Review Self delegates to
 `/auto-dev-review-repair`; both preserve the same canonical delivery state.
-They also route implicitly from equivalent chat requests.
+`/auto-dev-release-propagation` is a compatibility alias for PR Create and its
+lower-level `release_propagation` recorder. These routes also activate
+implicitly from equivalent chat requests.
 
 The friendlier operator facade is `agentic-os auto-dev`. It creates or resumes
 the same delivery task and `<work-item>/autodev.json`; it never owns another

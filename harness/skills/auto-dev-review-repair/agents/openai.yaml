@@ -1,6 +1,6 @@
 interface:
   display_name: "Auto-Dev Review and Repair"
-  short_description: "Review, open PR, repair CI, and prove readiness"
-  default_prompt: "Use $auto-dev-review-repair to take this validated change through PR and ready-for-merge evidence."
+  short_description: "Review the PR Create family, repair CI, and prove readiness"
+  default_prompt: "Use $auto-dev-review-repair to verify the exact PR Create family, repair its checks and findings, and produce ready-for-merge evidence without creating or retargeting a PR."
 policy:
   allow_implicit_invocation: true

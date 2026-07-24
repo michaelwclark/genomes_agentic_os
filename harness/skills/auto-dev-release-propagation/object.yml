@@ -2,7 +2,7 @@ api_version: agentic-os-library-object/v1
 kind: skill
 id: auto-dev-release-propagation
 title: Auto-Dev Release Propagation
-description: Operate configured release and hotfix branch families with receipts.
+description: Compatibility alias for Auto-Dev PR Create family mode and its lower-level release_propagation recorder.
 status: active
 scope: {level: root, domain: null, project: null}
 owner: {type: package, id: genomes_agentic_os}

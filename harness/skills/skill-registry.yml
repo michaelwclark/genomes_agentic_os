@@ -588,7 +588,7 @@ skills:
     status: active
     builtin: true
     bootstrap: false
-    purpose: Review, open the governed PR, repair checks and findings, and prove readiness.
+    purpose: Verify the exact PR Create family, repair checks and findings, and prove readiness without creating or retargeting pull requests.
   - id: auto-dev-review-self
     title: Auto-Dev Review Self
     source_path: harness/skills/auto-dev-review-self
@@ -642,7 +642,7 @@ skills:
     status: active
     builtin: true
     bootstrap: false
-    purpose: Operate configured release and hotfix branch families.
+    purpose: Compatibility alias for Auto-Dev PR Create family mode and its lower-level release_propagation recorder.
   - id: auto-dev-pr-create
     title: Auto-Dev PR Create
     source_path: harness/skills/auto-dev-pr-create

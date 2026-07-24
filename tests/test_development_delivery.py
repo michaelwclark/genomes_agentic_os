@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -3033,6 +3034,305 @@ def test_auto_dev_template_satisfies_strict_runtime_schema() -> None:
     assert list(Draft202012Validator(schema).iter_errors(template)) == []
     assert set(template["stage_order"]) == set(template["stages"])
     assert template["stage_order"][-1] == "health"
+
+
+def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    policy_root = repository / "harness/shared_factory/05-knowledge/auto_dev"
+    stage_labels = {
+        "groom": "Grooming",
+        "detective": "Detective",
+        "create_artifacts": "Create Artifacts",
+        "readiness": "Readiness",
+        "develop": "Develop",
+        "document": "Document",
+        "pr_create": "PR Create",
+        "review_self": "Review Self",
+        "review_others": "Review Others",
+        "qa": "QA",
+        "finalize": "Finalize",
+        "merge": "Merge",
+        "release": "Release",
+        "deploy": "Deploy",
+        "closeout": "Closeout",
+        "health": "Health",
+    }
+    expected = [stage_labels[stage] for stage in AUTO_DEV_STAGE_ORDER]
+
+    general = (policy_root / "00-auto-dev-general.md").read_text(encoding="utf-8")
+    general_lifecycle = general.split("## Canonical lifecycle", 1)[1].split(
+        "## Orchestration", 1
+    )[0]
+    numbered_stages = [
+        line.split(". ", 1)[1]
+        for line in general_lifecycle.splitlines()
+        if line.split(". ", 1)[0].isdigit()
+    ]
+
+    everything = (policy_root / "13-auto-dev-everything.md").read_text(
+        encoding="utf-8"
+    )
+    everything_order = everything.split("## Exact stage order", 1)[1].split(
+        "## Orchestration behavior", 1
+    )[0]
+    table_stages = []
+    for line in everything_order.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[0].isdigit():
+            table_stages.append(cells[1])
+
+    assert numbered_stages == expected
+    assert table_stages == expected
+    assert "Neither compatibility surface adds another Auto-Dev stage" in " ".join(
+        general.split()
+    )
+    assert "Neither compatibility surface is a separate Auto-Dev stage" in " ".join(
+        everything.split()
+    )
+
+    for command_name in ("auto-dev.md", "auto-dev-everything.md"):
+        command = (
+            repository / "harness" / "commands" / command_name
+        ).read_text(encoding="utf-8")
+        normalized_command = " ".join(command.split())
+        assert "Document, PR Create, Review Self, Review Others, QA" in normalized_command
+        assert "compatibility recorder/alias for PR Create" in normalized_command
+
+    readme = (policy_root / "README.md").read_text(encoding="utf-8")
+    readme_order = readme.split("## Files and execution order", 1)[1].split(
+        "Each workflow has a same-named command", 1
+    )[0]
+    readme_stages = []
+    for line in readme_order.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[0].isdigit():
+            readme_stages.append(cells[1])
+    assert readme_stages == expected
+    assert "intentionally outside this stage table" in " ".join(readme.split())
+
+    everything_skill = (
+        repository / "harness/skills/auto-dev-everything/SKILL.md"
+    ).read_text(encoding="utf-8")
+    normalized_skill = " ".join(everything_skill.split())
+    assert (
+        "Develop, Document, PR Create, Review Self, Review Others, QA, Finalize"
+        in normalized_skill
+    )
+    assert "does not add another Auto-Dev stage" in normalized_skill
+
+    auto_dev_skill = (
+        repository / "harness/skills/auto-dev/SKILL.md"
+    ).read_text(encoding="utf-8")
+    numbered_skill_stages = [
+        line
+        for line in auto_dev_skill.splitlines()
+        if re.match(r"^\d+\. ", line)
+    ]
+    assert len(numbered_skill_stages) == 16
+    assert numbered_skill_stages[6] == "7. `$auto-dev-pr-create`"
+    assert "$auto-dev-review-self" in numbered_skill_stages[7]
+    assert numbered_skill_stages[9] == "10. `$auto-dev-qa`"
+    assert numbered_skill_stages[10] == "11. `$auto-dev-finalize`"
+    assert not any(
+        "$auto-dev-release-propagation" in line
+        for line in numbered_skill_stages
+    )
+    assert "is not counted in this list" in auto_dev_skill
+
+    finalize_policy = (policy_root / "07-auto-dev-finalize.md").read_text(
+        encoding="utf-8"
+    )
+    release_policy = (policy_root / "10-auto-dev-release.md").read_text(
+        encoding="utf-8"
+    )
+    assert "required PR Create and QA dispositions" in finalize_policy
+    assert "QA and Release Propagation" not in finalize_policy
+    assert "lower-level compatibility recorder/alias" in " ".join(
+        release_policy.split()
+    )
+    assert "Release Propagation is a separate stage" not in release_policy
+
+    review_self_policy = (policy_root / "05-auto-dev-review-self.md").read_text(
+        encoding="utf-8"
+    )
+    normalized_review_self = " ".join(review_self_policy.split())
+    assert "consumes the family created by PR Create" in normalized_review_self
+    assert "never creates or retargets a pull request" in normalized_review_self
+    assert "Create or update the pull request" not in review_self_policy
+
+    propagation_policy = (
+        policy_root / "16-auto-dev-release-propagation.md"
+    ).read_text(encoding="utf-8")
+    normalized_propagation_policy = " ".join(propagation_policy.split())
+    assert "Delegate the invocation to `/auto-dev-pr-create`" in (
+        normalized_propagation_policy
+    )
+    assert "never resolves target branches" in normalized_propagation_policy
+    assert "## Propagation behavior" not in propagation_policy
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "harness/shared_factory/00-programs/auto_dev/templates/auto-dev-stage-policy-decision.json",
+        "harness/shared_factory/05-knowledge/auto_dev/examples/auto-dev-stage-policy-decision.json",
+    ],
+)
+def test_shipped_auto_dev_stage_policy_decisions_satisfy_strict_schema(
+    relative_path: str,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    schema = json.loads(
+        (
+            repository / "schemas/auto-dev-stage-policy-decision.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    document = json.loads((repository / relative_path).read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(document)) == []
+
+
+def test_release_propagation_workflow_is_pr_create_compatibility_recorder() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    workflow_root = (
+        repository
+        / "harness/shared_factory/04-workflows/development_delivery/release_propagation"
+    )
+    contract = yaml.safe_load(
+        (workflow_root / "workflow.yml").read_text(encoding="utf-8")
+    )
+    assert contract["version"] == 2
+    assert contract["inputs"][0] == "pr_create_family_receipt"
+    assert contract["outputs"] == [
+        "release_propagation_stage_receipt",
+        "pr_create_projection",
+    ]
+    forbidden_steps = {
+        "read_fix_version",
+        "map_targets",
+        "cherry_pick",
+        "open_and_watch_release_prs",
+    }
+    assert not (forbidden_steps & set(contract["steps"]))
+    assert "no_provider_or_target_mutation" in contract["validations"]
+
+    workflow = (workflow_root / "workflow.md").read_text(encoding="utf-8")
+    normalized_workflow = " ".join(workflow.split())
+    assert "lower-level compatibility recorder, not an Auto-Dev stage" in (
+        normalized_workflow
+    )
+    assert "does not resolve targets, create branches, cherry-pick code" in (
+        normalized_workflow
+    )
+
+    command = (
+        repository / "harness/commands/auto-dev-release-propagation.md"
+    ).read_text(encoding="utf-8")
+    assert "Delegate every target-resolution decision and provider action" in (
+        " ".join(command.split())
+    )
+    skill = (
+        repository / "harness/skills/auto-dev-release-propagation/SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "do not resolve targets, create branches, perform provider actions" in (
+        " ".join(skill.split())
+    )
+
+
+def test_development_delivery_orders_pr_create_before_review() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    program_root = (
+        repository / "harness/shared_factory/00-programs/development_delivery"
+    )
+    components = yaml.safe_load(
+        (program_root / "components.yml").read_text(encoding="utf-8")
+    )
+    workflow_ids = [workflow["id"] for workflow in components["workflows"]]
+    assert "pr_create" in workflow_ids
+    assert workflow_ids.index("pr_create") < workflow_ids.index(
+        "testing_review_and_pr_repair"
+    )
+
+    program = (program_root / "program.md").read_text(encoding="utf-8")
+    numbered_rows = [
+        line
+        for line in program.splitlines()
+        if line.startswith("| ") and line.split("|")[1].strip().isdigit()
+    ]
+    numbered_workflows = [line.split("|")[2].strip(" `") for line in numbered_rows]
+    assert numbered_workflows == [
+        "readiness_and_context",
+        "isolated_implementation",
+        "pr_create",
+        "testing_review_and_pr_repair",
+        "merge_deployment_and_cleanup",
+    ]
+    assert "invoked inside the PR Create handoff" in " ".join(program.split())
+
+    pr_create_contract = yaml.safe_load(
+        (
+            repository
+            / "harness/shared_factory/04-workflows/development_delivery/pr_create/workflow.yml"
+        ).read_text(encoding="utf-8")
+    )
+    assert pr_create_contract["owner"] == "auto-dev-pr-create"
+    assert "record_compatibility_receipt" in pr_create_contract["steps"]
+    assert pr_create_contract["compatibility_receipt_state"] == "release_propagation"
+    assert "family_complete_receipt" in pr_create_contract["receipts"]
+
+
+def test_review_repair_consumes_pr_create_family_without_creating_prs() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    workflow_root = (
+        repository
+        / "harness/shared_factory/04-workflows/development_delivery"
+        / "testing_review_and_pr_repair"
+    )
+    contract = yaml.safe_load(
+        (workflow_root / "workflow.yml").read_text(encoding="utf-8")
+    )
+    assert contract["version"] == 2
+    assert contract["inputs"][0] == "pr_create_family_receipt"
+    assert "open_pr" not in contract["steps"]
+    assert "verify_pr_create_family" in contract["steps"]
+    assert "no_pr_target_mutation" in contract["validations"]
+
+    workflow = " ".join(
+        (workflow_root / "workflow.md").read_text(encoding="utf-8").split()
+    )
+    assert "does not open, retarget, or add pull requests" in workflow
+    assert "A missing or wrong target returns to PR Create" in workflow
+    assert "pr_open stores the provider readback already created by PR Create" in (
+        workflow.replace("`", "")
+    )
+
+    agent_metadata = yaml.safe_load(
+        (
+            repository
+            / "harness/skills/auto-dev-review-repair/agents/openai.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    interface = agent_metadata["interface"]
+    assert "PR Create family" in interface["short_description"]
+    assert "without creating or retargeting a PR" in interface["default_prompt"]
+
+    skill_registry = yaml.safe_load(
+        (repository / "harness/skills/skill-registry.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    registry_row = next(
+        row
+        for row in skill_registry["skills"]
+        if row["id"] == "auto-dev-review-repair"
+    )
+    assert "without creating or retargeting pull requests" in registry_row["purpose"]
+
+    object_contract = yaml.safe_load(
+        (
+            repository / "harness/skills/auto-dev-review-repair/object.yml"
+        ).read_text(encoding="utf-8")
+    )
+    assert object_contract["dependencies"] == ["skill:root:auto-dev-pr-create"]
 
 
 @pytest.mark.parametrize(

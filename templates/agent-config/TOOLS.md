@@ -17,12 +17,12 @@ List the visible capabilities intended for this layer.
 | `auto-dev-develop` | Use the plain-English entrypoint for implementation and local validation. | `harness/skills/auto-dev-develop/SKILL.md` |
 | `auto-dev-document` | Document code, issues, architecture, operations, QA, releases, or handoffs. | `harness/skills/auto-dev-document/SKILL.md` |
 | `auto-dev-qa` | Run the project-configured QA gates independently. | `harness/skills/auto-dev-qa/SKILL.md` |
-| `auto-dev-review-repair` | Manually run tests, opposing review, PR creation, and quiet CI/review repair. | `harness/skills/auto-dev-review-repair/SKILL.md` |
+| `auto-dev-review-repair` | Review the exact PR Create family, run opposing review, and perform quiet CI/review repair. | `harness/skills/auto-dev-review-repair/SKILL.md` |
 | `auto-dev-review-self` | Review and repair our own active delivery. | `harness/skills/auto-dev-review-self/SKILL.md` |
 | `auto-dev-review-others` | Review another author's live pull request. | `harness/skills/auto-dev-review-others/SKILL.md` |
 | `auto-dev-finalize` | Converge our ticket's pull-request family and record merge readiness without merging. | `harness/skills/auto-dev-finalize/SKILL.md` |
 | `auto-dev-merge` | Run the final live merge gate through the correct pull-request owner. | `harness/skills/auto-dev-merge/SKILL.md` |
-| `auto-dev-release-propagation` | Manually run configured release, hotfix, backport, or forward-port propagation. | `harness/skills/auto-dev-release-propagation/SKILL.md` |
+| `auto-dev-release-propagation` | Compatibility alias for Auto-Dev PR Create family mode and its lower-level recorder. | `harness/skills/auto-dev-release-propagation/SKILL.md` |
 | `auto-dev-release` | Create and verify the project version, tag, package, changelog, or provider release. | `harness/skills/auto-dev-release/SKILL.md` |
 | `auto-dev-deploy` | Deploy or monitor the exact merged artifact and verify behavior. | `harness/skills/auto-dev-deploy/SKILL.md` |
 | `auto-dev-closeout` | Reconcile tracker, pull-request, release, and deployment truth and prove delivery complete. | `harness/skills/auto-dev-closeout/SKILL.md` |
@@ -43,12 +43,12 @@ List the visible capabilities intended for this layer.
 | `/auto-dev-develop` | Run the named Develop workflow. | Friendly route to canonical implementation. |
 | `/auto-dev-document` | Document code or delivery state for the required audience. | Records verified output references. |
 | `/auto-dev-qa` | Run configured QA independently. | Records exact revision and acceptance evidence. |
-| `/auto-dev-review-repair` | Run tests, review, PR, CI, and repair convergence manually. | Records typed stage evidence. |
+| `/auto-dev-review-repair` | Review the PR Create family and run CI/review repair convergence manually. | Records typed stage evidence. |
 | `/auto-dev-review-self` | Review and repair our own change. | Friendly route to canonical review/repair. |
 | `/auto-dev-review-others` | Review another author's live pull request. | Uses the canonical PR Review owner. |
 | `/auto-dev-finalize` | Converge the ticket pull-request family. | Leaves immutable merge readiness or an exact hold; never merges. |
 | `/auto-dev-merge` | Execute the final merge gate. | Requires PR-owner readiness, live provider readback, and merge authority. |
-| `/auto-dev-release-propagation` | Run release/backport/forward-port propagation manually. | Uses the effective gitflow topology. |
+| `/auto-dev-release-propagation` | Invoke Auto-Dev PR Create family mode through the legacy name. | Preserves the lower-level `release_propagation` recorder. |
 | `/auto-dev-release` | Create and verify a project release. | Uses project release policy and provider readback. |
 | `/auto-dev-deploy` | Deploy and verify the exact artifact. | Records deployed-version evidence or a policy-backed skip. |
 | `/auto-dev-closeout` | Reconcile providers and prove delivery complete. | Does not own lifecycle cleanup. |

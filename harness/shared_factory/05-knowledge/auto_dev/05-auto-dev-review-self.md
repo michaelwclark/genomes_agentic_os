@@ -1,16 +1,18 @@
 # Auto-Dev: review and repair our work
 
 Use `/auto-dev-review-self`; it delegates to the canonical
-`/auto-dev-review-repair` owner. This stage challenges, tests, publishes, and
-repairs an agent-authored change until the exact pull-request revision is ready
-for Finalize or an explicit blocker remains.
+`/auto-dev-review-repair` owner. This stage challenges, tests, and repairs an
+agent-authored change until the exact pull-request revision is ready for
+Finalize or an explicit blocker remains. It consumes the family created by PR
+Create and never creates or retargets a pull request.
 
 ## Inputs
 
-- completed Development evidence for the registered worktree and revision;
+- completed Development and PR Create family evidence for the registered
+  worktree and revision;
 - tracker acceptance behavior and risk assessment;
 - effective development, QA, review, artifact, and GitFlow policy;
-- exact repository/base/branch plus any required sibling pull-request plan.
+- exact provider-read repository/base/branch and sibling pull-request family.
 
 ## Review and repair loop
 
@@ -21,8 +23,8 @@ for Finalize or an explicit blocker remains.
 3. Obtain the required independent or opposing-model review. A reviewer that is
    unavailable is recorded according to project policy; actual findings remain
    blocking.
-4. Create or update the pull request through Create Artifacts with a clean,
-   teammate-facing body and the exact configured base.
+4. Verify every pull request from the canonical PR Create family receipt. A
+   missing, extra, or wrong target returns to PR Create.
 5. Read live CI checks, required reviews, automated-review threads, and human
    discussion from the provider.
 6. Classify each failure or finding before editing. Repair the smallest

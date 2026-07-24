@@ -60,6 +60,9 @@ lifecycle precedence. Bare Auto-Dev uses Default and must include PR Create.
 Stages outside a run boundary are `out_of_scope`. Single-stage commands use the
 same predecessor receipts.
 
+Release Propagation is not a child stage or a `not_required` stage choice. It
+is the lower-level compatibility recorder and legacy alias for PR Create.
+
 Object Library Self-Hosting is also a profile, not a stage. It must show the
 canonical source repository versus installed projection boundary and map build
 to Develop, exact-artifact validation to QA, publication to Release,

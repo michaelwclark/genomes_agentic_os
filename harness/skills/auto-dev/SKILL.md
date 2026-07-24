@@ -79,6 +79,9 @@ but non-blocking when its receipt records that the reviewer was unavailable.
 15. `$auto-dev-closeout`
 16. `$auto-dev-health`
 
+`$auto-dev-release-propagation` is not counted in this list. It delegates to
+stage 7 PR Create and preserves only the lower-level compatibility receipt.
+
 This is the shared safe order. A project may reorder stages when every required
 lifecycle precedence edge remains intact. Every stage is independently
 callable, but a later external stage on an Auto-Dev item requires all active

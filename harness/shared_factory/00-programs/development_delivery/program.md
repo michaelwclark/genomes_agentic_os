@@ -31,9 +31,14 @@ controlled by `worktrees.directory`.
 |---|---|---|---|
 | 1 | `readiness_and_context` | claim, grooming check, evidence, worktree and plan inputs | `planned` |
 | 2 | `isolated_implementation` | work item, worktree, implementation and local checks | `local_validation` |
-| 3 | `testing_review_and_pr_repair` | test triangle, PR, CI, Copilot and opposing review loops | `ready_for_merge` |
-| 4 | `release_propagation` | fix-version and cherry-pick/release-PR needs | separate propagation receipt while retaining `ready_for_merge` or `merged` |
+| 3 | `pr_create` | resolve, create or reuse, and provider-read the complete PR family | canonical family receipt projected as Auto-Dev `pr_create` |
+| 4 | `testing_review_and_pr_repair` | verify the canonical PR Create family, then run test, CI, Copilot, and opposing-review loops | `ready_for_merge` |
 | 5 | `merge_deployment_and_cleanup` | independently record Merge, Deploy, provider Closeout, and the cleanup decision | `delivery_complete`; Auto-Dev Health performs later resource pruning |
+
+Auto-Dev PR Create exclusively owns target resolution plus branch and
+pull-request creation. The historical `release_propagation` workflow name is a
+lower-level recorder/adapter invoked inside the PR Create handoff, not another
+ordered workflow, Auto-Dev stage, or provider writer.
 
 Each workflow is documented completely in one `workflow.md`; its adjacent
 `workflow.yml` contains only the machine contract. Do not add routing/context

@@ -6,74 +6,90 @@
 
 ## What this does
 
-Translates tracker fix-version/release policy into the required target branches
-and cherry-pick PRs without silently inventing release scope.
+Preserves the stable `release_propagation` Development Delivery receipt for
+existing tasks and adapters after the canonical PR Create workflow has already
+resolved, created, and read back the complete pull-request family.
+
+This is a lower-level compatibility recorder, not an Auto-Dev stage. It does
+not resolve targets, create branches, cherry-pick code, open or retarget pull
+requests, watch checks, or own GitFlow policy.
 
 ## Manual run
 
-Use `/auto-dev-release-propagation`, then record verified work with
-`agentic-os develop stage <state.json> --stage release_propagation ...`.
+Use `/auto-dev-release-propagation`, which delegates to PR Create family mode.
+After PR Create returns its provider-read family receipt, record that exact
+receipt with `agentic-os develop stage <state.json> --stage
+release_propagation ...`.
 
 ## Inputs
 
-- Ready PR, tracker fix version, project release configuration, branch/version
-  registry, merge commit when available, and target release eligibility rules.
+- canonical PR Create family receipt;
+- exact task state, work-item identity, and `autodev.json` linkage;
+- packet-local immutable evidence snapshot;
+- stable idempotency key.
 
 ## Outputs
 
-- `not_required` decision or verified release target matrix, cherry-pick
-  branches/PRs, conflict receipts, and `release_ready` decision.
+- packet-local `release_propagation` compatibility receipt;
+- synchronized Auto-Dev `pr_create` projection referencing the same evidence;
+- legacy Development Delivery event/readback for existing consumers.
 
 ## States
 
-This workflow is a gated companion to `ready_for_merge`/`merged`:
-`release_evaluation -> not_required|release_preparing -> release_ready|blocked`.
+`compatibility_validation -> recorded|blocked`.
+
+The recorder accepts only the delivery states supported by the canonical
+implementation. It does not introduce target-matrix or provider lifecycle
+states.
 
 ## Steps
 
-1. Re-read fix version and project release policy; map them to canonical target
-   branches through the version registry.
-2. Decide whether the primary PR is sufficient or propagation is required.
-3. After the source commit exists, create isolated release worktrees/branches
-   and cherry-pick in dependency-safe order.
-4. Resolve mechanical conflicts only when intent is unambiguous; otherwise
-   block with the conflict set and original acceptance criteria.
-5. Run target-branch validation, open linked release PRs, and watch their checks
-   and review findings using the same quality policy.
+1. Require the canonical work item and `autodev.json` linkage.
+2. Require every predecessor of Auto-Dev PR Create to be terminal and
+   receipt-backed.
+3. Validate the PR Create family receipt and exact work-item/provider/revision
+   identity.
+4. Require the evidence snapshot to live inside the work-item packet.
+5. Record the immutable compatibility receipt idempotently.
+6. Synchronize `autodev.json` so the same receipt is exposed as `pr_create`.
+7. Read back the stored receipt and projection.
 
 ## Validations
 
-- Fix version, branch mapping, and release eligibility agree.
-- Every required target has exactly one linked PR/receipt; no duplicate cherry
-  pick exists.
-- Cherry-picked diff preserves intent and target-specific tests pass.
-- External tracker/PR links are verified after write.
+- The canonical PR Create receipt already contains the complete provider-read
+  target family.
+- Work item, task, repository, provider, pull-request family, and revision
+  identities match.
+- The evidence is packet-local and its SHA-256 matches the stored receipt.
+- Repeating the same idempotency key returns the same result; different input
+  cannot overwrite it.
+- No target resolution, branch mutation, pull-request write, check watch, or
+  policy decision occurs in this recorder.
 
 ## Success modes
 
-- `not_required`: policy proves the primary branch delivers the fix.
-- `release_ready`: every required release PR is open, green, review-clean, and
-  linked to the source task.
+- `recorded`: the lower-level receipt is stored and the Auto-Dev projection
+  exposes the same evidence as completed PR Create.
+- `idempotent`: an identical prior receipt is read back without another write.
 
 ## Failure modes and recovery
 
-- Missing/ambiguous fix version: block for tracker grooming.
-- Target mapping absent: block for release configuration repair.
-- Cherry-pick conflict: keep isolated worktree, record conflict files, and retry
-  after an intent-backed resolution.
-- Target checks fail: repair on that target branch and rewatch.
-- Partial propagation: keep completed targets and resume only missing/failed
-  targets through idempotent target keys.
+- Missing or incomplete PR Create family receipt: return to PR Create.
+- Missing canonical `autodev.json` linkage: reconcile the existing work item;
+  never create a second packet.
+- Identity, revision, or evidence-hash mismatch: block on the exact mismatch.
+- Idempotency collision: preserve the original receipt and stop.
 
 ## Events and receipts
 
-Emit `release.evaluated`, `release.not_required`, `release.target.started`,
-`release.pr.opened`, `release.target.failed`, and `release.ready`. Store fix-
-version snapshot, target matrix, source SHA, cherry-pick result, target tests,
-PR/check snapshots, and conflict details.
+Emit the legacy `development.stage.release_propagated` event only after the
+compatibility receipt is stored. Preserve the canonical PR Create family
+receipt, packet-local evidence SHA-256, compatibility receipt, and synchronized
+`pr_create` projection.
 
 ## Cleanup and handoff
 
-Remove release worktrees only after their PRs merge or are abandoned. Handoff
-the target matrix and terminal evidence to deployment/cleanup; do not hold the
-primary task active solely for raw release logs.
+This recorder owns no worktree, branch, pull request, watcher, or cleanup
+resource. Review Self consumes the canonical PR Create family receipt. Later
+Finalize, Merge, Release, Deploy, Closeout, and Health retain their own
+authorities.

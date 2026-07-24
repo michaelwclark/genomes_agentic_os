@@ -1,6 +1,6 @@
 ---
 name: develop
-description: Canonical Agentic OS implementation program for one or many tracker-backed programming tasks, including project configuration, isolated worktrees, testing, PR repair, release propagation, deployment monitoring, recovery, and cleanup.
+description: Canonical Agentic OS implementation program for one or many tracker-backed programming tasks, including project configuration, isolated worktrees, testing, PR repair, PR-family compatibility recording, deployment monitoring, recovery, and cleanup.
 ---
 
 # Develop
@@ -38,9 +38,12 @@ agentic-os develop start <domain> <project> <ticket> [<ticket> ...] --apply
 - A broken local environment is `environment_unavailable`, not passing. When
   policy permits, finish the branch/PR and require GitHub CI as the final signal.
 - Watch and repair CI and actionable Copilot/review findings until clean.
-- Run pre-PR and post-PR opposing-harness review when configured; preserve
-  prompt, response, model, and decision receipts.
-- Respect fix-version release propagation and post-merge deployment/cleanup.
+- Run initial and final opposing-harness review when configured; preserve the
+  stable `pre_pr_review` and `post_pr_review` receipt names plus prompt,
+  response, model, and decision evidence.
+- Respect fix-version PR-family policy, preserve the lower-level
+  `release_propagation` compatibility receipt, and enforce post-merge
+  deployment/cleanup.
 - Record every state transition and failure with an idempotency key and receipt.
 
 ## Failure and resumption

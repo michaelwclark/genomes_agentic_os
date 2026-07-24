@@ -26,16 +26,21 @@ or provider authority.
 | 4 | Readiness | exact repository/base/policy/worktree/plan resolved |
 | 5 | Develop | `local_validation` |
 | 6 | Document | canonical documentation validated/read back |
-| 7 | Review Self | exact revision ready for Finalize or blocker |
-| 8 | Review Others | clean no-merge review or actionable findings |
-| 9 | QA | every applicable gate passed, failed, or blocked |
-| 10 | Release Propagation | required pull-request family created and verified |
+| 7 | PR Create | required pull-request family created and provider-verified |
+| 8 | Review Self | exact revision ready for Finalize or blocker |
+| 9 | Review Others | clean no-merge review or actionable findings |
+| 10 | QA | every applicable gate passed, failed, or blocked |
 | 11 | Finalize | governed `ready_for_merge` decision for our work |
 | 12 | Merge | provider-read merged result and `merge_sha` |
 | 13 | Release | exact published version/artifact readback |
 | 14 | Deploy | exact artifact verified in target environment |
 | 15 | Closeout | `delivery_complete` provider/tracker reconciliation |
 | 16 | Health | audited finished packet and exact resource disposition |
+
+PR Create is stage 7. Its lower-level Development Delivery recorder remains
+`release_propagation` for compatibility, and the legacy
+`/auto-dev-release-propagation` command delegates to PR Create family mode.
+Neither compatibility surface is a separate Auto-Dev stage.
 
 No project, policy overlay, automation, or agent may reorder these rows. A
 stage that truly does not apply remains visible in `autodev.json` with the
