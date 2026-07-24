@@ -1,0 +1,54 @@
+schema_version: 1
+owner: shared_factory
+source_of_truth: filesystem
+notion:
+  workspace: "Genome's Notion"
+  surface_slug: morning_agentic_dashboard
+  parent_surface_slug: os_home
+purpose: >
+  Canonical registry of automations, workflows, watchers, reports, dashboards,
+  databases, and approval surfaces that can require operator attention in the
+  morning Agentic Dashboard.
+registration_required_for:
+  - automations with latest-run summaries
+  - workflows that produce daily, weekly, or on-demand reports
+  - watchers that create work, alerts, approvals, or review queues
+  - dashboards that expose blockers, degraded state, or action controls
+  - external tracker/report surfaces that should appear in the daily rollup
+required_fields:
+  - id
+  - title
+  - kind
+  - owner
+  - cadence
+  - notion_surface
+  - source
+  - summary_source
+  - attention_signals
+  - actions
+contributors:
+  - id: watch_pr_quiet
+    title: Quiet Pull Request Check Watcher
+    kind: watcher
+    owner: shared_factory/engineering
+    cadence: on_demand_for_pr_delivery_gates
+    notion_surface: none
+    source: harness/skills/watch-pr-quiet/SKILL.md
+    summary_source: work-item artifacts/pr-watch/pr-*-watch-summary.md
+    attention_signals:
+      - the PR head differs from the exact SHA bound to the watcher
+      - a required workflow check has not appeared before the deadline
+      - a required workflow check completes without an explicit success conclusion
+      - any observed check fails, times out, is cancelled, or requires action
+      - the watcher cannot query GitHub or write its durable state artifacts
+    actions:
+      - id: inspect_pr_watch_receipt
+        mode: local_state_and_summary
+        guard: read-only PR check, exact-head, and required-check receipt inspection
+        approval: not required
+actions_policy:
+  default: disabled
+  requirements:
+    - every action must write a receipt before chat or Notion claims success
+    - actions that mutate external systems require explicit approval unless a narrower automation grants execute_guarded
+    - webhook-style actions require authentication and unknown-action refusal

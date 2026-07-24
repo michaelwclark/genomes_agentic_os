@@ -290,7 +290,7 @@ through the registries above):
 | --- | --- |
 | `auto-dev` (family entry point) | Route programming work through the canonical polymorphic investigation, artifact, delivery, review, release, deployment, and closeout family. |
 | `pr-review` | Canonical others'-PR review, batch reporting, engineering-health, and authority-aware standard squash-merge workflow using DEV_STANDARDS and GitFlow family coverage. |
-| `watch-pr-quiet` | Monitor GitHub PR checks through file-based watcher artifacts instead of repeated chat polling. |
+| `watch-pr-quiet` | Monitor exact-head GitHub PR checks and required workflows through file-based watcher artifacts instead of repeated chat polling. |
 | `doc-config-router` | Route document captures to the configured Agentic OS filesystem and Notion destinations. |
 | `spec-intake-router` | Create spec and future-work intake items using doc-config before filesystem or Notion writes. |
 | `status-report` | Generate recent-work Agentic OS status reports with filesystem markdown (plus optional Notion projection). |
