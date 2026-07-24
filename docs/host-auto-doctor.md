@@ -13,8 +13,21 @@ agentic-os host health-report --root /path/to/agentic_os --host genomesbox
 
 Add `--apply-safe-repairs` to execute only allowlisted, reconstructable actions.
 Add `--apply-notion` to replace the host's configured page after verifying the
-workspace is exactly `Genome's Notion`. The page id is read from the host's
-identity policy; `--notion-page-id` is an explicit override.
+workspace matches `notion_workspace` in the host policy or the explicit
+`--verified-workspace` value. The page id and optional `notion_token_env` are
+also read from policy; `--notion-page-id` and `--token-env` are explicit
+overrides. A missing expected workspace fails closed before the Notion write.
+
+Optional report distribution remains provider-neutral:
+
+- `--apply-http-report` sends the report to `report_ingest_url` using the
+  bearer token named by `report_token_env` (or `--http-token-env`);
+- `--apply-report-drop` copies `latest.json` to the fixed SSH target declared
+  by `report_drop_target`.
+
+When upgrading an existing installation, migrate the policy keys, token
+environment names, and timer/service flags together with the package so a
+scheduled run never mixes old configuration with the new CLI contract.
 
 Each run writes immutable JSON and Markdown receipts plus `latest.json` and
 `latest.md`. A report contains the host status, observed metrics, findings,

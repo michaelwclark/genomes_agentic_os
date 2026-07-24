@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from genomes_agentic_os.host_doctor import (
     apply_safe_repairs,
     build_host_report,
@@ -12,8 +14,9 @@ from genomes_agentic_os.host_doctor import (
     host_projection,
     next_run_at,
     render_host_report,
-    project_losmon_report,
-    project_losmon_drop,
+    project_host_report,
+    project_http_report,
+    project_report_drop,
     write_host_report,
     _docker_inventory,
     _worktree_inventory,
@@ -25,14 +28,14 @@ class _Response:
     status = 202
 
 
-def test_losmon_projection_uses_env_token_without_returning_it(monkeypatch) -> None:
+def test_http_projection_uses_env_token_without_returning_it(monkeypatch) -> None:
     seen = {}
     def fetcher(request, timeout):
         seen['authorization'] = request.headers['Authorization']
         seen['timeout'] = timeout
         return _Response()
     monkeypatch.setenv('TEST_HOST_TOKEN', 'secret-value')
-    result = project_losmon_report(
+    result = project_http_report(
         {'api_version': 'auto-doctor-report/v1', 'host': 'bigmac'},
         'http://example.test/api/host-health/bigmac',
         token_env='TEST_HOST_TOKEN',
@@ -43,20 +46,32 @@ def test_losmon_projection_uses_env_token_without_returning_it(monkeypatch) -> N
     assert 'secret-value' not in str(result)
 
 
-def test_losmon_drop_uses_fixed_scp_command(tmp_path: Path) -> None:
+def test_report_drop_uses_fixed_scp_command(tmp_path: Path) -> None:
     latest = tmp_path / 'latest.json'
     latest.write_text('{}', encoding='utf-8')
     seen = []
     def runner(args, **kwargs):
         seen.append(args)
         return subprocess.CompletedProcess(args, 0, '', '')
-    result = project_losmon_drop(
+    result = project_report_drop(
         latest,
         'genomesbox:/home/genome/agentic_os/auto-doctor/bigmac/latest.json',
         runner=runner,
     )
     assert result['applied'] is True
     assert seen[0][:5] == ['scp', '-q', '-o', 'ConnectTimeout=8', str(latest.resolve())]
+
+
+def test_notion_projection_requires_and_verifies_workspace(monkeypatch) -> None:
+    report = {"api_version": "auto-doctor-report/v1", "host": "testbox"}
+    with pytest.raises(ValueError, match="verified_workspace is required"):
+        project_host_report(report, "page-id", verified_workspace="")
+    monkeypatch.setattr(
+        "genomes_agentic_os.host_doctor.notion_api.get_bot_workspace",
+        lambda token_env: "Different Workspace",
+    )
+    with pytest.raises(RuntimeError, match="workspace mismatch"):
+        project_host_report(report, "page-id", verified_workspace="Expected Workspace")
 
 
 def _policy(path: Path, body: str) -> None:
@@ -116,6 +131,7 @@ schedule:
   local_times: ['06:00', '14:00', '22:00']
 notion_workspace: Genome's Notion
 notion_page_id: abc-123
+notion_token_env: TEST_NOTION_TOKEN
 ---
 # Testbox
 """,
@@ -123,6 +139,7 @@ notion_page_id: abc-123
     assert host_projection(load_host_policies(config, "testbox")) == {
         "workspace": "Genome's Notion",
         "page_id": "abc123",
+        "token_env": "TEST_NOTION_TOKEN",
     }
     monkeypatch.setattr("genomes_agentic_os.host_doctor.collect_metrics", lambda runner: ({
         "platform": "linux", "cpu_count": 4, "load1": 1.0, "load5": 1.0,
@@ -247,6 +264,42 @@ def test_cleanup_commands_are_bounded_and_reconstructable() -> None:
     ]
 
 
+def test_manual_only_receipts_do_not_consume_automatic_repair_limit() -> None:
+    report = {"findings": [{"code": "service.worker.unhealthy"}]}
+    manual = [
+        {
+            "id": f"manual-{index}",
+            "when": "service.worker.unhealthy",
+            "action": "operator_only_action",
+            "target": f"manual-{index}",
+        }
+        for index in range(5)
+    ]
+    automatic = {
+        "id": "restart-worker",
+        "when": "service.worker.unhealthy",
+        "action": "restart_user_service",
+        "target": "worker.service",
+        "automatic": True,
+        "safety": "reconstructable",
+    }
+    commands = []
+
+    def runner(args, **kwargs):
+        commands.append(args)
+        return subprocess.CompletedProcess(args, 0, "restarted", "")
+
+    receipts = apply_safe_repairs(
+        report,
+        [{"workflow": "services", "repairs": [*manual, automatic]}],
+        apply=True,
+        runner=runner,
+    )
+    assert [item["status"] for item in receipts[:5]] == ["manual_only"] * 5
+    assert receipts[-1]["status"] == "repaired"
+    assert commands == [["systemctl", "--user", "restart", "worker.service"]]
+
+
 def test_stopped_containers_are_degraded_but_unhealthy_running_containers_are_critical() -> None:
     from genomes_agentic_os.host_doctor import _probe_docker
 
@@ -281,3 +334,6 @@ def test_notion_blocks_use_operator_friendly_native_layout() -> None:
     types = [block["type"] for block in blocks]
     assert {"callout", "column_list", "divider", "table", "heading_2", "toggle"}.issubset(types)
     assert sum(1 for block in blocks if block["type"] == "table") == 2
+    report["host"] = "testbox"
+    callout = notion_blocks(report)[0]["callout"]["rich_text"][0]["text"]["content"]
+    assert callout == "HEALTHY · Testbox host health"

@@ -15,8 +15,8 @@ from ..host_doctor import (
     host_projection,
     load_host_policies,
     project_host_report,
-    project_losmon_report,
-    project_losmon_drop,
+    project_http_report,
+    project_report_drop,
     write_host_report,
 )
 
@@ -99,26 +99,33 @@ def handle_host_health_report(args: argparse.Namespace) -> int:
             report,
             page_id,
             verified_workspace=projection.get("workspace") or args.verified_workspace,
-            token_env=args.token_env,
+            token_env=projection.get("token_env") or args.token_env,
         )
-    losmon = {"applied": False}
-    if args.apply_losmon:
-        identity = next((policy for policy in reversed(policies) if policy.get("losmon_ingest_url")), {})
-        url = args.losmon_url or identity.get("losmon_ingest_url")
+    http_report = {"applied": False}
+    if args.apply_http_report:
+        identity = next((policy for policy in reversed(policies) if policy.get("report_ingest_url")), {})
+        url = args.http_report_url or identity.get("report_ingest_url")
         if not url:
-            raise ValueError("no LOSMON ingestion URL configured; set losmon_ingest_url or pass --losmon-url")
-        losmon = project_losmon_report(
+            raise ValueError("no report ingestion URL configured; set report_ingest_url or pass --http-report-url")
+        http_report = project_http_report(
             report,
             str(url),
-            token_env=str(identity.get("losmon_token_env") or args.losmon_token_env),
+            token_env=str(identity.get("report_token_env") or args.http_token_env),
         )
-    if args.apply_losmon_drop:
-        identity = next((policy for policy in reversed(policies) if policy.get("losmon_drop_target")), {})
-        target = identity.get("losmon_drop_target")
+    report_drop = {"applied": False}
+    if args.apply_report_drop:
+        identity = next((policy for policy in reversed(policies) if policy.get("report_drop_target")), {})
+        target = identity.get("report_drop_target")
         if not target:
-            raise ValueError("no losmon_drop_target configured in the host identity policy")
-        losmon = project_losmon_drop(paths["latest_json"], str(target))
-    result = {"report": report, "paths": paths, "notion": notion, "losmon": losmon}
+            raise ValueError("no report_drop_target configured in the host identity policy")
+        report_drop = project_report_drop(paths["latest_json"], str(target))
+    result = {
+        "report": report,
+        "paths": paths,
+        "notion": notion,
+        "http_report": http_report,
+        "report_drop": report_drop,
+    }
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else yaml.safe_dump(result, sort_keys=False))
     return 1 if args.fail_on_unhealthy and report["status"] != "healthy" else 0
 
@@ -156,13 +163,13 @@ def register(subparsers) -> None:
     host_health.add_argument("--config-root", help="Auto-Doctor Markdown policy root.")
     host_health.add_argument("--apply-safe-repairs", action="store_true", help="Apply allowlisted reconstructable repairs and recheck.")
     host_health.add_argument("--apply-notion", action="store_true", help="Replace the verified host page with the latest report.")
-    host_health.add_argument("--notion-page-id", help="Override the Genome's Notion host page id from policy.")
-    host_health.add_argument("--verified-workspace", default="Genome's Notion", help="Expected Notion workspace name.")
-    host_health.add_argument("--token-env", default="GENOMES_NOTION_PAT", help="Notion token environment variable name.")
-    host_health.add_argument("--apply-losmon", action="store_true", help="Ingest the report into the configured LOSMON fleet endpoint.")
-    host_health.add_argument("--losmon-url", help="Override the LOSMON report ingestion URL from policy.")
-    host_health.add_argument("--losmon-token-env", default="LOSMON_HOST_HEALTH_TOKEN", help="LOSMON ingestion token environment variable name.")
-    host_health.add_argument("--apply-losmon-drop", action="store_true", help="Copy latest.json to the policy's SSH-backed LOSMON drop path.")
+    host_health.add_argument("--notion-page-id", help="Override the Notion host page id from policy.")
+    host_health.add_argument("--verified-workspace", help="Expected Notion workspace name; required unless configured in policy.")
+    host_health.add_argument("--token-env", default="NOTION_TOKEN", help="Notion token environment variable name.")
+    host_health.add_argument("--apply-http-report", action="store_true", help="Ingest the report into the configured HTTP endpoint.")
+    host_health.add_argument("--http-report-url", help="Override the report ingestion URL from policy.")
+    host_health.add_argument("--http-token-env", default="HOST_HEALTH_REPORT_TOKEN", help="Report ingestion token environment variable name.")
+    host_health.add_argument("--apply-report-drop", action="store_true", help="Copy latest.json to the policy's SSH-backed report drop path.")
     host_health.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     host_health.add_argument("--fail-on-unhealthy", action="store_true", help="Return exit 1 for degraded or critical health (interactive/CI use).")
     host_health.set_defaults(handler=handle_host_health_report)

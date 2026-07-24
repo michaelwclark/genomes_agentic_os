@@ -89,10 +89,14 @@ def host_projection(policies: Iterable[dict[str, Any]]) -> dict[str, str]:
     for policy in reversed(list(policies)):
         page_id = policy.get("notion_page_id")
         if page_id:
-            return {
+            projection = {
                 "page_id": str(page_id).replace("-", ""),
-                "workspace": str(policy.get("notion_workspace") or "Genome's Notion"),
             }
+            if policy.get("notion_workspace"):
+                projection["workspace"] = str(policy["notion_workspace"])
+            if policy.get("notion_token_env"):
+                projection["token_env"] = str(policy["notion_token_env"])
+            return projection
     return {}
 
 
@@ -738,6 +742,7 @@ def apply_safe_repairs(
 ) -> list[dict[str, Any]]:
     finding_codes = {str(item.get("code")) for item in report.get("findings") or []}
     repairs: list[dict[str, Any]] = []
+    eligible_attempts = 0
     for policy in policies:
         for action in policy.get("repairs") or []:
             if action.get("when") not in finding_codes:
@@ -748,19 +753,22 @@ def apply_safe_repairs(
                 and action.get("automatic") is True
                 and action.get("safety") == "reconstructable"
             )
+            within_limit = eligible and eligible_attempts < 5
+            if within_limit:
+                eligible_attempts += 1
             receipt: dict[str, Any] = {
                 "id": action.get("id") or action_id,
                 "action": action_id,
                 "target": action.get("target"),
                 "eligible": eligible,
                 "applied": False,
-                "status": "planned" if eligible else "manual_only",
+                "status": "planned" if within_limit else ("deferred_limit" if eligible else "manual_only"),
             }
-            command = _repair_command(action) if eligible else None
-            if apply and eligible and action_id == "prune_ephemeral_worktrees":
+            command = _repair_command(action) if within_limit else None
+            if apply and within_limit and action_id == "prune_ephemeral_worktrees":
                 success, detail = _prune_ephemeral_worktrees(report, action, runner=runner)
                 receipt.update({"applied": success, "status": "repaired" if success else "failed", "detail": detail})
-            elif apply and eligible and action_id == "prune_docker_images":
+            elif apply and within_limit and action_id == "prune_docker_images":
                 success, detail = _remove_old_unused_images(report, runner=runner)
                 receipt.update({"applied": success, "status": "repaired" if success else "failed", "detail": detail})
             elif apply and command:
@@ -774,8 +782,6 @@ def apply_safe_repairs(
                     }
                 )
             repairs.append(receipt)
-            if len(repairs) >= 5:
-                return repairs
     return repairs
 
 
@@ -876,6 +882,7 @@ def _status_style(status: str) -> tuple[str, str]:
 def notion_blocks(report: dict[str, Any]) -> list[dict[str, Any]]:
     metrics = report.get("metrics") or {}
     status = str(report.get("status") or "unknown")
+    host = str(report.get("host") or "Unknown").title()
     icon, status_color = _status_style(status)
     snapshot_rows = [
         _table_row("Signal", "Current", "Why it matters", header=True),
@@ -888,7 +895,7 @@ def notion_blocks(report: dict[str, Any]) -> list[dict[str, Any]]:
         _table_row("Worktrees", f"{metrics.get('worktree_count', 'n/a')} total · {metrics.get('worktree_cleanup_candidate_count', 0)} safe candidates", "Filesystem watcher pressure"),
     ]
     blocks: list[dict[str, Any]] = [
-        {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"{status.upper()} · BigMac host health"), "icon": {"type": "emoji", "emoji": icon}, "color": status_color}},
+        {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"{status.upper()} · {host} host health"), "icon": {"type": "emoji", "emoji": icon}, "color": status_color}},
         {"object": "block", "type": "column_list", "column_list": {"children": [
             {"object": "block", "type": "column", "column": {"children": [
                 {"object": "block", "type": "callout", "callout": {"rich_text": _rich_text(f"Last ran\n{report['checked_at']}"), "icon": {"type": "emoji", "emoji": "🕒"}, "color": "blue_background"}},
@@ -956,26 +963,28 @@ def project_host_report(
     page_id: str,
     *,
     verified_workspace: str,
-    token_env: str = "GENOMES_NOTION_PAT",
+    token_env: str = "NOTION_TOKEN",
 ) -> dict[str, Any]:
+    if not verified_workspace:
+        raise ValueError("verified_workspace is required for a Notion projection")
     actual = notion_api.get_bot_workspace(token_env)
-    if actual != verified_workspace or actual != "Genome's Notion":
-        raise RuntimeError(f"Notion workspace mismatch: expected Genome's Notion, got {actual!r}")
+    if actual != verified_workspace:
+        raise RuntimeError(f"Notion workspace mismatch: expected {verified_workspace!r}, got {actual!r}")
     notion_api.replace_block_children(page_id, notion_blocks(report), token_env)
     return {"applied": True, "workspace": actual, "page_id": page_id}
 
 
-def project_losmon_report(
+def project_http_report(
     report: dict[str, Any],
     url: str,
     *,
-    token_env: str = "LOSMON_HOST_HEALTH_TOKEN",
+    token_env: str = "HOST_HEALTH_REPORT_TOKEN",
     fetcher: Callable[..., Any] = urllib.request.urlopen,
 ) -> dict[str, Any]:
-    """Publish one report to LOSMON without returning or logging its token."""
+    """Publish one report to an HTTP sink without returning or logging its token."""
     token = os.environ.get(token_env)
     if not token:
-        raise RuntimeError(f"LOSMON ingestion token env var {token_env!r} is not set")
+        raise RuntimeError(f"report ingestion token env var {token_env!r} is not set")
     request = urllib.request.Request(
         url,
         data=json.dumps(report).encode("utf-8"),
@@ -985,27 +994,27 @@ def project_losmon_report(
     try:
         response = fetcher(request, timeout=20)
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"LOSMON report ingestion returned HTTP {exc.code}") from None
+        raise RuntimeError(f"report ingestion returned HTTP {exc.code}") from None
     status = int(getattr(response, "status", 202))
     if status < 200 or status >= 300:
-        raise RuntimeError(f"LOSMON report ingestion returned HTTP {status}")
+        raise RuntimeError(f"report ingestion returned HTTP {status}")
     return {"applied": True, "url": url, "status": status}
 
 
-def project_losmon_drop(
+def project_report_drop(
     latest_json: str | Path,
     target: str,
     *,
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
-    """Copy a report to an SSH-backed LOSMON drop path using a fixed command."""
+    """Copy a report to an SSH-backed drop path using a fixed command."""
     if not re.fullmatch(r"[A-Za-z0-9._-]+:/[A-Za-z0-9_./-]+\.json", target):
-        raise ValueError("LOSMON drop target must be ssh-alias:/absolute/path.json")
+        raise ValueError("report drop target must be ssh-alias:/absolute/path.json")
     result = _run(
         ["scp", "-q", "-o", "ConnectTimeout=8", str(Path(latest_json).resolve()), target],
         timeout=20,
         runner=runner,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"LOSMON SSH report drop failed with exit {result.returncode}")
+        raise RuntimeError(f"SSH report drop failed with exit {result.returncode}")
     return {"applied": True, "target": target}
