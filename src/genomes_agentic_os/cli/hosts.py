@@ -3,8 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import json
+
+import yaml
 
 from ..hosts import format_host_routing_status, host_routing_status, list_hosts, upsert_host
+from ..host_doctor import (
+    apply_safe_repairs,
+    build_host_report,
+    default_config_root,
+    host_projection,
+    load_host_policies,
+    project_host_report,
+    project_http_report,
+    project_report_drop,
+    write_host_report,
+)
 
 from ._shared import DEFAULT_ROOT
 
@@ -53,6 +67,69 @@ def handle_host_routing(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_host_health_report(args: argparse.Namespace) -> int:
+    report = build_host_report(
+        args.root,
+        host_alias=args.host,
+        config_root=args.config_root,
+    )
+    config_root = args.config_root or default_config_root(args.root)
+    policies = load_host_policies(config_root, report["host"])
+    report["repairs"] = apply_safe_repairs(report, policies, apply=args.apply_safe_repairs)
+    if args.apply_safe_repairs and any(item.get("applied") for item in report["repairs"]):
+        verification = build_host_report(
+            args.root,
+            host_alias=report["host"],
+            config_root=config_root,
+        )
+        report["verification"] = {
+            "status": verification["status"],
+            "checked_at": verification["checked_at"],
+            "findings": verification["findings"],
+        }
+        report["status"] = verification["status"]
+    paths = write_host_report(args.root, report)
+    notion = {"applied": False}
+    if args.apply_notion:
+        projection = host_projection(policies)
+        page_id = args.notion_page_id or projection.get("page_id")
+        if not page_id:
+            raise ValueError("no Notion page id configured; set notion_page_id in the host identity policy or pass --notion-page-id")
+        notion = project_host_report(
+            report,
+            page_id,
+            verified_workspace=projection.get("workspace") or args.verified_workspace,
+            token_env=projection.get("token_env") or args.token_env,
+        )
+    http_report = {"applied": False}
+    if args.apply_http_report:
+        identity = next((policy for policy in reversed(policies) if policy.get("report_ingest_url")), {})
+        url = args.http_report_url or identity.get("report_ingest_url")
+        if not url:
+            raise ValueError("no report ingestion URL configured; set report_ingest_url or pass --http-report-url")
+        http_report = project_http_report(
+            report,
+            str(url),
+            token_env=str(identity.get("report_token_env") or args.http_token_env),
+        )
+    report_drop = {"applied": False}
+    if args.apply_report_drop:
+        identity = next((policy for policy in reversed(policies) if policy.get("report_drop_target")), {})
+        target = identity.get("report_drop_target")
+        if not target:
+            raise ValueError("no report_drop_target configured in the host identity policy")
+        report_drop = project_report_drop(paths["latest_json"], str(target))
+    result = {
+        "report": report,
+        "paths": paths,
+        "notion": notion,
+        "http_report": http_report,
+        "report_drop": report_drop,
+    }
+    print(json.dumps(result, indent=2, sort_keys=True) if args.json else yaml.safe_dump(result, sort_keys=False))
+    return 1 if args.fail_on_unhealthy and report["status"] != "healthy" else 0
+
+
 def register(subparsers) -> None:
     """Register the host command group."""
     host_parser = subparsers.add_parser("host", help="Manage the installed SSH host registry.")
@@ -77,3 +154,22 @@ def register(subparsers) -> None:
     host_routing.add_argument("--recent-runs", type=int, default=8, help="Recent harness receipts to show.")
     host_routing.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     host_routing.set_defaults(handler=handle_host_routing)
+    host_health = host_subparsers.add_parser(
+        "health-report",
+        help="Run the policy-composed Auto-Doctor host report and optional safe repair pass.",
+    )
+    host_health.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    host_health.add_argument("--host", help="Host policy alias; defaults to the local hostname.")
+    host_health.add_argument("--config-root", help="Auto-Doctor Markdown policy root.")
+    host_health.add_argument("--apply-safe-repairs", action="store_true", help="Apply allowlisted reconstructable repairs and recheck.")
+    host_health.add_argument("--apply-notion", action="store_true", help="Replace the verified host page with the latest report.")
+    host_health.add_argument("--notion-page-id", help="Override the Notion host page id from policy.")
+    host_health.add_argument("--verified-workspace", help="Expected Notion workspace name; required unless configured in policy.")
+    host_health.add_argument("--token-env", default="NOTION_TOKEN", help="Notion token environment variable name.")
+    host_health.add_argument("--apply-http-report", action="store_true", help="Ingest the report into the configured HTTP endpoint.")
+    host_health.add_argument("--http-report-url", help="Override the report ingestion URL from policy.")
+    host_health.add_argument("--http-token-env", default="HOST_HEALTH_REPORT_TOKEN", help="Report ingestion token environment variable name.")
+    host_health.add_argument("--apply-report-drop", action="store_true", help="Copy latest.json to the policy's SSH-backed report drop path.")
+    host_health.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    host_health.add_argument("--fail-on-unhealthy", action="store_true", help="Return exit 1 for degraded or critical health (interactive/CI use).")
+    host_health.set_defaults(handler=handle_host_health_report)
