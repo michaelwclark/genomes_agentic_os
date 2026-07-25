@@ -129,6 +129,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install deployment-test dependencies
+        run: python -m pip install --disable-pip-version-check -e '.[dev]'
       - uses: azure/setup-helm@v4
         with:
           version: v3.17.3
