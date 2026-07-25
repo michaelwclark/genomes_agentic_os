@@ -1,0 +1,12 @@
+[Unit]
+Description=Genome Agentic OS execution fabric witness health and eligibility monitor
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=WITNESS_ENV_FILE=@@ENVIRONMENT_FILE@@
+ExecStart=@@INSTALL_ROOT@@/current/bin/monitor.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

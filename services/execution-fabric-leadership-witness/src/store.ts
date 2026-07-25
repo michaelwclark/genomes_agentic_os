@@ -10,6 +10,8 @@ import type {
   FailbackCommitMutation,
   FailbackPlan,
   LeadershipState,
+  LeadershipCasMutation,
+  PromotionReceipt,
   PromotionMutation,
 } from "./contracts.js";
 
@@ -57,18 +59,21 @@ export interface WitnessStore {
   abortConfigDigestRotation(
     mutation: ConfigDigestRotationAbortMutation,
   ): Promise<ConfigDigestRotationAbortReceipt>;
-  promote(mutation: PromotionMutation): Promise<LeadershipState>;
+  getPromotion(promotionId: string): Promise<PromotionReceipt | null>;
+  promote(mutation: PromotionMutation): Promise<PromotionReceipt>;
   putFailbackPreparation(plan: FailbackPlan, audit: AuditRecord): Promise<void>;
   putFailbackPlan(plan: FailbackPlan, audit: AuditRecord): Promise<void>;
   getFailbackPlan(tokenHash: string): Promise<FailbackPlan | null>;
   commitFailback(mutation: FailbackCommitMutation): Promise<LeadershipState>;
   appendAudit(audit: AuditRecord): Promise<void>;
   listAudit(limit: number): Promise<AuditRecord[]>;
+  close(): Promise<void>;
 }
 
 export type WitnessStoreSnapshot = {
-  schemaVersion: "execution-fabric-witness-store/v1";
+  schemaVersion: "execution-fabric-witness-store/v2";
   state?: LeadershipState;
+  promotions: PromotionReceipt[];
   candidates: CandidateRecord[];
   plans: FailbackPlan[];
   configRotations: ConfigDigestRotationReceipt[];
@@ -159,7 +164,7 @@ function rotationAbortCandidateEligible(
 
 function eligible(
   candidate: CandidateRecord | undefined,
-  mutation: PromotionMutation,
+  mutation: LeadershipCasMutation,
 ): boolean {
   return Boolean(
     candidate?.healthy &&
@@ -181,6 +186,7 @@ function eligible(
 export class InMemoryWitnessStore implements WitnessStore {
   protected state: LeadershipState | undefined;
   protected readonly candidates = new Map<string, CandidateRecord>();
+  protected readonly promotions = new Map<string, PromotionReceipt>();
   protected readonly plans = new Map<string, FailbackPlan>();
   protected readonly configRotations = new Map<
     string,
@@ -198,10 +204,13 @@ export class InMemoryWitnessStore implements WitnessStore {
 
   protected didMutate(): void {}
 
+  async close(): Promise<void> {}
+
   protected exportSnapshot(): WitnessStoreSnapshot {
     return structuredClone({
-      schemaVersion: "execution-fabric-witness-store/v1",
+      schemaVersion: "execution-fabric-witness-store/v2",
       ...(this.state ? { state: this.state } : {}),
+      promotions: [...this.promotions.values()],
       candidates: [...this.candidates.values()],
       plans: [...this.plans.values()],
       configRotations: [...this.configRotations.values()],
@@ -214,10 +223,14 @@ export class InMemoryWitnessStore implements WitnessStore {
   }
 
   protected restoreSnapshot(snapshot: WitnessStoreSnapshot): void {
-    if (snapshot.schemaVersion !== "execution-fabric-witness-store/v1") {
+    if (snapshot.schemaVersion !== "execution-fabric-witness-store/v2") {
       throw new Error("unsupported portable witness store schema");
     }
     this.state = snapshot.state ? structuredClone(snapshot.state) : undefined;
+    this.promotions.clear();
+    for (const item of snapshot.promotions) {
+      this.promotions.set(item.promotionId, structuredClone(item));
+    }
     this.candidates.clear();
     for (const item of snapshot.candidates) {
       this.candidates.set(item.candidate, structuredClone(item));
@@ -474,10 +487,23 @@ export class InMemoryWitnessStore implements WitnessStore {
     return structuredClone(mutation.receipt);
   }
 
-  async promote(mutation: PromotionMutation): Promise<LeadershipState> {
+  async getPromotion(promotionId: string): Promise<PromotionReceipt | null> {
+    const receipt = this.promotions.get(promotionId);
+    return receipt ? structuredClone(receipt) : null;
+  }
+
+  async promote(mutation: PromotionMutation): Promise<PromotionReceipt> {
+    const replay = this.promotions.get(mutation.promotionId);
+    if (replay) {
+      if (replay.requestDigest !== mutation.requestDigest) {
+        throw new ConditionalWriteError(
+          "promotion id was already used by another request",
+        );
+      }
+      return structuredClone(replay);
+    }
     // Keep every conditional check and write in one synchronous section. This
-    // mirrors the production DynamoDB transaction and makes dual-promotion
-    // tests authoritative instead of allowing an await-point race.
+    // makes the SQLite CAS, durable receipt, and audit one crash-safe commit.
     const state = this.requireState();
     if (
       state.currentLeader !== mutation.expectedLeader ||
@@ -513,9 +539,13 @@ export class InMemoryWitnessStore implements WitnessStore {
       throw new ConditionalWriteError("promotion candidate is not eligible");
     }
     this.state = structuredClone(mutation.nextState);
+    this.promotions.set(
+      mutation.promotionId,
+      structuredClone(mutation.receipt),
+    );
     this.audit.push(structuredClone(mutation.audit));
     this.didMutate();
-    return structuredClone(this.state);
+    return structuredClone(mutation.receipt);
   }
 
   async putFailbackPlan(

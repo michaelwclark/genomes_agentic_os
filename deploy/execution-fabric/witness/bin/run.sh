@@ -35,11 +35,13 @@ exec "$runtime" run --detach \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges \
+  --user "${WITNESS_UID:-3195}:${WITNESS_GID:-3195}" \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   --volume "$WITNESS_STATE_DIR:/var/lib/execution-fabric-witness:rw" \
-  --volume "$WITNESS_READER_TOKEN_FILE:$WITNESS_READER_TOKEN_FILE:ro" \
-  --volume "$WITNESS_CANDIDATE_TOKENS_FILE:$WITNESS_CANDIDATE_TOKENS_FILE:ro" \
-  --volume "$WITNESS_ADMIN_TOKEN_FILE:$WITNESS_ADMIN_TOKEN_FILE:ro" \
-  --volume "$WITNESS_SIGNING_PRIVATE_KEY_FILE:$WITNESS_SIGNING_PRIVATE_KEY_FILE:ro" \
+  --volume "${WITNESS_PREPARED_SECRETS_DIR:-$WITNESS_STATE_DIR/container-secrets}:/run/secrets/execution-fabric-witness:ro" \
   --env-file "$WITNESS_ENV_FILE" \
+  --env WITNESS_READER_TOKEN_FILE=/run/secrets/execution-fabric-witness/reader-token \
+  --env WITNESS_CANDIDATE_TOKENS_FILE=/run/secrets/execution-fabric-witness/candidate-tokens.json \
+  --env WITNESS_ADMIN_TOKEN_FILE=/run/secrets/execution-fabric-witness/admin-token \
+  --env WITNESS_SIGNING_PRIVATE_KEY_FILE=/run/secrets/execution-fabric-witness/signing-private-key.pem \
   "$FABRIC_WITNESS_IMAGE"

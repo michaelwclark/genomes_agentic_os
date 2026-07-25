@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the execution fabric witness monitor continuously
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=genomes-agentic-os-execution-fabric-witness-monitor.service
+
+[Install]
+WantedBy=timers.target
+

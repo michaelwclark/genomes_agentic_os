@@ -15,8 +15,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "3.1095.0",
-    "@aws-sdk/lib-dynamodb": "3.1095.0",
     "dotenv": "16.4.7",
     "fastify": "5.10.0",
     "zod": "3.24.2"

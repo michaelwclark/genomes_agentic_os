@@ -1205,6 +1205,16 @@ export class LeadershipWitness {
   }
 
   async promote(request: PromotionRequest) {
+    const requestDigest = sha256(JSON.stringify(request));
+    const replay = await this.store.getPromotion(request.promotionId);
+    if (replay) {
+      if (replay.requestDigest !== requestDigest) {
+        throw new WitnessConflictError(
+          "promotion id was already used by another request",
+        );
+      }
+      return replay;
+    }
     const authorityMode = request.authorityMode ?? "synchronous";
     const [state, candidates] = await Promise.all([
       this.store.getState(),
@@ -1286,8 +1296,25 @@ export class LeadershipWitness {
           ? request.incidentDigest
           : null,
     };
+    const receipt = {
+      apiVersion: "execution-fabric-leadership/v1" as const,
+      decision: "promoted" as const,
+      promotionId: request.promotionId,
+      requestDigest,
+      receiptId,
+      previousLeader: request.expectedLeader,
+      currentLeader: request.candidate,
+      fabricEpoch: nextEpoch,
+      clusterId: this.config.clusterId,
+      fenceToken,
+      authorityMode: nextState.authorityMode,
+      degradedUntil,
+      committedAt: occurredAt,
+    };
     try {
-      await this.store.promote({
+      return await this.store.promote({
+        promotionId: request.promotionId,
+        requestDigest,
         expectedLeader: request.expectedLeader,
         expectedEpoch: request.expectedEpoch,
         candidate: request.candidate,
@@ -1308,6 +1335,7 @@ export class LeadershipWitness {
         receiverFreshAfterEpoch:
           nowEpoch - this.config.candidateFreshnessSeconds,
         nextState,
+        receipt,
         audit: {
           auditId: receiptId,
           eventType: "promotion_committed",
@@ -1331,19 +1359,14 @@ export class LeadershipWitness {
       }
       throw error;
     }
-    return {
-      apiVersion: "execution-fabric-leadership/v1",
-      decision: "promoted",
-      receiptId,
-      previousLeader: request.expectedLeader,
-      currentLeader: request.candidate,
-      fabricEpoch: nextEpoch,
-      clusterId: this.config.clusterId,
-      fenceToken,
-      authorityMode: nextState.authorityMode,
-      degradedUntil,
-      committedAt: occurredAt,
-    };
+  }
+
+  async promotion(promotionId: string) {
+    const receipt = await this.store.getPromotion(promotionId);
+    if (!receipt) {
+      throw new WitnessNotFoundError("promotion receipt was not found");
+    }
+    return receipt;
   }
 
   async planFailback(request: FailbackPlanRequest) {

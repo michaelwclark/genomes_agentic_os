@@ -3,7 +3,8 @@
 This service is the independent arbiter for Execution Fabric leadership. Its
 canonical runtime is a digest-pinned OCI image on a declared host outside both
 leadership candidates. The default durable store is local SQLite in a mounted
-volume; DynamoDB remains an optional adapter, not an activation prerequisite.
+volume. The release artifact contains no cloud-provider runtime or deployment
+adapter.
 
 Two candidate hosts cannot safely decide which one should lead after a
 partition. If no independent witness host exists, configure
@@ -28,8 +29,9 @@ disabled, and the topology makes no split-brain-safety claim.
 - Promotion requires the expected leader and epoch, expiry of the current
   leader's complete proof-lease window, and a fresh healthy candidate inside
   the configured replica-lag, timeline, WAL, and config-digest bounds.
-- Each transfer increments the epoch exactly once and returns an
-  identity-bound, asymmetrically signed fence receipt.
+- Each transfer uses a caller-owned `promotionId`, increments the epoch exactly
+  once, and atomically stores an identity-bound signed fence receipt. Exact
+  replays and receipt lookup recover a lost API response without a second CAS.
 - Failback is always manual. Its short-lived one-use plan is bound to a
   separately recorded operator approval and consumed atomically.
 - Policy rotation is prepare/commit and fail-closed. A fresh, healthy,
@@ -37,27 +39,26 @@ disabled, and the topology makes no split-brain-safety claim.
   from PostgreSQL on the prepared timeline and upstream system.
 - SQLite mutations commit the complete state and immutable audit stream under
   `BEGIN IMMEDIATE`, WAL, and `synchronous=FULL` before an API mutation returns.
-  Exactly one witness container may own a SQLite state file. This is a
-  singleton authority, not a replicated quorum.
+  The numeric container identity alone can access the mounted state and copied
+  secrets. A renewable storage lease fences duplicate or paused processes.
+- First startup requires `WITNESS_BOOTSTRAP_ONCE=true`. Initialization writes a
+  cluster-bound sentinel and verified recovery backup. A missing database,
+  sentinel, backup, corrupt file, or stale local version fails readiness closed.
 
 ## Storage
 
 The provider-neutral default is:
 
 ```text
-WITNESS_STORE=sqlite
 WITNESS_STATE_FILE=/var/lib/execution-fabric-witness/witness.sqlite3
+WITNESS_BOOTSTRAP_ONCE=true
 ```
 
 Mount `/var/lib/execution-fabric-witness` on durable host storage and back up
-the SQLite database together with its WAL only through a consistent container
-stop or SQLite backup operation. Restore never becomes authoritative merely
+the database, `.initialized` sentinel, and `.backup` recovery copy as one
+authority set. Restore never becomes authoritative merely
 because a file exists: verify the last leader, epoch, audit tail, candidate
 configuration, public key, and drill receipt before reconnecting candidates.
-
-The optional AWS adapter uses `WITNESS_STORE=dynamodb` plus
-`WITNESS_TABLE_NAME` and `AWS_REGION`. The existing CloudFormation template is
-an optional provider implementation for teams that want it.
 
 ## API
 
@@ -68,7 +69,8 @@ an optional provider implementation for teams that want it.
 | `GET` | `/openapi.json` | none | Versioned contract |
 | `GET` | `/api/v1/admin/leadership/status` | Reader | Leader, epoch, candidates, promotion gate |
 | `PUT` | `/api/v1/admin/leadership/candidates/{candidate}` | Matching candidate | Measured replication and config observation |
-| `POST` | `/api/v1/admin/leadership/promote` | Admin | Conditional monotonic promotion |
+| `POST` | `/api/v1/admin/leadership/promote` | Admin | Idempotent conditional promotion |
+| `GET` | `/api/v1/admin/leadership/promotions/{promotionId}` | Admin | Crash/retry receipt lookup |
 | `POST` | `/api/v1/admin/leadership/config-digest-rotations/prepare` | Admin | Prepare fenced policy rotation |
 | `POST` | `/api/v1/admin/leadership/config-digest-rotations/commit` | Admin | Commit from causal standby proof |
 | `POST` | `/api/v1/admin/leadership/config-digest-rotations/abort` | Admin | Resolve expired pre-database preparation |

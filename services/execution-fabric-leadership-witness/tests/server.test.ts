@@ -11,9 +11,9 @@ const config: WitnessConfig = {
   port: 3195,
   witnessHostId: "witness-1",
   clusterId: "test-fabric",
-  store: "sqlite",
   stateFile: "/tmp/test-witness.sqlite3",
-  tableName: "test-witness",
+  bootstrapOnce: false,
+  processLeaseSeconds: 30,
   initialLeader: "genomesbox",
   initialTimelineId: 1,
   initialConfigDigest: "a".repeat(64),
@@ -35,7 +35,6 @@ const config: WitnessConfig = {
     })
     .toString(),
   logLevel: "silent",
-  region: "us-east-1",
 };
 
 async function fixture() {

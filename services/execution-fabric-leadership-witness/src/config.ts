@@ -9,15 +9,20 @@ const environmentSchema = z.object({
   WITNESS_PORT: z.coerce.number().int().min(1).max(65535).default(3195),
   WITNESS_HOST_ID: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
   WITNESS_CLUSTER_ID: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
-  WITNESS_STORE: z.enum(["sqlite", "dynamodb"]).default("sqlite"),
   WITNESS_STATE_FILE: z
     .string()
     .min(1)
     .default("/var/lib/execution-fabric-witness/witness.sqlite3"),
-  WITNESS_TABLE_NAME: z
-    .string()
-    .regex(/^[a-zA-Z0-9_.-]{3,255}$/)
-    .optional(),
+  WITNESS_BOOTSTRAP_ONCE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  WITNESS_PROCESS_LEASE_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(10)
+    .max(300)
+    .default(30),
   WITNESS_INITIAL_LEADER: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
   WITNESS_INITIAL_TIMELINE_ID: z.coerce.number().int().min(1),
   WITNESS_INITIAL_CONFIG_DIGEST: z.string().regex(digest),
@@ -67,8 +72,6 @@ const environmentSchema = z.object({
   WITNESS_LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  AWS_REGION: z.string().min(1).optional(),
-  AWS_ENDPOINT_URL_DYNAMODB: z.string().url().optional(),
 });
 
 function secret(path: string, variable: string): string {
@@ -122,9 +125,9 @@ export type WitnessConfig = {
   port: number;
   witnessHostId: string;
   clusterId: string;
-  store: "sqlite" | "dynamodb";
   stateFile: string;
-  tableName?: string;
+  bootstrapOnce: boolean;
+  processLeaseSeconds: number;
   initialLeader: string;
   initialTimelineId: number;
   initialConfigDigest: string;
@@ -140,8 +143,6 @@ export type WitnessConfig = {
   adminToken: string;
   signingPrivateKey: string;
   logLevel: z.infer<typeof environmentSchema>["WITNESS_LOG_LEVEL"];
-  region?: string;
-  dynamoEndpoint?: string;
 };
 
 export function loadConfig(
@@ -161,14 +162,6 @@ export function loadConfig(
   ) {
     throw new Error(
       "WITNESS_LEADER_BASELINE_MAX_AGE_SECONDS must exceed WITNESS_CANDIDATE_FRESHNESS_SECONDS",
-    );
-  }
-  if (
-    parsed.WITNESS_STORE === "dynamodb" &&
-    (!parsed.WITNESS_TABLE_NAME || !parsed.AWS_REGION)
-  ) {
-    throw new Error(
-      "WITNESS_TABLE_NAME and AWS_REGION are required when WITNESS_STORE=dynamodb",
     );
   }
   const adminToken = secret(
@@ -210,11 +203,9 @@ export function loadConfig(
     port: parsed.WITNESS_PORT,
     witnessHostId: parsed.WITNESS_HOST_ID,
     clusterId: parsed.WITNESS_CLUSTER_ID,
-    store: parsed.WITNESS_STORE,
     stateFile: parsed.WITNESS_STATE_FILE,
-    ...(parsed.WITNESS_TABLE_NAME
-      ? { tableName: parsed.WITNESS_TABLE_NAME }
-      : {}),
+    bootstrapOnce: parsed.WITNESS_BOOTSTRAP_ONCE,
+    processLeaseSeconds: parsed.WITNESS_PROCESS_LEASE_SECONDS,
     initialLeader: parsed.WITNESS_INITIAL_LEADER,
     initialTimelineId: parsed.WITNESS_INITIAL_TIMELINE_ID,
     initialConfigDigest: parsed.WITNESS_INITIAL_CONFIG_DIGEST,
@@ -232,9 +223,5 @@ export function loadConfig(
     adminToken,
     signingPrivateKey,
     logLevel: parsed.WITNESS_LOG_LEVEL,
-    ...(parsed.AWS_REGION ? { region: parsed.AWS_REGION } : {}),
-    ...(parsed.AWS_ENDPOINT_URL_DYNAMODB
-      ? { dynamoEndpoint: parsed.AWS_ENDPOINT_URL_DYNAMODB }
-      : {}),
   };
 }

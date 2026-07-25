@@ -24,29 +24,6 @@ def _yaml(path: Path) -> dict:
     return value
 
 
-def _cloudformation(path: Path) -> dict:
-    class CloudFormationLoader(yaml.SafeLoader):
-        pass
-
-    def construct_intrinsic(
-        loader: CloudFormationLoader,
-        tag_suffix: str,
-        node: yaml.Node,
-    ) -> dict:
-        if isinstance(node, yaml.ScalarNode):
-            value = loader.construct_scalar(node)
-        elif isinstance(node, yaml.SequenceNode):
-            value = loader.construct_sequence(node)
-        else:
-            value = loader.construct_mapping(node)
-        return {tag_suffix: value}
-
-    CloudFormationLoader.add_multi_constructor("!", construct_intrinsic)
-    value = yaml.load(path.read_text(encoding="utf-8"), Loader=CloudFormationLoader)
-    assert isinstance(value, dict)
-    return value
-
-
 def _all_text(root: Path) -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
@@ -80,7 +57,6 @@ def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
         "macos",
         "kubernetes",
         "oci_witness",
-        "aws_witness",
     }
     assert installer_manifest["platforms"]["linux"]["activator"].endswith(
         "activate-linux.sh"
@@ -384,7 +360,22 @@ def test_promotion_is_api_fenced_before_any_local_mutation() -> None:
         "pg_ctl promote"
     )
     assert "UPDATE fabric_state" not in script
-    assert "psql" not in script
+    assert "SELECT pg_is_in_recovery()" in script
+    assert script.index("fenceToken") < script.index("SELECT pg_is_in_recovery()")
+
+
+def test_promotion_has_durable_lookup_and_postgres_resume_journal() -> None:
+    script = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
+    assert "execution-fabric-promotion-operation/v1" in script
+    assert "/api/v1/admin/leadership/promotions/$promotion_id" in script
+    assert "promotion_journal_phase witness_committed" in script
+    assert "promotion_journal_phase postgres_promoted" in script
+    assert "promotion_journal_phase complete" in script
+    assert "PostgreSQL is already promoted; resuming" in script
+    assert script.index("promotion.operation.json") < script.index(
+        "/api/v1/admin/leadership/promote"
+    )
+    assert script.index("witness_committed") < script.index("pg_ctl promote")
 
 
 def test_hard_primary_loss_uses_configured_host_ids_and_bounded_degraded_gates() -> None:
@@ -464,7 +455,8 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     deployment = DEPLOY / "witness"
     assert (service / "Dockerfile").is_file()
     assert (service / "src" / "sqlite-store.ts").is_file()
-    assert (service / "src" / "dynamo-store.ts").is_file()
+    assert not (service / "src" / "dynamo-store.ts").exists()
+    assert not (deployment / "cloudformation.yml").exists()
     manifest = _yaml(deployment / "manifest.yml")
     assert manifest["container"]["immutable_digest_required"] is True
     assert manifest["container"]["network_mode"] == "host"
@@ -472,6 +464,8 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     assert manifest["safety"]["candidate_host_may_run_witness"] is False
     assert manifest["safety"]["two_candidate_hosts_are_not_quorum"] is True
     assert manifest["safety"]["no_witness_behavior"] == "manual_fail_closed"
+    assert manifest["safety"]["singleton_storage_lease"] is True
+    assert manifest["safety"]["explicit_one_time_bootstrap"] is True
     preflight = (deployment / "bin/preflight.sh").read_text(encoding="utf-8")
     runner = (deployment / "bin/run.sh").read_text(encoding="utf-8")
     assert "tailscale ip -4" in preflight
@@ -481,128 +475,37 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     assert "--read-only" in runner
     assert "--cap-drop ALL" in runner
     assert "--security-opt no-new-privileges" in runner
+    assert '--user "${WITNESS_UID:-3195}:${WITNESS_GID:-3195}"' in runner
+    assert "container-secrets" in runner
     assert (deployment / "bin/preflight.sh").stat().st_mode & 0o111
     assert (deployment / "bin/run.sh").stat().st_mode & 0o111
-    template = (deployment / "cloudformation.yml").read_text(encoding="utf-8")
-    assert "AllowedPattern: \"^.+@sha256:[a-f0-9]{64}$\"" in template
-    assert "PointInTimeRecoveryEnabled: true" in template
-    assert "DeletionPolicy: Retain" in template
-    assert "dynamodb:ConditionCheckItem" in template
-    assert "WITNESS_ADMIN_TOKEN_FILE" in template
-    assert "WITNESS_SIGNING_PRIVATE_KEY_FILE" in template
-    assert "AdminTokenSecretArn" in template
-    assert "SigningPrivateKeySecretArn" in template
-    assert not any(part.isdigit() and len(part) == 12 for part in template.split(":"))
+    oci_smoke = SOURCE_ROOT / "tests/scripts/run-witness-oci-smoke.sh"
+    assert oci_smoke.is_file()
+    assert oci_smoke.stat().st_mode & 0o111
+    service_package = (service / "package.json").read_text(encoding="utf-8")
+    service_lock = (service / "pnpm-lock.yaml").read_text(encoding="utf-8")
+    assert "@aws-sdk" not in service_package
+    assert "@aws-sdk" not in service_lock
     docs = (DEPLOY / "README.md").read_text(encoding="utf-8")
     assert "does not yet expose" not in docs
     assert "operator prerequisites" in docs
 
 
-def test_witness_alarm_destination_is_optional_and_least_privilege() -> None:
-    template = _cloudformation(DEPLOY / "witness/cloudformation.yml")
-    parameters = template["Parameters"]
-    resources = template["Resources"]
-    assert parameters["AlarmTopicArn"]["Default"] == ""
-    assert parameters["CreateAlarmTopic"]["Default"] == "false"
-    assert parameters["CreateAlarmTopic"]["AllowedValues"] == ["true", "false"]
-    assert resources["WitnessAlarmTopic"]["Condition"] == "CreateManagedAlarmTopic"
-    assert (
-        resources["WitnessAlarmTopicPolicy"]["Properties"]["PolicyDocument"][
-            "Statement"
-        ][0]["Principal"]["Service"]
-        == "cloudwatch.amazonaws.com"
-    )
-    task_actions = {
-        action
-        for policy in resources["TaskRole"]["Properties"]["Policies"]
-        for statement in policy["PolicyDocument"]["Statement"]
-        for action in statement["Action"]
-    }
-    assert not any(
-        action.startswith(("sns:", "cloudwatch:")) for action in task_actions
-    )
-    outputs = template["Outputs"]
-    assert outputs["WitnessAlarmTopicArn"]["Condition"] == "HasAlarmDestination"
-    assert "WitnessAlarmNames" in outputs
-
-
-def test_witness_cloudwatch_alarms_cover_service_alb_and_dynamodb_health() -> None:
-    template = _cloudformation(DEPLOY / "witness/cloudformation.yml")
-    resources = template["Resources"]
-    alarm_names = {
-        name
-        for name, resource in resources.items()
-        if resource["Type"] == "AWS::CloudWatch::Alarm"
-    }
-    assert alarm_names == {
-        "WitnessRunningTaskCountAlarm",
-        "WitnessUnhealthyTargetsAlarm",
-        "WitnessAlb5xxAlarm",
-        "WitnessTarget5xxAlarm",
-        "WitnessReadThrottleAlarm",
-        "WitnessWriteThrottleAlarm",
-        "WitnessDynamoSystemErrorsAlarm",
-    }
-    for name in alarm_names:
-        properties = resources[name]["Properties"]
-        assert "AlarmActions" in properties
-        assert "OKActions" in properties
-        assert properties["EvaluationPeriods"] >= 1
-        assert properties["DatapointsToAlarm"] >= 1
-
-    running = resources["WitnessRunningTaskCountAlarm"]["Properties"]
-    assert running["Namespace"] == "ECS/ContainerInsights"
-    assert running["MetricName"] == "RunningTaskCount"
-    assert running["TreatMissingData"] == "breaching"
-    assert running["Threshold"] == {"Ref": "DesiredCount"}
-
-    unhealthy = resources["WitnessUnhealthyTargetsAlarm"]["Properties"]
-    assert unhealthy["MetricName"] == "UnHealthyHostCount"
-    assert {row["Name"] for row in unhealthy["Dimensions"]} == {
-        "LoadBalancer",
-        "TargetGroup",
-    }
-    assert (
-        resources["WitnessAlb5xxAlarm"]["Properties"]["MetricName"]
-        == "HTTPCode_ELB_5XX_Count"
-    )
-    assert (
-        resources["WitnessTarget5xxAlarm"]["Properties"]["MetricName"]
-        == "HTTPCode_Target_5XX_Count"
-    )
-    assert (
-        resources["WitnessReadThrottleAlarm"]["Properties"]["MetricName"]
-        == "ReadThrottleEvents"
-    )
-    assert (
-        resources["WitnessWriteThrottleAlarm"]["Properties"]["MetricName"]
-        == "WriteThrottleEvents"
-    )
-
-    error_metrics = resources["WitnessDynamoSystemErrorsAlarm"]["Properties"][
-        "Metrics"
-    ]
-    operations = {
-        dimension["Value"]
-        for query in error_metrics
-        if "MetricStat" in query
-        for dimension in query["MetricStat"]["Metric"]["Dimensions"]
-        if dimension["Name"] == "Operation"
-    }
-    assert operations == {"GetItem", "PutItem", "Query", "TransactWriteItems"}
-
-
-def test_witness_runbook_documents_portable_health_alerts_and_optional_aws() -> None:
+def test_witness_runbook_documents_supervised_portable_health_alerts() -> None:
     runbook = (DEPLOY / "witness/RUNBOOK.md").read_text(encoding="utf-8")
     assert "manual_fail_closed" in runbook
     assert "runtime.execution_fabric.health" in runbook
     assert "health.json" in runbook
     assert "SQLite" in runbook
-    assert "optional `cloudformation.yml`" in runbook
+    assert "systemd timer" in runbook
+    assert "automaticPromotionEligible" in runbook
     monitor = (DEPLOY / "witness/bin/monitor.sh").read_text(encoding="utf-8")
-    assert "execution-fabric-witness-health/v1" in monitor
+    assert "execution-fabric-witness-health/v2" in monitor
     assert "witness_notify critical" in monitor
-    assert "automaticPromotion" in monitor
+    assert "automaticPromotionEligible" in monitor
+    systemd = DEPLOY / "witness/systemd"
+    assert (systemd / "genomes-agentic-os-execution-fabric-witness-monitor.service").is_file()
+    assert (systemd / "genomes-agentic-os-execution-fabric-witness-monitor.timer").is_file()
 
 
 def test_witness_manual_mode_is_explicit_inert_and_fail_closed(
@@ -663,6 +566,8 @@ def test_witness_installer_is_inert_and_manual_activation_starts_nothing(
             str(install_root),
             "--environment-file",
             str(environment),
+            "--systemd-root",
+            str(tmp_path / "systemd"),
         ],
         check=True,
         capture_output=True,
@@ -673,6 +578,11 @@ def test_witness_installer_is_inert_and_manual_activation_starts_nothing(
     assert (current / "manifest.yml").is_file()
     assert not environment.exists()
     assert Path(f"{environment}.example").is_file()
+    assert (
+        tmp_path
+        / "systemd"
+        / "genomes-agentic-os-execution-fabric-witness-monitor.timer"
+    ).is_file()
 
     environment.write_text(
         "\n".join(
@@ -1583,7 +1493,7 @@ def test_documentation_exposes_the_implemented_witness_and_activation_boundary()
     assert "/api/v1/admin/leadership/*" in readme
     assert "canonical provider-neutral deployment" in normalized
     assert "singleton SQLite authority" in normalized
-    assert "AWS CloudFormation template is an optional provider adapter" in normalized
+    assert "cloud-provider deployment dependency" in normalized
     assert "manual_fail_closed" in normalized
     assert "Source availability does not activate the witness" in normalized
     assert "operator prerequisites" in normalized

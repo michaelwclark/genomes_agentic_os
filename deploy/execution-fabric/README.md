@@ -268,10 +268,10 @@ coincidental process or host-manager restart.
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
 independently deployable service in
 `services/execution-fabric-leadership-witness`. Its canonical provider-neutral
-deployment uses a singleton SQLite authority on a third host. Each mutation
+deployment uses a singleton SQLite authority on a third host and has no
+cloud-provider deployment dependency. Each mutation
 commits under `BEGIN IMMEDIATE`, WAL, and `synchronous=FULL` before returning.
-The optional DynamoDB adapter preserves the same conditional contract. Both
-advance a monotonic epoch, return an identity-bound fence receipt, check fresh
+It advances a monotonic epoch, returns an identity-bound fence receipt, checks fresh
 health/replica-lag/config evidence, reject stale expected-leader/epoch
 requests, and preserve durable audit records. A two-host ping check is not a
 witness, and two candidates are not a quorum.
@@ -286,8 +286,7 @@ The portable OCI manifest, installer, Tailscale-only bind preflight, monitor,
 and activation runbook are under `witness/`. Source availability does not
 activate the witness. A real independent host, immutable image, network policy,
 protected secrets, durable state, candidate reporters, alarms, and a successful
-failover/failback drill remain operator prerequisites. The AWS CloudFormation
-template is an optional provider adapter, not a prerequisite. Without an
+failover/failback drill remain operator prerequisites. Without an
 independent host, select `manual_fail_closed`; no witness starts and automatic
 promotion must remain disabled.
 

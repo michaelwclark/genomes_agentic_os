@@ -26,9 +26,10 @@ witness_require_command() {
 }
 
 witness_api_base() {
-  case "$WITNESS_TAILSCALE_IP" in
-    *:*) printf 'http://[%s]:%s\n' "$WITNESS_TAILSCALE_IP" "$WITNESS_PORT" ;;
-    *) printf 'http://%s:%s\n' "$WITNESS_TAILSCALE_IP" "$WITNESS_PORT" ;;
+  witness_bind=${WITNESS_TAILSCALE_IP:-${WITNESS_BIND_IP:-}}
+  case "$witness_bind" in
+    *:*) printf 'http://[%s]:%s\n' "$witness_bind" "$WITNESS_PORT" ;;
+    *) printf 'http://%s:%s\n' "$witness_bind" "$WITNESS_PORT" ;;
   esac
 }
 

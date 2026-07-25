@@ -29,7 +29,8 @@ candidate vote for itself.
 5. Copy `witness.env.example` to the canonical operator-owned `witness.env`.
    Set the exact `WITNESS_TAILSCALE_IP`, host and cluster IDs, digest-pinned
    image, state directory, secret paths, initial leader, and reviewed policy
-   digest.
+   digest. Set `WITNESS_BOOTSTRAP_ONCE=true` only for the first start; after
+   the `.initialized` sentinel and `.backup` exist, return it to `false`.
 6. Pull the exact image digest, then install inert assets:
 
    ```sh
@@ -59,7 +60,8 @@ candidate vote for itself.
    The OCI runner uses host networking so the process itself binds only to the
    configured Tailscale IP. It drops all capabilities, enables
    `no-new-privileges`, makes the root filesystem read-only, and mounts only
-   the state directory and four secret files.
+   the numeric-identity state directory and one protected prepared-secrets
+   directory. Host secret sources are never made container-readable directly.
 9. Run `bin/health.sh`, authenticated `bin/smoke-test.sh`, and
    `bin/monitor.sh`. Read back `/readyz`, the signed status, current container
    digest, state-file durability, and the Agentic OS alert receipt.
@@ -67,17 +69,19 @@ candidate vote for itself.
 ## Health and alarms
 
 `bin/monitor.sh` writes the atomic
-`execution-fabric-witness-health/v1` receipt to
+`execution-fabric-witness-health/v2` receipt to
 `WITNESS_RUNTIME_STATE_DIR/health.json`.
 
-- `healthy` means both liveness and durable readiness passed.
+- `availability=available` means both liveness and durable readiness passed.
+- `automaticPromotionEligible=true` additionally requires a current,
+  cluster-bound `execution-fabric-witness-promotion-eligibility/v1` drill
+  receipt. Health alone never grants promotion eligibility.
 - `critical` disables any promotion assumption and emits the canonical
   `runtime.execution_fabric.health` alert through `agentic-os-notify`.
 - `manual_fail_closed` records that no automatic promotion authority exists.
 
-Schedule the monitor at least every 30 seconds with systemd, cron, Kubernetes,
-Nomad, or another host supervisor. The scheduler is replaceable; the receipt
-and alert contract are not. Exercise the notification path with an
+The witness installer installs and enables a 30-second systemd timer for the
+monitor. Exercise the notification path with an
 operator-approved test. Do not stop the witness merely to make the pager sing.
 
 Container restart policy is a recovery aid, not health proof. Alert on:
@@ -109,8 +113,10 @@ Promotion requires:
 - explicit operator enablement of automatic promotion.
 
 The witness advances the epoch and durably records the signed fence receipt
-before local PostgreSQL promotion begins. A stale request returns HTTP 409 and
-must never be retried with guessed values.
+before local PostgreSQL promotion begins. `promote.sh` stores its operation
+journal before CAS, looks up the exact `promotionId` after response loss, and
+resumes idempotently if PostgreSQL is already primary. A stale request returns
+HTTP 409 and must never be retried with guessed values.
 
 ## Manual failback
 
@@ -140,10 +146,6 @@ digest-pinned image on an isolated test IP, and verify:
 
 A restored file is never automatically authoritative. Reconnect candidate
 hosts only after incident-command review and an exact signed drill.
-
-The optional `cloudformation.yml` remains available for an AWS deployment with
-DynamoDB and CloudWatch. It is not the canonical prerequisite and does not
-change the portable safety contract.
 
 ## Credential and image rotation
 

@@ -24,7 +24,6 @@ case "${WITNESS_MODE:-}" in
 esac
 
 : "${WITNESS_HOST_ID:?independent witness host identity is required}"
-: "${WITNESS_TAILSCALE_IP:?witness Tailscale bind IP is required}"
 : "${WITNESS_PORT:?witness port is required}"
 : "${WITNESS_CLUSTER_ID:?witness cluster identity is required}"
 : "${WITNESS_INITIAL_LEADER:?initial leader is required}"
@@ -36,14 +35,17 @@ esac
 : "${WITNESS_ADMIN_TOKEN_FILE:?admin token file is required}"
 : "${WITNESS_SIGNING_PRIVATE_KEY_FILE:?signing key file is required}"
 : "${FABRIC_WITNESS_IMAGE:?digest-pinned witness image is required}"
+WITNESS_UID=${WITNESS_UID:-3195}
+WITNESS_GID=${WITNESS_GID:-3195}
+WITNESS_PREPARED_SECRETS_DIR=${WITNESS_PREPARED_SECRETS_DIR:-$WITNESS_STATE_DIR/container-secrets}
+export WITNESS_UID WITNESS_GID WITNESS_PREPARED_SECRETS_DIR
 
 witness_require_command jq
-witness_require_command tailscale
 container_runtime=${WITNESS_CONTAINER_RUNTIME:-docker}
 witness_require_command "$container_runtime"
 
-printf '%s\n' "$FABRIC_WITNESS_IMAGE" |
-  grep -Eq '^.+@sha256:[a-f0-9]{64}$' || {
+printf '%s\n' "$FABRIC_WITNESS_IMAGE" | grep -Eq \
+  '(^.+@sha256:[a-f0-9]{64}$)|(^sha256:[a-f0-9]{64}$)' || {
   echo "FABRIC_WITNESS_IMAGE must be an immutable sha256 image reference" >&2
   exit 78
 }
@@ -59,14 +61,33 @@ esac
   echo "WITNESS_PORT must be between 1 and 65535" >&2
   exit 78
 }
+for identity in "$WITNESS_UID" "$WITNESS_GID"; do
+  case "$identity" in
+    ''|*[!0-9]*) echo "WITNESS_UID and WITNESS_GID must be numeric" >&2; exit 78 ;;
+  esac
+  [ "$identity" -ge 1 ] && [ "$identity" -le 2147483647 ] || {
+    echo "WITNESS_UID and WITNESS_GID must be positive 32-bit identities" >&2
+    exit 78
+  }
+done
 
-{
-  tailscale ip -4 2>/dev/null || true
-  tailscale ip -6 2>/dev/null || true
-} | grep -Fx "$WITNESS_TAILSCALE_IP" >/dev/null || {
-  echo "WITNESS_TAILSCALE_IP is not assigned to this witness host" >&2
+if [ -n "${WITNESS_TAILSCALE_IP:-}" ] && [ -n "${WITNESS_BIND_IP:-}" ]; then
+  echo "set exactly one of WITNESS_TAILSCALE_IP or WITNESS_BIND_IP" >&2
   exit 78
-}
+fi
+if [ -n "${WITNESS_TAILSCALE_IP:-}" ]; then
+  witness_require_command tailscale
+  {
+    tailscale ip -4 2>/dev/null || true
+    tailscale ip -6 2>/dev/null || true
+  } | grep -Fx "$WITNESS_TAILSCALE_IP" >/dev/null || {
+    echo "WITNESS_TAILSCALE_IP is not assigned to this witness host" >&2
+    exit 78
+  }
+elif [ -z "${WITNESS_BIND_IP:-}" ]; then
+  echo "set WITNESS_TAILSCALE_IP or WITNESS_BIND_IP" >&2
+  exit 78
+fi
 
 for secret in \
   "$WITNESS_READER_TOKEN_FILE" \
@@ -95,22 +116,14 @@ jq -e \
   exit 78
 }
 
-case "${WITNESS_STORE:-sqlite}" in
-  sqlite)
-    case "$WITNESS_STATE_FILE" in
-      /var/lib/execution-fabric-witness/*) ;;
-      *)
-        echo "portable WITNESS_STATE_FILE must live in the mounted container state directory" >&2
-        exit 78
-        ;;
-    esac
-    ;;
-  dynamodb)
-    : "${WITNESS_TABLE_NAME:?DynamoDB table is required}"
-    : "${AWS_REGION:?AWS region is required}"
-    ;;
+[ "${WITNESS_STORE:-sqlite}" = sqlite ] || {
+  echo "portable witness supports only the canonical SQLite store" >&2
+  exit 78
+}
+case "$WITNESS_STATE_FILE" in
+  /var/lib/execution-fabric-witness/*) ;;
   *)
-    echo "WITNESS_STORE must be sqlite or dynamodb" >&2
+    echo "portable WITNESS_STATE_FILE must live in the mounted container state directory" >&2
     exit 78
     ;;
 esac
@@ -120,6 +133,23 @@ esac
   exit 78
 }
 
-mkdir -p "$WITNESS_STATE_DIR" "${WITNESS_RUNTIME_STATE_DIR:-$WITNESS_STATE_DIR/monitor}"
+mkdir -p "$WITNESS_STATE_DIR" \
+  "${WITNESS_RUNTIME_STATE_DIR:-$WITNESS_STATE_DIR/monitor}" \
+  "$WITNESS_PREPARED_SECRETS_DIR"
+chown "$WITNESS_UID:$WITNESS_GID" "$WITNESS_STATE_DIR" \
+  "$WITNESS_PREPARED_SECRETS_DIR" || {
+  echo "cannot assign protected witness state to numeric runtime identity $WITNESS_UID:$WITNESS_GID" >&2
+  exit 78
+}
 chmod 0700 "$WITNESS_STATE_DIR"
+chmod 0700 "$WITNESS_PREPARED_SECRETS_DIR"
+install -m 0400 -o "$WITNESS_UID" -g "$WITNESS_GID" \
+  "$WITNESS_READER_TOKEN_FILE" "$WITNESS_PREPARED_SECRETS_DIR/reader-token"
+install -m 0400 -o "$WITNESS_UID" -g "$WITNESS_GID" \
+  "$WITNESS_CANDIDATE_TOKENS_FILE" "$WITNESS_PREPARED_SECRETS_DIR/candidate-tokens.json"
+install -m 0400 -o "$WITNESS_UID" -g "$WITNESS_GID" \
+  "$WITNESS_ADMIN_TOKEN_FILE" "$WITNESS_PREPARED_SECRETS_DIR/admin-token"
+install -m 0400 -o "$WITNESS_UID" -g "$WITNESS_GID" \
+  "$WITNESS_SIGNING_PRIVATE_KEY_FILE" "$WITNESS_PREPARED_SECRETS_DIR/signing-private-key.pem"
+chmod 0500 "$WITNESS_PREPARED_SECRETS_DIR"
 printf '%s\n' "independent witness preflight passed"

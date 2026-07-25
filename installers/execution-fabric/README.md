@@ -26,8 +26,9 @@ installers/execution-fabric/activate-witness.sh --apply
 Installation copies only immutable deployment assets and remains inert.
 Activation preflights the exact Tailscale bind IP, digest-pinned OCI image,
 independent host identity, candidate-scoped credentials, and durable state
-mount before Docker or Podman starts anything. AWS, Fargate, and
-CloudFormation are optional adapters, not prerequisites.
+mount before Docker or Podman starts anything. It also installs and enables the
+systemd health-monitor timer; the released witness has no cloud-provider
+runtime or deployment adapter.
 
 When no independent third host is configured, set
 `WITNESS_MODE=manual_fail_closed`. The activator starts no witness and requires

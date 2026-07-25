@@ -45,8 +45,8 @@ describe("witness config", () => {
   it("requires file-backed, distinct secrets and a pinned config digest", () => {
     const config = loadConfig(environment());
     expect(config.port).toBe(3195);
-    expect(config.store).toBe("sqlite");
     expect(config.host).toBe("100.100.100.100");
+    expect(config.bootstrapOnce).toBe(false);
     expect(config.initialConfigDigest).toHaveLength(64);
 
     const valid = environment();
@@ -70,11 +70,12 @@ describe("witness config", () => {
       }),
     ).toThrow(/independent/);
 
-    expect(() =>
+    expect(
       loadConfig({
         ...environment(),
-        WITNESS_STORE: "dynamodb",
+        WITNESS_BOOTSTRAP_ONCE: "true",
+        WITNESS_PROCESS_LEASE_SECONDS: "45",
       }),
-    ).toThrow(/WITNESS_TABLE_NAME and AWS_REGION/);
+    ).toMatchObject({ bootstrapOnce: true, processLeaseSeconds: 45 });
   });
 });

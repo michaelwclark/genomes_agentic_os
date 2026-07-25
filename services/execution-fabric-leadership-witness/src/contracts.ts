@@ -74,6 +74,7 @@ export const candidateUpdateSchema = z.object({
 });
 
 export const promotionSchema = z.object({
+  promotionId: z.string().uuid(),
   candidate: hostIdSchema,
   expectedLeader: hostIdSchema,
   expectedEpoch: z.number().int().min(1),
@@ -189,6 +190,22 @@ export type LeadershipState = {
   authorityMode: "synchronous" | "degraded_primary";
   degradedUntil: string | null;
   degradedIncidentDigest: string | null;
+};
+
+export type PromotionReceipt = {
+  apiVersion: "execution-fabric-leadership/v1";
+  decision: "promoted";
+  promotionId: string;
+  requestDigest: string;
+  receiptId: string;
+  previousLeader: string;
+  currentLeader: string;
+  fabricEpoch: number;
+  clusterId: string;
+  fenceToken: string;
+  authorityMode: LeadershipState["authorityMode"];
+  degradedUntil: string | null;
+  committedAt: string;
 };
 
 export type CandidateRecord = CandidateUpdate & {
@@ -344,7 +361,7 @@ export type Eligibility = {
   reasons: string[];
 };
 
-export type PromotionMutation = {
+export type LeadershipCasMutation = {
   expectedLeader: string;
   expectedEpoch: number;
   candidate: string;
@@ -361,7 +378,13 @@ export type PromotionMutation = {
   audit: AuditRecord;
 };
 
-export type FailbackCommitMutation = PromotionMutation & {
+export type PromotionMutation = LeadershipCasMutation & {
+  promotionId: string;
+  requestDigest: string;
+  receipt: PromotionReceipt;
+};
+
+export type FailbackCommitMutation = LeadershipCasMutation & {
   planTokenHash: string;
   nowEpoch: number;
 };

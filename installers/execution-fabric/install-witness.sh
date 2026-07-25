@@ -7,6 +7,7 @@ source_root=
 release=
 install_root=/opt/genomes-agentic-os/execution-fabric-witness
 environment_file=/etc/genomes-agentic-os/execution-fabric-witness/witness.env
+systemd_root=/etc/systemd/system
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -16,8 +17,9 @@ while [ "$#" -gt 0 ]; do
     --release) shift; release=${1:?missing release} ;;
     --install-root) shift; install_root=${1:?missing install root} ;;
     --environment-file) shift; environment_file=${1:?missing environment file} ;;
+    --systemd-root) shift; systemd_root=${1:?missing systemd root} ;;
     *)
-      echo "usage: install-witness.sh [--apply] [--enable] --source-root PATH --release ID [--install-root PATH] [--environment-file PATH]" >&2
+      echo "usage: install-witness.sh [--apply] [--enable] --source-root PATH --release ID [--install-root PATH] [--environment-file PATH] [--systemd-root PATH]" >&2
       exit 64
       ;;
   esac
@@ -57,8 +59,26 @@ if [ ! -e "$environment_file" ]; then
   install -m 0600 "$target/witness.env.example" "${environment_file}.example"
 fi
 
+mkdir -p "$systemd_root"
+for unit in \
+  genomes-agentic-os-execution-fabric-witness-monitor.service \
+  genomes-agentic-os-execution-fabric-witness-monitor.timer
+do
+  sed \
+    -e "s|@@INSTALL_ROOT@@|$install_root|g" \
+    -e "s|@@ENVIRONMENT_FILE@@|$environment_file|g" \
+    "$target/systemd/$unit" >"$systemd_root/$unit"
+  chmod 0644 "$systemd_root/$unit"
+done
+
 if [ "$enable" = true ]; then
   WITNESS_ENV_FILE="$environment_file" \
     "$current/bin/run.sh"
+  command -v systemctl >/dev/null 2>&1 || {
+    echo "systemctl is required to supervise the witness monitor" >&2
+    exit 69
+  }
+  systemctl daemon-reload
+  systemctl enable --now genomes-agentic-os-execution-fabric-witness-monitor.timer
 fi
 printf '%s\n' "installed inert witness release $release"

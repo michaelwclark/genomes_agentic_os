@@ -352,8 +352,9 @@ The witness is a provider-neutral, digest-pinned OCI service. Its canonical
 portable deployment runs once on a declared third host, binds the process only
 to that host's configured Tailscale IP, and stores authority in a durable
 SQLite volume. SQLite uses WAL, `synchronous=FULL`, and
-`BEGIN IMMEDIATE`; the mutation and immutable audit stream commit before the
-API returns. DynamoDB remains an optional storage/deployment adapter.
+`BEGIN IMMEDIATE`; the mutation, replay receipt, and immutable audit stream
+commit before the API returns. The shipped witness is SQLite-only and has no
+cloud-provider deployment dependency.
 
 Install and activate the portable assets explicitly:
 
@@ -363,8 +364,9 @@ installers/execution-fabric/install-witness.sh \
 installers/execution-fabric/activate-witness.sh --apply
 ```
 
-Monitor `deploy/execution-fabric/witness/bin/monitor.sh` through the host
-supervisor. It writes a durable health receipt and emits the canonical
+The installer enables a systemd timer for
+`deploy/execution-fabric/witness/bin/monitor.sh`. It writes separate service
+availability and drill-backed promotion-eligibility fields and emits the canonical
 `runtime.execution_fabric.health` alert when liveness or durable readiness
 fails. A container restart is not a readiness receipt.
 

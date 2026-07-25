@@ -76,6 +76,54 @@ export const openApiDocument = {
           observedAt: { type: "string", format: "date-time" },
         },
       },
+      PromotionRequest: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "promotionId",
+          "candidate",
+          "expectedLeader",
+          "expectedEpoch",
+          "incidentDigest",
+        ],
+        properties: {
+          promotionId: { type: "string", format: "uuid" },
+          candidate: { type: "string", pattern: "^[a-zA-Z0-9._-]{1,128}$" },
+          expectedLeader: { type: "string", pattern: "^[a-zA-Z0-9._-]{1,128}$" },
+          expectedEpoch: { type: "integer", minimum: 1 },
+          incidentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          authorityMode: {
+            type: "string",
+            enum: ["synchronous", "degraded_primary"],
+          },
+          degradedDurationSeconds: { type: "integer", minimum: 60, maximum: 86400 },
+        },
+      },
+      PromotionReceipt: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "apiVersion", "decision", "promotionId", "requestDigest",
+          "receiptId", "previousLeader", "currentLeader", "fabricEpoch",
+          "clusterId", "fenceToken", "authorityMode", "degradedUntil",
+          "committedAt",
+        ],
+        properties: {
+          apiVersion: { type: "string", const: "execution-fabric-leadership/v1" },
+          decision: { type: "string", const: "promoted" },
+          promotionId: { type: "string", format: "uuid" },
+          requestDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          receiptId: { type: "string" },
+          previousLeader: { type: "string" },
+          currentLeader: { type: "string" },
+          fabricEpoch: { type: "integer", minimum: 2 },
+          clusterId: { type: "string" },
+          fenceToken: { type: "string" },
+          authorityMode: { type: "string", enum: ["synchronous", "degraded_primary"] },
+          degradedUntil: { type: ["string", "null"], format: "date-time" },
+          committedAt: { type: "string", format: "date-time" },
+        },
+      },
       ConfigDigestRotationRequest: {
         type: "object",
         additionalProperties: false,
@@ -328,9 +376,43 @@ export const openApiDocument = {
     "/api/v1/admin/leadership/promote": {
       post: {
         operationId: "promoteLeadershipCandidate",
+        description:
+          "Atomically CAS leadership and persist an idempotent receipt. Exact promotionId replays return the original receipt.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/PromotionRequest" },
+            },
+          },
+        },
         responses: {
-          "200": { description: "Monotonic promotion and fence receipt" },
+          "200": {
+            description: "Monotonic durable promotion and fence receipt",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PromotionReceipt" },
+              },
+            },
+          },
           "409": { description: "Stale or unsafe request" },
+        },
+      },
+    },
+    "/api/v1/admin/leadership/promotions/{promotionId}": {
+      get: {
+        operationId: "getLeadershipPromotion",
+        description: "Read the durable receipt used to resume after response loss.",
+        responses: {
+          "200": {
+            description: "Durable promotion receipt",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PromotionReceipt" },
+              },
+            },
+          },
+          "404": { description: "Promotion receipt not found" },
         },
       },
     },
