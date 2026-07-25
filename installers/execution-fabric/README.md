@@ -12,6 +12,15 @@ They do not copy secrets, do not rewrite
 operator provisions `runtime.env`, the referenced secret files, and an image
 lock with immutable digests.
 
+Keep datastore credentials out of `runtime.env`. Both hosts require protected
+`secrets/postgres-password`, `secrets/valkey-app-password`, and
+`secrets/valkey-health-password` files containing URL-safe tokens of at least
+32 characters. The standby PostgreSQL password must equal the primary value
+because physical replication copies the role verifier. Compose mounts these
+files and constructs application URLs inside the container process; rendered
+configuration contains only `/run/secrets/...` paths. Valkey's ACL is generated
+on container tmpfs rather than stored as a plaintext operator file.
+
 `runtime.env` uses `FABRIC_POSTGRES_REPLICATION_PORT=35432` by default on both
 hosts. This is the Tailscale-bound host port, not PostgreSQL's internal
 container port. Keep the replication pgpass entry aligned when overriding it.
@@ -73,6 +82,14 @@ stable bootstrap ID. Each entry binds one unique token to its exact worker ID,
 host ID, pool ID, queue set, capability set, and concurrency. The installed
 worker itself receives only its one scoped token file; it never receives the
 server-side map.
+
+The bigmac worker runtime must set `FABRIC_WORKER_ID`,
+`FABRIC_WORKER_BOOTSTRAP_ID`, `FABRIC_WORKER_POOL_ID`,
+`FABRIC_WORKER_ACCEPTED_QUEUES`, `FABRIC_WORKER_CAPABILITIES`,
+`FABRIC_WORKER_MAX_CONCURRENCY`, and
+`AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE`. Standby preflight verifies
+that those values and token file exactly match the selected entry in the
+server-side bootstrap map before launchd starts the worker.
 
 The protected secret directory must also contain `minio-root-user`,
 `minio-root-password`, `artifact-observer-access-key`, and

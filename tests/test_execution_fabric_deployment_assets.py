@@ -127,6 +127,64 @@ def test_postgres_replication_host_port_is_configurable_and_non_conflicting() ->
     assert "FABRIC_POSTGRES_REPLICATION_PORT=35432" in runtime_env
 
 
+def test_datastore_credentials_are_file_mounted_and_urls_are_process_local(
+    tmp_path: Path,
+) -> None:
+    runtime_env = (DEPLOY / "runtime.env.example").read_text(encoding="utf-8")
+    assert "FABRIC_DATABASE_URL=" not in runtime_env
+    assert "FABRIC_VALKEY_URL=" not in runtime_env
+
+    for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
+        compose = _yaml(DEPLOY / name)
+        assert "valkey-acl" not in compose["secrets"]
+        assert {"postgres-password", "valkey-app-password"} <= set(
+            compose["secrets"]
+        )
+        for service_name in ("candidate-reporter", "control-plane", "observer", "healer"):
+            service = compose["services"][service_name]
+            assert "FABRIC_DATABASE_URL" not in service["environment"]
+            assert service["environment"]["FABRIC_DATABASE_PASSWORD_FILE"] == (
+                "/run/secrets/postgres-password"
+            )
+            assert "postgres-password" in service["secrets"]
+            assert service["entrypoint"] == ["/usr/local/bin/fabric-datastore-env"]
+        for service_name in ("control-plane", "healer"):
+            service = compose["services"][service_name]
+            assert "FABRIC_VALKEY_URL" not in service["environment"]
+            assert service["environment"]["FABRIC_VALKEY_PASSWORD_FILE"] == (
+                "/run/secrets/valkey-app-password"
+            )
+            assert "valkey-app-password" in service["secrets"]
+
+    postgres_password = "p" * 40
+    valkey_password = "v" * 40
+    postgres_file = tmp_path / "postgres-password"
+    valkey_file = tmp_path / "valkey-app-password"
+    postgres_file.write_text(postgres_password, encoding="utf-8")
+    valkey_file.write_text(valkey_password, encoding="utf-8")
+    result = subprocess.run(
+        [
+            "sh",
+            str(DEPLOY / "scripts/datastore-env-entrypoint.sh"),
+            "sh",
+            "-c",
+            'printf "%s\\n%s\\n" "$FABRIC_DATABASE_URL" "$FABRIC_VALKEY_URL"',
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "FABRIC_DATABASE_PASSWORD_FILE": str(postgres_file),
+            "FABRIC_VALKEY_PASSWORD_FILE": str(valkey_file),
+        },
+    )
+    assert result.stdout.splitlines() == [
+        f"postgresql://fabric:{postgres_password}@postgres:5432/execution_fabric",
+        f"redis://fabric:{valkey_password}@valkey:6379/0",
+    ]
+
+
 def test_long_running_services_have_healthchecks_and_durable_volumes() -> None:
     primary = _yaml(DEPLOY / "compose.genomesbox.yml")
     standby = _yaml(DEPLOY / "compose.bigmac.yml")
@@ -233,6 +291,7 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
         observer = compose["services"]["observer"]
         assert forbidden_environment.isdisjoint(observer["environment"])
         assert set(observer["secrets"]) == {
+            "postgres-password",
             "artifact-observer-access-key",
             "artifact-observer-secret-key",
         }
@@ -1083,6 +1142,19 @@ def test_packaged_python_worker_is_the_default_governed_host_entrypoint() -> Non
     preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
     assert '${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}' in worker
     assert '"$worker_executable" --preflight' in preflight
+    runtime_env = (DEPLOY / "runtime.env.example").read_text(encoding="utf-8")
+    for variable in (
+        "FABRIC_WORKER_ID",
+        "FABRIC_WORKER_BOOTSTRAP_ID",
+        "FABRIC_WORKER_POOL_ID",
+        "FABRIC_WORKER_ACCEPTED_QUEUES",
+        "FABRIC_WORKER_CAPABILITIES",
+        "FABRIC_WORKER_MAX_CONCURRENCY",
+        "AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE",
+    ):
+        assert f"{variable}=" in runtime_env
+        assert variable in preflight
+    assert "$credential.token==$token" in preflight
 
 
 def test_compose_helper_preserves_runtime_and_deployment_paths_with_spaces(

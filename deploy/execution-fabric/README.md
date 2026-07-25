@@ -35,6 +35,23 @@ Do not add host-specific queue-policy files here. Runtime installation consumes:
 The deployment environment selects endpoints, immutable images, storage, and
 role. It does not redefine queues or alerts.
 
+## Datastore credential boundary
+
+`runtime.env` must not contain `FABRIC_DATABASE_URL`, `FABRIC_VALKEY_URL`, or
+either datastore password. Provision the same `postgres-password` and
+`valkey-app-password` files in each host's protected `secrets/` directory; also
+provision a distinct `valkey-health-password`. Each value must be one URL-safe
+token of at least 32 characters (`A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, or `-`).
+
+Compose mounts these files only into roles that need them.
+`datastore-env-entrypoint.sh` constructs the PostgreSQL and Redis-compatible
+URLs inside each application process immediately before `exec`; secret values
+do not appear in `runtime.env` or rendered Compose configuration.
+`valkey-acl-entrypoint.sh` builds a mode-0600 ACL on tmpfs, disables the
+default user, and starts Valkey without placing a password in its command line.
+The standby uses the same PostgreSQL password as the primary because physical
+replication copies the role verifier.
+
 ## Independent service roles
 
 The shipped image has three explicit entrypoints:

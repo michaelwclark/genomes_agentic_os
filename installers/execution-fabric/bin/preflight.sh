@@ -33,6 +33,10 @@ case "$expected_role:$FABRIC_HOST_ID" in
 esac
 : "${FABRIC_DEPLOYMENT_DIR:?installed deployment directory is required}"
 : "${FABRIC_SECRETS_DIR:?runtime secret directory is required}"
+[ -z "${FABRIC_DATABASE_URL:-}" ] && [ -z "${FABRIC_VALKEY_URL:-}" ] || {
+  echo "datastore URLs must not be stored in runtime.env; use mounted password files" >&2
+  exit 78
+}
 : "${FABRIC_TAILSCALE_IP:?Tailscale bind address is required}"
 : "${FABRIC_CLUSTER_ID:?fabric cluster id is required}"
 : "${FABRIC_LEADERSHIP_API_BASE:?independent witness API is required}"
@@ -97,6 +101,49 @@ do
   fi
 done
 if [ "$expected_role" = standby ]; then
+  : "${FABRIC_WORKER_ID:?host worker identity is required}"
+  : "${FABRIC_WORKER_BOOTSTRAP_ID:?host worker bootstrap identity is required}"
+  : "${FABRIC_WORKER_POOL_ID:?host worker pool identity is required}"
+  : "${FABRIC_WORKER_ACCEPTED_QUEUES:?host worker queue set is required}"
+  : "${FABRIC_WORKER_CAPABILITIES:?host worker capability set is required}"
+  : "${FABRIC_WORKER_MAX_CONCURRENCY:?host worker concurrency is required}"
+  : "${AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE:?scoped worker token file is required}"
+  case "$FABRIC_WORKER_MAX_CONCURRENCY" in
+    ''|*[!0-9]*) echo "FABRIC_WORKER_MAX_CONCURRENCY must be a positive integer" >&2; exit 78 ;;
+  esac
+  [ "$FABRIC_WORKER_MAX_CONCURRENCY" -ge 1 ] || {
+    echo "FABRIC_WORKER_MAX_CONCURRENCY must be a positive integer" >&2
+    exit 78
+  }
+  [ -s "$AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE" ] || {
+    echo "scoped worker token file is missing or empty" >&2
+    exit 78
+  }
+  jq -e \
+    --arg bootstrap "$FABRIC_WORKER_BOOTSTRAP_ID" \
+    --arg worker "$FABRIC_WORKER_ID" \
+    --arg host "$FABRIC_HOST_ID" \
+    --arg pool "$FABRIC_WORKER_POOL_ID" \
+    --arg queues "$FABRIC_WORKER_ACCEPTED_QUEUES" \
+    --arg capabilities "$FABRIC_WORKER_CAPABILITIES" \
+    --argjson concurrency "$FABRIC_WORKER_MAX_CONCURRENCY" \
+    --rawfile scoped_token "$AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE" '
+      .[$bootstrap] as $credential |
+      ($queues | split(",") | map(gsub("^\\s+|\\s+$"; "")) | sort) as $queue_set |
+      ($capabilities | split(",") | map(gsub("^\\s+|\\s+$"; "")) | sort) as $capability_set |
+      ($scoped_token | gsub("[\\r\\n]+$"; "")) as $token |
+      ($credential | type=="object") and
+      $credential.workerId==$worker and
+      $credential.hostId==$host and
+      $credential.poolId==$pool and
+      ($credential.queues | sort)==$queue_set and
+      ($credential.capabilities | sort)==$capability_set and
+      $credential.maxConcurrency==$concurrency and
+      $credential.token==$token
+    ' "$FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE" >/dev/null || {
+    echo "host worker runtime identity does not match its scoped bootstrap credential" >&2
+    exit 78
+  }
   worker_executable=${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}
   [ -x "$worker_executable" ] || {
     echo "host worker executable is unavailable: $worker_executable" >&2
@@ -183,11 +230,11 @@ grep -Eq '^  runtime\.execution_fabric\.health:' \
 case "$expected_role" in
   primary)
     compose_file="$FABRIC_DEPLOYMENT_DIR/compose.genomesbox.yml"
-    required_secrets="postgres-password postgres-replication-password postgres-pgpass postgres-failback-pgpass valkey-acl valkey-health-password minio-root-user minio-root-password artifact-observer-access-key artifact-observer-secret-key fabric-api-token fabric-submit-token fabric-admin-token"
+    required_secrets="postgres-password postgres-replication-password postgres-pgpass postgres-failback-pgpass valkey-app-password valkey-health-password minio-root-user minio-root-password artifact-observer-access-key artifact-observer-secret-key fabric-api-token fabric-submit-token fabric-admin-token"
     ;;
   standby)
     compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
-    required_secrets="postgres-replication-pgpass valkey-acl valkey-health-password minio-root-user minio-root-password artifact-observer-access-key artifact-observer-secret-key fabric-api-token fabric-submit-token fabric-admin-token"
+    required_secrets="postgres-password postgres-replication-pgpass valkey-app-password valkey-health-password minio-root-user minio-root-password artifact-observer-access-key artifact-observer-secret-key fabric-api-token fabric-submit-token fabric-admin-token"
     ;;
 esac
 
@@ -197,6 +244,21 @@ for secret in $required_secrets; do
     exit 78
   }
 done
+
+for secret in postgres-password valkey-app-password valkey-health-password; do
+  secret_value=$(cat "$FABRIC_SECRETS_DIR/$secret")
+  case "$secret_value" in
+    ''|*[!A-Za-z0-9._~-]*)
+      echo "$secret must contain one URL-safe token" >&2
+      exit 78
+      ;;
+  esac
+  [ "${#secret_value}" -ge 32 ] || {
+    echo "$secret must contain at least 32 characters" >&2
+    exit 78
+  }
+done
+unset secret_value
 
 docker compose \
   --env-file "$FABRIC_RUNTIME_ENV_FILE" \

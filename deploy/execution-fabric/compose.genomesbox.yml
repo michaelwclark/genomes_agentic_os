@@ -41,20 +41,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    entrypoint: ["/usr/local/bin/fabric-datastore-env"]
     command: ["node", "/app/dist/candidate-reporter.mjs"]
     environment:
       FABRIC_HOST_ID: genomesbox
-      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
+      FABRIC_POSTGRES_USER: ${FABRIC_POSTGRES_USER:-fabric}
+      FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
+      FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
       FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
       FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
       FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
       FABRIC_CANDIDATE_REPORT_INTERVAL_SECONDS: ${FABRIC_CANDIDATE_REPORT_INTERVAL_SECONDS:-30}
       FABRIC_CANDIDATE_HEARTBEAT_MAX_AGE_SECONDS: ${FABRIC_CANDIDATE_HEARTBEAT_MAX_AGE_SECONDS:-75}
     secrets:
+      - postgres-password
       - fabric-leadership-candidate-token
     volumes:
       - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ./scripts/candidate-reporter.mjs:/app/dist/candidate-reporter.mjs:ro
+      - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
     networks: [fabric-private, fabric-egress]
     read_only: true
     tmpfs: ["/tmp"]
@@ -71,10 +76,15 @@ services:
     image: ${FABRIC_VALKEY_IMAGE:?set an immutable valkey image digest}
     profiles: ["primary"]
     restart: unless-stopped
-    command: ["valkey-server", "/etc/valkey/valkey.conf", "--aclfile", "/run/secrets/valkey-acl"]
+    entrypoint: ["/usr/local/bin/fabric-valkey-acl"]
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    environment:
+      FABRIC_VALKEY_PASSWORD_FILE: /run/secrets/valkey-app-password
+      FABRIC_VALKEY_HEALTH_PASSWORD_FILE: /run/secrets/valkey-health-password
     volumes:
       - valkey-primary-data:/data
       - ./config/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ./scripts/valkey-acl-entrypoint.sh:/usr/local/bin/fabric-valkey-acl:ro
     networks: [fabric-private]
     healthcheck:
       test: ["CMD-SHELL", "valkey-cli --user \"$${FABRIC_VALKEY_HEALTH_USER:-health}\" --pass \"$$(cat /run/secrets/valkey-health-password)\" ping | grep -qx PONG"]
@@ -82,8 +92,9 @@ services:
       timeout: 5s
       retries: 6
     secrets:
-      - valkey-acl
+      - valkey-app-password
       - valkey-health-password
+    tmpfs: ["/run/valkey"]
     security_opt: ["no-new-privileges:true"]
 
   minio:
@@ -166,12 +177,16 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/fabric-datastore-env"]
     environment:
       FABRIC_HOST: 0.0.0.0
       FABRIC_PORT: "3180"
       FABRIC_HOST_ID: genomesbox
-      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
-      FABRIC_VALKEY_URL: ${FABRIC_VALKEY_URL:?set via protected runtime environment}
+      FABRIC_POSTGRES_USER: ${FABRIC_POSTGRES_USER:-fabric}
+      FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
+      FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
+      FABRIC_VALKEY_USER: fabric
+      FABRIC_VALKEY_PASSWORD_FILE: /run/secrets/valkey-app-password
       FABRIC_QUEUE_PREFIX: ${FABRIC_QUEUE_PREFIX:-agentic-os:fabric}
       FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
       FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
@@ -201,6 +216,8 @@ services:
       FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS: ${FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS:-30}
       FABRIC_LOG_LEVEL: info
     secrets:
+      - postgres-password
+      - valkey-app-password
       - fabric-api-token
       - fabric-submit-token
       - fabric-worker-bootstrap-credentials
@@ -214,6 +231,7 @@ services:
       - fabric-leadership-candidate-token
       - fabric-leadership-public-key
     volumes:
+      - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
       - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
@@ -239,9 +257,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    entrypoint: ["/usr/local/bin/fabric-datastore-env"]
     environment:
       FABRIC_HOST_ID: genomesbox
-      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
+      FABRIC_POSTGRES_USER: ${FABRIC_POSTGRES_USER:-fabric}
+      FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
+      FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
       FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
       FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
       FABRIC_ARTIFACT_ENDPOINT: http://minio:9000
@@ -253,9 +274,11 @@ services:
       FABRIC_OBSERVER_INTERVAL_MS: ${FABRIC_OBSERVER_INTERVAL_MS:-15000}
       FABRIC_LOG_LEVEL: info
     secrets:
+      - postgres-password
       - artifact-observer-access-key
       - artifact-observer-secret-key
     volumes:
+      - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
       - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
     networks: [fabric-private]
@@ -276,10 +299,14 @@ services:
         condition: service_healthy
       observer:
         condition: service_started
+    entrypoint: ["/usr/local/bin/fabric-datastore-env"]
     environment:
       FABRIC_HOST_ID: genomesbox
-      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
-      FABRIC_VALKEY_URL: ${FABRIC_VALKEY_URL:?set via protected runtime environment}
+      FABRIC_POSTGRES_USER: ${FABRIC_POSTGRES_USER:-fabric}
+      FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
+      FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
+      FABRIC_VALKEY_USER: fabric
+      FABRIC_VALKEY_PASSWORD_FILE: /run/secrets/valkey-app-password
       FABRIC_QUEUE_PREFIX: ${FABRIC_QUEUE_PREFIX:-agentic-os:fabric}
       FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
       FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
@@ -307,6 +334,8 @@ services:
       FABRIC_HEALER_ALLOW_ACTIONS: ${FABRIC_HEALER_ALLOW_ACTIONS:-reconcile_expired_attempts,reconstruct_delivery,recover_effect_claim}
       FABRIC_LOG_LEVEL: info
     secrets:
+      - postgres-password
+      - valkey-app-password
       - fabric-api-token
       - fabric-submit-token
       - fabric-worker-bootstrap-credentials
@@ -320,6 +349,7 @@ services:
       - fabric-leadership-candidate-token
       - fabric-leadership-public-key
     volumes:
+      - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
       - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
@@ -409,8 +439,8 @@ secrets:
     file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/postgres-pgpass
   postgres-failback-pgpass:
     file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/postgres-failback-pgpass
-  valkey-acl:
-    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/valkey-acl
+  valkey-app-password:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/valkey-app-password
   valkey-health-password:
     file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/valkey-health-password
   minio-root-password:
