@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 
 
 ROOT = Path(__file__).parents[1]
@@ -62,7 +63,10 @@ def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> 
             encoding="utf-8"
         )
     )
-    assert manifest["python_package"]["version"] == "0.4.0"
+    package_version = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    assert manifest["python_package"]["version"] == package_version
     assert "@sha256:" in manifest["images"]["control_plane"]
     assert "@sha256:" in manifest["images"]["worker"]
     assert (tmp_path / "execution-fabric-emergency-bundle.tar.gz").is_file()
