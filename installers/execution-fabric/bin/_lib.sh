@@ -33,6 +33,34 @@ fabric_require_command() {
   }
 }
 
+fabric_compose() {
+  [ "$#" -ge 1 ] || {
+    echo "fabric_compose requires a compose file" >&2
+    return 64
+  }
+  _fabric_compose_file=$1
+  shift
+  docker compose \
+    --env-file "$FABRIC_RUNTIME_ENV_FILE" \
+    -f "$_fabric_compose_file" \
+    "$@"
+}
+
+fabric_replication_slot() {
+  [ "$#" -eq 1 ] || {
+    echo "fabric_replication_slot requires primary or standby" >&2
+    return 64
+  }
+  case "$1" in
+    primary) printf '%s\n' genomesbox_fabric ;;
+    standby) printf '%s\n' bigmac_fabric ;;
+    *)
+      echo "unknown replication slot target: $1" >&2
+      return 64
+      ;;
+  esac
+}
+
 fabric_api_get() {
   base=$1
   path=$2

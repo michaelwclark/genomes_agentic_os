@@ -48,7 +48,6 @@ else
     echo "unsupported durable primary host: $FABRIC_HOST_ID" >&2
     exit 75
 fi
-compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $compose_file"
 status_temp=$(mktemp "${TMPDIR:-/tmp}/fabric-durability-status.XXXXXX")
 receipt_temp=$(mktemp "${TMPDIR:-/tmp}/fabric-durability-receipt.XXXXXX")
 trap 'rm -f "$status_temp" "$receipt_temp"' EXIT HUP INT TERM
@@ -63,7 +62,7 @@ fabric_api_get_bearer \
 }
 
 psql_primary() {
-  $compose --profile "$compose_profile" exec -T postgres \
+  fabric_compose "$compose_file" --profile "$compose_profile" exec -T postgres \
     psql -X -qAt -v ON_ERROR_STOP=1 \
       -U "${FABRIC_POSTGRES_USER:-fabric}" \
       -d "${FABRIC_POSTGRES_DB:-execution_fabric}" "$@"
@@ -177,5 +176,6 @@ fabric_atomic_write \
 # A standby-side launchd invocation may have exited before promotion. Starting
 # the scheduler here binds its lifecycle to the measured remote_apply gate,
 # while the degraded-primary branch above keeps it stopped.
-$compose --profile "$compose_profile" up -d --no-deps scheduler
+fabric_compose "$compose_file" \
+  --profile "$compose_profile" up -d --no-deps scheduler
 cat "$receipt_temp"

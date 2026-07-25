@@ -12,21 +12,69 @@ They do not copy secrets, do not rewrite
 operator provisions `runtime.env`, the referenced secret files, and an image
 lock with immutable digests.
 
+Keep datastore credentials out of `runtime.env`. Both hosts require protected
+`secrets/postgres-password`, `secrets/valkey-app-password`, and
+`secrets/valkey-health-password` files containing URL-safe tokens of at least
+32 characters. The standby PostgreSQL password must equal the primary value
+because physical replication copies the role verifier. Compose mounts these
+files and constructs application URLs inside the container process; rendered
+configuration contains only `/run/secrets/...` paths. Valkey's ACL is generated
+on container tmpfs rather than stored as a plaintext operator file.
+
 `runtime.env` uses `FABRIC_POSTGRES_REPLICATION_PORT=35432` by default on both
 hosts. This is the Tailscale-bound host port, not PostgreSQL's internal
 container port. Keep the replication pgpass entry aligned when overriding it.
+Replication slots follow the target role: `genomesbox_fabric` feeds the
+configured primary host while it is being rebuilt as a failback target, and
+`bigmac_fabric` feeds the configured standby host. Failback creates the former
+before the primary-host base backup; receipt activation creates the latter
+before rebuilding the standby. Reseed resolves the same names through the
+shared installer contract instead of carrying separate literals.
 
 `install-linux.sh` installs systemd units for the genomesbox primary plus
 observer, watchdog, and backup timers. `install-macos.sh` installs launchd
 definitions for the bigmac warm standby, worker, observer, and watchdog.
 
-Both installers are inert without `--apply`. Service loading is a separate
-`--enable` choice so package installation is not mistaken for runtime
-activation.
+The Linux backup timer invokes `bin/backup-health.sh`, which accepts only the
+canonical `${FABRIC_RUNTIME_STATE_DIR}/backup-health.json` destination and
+validates the newly generated run ID. The underlying backup is not healthy
+until it has been restored into an isolated disposable database, queried, and
+removed; the validator also verifies the hash-bound restore-manifest sidecar.
 
-The worker definition executes `FABRIC_WORKER_EXECUTABLE`. No worker binary is
-invented by the deployment layer; it must implement the public `/api/v1`
-register, heartbeat, claim, complete, and fail protocol.
+Both installers are inert without `--apply`. Service activation is a separate,
+explicit operation:
+
+```sh
+# Linux, after runtime.env and every referenced secret/config file are ready.
+sudo /opt/genomes-agentic-os/execution-fabric/current/installers/activate-linux.sh --apply
+
+# macOS, after runtime.env and every referenced secret/config file are ready.
+"$HOME/Library/Application Support/GenomesAgenticOS/execution-fabric/current/installers/activate-macos.sh" --apply
+```
+
+The activators run the complete `bin/preflight.sh` role check before the first
+`systemctl` or `launchctl` mutation. A failed preflight starts nothing.
+Successful activation is idempotent: systemd starts already-active units
+without restarting them, and the macOS activator skips labels already loaded in
+the user launchd domain.
+
+`install-*.sh --enable` remains an explicit install-and-activate convenience
+and delegates to the same activator. Re-running the installer for the same
+current release does not copy the release again or exit 73; adding `--enable`
+activates that inert release. It still refuses an incomplete release or a
+previous release that is installed but is not the selected `current` release,
+so an installer rerun cannot become an accidental rollback.
+
+The host worker has a package-owned executable at
+`current/installers/bin/python-worker.sh`. `bin/worker.sh` selects it by default
+and points it at the stable signed-leader gateway. The executable launches the
+shipped `genomes_agentic_os.execution_fabric_worker` module, so an operator no
+longer needs to create an untracked wrapper. Set `FABRIC_WORKER_PYTHON` when the
+package lives in a dedicated virtual environment; it may be an absolute path or
+an executable name. `FABRIC_WORKER_EXECUTABLE` remains an explicit advanced
+override for another governed worker implementation of the public `/api/v1`
+register, heartbeat, claim, complete, and fail protocol. Standby preflight
+verifies that the default Python module is importable before launchd is touched.
 
 Control-plane roles require
 `FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE`, a protected JSON map keyed by
@@ -34,6 +82,14 @@ stable bootstrap ID. Each entry binds one unique token to its exact worker ID,
 host ID, pool ID, queue set, capability set, and concurrency. The installed
 worker itself receives only its one scoped token file; it never receives the
 server-side map.
+
+The bigmac worker runtime must set `FABRIC_WORKER_ID`,
+`FABRIC_WORKER_BOOTSTRAP_ID`, `FABRIC_WORKER_POOL_ID`,
+`FABRIC_WORKER_ACCEPTED_QUEUES`, `FABRIC_WORKER_CAPABILITIES`,
+`FABRIC_WORKER_MAX_CONCURRENCY`, and
+`AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE`. Standby preflight verifies
+that those values and token file exactly match the selected entry in the
+server-side bootstrap map before launchd starts the worker.
 
 The protected secret directory must also contain `minio-root-user`,
 `minio-root-password`, `artifact-observer-access-key`, and

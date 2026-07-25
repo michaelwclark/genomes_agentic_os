@@ -85,8 +85,66 @@ Parameters:
     Default: 3600
     MinValue: 60
     MaxValue: 86400
+  AlarmTopicArn:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional existing SNS topic ARN for witness alarm and recovery actions.
+      Leave empty to keep alarms local to CloudWatch or create a managed topic.
+    AllowedPattern: "^$|^arn:[a-z0-9-]+:sns:[a-z0-9-]+:[0-9]{12}:.+$"
+  CreateAlarmTopic:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Create an unsubscribed, stack-managed SNS topic when AlarmTopicArn is
+      empty. Subscriptions remain an explicit operator action.
+
+Conditions:
+  HasProvidedAlarmTopic: !Not
+    - !Equals [!Ref AlarmTopicArn, ""]
+  CreateManagedAlarmTopic: !And
+    - !Equals [!Ref CreateAlarmTopic, "true"]
+    - !Equals [!Ref AlarmTopicArn, ""]
+  HasAlarmDestination: !Or
+    - !Condition HasProvidedAlarmTopic
+    - !Condition CreateManagedAlarmTopic
 
 Resources:
+  WitnessAlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateManagedAlarmTopic
+    Properties:
+      TopicName: !Sub "${EnvironmentName}-alarms"
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: system
+          Value: genomes-agentic-os
+        - Key: component
+          Value: execution-fabric-leadership-witness
+
+  WitnessAlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: CreateManagedAlarmTopic
+    Properties:
+      Topics:
+        - !Ref WitnessAlarmTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarmPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref WitnessAlarmTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                AWS:SourceArn: !Sub >-
+                  arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${EnvironmentName}-*
+
   WitnessTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -358,6 +416,293 @@ Resources:
           ContainerPort: 3195
           TargetGroupArn: !Ref TargetGroup
 
+  WitnessRunningTaskCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-ecs-running-task-count"
+      AlarmDescription: Witness ECS running task count is below DesiredCount.
+      Namespace: ECS/ContainerInsights
+      MetricName: RunningTaskCount
+      Dimensions:
+        - Name: ClusterName
+          Value: !Select [1, !Split ["/", !Ref EcsClusterArn]]
+        - Name: ServiceName
+          Value: !GetAtt Service.Name
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: !Ref DesiredCount
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      InsufficientDataActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
+  WitnessUnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-alb-unhealthy-targets"
+      AlarmDescription: One or more witness ALB targets are unhealthy.
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
+  WitnessAlb5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-alb-5xx"
+      AlarmDescription: Witness ALB generated HTTP 5xx responses.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_ELB_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
+  WitnessTarget5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-target-5xx"
+      AlarmDescription: Witness targets returned HTTP 5xx responses.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
+  WitnessReadThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-dynamodb-read-throttles"
+      AlarmDescription: Witness DynamoDB table read requests were throttled.
+      Namespace: AWS/DynamoDB
+      MetricName: ReadThrottleEvents
+      Dimensions:
+        - Name: TableName
+          Value: !Ref WitnessTable
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
+  WitnessWriteThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-dynamodb-write-throttles"
+      AlarmDescription: Witness DynamoDB table write requests were throttled.
+      Namespace: AWS/DynamoDB
+      MetricName: WriteThrottleEvents
+      Dimensions:
+        - Name: TableName
+          Value: !Ref WitnessTable
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
+  WitnessDynamoSystemErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-dynamodb-system-errors"
+      AlarmDescription: Witness DynamoDB API operations returned system errors.
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: systemErrors
+          Label: DynamoDB witness system errors
+          Expression: getErrors + putErrors + queryErrors + transactErrors
+          ReturnData: true
+        - Id: getErrors
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/DynamoDB
+              MetricName: SystemErrors
+              Dimensions:
+                - Name: TableName
+                  Value: !Ref WitnessTable
+                - Name: Operation
+                  Value: GetItem
+            Period: 60
+            Stat: Sum
+        - Id: putErrors
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/DynamoDB
+              MetricName: SystemErrors
+              Dimensions:
+                - Name: TableName
+                  Value: !Ref WitnessTable
+                - Name: Operation
+                  Value: PutItem
+            Period: 60
+            Stat: Sum
+        - Id: queryErrors
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/DynamoDB
+              MetricName: SystemErrors
+              Dimensions:
+                - Name: TableName
+                  Value: !Ref WitnessTable
+                - Name: Operation
+                  Value: Query
+            Period: 60
+            Stat: Sum
+        - Id: transactErrors
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/DynamoDB
+              MetricName: SystemErrors
+              Dimensions:
+                - Name: TableName
+                  Value: !Ref WitnessTable
+                - Name: Operation
+                  Value: TransactWriteItems
+            Period: 60
+            Stat: Sum
+      AlarmActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+      OKActions: !If
+        - HasProvidedAlarmTopic
+        - [!Ref AlarmTopicArn]
+        - !If
+          - CreateManagedAlarmTopic
+          - [!Ref WitnessAlarmTopic]
+          - !Ref AWS::NoValue
+
 Outputs:
   WitnessTableName:
     Value: !Ref WitnessTable
@@ -367,3 +712,21 @@ Outputs:
     Value: !Sub "https://${LoadBalancer.DNSName}"
   TaskDefinitionArn:
     Value: !Ref TaskDefinition
+  WitnessAlarmTopicArn:
+    Condition: HasAlarmDestination
+    Description: Existing or stack-managed SNS topic used by witness alarms.
+    Value: !If
+      - HasProvidedAlarmTopic
+      - !Ref AlarmTopicArn
+      - !Ref WitnessAlarmTopic
+  WitnessAlarmNames:
+    Description: CloudWatch alarms installed for the witness control plane.
+    Value: !Join
+      - ","
+      - - !Ref WitnessRunningTaskCountAlarm
+        - !Ref WitnessUnhealthyTargetsAlarm
+        - !Ref WitnessAlb5xxAlarm
+        - !Ref WitnessTarget5xxAlarm
+        - !Ref WitnessReadThrottleAlarm
+        - !Ref WitnessWriteThrottleAlarm
+        - !Ref WitnessDynamoSystemErrorsAlarm

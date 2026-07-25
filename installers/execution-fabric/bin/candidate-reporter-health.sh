@@ -65,13 +65,13 @@ fail_health() {
   exit 75
 }
 
-compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $compose_file"
-container=$($compose --profile "$profile" ps --status running -q candidate-reporter)
+container=$(fabric_compose "$compose_file" \
+  --profile "$profile" ps --status running -q candidate-reporter)
 [ -n "$container" ] &&
   [ "$(printf '%s\n' "$container" | wc -l | tr -d ' ')" -eq 1 ] ||
   fail_health "candidate-reporter container is not uniquely running"
 
-$compose --profile "$profile" exec -T candidate-reporter \
+fabric_compose "$compose_file" --profile "$profile" exec -T candidate-reporter \
   node /app/dist/candidate-reporter.mjs --print-heartbeat >"$heartbeat_temp" ||
   fail_health "candidate heartbeat is unavailable"
 

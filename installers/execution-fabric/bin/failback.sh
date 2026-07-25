@@ -89,11 +89,12 @@ if [ "$action" = reseed ]; then
     echo "witness leadership changed after standby reseed authorization" >&2
     exit 75
   }
-  compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
-  $compose --profile promoted exec -T postgres \
+  compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
+  target_slot=$(fabric_replication_slot primary)
+  fabric_compose "$compose_file" --profile promoted exec -T postgres \
     psql -X -v ON_ERROR_STOP=1 -U "${FABRIC_POSTGRES_USER:-fabric}" \
       -d "${FABRIC_POSTGRES_DB:-execution_fabric}" \
-      -c "SELECT pg_create_physical_replication_slot('fabric_failback_target') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name='fabric_failback_target')"
+      -c "SELECT pg_create_physical_replication_slot('$target_slot') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name='$target_slot')"
   ssh "$FABRIC_PRIMARY_SSH_TARGET" \
     "$FABRIC_REMOTE_INSTALLER_DIR/bin/reseed-postgres-standby.sh --apply --target-role failback-target"
   fabric_api_get_bearer \
@@ -186,8 +187,9 @@ fi
 "$script_dir/validate-backup-health-receipt.sh"
 
 # Fence the old mutation plane before the independent witness advances epoch.
-compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
-$compose --profile promoted stop control-plane observer healer scheduler
+compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
+fabric_compose "$compose_file" \
+  --profile promoted stop control-plane observer healer scheduler
 commit_request=$(jq -cn \
   --arg planToken "$plan_token" \
   --slurpfile approval "$approval_file" \

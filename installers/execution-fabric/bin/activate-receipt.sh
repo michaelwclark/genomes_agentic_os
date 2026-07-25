@@ -52,11 +52,11 @@ fabric_api_get_bearer \
     exit 75
   }
 fabric_atomic_write "$FABRIC_LEADERSHIP_RECEIPT_FILE" "$receipt_temp"
-compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $FABRIC_DEPLOYMENT_DIR/compose.genomesbox.yml"
-$compose --profile primary up -d postgres
+compose_file="$FABRIC_DEPLOYMENT_DIR/compose.genomesbox.yml"
+fabric_compose "$compose_file" --profile primary up -d postgres
 attempt=0
 while [ "$attempt" -lt 24 ]; do
-  recovery=$($compose --profile primary exec -T postgres \
+  recovery=$(fabric_compose "$compose_file" --profile primary exec -T postgres \
     psql -X -qAt -U "${FABRIC_POSTGRES_USER:-fabric}" \
       -d "${FABRIC_POSTGRES_DB:-execution_fabric}" \
       -c 'SELECT pg_is_in_recovery()' 2>/dev/null || true)
@@ -68,16 +68,21 @@ done
   echo "failback target is not a PostgreSQL standby; refusing activation" >&2
   exit 75
 }
-$compose --profile primary exec -T postgres \
+fabric_compose "$compose_file" --profile primary exec -T postgres \
   pg_ctl promote -D /var/lib/postgresql/data -w -t 60
-[ "$($compose --profile primary exec -T postgres \
+[ "$(fabric_compose "$compose_file" --profile primary exec -T postgres \
   psql -X -qAt -U "${FABRIC_POSTGRES_USER:-fabric}" \
     -d "${FABRIC_POSTGRES_DB:-execution_fabric}" \
     -c 'SELECT pg_is_in_recovery()')" = f ] || {
   echo "PostgreSQL promotion did not complete" >&2
   exit 70
 }
-$compose --profile primary restart candidate-reporter
+standby_slot=$(fabric_replication_slot standby)
+fabric_compose "$compose_file" --profile primary exec -T postgres \
+  psql -X -v ON_ERROR_STOP=1 -U "${FABRIC_POSTGRES_USER:-fabric}" \
+    -d "${FABRIC_POSTGRES_DB:-execution_fabric}" \
+    -c "SELECT pg_create_physical_replication_slot('$standby_slot') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name='$standby_slot')"
+fabric_compose "$compose_file" --profile primary restart candidate-reporter
 active_report=false
 attempt=0
 while [ "$attempt" -lt 12 ]; do
@@ -94,5 +99,6 @@ done
   echo "failback target did not publish a fresh active candidate report" >&2
   exit 70
 }
-$compose --profile primary up -d valkey control-plane observer healer scheduler gateway
+fabric_compose "$compose_file" \
+  --profile primary up -d valkey control-plane observer healer scheduler gateway
 fabric_atomic_write "$FABRIC_RUNTIME_STATE_DIR/activation.receipt.json" "$receipt_temp"

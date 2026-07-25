@@ -7,6 +7,6 @@ After=genomes-agentic-os-execution-fabric-primary.service
 Type=oneshot
 EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
 WorkingDirectory=/opt/genomes-agentic-os/execution-fabric/current/deploy
-ExecStart=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile backup run --rm postgres-backup
+ExecStart=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/backup-health.sh
 NoNewPrivileges=true
 TimeoutStartSec=600

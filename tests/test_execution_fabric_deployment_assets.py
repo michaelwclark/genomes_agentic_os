@@ -4,7 +4,9 @@ import json
 import os
 import plistlib
 import re
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import jsonschema
@@ -22,12 +24,41 @@ def _yaml(path: Path) -> dict:
     return value
 
 
+def _cloudformation(path: Path) -> dict:
+    class CloudFormationLoader(yaml.SafeLoader):
+        pass
+
+    def construct_intrinsic(
+        loader: CloudFormationLoader,
+        tag_suffix: str,
+        node: yaml.Node,
+    ) -> dict:
+        if isinstance(node, yaml.ScalarNode):
+            value = loader.construct_scalar(node)
+        elif isinstance(node, yaml.SequenceNode):
+            value = loader.construct_sequence(node)
+        else:
+            value = loader.construct_mapping(node)
+        return {tag_suffix: value}
+
+    CloudFormationLoader.add_multi_constructor("!", construct_intrinsic)
+    value = yaml.load(path.read_text(encoding="utf-8"), Loader=CloudFormationLoader)
+    assert isinstance(value, dict)
+    return value
+
+
 def _all_text(root: Path) -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted(root.rglob("*"))
         if path.is_file()
     )
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
 
 
 def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
@@ -50,6 +81,15 @@ def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
         "kubernetes",
         "aws_witness",
     }
+    assert installer_manifest["platforms"]["linux"]["activator"].endswith(
+        "activate-linux.sh"
+    )
+    assert installer_manifest["platforms"]["macos"]["activator"].endswith(
+        "activate-macos.sh"
+    )
+    assert installer_manifest["runtime_contract"]["host_worker_executable"].endswith(
+        "bin/python-worker.sh"
+    )
 
 
 def test_emergency_bundle_manifest_matches_schema() -> None:
@@ -108,6 +148,64 @@ def test_postgres_replication_host_port_is_configurable_and_non_conflicting() ->
     assert '--port="${FABRIC_POSTGRES_REPLICATION_PORT:-35432}"' in entrypoint
     runtime_env = (DEPLOY / "runtime.env.example").read_text(encoding="utf-8")
     assert "FABRIC_POSTGRES_REPLICATION_PORT=35432" in runtime_env
+
+
+def test_datastore_credentials_are_file_mounted_and_urls_are_process_local(
+    tmp_path: Path,
+) -> None:
+    runtime_env = (DEPLOY / "runtime.env.example").read_text(encoding="utf-8")
+    assert "FABRIC_DATABASE_URL=" not in runtime_env
+    assert "FABRIC_VALKEY_URL=" not in runtime_env
+
+    for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
+        compose = _yaml(DEPLOY / name)
+        assert "valkey-acl" not in compose["secrets"]
+        assert {"postgres-password", "valkey-app-password"} <= set(
+            compose["secrets"]
+        )
+        for service_name in ("candidate-reporter", "control-plane", "observer", "healer"):
+            service = compose["services"][service_name]
+            assert "FABRIC_DATABASE_URL" not in service["environment"]
+            assert service["environment"]["FABRIC_DATABASE_PASSWORD_FILE"] == (
+                "/run/secrets/postgres-password"
+            )
+            assert "postgres-password" in service["secrets"]
+            assert service["entrypoint"] == ["/usr/local/bin/fabric-datastore-env"]
+        for service_name in ("control-plane", "healer"):
+            service = compose["services"][service_name]
+            assert "FABRIC_VALKEY_URL" not in service["environment"]
+            assert service["environment"]["FABRIC_VALKEY_PASSWORD_FILE"] == (
+                "/run/secrets/valkey-app-password"
+            )
+            assert "valkey-app-password" in service["secrets"]
+
+    postgres_password = "p" * 40
+    valkey_password = "v" * 40
+    postgres_file = tmp_path / "postgres-password"
+    valkey_file = tmp_path / "valkey-app-password"
+    postgres_file.write_text(postgres_password, encoding="utf-8")
+    valkey_file.write_text(valkey_password, encoding="utf-8")
+    result = subprocess.run(
+        [
+            "sh",
+            str(DEPLOY / "scripts/datastore-env-entrypoint.sh"),
+            "sh",
+            "-c",
+            'printf "%s\\n%s\\n" "$FABRIC_DATABASE_URL" "$FABRIC_VALKEY_URL"',
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "FABRIC_DATABASE_PASSWORD_FILE": str(postgres_file),
+            "FABRIC_VALKEY_PASSWORD_FILE": str(valkey_file),
+        },
+    )
+    assert result.stdout.splitlines() == [
+        f"postgresql://fabric:{postgres_password}@postgres:5432/execution_fabric",
+        f"redis://fabric:{valkey_password}@valkey:6379/0",
+    ]
 
 
 def test_long_running_services_have_healthchecks_and_durable_volumes() -> None:
@@ -216,6 +314,7 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
         observer = compose["services"]["observer"]
         assert forbidden_environment.isdisjoint(observer["environment"])
         assert set(observer["secrets"]) == {
+            "postgres-password",
             "artifact-observer-access-key",
             "artifact-observer-secret-key",
         }
@@ -252,10 +351,8 @@ def test_scheduler_lifecycle_follows_promotion_and_durability_gates() -> None:
     durable = (
         INSTALLERS / "bin" / "enable-postgres-durable-primary.sh"
     ).read_text(encoding="utf-8")
-    promoted_start = (
-        "$compose --profile promoted up -d control-plane observer healer scheduler"
-    )
-    durable_start = '$compose --profile "$compose_profile" up -d --no-deps scheduler'
+    promoted_start = "--profile promoted up -d control-plane observer healer scheduler"
+    durable_start = '--profile "$compose_profile" up -d --no-deps scheduler'
     scheduler_main = (
         SOURCE_ROOT
         / "services"
@@ -263,8 +360,10 @@ def test_scheduler_lifecycle_follows_promotion_and_durability_gates() -> None:
         / "src"
         / "scheduler-main.ts"
     ).read_text(encoding="utf-8")
+    assert 'fabric_compose "$compose_file"' in promotion
     assert promoted_start in promotion
     assert promotion.index("--degraded-primary") < promotion.index(promoted_start)
+    assert 'fabric_compose "$compose_file"' in durable
     assert durable_start in durable
     assert durable.index("synchronous_commit = 'remote_apply'") < durable.index(
         durable_start
@@ -377,6 +476,111 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     docs = (DEPLOY / "README.md").read_text(encoding="utf-8")
     assert "does not yet expose" not in docs
     assert "operator prerequisites" in docs
+
+
+def test_witness_alarm_destination_is_optional_and_least_privilege() -> None:
+    template = _cloudformation(DEPLOY / "witness/cloudformation.yml")
+    parameters = template["Parameters"]
+    resources = template["Resources"]
+    assert parameters["AlarmTopicArn"]["Default"] == ""
+    assert parameters["CreateAlarmTopic"]["Default"] == "false"
+    assert parameters["CreateAlarmTopic"]["AllowedValues"] == ["true", "false"]
+    assert resources["WitnessAlarmTopic"]["Condition"] == "CreateManagedAlarmTopic"
+    assert (
+        resources["WitnessAlarmTopicPolicy"]["Properties"]["PolicyDocument"][
+            "Statement"
+        ][0]["Principal"]["Service"]
+        == "cloudwatch.amazonaws.com"
+    )
+    task_actions = {
+        action
+        for policy in resources["TaskRole"]["Properties"]["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        for action in statement["Action"]
+    }
+    assert not any(
+        action.startswith(("sns:", "cloudwatch:")) for action in task_actions
+    )
+    outputs = template["Outputs"]
+    assert outputs["WitnessAlarmTopicArn"]["Condition"] == "HasAlarmDestination"
+    assert "WitnessAlarmNames" in outputs
+
+
+def test_witness_cloudwatch_alarms_cover_service_alb_and_dynamodb_health() -> None:
+    template = _cloudformation(DEPLOY / "witness/cloudformation.yml")
+    resources = template["Resources"]
+    alarm_names = {
+        name
+        for name, resource in resources.items()
+        if resource["Type"] == "AWS::CloudWatch::Alarm"
+    }
+    assert alarm_names == {
+        "WitnessRunningTaskCountAlarm",
+        "WitnessUnhealthyTargetsAlarm",
+        "WitnessAlb5xxAlarm",
+        "WitnessTarget5xxAlarm",
+        "WitnessReadThrottleAlarm",
+        "WitnessWriteThrottleAlarm",
+        "WitnessDynamoSystemErrorsAlarm",
+    }
+    for name in alarm_names:
+        properties = resources[name]["Properties"]
+        assert "AlarmActions" in properties
+        assert "OKActions" in properties
+        assert properties["EvaluationPeriods"] >= 1
+        assert properties["DatapointsToAlarm"] >= 1
+
+    running = resources["WitnessRunningTaskCountAlarm"]["Properties"]
+    assert running["Namespace"] == "ECS/ContainerInsights"
+    assert running["MetricName"] == "RunningTaskCount"
+    assert running["TreatMissingData"] == "breaching"
+    assert running["Threshold"] == {"Ref": "DesiredCount"}
+
+    unhealthy = resources["WitnessUnhealthyTargetsAlarm"]["Properties"]
+    assert unhealthy["MetricName"] == "UnHealthyHostCount"
+    assert {row["Name"] for row in unhealthy["Dimensions"]} == {
+        "LoadBalancer",
+        "TargetGroup",
+    }
+    assert (
+        resources["WitnessAlb5xxAlarm"]["Properties"]["MetricName"]
+        == "HTTPCode_ELB_5XX_Count"
+    )
+    assert (
+        resources["WitnessTarget5xxAlarm"]["Properties"]["MetricName"]
+        == "HTTPCode_Target_5XX_Count"
+    )
+    assert (
+        resources["WitnessReadThrottleAlarm"]["Properties"]["MetricName"]
+        == "ReadThrottleEvents"
+    )
+    assert (
+        resources["WitnessWriteThrottleAlarm"]["Properties"]["MetricName"]
+        == "WriteThrottleEvents"
+    )
+
+    error_metrics = resources["WitnessDynamoSystemErrorsAlarm"]["Properties"][
+        "Metrics"
+    ]
+    operations = {
+        dimension["Value"]
+        for query in error_metrics
+        if "MetricStat" in query
+        for dimension in query["MetricStat"]["Metric"]["Dimensions"]
+        if dimension["Name"] == "Operation"
+    }
+    assert operations == {"GetItem", "PutItem", "Query", "TransactWriteItems"}
+
+
+def test_witness_runbook_documents_alarm_destination_and_readback() -> None:
+    runbook = (DEPLOY / "witness/RUNBOOK.md").read_text(encoding="utf-8")
+    assert "AlarmTopicArn" in runbook
+    assert "CreateAlarmTopic=true" in runbook
+    assert "without an external action" in runbook
+    assert "WitnessAlarmNames" in runbook
+    assert "WitnessAlarmTopicArn" in runbook
+    assert "describe-alarms" in runbook
+    assert "task role receives no SNS or CloudWatch permissions" in runbook
 
 
 def test_watchdog_alerts_locally_and_never_bypasses_promotion_contract() -> None:
@@ -805,11 +1009,371 @@ def test_shell_assets_are_syntax_valid() -> None:
     scripts = sorted((INSTALLERS / "bin").glob("*.sh"))
     scripts.extend(sorted(DEPLOY.glob("scripts/*.sh")))
     scripts.extend(
-        [INSTALLERS / "install-linux.sh", INSTALLERS / "install-macos.sh"]
+        [
+            INSTALLERS / "install-linux.sh",
+            INSTALLERS / "install-macos.sh",
+            INSTALLERS / "activate-linux.sh",
+            INSTALLERS / "activate-macos.sh",
+        ]
     )
     assert scripts
     for script in scripts:
         subprocess.run(["sh", "-n", str(script)], check=True)
+
+
+def test_linux_activation_is_explicit_preflight_gated_and_repeatable(
+    tmp_path: Path,
+) -> None:
+    installer = tmp_path / "installer"
+    installer.mkdir()
+    shutil.copy2(INSTALLERS / "activate-linux.sh", installer / "activate-linux.sh")
+    activation_log = tmp_path / "activation.log"
+    _write_executable(
+        installer / "bin/preflight.sh",
+        """#!/bin/sh
+printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
+[ "${PREFLIGHT_FAIL:-false}" != true ]
+""",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "id",
+        """#!/bin/sh
+[ "${1:-}" = -u ] && printf '0\n'
+""",
+    )
+    _write_executable(
+        fake_bin / "systemctl",
+        """#!/bin/sh
+printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
+""",
+    )
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    blocked = subprocess.run(
+        ["sh", str(installer / "activate-linux.sh"), "--apply"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**env, "PREFLIGHT_FAIL": "true"},
+    )
+    assert blocked.returncode != 0
+    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+        "preflight primary"
+    ]
+
+    activation_log.write_text("", encoding="utf-8")
+    for _ in range(2):
+        subprocess.run(
+            ["sh", str(installer / "activate-linux.sh"), "--apply"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "preflight primary"
+    assert lines.index("systemctl daemon-reload") > lines.index("preflight primary")
+    assert not any("--now" in line or "restart" in line for line in lines)
+    assert lines.count(
+        "systemctl start genomes-agentic-os-execution-fabric-primary.service"
+    ) == 2
+
+
+def test_macos_activation_preflights_before_bootstrap_and_skips_loaded_jobs(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installer = tmp_path / "installer"
+    installer.mkdir()
+    shutil.copy2(INSTALLERS / "activate-macos.sh", installer / "activate-macos.sh")
+    activation_log = tmp_path / "activation.log"
+    launch_state = tmp_path / "launch-state"
+    launch_state.mkdir()
+    _write_executable(
+        installer / "bin/preflight.sh",
+        """#!/bin/sh
+printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
+[ "${PREFLIGHT_FAIL:-false}" != true ]
+""",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(
+        fake_bin / "id",
+        """#!/bin/sh
+[ "${1:-}" = -u ] && printf '501\n'
+""",
+    )
+    _write_executable(
+        fake_bin / "launchctl",
+        """#!/bin/sh
+case "$1" in
+  print)
+    label=${2##*/}
+    [ -f "$LAUNCH_STATE/$label" ]
+    ;;
+  bootstrap)
+    label=$(basename "$3" .plist)
+    printf 'bootstrap %s\n' "$label" >>"$ACTIVATION_LOG"
+    : >"$LAUNCH_STATE/$label"
+    ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    launch_agents = home / "Library/LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    suffixes = (
+        "standby",
+        "worker",
+        "observer",
+        "watchdog",
+        "alarm-dispatcher",
+        "artifact-replication",
+        "candidate-reporter-health",
+        "scheduler-role",
+    )
+    for suffix in suffixes:
+        (
+            launch_agents
+            / f"com.genomes.agentic-os.execution-fabric.{suffix}.plist"
+        ).write_text("<plist/>", encoding="utf-8")
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "HOME": str(home),
+        "LAUNCH_STATE": str(launch_state),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    blocked = subprocess.run(
+        ["sh", str(installer / "activate-macos.sh"), "--apply"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**env, "PREFLIGHT_FAIL": "true"},
+    )
+    assert blocked.returncode != 0
+    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+        "preflight standby"
+    ]
+
+    activation_log.write_text("", encoding="utf-8")
+    for _ in range(2):
+        subprocess.run(
+            ["sh", str(installer / "activate-macos.sh"), "--apply"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "preflight standby"
+    assert lines.count("preflight standby") == 2
+    assert len([line for line in lines if line.startswith("bootstrap ")]) == len(
+        suffixes
+    )
+
+
+def test_installers_can_activate_an_existing_current_release_without_recopy() -> None:
+    for platform in ("linux", "macos"):
+        script = (INSTALLERS / f"install-{platform}.sh").read_text(encoding="utf-8")
+        assert "already_installed=true" in script
+        assert "release is installed but is not current" in script
+        assert f"activate-{platform}.sh" in script
+        assert '"$activator" --apply' in script
+        assert "cp -R" in script.split("else", maxsplit=1)[1]
+
+
+def test_macos_installer_rerun_activates_existing_release_without_reinstall(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    activation_log = tmp_path / "activation.log"
+    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(fake_bin / "plutil", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        fake_bin / "launchctl",
+        """#!/bin/sh
+case "$1" in
+  print) exit 1 ;;
+  bootstrap) printf 'bootstrap %s\n' "$3" >>"$ACTIVATION_LOG" ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "HOME": str(home),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+    command = [
+        "sh",
+        str(INSTALLERS / "install-macos.sh"),
+        "--apply",
+        "--source-root",
+        str(SOURCE_ROOT),
+        "--release",
+        "test-release",
+    ]
+    subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+
+    release = (
+        home
+        / "Library/Application Support/GenomesAgenticOS/execution-fabric"
+        / "releases/test-release"
+    )
+    _write_executable(
+        release / "installers/bin/preflight.sh",
+        """#!/bin/sh
+printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
+""",
+    )
+    activated = subprocess.run(
+        [*command, "--enable"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert activated.returncode == 0, activated.stderr
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "preflight standby"
+    assert len([line for line in lines if line.startswith("bootstrap ")]) == 8
+    assert "preflight %s" in (
+        release / "installers/bin/preflight.sh"
+    ).read_text(encoding="utf-8")
+
+
+def test_packaged_python_worker_is_the_default_governed_host_entrypoint() -> None:
+    launcher = INSTALLERS / "bin/python-worker.sh"
+    result = subprocess.run(
+        ["sh", str(launcher), "--preflight"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "FABRIC_WORKER_PYTHON": sys.executable,
+            "PYTHONPATH": str(SOURCE_ROOT / "src"),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    worker = (INSTALLERS / "bin/worker.sh").read_text(encoding="utf-8")
+    preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
+    assert '${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}' in worker
+    assert '"$worker_executable" --preflight' in preflight
+    runtime_env = (DEPLOY / "runtime.env.example").read_text(encoding="utf-8")
+    for variable in (
+        "FABRIC_WORKER_ID",
+        "FABRIC_WORKER_BOOTSTRAP_ID",
+        "FABRIC_WORKER_POOL_ID",
+        "FABRIC_WORKER_ACCEPTED_QUEUES",
+        "FABRIC_WORKER_CAPABILITIES",
+        "FABRIC_WORKER_MAX_CONCURRENCY",
+        "AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE",
+    ):
+        assert f"{variable}=" in runtime_env
+        assert variable in preflight
+    assert "$credential.token==$token" in preflight
+
+
+def test_compose_helper_preserves_runtime_and_deployment_paths_with_spaces(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    argument_log = tmp_path / "docker-arguments.log"
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+for argument in "$@"; do
+  printf '%s\n' "$argument" >>"$DOCKER_ARGUMENT_LOG"
+done
+""",
+    )
+    runtime_env = tmp_path / "Application Support/runtime.env"
+    compose_file = tmp_path / "Application Support/compose.bigmac.yml"
+    runtime_env.parent.mkdir(parents=True)
+    runtime_env.write_text("FABRIC_HOST_ID=bigmac\n", encoding="utf-8")
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    command = """
+. "$1"
+FABRIC_RUNTIME_ENV_FILE=$2
+export FABRIC_RUNTIME_ENV_FILE
+fabric_compose "$3" --profile standby ps --status running
+"""
+    subprocess.run(
+        [
+            "sh",
+            "-c",
+            command,
+            "fabric-compose-test",
+            str(INSTALLERS / "bin/_lib.sh"),
+            str(runtime_env),
+            str(compose_file),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "DOCKER_ARGUMENT_LOG": str(argument_log),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+    assert argument_log.read_text(encoding="utf-8").splitlines() == [
+        "compose",
+        "--env-file",
+        str(runtime_env),
+        "-f",
+        str(compose_file),
+        "--profile",
+        "standby",
+        "ps",
+        "--status",
+        "running",
+    ]
+
+
+def test_all_compose_command_scripts_use_argument_safe_invocation() -> None:
+    affected = (
+        "activate-receipt.sh",
+        "candidate-reporter-health.sh",
+        "enable-postgres-durable-primary.sh",
+        "failback.sh",
+        "promote.sh",
+        "reseed-postgres-standby.sh",
+    )
+    for name in affected:
+        script = (INSTALLERS / "bin" / name).read_text(encoding="utf-8")
+        assert 'compose="docker compose' not in script
+        assert re.search(r"(?m)^\$compose(?:\s|$)", script) is None
+        assert "fabric_compose" in script
+
+
+def test_failback_and_reseed_share_canonical_target_slot_contract() -> None:
+    library = (INSTALLERS / "bin/_lib.sh").read_text(encoding="utf-8")
+    failback = (INSTALLERS / "bin/failback.sh").read_text(encoding="utf-8")
+    reseed = (
+        INSTALLERS / "bin/reseed-postgres-standby.sh"
+    ).read_text(encoding="utf-8")
+    activation = (
+        INSTALLERS / "bin/activate-receipt.sh"
+    ).read_text(encoding="utf-8")
+    assert "primary) printf '%s\\n' genomesbox_fabric" in library
+    assert "standby) printf '%s\\n' bigmac_fabric" in library
+    assert "fabric_failback_target" not in failback
+    assert "target_slot=$(fabric_replication_slot primary)" in failback
+    assert "slot=$(fabric_replication_slot primary)" in reseed
+    assert "slot=$(fabric_replication_slot standby)" in reseed
+    assert "standby_slot=$(fabric_replication_slot standby)" in activation
 
 
 def test_workers_use_stable_signed_leader_gateway_and_receipts_are_verified() -> None:

@@ -174,10 +174,11 @@ fabric_api_get_bearer \
   }
 fabric_atomic_write "$FABRIC_LEADERSHIP_RECEIPT_FILE" "$receipt_temp"
 
-compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
+compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
 # Promotion occurs only after the independent witness returns a newer epoch.
-$compose --profile standby exec -T postgres pg_ctl promote -D /var/lib/postgresql/data
-$compose --profile promoted restart candidate-reporter
+fabric_compose "$compose_file" \
+  --profile standby exec -T postgres pg_ctl promote -D /var/lib/postgresql/data
+fabric_compose "$compose_file" --profile promoted restart candidate-reporter
 
 active_report=false
 attempt=0
@@ -203,7 +204,8 @@ done
 # its own authority check and admits no occurrence when the canonical degraded
 # policy disables it; starting the role here also means enabling that policy
 # later cannot leave schedules silently dormant until a host-manager restart.
-$compose --profile promoted up -d control-plane observer healer scheduler
+fabric_compose "$compose_file" \
+  --profile promoted up -d control-plane observer healer scheduler
 
 local_api="http://${FABRIC_TAILSCALE_IP}:3180"
 ready=false

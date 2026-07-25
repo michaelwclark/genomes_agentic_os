@@ -49,7 +49,7 @@ case "$target_role" in
     volume_key=postgres-primary-data
     source_host=${FABRIC_STANDBY_TAILSCALE_IP:?bigmac source address is required}
     expected_leader=bigmac
-    slot=genomesbox_fabric
+    slot=$(fabric_replication_slot primary)
     pgpass="$FABRIC_SECRETS_DIR/postgres-failback-pgpass"
     ;;
   standby)
@@ -63,7 +63,7 @@ case "$target_role" in
     volume_key=postgres-standby-data
     source_host=${FABRIC_PRIMARY_TAILSCALE_IP:?genomesbox source address is required}
     expected_leader=genomesbox
-    slot=bigmac_fabric
+    slot=$(fabric_replication_slot standby)
     pgpass="$FABRIC_SECRETS_DIR/postgres-replication-pgpass"
     ;;
   *) usage ;;
@@ -89,8 +89,10 @@ fabric_api_get_bearer \
   exit 75
 }
 
-compose="docker compose --env-file $FABRIC_RUNTIME_ENV_FILE -f $compose_file"
-$compose --profile "$compose_profile" stop control-plane observer healer scheduler gateway candidate-reporter postgres 2>/dev/null || true
+fabric_compose "$compose_file" \
+  --profile "$compose_profile" \
+  stop control-plane observer healer scheduler gateway candidate-reporter postgres \
+  2>/dev/null || true
 
 volume=$(docker volume ls \
   --filter "label=com.docker.compose.project=$compose_project" \
@@ -125,10 +127,12 @@ docker run --rm \
   --wal-method=stream \
   --checkpoint=fast
 
-$compose --profile "$compose_profile" up -d postgres candidate-reporter
+fabric_compose "$compose_file" \
+  --profile "$compose_profile" up -d postgres candidate-reporter
 attempt=0
 while [ "$attempt" -lt 24 ]; do
-  if [ "$($compose --profile "$compose_profile" exec -T postgres \
+  if [ "$(fabric_compose "$compose_file" \
+    --profile "$compose_profile" exec -T postgres \
     psql -X -qAt -U "${FABRIC_POSTGRES_USER:-fabric}" \
       -d "${FABRIC_POSTGRES_DB:-execution_fabric}" \
       -c 'SELECT pg_is_in_recovery()' 2>/dev/null)" = t ]; then
