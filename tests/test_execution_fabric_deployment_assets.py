@@ -269,10 +269,8 @@ def test_scheduler_lifecycle_follows_promotion_and_durability_gates() -> None:
     durable = (
         INSTALLERS / "bin" / "enable-postgres-durable-primary.sh"
     ).read_text(encoding="utf-8")
-    promoted_start = (
-        "$compose --profile promoted up -d control-plane observer healer scheduler"
-    )
-    durable_start = '$compose --profile "$compose_profile" up -d --no-deps scheduler'
+    promoted_start = "--profile promoted up -d control-plane observer healer scheduler"
+    durable_start = '--profile "$compose_profile" up -d --no-deps scheduler'
     scheduler_main = (
         SOURCE_ROOT
         / "services"
@@ -280,8 +278,10 @@ def test_scheduler_lifecycle_follows_promotion_and_durability_gates() -> None:
         / "src"
         / "scheduler-main.ts"
     ).read_text(encoding="utf-8")
+    assert 'fabric_compose "$compose_file"' in promotion
     assert promoted_start in promotion
     assert promotion.index("--degraded-primary") < promotion.index(promoted_start)
+    assert 'fabric_compose "$compose_file"' in durable
     assert durable_start in durable
     assert durable.index("synchronous_commit = 'remote_apply'") < durable.index(
         durable_start
@@ -1083,6 +1083,97 @@ def test_packaged_python_worker_is_the_default_governed_host_entrypoint() -> Non
     preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
     assert '${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}' in worker
     assert '"$worker_executable" --preflight' in preflight
+
+
+def test_compose_helper_preserves_runtime_and_deployment_paths_with_spaces(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    argument_log = tmp_path / "docker-arguments.log"
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+for argument in "$@"; do
+  printf '%s\n' "$argument" >>"$DOCKER_ARGUMENT_LOG"
+done
+""",
+    )
+    runtime_env = tmp_path / "Application Support/runtime.env"
+    compose_file = tmp_path / "Application Support/compose.bigmac.yml"
+    runtime_env.parent.mkdir(parents=True)
+    runtime_env.write_text("FABRIC_HOST_ID=bigmac\n", encoding="utf-8")
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    command = """
+. "$1"
+FABRIC_RUNTIME_ENV_FILE=$2
+export FABRIC_RUNTIME_ENV_FILE
+fabric_compose "$3" --profile standby ps --status running
+"""
+    subprocess.run(
+        [
+            "sh",
+            "-c",
+            command,
+            "fabric-compose-test",
+            str(INSTALLERS / "bin/_lib.sh"),
+            str(runtime_env),
+            str(compose_file),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "DOCKER_ARGUMENT_LOG": str(argument_log),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+    assert argument_log.read_text(encoding="utf-8").splitlines() == [
+        "compose",
+        "--env-file",
+        str(runtime_env),
+        "-f",
+        str(compose_file),
+        "--profile",
+        "standby",
+        "ps",
+        "--status",
+        "running",
+    ]
+
+
+def test_all_compose_command_scripts_use_argument_safe_invocation() -> None:
+    affected = (
+        "activate-receipt.sh",
+        "candidate-reporter-health.sh",
+        "enable-postgres-durable-primary.sh",
+        "failback.sh",
+        "promote.sh",
+        "reseed-postgres-standby.sh",
+    )
+    for name in affected:
+        script = (INSTALLERS / "bin" / name).read_text(encoding="utf-8")
+        assert 'compose="docker compose' not in script
+        assert re.search(r"(?m)^\$compose(?:\s|$)", script) is None
+        assert "fabric_compose" in script
+
+
+def test_failback_and_reseed_share_canonical_target_slot_contract() -> None:
+    library = (INSTALLERS / "bin/_lib.sh").read_text(encoding="utf-8")
+    failback = (INSTALLERS / "bin/failback.sh").read_text(encoding="utf-8")
+    reseed = (
+        INSTALLERS / "bin/reseed-postgres-standby.sh"
+    ).read_text(encoding="utf-8")
+    activation = (
+        INSTALLERS / "bin/activate-receipt.sh"
+    ).read_text(encoding="utf-8")
+    assert "primary) printf '%s\\n' genomesbox_fabric" in library
+    assert "standby) printf '%s\\n' bigmac_fabric" in library
+    assert "fabric_failback_target" not in failback
+    assert "target_slot=$(fabric_replication_slot primary)" in failback
+    assert "slot=$(fabric_replication_slot primary)" in reseed
+    assert "slot=$(fabric_replication_slot standby)" in reseed
+    assert "standby_slot=$(fabric_replication_slot standby)" in activation
 
 
 def test_workers_use_stable_signed_leader_gateway_and_receipts_are_verified() -> None:

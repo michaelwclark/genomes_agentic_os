@@ -15,6 +15,12 @@ lock with immutable digests.
 `runtime.env` uses `FABRIC_POSTGRES_REPLICATION_PORT=35432` by default on both
 hosts. This is the Tailscale-bound host port, not PostgreSQL's internal
 container port. Keep the replication pgpass entry aligned when overriding it.
+Replication slots follow the target role: `genomesbox_fabric` feeds the
+configured primary host while it is being rebuilt as a failback target, and
+`bigmac_fabric` feeds the configured standby host. Failback creates the former
+before the primary-host base backup; receipt activation creates the latter
+before rebuilding the standby. Reseed resolves the same names through the
+shared installer contract instead of carrying separate literals.
 
 `install-linux.sh` installs systemd units for the genomesbox primary plus
 observer, watchdog, and backup timers. `install-macos.sh` installs launchd
