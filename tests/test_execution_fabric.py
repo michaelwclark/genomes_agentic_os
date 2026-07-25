@@ -111,7 +111,13 @@ def test_runtime_snapshot_is_backend_neutral_and_projects_safe_task_fields(tmp_p
     snapshot = build_runtime_snapshot(root, queue_name="codex", statuses=["queued"], task_limit=10)
 
     assert snapshot["queue_mode"] == "execution_fabric"
-    assert {queue["queue_name"] for queue in snapshot["queues"]} == {"codex", "claude", "non_llm"}
+    assert {queue["queue_name"] for queue in snapshot["queues"]} == {
+        "codex",
+        "claude",
+        "pr_reviews",
+        "los_environment",
+        "non_llm",
+    }
     assert snapshot["filters"]["matching_tasks"] == 1
     assert snapshot["tasks"][0]["id"] == "snapshot-codex"
     assert snapshot["tasks"][0]["display_name"] == "self_improvement_action_watch"
@@ -364,8 +370,8 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
     assert applied["queue_mode"] == "execution_fabric"
     assert applied["mode_source"] == "explicit"
     assert applied["import_receipt"]["processed"] == 1
-    assert applied["metrics"]["queue_count"] == 3
-    assert applied["metrics"]["worker_pool_count"] == 3
+    assert applied["metrics"]["queue_count"] == 5
+    assert applied["metrics"]["worker_pool_count"] == 5
     assert applied["metrics"]["global_max_running"] == 6
     assert applied["metrics"]["reserved_interactive_slots"] == 1
     assert applied["metrics"]["max_interactive_running"] == 1
@@ -375,8 +381,20 @@ def test_apply_imports_legacy_queue_reads_back_and_rolls_back(tmp_path: Path) ->
     try:
         assert db.schema_version(conn) == 3
         assert conn.execute("SELECT COUNT(*) FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == 1
-        assert {row[0] for row in conn.execute("SELECT name FROM execution_queues")} == {"codex", "claude", "non_llm"}
-        assert {row[0] for row in conn.execute("SELECT name FROM worker_pools")} == {"codex_workers", "claude_workers", "non_llm_workers"}
+        assert {row[0] for row in conn.execute("SELECT name FROM execution_queues")} == {
+            "codex",
+            "claude",
+            "pr_reviews",
+            "los_environment",
+            "non_llm",
+        }
+        assert {row[0] for row in conn.execute("SELECT name FROM worker_pools")} == {
+            "codex_workers",
+            "claude_workers",
+            "pr_reviewers",
+            "los_environment_workers",
+            "non_llm_workers",
+        }
         assert conn.execute("SELECT queue_name FROM run_queue WHERE id = 'legacy-1'").fetchone()[0] == "non_llm"
         assert conn.execute("SELECT max_concurrency FROM execution_limits WHERE scope = 'global' AND key = '*'").fetchone()[0] == 5
     finally:

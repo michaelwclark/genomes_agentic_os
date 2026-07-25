@@ -23,6 +23,7 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 | Own-PR continuous delivery to merged, released, and documented | `auto-dev-continuous-release` | project `continuous_release` + `release` policy |
 | Implement, fix, build, review/repair, release, deploy, or close out code | Auto-Dev / Development Delivery | `harness/shared_factory/00-programs/auto_dev/program.md` |
 | Audit receipts and retire reconstructable local resources after verified delivery | Auto-Dev Health | `harness/skills/auto-dev-health/SKILL.md` |
+| Queue admission, worker capacity, run/effect state, retries, dead letters, alarms, healing, or host failover | Execution Fabric | `harness/shared_factory/00-programs/execution_fabric/` |
 
 ## Routing Rules
 
@@ -35,6 +36,9 @@ After routing to a narrower directory, read that directory's `ROUTER.md`,
 - Record unclear routing decisions in the local run log or triage file.
 - Select Auto-Dev workflows by intent; the user does not need to say
   “Auto-Dev.” Domain/project configuration specializes shared behavior.
+- Route managed execution and observability to Execution Fabric. Projects and
+  workflows select declared task types and named queues; they do not define a
+  second queue, worker-health, or failover plane.
 
 ## Output Rule
 

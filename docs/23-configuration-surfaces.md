@@ -92,6 +92,43 @@ agentic-os host routing [--recent-runs N] [--json]
 
 ---
 
+## 3A. Execution Fabric instance configuration
+
+`~/agentic_os/harness/config/execution-fabric.yml` is the one editable
+instance policy for named queues, worker pools, global/provider admission
+limits, queue depth, worker capacity, leases, and retries. Source-package
+updates install the shipped default only when the file is absent, so local
+operator changes are preserved. Package-owned schemas are upgraded by checksum
+manifest; an edited installed schema is retained and the new package copy is
+written beside it with a `.new` suffix for explicit reconciliation.
+
+The runtime reports the exact effective source and a deterministic SHA-256
+fingerprint:
+
+```bash
+agentic-os runtime config status --root ~/agentic_os --json
+agentic-os runtime config show --root ~/agentic_os --json
+agentic-os runtime config diff --root ~/agentic_os --json
+agentic-os runtime config validate --root ~/agentic_os
+agentic-os runtime config reconcile --root ~/agentic_os
+agentic-os runtime config reconcile --root ~/agentic_os --apply
+agentic-os runtime config reload --root ~/agentic_os --expected-fingerprint <sha256>
+agentic-os runtime config reload --root ~/agentic_os --expected-fingerprint <sha256> --apply
+```
+
+Reconciliation is dry-run-first and writes only while `execution_fabric` is
+the selected queue writer. Queue, pool, enablement, capacity, admission,
+lease, and retry rows update in one SQLite transaction, followed by exact
+readback. The file does not duplicate host or alert settings: status points to
+the active `config/hosts.yml` or `harness/config/hosts.yml`,
+`harness/registries/hosts-routing.yml`, and `harness/registries/alerts.yml`.
+Every host overlay must resolve in both canonical host registries. Remote reload
+uses the distinct admin credential, verifies an expected fingerprint, performs
+observer pre-read and readback, fences both current and candidate fingerprints
+server-side, and writes a redacted durable receipt.
+
+---
+
 ## 4. agentic-os.lock.json — Install Lock
 
 Located at `~/agentic_os/agentic-os.lock.json`.

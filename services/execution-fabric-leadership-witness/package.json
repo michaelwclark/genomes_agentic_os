@@ -1,0 +1,30 @@
+{
+  "name": "@genomes-agentic-os/execution-fabric-leadership-witness",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Independent DynamoDB-backed leadership witness for the Agentic OS execution fabric",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/src/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1095.0",
+    "@aws-sdk/lib-dynamodb": "3.1095.0",
+    "dotenv": "16.4.7",
+    "fastify": "5.10.0",
+    "zod": "3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.10",
+    "tsx": "4.19.3",
+    "typescript": "5.7.3",
+    "vitest": "3.2.7"
+  }
+}

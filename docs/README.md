@@ -65,7 +65,8 @@ vs Codex"** callout for its task; the full mechanics live on
 ### Runtime, events & integration
 | Page | What it covers |
 | --- | --- |
-| [09 · Runtime & Always-On](09-runtime-and-always-on.md) | `runtime` / `heartbeat` / `schedule` / `integration` — and the honest "no scheduler yet" gap. |
+| [09 · Runtime & Always-On](09-runtime-and-always-on.md) | Local supervisor cadence plus the remote Execution Fabric scheduler, named queues, workers, and durable run state. |
+| [18 · Execution Fabric](13-feature-guides/18-execution-fabric.md) | Canonical configuration, queue/worker monitoring, consumer routes, alarms, healing, and cross-host failover. |
 | [33 · Filesystem Resource Lifecycle](33-filesystem-resource-lifecycle.md) | Governed automation, workflow, program, and instance-program lifecycle plus queue-only run-now and derived schedules. |
 | [10 · Events & Chains](10-events-and-chains.md) | The file-backed event ledger + declarative chain rules (the reaction model). |
 | [11 · Connected Sources](11-connected-sources.md) | `connected-system` / `watch-source` registries and polling (contracts, not live yet). |

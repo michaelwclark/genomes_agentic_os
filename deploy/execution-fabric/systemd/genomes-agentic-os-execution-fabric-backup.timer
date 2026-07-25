@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Execution Fabric PostgreSQL backups
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=genomes-agentic-os-execution-fabric-backup.service
+
+[Install]
+WantedBy=timers.target

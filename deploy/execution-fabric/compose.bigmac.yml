@@ -1,0 +1,414 @@
+name: genomes-agentic-os-execution-fabric-standby
+
+services:
+  postgres:
+    image: ${FABRIC_POSTGRES_IMAGE:?set an immutable postgres image digest}
+    profiles: ["standby", "promoted"]
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PGUSER: ${FABRIC_POSTGRES_USER:-fabric}
+      PGPASSFILE: /run/secrets/postgres-replication-pgpass
+      FABRIC_PRIMARY_POSTGRES_HOST: ${FABRIC_PRIMARY_TAILSCALE_IP:?set genomesbox Tailscale IP}
+      FABRIC_POSTGRES_REPLICATION_PORT: ${FABRIC_POSTGRES_REPLICATION_PORT:-35432}
+      FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+    entrypoint: ["/usr/local/bin/fabric-postgres-standby-entrypoint"]
+    secrets:
+      - postgres-replication-pgpass
+    ports:
+      - "${FABRIC_TAILSCALE_IP:?set the bigmac Tailscale IP}:${FABRIC_POSTGRES_REPLICATION_PORT:-35432}:5432"
+    volumes:
+      - postgres-standby-data:/var/lib/postgresql/data
+      - postgres-backups:/var/backups/postgresql
+      - ./config/postgresql-standby.conf:/etc/postgresql/postgresql.conf:ro
+      - ./config/pg_hba.standby.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./scripts/postgres-standby-entrypoint.sh:/usr/local/bin/fabric-postgres-standby-entrypoint:ro
+    networks: [fabric-private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FABRIC_POSTGRES_USER:-fabric} -d ${FABRIC_POSTGRES_DB:-execution_fabric}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    security_opt: ["no-new-privileges:true"]
+
+  candidate-reporter:
+    image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
+    profiles: ["standby", "promoted"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "/app/dist/candidate-reporter.mjs"]
+    environment:
+      FABRIC_HOST_ID: bigmac
+      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
+      FABRIC_CANDIDATE_REPORT_INTERVAL_SECONDS: ${FABRIC_CANDIDATE_REPORT_INTERVAL_SECONDS:-30}
+      FABRIC_CANDIDATE_HEARTBEAT_MAX_AGE_SECONDS: ${FABRIC_CANDIDATE_HEARTBEAT_MAX_AGE_SECONDS:-75}
+    secrets:
+      - fabric-leadership-candidate-token
+    volumes:
+      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ./scripts/candidate-reporter.mjs:/app/dist/candidate-reporter.mjs:ro
+    networks: [fabric-private, fabric-egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "node", "/app/dist/candidate-reporter.mjs", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 2
+      start_period: 45s
+
+  valkey:
+    image: ${FABRIC_VALKEY_IMAGE:?set an immutable valkey image digest}
+    profiles: ["standby", "promoted"]
+    restart: unless-stopped
+    command: ["valkey-server", "/etc/valkey/valkey.conf", "--aclfile", "/run/secrets/valkey-acl"]
+    secrets:
+      - valkey-acl
+      - valkey-health-password
+    volumes:
+      - valkey-standby-data:/data
+      - ./config/valkey.conf:/etc/valkey/valkey.conf:ro
+    networks: [fabric-private]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --user \"$${FABRIC_VALKEY_HEALTH_USER:-health}\" --pass \"$$(cat /run/secrets/valkey-health-password)\" ping | grep -qx PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    security_opt: ["no-new-privileges:true"]
+
+  minio:
+    image: ${FABRIC_MINIO_IMAGE:?set an immutable minio image digest}
+    profiles: ["standby", "promoted"]
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio-root-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-root-password
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    ports:
+      - "${FABRIC_TAILSCALE_IP:?set the bigmac Tailscale IP}:3190:9000"
+      - "${FABRIC_TAILSCALE_IP:?set the bigmac Tailscale IP}:3191:9001"
+    volumes:
+      - minio-standby-data:/data
+      - artifact-spool:/spool
+    networks: [fabric-private]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    security_opt: ["no-new-privileges:true"]
+
+  minio-init:
+    image: ${FABRIC_MINIO_CLIENT_IMAGE:?set an immutable minio client image digest}
+    profiles: ["promoted"]
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      FABRIC_ARTIFACT_BUCKET: ${FABRIC_ARTIFACT_BUCKET:-execution-fabric-artifacts}
+      FABRIC_ARTIFACT_RETENTION_DAYS: ${FABRIC_ARTIFACT_RETENTION_DAYS:-30}
+    secrets:
+      - minio-root-user
+      - minio-root-password
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        mc alias set fabric http://minio:9000 "$$(cat /run/secrets/minio-root-user)"
+        "$$(cat /run/secrets/minio-root-password)" &&
+        mc mb --ignore-existing "fabric/$${FABRIC_ARTIFACT_BUCKET}" &&
+        (mc ilm rule add --expire-days "$${FABRIC_ARTIFACT_RETENTION_DAYS}"
+        "fabric/$${FABRIC_ARTIFACT_BUCKET}" ||
+        mc ilm rule ls "fabric/$${FABRIC_ARTIFACT_BUCKET}")
+    networks: [fabric-private]
+    security_opt: ["no-new-privileges:true"]
+
+  control-plane:
+    image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
+    profiles: ["promoted"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      FABRIC_HOST: 0.0.0.0
+      FABRIC_PORT: "3180"
+      FABRIC_HOST_ID: bigmac
+      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
+      FABRIC_VALKEY_URL: ${FABRIC_VALKEY_URL:?set via protected runtime environment}
+      FABRIC_QUEUE_PREFIX: ${FABRIC_QUEUE_PREFIX:-agentic-os:fabric}
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
+      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
+      FABRIC_API_TOKEN_FILE: /run/secrets/fabric-api-token
+      FABRIC_SUBMIT_TOKEN_FILE: /run/secrets/fabric-submit-token
+      FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /run/secrets/fabric-worker-bootstrap-credentials
+      FABRIC_ADMIN_TOKEN_FILE: /run/secrets/fabric-admin-token
+      FABRIC_RELIABILITY_SOURCE_TOKENS_FILE: /run/secrets/fabric-reliability-source-tokens
+      FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE: /run/secrets/fabric-effect-consumer-credentials
+      FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE: /run/secrets/fabric-alarm-dispatcher-credentials
+      FABRIC_ARTIFACT_ENDPOINT: http://minio:9000
+      FABRIC_ARTIFACT_REGION: ${FABRIC_ARTIFACT_REGION:-us-east-1}
+      FABRIC_ARTIFACT_BUCKET: ${FABRIC_ARTIFACT_BUCKET:-execution-fabric-artifacts}
+      FABRIC_ARTIFACT_ACCESS_KEY_FILE: /run/secrets/minio-root-user
+      FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/minio-root-password
+      FABRIC_ARTIFACT_FORCE_PATH_STYLE: ${FABRIC_ARTIFACT_FORCE_PATH_STYLE:-true}
+      FABRIC_ARTIFACT_UPLOAD_TTL_SECONDS: ${FABRIC_ARTIFACT_UPLOAD_TTL_SECONDS:-300}
+      FABRIC_ARTIFACT_DOWNLOAD_TTL_SECONDS: ${FABRIC_ARTIFACT_DOWNLOAD_TTL_SECONDS:-300}
+      FABRIC_ARTIFACT_MAX_BYTES: ${FABRIC_ARTIFACT_MAX_BYTES:-10485760}
+      FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
+      FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
+      FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
+      FABRIC_LEADERSHIP_RECEIPT_FILE: /var/lib/execution-fabric-ha/leadership.receipt.json
+      FABRIC_LEADERSHIP_REFRESH_MS: ${FABRIC_LEADERSHIP_REFRESH_MS:-10000}
+      FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS: ${FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS:-30}
+      FABRIC_LOG_LEVEL: info
+    secrets:
+      - fabric-api-token
+      - fabric-submit-token
+      - fabric-worker-bootstrap-credentials
+      - fabric-admin-token
+      - fabric-reliability-source-tokens
+      - fabric-effect-consumer-credentials
+      - fabric-alarm-dispatcher-credentials
+      - minio-root-user
+      - minio-root-password
+      - fabric-leadership-token
+      - fabric-leadership-candidate-token
+      - fabric-leadership-public-key
+    volumes:
+      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
+    ports:
+      - "${FABRIC_TAILSCALE_IP:?set the bigmac Tailscale IP}:3180:3180"
+    networks: [fabric-private, fabric-egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3180/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+
+  observer:
+    image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
+    profiles: ["promoted"]
+    restart: unless-stopped
+    command: ["node", "dist/src/observer-main.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FABRIC_HOST_ID: bigmac
+      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
+      FABRIC_VALKEY_URL: ${FABRIC_VALKEY_URL:?set via protected runtime environment}
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
+      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
+      FABRIC_API_TOKEN_FILE: /run/secrets/fabric-api-token
+      FABRIC_SUBMIT_TOKEN_FILE: /run/secrets/fabric-submit-token
+      FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /run/secrets/fabric-worker-bootstrap-credentials
+      FABRIC_ADMIN_TOKEN_FILE: /run/secrets/fabric-admin-token
+      FABRIC_RELIABILITY_SOURCE_TOKENS_FILE: /run/secrets/fabric-reliability-source-tokens
+      FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE: /run/secrets/fabric-effect-consumer-credentials
+      FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE: /run/secrets/fabric-alarm-dispatcher-credentials
+      FABRIC_ARTIFACT_ENDPOINT: http://minio:9000
+      FABRIC_ARTIFACT_REGION: ${FABRIC_ARTIFACT_REGION:-us-east-1}
+      FABRIC_ARTIFACT_BUCKET: ${FABRIC_ARTIFACT_BUCKET:-execution-fabric-artifacts}
+      FABRIC_ARTIFACT_ACCESS_KEY_FILE: /run/secrets/minio-root-user
+      FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/minio-root-password
+      FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
+      FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
+      FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
+      FABRIC_OBSERVER_INTERVAL_MS: ${FABRIC_OBSERVER_INTERVAL_MS:-15000}
+      FABRIC_LOG_LEVEL: info
+    secrets:
+      - fabric-api-token
+      - fabric-submit-token
+      - fabric-worker-bootstrap-credentials
+      - fabric-admin-token
+      - fabric-reliability-source-tokens
+      - fabric-effect-consumer-credentials
+      - fabric-alarm-dispatcher-credentials
+      - minio-root-user
+      - minio-root-password
+      - fabric-leadership-token
+      - fabric-leadership-candidate-token
+      - fabric-leadership-public-key
+    volumes:
+      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+    networks: [fabric-private, fabric-egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  healer:
+    image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
+    profiles: ["promoted"]
+    restart: unless-stopped
+    command: ["node", "dist/src/healer-main.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      observer:
+        condition: service_started
+    environment:
+      FABRIC_HOST_ID: bigmac
+      FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
+      FABRIC_VALKEY_URL: ${FABRIC_VALKEY_URL:?set via protected runtime environment}
+      FABRIC_QUEUE_PREFIX: ${FABRIC_QUEUE_PREFIX:-agentic-os:fabric}
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
+      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
+      FABRIC_API_TOKEN_FILE: /run/secrets/fabric-api-token
+      FABRIC_SUBMIT_TOKEN_FILE: /run/secrets/fabric-submit-token
+      FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /run/secrets/fabric-worker-bootstrap-credentials
+      FABRIC_ADMIN_TOKEN_FILE: /run/secrets/fabric-admin-token
+      FABRIC_RELIABILITY_SOURCE_TOKENS_FILE: /run/secrets/fabric-reliability-source-tokens
+      FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE: /run/secrets/fabric-effect-consumer-credentials
+      FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE: /run/secrets/fabric-alarm-dispatcher-credentials
+      FABRIC_ARTIFACT_ENDPOINT: http://minio:9000
+      FABRIC_ARTIFACT_ACCESS_KEY_FILE: /run/secrets/minio-root-user
+      FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/minio-root-password
+      FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
+      FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
+      FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
+      FABRIC_LEADERSHIP_RECEIPT_FILE: /var/lib/execution-fabric-ha/leadership.receipt.json
+      FABRIC_LEADERSHIP_REFRESH_MS: ${FABRIC_LEADERSHIP_REFRESH_MS:-10000}
+      FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS: ${FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS:-30}
+      FABRIC_HEALER_INTERVAL_MS: ${FABRIC_HEALER_INTERVAL_MS:-15000}
+      FABRIC_HEALER_COOLDOWN_SECONDS: ${FABRIC_HEALER_COOLDOWN_SECONDS:-60}
+      FABRIC_HEALER_MAX_REPAIRS_PER_HOUR: ${FABRIC_HEALER_MAX_REPAIRS_PER_HOUR:-30}
+      FABRIC_HEALER_ALLOW_ACTIONS: ${FABRIC_HEALER_ALLOW_ACTIONS:-reconcile_expired_attempts,reconstruct_delivery,recover_effect_claim}
+      FABRIC_LOG_LEVEL: info
+    secrets:
+      - fabric-api-token
+      - fabric-submit-token
+      - fabric-worker-bootstrap-credentials
+      - fabric-admin-token
+      - fabric-reliability-source-tokens
+      - fabric-effect-consumer-credentials
+      - fabric-alarm-dispatcher-credentials
+      - minio-root-user
+      - minio-root-password
+      - fabric-leadership-token
+      - fabric-leadership-candidate-token
+      - fabric-leadership-public-key
+    volumes:
+      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
+    networks: [fabric-private, fabric-egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  scheduler:
+    extends:
+      service: healer
+    image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
+    command: ["node", "dist/src/scheduler-main.js"]
+    environment:
+      FABRIC_SCHEDULER_INTERVAL_MS: ${FABRIC_SCHEDULER_INTERVAL_MS:-15000}
+      FABRIC_SCHEDULER_BATCH_SIZE: ${FABRIC_SCHEDULER_BATCH_SIZE:-20}
+
+  gateway:
+    image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
+    profiles: ["standby", "promoted"]
+    restart: unless-stopped
+    command: ["node", "dist/src/gateway-main.js"]
+    environment:
+      FABRIC_GATEWAY_HOST: 0.0.0.0
+      FABRIC_GATEWAY_PORT: "3181"
+      FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
+      FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
+      FABRIC_GATEWAY_LEADER_ENDPOINTS: >-
+        {"genomesbox":"http://${FABRIC_PRIMARY_TAILSCALE_IP:?set genomesbox Tailscale IP}:3180","bigmac":"http://${FABRIC_TAILSCALE_IP:?set bigmac Tailscale IP}:3180"}
+    secrets:
+      - fabric-leadership-token
+      - fabric-leadership-public-key
+    ports:
+      - "${FABRIC_TAILSCALE_IP:?set the bigmac Tailscale IP}:3181:3181"
+    networks: [fabric-egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  fabric-private:
+    internal: true
+  fabric-egress: {}
+
+volumes:
+  postgres-standby-data:
+  postgres-backups:
+  valkey-standby-data:
+  minio-standby-data:
+  artifact-spool:
+
+secrets:
+  minio-root-user:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/minio-root-user
+  postgres-replication-pgpass:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/postgres-replication-pgpass
+  valkey-acl:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/valkey-acl
+  valkey-health-password:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/valkey-health-password
+  minio-root-password:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/minio-root-password
+  fabric-admin-token:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/fabric-admin-token
+  fabric-api-token:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/fabric-api-token
+  fabric-submit-token:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/fabric-submit-token
+  fabric-worker-bootstrap-credentials:
+    file: ${FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE:?set worker bootstrap credential map file}
+  fabric-reliability-source-tokens:
+    file: ${FABRIC_RELIABILITY_SOURCE_TOKENS_FILE:?set reliability source token map file}
+  fabric-effect-consumer-credentials:
+    file: ${FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE:?set effect consumer credential map file}
+  fabric-alarm-dispatcher-credentials:
+    file: ${FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE:?set alarm dispatcher credential map file}
+  fabric-leadership-token:
+    file: ${FABRIC_LEADERSHIP_TOKEN_FILE:?set witness token file}
+  fabric-leadership-candidate-token:
+    file: ${FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE:?set host-scoped witness candidate token file}
+  fabric-leadership-public-key:
+    file: ${FABRIC_LEADERSHIP_PUBLIC_KEY_FILE:?set witness public key file}

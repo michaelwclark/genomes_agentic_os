@@ -1,0 +1,58 @@
+{
+  "schema_version": "agentic-os-execution-fabric-task-route-fixtures/v1",
+  "fixtures": [
+    {
+      "task_type": "los.team_pr.ai_review.v1",
+      "queue": "pr_reviews",
+      "payload": {
+        "repository": "example/repository",
+        "pull_request": 42,
+        "pull_request_url": "https://github.com/example/repository/pull/42",
+        "expected_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "base_branch": "develop",
+        "source_key": "FLYWL-409",
+        "jira_key": "FLYWL-409",
+        "title": "Add queue visibility",
+        "notion_page_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "author_identity": "github:external-author"
+      },
+      "required_capability": "pr_review",
+      "domain_worker": "team_pr_ai_review",
+      "allowed_effect_types": ["notion.pr_review.update"]
+    },
+    {
+      "task_type": "los.environment.deployment.observed",
+      "queue": "los_environment",
+      "payload": {
+        "environment": "beta",
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "previous_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at": "2026-07-24T20:00:00Z",
+        "health_url": "https://beta.example.test/health_check",
+        "build": "2026.07.24.1"
+      },
+      "required_capability": "los.environment.reconcile",
+      "domain_worker": "los_environment_reconcile",
+      "allowed_effect_types": [
+        "jira.labels.apply",
+        "jira.status.transition",
+        "agentic_os.alert.publish"
+      ]
+    },
+    {
+      "task_type": "los.jira.action.execute",
+      "queue": "los_environment",
+      "payload": {
+        "action_id": "action-123",
+        "action_key": "jira-action:FLYWL-409:env_beta2"
+      },
+      "required_capability": "los.environment.reconcile",
+      "domain_worker": "los_jira_action",
+      "allowed_effect_types": [
+        "jira.labels.apply",
+        "jira.status.transition",
+        "agentic_os.alert.publish"
+      ]
+    }
+  ]
+}

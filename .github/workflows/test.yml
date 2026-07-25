@@ -1,10 +1,10 @@
 name: Test
 
 on:
+  workflow_call:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: read
@@ -14,58 +14,186 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pytest:
+  python:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
-
-      - name: Install package and test dependencies
-        run: python -m pip install --disable-pip-version-check -e '.[dev]'
-
-      - name: Run repository tests
+      - name: Install package and build tools
+        run: python -m pip install --disable-pip-version-check -e '.[dev]' build twine
+      - name: Validate release contract
+        run: python scripts/release/build-execution-fabric-release.py --validate-only
+      - name: Run full Python suite
         run: python -m pytest tests/ -q
+      - name: Validate published-style wheel and source distribution
+        run: |
+          python scripts/qa/validate-python-distributions.py
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v6
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
 
   gui:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/agentic-os-gui
     steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
         with:
           version: 11
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: apps/agentic-os-gui/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:contracts
+      - run: pnpm check:contracts-coverage
+      - run: pnpm build
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+  node-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - execution-fabric-control-plane
+          - execution-fabric-leadership-witness
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
 
-      - name: Typecheck
-        run: pnpm typecheck
+  control-plane-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/execution-fabric-control-plane
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/execution-fabric-control-plane/package-lock.json
+      - run: npm ci
+      - name: Start isolated PostgreSQL, Valkey, and MinIO
+        run: |
+          docker run -d --name fabric-postgres -e POSTGRES_USER=fabric -e POSTGRES_PASSWORD=fabric -e POSTGRES_DB=execution_fabric -p 5432:5432 postgres:17-alpine
+          docker run -d --name fabric-valkey -p 6379:6379 valkey/valkey:8-alpine
+          docker run -d --name fabric-minio -e MINIO_ROOT_USER=fabricminio -e MINIO_ROOT_PASSWORD=fabricminiosecret -p 9000:9000 minio/minio:latest server /data
+          for _ in $(seq 1 30); do
+            docker exec fabric-postgres pg_isready -U fabric -d execution_fabric &&
+              curl -fsS http://127.0.0.1:9000/minio/health/ready &&
+              break
+            sleep 2
+          done
+          docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -ec \
+            'mc alias set fabric http://127.0.0.1:9000 fabricminio fabricminiosecret &&
+             mc mb --ignore-existing fabric/execution-fabric-artifacts'
+      - name: Run delivery, ledger, and artifact integration tests
+        env:
+          FABRIC_TEST_DATABASE_URL: postgresql://fabric:fabric@127.0.0.1:5432/execution_fabric
+          FABRIC_TEST_VALKEY_URL: redis://127.0.0.1:6379
+          FABRIC_TEST_ARTIFACT_ENDPOINT: http://127.0.0.1:9000
+          FABRIC_TEST_ARTIFACT_BUCKET: execution-fabric-artifacts
+          FABRIC_TEST_ARTIFACT_ACCESS_KEY: fabricminio
+          FABRIC_TEST_ARTIFACT_SECRET_KEY: fabricminiosecret
+        run: npm run test:integration
 
-      - name: Run unit tests
-        run: pnpm test
+  deployment-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Validate deployment and installer assets
+        run: python -m pytest -q tests/test_execution_fabric_deployment_assets.py tests/test_execution_fabric_release.py
+      - name: Lint Helm worker chart
+        run: |
+          helm lint deploy/execution-fabric/helm/los-agents \
+            --set image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --set fabric.apiBase=https://fabric.example.test \
+            --set secrets.existingSecret=execution-fabric-worker \
+            --set worker.id=gaos-worker-ci \
+            --set worker.bootstrapId=gaos-worker-ci \
+            --set worker.hostId=los-agents \
+            --set storage.existingClaim=gaos-worker-rwx
+          helm template los-agents deploy/execution-fabric/helm/los-agents \
+            --set image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --set fabric.apiBase=https://fabric.example.test \
+            --set secrets.existingSecret=execution-fabric-worker \
+            --set worker.id=gaos-worker-ci \
+            --set worker.bootstrapId=gaos-worker-ci \
+            --set worker.hostId=los-agents \
+            --set storage.existingClaim=gaos-worker-rwx >/dev/null
+      - name: Validate both Compose topologies
+        env:
+          FABRIC_POSTGRES_IMAGE: postgres:17-alpine
+          FABRIC_VALKEY_IMAGE: valkey/valkey:8-alpine
+          FABRIC_MINIO_IMAGE: minio/minio:latest
+          FABRIC_MINIO_CLIENT_IMAGE: minio/mc:latest
+          FABRIC_CONTROL_PLANE_IMAGE: ghcr.io/example/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          FABRIC_TAILSCALE_IP: 100.64.0.2
+          FABRIC_PRIMARY_TAILSCALE_IP: 100.64.0.2
+          FABRIC_STANDBY_TAILSCALE_IP: 100.64.0.3
+          FABRIC_DATABASE_URL: postgresql://fabric:unused@postgres/execution_fabric
+          FABRIC_VALKEY_URL: redis://valkey:6379
+          FABRIC_SECRETS_DIR: /tmp/fabric-secrets
+          FABRIC_RUNTIME_STATE_DIR: /tmp/fabric-state
+          FABRIC_CLUSTER_ID: ci
+          FABRIC_LEADERSHIP_API_BASE: https://witness.example.test
+          FABRIC_LEADERSHIP_TOKEN_FILE: /tmp/fabric-secrets/witness-token
+          FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /tmp/fabric-secrets/witness-candidate-token
+          FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /tmp/fabric-secrets/witness-public.pem
+          FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /tmp/fabric-secrets/worker-bootstrap-credentials.json
+          FABRIC_RELIABILITY_SOURCE_TOKENS_FILE: /tmp/fabric-secrets/reliability-sources.json
+          FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE: /tmp/fabric-secrets/effect-consumers.json
+          FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE: /tmp/fabric-secrets/alarm-dispatchers.json
+        run: |
+          docker compose --profile primary -f deploy/execution-fabric/compose.genomesbox.yml config -q
+          docker compose --profile standby --profile promoted -f deploy/execution-fabric/compose.bigmac.yml config -q
+      - name: Build service and worker images
+        run: |
+          docker build -t execution-fabric-control-plane:ci services/execution-fabric-control-plane
+          docker build -t execution-fabric-leadership-witness:ci services/execution-fabric-leadership-witness
+          docker build -t genomes-agentic-os-worker:ci -f services/execution-fabric-worker/Dockerfile .
+          docker run --rm \
+            -e FABRIC_WORKER_ACCEPTED_QUEUES=codex \
+            -e FABRIC_WORKER_CAPABILITIES=codex.task \
+            genomes-agentic-os-worker:ci --validate-routes
 
-      - name: Run dependency contract tests
-        run: pnpm test:contracts
-
-      - name: Check contract coverage
-        run: pnpm check:contracts-coverage
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

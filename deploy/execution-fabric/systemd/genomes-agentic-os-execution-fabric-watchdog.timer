@@ -1,0 +1,12 @@
+[Unit]
+Description=Continuously verify Execution Fabric primary leadership health
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=3s
+Persistent=true
+Unit=genomes-agentic-os-execution-fabric-watchdog.service
+
+[Install]
+WantedBy=timers.target

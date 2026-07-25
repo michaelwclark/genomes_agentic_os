@@ -72,6 +72,30 @@ export function taskSampleSummary(runtime: RuntimeHealth, shown: number): string
   return `${shown} shown from ${runtime.task_sample_count}-task operational sample · ${runtime.task_count} retained`;
 }
 
+export function activeRuntimeAlarms(runtime: RuntimeHealth) {
+  // Older remote control planes emitted transient alarm summaries without a
+  // status. Treat those as active instead of silently hiding the condition.
+  return (runtime.alarms || []).filter((alarm) => !alarm.status || alarm.status === "active");
+}
+
+export function runtimeAttentionCount(runtime: RuntimeHealth): number {
+  return runtime.dead_letter
+    + runtime.unhealthy_workers
+    + (runtime.stale_queued || 0)
+    + (runtime.expired_running_leases || 0)
+    + (runtime.effects?.failed || 0)
+    + (runtime.effects?.dead_letter || 0)
+    + activeRuntimeAlarms(runtime).length
+    + (runtime.config?.drifted ? 1 : 0)
+    + (runtime.healing?.status === "failed" ? 1 : 0);
+}
+
+function compactTimestamp(value?: string): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? "unknown" : parsed.toLocaleString();
+}
+
 export function ExecutionFabricView({ runtime, onRefresh, refreshing }: ExecutionFabricViewProps) {
   const [queue, setQueue] = useState("all");
   const [status, setStatus] = useState("active");
@@ -79,14 +103,19 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
   const [selectedId, setSelectedId] = useState<string>();
   const tasks = useMemo(() => filterRuntimeTasks(runtime.tasks, queue, status, query), [runtime.tasks, queue, status, query]);
   const selected = runtime.tasks.find((task) => task.id === selectedId);
-  const needsAttention = runtime.dead_letter
-    + runtime.unhealthy_workers
-    + (runtime.stale_queued || 0)
-    + (runtime.expired_running_leases || 0);
+  const needsAttention = runtimeAttentionCount(runtime);
   const activeLongRuns = (runtime.long_running_runs || []).filter((run) => activeLongRunStatuses.has(run.status));
   const visibleWorkers = operationalWorkers(runtime);
   const hiddenWorkerHistory = runtime.historical_worker_records + Math.max(0, runtime.workers.length - visibleWorkers.length);
   const registeredWorkers = Math.max(runtime.registered_workers, runtime.workers.length);
+  const activeAlarms = activeRuntimeAlarms(runtime);
+  const controlPlane = runtime.control_plane;
+  const fabricConfig = runtime.config;
+  const healing = runtime.healing;
+  const effects = runtime.effects;
+  const recentReports = runtime.recent_run_reports || [];
+  const activeFindings = healing?.finding_details || [];
+  const repairReceipts = healing?.repair_receipts || [];
 
   return (
     <section className="fabric-view" aria-label="Execution Fabric details">
@@ -102,12 +131,98 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
       <div className="fabric-kpis">
         <article><span>Waiting now</span><strong>{runtime.queue_depth}</strong></article>
         <article><span>Running now</span><strong>{runtime.running}</strong></article>
+        <article><span>Completed</span><strong>{runtime.completed ?? 0}</strong></article>
         <article><span>Live workers</span><strong>{runtime.active_workers}</strong></article>
         <article><span>Retrying / delayed</span><strong>{runtime.retrying} / {runtime.delayed_retries}</strong></article>
         <article><span>Needs attention</span><strong>{needsAttention}</strong></article>
         <article><span>Recent failures (1h)</span><strong>{runtime.recent_failures}</strong></article>
         <article><span>Health</span><strong data-health={runtime.status}>{runtime.status}</strong></article>
       </div>
+
+      <section className="fabric-section" aria-label="Control plane and configuration">
+        <div className="fabric-section-title">
+          <h3>Control plane & configuration</h3>
+          <span>{controlPlane?.transport || "unknown"} transport · epoch {controlPlane?.epoch ?? "unknown"}</span>
+        </div>
+        <div className="fabric-state-grid">
+          <article>
+            <span>Active host</span>
+            <strong>{controlPlane?.active_host || controlPlane?.leader_host || "Unknown"}</strong>
+            <small>{controlPlane?.role || "unknown"} · {controlPlane?.failover_state || "failover state unknown"} · lease {compactTimestamp(controlPlane?.leader_lease_expires_at)}</small>
+          </article>
+          <article>
+            <span>Standby & witness</span>
+            <strong>{controlPlane?.standby_hosts?.join(", ") || "Not reported"}</strong>
+            <small title={controlPlane?.last_error || controlPlane?.leadership_receipt_id}>Witness {controlPlane?.witness_status || "unknown"} · proof {compactTimestamp(controlPlane?.leadership_proof_expires_at)} · hold {compactTimestamp(controlPlane?.recovery_hold_until)}</small>
+          </article>
+          <article>
+            <span>Effective configuration</span>
+            <strong data-health={fabricConfig ? (fabricConfig.drifted ? "critical" : "healthy") : undefined}>{fabricConfig ? (fabricConfig.drifted ? "Drift detected" : "In sync") : "Unknown"}</strong>
+            <small title={fabricConfig?.fingerprint}>{fabricConfig?.source || "Source not reported"} · {fabricConfig?.fingerprint || "fingerprint unknown"}</small>
+          </article>
+          <article>
+            <span>Auto-healing</span>
+            <strong data-health={healing?.status === "failed" ? "critical" : healing?.status === "degraded" ? "degraded" : "healthy"}>{healing?.status || "unknown"}</strong>
+            <small>{healing?.repairs ?? 0} repairs · {healing?.failures ?? 0} failures · last {compactTimestamp(healing?.last_run_at)}</small>
+          </article>
+        </div>
+      </section>
+
+      <section className="fabric-section" aria-label="Effects and alarms">
+        <div className="fabric-section-title">
+          <h3>Effects, alarms & healing</h3>
+          <span>{activeAlarms.length} active alarms</span>
+        </div>
+        <div className="fabric-inline-metrics">
+          <span>Effects pending <strong>{effects?.pending ?? "—"}</strong></span>
+          <span>Delivering <strong>{effects?.delivering ?? "—"}</strong></span>
+          <span>Delivered <strong>{effects?.delivered ?? "—"}</strong></span>
+          <span>Failed <strong>{effects?.failed ?? "—"}</strong></span>
+          <span>Dead letter <strong>{effects?.dead_letter ?? "—"}</strong></span>
+        </div>
+        {activeAlarms.length > 0 && <div className="fabric-table-wrap">
+          <table className="fabric-table">
+            <thead><tr><th>Alarm</th><th>Severity</th><th>Source</th><th>Occurred</th></tr></thead>
+            <tbody>{activeAlarms.map((alarm) => (
+              <tr key={alarm.id}>
+                <th title={alarm.id}>{alarm.message}</th>
+                <td><span className="status-chip" data-status={alarm.severity}>{alarm.severity}</span></td>
+                <td>{alarm.source ? humanizeIdentifier(alarm.source) : "—"}</td>
+                <td>{compactTimestamp(alarm.occurred_at)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+        {!activeAlarms.length && <p className="fabric-empty">No active alarms. {healing?.summary || "The healer has no unresolved condition to report."}</p>}
+        {activeFindings.length > 0 && <div className="fabric-table-wrap">
+          <table className="fabric-table">
+            <thead><tr><th>Active finding</th><th>Revision</th><th>Severity</th><th>Scope</th><th>Observed</th></tr></thead>
+            <tbody>{activeFindings.map((finding) => (
+              <tr key={finding.id}>
+                <th title={JSON.stringify(finding.details || {})}>{finding.summary}</th>
+                <td>{finding.revision}</td>
+                <td><span className="status-chip" data-status={finding.severity}>{finding.severity}</span></td>
+                <td>{finding.scopeType || "fabric"} · {finding.scopeId || "—"}</td>
+                <td>{compactTimestamp(finding.lastObservedAt)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+        {repairReceipts.length > 0 && <div className="fabric-table-wrap">
+          <table className="fabric-table">
+            <thead><tr><th>Repair</th><th>Finding revision</th><th>Status</th><th>Actor</th><th>Completed</th></tr></thead>
+            <tbody>{repairReceipts.map((receipt) => (
+              <tr key={receipt.id}>
+                <th title={receipt.errorSummary || receipt.id}>{humanizeIdentifier(receipt.action)}</th>
+                <td>{receipt.findingRevision}</td>
+                <td><span className="status-chip" data-status={receipt.status}>{receipt.status}</span></td>
+                <td>{receipt.actor || "automation"}</td>
+                <td>{compactTimestamp(receipt.completedAt || receipt.startedAt)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+      </section>
 
       <section className="fabric-section">
         <div className="fabric-section-title"><h3>Running now</h3><span>{runtime.running_tasks.length} queue tasks · {activeLongRuns.length} managed runs</span></div>
@@ -165,10 +280,10 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
         <div className="fabric-section-title"><h3>Active & unhealthy workers</h3><span>{visibleWorkers.length} operational rows · {registeredWorkers.toLocaleString()} retained registrations</span></div>
         {visibleWorkers.length > 0 && <div className="fabric-table-wrap">
           <table className="fabric-table">
-            <thead><tr><th>Worker</th><th>Status</th><th>Pool</th><th>Provider</th><th>Active</th><th>Capacity</th><th>Lease until</th></tr></thead>
+            <thead><tr><th>Worker</th><th>Status</th><th>Pool</th><th>Provider</th><th>Active</th><th>Capacity</th><th>Heartbeat</th><th>Lease until</th></tr></thead>
             <tbody>{visibleWorkers.map((worker) => (
               <tr key={worker.id}>
-                <th title={worker.id}>{workerLabel(worker.id)}</th><td><span className="status-chip" data-status={worker.status}>{worker.status}</span></td><td title={worker.pool_name}>{poolLabel(worker.pool_name)}</td><td>{queueLabel(worker.provider)}</td><td>{worker.active_tasks}</td><td>{worker.capacity}</td><td>{worker.lease_until ? new Date(worker.lease_until).toLocaleTimeString() : "—"}</td>
+                <th title={worker.id}>{workerLabel(worker.id)}</th><td><span className="status-chip" data-status={worker.status}>{worker.status}</span></td><td title={worker.pool_name}>{poolLabel(worker.pool_name)}</td><td>{queueLabel(worker.provider)}</td><td>{worker.active_tasks}</td><td>{worker.capacity}</td><td>{compactTimestamp(worker.heartbeat_at)}</td><td>{compactTimestamp(worker.lease_until)}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -215,6 +330,29 @@ export function ExecutionFabricView({ runtime, onRefresh, refreshing }: Executio
             </dl>
           </aside>}
         </div>
+      </section>
+
+      <section className="fabric-section">
+        <div className="fabric-section-title"><h3>Recent run reports</h3><span>{recentReports.length} retained in this snapshot</span></div>
+        {recentReports.length > 0 && <div className="fabric-table-wrap">
+          <table className="fabric-table">
+            <thead><tr><th>Run</th><th>Status</th><th>Queue</th><th>Worker</th><th>Attempts</th><th>Effects</th><th>Artifacts</th><th>Duration</th><th>Updated</th></tr></thead>
+            <tbody>{recentReports.map((report) => (
+              <tr key={report.run_id}>
+                <th title={report.run_id}>{report.summary || humanizeIdentifier(report.task_type || report.run_id)}</th>
+                <td><span className="status-chip" data-status={report.status}>{report.status}</span></td>
+                <td>{report.queue_name ? queueLabel(report.queue_name) : "—"}</td>
+                <td title={report.worker_id}>{report.worker_id ? workerLabel(report.worker_id) : "—"}</td>
+                <td>{report.attempt_count ?? 0}</td>
+                <td title={report.error_summary}>{report.effects_failed ? `${report.effects_failed} failed` : `${report.effects_pending ?? 0} pending`}</td>
+                <td title={(report.artifacts || []).map((artifact) => `${artifact.name || artifact.artifact_id}: ${artifact.status || "unknown"} · ${artifact.sha256 || "no hash"} · ${artifact.uri || "no URI"}`).join("\n")}>{(report.artifacts || []).length || "—"}</td>
+                <td>{report.duration_seconds === undefined ? "—" : `${Math.round(report.duration_seconds)}s`}</td>
+                <td>{compactTimestamp(report.finished_at || report.updated_at)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+        {!recentReports.length && <p className="fabric-empty">No run reports are available from the selected backend snapshot.</p>}
       </section>
     </section>
   );

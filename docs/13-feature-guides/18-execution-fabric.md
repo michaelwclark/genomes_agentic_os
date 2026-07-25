@@ -35,17 +35,238 @@ missing from the installed runtime registry, the effective mode is still
 
 ## What ships
 
-The source-owned program is under
-`harness/shared_factory/00-programs/execution_fabric/`. It contains:
+The editable installed policy is the discoverable root-level harness config:
 
-- inactive, bounded queue definitions for Codex, Claude, and non-LLM work;
+```text
+harness/config/execution-fabric.yml
+```
+
+The source-owned program under
+`harness/shared_factory/00-programs/execution_fabric/` contains the operating
+contract and compatibility definition assets. The effective instance config
+contains:
+
+- one explicit `transport` selector (`local` or authenticated `remote`) and its
+  control-plane URL/timeouts plus distinct submit, worker, observer, and admin
+  token environment-variable names;
+- five bounded queue definitions for Codex, Claude, Team PR review, LOS
+  environment reconciliation, and host-local non-LLM work;
 - matching worker-pool definitions with worker, task, lease, and retry limits;
 - JSON Schemas for queue configuration, worker pools, and task envelopes;
 - routing, CRUD, runbook, testing, and rollback contracts.
 
+Lists with canonical identifiers merge by stable identity: queues and worker
+pools use `id`, while `task_routes` use `task_type`. A host or invocation
+overlay that changes one task route therefore preserves every unrelated route.
+
 Mutable state never lives in that program folder. Filesystem mode owns
 `run-queue.yml`; execution-fabric mode owns the `run_queue`, queue, pool, and
-worker tables in `state.db`.
+worker tables in local `state.db` when `transport.mode: local`. In remote mode,
+PostgreSQL is the canonical task/run/effect ledger and BullMQ/Valkey is the
+delivery signal; workers never treat Valkey as the source of truth.
+
+Inspect configuration provenance before editing or reconciling:
+
+```bash
+agentic-os runtime config status --root ~/agentic_os --json
+agentic-os runtime config show --root ~/agentic_os --json
+agentic-os runtime config diff --root ~/agentic_os --json
+agentic-os runtime config validate --root ~/agentic_os
+```
+
+The status includes the effective source, schema, content fingerprint, drift,
+and paths to the canonical host identity, host-routing, and alert registries.
+Those existing registries remain authoritative; Execution Fabric does not
+create parallel host or alert configuration.
+
+## Local and cross-host transport
+
+Fresh installs remain on the explicit local/degraded transport:
+
+```yaml
+execution_fabric:
+  transport:
+    mode: local
+    control_plane_url: null
+    request_timeout_seconds: 20
+    long_poll_seconds: 20
+    submit_token_env: AGENTIC_OS_EXECUTION_FABRIC_SUBMIT_TOKEN
+    worker_token_env: AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN
+    observer_token_env: AGENTIC_OS_EXECUTION_FABRIC_OBSERVER_TOKEN
+    admin_token_env: AGENTIC_OS_EXECUTION_FABRIC_ADMIN_TOKEN
+```
+
+For cross-host operation, use an HTTPS endpoint reachable through Tailscale
+Serve or trusted ingress and store only the environment-variable name in YAML:
+
+```yaml
+execution_fabric:
+  transport:
+    mode: remote
+    control_plane_url: https://genomesbox.example.ts.net
+    request_timeout_seconds: 20
+    long_poll_seconds: 20
+    submit_token_env: AGENTIC_OS_EXECUTION_FABRIC_SUBMIT_TOKEN
+    worker_token_env: AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN
+    observer_token_env: AGENTIC_OS_EXECUTION_FABRIC_OBSERVER_TOKEN
+    admin_token_env: AGENTIC_OS_EXECUTION_FABRIC_ADMIN_TOKEN
+```
+
+The Python client refuses remote mode if the URL is not HTTPS, loopback HTTP,
+or a literal Tailscale CGNAT (`100.64.0.0/10`) HTTP address; it also refuses
+credentials embedded in the URL or an empty named token environment variable.
+Each credential can come from the named variable or its `_FILE` counterpart,
+which supports Docker and Kubernetes secret mounts without copying tokens into
+the process definition. Defining both forms is rejected.
+Arbitrary LAN/public HTTP and hostname-based plain HTTP are rejected. Tailscale
+Serve HTTPS remains preferred. The service deployment must enforce bearer
+authentication on every `/api/v1` task, worker, attempt, effect, and snapshot
+route; client-side headers alone are not an authorization boundary.
+
+Submit a remote-safe, commandless task, run a bounded worker, and inspect the
+same contract:
+
+```bash
+agentic-os runtime submit \
+  --queue codex \
+  --task-type llm.codex \
+  --idempotency-key age-123-implementation-v1 \
+  --payload-json '{"work_item_id":"AGE-123","instruction_ref":"harness/shared_factory/01-inbox/AGE-123.md"}' \
+  --root ~/agentic_os
+
+# The first command is a dry-run. Repeat it with --apply after review.
+agentic-os runtime submit ... --apply
+
+agentic-os runtime work \
+  --queue codex \
+  --capability codex.task \
+  --max-concurrency 2 \
+  --root ~/agentic_os \
+  --apply
+
+agentic-os runtime status --root ~/agentic_os --json
+```
+
+`runtime work` registers the host, renews worker and active-attempt leases,
+long-polls for assignments, executes only the existing governed local runtime
+targets, and reports success/failure to the durable ledger. It writes a local
+run receipt below
+`harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs/`.
+`--once` is useful for a smoke test; `--max-tasks N` creates a bounded batch.
+Worker concurrency defaults from the selected queue pools and global admission
+limit and can be lowered per process.
+
+Raw `script` and `process` payloads remain available only to the local/degraded
+transport. The shared remote control plane admits only closed-schema task
+routes with a registered domain worker; it never accepts an arbitrary command
+from a task producer.
+
+## First-class consumer routes
+
+Team PR review uses `los.team_pr.ai_review.v1` on `pr_reviews`. The Notion
+button adapter snapshots repository, PR number and URL, expected head SHA, base
+branch, source/Jira key, title, Notion page ID, and optional GitHub author into
+the closed payload. Its idempotency key is stable for one Notion request and PR
+head SHA, so repeated button observations return the same task instead of
+starting duplicate reviews. The `team_pr_ai_review` worker invokes the
+installed portable helper at
+`lib/programs/domains/los/team_pr_sync/scripts/team_pr_review_fabric.py`.
+That helper reads the canonical LOS project policy from
+`domains/los/02-projects/los_app_los_django/config/development.yml`, routes
+team-authored PRs through `auto-dev review-self` and other PRs through
+`auto-dev review-others`, and delegates both convenience routes to canonical
+PR review. It revalidates the immutable provider head before and after review.
+The review subprocess receives only `TEAM_PR_GITHUB_READ_TOKEN`, an empty
+GitHub CLI config, ignored user configuration, and a read-only sandbox with
+posting, repair, and merge disabled. A changed head returns `superseded` and
+creates no effect. Only the route-derived `notion.pr_review.update` effect
+consumer may project a validated terminal review receipt back to Notion.
+
+The watcher state is runtime data at
+`runtime/objects/programs/program/domain/los/team_pr_sync/state/team-pr-review-trigger-state.json`;
+it does not belong beside root configuration or in the versioned program
+object.
+
+LOS deployment observation uses
+`los.environment.deployment.observed` on `los_environment`. A producer records
+the exact previous SHA, new SHA, environment, observation time, health URL, and
+optional build. The `los_environment_reconcile` worker computes the exact
+commit range, resolves included GitHub PRs and Jira keys, and emits durable Jira
+actions. The label sequence is per Jira and per environment:
+`env_beta`, `env_beta2`, `env_beta3`, and equivalently for QA, preprod, and
+production. A second PR for a ticket in beta therefore increments only beta;
+it does not imply a second QA or production visit. The first observed beta
+arrival may also emit the configured Ready for QA transition.
+
+Provider projection is a separate task route,
+`los.jira.action.execute`, on the same queue. Its stable `action_id` and
+`action_key` make Jira label and transition effects recoverable and idempotent.
+Failures remain visible in the effect ledger and dead-letter flow, and may emit
+`agentic_os.alert.publish`; the environment observer never hides a failed Jira
+write behind a successful SHA observation.
+
+The client also exposes fenced effect claim/deliver/fail operations for
+provider-specific effect consumers. The observer token is read-only. Every
+claim uses a separate credential bound to the consumer ID, source, and
+non-empty owned `effect_types` allow-list; a projector must never claim
+globally and skip unrelated effects. Completion can set bounded per-effect
+`maxAttempts` and `baseBackoffSeconds`. The generic CLI worker does not invent
+a provider handler or execute effect payloads blindly.
+
+Alarm dispatchers likewise use a separate credential bound to dispatcher ID
+and source. The static credential is used only to claim; deliver/fail uses the
+short-lived claim token. Credential-map filenames live in the deployment
+runtime environment, while queue and routing policy remains in the canonical
+root-level `harness/config/execution-fabric.yml`.
+
+In remote mode, API serving, health observation, deterministic healing, and
+alarm delivery are separate processes over one PostgreSQL truth plane. Inspect
+their durable projection through the supported CLI:
+
+```bash
+agentic-os runtime status --root ~/agentic_os --json
+```
+
+The status retains the existing `effects`, `healing`, and `alarms` fields.
+PostgreSQL also exposes a bounded reliability snapshot to authenticated
+operators; Command Center does not infer healer health from the API process.
+
+Queue snapshots include ready, delayed, retrying, running, dead-letter,
+hourly-throughput, recent-failure-rate, oldest-ready-age, saturation, and
+remaining-capacity values. Worker rows expose the current immutable session and
+the ten most recent sessions. Run reports include every attempt plus safe
+effect and artifact metadata, timing, errors, and the route-derived approval
+and mutation classes. These are ledger projections; they are not reconstructed
+from BullMQ.
+
+## Configuration layers and scheduling
+
+The only editable instance file remains
+`harness/config/execution-fabric.yml`. Its deterministic precedence is release
+default, instance, canonical host alias, then invocation override. Queue and
+worker-pool arrays merge by stable `id`, never by list position. Host and
+invocation layers may lower capacity and retry bounds but cannot raise them.
+Every configured host overlay is validated even when it is not the current
+host, preventing a dormant failover config from rotting quietly. A host alias
+must exist in both canonical host identity and host-routing registries. Python
+workers and Node services receive the same resolved `FABRIC_HOST_ID`; a
+conflicting explicit worker ID is rejected instead of silently splitting one
+machine into two logical hosts.
+
+Admission supports hard `namespace_limits` and `host_limits`. Claim decisions
+are serialized in PostgreSQL so concurrent workers cannot oversubscribe those
+limits. Bounded priority aging prevents old low-priority tasks from starving;
+namespace weights break ties by normalized running share.
+
+The scheduler is its own independently supervised role. Each interval
+occurrence receives a deterministic idempotency key, is persisted before task
+admission, and is fenced by the current fabric epoch and unexpired leader
+lease. Operators can inspect `/api/v1/snapshots/schedules`; schedule create,
+update, enable, and disable operations remain admin-scoped. Normal primary and
+synchronously durable promoted-standby profiles run it. A degraded-primary
+takeover deliberately keeps it stopped unless canonical
+`degraded_primary.allow_scheduler` is explicitly enabled; occurrences remain
+durable and resume idempotently after redundancy is restored.
 
 ## Selecting the writer
 
@@ -68,6 +289,42 @@ Activation imports the existing YAML queue idempotently, initializes the local
 SQLite schema, writes the selector atomically, and reads it back. Producers and
 `runtime run-next` then use only the selected backend. A shared advisory lock
 serializes queue mutation with mode changes.
+
+After changing `harness/config/execution-fabric.yml`, preview and apply the
+configuration reconciliation:
+
+```bash
+agentic-os runtime config reconcile --root ~/agentic_os
+agentic-os runtime config reconcile --root ~/agentic_os --apply
+```
+
+Apply is rejected unless the fabric is the selected writer. Queue and pool
+enablement, queue depth/concurrency, pool capacity, global/provider limits,
+lease policy, and retry policy reconcile in one `BEGIN IMMEDIATE` transaction
+and must read back with zero drift. Producers also run the same idempotent
+reconciliation before enqueueing, so a valid edit cannot remain silently
+stale.
+
+For the remote control plane, use a fingerprint-fenced reload instead of
+restarting services around an unverified edit:
+
+```bash
+agentic-os runtime config diff --root ~/agentic_os --json
+agentic-os runtime config reload \
+  --root ~/agentic_os \
+  --expected-fingerprint <sha256>
+agentic-os runtime config reload \
+  --root ~/agentic_os \
+  --expected-fingerprint <sha256> \
+  --apply
+```
+
+Apply requires the distinct admin credential. The CLI reads the observer
+projection before mutation and sends both the current applied fingerprint and
+the operator-confirmed candidate fingerprint. The server rejects either
+mismatch before activation. The CLI then reads the observer projection back,
+verifies the candidate fingerprint, and writes a redacted receipt below
+`harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads/`.
 
 If activation finds historical nonterminal SQLite rows that are missing from or
 status-drifted against YAML, it refuses the switch. Reconcile from filesystem
@@ -117,8 +374,47 @@ has happened.
 
 ## Backend boundary
 
-SQLite is the included coordinator because it provides safe local concurrency
-without another service. Temporal remains the intended durable cross-host
-adapter/pilot boundary. Celery is not an installation dependency. Producers use
-the Agentic OS enqueue contract so a later backend adapter does not require each
-workflow, automation, program, or interactive session to call a vendor API.
+SQLite remains the included degraded coordinator because it provides safe local
+concurrency without another service. The remote adapter uses the versioned
+`/api/v1` control-plane contract; producers and workers do not connect directly
+to PostgreSQL or Valkey. That boundary keeps host relocation and failover out of
+individual workflows and automations. Switching `transport.mode` does not
+silently migrate in-flight local tasks: activation and failover runbooks must
+prove a fenced writer, reconcile outstanding work, and retain exact receipts.
+
+## Run artifacts and release assets
+
+Remote workers publish actual run reports through the control plane's
+S3-compatible artifact contract. PostgreSQL records task, attempt, name,
+content type, size, SHA-256, status, and portable URI. The service verifies the
+stored object's bytes before making it available; a host-local receipt path is
+never presented as cross-host proof. The PUT grant signs exactly the required
+content length, content type, and SHA-256 metadata headers, including on MinIO.
+When storage is unavailable, workers copy the immutable payload into their RWX
+spool and retain only an attempt-scoped recovery token alongside its digest and
+size. The current worker registration token is still required, so the recovery
+token is not independently usable. A replacement pod with the same durable
+bootstrap identity drains bounded batches, quarantines corrupt or exhausted
+records, and publishes pending/due/quarantine health in its central heartbeat.
+
+The Python wheel stays small and exposes
+`genomes_agentic_os/resources/release-assets.json` so tools can discover the
+matching release bundle. Deployments, installers, canonical config, schema,
+image lock, checksums, SBOM, and emergency bundle are GitHub release assets and
+remain in the source distribution. The tag workflow builds both service
+images, records their GHCR digests, validates Python/service/API versions plus
+config/schema hashes, and lets exactly one job create or refresh the GitHub
+release.
+
+Local release preflight:
+
+```bash
+python scripts/release/build-execution-fabric-release.py --validate-only
+python scripts/release/build-execution-fabric-release.py \
+  --output-dir dist/release \
+  --control-plane-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
+  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
+```
+
+The builder rejects mutable tags. Publishing is intentionally reserved for a
+merged `v<pyproject version>` tag; local validation performs no provider write.

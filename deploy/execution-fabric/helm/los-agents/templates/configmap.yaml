@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "los-agents.name" . }}
+  labels:
+    {{- include "los-agents.labels" . | nindent 4 }}
+data:
+  FABRIC_API_BASE: {{ required "fabric.apiBase is required" .Values.fabric.apiBase | quote }}
+  FABRIC_API_VERSION: {{ .Values.fabric.apiVersion | quote }}
+  FABRIC_WORKER_ACCEPTED_QUEUES: {{ join "," .Values.worker.acceptedQueues | quote }}
+  FABRIC_WORKER_CAPABILITIES: {{ join "," .Values.worker.capabilities | quote }}
+  FABRIC_WORKER_MAX_CONCURRENCY: {{ .Values.worker.maxConcurrency | quote }}
+  FABRIC_WORKER_HEARTBEAT_SECONDS: {{ .Values.worker.heartbeatSeconds | quote }}
+  FABRIC_WORKER_SPOOL_DRAIN_SECONDS: {{ .Values.worker.spoolDrainSeconds | quote }}

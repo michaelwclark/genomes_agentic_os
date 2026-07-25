@@ -3,9 +3,24 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
+import os
+from uuid import uuid4
 
+from ..execution_fabric_config import ExecutionFabricConfigError
+from ..execution_fabric_config import load_execution_fabric_config
+from ..execution_fabric_config import redact_execution_fabric_config
+from ..execution_fabric_config import resolve_execution_fabric_host_id
+from ..execution_fabric_config import show_execution_fabric_config
+from ..execution_fabric_remote import (
+    ExecutionFabricClient,
+    RemoteFabricWorker,
+    build_remote_runtime_snapshot,
+    resolve_remote_settings,
+    validate_task_route,
+)
 from ..cli_help import AosHelpFormatter, env_epilog
 from ..runtime_health import (
     build_runtime_health,
@@ -25,9 +40,11 @@ from ..resource_actions import (
 )
 from ..runtime_backend import (
     apply_queue_mode,
+    execution_fabric_config_status,
     plan_queue_mode,
     plan_queue_mode_rollback,
     queue_mode_status,
+    reconcile_execution_fabric_configuration,
     reconcile_execution_state,
     rollback_queue_mode,
 )
@@ -38,6 +55,7 @@ from ..runtime_ops import (
     integration_doctor,
     integration_list,
     integration_setup,
+    append_run_queue_item,
     run_queue_prune,
     runtime_doctor,
     runtime_init,
@@ -144,6 +162,233 @@ def handle_runtime_run_next(args: argparse.Namespace) -> int:
     return 0 if not args.apply or result["status"] not in {"failed", "blocked"} else 1
 
 
+def _runtime_payload(args: argparse.Namespace) -> dict:
+    if args.payload_json and args.payload_file:
+        raise ValueError("use only one of --payload-json or --payload-file")
+    if args.payload_file:
+        loaded = json.loads(Path(args.payload_file).expanduser().read_text(encoding="utf-8"))
+    else:
+        loaded = json.loads(args.payload_json or "{}")
+    if not isinstance(loaded, dict):
+        raise ValueError("task payload must be a JSON object")
+    if args.command:
+        loaded["command"] = args.command
+    return loaded
+
+
+def _configured_worker_defaults(
+    root: str,
+    queue_names: list[str],
+    *,
+    host_alias: str | None = None,
+) -> tuple[int, int]:
+    fabric = load_execution_fabric_config(
+        root,
+        host_alias=host_alias,
+    ).value["execution_fabric"]
+    selected = [
+        pool
+        for pool in fabric["worker_pools"]
+        if pool.get("enabled") and set(pool.get("queues") or []).intersection(queue_names)
+    ]
+    if not selected:
+        raise ValueError(
+            "no enabled worker pool is configured for queues: " + ", ".join(queue_names)
+        )
+    concurrency = sum(
+        int(pool["capacity"]["max_workers"])
+        * int(pool["capacity"]["max_tasks_per_worker"])
+        for pool in selected
+    )
+    concurrency = min(
+        concurrency,
+        int(fabric["admission"]["global_max_running"]),
+    )
+    # The shipped control plane keeps a short worker registration TTL. Heartbeat
+    # more frequently than long task leases even when a pool's task heartbeat
+    # policy is intentionally relaxed.
+    heartbeat = min(
+        15,
+        *(int(pool["lease"]["heartbeat_seconds"]) for pool in selected),
+    )
+    return max(1, concurrency), max(1, heartbeat)
+
+
+def handle_runtime_submit(args: argparse.Namespace) -> int:
+    payload = _runtime_payload(args)
+    settings = resolve_remote_settings(args.root, role="submit")
+    route = validate_task_route(
+        args.root,
+        args.queue,
+        args.task_type,
+        payload=payload,
+        remote=settings.remote,
+    )
+    task = {
+        "namespace": args.namespace,
+        "queue": args.queue,
+        "taskType": args.task_type,
+        "idempotencyKey": args.idempotency_key,
+        "payload": payload,
+        "requiredCapabilities": args.capability,
+        "priority": args.priority,
+        "maxAttempts": args.max_attempts,
+    }
+    if args.available_at:
+        task["availableAt"] = args.available_at
+    if not args.apply:
+        _print_structured(
+            {
+                "status": "would-submit",
+                "dry_run": True,
+                "transport": settings.public(),
+                "task": task,
+            },
+            json_output=args.json,
+        )
+        return 0
+    if settings.remote:
+        result = ExecutionFabricClient(settings).admit_task(task)
+        _print_structured(
+            {"status": "submitted", "transport": settings.public(), **result},
+            json_output=args.json,
+        )
+        return 0
+    local_item = {
+        "id": args.idempotency_key,
+        "idempotency_key": args.idempotency_key,
+        "kind": "remote-compatible",
+        "ref": f"{args.namespace}:{args.task_type}",
+        "status": "queued",
+        "queue_name": args.queue,
+        "task_type": args.task_type,
+        "priority": args.priority,
+        "max_attempts": args.max_attempts,
+        "due_at": args.available_at,
+        **payload,
+        "execution_target": args.execution_target or route["execution_target"],
+        "approval_state": route["approval_class"],
+    }
+    result = append_run_queue_item(args.root, local_item)
+    _print_structured(
+        {
+            "status": "submitted-local-degraded",
+            "transport": settings.public(),
+            **result,
+        },
+        json_output=args.json,
+    )
+    return 0
+
+
+def handle_runtime_work(args: argparse.Namespace) -> int:
+    settings = resolve_remote_settings(
+        args.root,
+        role="worker",
+        host_alias=args.host_id,
+    )
+    host_id = resolve_execution_fabric_host_id(
+        args.root,
+        explicit=args.host_id,
+        require_registered=settings.remote,
+    )
+    fabric = load_execution_fabric_config(
+        args.root,
+        host_alias=host_id if settings.remote or args.host_id else None,
+    ).value["execution_fabric"]
+    queues = args.queue or [
+        str(queue["id"]) for queue in fabric["queues"] if queue.get("enabled")
+    ]
+    configured_concurrency, configured_heartbeat = _configured_worker_defaults(
+        args.root,
+        queues,
+        host_alias=host_id if settings.remote or args.host_id else None,
+    )
+    max_concurrency = args.max_concurrency or (
+        configured_concurrency if settings.remote else 1
+    )
+    heartbeat_seconds = args.heartbeat_seconds or configured_heartbeat
+    worker_id = args.worker_id or f"{host_id}-{os.getpid()}"
+    bootstrap_id = args.bootstrap_id or worker_id
+    if not args.apply:
+        _print_structured(
+            {
+                "status": "would-work",
+                "dry_run": True,
+                "transport": settings.public(),
+                "worker_id": worker_id,
+                "bootstrap_id": bootstrap_id,
+                "host_id": host_id,
+                "queues": queues,
+                "capabilities": args.capability,
+                "max_concurrency": max_concurrency,
+                "heartbeat_seconds": heartbeat_seconds,
+            },
+            json_output=args.json,
+        )
+        return 0
+    max_tasks = 1 if args.once else args.max_tasks
+    if not settings.remote:
+        if max_concurrency != 1:
+            raise ValueError(
+                "local/degraded worker mode supports max concurrency 1; use remote transport for a shared worker pool"
+            )
+        results = []
+        while max_tasks is None or len(results) < max_tasks:
+            result = runtime_run_next(args.root, dry_run=False)
+            results.append(result)
+            if result.get("status") == "idle":
+                break
+        _print_structured(
+            {
+                "status": "stopped-local-degraded",
+                "transport": settings.public(),
+                "worker_id": worker_id,
+                "results": results,
+            },
+            json_output=args.json,
+        )
+        return 0 if all(row.get("status") not in {"failed", "blocked"} for row in results) else 1
+    worker = RemoteFabricWorker(
+        ExecutionFabricClient(settings),
+        root=args.root,
+        worker_id=worker_id,
+        bootstrap_id=bootstrap_id,
+        host_id=host_id,
+        queues=queues,
+        capabilities=args.capability,
+        max_concurrency=max_concurrency,
+        heartbeat_seconds=heartbeat_seconds,
+    )
+    try:
+        result = worker.work(max_tasks=max_tasks)
+    except KeyboardInterrupt:
+        result = {
+            "status": "interrupted",
+            "worker_id": worker_id,
+            "host_id": host_id,
+        }
+    _print_structured(result, json_output=args.json)
+    return 0 if not result.get("failed") else 1
+
+
+def handle_runtime_status(args: argparse.Namespace) -> int:
+    settings = resolve_remote_settings(args.root, role="observer")
+    if settings.remote:
+        result = build_remote_runtime_snapshot(
+            args.root,
+            task_id=args.task_id,
+            limit=args.limit,
+            client=ExecutionFabricClient(settings),
+        )
+    else:
+        result = build_runtime_snapshot(args.root, task_limit=args.limit)
+        result["transport"] = settings.public()
+        result["degraded_mode"] = True
+    print(json.dumps(result, sort_keys=True) if args.json else format_runtime_snapshot(result))
+    return 0
+
+
 def handle_queue_mode_status(args: argparse.Namespace) -> int:
     _print_structured(queue_mode_status(args.root), json_output=args.json)
     return 0
@@ -175,6 +420,165 @@ def handle_queue_mode_reconcile(args: argparse.Namespace) -> int:
     result = reconcile_execution_state(args.root, dry_run=not args.apply)
     _print_structured(result, json_output=args.json)
     return 0 if result.get("ready", True) else 1
+
+
+def handle_execution_fabric_config_status(args: argparse.Namespace) -> int:
+    _print_structured(execution_fabric_config_status(args.root), json_output=args.json)
+    return 0
+
+
+def handle_execution_fabric_config_show(args: argparse.Namespace) -> int:
+    _print_structured(show_execution_fabric_config(args.root), json_output=args.json)
+    return 0
+
+
+def handle_execution_fabric_config_diff(args: argparse.Namespace) -> int:
+    result = execution_fabric_config_status(args.root)
+    effective = load_execution_fabric_config(args.root)
+    remote: dict[str, object] | None = None
+    transport = effective.value["execution_fabric"].get("transport") or {}
+    if transport.get("mode") == "remote":
+        remote_status = ExecutionFabricClient.from_root(
+            args.root,
+            role="observer",
+        ).status()
+        remote = dict(remote_status.get("config") or {})
+    in_sync = result["drift_count"] == 0 and (
+        remote is None
+        or remote.get("appliedFingerprint") == effective.fingerprint
+    )
+    output = {
+        "ok": True,
+        "root": result["root"],
+        "fingerprint": effective.fingerprint,
+        "local_catalog": {
+            "queue_mode": result["queue_mode"],
+            "drift_count": result["drift_count"],
+            "drift": result["drift"],
+        },
+        "remote_policy": redact_execution_fabric_config(remote),
+        "in_sync": in_sync,
+    }
+    _print_structured(output, json_output=args.json)
+    return 0 if in_sync else 1
+
+
+def _write_config_reload_receipt(root: str, payload: dict) -> Path:
+    receipt_root = (
+        Path(root).expanduser().resolve()
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads"
+    )
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination = receipt_root / f"{stamp}-{payload['fingerprint'][:12]}.json"
+    temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, destination)
+    return destination
+
+
+def handle_execution_fabric_config_reload(args: argparse.Namespace) -> int:
+    effective = load_execution_fabric_config(args.root)
+    expected = str(args.expected_fingerprint or "").strip()
+    if effective.value["execution_fabric"]["transport"].get("mode") != "remote":
+        raise ExecutionFabricConfigError(
+            "runtime config reload is a remote control-plane operation; "
+            "use runtime config reconcile for local/degraded SQLite"
+        )
+    observer = ExecutionFabricClient.from_root(args.root, role="observer")
+    before = observer.status()
+    before_policy = dict(before.get("config") or {})
+    current_fingerprint = str(before_policy.get("appliedFingerprint") or "")
+    if len(current_fingerprint) != 64 or any(
+        character not in "0123456789abcdef" for character in current_fingerprint
+    ):
+        raise ExecutionFabricConfigError(
+            "remote config reload requires a valid observer pre-read fingerprint"
+        )
+    plan = {
+        "action": "runtime.execution-fabric.config.reload",
+        "root": str(Path(args.root).expanduser().resolve()),
+        "fingerprint": effective.fingerprint,
+        "expected_fingerprint": expected or None,
+        "expected_current_fingerprint": current_fingerprint,
+        "dry_run": not args.apply,
+        "applied": False,
+    }
+    if expected and expected != effective.fingerprint:
+        raise ExecutionFabricConfigError(
+            "expected fingerprint does not match the validated effective configuration"
+        )
+    if not args.apply:
+        _print_structured(
+            {
+                **plan,
+                "ready": bool(expected),
+                "blockers": []
+                if expected
+                else ["--expected-fingerprint is required for --apply"],
+            },
+            json_output=args.json,
+        )
+        return 0
+    if not expected:
+        raise ExecutionFabricConfigError(
+            "--expected-fingerprint is required when applying a remote config reload"
+        )
+    admin_settings = resolve_remote_settings(args.root, role="admin")
+    reload_result = ExecutionFabricClient(admin_settings).reload_config(
+        expected_current_fingerprint=current_fingerprint,
+        expected_candidate_fingerprint=effective.fingerprint,
+    )
+    readback = observer.status()
+    remote_policy = dict(readback.get("config") or {})
+    applied_fingerprint = str(
+        remote_policy.get("appliedFingerprint")
+        or reload_result.get("appliedFingerprint")
+        or ""
+    )
+    if applied_fingerprint != effective.fingerprint:
+        raise ExecutionFabricConfigError(
+            "remote config reload readback fingerprint does not match the local effective config"
+        )
+    receipt = {
+        **plan,
+        "schema_version": "agentic-os-execution-fabric-config-reload/v1",
+        "dry_run": False,
+        "applied": True,
+        "reloaded": redact_execution_fabric_config(reload_result),
+        "readback": redact_execution_fabric_config(remote_policy),
+        "recorded_at": datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+    receipt_path = _write_config_reload_receipt(args.root, receipt)
+    _print_structured(
+        {**receipt, "receipt_path": str(receipt_path)},
+        json_output=args.json,
+    )
+    return 0
+
+
+def handle_execution_fabric_config_validate(args: argparse.Namespace) -> int:
+    try:
+        result = execution_fabric_config_status(args.root)
+    except ExecutionFabricConfigError as exc:
+        result = {
+            "ok": False,
+            "root": str(Path(args.root).expanduser().resolve()),
+            "findings": [{"severity": "error", "message": str(exc)}],
+        }
+    _print_structured(result, json_output=args.json)
+    return 0 if result["ok"] else 1
+
+
+def handle_execution_fabric_config_reconcile(args: argparse.Namespace) -> int:
+    result = reconcile_execution_fabric_configuration(args.root, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result["ready"] else 1
 
 
 def handle_run_queue_prune(args: argparse.Namespace) -> int:
@@ -313,8 +717,16 @@ def register(subparsers) -> None:
         epilog=env_epilog(
             env_vars=[
                 ("AGENTIC_OS_ROOT", "Installed OS root (fallback for --root). Default: ~/agentic_os."),
+                (
+                    "AGENTIC_OS_EXECUTION_FABRIC_TOKEN",
+                    "Default bearer-token source for authenticated remote Execution Fabric requests.",
+                ),
             ],
             config_files=[
+                (
+                    "harness/config/execution-fabric.yml",
+                    "Canonical queue, worker-pool, admission, lease, and retry instance policy.",
+                ),
                 ("harness/registries/runtime-registry.yml", "Runtime registry: schedules, heartbeats, integrations."),
                 ("harness/registries/run-queue.yml", "Run queue: pending and in-progress items."),
                 ("harness/registries/automation-run-tracking.yml", "Automation run tracking."),
@@ -323,8 +735,20 @@ def register(subparsers) -> None:
                 ("agentic-os runtime init", "Create runtime registries and log folders."),
                 ("agentic-os runtime doctor", "Check runtime registry health."),
                 ("agentic-os runtime snapshot", "Capture queue, worker, and task state at one moment."),
+                (
+                    "agentic-os runtime config status --json",
+                    "Show effective Execution Fabric config source, fingerprint, and drift.",
+                ),
                 ("agentic-os runtime supervise --apply", "Run a full supervisor tick across all subsystems."),
                 ("agentic-os runtime run-next --apply", "Dispatch the next safe queued item."),
+                (
+                    "agentic-os runtime submit --queue codex --task-type llm.codex --idempotency-key example --payload-json '{\"work_item_id\":\"AGE-1\",\"instruction_ref\":\"harness/shared_factory/01-inbox/AGE-1.md\"}' --apply",
+                    "Idempotently submit one commandless, closed-schema task through local or remote transport.",
+                ),
+                (
+                    "agentic-os runtime work --queue non_llm --max-concurrency 2 --apply",
+                    "Run a host-native worker against the configured transport.",
+                ),
             ],
         ),
         formatter_class=AosHelpFormatter,
@@ -377,6 +801,59 @@ def register(subparsers) -> None:
     runtime_run_next_mode.add_argument("--dry-run", action="store_true", default=True)
     runtime_run_next_mode.add_argument("--apply", action="store_true")
     runtime_run_next_parser.set_defaults(handler=handle_runtime_run_next)
+    runtime_submit_parser = runtime_subparsers.add_parser(
+        "submit",
+        help="Idempotently submit one task through the configured local or remote transport.",
+    )
+    runtime_submit_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_submit_parser.add_argument("--namespace", default="agentic_os")
+    runtime_submit_parser.add_argument("--queue", required=True)
+    runtime_submit_parser.add_argument("--task-type", required=True)
+    runtime_submit_parser.add_argument("--idempotency-key", required=True)
+    runtime_submit_parser.add_argument("--payload-json")
+    runtime_submit_parser.add_argument("--payload-file")
+    runtime_submit_parser.add_argument(
+        "--command",
+        help="Governed host-native command. Prefer a script below the installed OS root.",
+    )
+    runtime_submit_parser.add_argument(
+        "--execution-target",
+        choices=("script", "codex_harness", "claude_harness"),
+    )
+    runtime_submit_parser.add_argument("--capability", action="append", default=[])
+    runtime_submit_parser.add_argument("--priority", type=int, default=0)
+    runtime_submit_parser.add_argument("--max-attempts", type=_positive_int, default=3)
+    runtime_submit_parser.add_argument("--available-at")
+    _add_safe_mutation_mode(runtime_submit_parser)
+    _add_json_arg(runtime_submit_parser)
+    runtime_submit_parser.set_defaults(handler=handle_runtime_submit)
+    runtime_work_parser = runtime_subparsers.add_parser(
+        "work",
+        help="Run a concurrent host-native worker against the configured transport.",
+    )
+    runtime_work_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_work_parser.add_argument("--worker-id")
+    runtime_work_parser.add_argument("--bootstrap-id")
+    runtime_work_parser.add_argument("--host-id")
+    runtime_work_parser.add_argument("--queue", action="append", default=[])
+    runtime_work_parser.add_argument("--capability", action="append", default=[])
+    runtime_work_parser.add_argument("--max-concurrency", type=_positive_int)
+    runtime_work_parser.add_argument("--heartbeat-seconds", type=_positive_int)
+    runtime_work_limit = runtime_work_parser.add_mutually_exclusive_group()
+    runtime_work_limit.add_argument("--once", action="store_true")
+    runtime_work_limit.add_argument("--max-tasks", type=_positive_int)
+    _add_safe_mutation_mode(runtime_work_parser)
+    _add_json_arg(runtime_work_parser)
+    runtime_work_parser.set_defaults(handler=handle_runtime_work)
+    runtime_status_parser = runtime_subparsers.add_parser(
+        "status",
+        help="Read local/degraded or authenticated remote queue, worker, and run status.",
+    )
+    runtime_status_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    runtime_status_parser.add_argument("--task-id")
+    runtime_status_parser.add_argument("--limit", type=_positive_int, default=200)
+    _add_json_arg(runtime_status_parser)
+    runtime_status_parser.set_defaults(handler=handle_runtime_status)
     queue_mode_parser = runtime_subparsers.add_parser(
         "queue-mode",
         help="Read, plan, apply, or roll back the runtime queue backend selector.",
@@ -416,6 +893,62 @@ def register(subparsers) -> None:
     _add_safe_mutation_mode(queue_mode_reconcile_parser)
     _add_json_arg(queue_mode_reconcile_parser)
     queue_mode_reconcile_parser.set_defaults(handler=handle_queue_mode_reconcile)
+    fabric_config_parser = runtime_subparsers.add_parser(
+        "config",
+        help="Inspect, validate, or transactionally reconcile Execution Fabric instance configuration.",
+    )
+    fabric_config_subparsers = fabric_config_parser.add_subparsers(
+        dest="execution_fabric_config_command",
+        required=True,
+    )
+    fabric_config_status_parser = fabric_config_subparsers.add_parser(
+        "status",
+        help="Show the effective source, fingerprint, canonical dependencies, and runtime drift.",
+    )
+    fabric_config_status_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(fabric_config_status_parser)
+    fabric_config_status_parser.set_defaults(handler=handle_execution_fabric_config_status)
+    fabric_config_show_parser = fabric_config_subparsers.add_parser(
+        "show",
+        help="Show the redacted effective document with source and layer provenance.",
+    )
+    fabric_config_show_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(fabric_config_show_parser)
+    fabric_config_show_parser.set_defaults(handler=handle_execution_fabric_config_show)
+    fabric_config_diff_parser = fabric_config_subparsers.add_parser(
+        "diff",
+        help="Compare the effective fingerprint with local catalog and remote policy readback.",
+    )
+    fabric_config_diff_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(fabric_config_diff_parser)
+    fabric_config_diff_parser.set_defaults(handler=handle_execution_fabric_config_diff)
+    fabric_config_validate_parser = fabric_config_subparsers.add_parser(
+        "validate",
+        help="Validate the effective Execution Fabric instance configuration and cross-references.",
+    )
+    fabric_config_validate_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_json_arg(fabric_config_validate_parser)
+    fabric_config_validate_parser.set_defaults(handler=handle_execution_fabric_config_validate)
+    fabric_config_reconcile_parser = fabric_config_subparsers.add_parser(
+        "reconcile",
+        help="Plan by default; pass --apply to atomically update queue, pool, limit, lease, and retry state.",
+    )
+    fabric_config_reconcile_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    _add_safe_mutation_mode(fabric_config_reconcile_parser)
+    _add_json_arg(fabric_config_reconcile_parser)
+    fabric_config_reconcile_parser.set_defaults(handler=handle_execution_fabric_config_reconcile)
+    fabric_config_reload_parser = fabric_config_subparsers.add_parser(
+        "reload",
+        help="Plan or apply an admin-scoped remote policy reload with fingerprint readback.",
+    )
+    fabric_config_reload_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    fabric_config_reload_parser.add_argument(
+        "--expected-fingerprint",
+        help="Validated local fingerprint required with --apply.",
+    )
+    _add_safe_mutation_mode(fabric_config_reload_parser)
+    _add_json_arg(fabric_config_reload_parser)
+    fabric_config_reload_parser.set_defaults(handler=handle_execution_fabric_config_reload)
     runtime_prune_parser = runtime_subparsers.add_parser("prune", help="Prune stale run-queue items and old run-queue backups.")
     _add_run_queue_prune_args(runtime_prune_parser)
     runtime_prune_parser.set_defaults(handler=handle_run_queue_prune)

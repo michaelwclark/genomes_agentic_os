@@ -158,6 +158,117 @@ export interface RuntimeTask {
   lease_until?: string;
 }
 
+export interface RuntimeEffects {
+  pending: number;
+  delivering: number;
+  delivered: number;
+  failed: number;
+  dead_letter: number;
+}
+
+export interface RuntimeControlPlane {
+  transport: "local" | "remote" | "unknown";
+  active_host?: string;
+  leader_host?: string;
+  role?: "leader" | "standby" | "worker" | "unknown";
+  epoch?: number;
+  failover_state?: string;
+  witness_status?: string;
+  standby_hosts?: string[];
+  last_transition_at?: string;
+  leader_lease_expires_at?: string;
+  leadership_receipt_id?: string;
+  leadership_fence_digest?: string;
+  recovery_hold_until?: string;
+  leadership_proof_expires_at?: string;
+  last_error?: string;
+}
+
+export interface RuntimeConfigState {
+  source?: string;
+  fingerprint?: string;
+  applied_fingerprint?: string;
+  drifted?: boolean;
+  validated_at?: string;
+}
+
+export interface RuntimeHealingState {
+  status: "healthy" | "repairing" | "degraded" | "failed" | "unknown";
+  last_run_at?: string;
+  next_run_at?: string;
+  repairs: number;
+  failures: number;
+  summary?: string;
+  finding_details?: RuntimeFinding[];
+  repair_receipts?: RuntimeRepairReceipt[];
+}
+
+export interface RuntimeFinding {
+  id: string;
+  kind: string;
+  revision: number;
+  status: string;
+  severity: string;
+  summary: string;
+  scopeType?: string;
+  scopeId?: string;
+  lastObservedAt?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface RuntimeRepairReceipt {
+  id: string;
+  findingId: string;
+  findingRevision: number;
+  action: string;
+  status: string;
+  actor?: string;
+  startedAt?: string;
+  completedAt?: string;
+  errorSummary?: string;
+}
+
+export interface RuntimeAlarm {
+  id: string;
+  severity: "info" | "warning" | "error" | "critical";
+  status: "active" | "acknowledged" | "resolved";
+  message: string;
+  source?: string;
+  occurred_at?: string;
+  dedupe_key?: string;
+}
+
+export interface RuntimeRunReport {
+  run_id: string;
+  task_id?: string;
+  task_type?: string;
+  queue_name?: string;
+  status: string;
+  worker_id?: string;
+  attempt_count?: number;
+  effects_pending?: number;
+  effects_failed?: number;
+  started_at?: string;
+  finished_at?: string;
+  updated_at?: string;
+  duration_seconds?: number;
+  summary?: string;
+  error_summary?: string;
+  artifacts?: RuntimeRunArtifact[];
+}
+
+export interface RuntimeRunArtifact {
+  artifact_id?: string;
+  name?: string;
+  content_type?: string;
+  sha256?: string;
+  size_bytes?: number;
+  status?: string;
+  uri?: string;
+  available_at?: string;
+  last_error?: string;
+}
+
 export interface LongRunningRun {
   id: string;
   kind?: string;
@@ -184,6 +295,7 @@ export interface RuntimeHealth {
   queue_depth: number;
   running: number;
   failed: number;
+  completed?: number;
   recent_failures: number;
   dead_letter: number;
   active_workers: number;
@@ -208,6 +320,12 @@ export interface RuntimeHealth {
   long_running_runs?: LongRunningRun[];
   long_running_active?: number;
   long_running_attention?: number;
+  effects?: RuntimeEffects;
+  control_plane?: RuntimeControlPlane;
+  config?: RuntimeConfigState;
+  healing?: RuntimeHealingState;
+  alarms?: RuntimeAlarm[];
+  recent_run_reports?: RuntimeRunReport[];
   captured_at: string;
   reason?: string;
 }

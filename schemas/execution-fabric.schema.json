@@ -1,0 +1,564 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-os.local/schemas/execution-fabric-v1.json",
+  "title": "Agentic OS Execution Fabric instance configuration",
+  "$defs": {
+    "hostOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "degraded_primary": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_degraded_primary": {"type": "boolean"},
+            "max_duration_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+            "allowed_task_types": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"}
+            },
+            "allowed_effect_types": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"}
+            },
+            "allow_scheduler": {"type": "boolean"}
+          }
+        },
+        "transport": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"enum": ["local", "remote"]},
+            "control_plane_url": {"type": ["string", "null"], "minLength": 1},
+            "request_timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "long_poll_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30
+            },
+            "submit_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "worker_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "observer_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "admin_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            }
+          }
+        },
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "global_max_running": {"type": "integer", "minimum": 1},
+            "reserved_interactive_slots": {"type": "integer", "minimum": 0},
+            "max_interactive_running": {"type": "integer", "minimum": 1},
+            "provider_limits": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+              "additionalProperties": {"type": "integer", "minimum": 1}
+            },
+            "namespace_limits": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]+$"},
+              "additionalProperties": {"type": "integer", "minimum": 1}
+            },
+            "host_limits": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]+$"},
+              "additionalProperties": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        "scheduling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "priority_aging": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "interval_seconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                },
+                "boost_per_interval": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                },
+                "max_boost": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                }
+              }
+            },
+            "namespace_weights": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]+$"},
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        "queues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "enabled": {"type": "boolean"},
+              "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+              "concurrency": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "max_running": {"type": "integer", "minimum": 1},
+                  "max_queued": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          }
+        },
+        "worker_pools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "enabled": {"type": "boolean"},
+              "capacity": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min_workers": {"type": "integer", "minimum": 0},
+                  "max_workers": {"type": "integer", "minimum": 1},
+                  "max_tasks_per_worker": {"type": "integer", "minimum": 1}
+                }
+              },
+              "lease": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "timeout_seconds": {"type": "integer", "minimum": 30},
+                  "heartbeat_seconds": {"type": "integer", "minimum": 1}
+                }
+              },
+              "retry": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "backoff_seconds": {"type": "integer", "minimum": 0}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "execution_fabric"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "execution_fabric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["degraded_primary", "admission", "scheduling", "task_routes", "queues", "worker_pools"],
+      "properties": {
+        "degraded_primary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "allow_degraded_primary",
+            "max_duration_seconds",
+            "allowed_task_types",
+            "allowed_effect_types",
+            "allow_scheduler"
+          ],
+          "properties": {
+            "allow_degraded_primary": {"type": "boolean"},
+            "max_duration_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+            "allowed_task_types": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"}
+            },
+            "allowed_effect_types": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"}
+            },
+            "allow_scheduler": {"type": "boolean"}
+          }
+        },
+        "transport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "control_plane_url",
+            "request_timeout_seconds",
+            "long_poll_seconds",
+            "submit_token_env",
+            "worker_token_env",
+            "observer_token_env",
+            "admin_token_env"
+          ],
+          "properties": {
+            "mode": {"enum": ["local", "remote"]},
+            "control_plane_url": {
+              "type": ["string", "null"],
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "request_timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "long_poll_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30
+            },
+            "submit_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "worker_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "observer_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "admin_token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "global_max_running",
+            "reserved_interactive_slots",
+            "max_interactive_running",
+            "provider_limits",
+            "namespace_limits",
+            "host_limits"
+          ],
+          "properties": {
+            "global_max_running": {"type": "integer", "minimum": 1},
+            "reserved_interactive_slots": {"type": "integer", "minimum": 0},
+            "max_interactive_running": {"type": "integer", "minimum": 1},
+            "provider_limits": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+              "additionalProperties": {"type": "integer", "minimum": 1}
+            },
+            "namespace_limits": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]+$"},
+              "additionalProperties": {"type": "integer", "minimum": 1}
+            },
+            "host_limits": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]+$"},
+              "additionalProperties": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        "scheduling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["priority_aging", "namespace_weights"],
+          "properties": {
+            "priority_aging": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "interval_seconds",
+                "boost_per_interval",
+                "max_boost"
+              ],
+              "properties": {
+                "interval_seconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                },
+                "boost_per_interval": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                },
+                "max_boost": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000
+                }
+              }
+            },
+            "namespace_weights": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]+$"},
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        "host_overrides": {
+          "type": "object",
+          "description": "Host-specific safety-narrowing overlays applied after instance config and before invocation overrides.",
+          "propertyNames": {"pattern": "^[a-zA-Z0-9._:-]{1,128}$"},
+          "additionalProperties": {"$ref": "#/$defs/hostOverride"}
+        },
+        "task_routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "task_type",
+              "queue",
+              "scheduling_class",
+              "execution",
+              "mutation_class",
+              "approval_class",
+              "payload",
+              "allowed_effect_types"
+            ],
+            "properties": {
+              "task_type": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_.-]*$"
+              },
+              "queue": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "scheduling_class": {"enum": ["interactive", "background"]},
+              "execution": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "remote_allowed",
+                  "target",
+                  "required_capability",
+                  "command_template",
+                  "domain_worker"
+                ],
+                "properties": {
+                  "remote_allowed": {"type": "boolean"},
+                  "target": {
+                    "enum": [
+                      "script",
+                      "codex_harness",
+                      "claude_harness",
+                      "domain_worker"
+                    ]
+                  },
+                  "required_capability": {
+                    "type": ["string", "null"],
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "command_template": {
+                    "type": ["array", "null"],
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 512}
+                  },
+                  "domain_worker": {
+                    "type": ["string", "null"],
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  }
+                }
+              },
+              "mutation_class": {
+                "enum": [
+                  "read_only",
+                  "internal_write",
+                  "external_write",
+                  "production_write"
+                ]
+              },
+              "approval_class": {
+                "enum": ["not_required", "policy_gated", "explicit"]
+              },
+              "payload": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["additional_properties", "required", "properties"],
+                "properties": {
+                  "additional_properties": {"const": false},
+                  "required": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+                  },
+                  "properties": {
+                    "type": "object",
+                    "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["type"],
+                      "properties": {
+                        "type": {"enum": ["string", "integer", "boolean"]},
+                        "pattern": {"type": "string", "maxLength": 512},
+                        "enum": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": ["string", "integer", "boolean"]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "allowed_effect_types": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_.-]*$"
+                }
+              }
+            }
+          }
+        },
+        "queues": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "enabled",
+              "worker_pool",
+              "accepted_task_types",
+              "priority",
+              "concurrency"
+            ],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "enabled": {"type": "boolean"},
+              "worker_pool": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "accepted_task_types": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1}
+              },
+              "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+              "concurrency": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["max_running", "max_queued"],
+                "properties": {
+                  "max_running": {"type": "integer", "minimum": 1},
+                  "max_queued": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          }
+        },
+        "worker_pools": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "enabled", "provider", "queues", "capabilities", "capacity", "lease", "retry"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "enabled": {"type": "boolean"},
+              "provider": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              "queues": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "uniqueItems": true,
+                "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+              },
+              "capabilities": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "maxLength": 128}
+              },
+              "capacity": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["min_workers", "max_workers", "max_tasks_per_worker"],
+                "properties": {
+                  "min_workers": {"type": "integer", "minimum": 0},
+                  "max_workers": {"type": "integer", "minimum": 1},
+                  "max_tasks_per_worker": {"type": "integer", "minimum": 1}
+                }
+              },
+              "lease": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["timeout_seconds", "heartbeat_seconds"],
+                "properties": {
+                  "timeout_seconds": {"type": "integer", "minimum": 30},
+                  "heartbeat_seconds": {"type": "integer", "minimum": 1}
+                }
+              },
+              "retry": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["max_attempts", "backoff_seconds"],
+                "properties": {
+                  "max_attempts": {"type": "integer", "minimum": 1},
+                  "backoff_seconds": {"type": "integer", "minimum": 0}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

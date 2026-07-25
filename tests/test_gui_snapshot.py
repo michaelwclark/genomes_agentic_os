@@ -8,7 +8,14 @@ import sqlite3
 import jsonschema
 import yaml
 
-from genomes_agentic_os.gui_snapshot import SCHEMA_VERSION, build_gui_snapshot, build_transcript_snapshot
+from genomes_agentic_os.gui_snapshot import (
+    SCHEMA_VERSION,
+    _project_runtime_alarms,
+    _project_runtime_config,
+    _project_runtime_healing,
+    build_gui_snapshot,
+    build_transcript_snapshot,
+)
 from genomes_agentic_os.long_run import update_registry
 from genomes_agentic_os.runtime_backend import apply_queue_mode
 from genomes_agentic_os.runtime_ops import append_run_queue_item, runtime_init
@@ -283,6 +290,56 @@ def test_gui_v1_schema_still_accepts_legacy_snapshot_without_runtime(tmp_path: P
     jsonschema.validate(snapshot, schema)
 
 
+def test_remote_runtime_status_shapes_are_normalized_for_command_center() -> None:
+    config = _project_runtime_config(
+        {
+            "source": "/etc/agentic-os/execution-fabric.yml",
+            "state": "drifted",
+            "appliedFingerprint": "a" * 64,
+            "diskFingerprint": "b" * 64,
+            "lastCheckedAt": "2026-07-24T12:00:00Z",
+        }
+    )
+    healing = _project_runtime_healing(
+        {
+            "status": "degraded",
+            "lastRepairAt": "2026-07-24T12:01:00Z",
+            "repairs": {"succeeded": 2, "failed": 1, "running": 1},
+        }
+    )
+    alarms = _project_runtime_alarms(
+        [
+            {
+                "code": "queue_without_live_worker",
+                "severity": "critical",
+                "queue": "pr_reviews",
+                "count": 3,
+            }
+        ],
+        occurred_at="2026-07-24T12:02:00Z",
+    )
+
+    assert config == {
+        "source": "/etc/agentic-os/execution-fabric.yml",
+        "fingerprint": "b" * 64,
+        "applied_fingerprint": "a" * 64,
+        "drifted": True,
+        "validated_at": "2026-07-24T12:00:00Z",
+    }
+    assert healing == {
+        "status": "degraded",
+        "last_run_at": "2026-07-24T12:01:00Z",
+            "repairs": 3,
+            "failures": 1,
+            "summary": None,
+            "finding_details": [],
+            "repair_receipts": [],
+        }
+    assert alarms[0]["status"] == "active"
+    assert alarms[0]["message"] == "queue without live worker: pr_reviews"
+    assert alarms[0]["id"] == "queue_without_live_worker:pr_reviews"
+
+
 def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path: Path) -> None:
     fixture = make_gui_fixture(tmp_path)
     runtime_init(fixture["root"])
@@ -314,7 +371,13 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["registered_workers"] == 0
     assert snapshot["runtime"]["historical_worker_records"] == 0
     assert snapshot["runtime"]["oldest_wait_seconds"] >= 0
-    assert {queue["queue_name"] for queue in snapshot["runtime"]["queues"]} == {"codex", "claude", "non_llm"}
+    assert {queue["queue_name"] for queue in snapshot["runtime"]["queues"]} == {
+        "codex",
+        "claude",
+        "pr_reviews",
+        "los_environment",
+        "non_llm",
+    }
     assert snapshot["runtime"]["task_count"] == 1
     assert snapshot["runtime"]["tasks"][0]["id"] == "gui-codex"
     assert snapshot["runtime"]["tasks"][0]["queue_name"] == "codex"
@@ -322,6 +385,24 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["max_interactive_running"] == 1
     assert snapshot["runtime"]["workers"] == []
     assert snapshot["runtime"]["running_tasks"] == []
+    assert snapshot["runtime"]["completed"] == 0
+    assert snapshot["runtime"]["control_plane"] == {
+        "transport": "local",
+        "active_host": "localhost",
+        "leader_host": "localhost",
+        "role": "leader",
+        "failover_state": "single-host",
+    }
+    assert snapshot["runtime"]["config"]["drifted"] is False
+    assert len(snapshot["runtime"]["config"]["fingerprint"]) == 64
+    assert snapshot["runtime"]["alarms"] == []
+    assert snapshot["runtime"]["recent_run_reports"] == []
+    schema = json.loads(
+        (Path(__file__).parents[1] / "schemas" / "gui-snapshot.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    jsonschema.validate(snapshot, schema)
 
 
 def test_command_center_snapshot_exposes_long_running_safety_state(tmp_path: Path) -> None:

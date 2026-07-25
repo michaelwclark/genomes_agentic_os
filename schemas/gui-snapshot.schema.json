@@ -48,6 +48,7 @@
         "queue_depth": {"type": "integer", "minimum": 0},
         "running": {"type": "integer", "minimum": 0},
         "failed": {"type": "integer", "minimum": 0},
+        "completed": {"type": "integer", "minimum": 0},
         "recent_failures": {"type": "integer", "minimum": 0},
         "dead_letter": {"type": "integer", "minimum": 0},
         "active_workers": {"type": "integer", "minimum": 0},
@@ -75,6 +76,18 @@
         },
         "long_running_active": {"type": "integer", "minimum": 0},
         "long_running_attention": {"type": "integer", "minimum": 0},
+        "effects": {"$ref": "#/$defs/runtime_effects"},
+        "control_plane": {"$ref": "#/$defs/runtime_control_plane"},
+        "config": {"$ref": "#/$defs/runtime_config"},
+        "healing": {"$ref": "#/$defs/runtime_healing"},
+        "alarms": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/runtime_alarm"}
+        },
+        "recent_run_reports": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/runtime_run_report"}
+        },
         "captured_at": {"type": "string", "format": "date-time"},
         "reason": {"type": "string"}
       },
@@ -90,6 +103,160 @@
     }
   },
   "$defs": {
+    "runtime_effects": {
+      "type": "object",
+      "required": ["pending", "delivering", "delivered", "failed", "dead_letter"],
+      "properties": {
+        "pending": {"type": "integer", "minimum": 0},
+        "delivering": {"type": "integer", "minimum": 0},
+        "delivered": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "dead_letter": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "runtime_control_plane": {
+      "type": "object",
+      "required": ["transport"],
+      "properties": {
+        "transport": {"enum": ["local", "remote", "unknown"]},
+        "active_host": {"type": "string"},
+        "leader_host": {"type": "string"},
+        "role": {"enum": ["leader", "standby", "worker", "unknown"]},
+        "epoch": {"type": "integer", "minimum": 0},
+        "failover_state": {"type": "string"},
+        "witness_status": {"type": "string"},
+        "standby_hosts": {"type": "array", "items": {"type": "string"}},
+        "last_transition_at": {"type": "string"},
+        "leader_lease_expires_at": {"type": ["string", "null"]},
+        "leadership_receipt_id": {"type": ["string", "null"]},
+        "leadership_fence_digest": {"type": ["string", "null"]},
+        "recovery_hold_until": {"type": ["string", "null"]},
+        "leadership_proof_expires_at": {"type": ["string", "null"]},
+        "last_error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "runtime_config": {
+      "type": "object",
+      "properties": {
+        "source": {"type": "string"},
+        "fingerprint": {"type": "string"},
+        "applied_fingerprint": {"type": ["string", "null"]},
+        "drifted": {"type": "boolean"},
+        "validated_at": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "runtime_healing": {
+      "type": "object",
+      "required": ["status", "repairs", "failures"],
+      "properties": {
+        "status": {"enum": ["healthy", "repairing", "degraded", "failed", "unknown"]},
+        "last_run_at": {"type": "string"},
+        "next_run_at": {"type": "string"},
+        "repairs": {"type": "integer", "minimum": 0},
+        "failures": {"type": "integer", "minimum": 0},
+        "summary": {"type": ["string", "null"]},
+        "finding_details": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/runtime_finding"}
+        },
+        "repair_receipts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/runtime_repair_receipt"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime_finding": {
+      "type": "object",
+      "required": ["id", "kind", "revision", "status", "severity", "summary"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "revision": {"type": "integer", "minimum": 1},
+        "status": {"type": "string"},
+        "severity": {"type": "string"},
+        "summary": {"type": "string"},
+        "scopeType": {"type": "string"},
+        "scopeId": {"type": "string"},
+        "lastObservedAt": {"type": "string"},
+        "details": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "runtime_repair_receipt": {
+      "type": "object",
+      "required": ["id", "findingId", "findingRevision", "action", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "findingId": {"type": "string"},
+        "findingRevision": {"type": "integer", "minimum": 1},
+        "action": {"type": "string"},
+        "status": {"type": "string"},
+        "actor": {"type": "string"},
+        "startedAt": {"type": ["string", "null"]},
+        "completedAt": {"type": ["string", "null"]},
+        "errorSummary": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "runtime_alarm": {
+      "type": "object",
+      "required": ["id", "severity", "status", "message"],
+      "properties": {
+        "id": {"type": "string"},
+        "severity": {"enum": ["info", "warning", "error", "critical"]},
+        "status": {"enum": ["active", "acknowledged", "resolved"]},
+        "message": {"type": "string"},
+        "source": {"type": "string"},
+        "occurred_at": {"type": "string"},
+        "dedupe_key": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "runtime_run_report": {
+      "type": "object",
+      "required": ["run_id", "status"],
+      "properties": {
+        "run_id": {"type": "string"},
+        "task_id": {"type": "string"},
+        "task_type": {"type": "string"},
+        "queue_name": {"type": "string"},
+        "status": {"type": "string"},
+        "worker_id": {"type": "string"},
+        "attempt_count": {"type": "integer", "minimum": 0},
+        "effects_pending": {"type": "integer", "minimum": 0},
+        "effects_failed": {"type": "integer", "minimum": 0},
+        "started_at": {"type": "string"},
+        "finished_at": {"type": "string"},
+        "updated_at": {"type": "string"},
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "summary": {"type": "string"},
+        "error_summary": {"type": "string"},
+        "artifacts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/runtime_run_artifact"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime_run_artifact": {
+      "type": "object",
+      "properties": {
+        "artifact_id": {"type": ["string", "null"]},
+        "name": {"type": ["string", "null"]},
+        "content_type": {"type": ["string", "null"]},
+        "sha256": {"type": ["string", "null"]},
+        "size_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "status": {"type": ["string", "null"]},
+        "uri": {"type": ["string", "null"]},
+        "available_at": {"type": ["string", "null"]},
+        "last_error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
     "long_running_run": {
       "type": "object",
       "required": ["id", "label", "status"],

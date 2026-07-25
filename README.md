@@ -33,6 +33,7 @@ subcommand, see [`docs/17-cli-reference.md`](docs/17-cli-reference.md).
 | Validate / doctor / health | Checks required folder structure and file parseability, then runs a full health check across every subsystem with an auto-repair option. | `agentic-os doctor --fix-missing` |
 | Config surfaces | Installs or repairs a layered Codex `config.toml` (root, domain, project, workflow, automation) and the matching `AGENTS.md` → `CLAUDE.md` adapter that Claude reads. | `agentic-os config install --layer <layer> --apply` |
 | Runtime / always-on | Runs one supervisor tick across heartbeats, schedules, watch sources, events, and the run queue; each piece is also independently manageable. | `agentic-os runtime supervise --apply` |
+| Execution Fabric | Provides five named queues, bounded cross-host workers, durable attempts/effects, queue and worker visibility, alarms, deterministic healing, and fenced primary/standby failover while preserving a local degraded mode. | `agentic-os runtime snapshot` / `runtime config show` |
 | Intake / tracker sync | Plans where a capture request should land across the filesystem and Notion, polls connected external systems (Jira, Linear, GitHub, Slack, and others) into local events, and syncs OS state into a Notion control plane. | `agentic-os doc-config plan --request "..."` |
 | Self-improvement | Reviews local evidence — conversation reports, doctor findings — and proposes OS improvements for review; nothing lands without an explicit approve/promote step. | `agentic-os self-improvement run` |
 | Cockpit | Builds a local, read-only, self-contained HTML dashboard over conversations, work, reviews, reports, connected sources, hosts, automations, and hygiene, and opens it. | `agentic-os cockpit open` |
@@ -121,6 +122,7 @@ Key starting points:
 - [Architecture atlas](docs/architecture/system-architecture.md)
 - [Information architecture](docs/04-information-architecture.md)
 - [Install & quickstart](docs/01-install-and-quickstart.md)
+- [Execution Fabric operator guide](docs/13-feature-guides/18-execution-fabric.md)
 - [Example OS trees](docs/examples/README.md)
 - [Harness map](harness/README.md)
 - [Python source map](src/README.md)

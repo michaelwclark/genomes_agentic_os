@@ -67,6 +67,31 @@ locally derived Jira, PR, Slack, work-item, branch/worktree, report, and
 filesystem references. Absence is shown as an explicit empty state rather than
 invented linkage.
 
+## Execution Fabric Operations
+
+Open the `Execution Fabric` page from Command Center for the first-class
+operator view. It consumes `agentic-os gui snapshot`, which in turn uses the
+selected backend's normalized runtime snapshot; the renderer never opens
+SQLite, PostgreSQL, Valkey, or service files directly.
+
+The page exposes:
+
+- waiting, running, completed, failed, retrying, delayed, and dead-letter work;
+- named queue depth and limits;
+- worker-pool utilization plus live, unhealthy, capacity, heartbeat, and lease
+  state;
+- active host, leader/standby role, epoch, failover state, and witness health
+  when the selected backend reports them;
+- effective config source/fingerprint and drift;
+- effect outbox counts, active alarms, and healer status;
+- current managed runs, bounded task history, and recent terminal run reports.
+
+`Unknown` or `Not reported` is intentional when a compatibility backend does
+not provide a field. Command Center does not manufacture cross-host health from
+local process listings. Use `agentic-os runtime snapshot --json` for the same
+machine-readable projection and CLI filtering when the bounded UI sample is
+not exhaustive.
+
 ## Model Presentation And Routing
 
 Provider and complexity are separate dimensions:

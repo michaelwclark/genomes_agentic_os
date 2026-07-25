@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genomes-agentic-os"
-version = "0.3.0"
+version = "0.4.0"
 description = "Scaffold and validate local operating systems for agentic workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,9 @@ aos = "genomes_agentic_os.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+genomes_agentic_os = ["resources/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

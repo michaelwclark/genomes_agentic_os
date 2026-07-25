@@ -1,0 +1,16 @@
+*
+!.dockerignore
+!MANIFEST.in
+!README.md
+!pyproject.toml
+!setup.py
+!src/
+!src/**
+!harness/
+!harness/**
+!templates/
+!templates/**
+!schemas/
+!schemas/**
+!operating-manual/
+!operating-manual/**

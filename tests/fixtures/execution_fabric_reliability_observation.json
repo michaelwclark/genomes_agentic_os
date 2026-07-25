@@ -1,0 +1,95 @@
+{
+  "schema_version": "execution-fabric-reliability-observation-contract/v1",
+  "endpoint": "POST /api/v1/reliability/observations",
+  "authentication": {
+    "type": "bearer",
+    "scope": "reliability-source:<source>",
+    "source_body_must_match_credential": true
+  },
+  "request": {
+    "additional_properties": false,
+    "required": [
+      "source",
+      "incidentKey",
+      "revision",
+      "active",
+      "severity",
+      "code",
+      "summary",
+      "evidence",
+      "affected",
+      "runbook",
+      "observedAt"
+    ],
+    "example": {
+      "source": "team-pr-runner",
+      "incidentKey": "malformed-row:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "revision": 1,
+      "active": true,
+      "severity": "warning",
+      "code": "malformed_request_row",
+      "summary": "Team PR request row is malformed",
+      "evidence": {
+        "field": "pull_request_url",
+        "reason": "missing"
+      },
+      "affected": {
+        "kind": "notion_page",
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "runbook": {
+        "ref": "execution-fabric/team-pr-malformed-row"
+      },
+      "observedAt": "2026-07-24T20:00:00.000Z"
+    },
+    "recovery_example": {
+      "source": "team-pr-runner",
+      "incidentKey": "malformed-row:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "revision": 2,
+      "active": false,
+      "severity": "warning",
+      "code": "malformed_request_row",
+      "summary": "Team PR request row recovered",
+      "evidence": {
+        "field": "pull_request_url",
+        "recovered": true
+      },
+      "affected": {
+        "kind": "notion_page",
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "runbook": {
+        "ref": "execution-fabric/team-pr-malformed-row"
+      },
+      "observedAt": "2026-07-24T20:01:00.000Z"
+    }
+  },
+  "idempotency": {
+    "key_fields": ["source", "incidentKey", "revision"],
+    "same_content_status": 200,
+    "new_revision_status": 201,
+    "same_revision_different_content_status": 409,
+    "stale_revision_status": 409,
+    "recovery_requires_higher_revision": true
+  },
+  "recovery": {
+    "active": false,
+    "severity_must_remain": ["warning", "critical"],
+    "finding_status": "resolved",
+    "alarm_status": "resolved_awaiting_ack",
+    "repair_status": "cancelled",
+    "operator_ack_required": true
+  },
+  "platform_owned": [
+    "finding identity and persistence",
+    "sticky alarm derivation and routing",
+    "repair policy and repair execution"
+  ],
+  "forbidden_request_fields": [
+    "command",
+    "repair",
+    "repairCommand",
+    "alertRoute",
+    "notificationTarget"
+  ]
+}

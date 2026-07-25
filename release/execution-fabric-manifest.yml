@@ -1,0 +1,25 @@
+schema_version: execution-fabric-release/v1
+release_version: 0.4.0
+service_api_version: 1.0.0
+python_package: genomes-agentic-os
+services:
+  control_plane:
+    package: "@genomes-agentic-os/execution-fabric-control-plane"
+    image: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-control-plane
+  leadership_witness:
+    package: "@genomes-agentic-os/execution-fabric-leadership-witness"
+    image: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-leadership-witness
+  worker:
+    package: genomes-agentic-os
+    image: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-worker
+contracts:
+  config: harness/config/execution-fabric.yml
+  schema: schemas/execution-fabric.schema.json
+  openapi: services/execution-fabric-control-plane/src/openapi.ts
+release_assets:
+  - execution-fabric-emergency-bundle.tar.gz
+  - execution-fabric-config-schema.tar.gz
+  - execution-fabric-image-lock.json
+  - execution-fabric-release-manifest.json
+  - execution-fabric-sbom.spdx.json
+  - SHA256SUMS

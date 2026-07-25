@@ -28,7 +28,23 @@ class build_py(_build_py):
         for name in RESOURCE_DIRECTORIES:
             source = repository / name
             if source.is_dir():
-                shutil.copytree(source, destination / name, dirs_exist_ok=True)
+                packaged = destination / name
+                # build/ is intentionally reusable, so remove stale package
+                # resources before copying. Otherwise a local cache deleted
+                # from the source can survive into a later release wheel.
+                if packaged.exists():
+                    shutil.rmtree(packaged)
+                shutil.copytree(
+                    source,
+                    packaged,
+                    ignore=shutil.ignore_patterns(
+                        "__pycache__",
+                        "*.pyc",
+                        "*.pyo",
+                        ".DS_Store",
+                        ".git",
+                    ),
+                )
 
 
 setup(cmdclass={"build_py": build_py})
