@@ -19,6 +19,25 @@ Read with ARCHITECTURE.md §6; recipes that apply this doc are in FEATURE-PLAYBO
 Doctrine (ARCHITECTURE.md §1): rows 1–4 are the state plane — read-only to this app, reads
 funneled through the `agentic-os` CLI. Rows 5–8 are GUI-owned. Nothing else may persist.
 
+### Execution Fabric projection
+
+`snapshot.runtime` is the one Command Center contract for both the local
+compatibility backend and a remote control plane. The required core remains
+queue/run/worker health. Optional fields project richer backend truth without
+making it up:
+
+- `control_plane`: transport, active/leader host, role, epoch, failover and
+  witness state;
+- `config`: effective source, desired/applied fingerprint, and drift;
+- `effects`: pending/delivering/delivered/failed/dead-letter counts;
+- `healing` and `alarms`: last healer outcome and operator-actionable alarms;
+- `recent_run_reports`: bounded terminal run receipts.
+
+The CLI normalizes remote service snapshots before the GUI sees them. Missing
+optional fields render as unknown/not reported. The renderer must never join
+Docker, systemd, PostgreSQL, Valkey, or host process data into a competing
+health model.
+
 ## 2. Read path today (snapshot pipeline)
 
 ```

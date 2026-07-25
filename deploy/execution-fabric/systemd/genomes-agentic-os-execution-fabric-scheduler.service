@@ -1,0 +1,15 @@
+[Unit]
+Description=Genomes Agentic OS Execution Fabric scheduler role
+After=docker.service network-online.target genomes-agentic-os-execution-fabric-primary.service
+Requires=docker.service genomes-agentic-os-execution-fabric-primary.service
+PartOf=genomes-agentic-os-execution-fabric-primary.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
+WorkingDirectory=/opt/genomes-agentic-os/execution-fabric/current/deploy
+ExecStart=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile primary up -d --no-deps scheduler
+ExecStop=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml stop scheduler
+TimeoutStartSec=120
+TimeoutStopSec=60

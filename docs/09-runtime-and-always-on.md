@@ -1,9 +1,11 @@
 # 09 · Runtime & Always-On
 
 > **Purpose:** understand the Agentic OS runtime surface (registries,
-> heartbeats, schedules, integrations, a selectable queue backend) and how to make it **tick on a
-> cadence**. There is no bespoke daemon — an external scheduler calls one
-> auditable tick command (`runtime supervise`), installed by a small script.
+> heartbeats, schedules, integrations, and a selectable queue backend) and how
+> to make it **tick on a cadence**. Local/degraded mode uses an external
+> scheduler to call one auditable tick command (`runtime supervise`). Remote
+> Execution Fabric adds independently supervised API, scheduler, observer,
+> healer, alarm-dispatcher, and worker roles.
 >
 > **You'll use:** `agentic-os runtime {init,doctor,run-next,supervise}`,
 > `agentic-os run-queue prune`,
@@ -22,8 +24,9 @@
 
 The Agentic OS runtime layer manages registries that describe *what should
 happen* on a cadence. The compatibility queue remains file-backed; the optional
-Execution Fabric moves queue mutation and claiming into the local transactional
-state plane while leaving the other runtime registries file-backed:
+Execution Fabric moves queue mutation and claiming into a transactional state
+plane while leaving the other runtime registries file-backed. Its remote mode
+uses PostgreSQL as durable truth and BullMQ/Valkey as delivery signal:
 
 | Registry | File | What it holds |
 | --- | --- | --- |
@@ -42,11 +45,11 @@ Missing configuration means `filesystem`, preserving existing installs. The
 and queue/pool capacity. It does not add a network dependency. See
 [18 - Execution Fabric](13-feature-guides/18-execution-fabric.md).
 
-### How it ticks: on-demand by default, schedulable via the supervisor
+### How it ticks: local supervisor or remote persistent scheduler
 
-By itself, every command below is **invoked manually or previewed via dry-run** —
-the registry layer has no daemon. What turns the surface into an always-on engine
-is the **supervisor** plus an **external scheduler**:
+In local/degraded mode, every command below is **invoked manually or previewed
+via dry-run**. What turns that compatibility surface into an always-on engine is
+the **supervisor** plus an **external scheduler**:
 
 - **`agentic-os runtime supervise`** runs *one tick* across the whole surface, in
   order — heartbeats → schedules → watch-sources → events → run-queue — then a
@@ -62,6 +65,12 @@ itself; skip it and the same commands stay on-demand levers. This closes the old
 Gap A (F-001 + F-002) in the
 gap register — see
 [the supervisor section](#the-supervisor-what-makes-it-always-on) below for setup.
+
+Remote Execution Fabric does not depend on that host cron/launchd cadence for
+its own schedules. A dedicated scheduler role persists deterministic interval
+occurrences under leader-lease and fabric-epoch fencing; the API, observer,
+healer, alarm dispatcher, and workers remain separately supervised. See
+[18 · Execution Fabric](13-feature-guides/18-execution-fabric.md).
 
 ![Runtime registries (runtime-registry.yml, integration-registry.yml, run-queue.yml, heartbeat logs) fed by manual CLI commands; the shipped supervisor loop — runtime supervise, installed via install-scheduler.sh — composes one tick of heartbeat run, schedule run-due, watch-source run-due, event process-due, runtime run-next, and a read-only health check on a cadence](diagrams/runtime-registries.png)
 

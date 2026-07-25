@@ -1,0 +1,348 @@
+schema_version: 1
+execution_fabric:
+  # A witness-approved takeover can continue without a third host, but only
+  # inside this explicit, signed, time-bounded mutation envelope. Set
+  # allow_degraded_primary to false to fail closed until a synchronous standby
+  # is available.
+  degraded_primary:
+    allow_degraded_primary: true
+    max_duration_seconds: 3600
+    allowed_task_types:
+      - llm.codex
+      - llm.claude
+      - los.team_pr.ai_review.v1
+      - los.environment.deployment.observed
+      - los.jira.action.execute
+    allowed_effect_types:
+      - notion.pr_review.update
+      - jira.labels.apply
+      - jira.status.transition
+      - agentic_os.alert.publish
+    allow_scheduler: false
+  transport:
+    # Keep fresh installs on the proven host-local SQLite backend. Set mode to
+    # remote only after the authenticated control plane is reachable.
+    mode: local
+    control_plane_url: null
+    request_timeout_seconds: 20
+    long_poll_seconds: 20
+    # These are environment-variable names, never token values. The three
+    # roles must resolve to distinct secrets in remote mode.
+    submit_token_env: AGENTIC_OS_EXECUTION_FABRIC_SUBMIT_TOKEN
+    worker_token_env: AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN
+    observer_token_env: AGENTIC_OS_EXECUTION_FABRIC_OBSERVER_TOKEN
+    admin_token_env: AGENTIC_OS_EXECUTION_FABRIC_ADMIN_TOKEN
+  admission:
+    global_max_running: 6
+    reserved_interactive_slots: 1
+    # Team PR review is intentionally a two-wide interactive lane. This
+    # global ceiling must not silently collapse that queue back to one.
+    max_interactive_running: 2
+    provider_limits:
+      codex: 2
+      claude: 2
+      non_llm: 4
+    # Optional hard caps. Namespace values provide tenant isolation; host
+    # values prevent one machine from consuming the entire shared fabric.
+    namespace_limits: {}
+    host_limits:
+      genomesbox: 6
+      bigmac: 4
+  scheduling:
+    # Waiting work receives a bounded priority boost. Within the same effective
+    # priority, namespace weights distribute capacity without allowing an
+    # unbounded high-volume tenant to starve smaller tenants.
+    priority_aging:
+      interval_seconds: 300
+      boost_per_interval: 1
+      max_boost: 100
+    namespace_weights: {}
+  # Every remotely admitted task must match exactly one immutable route.
+  # Local-only script/process routes remain available to the degraded SQLite
+  # backend, but the shared control plane rejects them.
+  task_routes:
+    - task_type: llm.codex
+      queue: codex
+      scheduling_class: interactive
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: codex.task
+        command_template: null
+        domain_worker: codex_task
+      mutation_class: internal_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [work_item_id, instruction_ref]
+        properties:
+          work_item_id: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,128}$"}
+          instruction_ref: {type: string, pattern: "^[a-zA-Z0-9_./:-]{1,512}$"}
+      allowed_effect_types: []
+    - task_type: llm.claude
+      queue: claude
+      scheduling_class: interactive
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: claude.task
+        command_template: null
+        domain_worker: claude_task
+      mutation_class: internal_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [work_item_id, instruction_ref]
+        properties:
+          work_item_id: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,128}$"}
+          instruction_ref: {type: string, pattern: "^[a-zA-Z0-9_./:-]{1,512}$"}
+      allowed_effect_types: []
+    - task_type: los.team_pr.ai_review.v1
+      queue: pr_reviews
+      scheduling_class: interactive
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: pr_review
+        command_template: null
+        domain_worker: team_pr_ai_review
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required:
+          - repository
+          - pull_request
+          - pull_request_url
+          - expected_head_sha
+          - base_branch
+          - source_key
+          - title
+          - notion_page_id
+          - author_identity
+        properties:
+          repository: {type: string, pattern: "^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$"}
+          pull_request: {type: integer}
+          pull_request_url: {type: string, pattern: "^https://github\\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+/pull/[0-9]+$"}
+          expected_head_sha: {type: string, pattern: "^[a-f0-9]{40}$"}
+          base_branch: {type: string, pattern: "^[a-zA-Z0-9._/-]{1,255}$"}
+          source_key: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,128}$"}
+          jira_key: {type: string, pattern: "^[A-Z][A-Z0-9]+-[0-9]+$"}
+          title: {type: string, pattern: "^.{1,512}$"}
+          notion_page_id: {type: string, pattern: "^[a-f0-9-]{32,36}$"}
+          author_identity: {type: string, pattern: "^github:[a-zA-Z0-9-]+$"}
+      allowed_effect_types:
+        - notion.pr_review.update
+    - task_type: los.environment.deployment.observed
+      queue: los_environment
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: los.environment.reconcile
+        command_template: null
+        domain_worker: los_environment_reconcile
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [environment, sha, previous_sha, observed_at, health_url]
+        properties:
+          environment: {type: string, enum: [beta, qa, preprod, prod, production]}
+          sha: {type: string, pattern: "^[a-f0-9]{7,64}$"}
+          previous_sha: {type: string, pattern: "^[a-f0-9]{7,64}$"}
+          observed_at: {type: string, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$"}
+          health_url: {type: string, pattern: "^https?://[^ ]+$"}
+          build: {type: string, pattern: "^.{1,128}$"}
+      allowed_effect_types:
+        - jira.labels.apply
+        - jira.status.transition
+        - agentic_os.alert.publish
+    - task_type: los.jira.action.execute
+      queue: los_environment
+      scheduling_class: background
+      execution:
+        remote_allowed: true
+        target: domain_worker
+        required_capability: los.environment.reconcile
+        command_template: null
+        domain_worker: los_jira_action
+      mutation_class: external_write
+      approval_class: policy_gated
+      payload:
+        additional_properties: false
+        required: [action_id, action_key]
+        properties:
+          action_id: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,128}$"}
+          action_key: {type: string, pattern: "^[a-zA-Z0-9._:-]{1,512}$"}
+      allowed_effect_types:
+        - jira.labels.apply
+        - jira.status.transition
+        - agentic_os.alert.publish
+    - task_type: process
+      queue: non_llm
+      scheduling_class: background
+      execution:
+        remote_allowed: false
+        target: script
+        required_capability: null
+        command_template: ["{command}"]
+        domain_worker: null
+      mutation_class: internal_write
+      approval_class: explicit
+      payload:
+        additional_properties: false
+        required: [command]
+        properties:
+          command: {type: string}
+      allowed_effect_types: []
+    - task_type: script
+      queue: non_llm
+      scheduling_class: background
+      execution:
+        remote_allowed: false
+        target: script
+        required_capability: null
+        command_template: ["{command}"]
+        domain_worker: null
+      mutation_class: internal_write
+      approval_class: explicit
+      payload:
+        additional_properties: false
+        required: [command]
+        properties:
+          command: {type: string}
+      allowed_effect_types: []
+  queues:
+    - id: codex
+      enabled: true
+      worker_pool: codex_workers
+      accepted_task_types:
+        - llm.codex
+      priority: 50
+      concurrency:
+        max_running: 2
+        max_queued: 100
+    - id: claude
+      enabled: true
+      worker_pool: claude_workers
+      accepted_task_types:
+        - llm.claude
+      priority: 50
+      concurrency:
+        max_running: 2
+        max_queued: 100
+    - id: pr_reviews
+      enabled: true
+      worker_pool: pr_reviewers
+      accepted_task_types:
+        - los.team_pr.ai_review.v1
+      priority: 60
+      concurrency:
+        max_running: 2
+        max_queued: 100
+    - id: los_environment
+      enabled: true
+      worker_pool: los_environment_workers
+      accepted_task_types:
+        - los.environment.deployment.observed
+        - los.jira.action.execute
+      priority: 55
+      concurrency:
+        max_running: 4
+        max_queued: 500
+    - id: non_llm
+      enabled: true
+      worker_pool: non_llm_workers
+      accepted_task_types:
+        - process
+        - script
+      priority: 40
+      concurrency:
+        max_running: 4
+        max_queued: 500
+  worker_pools:
+    - id: codex_workers
+      enabled: true
+      provider: codex
+      queues:
+        - codex
+      capabilities:
+        - codex.task
+      capacity:
+        min_workers: 0
+        max_workers: 2
+        max_tasks_per_worker: 1
+      lease:
+        timeout_seconds: 1800
+        heartbeat_seconds: 60
+      retry:
+        max_attempts: 3
+        backoff_seconds: 60
+    - id: claude_workers
+      enabled: true
+      provider: claude
+      queues:
+        - claude
+      capabilities:
+        - claude.task
+      capacity:
+        min_workers: 0
+        max_workers: 2
+        max_tasks_per_worker: 1
+      lease:
+        timeout_seconds: 1800
+        heartbeat_seconds: 60
+      retry:
+        max_attempts: 3
+        backoff_seconds: 60
+    - id: pr_reviewers
+      enabled: true
+      provider: codex
+      queues:
+        - pr_reviews
+      capabilities:
+        - pr_review
+      capacity:
+        min_workers: 0
+        max_workers: 2
+        max_tasks_per_worker: 1
+      lease:
+        timeout_seconds: 3900
+        heartbeat_seconds: 30
+      retry:
+        max_attempts: 3
+        backoff_seconds: 60
+    - id: los_environment_workers
+      enabled: true
+      provider: non_llm
+      queues:
+        - los_environment
+      capabilities:
+        - los.environment.reconcile
+      capacity:
+        min_workers: 1
+        max_workers: 4
+        max_tasks_per_worker: 4
+      lease:
+        timeout_seconds: 900
+        heartbeat_seconds: 30
+      retry:
+        max_attempts: 8
+        backoff_seconds: 60
+    - id: non_llm_workers
+      enabled: true
+      provider: non_llm
+      queues:
+        - non_llm
+      capabilities: []
+      capacity:
+        min_workers: 0
+        max_workers: 4
+        max_tasks_per_worker: 2
+      lease:
+        timeout_seconds: 900
+        heartbeat_seconds: 30
+      retry:
+        max_attempts: 3
+        backoff_seconds: 60

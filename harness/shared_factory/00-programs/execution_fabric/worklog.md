@@ -28,3 +28,20 @@
   work is explicit, task exploration defaults to active states, safe workload
   identifiers receive readable labels, and only live or unhealthy workers are
   projected as rows while retired ephemeral workers remain summarized history.
+
+## 2026-07-24 — Canonical instance configuration
+
+- Established `harness/config/execution-fabric.yml` as the one editable
+  instance configuration and preserved it additively across package updates.
+- Added strict JSON Schema and cross-reference validation plus effective source,
+  schema, SHA-256 fingerprint, canonical host/routing/alert dependency, and
+  runtime-drift reporting.
+- Added redacted `runtime config show|status|diff|validate` inspection and
+  dry-run-first `reconcile|reload`; remote reload is fingerprint-fenced,
+  admin-scoped, read back through the observer role, and receipt-backed.
+- Queue/pool enablement, queue depth/concurrency, pool capacity,
+  global/provider limits, retry, and lease metadata now reconcile in one
+  `BEGIN IMMEDIATE` transaction while the execution fabric owns the queue.
+- Enqueue and dispatch paths reconcile the validated config before mutation;
+  filesystem mode remains authoritative by default and cannot write fabric
+  configuration state.

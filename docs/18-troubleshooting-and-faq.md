@@ -336,13 +336,15 @@ re-verified against the source on 2026-07-13; most of the register has closed.
 
 The residuals that still bite day to day:
 
-### Gap A residual — the scheduler is a per-host opt-in
+### Gap A residual — the local/degraded scheduler is a per-host opt-in
 
-The supervisor and its installer exist, but nothing installs the scheduler for
-you: heartbeats don't beat and schedules don't fire on a host until an operator
-runs the installer there. That is deliberate — installing a background agent is
-an explicit, per-machine choice. If "nothing is firing," this is almost always
-why.
+The compatibility supervisor and its installer exist, but nothing installs the
+local scheduler for you: heartbeats don't beat and local schedules don't fire
+on a host until an operator runs the installer there. That is deliberate —
+installing a background agent is an explicit, per-machine choice. Remote
+Execution Fabric schedules instead use its independently supervised, fenced
+scheduler role. Confirm the selected transport before treating a missing local
+cron/launchd entry as the cause.
 
 ```bash
 # one manual tick, end to end (dry-run first, then apply)

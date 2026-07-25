@@ -260,6 +260,48 @@ def test_install_clones_validates_and_atomically_replaces_projection(tmp_path: P
     assert verify_library_install(root)["status"] == "failed"
 
 
+def test_pristine_managed_placeholder_allows_first_external_install_without_override(
+    tmp_path: Path,
+) -> None:
+    remote, revision = _library_remote(tmp_path)
+    root = tmp_path / "installed-os"
+    assert main(["init", "--target", str(root)]) == 0
+
+    planned = install_library(root, repository=str(remote), dry_run=True)
+    assert planned["status"] == "planned"
+    assert planned["existing"]["managed_placeholder"] is True
+    assert planned["existing"]["projection_dirty"] is False
+    installed = install_library(root, repository=str(remote), dry_run=False)
+    assert installed["status"] == "installed"
+    assert installed["source_revision"] == revision
+    assert verify_library_install(root)["status"] == "verified"
+
+
+def test_init_never_mutates_receipt_backed_library_and_ignores_python_cache(
+    tmp_path: Path,
+) -> None:
+    remote, _ = _library_remote(tmp_path)
+    root = tmp_path / "installed-os"
+    assert main(["init", "--target", str(root)]) == 0
+    install_library(root, repository=str(remote), dry_run=False)
+    before_projection = library_module._projection_sha256(root / "lib")
+    before_receipt = (root / library_module.INSTALL_RECEIPT).read_bytes()
+    before_registry = (root / UNIFIED_REGISTRY).read_bytes()
+
+    cache = root / "lib/skills/root/from-source/__pycache__"
+    cache.mkdir()
+    (cache / "runtime.cpython-313.pyc").write_bytes(b"runtime-cache")
+    assert verify_library_install(root)["status"] == "verified"
+
+    initialized = init_library(root, dry_run=False)
+    assert initialized["status"] == "preserved"
+    assert main(["init", "--target", str(root)]) == 0
+    assert (root / library_module.INSTALL_RECEIPT).read_bytes() == before_receipt
+    assert (root / UNIFIED_REGISTRY).read_bytes() == before_registry
+    assert library_module._projection_sha256(root / "lib") == before_projection
+    assert verify_library_install(root)["status"] == "verified"
+
+
 def test_install_discards_ignored_validator_outputs_before_projection(
     tmp_path: Path,
 ) -> None:

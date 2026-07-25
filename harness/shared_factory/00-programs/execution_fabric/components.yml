@@ -11,8 +11,8 @@ skills:
     path: harness/skills/execution-fabric/SKILL.md
 configuration:
   path: config.toml
-  queue_catalog: config/queues.yml
-  worker_pools: config/worker-pools.yml
+  canonical_instance: harness/config/execution-fabric.yml
+  ownership_readme: config/README.md
   defaults:
     enabled: false
     runtime:
@@ -21,6 +21,7 @@ compatibility:
   queue_path: harness/shared_factory/00-control-plane/run-queue.yml
   operator_skill: harness/skills/runtime-operator/SKILL.md
 schemas:
+  instance_config: schemas/execution-fabric.schema.json
   queue_config: schemas/queue-config.schema.json
   worker_pool: schemas/worker-pool.schema.json
   task_envelope: schemas/task-envelope.schema.json
@@ -29,5 +30,7 @@ registries:
   - harness/skills/skill-registry.yml
   - src/genomes_agentic_os/capability_registry.py
 validation:
+  - tests/test_execution_fabric_config.py
+  - tests/test_execution_fabric.py
   - tests/test_cli_scaffold.py
   - tests/test_first_class_registry.py

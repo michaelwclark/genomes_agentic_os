@@ -3,7 +3,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { wrappedDialogFocusIndex } from "../src/renderer/components/ConversationList";
 import { snapshotFailureIsFatal } from "../src/renderer/App";
-import { ExecutionFabricView, filterRuntimeTasks, humanizeIdentifier, operationalWorkers, taskSampleSummary } from "../src/renderer/components/ExecutionFabricView";
+import {
+  activeRuntimeAlarms,
+  ExecutionFabricView,
+  filterRuntimeTasks,
+  humanizeIdentifier,
+  operationalWorkers,
+  runtimeAttentionCount,
+  taskSampleSummary,
+} from "../src/renderer/components/ExecutionFabricView";
 import { fixtureSnapshot } from "../src/shared/fixtures";
 
 describe("Execution Fabric renderer behavior", () => {
@@ -63,6 +71,26 @@ describe("Execution Fabric renderer behavior", () => {
     expect(markup).not.toContain("runtime-bigmac.example-4000-249");
   });
 
+  it("counts only actionable alarms, failed effects, drift, and failed healing", () => {
+    const runtime = {
+      ...fixtureSnapshot.runtime,
+      dead_letter: 1,
+      unhealthy_workers: 1,
+      stale_queued: 1,
+      expired_running_leases: 1,
+      effects: { pending: 2, delivering: 1, delivered: 4, failed: 1, dead_letter: 1 },
+      config: { ...fixtureSnapshot.runtime.config!, drifted: true },
+      healing: { ...fixtureSnapshot.runtime.healing!, status: "failed" as const },
+      alarms: [
+        ...fixtureSnapshot.runtime.alarms!,
+        { id: "active", severity: "critical" as const, status: "active" as const, message: "Leader unavailable" },
+      ],
+    };
+
+    expect(activeRuntimeAlarms(runtime).map((alarm) => alarm.id)).toEqual(["active"]);
+    expect(runtimeAttentionCount(runtime)).toBe(9);
+  });
+
   it("renders accessible sampled filtering and a disabled refresh state", () => {
     const markup = renderToStaticMarkup(createElement(ExecutionFabricView, {
       runtime: fixtureSnapshot.runtime,
@@ -73,6 +101,15 @@ describe("Execution Fabric renderer behavior", () => {
     expect(markup).toContain("2-task operational sample");
     expect(markup).toContain("Refreshing…");
     expect(markup).toContain("Retrying / delayed");
+    expect(markup).toContain("Control plane &amp; configuration");
+    expect(markup).toContain("genomesbox");
+    expect(markup).toContain("epoch 7");
+    expect(markup).toContain("In sync");
+    expect(markup).toContain("Effects, alarms &amp; healing");
+    expect(markup).toContain("No active alarms");
+    expect(markup).toContain("Recent run reports");
+    expect(markup).toContain("Release notes review completed.");
+    expect(markup).toContain("Heartbeat");
     expect(markup).toContain("Recent failures (1h)");
     expect(markup).toContain("Running now");
     expect(markup).toContain("Agentic OS GUI Review");

@@ -1,0 +1,51 @@
+schema_version: 1
+id: execution-fabric-emergency-bundle
+owner: genomes_agentic_os
+description: Warm-standby recovery inputs for a fenced genomesbox to bigmac promotion.
+canonical_configs:
+  - harness/config/execution-fabric.yml
+  - config/hosts.yml
+  - harness/config/hosts.yml
+  - harness/registries/hosts-routing.yml
+  - harness/registries/alerts.yml
+required_assets:
+  - deploy/execution-fabric/compose.genomesbox.yml
+  - deploy/execution-fabric/compose.bigmac.yml
+  - deploy/execution-fabric/systemd
+  - deploy/execution-fabric/launchd
+  - deploy/execution-fabric/helm/los-agents
+  - deploy/execution-fabric/witness
+  - installers/execution-fabric
+image_lock:
+  file: images.lock.env
+  format: env
+  required_variables:
+    - FABRIC_CONTROL_PLANE_IMAGE
+    - FABRIC_POSTGRES_IMAGE
+    - FABRIC_VALKEY_IMAGE
+    - FABRIC_MINIO_IMAGE
+    - FABRIC_MINIO_CLIENT_IMAGE
+  reference_pattern: "^.+@sha256:[a-f0-9]{64}$"
+recovery:
+  canonical_ledger: postgresql
+  delivery_index: valkey
+  delivery_rebuild: /api/v1/admin/reconcile
+  promotion_status: /api/v1/admin/leadership/status
+  promotion_apply: /api/v1/admin/leadership/promote
+  failback_plan: /api/v1/admin/leadership/failback-plan
+  failback_apply: /api/v1/admin/leadership/failback-commit
+  witness_required: true
+  epoch_advance_required: true
+  failback_mode: manual
+  artifact_replication:
+    mode: active_active_single_writer
+    reconcile: installers/execution-fabric/bin/reconcile-artifact-replication.sh
+    health: installers/execution-fabric/bin/artifact-replication-health.sh
+    receipt: artifact-replication-health.json
+    promotion_requires_fresh_receipt: true
+secrets:
+  included: false
+  policy: secret references and readability checks only
+validation:
+  checksums: CHECKSUMS.sha256
+  minimum_drill_frequency_days: 30

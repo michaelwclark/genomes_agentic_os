@@ -1,0 +1,109 @@
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" .Values.image.digest) -}}
+{{- fail "image.digest must be an immutable sha256 digest" -}}
+{{- end }}
+{{- if not .Values.secrets.existingSecret -}}
+{{- fail "secrets.existingSecret must name an operator-owned Kubernetes Secret" -}}
+{{- end }}
+{{- if not .Values.storage.existingClaim -}}
+{{- fail "storage.existingClaim must name an RWX claim for durable worker state" -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "los-agents.name" . }}
+  labels:
+    {{- include "los-agents.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "los-agents.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "los-agents.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "los-agents.name" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.worker.gracefulShutdownSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python"]
+          args: ["-m", "genomes_agentic_os.execution_fabric_worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "los-agents.name" . }}
+          env:
+            - name: FABRIC_HOST_ID
+              value: {{ required "worker.hostId must be a canonical registered host alias" .Values.worker.hostId | quote }}
+            - name: FABRIC_WORKER_HOST_ID
+              value: {{ .Values.worker.hostId | quote }}
+            - name: FABRIC_WORKER_ID
+              value: {{ required "worker.id must be a durable scoped worker identity" .Values.worker.id | quote }}
+            - name: FABRIC_WORKER_BOOTSTRAP_ID
+              value: {{ required "worker.bootstrapId must match the scoped bootstrap credential" .Values.worker.bootstrapId | quote }}
+            - name: AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE
+              value: /var/run/secrets/execution-fabric/worker-token
+            - name: AGENTIC_OS_ROOT
+              value: /var/lib/agentic-os
+          startupProbe:
+            exec:
+              command: ["python", "-m", "genomes_agentic_os.execution_fabric_worker", "--healthcheck"]
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "genomes_agentic_os.execution_fabric_worker", "--healthcheck"]
+            periodSeconds: {{ .Values.worker.heartbeatSeconds }}
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: temporary
+              mountPath: /tmp
+            - name: worker-state
+              mountPath: /var/lib/agentic-os
+            - name: execution-fabric-secret
+              mountPath: /var/run/secrets/execution-fabric
+              readOnly: true
+      volumes:
+        - name: temporary
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: worker-state
+          persistentVolumeClaim:
+            claimName: {{ .Values.storage.existingClaim | quote }}
+        - name: execution-fabric-secret
+          secret:
+            secretName: {{ .Values.secrets.existingSecret | quote }}
+            items:
+              - key: {{ .Values.secrets.keys.workerBootstrapToken | quote }}
+                path: worker-token
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}

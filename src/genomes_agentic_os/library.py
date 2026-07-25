@@ -45,6 +45,11 @@ INSTALL_RECEIPT_BACKUP_DIR = Path("runtime/backups/library-receipts")
 INSTALL_JOURNAL = Path("runtime/state/library-install-transaction.json")
 INSTALL_LOCK = Path("runtime/locks/library-install.lock")
 INSTALL_JOURNAL_API_VERSION = "agentic-os-library-install-transaction/v1"
+MANAGED_PLACEHOLDER_MARKER = LIBRARY_DIR / ".managed-placeholder.json"
+MANAGED_PLACEHOLDER_API_VERSION = "agentic-os-library-placeholder/v1"
+MANAGED_LIBRARY_FALLBACK = Path(
+    "harness/shared_factory/05-knowledge/library-bootstrap/lib"
+)
 
 OBJECT_KINDS = (
     "automation",
@@ -521,7 +526,13 @@ def _projection_sha256(path: Path) -> str:
             relative = item.relative_to(path)
             # Git metadata is deliberately removed from installed projections.
             # The registry lock is an operational mutex, not source content.
-            if relative.parts[0] == ".git" or relative == Path(".registry.lock"):
+            if (
+                relative.parts[0] == ".git"
+                or relative == Path(".registry.lock")
+                or relative == MANAGED_PLACEHOLDER_MARKER.relative_to(LIBRARY_DIR)
+                or "__pycache__" in relative.parts
+                or relative.suffix in {".pyc", ".pyo"}
+            ):
                 continue
             digest.update(relative.as_posix().encode("utf-8"))
             digest.update(b"\0")
@@ -1082,12 +1093,32 @@ def _installed_projection_state(root: Path, target: Path) -> dict[str, Any]:
         and receipt_projection_sha256 == projection_sha256
         and not unexpected_git
     )
+    marker = _load_json(root / MANAGED_PLACEHOLDER_MARKER)
+    marker_backed = bool(
+        marker
+        and marker.get("api_version") == MANAGED_PLACEHOLDER_API_VERSION
+        and marker.get("projection_sha256") == projection_sha256
+        and not git_state["present"]
+        and not receipt_projection_sha256
+    )
+    legacy_managed_placeholder = bool(
+        present
+        and not marker
+        and not git_state["present"]
+        and not receipt_projection_sha256
+        and _looks_like_legacy_managed_placeholder(root, projection_sha256)
+    )
+    managed_placeholder = marker_backed or legacy_managed_placeholder
     projection_dirty = bool(
         present
         and (
             projection_error
             or unexpected_git
-            or (not git_state["present"] and not receipt_backed)
+            or (
+                not git_state["present"]
+                and not receipt_backed
+                and not managed_placeholder
+            )
         )
     )
     return {
@@ -1095,9 +1126,32 @@ def _installed_projection_state(root: Path, target: Path) -> dict[str, Any]:
         "projection_sha256": projection_sha256,
         "receipt_projection_sha256": receipt_projection_sha256,
         "receipt_backed": receipt_backed,
+        "managed_placeholder": managed_placeholder,
         "projection_dirty": projection_dirty,
         "projection_error": projection_error,
     }
+
+
+def _looks_like_legacy_managed_placeholder(
+    root: Path,
+    projection_sha256: str | None,
+) -> bool:
+    """Recognize only an exact package fallback emitted before marker support."""
+
+    lib = root / LIBRARY_DIR
+    fallback = root / MANAGED_LIBRARY_FALLBACK
+    if (
+        not lib.is_dir()
+        or (lib / ".git").exists()
+        or not fallback.is_dir()
+        or not projection_sha256
+    ):
+        return False
+    try:
+        fallback_sha256 = _projection_sha256(fallback)
+    except LibraryError:
+        return False
+    return fallback_sha256 == projection_sha256
 
 
 def verify_library_install(root: str | Path) -> dict[str, Any]:
@@ -1702,6 +1756,17 @@ def init_library(
 ) -> dict[str, Any]:
     os_root = expand_path(root)
     lib = os_root / LIBRARY_DIR
+    receipt = _load_json(os_root / INSTALL_RECEIPT)
+    receipt_backed = bool(receipt and receipt.get("status") == "installed")
+    existing_state = (
+        _installed_projection_state(os_root, lib)
+        if lib.exists() or lib.is_symlink()
+        else None
+    )
+    managed_placeholder = bool(
+        existing_state and existing_state.get("managed_placeholder")
+    )
+    create_managed_placeholder = not lib.exists() or managed_placeholder
     planned = [
         LIBRARY_DIR / "README.md",
         LIBRARY_DIR / ".gitignore",
@@ -1716,9 +1781,21 @@ def init_library(
         "dry_run": dry_run,
         "paths": [path.as_posix() for path in planned],
         "git_requested": initialize_git,
+        "receipt_backed": receipt_backed,
+        "managed_placeholder": create_managed_placeholder and not initialize_git,
     }
+    if receipt_backed:
+        # A package update may refresh the separate bootstrap fallback, but
+        # init itself has no authority to change a receipt-backed external
+        # projection or regenerate its registries.
+        result["status"] = "preserved"
+        result["paths"] = []
+        return result
     if dry_run:
         return result
+    bootstrap = os_root / MANAGED_LIBRARY_FALLBACK
+    if bootstrap.is_dir() and create_managed_placeholder:
+        shutil.copytree(bootstrap, lib, dirs_exist_ok=True, symlinks=True)
     lib.mkdir(parents=True, exist_ok=True)
     for plural in PLURAL_BY_KIND.values():
         (lib / plural / "root").mkdir(parents=True, exist_ok=True)
@@ -1734,6 +1811,7 @@ def init_library(
     if initialize_git and not (lib / ".git").exists():
         subprocess.run(["git", "init", "-b", "main", str(lib)], check=True, capture_output=True, text=True)
     if initialize_git:
+        (os_root / MANAGED_PLACEHOLDER_MARKER).unlink(missing_ok=True)
         hook = lib / ".githooks/pre-commit"
         hook.parent.mkdir(parents=True, exist_ok=True)
         if not hook.exists():
@@ -1746,6 +1824,22 @@ def init_library(
             text=True,
         )
     refresh_registry(os_root, dry_run=False)
+    if create_managed_placeholder and not initialize_git:
+        _atomic_write(
+            os_root / MANAGED_PLACEHOLDER_MARKER,
+            (
+                json.dumps(
+                    {
+                        "api_version": MANAGED_PLACEHOLDER_API_VERSION,
+                        "managed_by": "genomes_agentic_os",
+                        "projection_sha256": _projection_sha256(lib),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8"),
+        )
     return result
 
 

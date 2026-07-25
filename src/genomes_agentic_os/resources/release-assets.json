@@ -1,0 +1,12 @@
+{
+  "schema_version": "genomes-agentic-os-release-assets/v1",
+  "program": "execution_fabric",
+  "manifest_path_in_source": "release/execution-fabric-manifest.yml",
+  "release_asset": "execution-fabric-release-manifest.json",
+  "portable_bundle": "execution-fabric-emergency-bundle.tar.gz",
+  "config_schema_bundle": "execution-fabric-config-schema.tar.gz",
+  "image_lock": "execution-fabric-image-lock.json",
+  "checksums": "SHA256SUMS",
+  "repository_env": "GENOMES_AGENTIC_OS_RELEASE_REPOSITORY",
+  "release_url_template": "https://github.com/{repository}/releases/download/v{version}/{asset}"
+}

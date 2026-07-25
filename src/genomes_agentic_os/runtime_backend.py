@@ -17,6 +17,12 @@ from uuid import uuid4
 
 import yaml
 
+from .execution_fabric_config import (
+    catalog_diff,
+    load_execution_fabric_config,
+    reconcile_catalog,
+    validate_execution_fabric_config,
+)
 from .scaffold import expand_path
 from .long_running import atomic_json
 from .state import db as state_db
@@ -33,7 +39,6 @@ EXECUTION_FABRIC_MODE = QueueMode.EXECUTION_FABRIC.value
 QUEUE_MODES = (FILESYSTEM_MODE, EXECUTION_FABRIC_MODE)
 RUNTIME_REGISTRY = Path("harness/shared_factory/00-control-plane/runtime-registry.yml")
 RUN_QUEUE = Path("harness/shared_factory/00-control-plane/run-queue.yml")
-EXECUTION_FABRIC_CONFIG = Path("harness/shared_factory/00-programs/execution_fabric/config")
 QUEUE_RECONCILIATION_LOG = Path("harness/shared_factory/06-runs-and-logs/runtime-queue-reconciliation")
 
 
@@ -41,20 +46,14 @@ class RuntimeBackendError(ValueError):
     """Raised when a queue-mode transition is invalid or unsafe."""
 
 
-def _load_mapping(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        raise RuntimeBackendError(f"execution-fabric configuration is missing: {path}")
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(loaded, dict):
-        raise RuntimeBackendError(f"execution-fabric configuration must be a mapping: {path}")
-    return loaded
-
-
 def _execution_fabric_catalog(root: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    config_root = expand_path(root) / EXECUTION_FABRIC_CONFIG
-    if not config_root.is_dir():
-        config_root = Path(__file__).resolve().parents[2] / EXECUTION_FABRIC_CONFIG
-    return _load_mapping(config_root / "queues.yml"), _load_mapping(config_root / "worker-pools.yml")
+    fabric = load_execution_fabric_config(root).value["execution_fabric"]
+    return {
+        "admission": fabric["admission"],
+        "queues": fabric["queues"],
+    }, {
+        "worker_pools": fabric["worker_pools"],
+    }
 
 
 def resolve_execution_route(root: str | Path, item: dict[str, Any]) -> dict[str, Any]:
@@ -102,77 +101,117 @@ def resolve_execution_route(root: str | Path, item: dict[str, Any]) -> dict[str,
 
 
 def _configure_execution_fabric(root: str | Path, conn: sqlite3.Connection) -> dict[str, Any]:
-    queues_config, pools_config = _execution_fabric_catalog(root)
-    configured_queues: list[str] = []
-    configured_pools: list[str] = []
-    for row in queues_config.get("queues") or []:
-        if not isinstance(row, dict) or not row.get("id"):
-            continue
-        concurrency = row.get("concurrency") if isinstance(row.get("concurrency"), dict) else {}
-        execution_fabric.configure_queue(
-            conn,
-            str(row["id"]),
-            max_concurrency=int(concurrency.get("max_running") or 1),
-            enabled=True,
-            metadata={
-                "accepted_task_types": list(row.get("accepted_task_types") or []),
-                "max_queued": int(concurrency.get("max_queued") or 0),
-                "priority": int(row.get("priority") or 0),
-                "source_enabled": bool(row.get("enabled", False)),
-            },
-        )
-        configured_queues.append(str(row["id"]))
-    for row in pools_config.get("worker_pools") or []:
-        if not isinstance(row, dict) or not row.get("id"):
-            continue
-        queues = list(row.get("queues") or [])
-        if not queues:
-            raise RuntimeBackendError(f"worker pool {row['id']!r} does not declare a queue")
-        capacity = row.get("capacity") if isinstance(row.get("capacity"), dict) else {}
-        lease = row.get("lease") if isinstance(row.get("lease"), dict) else {}
-        retry = row.get("retry") if isinstance(row.get("retry"), dict) else {}
-        execution_fabric.configure_worker_pool(
-            conn,
-            str(row["id"]),
-            queue_name=str(queues[0]),
-            max_workers=int(capacity.get("max_workers") or 1),
-            max_concurrency=int(capacity.get("max_workers") or 1) * int(capacity.get("max_tasks_per_worker") or 1),
-            provider=str(row.get("provider") or "") or None,
-            enabled=True,
-            metadata={
-                "lease": lease,
-                "retry": retry,
-                "min_workers": int(capacity.get("min_workers") or 0),
-                "max_tasks_per_worker": int(capacity.get("max_tasks_per_worker") or 1),
-                "source_enabled": bool(row.get("enabled", False)),
-            },
-        )
-        configured_pools.append(str(row["id"]))
-    admission = queues_config.get("admission") or {}
-    global_max = int(admission.get("global_max_running") or 1)
-    reserved = int(admission.get("reserved_interactive_slots") or 0)
-    max_interactive = int(admission.get("max_interactive_running") or max(1, reserved))
-    background_max = max(1, global_max - reserved)
-    execution_fabric.configure_limit(conn, scope="global", key="*", max_concurrency=background_max)
+    effective = load_execution_fabric_config(root)
+    result = reconcile_catalog(conn, effective)
+    fabric = effective.value["execution_fabric"]
     return {
-        "queues": configured_queues,
-        "worker_pools": configured_pools,
-        "global_max_running": global_max,
-        "reserved_interactive_slots": reserved,
-        "max_interactive_running": max_interactive,
-        "background_max_running": background_max,
+        "queues": [str(row["id"]) for row in fabric["queues"]],
+        "worker_pools": [str(row["id"]) for row in fabric["worker_pools"]],
+        "config_source": str(effective.source),
+        "config_source_kind": effective.source_kind,
+        "config_fingerprint": effective.fingerprint,
+        **result,
     }
 
 
 def ensure_execution_fabric_catalog(root: str | Path, conn: sqlite3.Connection) -> dict[str, Any]:
-    expected, expected_pools_config = _execution_fabric_catalog(root)
-    expected_names = {str(row.get("id")) for row in expected.get("queues") or [] if isinstance(row, dict)}
-    expected_pools = {str(row.get("id")) for row in expected_pools_config.get("worker_pools") or [] if isinstance(row, dict)}
-    present = {str(row["name"]) for row in conn.execute("SELECT name FROM execution_queues").fetchall()}
-    present_pools = {str(row["name"]) for row in conn.execute("SELECT name FROM worker_pools").fetchall()}
-    if expected_names.issubset(present) and expected_pools.issubset(present_pools):
-        return {"queues": sorted(present), "worker_pools": sorted(present_pools), "reconciled": False}
-    return {**_configure_execution_fabric(root, conn), "reconciled": True}
+    return _configure_execution_fabric(root, conn)
+
+
+def execution_fabric_config_status(root: str | Path) -> dict[str, Any]:
+    """Report the validated effective config, source, dependencies, and drift."""
+    os_root = expand_path(root)
+    validation = validate_execution_fabric_config(os_root)
+    effective = load_execution_fabric_config(os_root)
+    db_path = state_db.default_db_path(os_root)
+    if db_path.is_file():
+        conn = sqlite3.connect(f"file:{quote(str(db_path))}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            tables = {
+                str(row["name"])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            required = {"execution_queues", "worker_pools", "execution_limits"}
+            if required.issubset(tables):
+                changes = catalog_diff(conn, effective)
+            else:
+                memory = state_db.connect()
+                try:
+                    changes = catalog_diff(memory, effective)
+                finally:
+                    memory.close()
+        finally:
+            conn.close()
+    else:
+        conn = state_db.connect()
+        try:
+            changes = catalog_diff(conn, effective)
+        finally:
+            conn.close()
+    return {
+        "root": str(os_root),
+        "queue_mode": effective_queue_mode(os_root),
+        **validation,
+        "state_db": str(db_path),
+        "state_db_initialized": db_path.is_file(),
+        "drift_count": len(changes),
+        "drift": changes,
+    }
+
+
+def reconcile_execution_fabric_configuration(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or atomically apply the canonical config to the selected fabric."""
+    os_root = expand_path(root)
+    status = execution_fabric_config_status(os_root)
+    ready = status["queue_mode"] == EXECUTION_FABRIC_MODE
+    plan = {
+        **status,
+        "action": "runtime.execution-fabric.config.reconcile",
+        "dry_run": dry_run,
+        "ready": ready,
+        "blockers": []
+        if ready
+        else ["execution_fabric is not the authoritative queue mode; no runtime config write is permitted"],
+        "applied": False,
+    }
+    if dry_run:
+        return plan
+    if not ready:
+        raise RuntimeBackendError("execution-fabric config reconcile blocked: " + "; ".join(plan["blockers"]))
+
+    effective = load_execution_fabric_config(os_root)
+    with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
+        conn = state_db.connect(state_db.default_db_path(os_root))
+        try:
+            result = reconcile_catalog(conn, effective)
+            remaining = catalog_diff(conn, effective)
+        finally:
+            conn.close()
+    if remaining:
+        raise RuntimeBackendError(
+            f"execution-fabric config readback still has {len(remaining)} difference(s)"
+        )
+    return {
+        **plan,
+        "dry_run": False,
+        "applied": bool(result["reconciled"]),
+        "status": "reconciled" if result["reconciled"] else "unchanged",
+        "drift_count": 0,
+        "drift": [],
+        "changes": result["changes"],
+        "catalog": {
+            key: value
+            for key, value in result.items()
+            if key not in {"changes", "reconciled"}
+        },
+    }
 
 
 def runtime_queue_items(root: str | Path) -> list[dict[str, Any]]:

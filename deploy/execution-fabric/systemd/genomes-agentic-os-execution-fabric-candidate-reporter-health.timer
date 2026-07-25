@@ -1,0 +1,12 @@
+[Unit]
+Description=Continuously verify Execution Fabric candidate reporting freshness
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=30s
+AccuracySec=3s
+Persistent=true
+Unit=genomes-agentic-os-execution-fabric-candidate-reporter-health.service
+
+[Install]
+WantedBy=timers.target

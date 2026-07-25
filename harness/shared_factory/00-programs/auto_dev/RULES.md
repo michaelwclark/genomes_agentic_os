@@ -24,5 +24,9 @@
   logs, or OS internals to Jira, GitHub, Slack, Linear, Confluence, or email.
 - Notion is a beautiful, verified projection in Genome's Notion; it is not the
   execution queue or source of runtime truth.
+- When Execution Fabric is the selected runtime, admit Auto-Dev work through
+  its configured named queue with one stable idempotency key. Worker capacity
+  comes from the configured pool and global/provider limits, never work-item
+  folder names, `02-active` counts, or detached process counts.
 - Retire overlapping behavior only after parity evidence, breadcrumbs, registry
   cleanup, and a rollback note are complete.

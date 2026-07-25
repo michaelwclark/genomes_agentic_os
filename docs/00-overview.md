@@ -66,7 +66,10 @@ a code-level multi-agent framework. Framework orchestration can be replaced by
 
 **Design consequence that governs everything:** the *filesystem is the
 architecture*. The CLI's job is to create, validate, and navigate that structure
-deterministically — not to be a runtime that "owns" state in memory or a database.
+deterministically. The optional Execution Fabric is the explicit exception for
+always-on execution: it owns durable queue, attempt, effect, alarm, and
+failover state behind a versioned control-plane contract while the filesystem
+continues to own operating policy and human-readable context.
 
 ---
 

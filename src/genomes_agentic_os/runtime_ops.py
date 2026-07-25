@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from .execution_fabric_config import ExecutionFabricConfigError
 from .lifecycle import cleanup_terminal_worktrees
 from .notion_sync import target_workspace, verify_workspace
 from .runtime_backend import (
@@ -27,6 +28,7 @@ from .runtime_backend import (
     FILESYSTEM_MODE,
     effective_queue_mode,
     ensure_execution_fabric_catalog,
+    execution_fabric_config_status,
     queue_backend_mutation_guard,
     resolve_execution_route,
     runtime_queue_items,
@@ -3079,6 +3081,7 @@ def _prepare_execution_fabric_dispatch(
     with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
         conn = state_db.connect(state_db.default_db_path(os_root))
         try:
+            ensure_execution_fabric_catalog(os_root, conn)
             execution_fabric.recover_expired_leases(conn)
             if item_id:
                 candidate_state = state_queue.get(conn, item_id)
@@ -3820,6 +3823,32 @@ def runtime_doctor(root: str | Path) -> dict[str, Any]:
         findings.append({"severity": "blocker", "path": str(_runtime_path(os_root, HEARTBEAT_LOG_DIR)), "message": "heartbeat log folder is missing"})
     if findings:
         return {"root": str(os_root), "ok": False, "findings": findings}
+
+    try:
+        fabric_config = execution_fabric_config_status(os_root)
+    except ExecutionFabricConfigError as exc:
+        findings.append(
+            {
+                "severity": "blocker",
+                "path": str(os_root / "harness/config/execution-fabric.yml"),
+                "message": str(exc),
+            }
+        )
+    else:
+        if (
+            fabric_config["queue_mode"] == EXECUTION_FABRIC_MODE
+            and fabric_config["drift_count"]
+        ):
+            findings.append(
+                {
+                    "severity": "fix-soon",
+                    "path": str(fabric_config["source"]),
+                    "message": (
+                        f"execution-fabric runtime catalog has {fabric_config['drift_count']} "
+                        "configuration difference(s); run `agentic-os runtime config reconcile --apply`"
+                    ),
+                }
+            )
 
     registry = _load_yaml(registry_path, DEFAULT_RUNTIME_REGISTRY)
     integration_registry = _load_yaml(integration_path, DEFAULT_INTEGRATION_REGISTRY)

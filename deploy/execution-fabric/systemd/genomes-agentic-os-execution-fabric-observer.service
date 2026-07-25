@@ -1,0 +1,11 @@
+[Unit]
+Description=Capture Execution Fabric operator snapshots
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
+ExecStart=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/observe.sh
+NoNewPrivileges=true
+PrivateTmp=true

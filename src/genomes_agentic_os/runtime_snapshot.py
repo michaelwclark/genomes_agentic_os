@@ -15,8 +15,8 @@ from urllib.parse import quote
 
 import yaml
 
+from .execution_fabric_config import load_execution_fabric_config
 from .runtime_backend import (
-    EXECUTION_FABRIC_CONFIG,
     EXECUTION_FABRIC_MODE,
     FILESYSTEM_MODE,
     RUN_QUEUE,
@@ -101,14 +101,9 @@ def _project_task(item: dict[str, Any], *, queue_mode: str) -> dict[str, Any]:
 
 
 def _admission_metrics(root: Path) -> dict[str, int]:
-    config_root = root / EXECUTION_FABRIC_CONFIG
-    if not config_root.is_dir():
-        config_root = Path(__file__).resolve().parents[2] / EXECUTION_FABRIC_CONFIG
     try:
-        loaded = yaml.safe_load((config_root / "queues.yml").read_text(encoding="utf-8")) or {}
-        admission = loaded.get("admission") if isinstance(loaded, dict) else {}
-        admission = admission if isinstance(admission, dict) else {}
-    except (OSError, yaml.YAMLError):
+        admission = load_execution_fabric_config(root).value["execution_fabric"]["admission"]
+    except ValueError:
         admission = {}
     global_max = int(admission.get("global_max_running") or 1)
     reserved = int(admission.get("reserved_interactive_slots") or 0)
@@ -379,6 +374,73 @@ def build_runtime_snapshot(
     captured = now or datetime.now(timezone.utc)
     captured = captured.replace(tzinfo=timezone.utc) if captured.tzinfo is None else captured.astimezone(timezone.utc)
     requested_statuses = {str(status) for status in statuses if str(status)}
+    from .execution_fabric_remote import build_remote_runtime_snapshot, resolve_remote_settings
+
+    remote_settings = resolve_remote_settings(os_root, role="observer")
+    if remote_settings.remote:
+        remote_limit = min(task_limit or 1000, 1000)
+        snapshot = build_remote_runtime_snapshot(os_root, limit=remote_limit)
+        all_remote_tasks = list(snapshot.get("tasks") or [])
+        matching = _matching_tasks(
+            all_remote_tasks,
+            queue_name=queue_name,
+            statuses=requested_statuses,
+        )
+        displayed = matching if task_limit is None else matching[:task_limit]
+        summary = dict(snapshot.get("summary") or {})
+        queue_total = sum(int(row.get("total") or 0) for row in snapshot.get("queues") or [])
+        summary.setdefault("total_records", queue_total)
+        summary.setdefault("approval_needed", 0)
+        summary.setdefault("done", int(summary.get("succeeded") or 0))
+        summary.setdefault("cancelled", 0)
+        summary.setdefault("dead_letter", int(summary.get("dead_lettered") or 0))
+        summary.setdefault("oldest_wait_seconds", 0)
+        summary.setdefault("stale_queued", 0)
+        summary.setdefault("expired_running_leases", 0)
+        summary.setdefault("active_workers", int(summary.get("live_worker_count") or 0))
+        summary.setdefault("unhealthy_workers", int(summary.get("unhealthy_worker_count") or 0))
+        summary.setdefault("registered_workers", len(snapshot.get("workers") or []))
+        summary.setdefault(
+            "historical_worker_records",
+            max(
+                0,
+                int(summary["registered_workers"])
+                - int(summary["active_workers"])
+                - int(summary["unhealthy_workers"]),
+            ),
+        )
+        summary.setdefault("failed_last_hour", 0)
+        summary.setdefault("retrying", 0)
+        summary.setdefault("delayed_retries", 0)
+        summary.setdefault("global_max_running", 0)
+        summary.setdefault("background_max_running", 0)
+        summary.setdefault("reserved_interactive_slots", 0)
+        summary.setdefault("max_interactive_running", 1)
+        dead_letter = int(summary["dead_letter"])
+        unhealthy_workers = int(summary["unhealthy_workers"])
+        snapshot.update(
+            {
+                "health": "critical"
+                if dead_letter
+                else "degraded"
+                if unhealthy_workers
+                else "healthy",
+                "summary": summary,
+                "worker_pools": list(snapshot.get("worker_pools") or []),
+                "tasks": displayed,
+                "running_tasks": [
+                    task for task in all_remote_tasks if task.get("status") == "running"
+                ],
+                "filters": {
+                    "queue_name": queue_name,
+                    "statuses": sorted(requested_statuses),
+                    "task_limit": task_limit,
+                    "matching_tasks": len(matching),
+                    "displayed_tasks": len(displayed),
+                },
+            }
+        )
+        return snapshot
     queue_mode = effective_queue_mode(os_root)
     if queue_mode == FILESYSTEM_MODE:
         raw_tasks, workers, metrics, consistency = _filesystem_backend_snapshot(os_root)

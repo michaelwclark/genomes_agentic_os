@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-os.local/schemas/execution-fabric-emergency-bundle-v1.json",
+  "title": "Execution Fabric emergency bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "owner",
+    "canonical_configs",
+    "required_assets",
+    "image_lock",
+    "recovery",
+    "secrets",
+    "validation"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"const": "execution-fabric-emergency-bundle"},
+    "owner": {"const": "genomes_agentic_os"},
+    "description": {"type": "string", "minLength": 1},
+    "canonical_configs": {
+      "type": "array",
+      "minItems": 4,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "required_assets": {
+      "type": "array",
+      "minItems": 5,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "image_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "format", "required_variables", "reference_pattern"],
+      "properties": {
+        "file": {"const": "images.lock.env"},
+        "format": {"const": "env"},
+        "required_variables": {
+          "type": "array",
+          "minItems": 5,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^FABRIC_[A-Z0-9_]+_IMAGE$"}
+        },
+        "reference_pattern": {"type": "string", "minLength": 1}
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_ledger",
+        "delivery_index",
+        "delivery_rebuild",
+        "promotion_status",
+        "promotion_apply",
+        "failback_plan",
+        "failback_apply",
+        "witness_required",
+        "epoch_advance_required",
+        "failback_mode",
+        "artifact_replication"
+      ],
+      "properties": {
+        "canonical_ledger": {"const": "postgresql"},
+        "delivery_index": {"const": "valkey"},
+        "delivery_rebuild": {"pattern": "^/api/v1/"},
+        "promotion_status": {"pattern": "^/api/v1/"},
+        "promotion_apply": {"pattern": "^/api/v1/"},
+        "failback_plan": {"pattern": "^/api/v1/"},
+        "failback_apply": {"pattern": "^/api/v1/"},
+        "witness_required": {"const": true},
+        "epoch_advance_required": {"const": true},
+        "failback_mode": {"const": "manual"},
+        "artifact_replication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "reconcile",
+            "health",
+            "receipt",
+            "promotion_requires_fresh_receipt"
+          ],
+          "properties": {
+            "mode": {"const": "active_active_single_writer"},
+            "reconcile": {"type": "string", "minLength": 1},
+            "health": {"type": "string", "minLength": 1},
+            "receipt": {"const": "artifact-replication-health.json"},
+            "promotion_requires_fresh_receipt": {"const": true}
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "policy"],
+      "properties": {
+        "included": {"const": false},
+        "policy": {"type": "string", "minLength": 1}
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checksums", "minimum_drill_frequency_days"],
+      "properties": {
+        "checksums": {"const": "CHECKSUMS.sha256"},
+        "minimum_drill_frequency_days": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

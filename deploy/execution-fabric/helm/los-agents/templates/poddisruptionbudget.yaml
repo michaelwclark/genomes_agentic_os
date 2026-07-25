@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "los-agents.name" . }}
+  labels:
+    {{- include "los-agents.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "los-agents.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}

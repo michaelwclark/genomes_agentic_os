@@ -1,0 +1,11 @@
+[Unit]
+Description=Validate Execution Fabric candidate reporter heartbeat and mode
+After=docker.service network-online.target genomes-agentic-os-execution-fabric-primary.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
+ExecStart=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/candidate-reporter-health.sh
+NoNewPrivileges=true
+PrivateTmp=true

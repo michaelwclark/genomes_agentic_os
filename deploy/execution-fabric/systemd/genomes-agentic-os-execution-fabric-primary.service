@@ -1,0 +1,20 @@
+[Unit]
+Description=Genomes Agentic OS Execution Fabric primary
+Requires=docker.service
+After=docker.service network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
+WorkingDirectory=/opt/genomes-agentic-os/execution-fabric/current/deploy
+ExecStartPre=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/preflight.sh primary
+ExecStart=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile primary up -d --remove-orphans
+ExecStartPost=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/wait-ready.sh
+ExecStop=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile primary stop
+TimeoutStartSec=180
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

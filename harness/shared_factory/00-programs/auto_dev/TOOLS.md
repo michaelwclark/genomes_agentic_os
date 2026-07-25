@@ -28,6 +28,7 @@
 | Effective program/access/code/QA/gitflow policy | `agentic-os develop policy ...` | ordered sources and fingerprint |
 | Effective inherited OS rules | `agentic-os rules effective ...` | strictest-wins rule projection |
 | Object Library source/install lifecycle | `$object-library` plus `agentic-os library` list, show, install, verify-install, and doctor | source build/release evidence plus receipt-backed installed projection readback |
+| Managed Auto-Dev admission and observation | `agentic-os runtime submit`, `runtime status`, and `runtime snapshot` | named queue admission plus canonical worker, attempt, retry, dead-letter, and terminal receipts |
 
 ## Provider routes
 

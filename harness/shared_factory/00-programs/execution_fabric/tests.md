@@ -2,7 +2,13 @@
 
 - Fresh install contains the complete program, command, and skill projection.
 - Default readback is inactive with filesystem queue mode.
-- Queue and worker-pool defaults are disabled, bounded, and schema-valid.
+- The queue-mode selector defaults to filesystem; shipped queue and worker-pool
+  policies are bounded, schema-valid, and inert until that selector changes.
+- Config source/fingerprint and canonical host/routing/alert dependencies are
+  discoverable, and source-package update preserves local config edits.
+- Existing queue/pool enablement, limits, lease, and retry rows reconcile in
+  one transaction with zero-drift readback; filesystem mode cannot reconcile
+  them as a second writer.
 - The vendor-neutral task envelope schema accepts the canonical task contract.
 - Update installs a missing program additively.
 - Update preserves operator-modified program configuration.
@@ -33,3 +39,11 @@
   deduplicated governed notification; the Codex repair remains directly leased
   for its entire run.
 - The interim executor delegates only to the canonical supervisor.
+- Remote API, health observer, deterministic healer, and alarm dispatcher run
+  as independent roles over one PostgreSQL truth plane.
+- Effect claims require an explicit non-empty owned effect-type filter.
+- Repeated effect failures apply bounded backoff and reach dead letter at
+  `maxAttempts`; explicit replay resets the attempt count at the current epoch.
+- Expired task/effect claims recover through allow-listed healer actions with
+  idempotent, cooldown/budgeted, before/after repair receipts.
+- Stale epochs fence healer, effect, alarm, and operator mutations.

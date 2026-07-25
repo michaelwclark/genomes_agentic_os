@@ -1,0 +1,369 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Independent, digest-pinned Execution Fabric leadership witness on ECS
+  Fargate with DynamoDB conditional leadership state.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: execution-fabric-witness
+    AllowedPattern: "^[a-zA-Z0-9-]{3,48}$"
+  ClusterId:
+    Type: String
+    AllowedPattern: "^[a-zA-Z0-9._-]{1,128}$"
+  InitialLeader:
+    Type: String
+    Default: genomesbox
+    AllowedPattern: "^[a-zA-Z0-9._-]{1,128}$"
+  InitialTimelineId:
+    Type: Number
+    Default: 1
+    MinValue: 1
+  InitialConfigDigest:
+    Type: String
+    AllowedPattern: "^[a-f0-9]{64}$"
+  WitnessImage:
+    Type: String
+    Description: OCI image reference pinned with @sha256.
+    AllowedPattern: "^.+@sha256:[a-f0-9]{64}$"
+  SecretBootstrapImage:
+    Type: String
+    Description: AWS CLI image reference pinned with @sha256.
+    AllowedPattern: "^.+@sha256:[a-f0-9]{64}$"
+  EcsClusterArn:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  ServiceSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  ServiceSecurityGroups:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  LoadBalancerSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  LoadBalancerSecurityGroups:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  CertificateArn:
+    Type: String
+    Description: ACM certificate for the witness HTTPS endpoint.
+  AdminTokenSecretArn:
+    Type: String
+    Description: Secrets Manager ARN containing only the admin bearer token.
+  ReaderTokenSecretArn:
+    Type: String
+    Description: Secrets Manager ARN containing only the read-only status bearer token.
+  CandidateTokensSecretArn:
+    Type: String
+    Description: Secrets Manager ARN containing a JSON object of host id to unique candidate bearer token.
+  SigningPrivateKeySecretArn:
+    Type: String
+    Description: Secrets Manager ARN containing the Ed25519 PKCS8 signing private key.
+  DesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 2
+    MaxValue: 6
+  MaxReplicaLagBytes:
+    Type: Number
+    Default: 67108864
+    MinValue: 0
+  CandidateFreshnessSeconds:
+    Type: Number
+    Default: 90
+    MinValue: 15
+    MaxValue: 3600
+  LeaderBaselineMaxAgeSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 30
+    MaxValue: 86400
+  AllowDegradedPrimary:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  MaxDegradedPrimarySeconds:
+    Type: Number
+    Default: 3600
+    MinValue: 60
+    MaxValue: 86400
+
+Resources:
+  WitnessTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "${EnvironmentName}-leadership"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: system
+          Value: genomes-agentic-os
+        - Key: component
+          Value: execution-fabric-leadership-witness
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/genomes-agentic-os/${EnvironmentName}"
+      RetentionInDays: 90
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: witness-state-and-secret-bootstrap
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:ConditionCheckItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:DescribeTable
+                Resource: !GetAtt WitnessTable.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref AdminTokenSecretArn
+                  - !Ref ReaderTokenSecretArn
+                  - !Ref CandidateTokensSecretArn
+                  - !Ref SigningPrivateKeySecretArn
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${EnvironmentName}-service"
+      Cpu: "512"
+      Memory: "1024"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: witness-secrets
+      ContainerDefinitions:
+        - Name: secret-bootstrap
+          Image: !Ref SecretBootstrapImage
+          Essential: false
+          EntryPoint:
+            - sh
+            - -ec
+          Command:
+            - >-
+              umask 077;
+              aws secretsmanager get-secret-value --secret-id "$ADMIN_SECRET_ARN"
+              --query SecretString --output text > /run/witness-secrets/admin-token;
+              aws secretsmanager get-secret-value --secret-id "$READER_SECRET_ARN"
+              --query SecretString --output text > /run/witness-secrets/reader-token;
+              aws secretsmanager get-secret-value --secret-id "$CANDIDATE_TOKENS_SECRET_ARN"
+              --query SecretString --output text > /run/witness-secrets/candidate-tokens.json;
+              aws secretsmanager get-secret-value --secret-id "$SIGNING_PRIVATE_KEY_SECRET_ARN"
+              --query SecretString --output text > /run/witness-secrets/signing-private-key.pem;
+              chmod 0444 /run/witness-secrets/admin-token /run/witness-secrets/reader-token
+              /run/witness-secrets/candidate-tokens.json /run/witness-secrets/signing-private-key.pem
+          Environment:
+            - Name: ADMIN_SECRET_ARN
+              Value: !Ref AdminTokenSecretArn
+            - Name: READER_SECRET_ARN
+              Value: !Ref ReaderTokenSecretArn
+            - Name: CANDIDATE_TOKENS_SECRET_ARN
+              Value: !Ref CandidateTokensSecretArn
+            - Name: SIGNING_PRIVATE_KEY_SECRET_ARN
+              Value: !Ref SigningPrivateKeySecretArn
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+          MountPoints:
+            - SourceVolume: witness-secrets
+              ContainerPath: /run/witness-secrets
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: bootstrap
+        - Name: witness
+          Image: !Ref WitnessImage
+          Essential: true
+          DependsOn:
+            - ContainerName: secret-bootstrap
+              Condition: SUCCESS
+          PortMappings:
+            - ContainerPort: 3195
+              Protocol: tcp
+          Environment:
+            - Name: WITNESS_HOST
+              Value: 0.0.0.0
+            - Name: WITNESS_PORT
+              Value: "3195"
+            - Name: WITNESS_CLUSTER_ID
+              Value: !Ref ClusterId
+            - Name: WITNESS_TABLE_NAME
+              Value: !Ref WitnessTable
+            - Name: WITNESS_INITIAL_LEADER
+              Value: !Ref InitialLeader
+            - Name: WITNESS_INITIAL_TIMELINE_ID
+              Value: !Ref InitialTimelineId
+            - Name: WITNESS_INITIAL_CONFIG_DIGEST
+              Value: !Ref InitialConfigDigest
+            - Name: WITNESS_MAX_REPLICA_LAG_BYTES
+              Value: !Ref MaxReplicaLagBytes
+            - Name: WITNESS_CANDIDATE_FRESHNESS_SECONDS
+              Value: !Ref CandidateFreshnessSeconds
+            - Name: WITNESS_LEADER_BASELINE_MAX_AGE_SECONDS
+              Value: !Ref LeaderBaselineMaxAgeSeconds
+            - Name: WITNESS_ALLOW_DEGRADED_PRIMARY
+              Value: !Ref AllowDegradedPrimary
+            - Name: WITNESS_MAX_DEGRADED_PRIMARY_SECONDS
+              Value: !Ref MaxDegradedPrimarySeconds
+            - Name: WITNESS_ADMIN_TOKEN_FILE
+              Value: /run/witness-secrets/admin-token
+            - Name: WITNESS_READER_TOKEN_FILE
+              Value: /run/witness-secrets/reader-token
+            - Name: WITNESS_CANDIDATE_TOKENS_FILE
+              Value: /run/witness-secrets/candidate-tokens.json
+            - Name: WITNESS_SIGNING_PRIVATE_KEY_FILE
+              Value: /run/witness-secrets/signing-private-key.pem
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+          MountPoints:
+            - SourceVolume: witness-secrets
+              ContainerPath: /run/witness-secrets
+              ReadOnly: true
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - >-
+                node -e "fetch('http://127.0.0.1:3195/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 20
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: witness
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Ref LoadBalancerSubnets
+      SecurityGroups: !Ref LoadBalancerSecurityGroups
+      LoadBalancerAttributes:
+        - Key: deletion_protection.enabled
+          Value: "true"
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: HTTP
+      Port: 3195
+      HealthCheckEnabled: true
+      HealthCheckPath: /readyz
+      Matcher:
+        HttpCode: "200"
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - Listener
+    Properties:
+      Cluster: !Ref EcsClusterArn
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref ServiceSubnets
+          SecurityGroups: !Ref ServiceSecurityGroups
+      LoadBalancers:
+        - ContainerName: witness
+          ContainerPort: 3195
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  WitnessTableName:
+    Value: !Ref WitnessTable
+  WitnessTableArn:
+    Value: !GetAtt WitnessTable.Arn
+  WitnessHttpsBase:
+    Value: !Sub "https://${LoadBalancer.DNSName}"
+  TaskDefinitionArn:
+    Value: !Ref TaskDefinition

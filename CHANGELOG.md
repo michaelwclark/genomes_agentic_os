@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.4.0] - 2026-07-24
+
+### Added
+- Unified named-queue Execution Fabric with PostgreSQL truth, BullMQ/Valkey
+  delivery, bounded workers, durable effects, health findings, alarms,
+  deterministic healing, and fenced genomesbox/bigmac leadership.
+- Portable task-attempt run artifacts through a MinIO/S3-compatible contract,
+  exact signed PUT headers, stored-object SHA-256 verification, durable
+  workload-bound spool recovery, central spool health, terminal quarantine,
+  bidirectional replication receipts, and promotion/failback artifact-RPO
+  gates.
+- Command Center queue, worker, run, effect, alarm, healing, configuration,
+  and failover visibility plus canonical runtime configuration commands.
+- Digest-pinned control-plane and witness images, release manifest, image lock,
+  checksums, SBOM, emergency bundle, Compose/systemd/launchd/Helm assets, and a
+  single-writer GitHub release workflow.
+- A generic single-identity Kubernetes worker chart with mandatory RWX state,
+  closed route validation, and explicit separation from LOSMON domain handlers.
+
+### Changed
+- Package, control-plane service, witness service, and Helm app versions now
+  advance together under one validated release manifest.
+- Direct and source-distribution-derived wheels carry the same cache-free
+  scaffold runtime resources. Large deployment and emergency assets remain in
+  the source distribution and GitHub release behind the wheel's asset index.
+- GUI development dependencies are locked to patched transitive versions with
+  no known audit findings at release validation.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added

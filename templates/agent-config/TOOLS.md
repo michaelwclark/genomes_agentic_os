@@ -27,6 +27,7 @@ List the visible capabilities intended for this layer.
 | `auto-dev-deploy` | Deploy or monitor the exact merged artifact and verify behavior. | `harness/skills/auto-dev-deploy/SKILL.md` |
 | `auto-dev-closeout` | Reconcile tracker, pull-request, release, and deployment truth and prove delivery complete. | `harness/skills/auto-dev-closeout/SKILL.md` |
 | `auto-dev-health` | Audit final receipts, retire only reconstructable local resources, and preserve the packet in the finished lane. | `harness/skills/auto-dev-health/SKILL.md` |
+| `execution-fabric` | Inspect named queues, workers, run/effect receipts, health, configuration, and cross-host failover. | `harness/skills/execution-fabric/SKILL.md` |
 
 ## Commands
 
@@ -57,6 +58,9 @@ List the visible capabilities intended for this layer.
 | `agentic-os detective` | Resolve/start/status, record version/evidence, pause/resume, analyze/conclude, render, or doctor investigations. | For environment work, `record-version` gates all other evidence. |
 | `agentic-os develop policy` | Explain the 1-N development, QA, or gitflow Markdown bundle for a project. | Adding a Markdown file affects the next run without code changes. |
 | `agentic-os develop stage` | Validate typed stage-evidence receipts and advance a Development Delivery run. | Records verified actions; it never performs provider or code actions itself. |
+| `agentic-os runtime snapshot` | Inspect queue depth, workers, run states, retries, dead letters, and health. | Reads the selected backend's canonical projection; Command Center uses the same data. |
+| `agentic-os runtime config status/validate/reconcile` | Locate, validate, or reconcile `harness/config/execution-fabric.yml`. | Reconcile is guarded and dry-run first. |
+| `agentic-os runtime queue-mode` | Inspect or explicitly change the selected execution backend. | Never infer activation from installed files. |
 
 ## MCP Servers
 

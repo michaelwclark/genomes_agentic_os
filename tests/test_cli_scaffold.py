@@ -22,7 +22,12 @@ from genomes_agentic_os.investigation_contracts import investigation_contract_do
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.config_ops import LAYER_POLICIES, PROFILE_MANAGED_MARKER, sidecar_path
 from genomes_agentic_os.routing import context_from_here
-from genomes_agentic_os.scaffold import PROJECT_CONFIG_FILES, create_project_worktree
+from genomes_agentic_os.scaffold import (
+    EXECUTION_FABRIC_MARKER_START,
+    PROJECT_CONFIG_FILES,
+    create_project_worktree,
+    install_docs,
+)
 from genomes_agentic_os.validate import validate_root
 from genomes_agentic_os.work_lifecycle import (
     create_project_work_item as create_compat_project_work_item,
@@ -463,12 +468,12 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
         "enabled": False,
         "runtime": {"queue_mode": "filesystem"},
     }
-    queue_catalog = yaml.safe_load(
-        (program_root / "config" / "queues.yml").read_text(encoding="utf-8")
-    )
-    worker_pools = yaml.safe_load(
-        (program_root / "config" / "worker-pools.yml").read_text(encoding="utf-8")
-    )
+    instance_policy = yaml.safe_load(
+        (harness(root) / "config" / "execution-fabric.yml").read_text(encoding="utf-8")
+    )["execution_fabric"]
+    assert not (program_root / "config" / "queues.yml").exists()
+    assert not (program_root / "config" / "worker-pools.yml").exists()
+    assert (program_root / "config" / "README.md").is_file()
     queue_schema = json.loads(
         (program_root / "schemas" / "queue-config.schema.json").read_text(encoding="utf-8")
     )
@@ -481,8 +486,6 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
     Draft202012Validator.check_schema(queue_schema)
     Draft202012Validator.check_schema(pool_schema)
     Draft202012Validator.check_schema(envelope_schema)
-    Draft202012Validator(queue_schema).validate(queue_catalog)
-    Draft202012Validator(pool_schema).validate(worker_pools)
     Draft202012Validator(envelope_schema).validate(
         {
             "schema_version": 1,
@@ -497,14 +500,14 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
             "retry_policy": {"max_attempts": 3, "backoff_seconds": 30},
         }
     )
-    assert queue_catalog["enabled"] is False
-    assert {queue["id"] for queue in queue_catalog["queues"]} == {
+    assert {queue["id"] for queue in instance_policy["queues"]} == {
         "codex",
         "claude",
+        "pr_reviews",
+        "los_environment",
         "non_llm",
     }
-    assert worker_pools["enabled"] is False
-    assert {pool["provider"] for pool in worker_pools["worker_pools"]} == {
+    assert {pool["provider"] for pool in instance_policy["worker_pools"]} == {
         "codex",
         "claude",
         "non_llm",
@@ -703,6 +706,41 @@ def test_update_preserves_local_execution_fabric_config_and_repairs_missing_file
 
     assert config_path.read_text(encoding="utf-8") == local_config
     assert (program_root / "runbook.md").is_file()
+
+
+def test_execution_fabric_routing_blocks_upgrade_without_replacing_local_edits(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    capsys.readouterr()
+    assert main(["project", "create", "work", "queue_demo", "--root", str(root)]) == 0
+    capsys.readouterr()
+    project = domain_root(root, "work") / "02-projects" / "queue_demo"
+    targets = [
+        harness(root) / "AGENTS.md",
+        domain_root(root, "work") / "RULES.md",
+        project / "TOOLS.md",
+    ]
+    for path in targets:
+        assert EXECUTION_FABRIC_MARKER_START in path.read_text(encoding="utf-8")
+
+    tools = project / "TOOLS.md"
+    content = tools.read_text(encoding="utf-8")
+    tools.write_text(
+        content.replace(
+            "## Managed Execution Fabric",
+            "## Stale execution wording",
+        )
+        + "\nLocal operator note that must survive upgrades.\n",
+        encoding="utf-8",
+    )
+    install_docs(root)
+    repaired = tools.read_text(encoding="utf-8")
+    assert "## Managed Execution Fabric" in repaired
+    assert "## Stale execution wording" not in repaired
+    assert "Local operator note that must survive upgrades." in repaired
 
 
 def test_validate_requires_self_improvement_surface(tmp_path: Path) -> None:

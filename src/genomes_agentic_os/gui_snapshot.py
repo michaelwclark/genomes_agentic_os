@@ -16,6 +16,7 @@ from .codex_sessions import codex_transcript_result_for_id, collect_codex_conver
 from .conversation_index import build_navigation, utc_now
 from .runtime_snapshot import build_runtime_snapshot
 from .long_run import ACTIVE_STATUSES, list_runs
+from .runtime_backend import execution_fabric_config_status
 
 
 SCHEMA_VERSION = "agentic-os-gui/v1"
@@ -65,6 +66,97 @@ CONVERSATION_FIELDS = (
 
 def _generated_at(now: datetime | None = None) -> str:
     return utc_now(now).astimezone().isoformat().replace("+00:00", "Z")
+
+
+def _count_states(value: Any, *states: str) -> int:
+    if not isinstance(value, dict):
+        return 0
+    return sum(int(value.get(state) or 0) for state in states)
+
+
+def _project_runtime_config(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    state = str(value.get("state") or "")
+    fingerprint = value.get("diskFingerprint") or value.get("fingerprint")
+    applied = value.get("appliedFingerprint") or value.get("applied_fingerprint")
+    return {
+        "source": value.get("source"),
+        "fingerprint": fingerprint or applied,
+        "applied_fingerprint": applied,
+        "drifted": bool(value.get("drifted")) or state in {"drifted", "invalid"},
+        "validated_at": value.get("lastCheckedAt") or value.get("validated_at"),
+    }
+
+
+def _project_runtime_healing(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    repair_states = value.get("repairs")
+    failed = _count_states(repair_states, "failed")
+    completed = _count_states(repair_states, "succeeded", "failed", "skipped")
+    status = str(value.get("status") or "unknown")
+    finding_details = value.get("findingDetails") or value.get("finding_details") or []
+    repair_receipts = value.get("repairReceipts") or value.get("repair_receipts") or []
+    return {
+        "status": status
+        if status in {"healthy", "repairing", "degraded", "failed", "unknown"}
+        else "unknown",
+        "last_run_at": (
+            value.get("lastRepairAt")
+            or value.get("lastReconcileAt")
+            or value.get("last_run_at")
+        ),
+        "repairs": (
+            int(value.get("repairs") or 0)
+            if isinstance(value.get("repairs"), (int, float))
+            else completed
+        ),
+        "failures": int(value.get("failures") or failed),
+        "summary": value.get("lastError") or value.get("summary"),
+        "finding_details": finding_details if isinstance(finding_details, list) else [],
+        "repair_receipts": repair_receipts if isinstance(repair_receipts, list) else [],
+    }
+
+
+def _project_runtime_alarms(value: Any, *, occurred_at: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    projected: list[dict[str, Any]] = []
+    for index, alarm in enumerate(value):
+        if not isinstance(alarm, dict):
+            continue
+        code = str(alarm.get("code") or alarm.get("id") or f"alarm-{index + 1}")
+        queue = str(alarm.get("queue") or "")
+        summary = alarm.get("summary") or alarm.get("message")
+        if not summary:
+            summary = code.replace("_", " ")
+            if queue:
+                summary = f"{summary}: {queue}"
+        raw_status = str(alarm.get("status") or "active")
+        status = (
+            raw_status
+            if raw_status in {"active", "acknowledged", "resolved"}
+            else "active"
+        )
+        severity = str(alarm.get("severity") or "warning")
+        if severity not in {"info", "warning", "error", "critical"}:
+            severity = "warning"
+        dedupe_key = str(alarm.get("dedupe_key") or f"{code}:{queue or 'fabric'}")
+        projected.append(
+            {
+                "id": str(alarm.get("id") or dedupe_key),
+                "severity": severity,
+                "status": status,
+                "message": str(summary),
+                "source": str(
+                    alarm.get("source") or "runtime.execution_fabric.health"
+                ),
+                "occurred_at": str(alarm.get("occurred_at") or occurred_at),
+                "dedupe_key": dedupe_key,
+            }
+        )
+    return projected
 
 
 def _project_conversation(item: dict[str, Any]) -> dict[str, Any]:
@@ -120,12 +212,41 @@ def _runtime_snapshot(root: Path) -> dict[str, Any]:
             "reason": f"{type(exc).__name__}: {exc}",
         }
     summary = snapshot["summary"]
+    config_projection = _project_runtime_config(snapshot.get("config"))
+    if config_projection is None:
+        try:
+            config_status = execution_fabric_config_status(root)
+            config_projection = {
+                "source": config_status.get("source"),
+                "fingerprint": config_status.get("fingerprint"),
+                "applied_fingerprint": config_status.get("fingerprint")
+                if int(config_status.get("drift_count") or 0) == 0
+                else None,
+                "drifted": bool(config_status.get("drift_count")),
+            }
+        except Exception:
+            config_projection = None
+    healing_projection = _project_runtime_healing(snapshot.get("healing"))
+    alarm_projection = _project_runtime_alarms(
+        snapshot.get("alarms"),
+        occurred_at=str(snapshot["captured_at"]),
+    )
+    control_plane = snapshot.get("control_plane")
+    if not isinstance(control_plane, dict):
+        control_plane = {
+            "transport": "local",
+            "active_host": "localhost",
+            "leader_host": "localhost",
+            "role": "leader",
+            "failover_state": "single-host",
+        }
     return {
         "status": snapshot["health"],
         "queue_mode": snapshot["queue_mode"],
         "queue_depth": int(summary["queued"]) + int(summary["approval_needed"]),
         "running": int(summary["running"]),
         "failed": int(summary["failed"]),
+        "completed": int(summary.get("done") or summary.get("succeeded") or 0),
         "recent_failures": int(summary["failed_last_hour"]),
         "dead_letter": int(summary["dead_letter"]),
         "active_workers": int(summary["active_workers"]),
@@ -150,6 +271,16 @@ def _runtime_snapshot(root: Path) -> dict[str, Any]:
         "long_running_runs": long_running_rows,
         "long_running_active": len(long_running_active),
         "long_running_attention": len(long_running_attention),
+        **({"effects": snapshot["effects"]} if isinstance(snapshot.get("effects"), dict) else {}),
+        "control_plane": control_plane,
+        **({"config": config_projection} if config_projection else {}),
+        **({"healing": healing_projection} if healing_projection else {}),
+        "alarms": alarm_projection,
+        "recent_run_reports": (
+            snapshot.get("recent_run_reports")
+            if isinstance(snapshot.get("recent_run_reports"), list)
+            else []
+        ),
         "captured_at": snapshot["captured_at"],
     }
 

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.genomes.agentic-os.execution-fabric.standby</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__INSTALL_ROOT__/bin/run-standby.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FABRIC_RUNTIME_ENV_FILE</key>
+    <string>__RUNTIME_ENV__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>__STATE_DIR__/logs/standby.log</string>
+  <key>StandardErrorPath</key>
+  <string>__STATE_DIR__/logs/standby.error.log</string>
+</dict>
+</plist>

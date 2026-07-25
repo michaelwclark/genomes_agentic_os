@@ -1,0 +1,12 @@
+[Unit]
+Description=Create and verify an Execution Fabric PostgreSQL backup
+Requires=genomes-agentic-os-execution-fabric-primary.service
+After=genomes-agentic-os-execution-fabric-primary.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
+WorkingDirectory=/opt/genomes-agentic-os/execution-fabric/current/deploy
+ExecStart=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile backup run --rm postgres-backup
+NoNewPrivileges=true
+TimeoutStartSec=600

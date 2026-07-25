@@ -48,3 +48,15 @@ Record local constraints, approval gates, safety boundaries, coding rules, and o
   run. Never create a second notifier or a parallel alert-history location.
 - Notifications are local macOS effects. They do not authorize Slack, email,
   tracker, customer-facing, or production actions.
+
+## Managed Execution Rules
+
+- When Execution Fabric is enabled, admit managed workflow and automation work
+  through its configured named queues. Folder counts, detached launches, and
+  direct vendor queue writes are not concurrency controls.
+- Route queue selection, workers, retries, dead letters, effect delivery,
+  alarms, healing, and failover to
+  `harness/shared_factory/00-programs/execution_fabric/`; do not copy those
+  rules into each workflow.
+- Preserve admission, assignment, attempt, effect, and terminal run receipts.
+  A trigger, process id, or health endpoint alone does not prove execution.

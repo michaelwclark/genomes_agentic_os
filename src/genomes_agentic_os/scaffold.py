@@ -221,6 +221,27 @@ MANAGED_RUNTIME_FILES = (
     ),
 )
 
+EXECUTION_FABRIC_MARKER_START = "<!-- agentic-os-execution-fabric:start -->"
+EXECUTION_FABRIC_MARKER_END = "<!-- agentic-os-execution-fabric:end -->"
+EXECUTION_FABRIC_ROUTING_BLOCK = f"""{EXECUTION_FABRIC_MARKER_START}
+## Managed Execution Fabric
+
+- Route managed asynchronous work through the shared Execution Fabric using a
+  declared task type and named queue. Folder counts, detached processes, and
+  direct vendor queue writes are not concurrency controls.
+- Inspect configuration with `agentic-os runtime config show|status|diff`,
+  validate before activation, and use guarded `reconcile` (local) or `reload`
+  (remote) operations. The one mutable instance policy is
+  `harness/config/execution-fabric.yml`.
+- Monitor queue depth, workers, runs, attempts, effects, alarms, healing, and
+  host leadership through `agentic-os runtime status` or `runtime snapshot`.
+  Admission and terminal receipts, not a trigger or process id, prove a run.
+- Queue, capacity, retry, dead-letter, health, and failover policy is owned by
+  `harness/shared_factory/00-programs/execution_fabric/`; narrower layers may
+  select declared routes but must not copy or weaken the root policy.
+{EXECUTION_FABRIC_MARKER_END}
+"""
+
 # Source-owned first-class resources are copied additively into an installed
 # root.  Unlike run state and operator configuration, these directories are
 # product definitions: a fresh install must be able to discover and execute
@@ -376,6 +397,9 @@ MANAGED_RESOURCE_TREES = (
         "harness/skills/object-library",
         "lib/skills/root/object-library",
     ),
+)
+MANAGED_LIBRARY_FALLBACK_ROOT = Path(
+    "harness/shared_factory/05-knowledge/library-bootstrap"
 )
 
 PROJECT_STATUSES = (
@@ -963,6 +987,73 @@ def append_once(path: Path, content: str, result: ScaffoldResult) -> None:
     result.updated.append(path)
 
 
+def write_managed_marker_block(
+    path: Path,
+    block: str,
+    result: ScaffoldResult,
+) -> None:
+    """Insert or replace one package-owned block without touching local prose."""
+    if not path.is_file():
+        return
+    existing = path.read_text(encoding="utf-8")
+    start = existing.find(EXECUTION_FABRIC_MARKER_START)
+    end = existing.find(EXECUTION_FABRIC_MARKER_END)
+    if (start >= 0) != (end >= 0) or (start >= 0 and end < start):
+        conflict = path.with_name(f"{path.name}.execution-fabric.new")
+        conflict.write_text(block, encoding="utf-8")
+        if conflict in result.created or conflict in result.updated:
+            return
+        result.created.append(conflict)
+        return
+    if start >= 0:
+        end += len(EXECUTION_FABRIC_MARKER_END)
+        candidate = f"{existing[:start]}{block.rstrip()}{existing[end:]}"
+    else:
+        separator = "\n" if existing.endswith("\n") else "\n\n"
+        candidate = f"{existing}{separator}{block}"
+    if candidate == existing:
+        result.skipped.append(path)
+        return
+    path.write_text(candidate, encoding="utf-8")
+    result.updated.append(path)
+
+
+def ensure_execution_fabric_routing_blocks(
+    root: Path,
+    result: ScaffoldResult,
+) -> None:
+    """Reconcile managed queue guidance across installed routing layers."""
+    layers: list[Path] = [harness_path(root)]
+    domains_root = root / "domains"
+    if domains_root.is_dir():
+        layers.extend(
+            path for path in sorted(domains_root.iterdir()) if path.is_dir()
+        )
+    shared_factory = harness_path(root, "shared_factory")
+    if shared_factory.is_dir():
+        layers.append(shared_factory)
+    for domain_root in list(layers[1:]):
+        projects_root = domain_root / "02-projects"
+        if projects_root.is_dir():
+            layers.extend(
+                path
+                for path in sorted(projects_root.iterdir())
+                if path.is_dir() and (path / "project.yml").is_file()
+            )
+    seen: set[Path] = set()
+    for layer in layers:
+        resolved = layer.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        for filename in ("AGENTS.md", "ROUTER.md", "RULES.md", "TOOLS.md"):
+            write_managed_marker_block(
+                layer / filename,
+                EXECUTION_FABRIC_ROUTING_BLOCK,
+                result,
+            )
+
+
 def copy_file(source: Path, destination: Path, result: ScaffoldResult) -> None:
     if destination.exists():
         result.skipped.append(destination)
@@ -973,12 +1064,7 @@ def copy_file(source: Path, destination: Path, result: ScaffoldResult) -> None:
 
 
 def ensure_schemas_dir(root: Path, result: ScaffoldResult) -> None:
-    """Copy the repo schemas/ JSON files into harness/schemas/ so that
-    installed roots are self-contained for strict validation and work even
-    when the source repository is not available (e.g. pip-installed packages
-    or customer machines).  Only JSON schemas are copied; the YAML
-    customer-profile schema is not a SCHEMA_TARGETS target.
-    """
+    """Upgrade package-owned schemas while preserving any local override."""
     try:
         schemas_source = repo_root() / "schemas"
     except FileNotFoundError:
@@ -989,8 +1075,78 @@ def ensure_schemas_dir(root: Path, result: ScaffoldResult) -> None:
         return
     dest = harness_path(root, "schemas")
     ensure_dir(dest, result)
+    manifest_path = dest / "package-manifest.yml"
+    previous: dict[str, dict[str, object]] = {}
+    if manifest_path.is_file():
+        try:
+            payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            payload = {}
+        entries = payload.get("entries") if isinstance(payload, dict) else []
+        if isinstance(entries, list):
+            previous = {
+                str(entry.get("destination")): entry
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("destination")
+            }
+    manifest_entries: list[dict[str, object]] = []
     for schema_file in sorted(schemas_source.glob("*.json")):
-        copy_file(schema_file, dest / schema_file.name, result)
+        destination = dest / schema_file.name
+        relative = f"harness/schemas/{schema_file.name}"
+        source_checksum = file_sha256(schema_file)
+        prior = previous.get(relative, {})
+        managed_checksum = str(prior.get("managed_checksum") or "")
+        status = "current"
+        if not destination.exists():
+            shutil.copy2(schema_file, destination)
+            result.created.append(destination)
+        else:
+            installed_checksum = file_sha256(destination)
+            if installed_checksum == source_checksum:
+                result.skipped.append(destination)
+            elif managed_checksum and installed_checksum == managed_checksum:
+                shutil.copy2(schema_file, destination)
+                result.updated.append(destination)
+            else:
+                conflict = destination.with_name(f"{destination.name}.new")
+                if not conflict.exists() or file_sha256(conflict) != source_checksum:
+                    existed = conflict.exists()
+                    shutil.copy2(schema_file, conflict)
+                    (result.updated if existed else result.created).append(conflict)
+                else:
+                    result.skipped.append(conflict)
+                status = "local_override"
+        observed_checksum = file_sha256(destination)
+        manifest_entries.append(
+            {
+                "source": f"schemas/{schema_file.name}",
+                "destination": relative,
+                "source_checksum": source_checksum,
+                "managed_checksum": (
+                    source_checksum
+                    if observed_checksum == source_checksum
+                    else managed_checksum or None
+                ),
+                "observed_checksum": observed_checksum,
+                "status": status,
+            }
+        )
+    desired_manifest = yaml.safe_dump(
+        {
+            "schema_version": 1,
+            "managed_by": "genomes-agentic-os package",
+            "entries": manifest_entries,
+        },
+        sort_keys=False,
+    )
+    if not manifest_path.exists():
+        manifest_path.write_text(desired_manifest, encoding="utf-8")
+        result.created.append(manifest_path)
+    elif manifest_path.read_text(encoding="utf-8") != desired_manifest:
+        manifest_path.write_text(desired_manifest, encoding="utf-8")
+        result.updated.append(manifest_path)
+    else:
+        result.skipped.append(manifest_path)
 
 
 def ensure_report_engine_contract(root: Path, result: ScaffoldResult) -> None:
@@ -1185,6 +1341,11 @@ def copy_tree(
     result = ScaffoldResult()
     for item in sorted(source.rglob("*")):
         relative = item.relative_to(source)
+        if (
+            "__pycache__" in relative.parts
+            or relative.suffix in {".pyc", ".pyo"}
+        ):
+            continue
         if any(relative == prefix or prefix in relative.parents for prefix in excluded):
             continue
         target = destination / relative
@@ -1209,7 +1370,17 @@ def ensure_managed_resource_surfaces(root: Path, result: ScaffoldResult) -> None
     for source, destination in MANAGED_RESOURCE_TREES:
         source_path = source_relative_path(source)
         if source_path.is_dir():
-            result.extend(copy_tree(source_path, root / destination))
+            destination_path = Path(destination)
+            # The external object library is a receipt-backed projection. The
+            # GAOS wheel may carry a first-install fallback, but update/init
+            # must never add files directly to an installed external revision.
+            # Keep package fallbacks outside lib/ and let library.init project
+            # them only into a new, unreceipted managed placeholder.
+            if destination_path.parts[:1] == ("lib",):
+                destination_path = (
+                    MANAGED_LIBRARY_FALLBACK_ROOT / destination_path
+                )
+            result.extend(copy_tree(source_path, root / destination_path))
     ensure_object_library_command_projection(root, result)
 
 
@@ -1217,7 +1388,14 @@ def ensure_object_library_command_projection(root: Path, result: ScaffoldResult)
     """Project the Python-registered library command into object discovery."""
 
     command = next(entry for entry in command_entries() if entry["id"] == "object-library")
-    target = root / "lib" / "commands" / "root" / "object-library"
+    target = (
+        root
+        / MANAGED_LIBRARY_FALLBACK_ROOT
+        / "lib"
+        / "commands"
+        / "root"
+        / "object-library"
+    )
     copy_file(source_relative_path(command["source"]), target / "command.md", result)
     manifest = {
         "api_version": "agentic-os-library-object/v1",
@@ -1443,6 +1621,7 @@ After choosing a domain or narrower layer, change to that directory and read its
 | Our pull request through governed merge, release, and documentation | Auto-Dev Continuous Release |
 | Implement, review, validate, release, deploy, or close out code | Auto-Dev over Development Delivery |
 | Audit receipts and retire reconstructable local resources after verified delivery | Auto-Dev Health |
+| Queue admission, worker capacity, run state, retries, dead letters, effects, alarms, healing, or host failover | `harness/shared_factory/00-programs/execution_fabric/` |
 
 Select these workflows by intent even when the user does not name Auto-Dev.
 Route to the domain/project before resolving its policy additions.
@@ -1639,6 +1818,19 @@ These root rules apply unless a narrower layer provides a stricter rule.
 - Pause and resume the same run for unavailable VPN, environment, provider, authentication, rate limit, or operator decision; do not create retry-failure storms.
 - Render and validate governed artifacts before approved external apply, then read back and receipt the provider result.
 
+## Managed Execution Rules
+
+- When Execution Fabric is enabled, every managed workflow and automation
+  admits work through its configured named queue; folder counts, detached
+  processes, and direct vendor queue writes are not concurrency controls.
+- Route queue selection, capacity, worker, retry, dead-letter, effect,
+  observability, healing, and failover questions to
+  `harness/shared_factory/00-programs/execution_fabric/`. Do not copy that
+  program's policy into domains or projects.
+- Treat admission, assignment, attempt, effect, and terminal run receipts as
+  the execution record. A trigger, health check, or process id alone does not
+  prove that requested work ran.
+
 ## Precedence
 
 Narrower rules override broader rules unless the broader rule is stricter for
@@ -1675,6 +1867,7 @@ the source of truth by themselves.
 | `quiet-async-runner` | Run long waits through artifact-backed async state instead of chat polling. | `shared_factory/05-knowledge/skills/quiet-async-runner/` |
 | `cockpit` | Build or open the local engineering cockpit over canonical OS state. | `shared_factory/05-knowledge/skills/cockpit/` |
 | `agentic-os-gui` | Open or build the domain/project-focused desktop conversation driver. | `shared_factory/05-knowledge/skills/agentic-os-gui/` |
+| `execution-fabric` | Inspect named queues, worker pools, run receipts, health, configuration, and cross-host failover. | `skills/execution-fabric/SKILL.md` |
 | `os-doctor` | Audit installed OS structure and contracts. | `shared_factory/05-knowledge/skills/os-doctor/` |
 | `auto-dev` | Run a code change through the canonical SDLC family. | `skills/auto-dev/SKILL.md` |
 | `auto-dev-everything` | Run every applicable workflow against one resumable `autodev.json`. | `skills/auto-dev-everything/SKILL.md` |
@@ -1748,6 +1941,9 @@ the source of truth by themselves.
 | `harness/bin/agentic-os-quiet-run` | Run long local commands with file-backed state. | Use for tests, setup, watchers, and slow waits. |
 | `agentic-os cockpit snapshot/build/open` | Build or open the read-only local engineering cockpit. | Generates disposable JSON/HTML under the canonical report root. |
 | `agentic-os gui snapshot/transcript/open` | Inspect or open AgenticOSGui's native Claude/Codex conversation surface. | Provider stores remain read-only; interactive actions stay behind desktop IPC. |
+| `agentic-os runtime snapshot` | Inspect queue depth, workers, task/run states, retries, dead letters, and current health. | Backend-neutral read; Command Center consumes this same projection. |
+| `agentic-os runtime config status/validate/reconcile` | Inspect or reconcile the canonical Execution Fabric configuration. | Reconcile is guarded and dry-run first. |
+| `agentic-os runtime queue-mode` | Inspect or explicitly change the selected execution backend. | Never infer activation from installed files. |
 | `agentic-os project worktree cleanup-closed` | Move terminal-status or merged-PR worktree registrations to `worktrees/closed.yml`. | Physical removal requires exact domain, project, worktree, packet-local Health preflight, and preflight-bound runtime receipt; failed or `REOPEN.md` cleanup remains registered. |
 | `agentic-os project work-item infer-complete` | Infer completed active work items from terminal evidence, closeout artifacts, and quiet conversation activity. | Use before `finalize-lingering` in cleanup workflows. |
 | `agentic-os project work-item finalize-lingering` | Move terminal-status packets out of active lanes and refresh the global active symlink container. | Use after closeout/stale-finalization cleanup. |
@@ -1962,6 +2158,7 @@ Classify the request into one of this domain's operating lanes, then choose the 
 | Bug, failed QA, log, incident, or RCA | Auto-Dev Detective plus `investigation-config/` |
 | Jira, Linear, Notion, Confluence, GitHub, report, or RCA output | Auto-Dev Create Artifacts plus `artifact-config/` |
 | Code implementation through release | Auto-Dev plus the selected project development profile |
+| Queue admission, worker capacity, run/effect state, health, or failover | shared Execution Fabric program |
 
 ## Routing Rules
 
@@ -1974,6 +2171,9 @@ Classify the request into one of this domain's operating lanes, then choose the 
 - Use `agentic-os library create workflow` when judgment, context assembly, or approval gates are central.
 - Use `agentic-os library create automation` when a trigger can safely run a repeatable action with declared permissions.
 - Use `shared_factory` when a pattern should be reused by multiple domains.
+- Route managed execution through the shared Execution Fabric program. Domain
+  workflows select a declared task type and named queue; they do not create
+  local worker-count or queue-health rules.
 
 ## Context Loading
 
@@ -2114,6 +2314,9 @@ workflow, or automation defines a stricter rule.
 - Resolve deployed version before causal code claims and record evidence authority, freshness, and limitations.
 - Pause the same Detective run when a declared dependency is unavailable; resume only with availability evidence.
 - Validate and sanitize artifacts before approved external apply; verify target and read back the result.
+- When Execution Fabric is enabled, use its admission API and terminal receipts
+  for managed work. Do not infer capacity from work-item folders or process
+  listings, and do not bypass the named queue with a detached launch.
 
 ## Precedence
 
@@ -2141,6 +2344,7 @@ libraries, and wrappers for `{domain}`.
 | `auto-dev` | Implement, review, release, deploy, and close out code through shared SDLC stages. | inherited from `harness/skills` |
 | `auto-dev-create-artifacts` | Author governed provider/type outputs with domain/project policy. | inherited from `harness/skills` |
 | `auto-dev-detective` | Investigate bugs, failed QA, logs, incidents, and RCA questions with versioned evidence. | inherited from `harness/skills` |
+| `execution-fabric` | Inspect or troubleshoot named queues, workers, run receipts, health, and host failover. | inherited from `harness/skills` |
 
 ## Commands
 
@@ -2153,6 +2357,8 @@ libraries, and wrappers for `{domain}`.
 | `agentic-os artifacts ...` | Resolve/render/validate/apply/readback/doctor artifact contracts. | External writes require target verification and approval. |
 | `agentic-os detective ...` | Resolve/start/status/version/evidence/pause/resume/analyze/conclude/render/doctor investigations. | Read-only and resumable. |
 | `agentic-os develop ...` | Plan/start code delivery or explain development policy. | Select a repository explicitly when the project catalog requires it. |
+| `agentic-os runtime snapshot` | Inspect queue, worker, task/run, retry, dead-letter, and health state. | Reads the selected backend's canonical projection. |
+| `agentic-os runtime config status` | Find the effective Execution Fabric config and detect drift. | The editable instance file remains `harness/config/execution-fabric.yml`. |
 
 ## MCP Servers
 
@@ -2768,6 +2974,11 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         harness_path(os_root, "config", "long-running-execution.yml"),
         result,
     )
+    copy_file(
+        harness_source_dir() / "config" / "execution-fabric.yml",
+        harness_path(os_root, "config", "execution-fabric.yml"),
+        result,
+    )
     ensure_capability_registries(os_root, result)
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)
@@ -2843,6 +3054,7 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     init_library(os_root, dry_run=False)
     ensure_auto_dev_program_alias(os_root, result)
     ensure_self_improvement_surface(os_root, result)
+    ensure_execution_fabric_routing_blocks(os_root, result)
     return result
 
 
@@ -3123,6 +3335,7 @@ Route project work to the narrowest local surface before acting.
 | Project status or next action | `status.md` |
 | Source map, repo, Notion, Jira, or MCP setup | `source-map.md` and `config/*.yml` |
 | Feature implementation | active registry row, stable packet, then `src/` or the row's verified worktree |
+| Queue admission, worker/run health, or failover | shared Execution Fabric program; project config only selects declared task type/queue |
 | Feature artifact or generated output | `artifacts/` or configured source artifact root |
 | Durable decision | `decisions.md` |
 
@@ -3216,6 +3429,9 @@ checkout or feature artifact defines a stricter rule.
 - Treat source repo `features/`, `.features/`, and legacy lane folders as mirrors or artifact locations, never lifecycle truth.
 - Keep secrets out of markdown, YAML, generated config, logs, and artifacts.
 - Follow the strictest applicable parent, project, source-repo, and workflow rule.
+- When managed execution is enabled, submit through the shared Execution Fabric
+  contract and retain its admission and terminal receipts in the owning run
+  evidence. Never use folder counts as a concurrency semaphore.
 {ssh_section}
 """
 
@@ -3243,6 +3459,8 @@ This registry names project-local capabilities for `domains/{domain}/projects/{p
 | `agentic-os project work-item sync-active` | Rebuild disposable active links from SQLite-active rows and their verified worktrees. | Use after canonical work-state changes. |
 | `agentic-os context build --project {project}` | Build a deterministic project context packet from this routed project or a unique project match. | Use `--domain {domain}` when outside the project route or when project names could collide. |
 | `agentic-os validate` | Validate OS and project layer structure. | Run before handoff after scaffold changes. |
+| `agentic-os runtime snapshot` | Inspect this project's queued and running work through the shared backend projection. | Filter by the declared named queue or task identity; do not inspect vendor state directly. |
+| `agentic-os runtime config status` | Locate the canonical fabric config and inspect fingerprint/drift. | Project config references task types/queues but does not copy the root fabric config. |
 | `/add-spec` | Compatibility intake that must land specification truth in Jira or Linear. | Do not create a filesystem source of truth. |
 | `/auto-add-spec` | Compatibility intake that must land specification truth in Jira or Linear. | Do not create a filesystem source of truth. |
 | `/new-feature` | Deprecated alias for `/add-spec`. | Compatibility only. |
@@ -4239,6 +4457,12 @@ Verify selection with `agentic-os develop policy {domain} {project} --plane {pla
         result,
         replace_markers=("List the visible capabilities intended for this layer",),
     )
+    for filename in ("AGENTS.md", "ROUTER.md", "RULES.md", "TOOLS.md"):
+        write_managed_marker_block(
+            project_root / filename,
+            EXECUTION_FABRIC_ROUTING_BLOCK,
+            result,
+        )
     write_project_file(
         project_root / "MEMORY.md",
         project_memory_policy(project),

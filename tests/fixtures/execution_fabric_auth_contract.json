@@ -1,0 +1,127 @@
+{
+  "schema_version": "execution-fabric-auth-contract/v2",
+  "static_credentials": {
+    "submit": {
+      "environment": "EXECUTION_FABRIC_SUBMIT_TOKEN",
+      "endpoints": ["POST /api/v1/tasks"]
+    },
+    "worker_bootstrap": {
+      "credential_map_file_environment": "FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE",
+      "endpoints": ["POST /api/v1/workers/register"],
+      "bound_fields": [
+        "bootstrapId",
+        "workerId",
+        "hostId",
+        "queues",
+        "capabilities",
+        "maxConcurrency"
+      ]
+    },
+    "observer": {
+      "environment": "EXECUTION_FABRIC_OBSERVER_TOKEN",
+      "endpoints": [
+        "GET /api/v1/tasks/:taskId",
+        "GET /api/v1/snapshots/*",
+        "GET /api/v1/status",
+        "GET /metrics"
+      ]
+    },
+    "admin": {
+      "environment": "EXECUTION_FABRIC_ADMIN_TOKEN",
+      "endpoints": ["POST /api/v1/admin/*"]
+    },
+    "effect_consumer": {
+      "credential_map_file_environment": "FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE",
+      "endpoints": ["POST /api/v1/effects/claim"],
+      "bound_fields": ["consumerId", "source", "effectTypes"]
+    },
+    "alarm_dispatcher": {
+      "credential_map_file_environment": "FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE",
+      "endpoints": ["POST /api/v1/alarms/claim"],
+      "bound_fields": ["consumerId", "source"]
+    }
+  },
+  "session_credentials": {
+    "registration_token": {
+      "source": "POST /api/v1/workers/register response.registrationToken",
+      "format": "uuid",
+      "bearer_and_body_must_match": true,
+      "endpoints": [
+        "POST /api/v1/workers/:workerId/heartbeat",
+        "POST /api/v1/assignments/claim",
+        "POST /api/v1/artifacts/recovery-uploads",
+        "POST /api/v1/artifacts/:artifactId/recovery-finalize"
+      ]
+    },
+    "lease_token": {
+      "source": "POST /api/v1/assignments/claim response.leaseToken",
+      "format": "uuid",
+      "bearer_and_body_must_match": true,
+      "bound_fields": ["attemptId", "workerId", "fabricEpoch"],
+      "endpoints": [
+        "POST /api/v1/attempts/:attemptId/complete",
+        "POST /api/v1/attempts/:attemptId/fail",
+        "POST /api/v1/artifacts/uploads",
+        "POST /api/v1/artifacts/:artifactId/finalize"
+      ]
+    },
+    "effect_claim_token": {
+      "source": "POST /api/v1/effects/claim response[].claimToken",
+      "format": "uuid",
+      "bearer_and_body_must_match": true,
+      "bound_fields": ["effectId", "consumerId", "fabricEpoch"],
+      "endpoints": [
+        "POST /api/v1/effects/:effectId/deliver",
+        "POST /api/v1/effects/:effectId/fail"
+      ]
+    },
+    "alarm_claim_token": {
+      "source": "POST /api/v1/alarms/claim response[].claimToken",
+      "format": "uuid",
+      "bearer_and_body_must_match": true,
+      "bound_fields": ["alarmId", "consumerId", "fabricEpoch"],
+      "endpoints": [
+        "POST /api/v1/alarms/:alarmId/deliver",
+        "POST /api/v1/alarms/:alarmId/fail"
+      ]
+    }
+  },
+  "source_credentials": {
+    "reliability_observation": {
+      "source_token_map_file_environment": "FABRIC_RELIABILITY_SOURCE_TOKENS_FILE",
+      "endpoint": "POST /api/v1/reliability/observations",
+      "body_source_must_match_token_scope": true
+    }
+  },
+  "response_contracts": {
+    "worker_registration": [
+      "workerId",
+      "registrationToken",
+      "leaseExpiresAt",
+      "fabricEpoch"
+    ],
+    "assignment": [
+      "attemptId",
+      "task",
+      "leaseToken",
+      "attemptRecoveryToken",
+      "leaseExpiresAt",
+      "fabricEpoch"
+    ],
+    "no_assignment": {
+      "status": 204,
+      "body": null
+    }
+  },
+  "invariants": [
+    "All static, source, consumer, and dispatcher credentials are distinct.",
+    "Observer credentials authorize GET requests only.",
+    "Effect consumers are bound to one consumer ID, one source, and an allow-list of effect types.",
+    "Alarm dispatchers are bound to one consumer ID and one source.",
+    "Static credentials are never accepted on session-bound endpoints.",
+    "Reliability source credentials are unique per source and cannot submit for another source.",
+    "Session credentials are opaque, short-lived, and never reusable across workers, attempts, effects, alarms, or fabric epochs.",
+    "Artifact recovery requires both the current worker registration token and the opaque attemptRecoveryToken issued only with that assignment.",
+    "A producer submits typed task payloads only; it cannot submit commands or effect envelopes."
+  ]
+}

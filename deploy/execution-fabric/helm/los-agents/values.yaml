@@ -1,0 +1,58 @@
+# One release represents one durable worker credential/identity. Scale by
+# installing another release with another scoped credential.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-worker
+  digest: ""
+  pullPolicy: IfNotPresent
+
+fabric:
+  apiBase: ""
+  apiVersion: v1
+
+secrets:
+  # Operator-owned Secret; this chart never creates or embeds credentials.
+  # Intentionally unset: production installs must name their own Secret.
+  existingSecret: ""
+  keys:
+    workerBootstrapToken: worker-bootstrap-token
+
+worker:
+  # These three values must match one entry in the control plane's
+  # worker-bootstrap credential map. They remain stable across pod replacement.
+  id: ""
+  bootstrapId: ""
+  # Operator supplied; must exist in both canonical host identity and
+  # host-routing registries.
+  hostId: ""
+  # The generic image ships the codex_task handler. LOS environment/Jira
+  # handlers live in the LOSMON adapter image and are intentionally absent.
+  acceptedQueues: [codex]
+  capabilities: [codex.task]
+  maxConcurrency: 1
+  heartbeatSeconds: 15
+  spoolDrainSeconds: 30
+  gracefulShutdownSeconds: 60
+
+storage:
+  # Required RWX claim: preserves artifact spool payloads across pod replacement.
+  existingClaim: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+network:
+  fabricCidrs:
+    - 100.64.0.0/10
+  fabricPort: 3180
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

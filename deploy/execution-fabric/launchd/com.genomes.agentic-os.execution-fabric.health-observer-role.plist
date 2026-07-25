@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.genomes.agentic-os.execution-fabric.health-observer-role</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__INSTALL_ROOT__/bin/run-role.sh</string>
+    <string>observer</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FABRIC_RUNTIME_ENV_FILE</key>
+    <string>__RUNTIME_ENV__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__STATE_DIR__/logs/health-observer-role.log</string>
+  <key>StandardErrorPath</key>
+  <string>__STATE_DIR__/logs/health-observer-role.error.log</string>
+</dict>
+</plist>

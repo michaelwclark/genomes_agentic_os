@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Execution Fabric operator snapshots
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=true
+Unit=genomes-agentic-os-execution-fabric-observer.service
+
+[Install]
+WantedBy=timers.target

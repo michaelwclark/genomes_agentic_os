@@ -1,0 +1,11 @@
+include release/execution-fabric-manifest.yml
+include harness/config/execution-fabric.yml
+include schemas/execution-fabric.schema.json
+recursive-include harness *
+recursive-include templates *
+recursive-include operating-manual *
+recursive-include schemas *
+recursive-include deploy/execution-fabric *
+recursive-include installers/execution-fabric *
+recursive-include services/execution-fabric-control-plane/migrations *.sql
+global-exclude __pycache__ *.py[cod] .DS_Store

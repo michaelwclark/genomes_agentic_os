@@ -53,6 +53,11 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     max_interactive_running: 1,
     queues: [], worker_pools: [], workers: [], running_tasks: [], tasks: [], task_count: 0,
     task_sample_count: 0, task_sample_limit: 200,
+    completed: 0,
+    control_plane: { transport: "unknown" as const, role: "unknown" as const },
+    healing: { status: "unknown" as const, repairs: 0, failures: 0 },
+    alarms: [],
+    recent_run_reports: [],
     captured_at: generatedAt,
   };
   const runtime = native.runtime ? {
@@ -88,6 +93,26 @@ export function normalizeSnapshot(value: GuiSnapshot, root: string, state: Opera
     recent_failures: Number(native.runtime.recent_failures || 0),
     registered_workers: Number(native.runtime.registered_workers || 0),
     historical_worker_records: Number(native.runtime.historical_worker_records || 0),
+    completed: Number(native.runtime.completed || 0),
+    effects: native.runtime.effects ? {
+      pending: Number(native.runtime.effects.pending || 0),
+      delivering: Number(native.runtime.effects.delivering || 0),
+      delivered: Number(native.runtime.effects.delivered || 0),
+      failed: Number(native.runtime.effects.failed || 0),
+      dead_letter: Number(native.runtime.effects.dead_letter || 0),
+    } : undefined,
+    control_plane: native.runtime.control_plane ?? fallbackRuntime.control_plane,
+    config: native.runtime.config ? {
+      ...native.runtime.config,
+      drifted: Boolean(native.runtime.config.drifted),
+    } : undefined,
+    healing: native.runtime.healing ? {
+      ...native.runtime.healing,
+      repairs: Number(native.runtime.healing.repairs || 0),
+      failures: Number(native.runtime.healing.failures || 0),
+    } : fallbackRuntime.healing,
+    alarms: Array.isArray(native.runtime.alarms) ? native.runtime.alarms : [],
+    recent_run_reports: Array.isArray(native.runtime.recent_run_reports) ? native.runtime.recent_run_reports : [],
   } : fallbackRuntime;
   const launchedByOwnedId = new Map(
     Object.values(state.launchedSessions).map((session) => [`${session.harness}:${session.sessionId}`, session]),

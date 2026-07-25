@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify Execution Fabric artifact replication in both directions
+After=network-online.target genomes-agentic-os-execution-fabric-primary.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
+ExecStart=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/artifact-replication-health.sh
+NoNewPrivileges=true
+PrivateTmp=true

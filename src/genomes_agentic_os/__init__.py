@@ -1,3 +1,3 @@
 """Genome's Agentic OS scaffold package."""
 
-__version__ = "0.1.8"
+__version__ = "0.4.0"

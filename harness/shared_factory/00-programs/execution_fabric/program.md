@@ -15,9 +15,11 @@ managed execution path.
 
 ## Ownership
 
-The source package owns the reusable program contract, routing policy, queue and
-worker-pool definitions, and activation requirements. Each installed Agentic OS
-instance owns its selected mode, runtime state, receipts, and backend secrets.
+The source package owns the reusable program contract, schema, shipped defaults,
+and activation requirements. Each installed Agentic OS instance owns the
+editable `harness/config/execution-fabric.yml`, selected mode, runtime state,
+receipts, and backend secrets. Host identity, host-routing policy, and alert
+policy remain in their canonical existing registries.
 
 ## Modes
 
@@ -39,6 +41,13 @@ letters, authoritative backend reads, health observability, self-heal routing,
 system notifications, concurrent supervisor batches, interactive capacity
 reservation, detached-child lease retention, and rollback blockers for
 unprojected work.
+
+Remote activation additionally requires independent API, observer, healer,
+and alarm-dispatcher roles. Business processing never evaluates health or
+sends alerts. Observation never repairs. Healing is deterministic and limited
+to configured allow-listed actions with epoch fencing, idempotency, cooldown,
+hourly budget, and before/after verification. The alarm dispatcher is the only
+role that crosses into the canonical Agentic OS notification seam.
 
 Transient timeouts, provider throttling and 5xx responses, and recognized
 network transport failures use bounded exponential backoff. Unknown command
