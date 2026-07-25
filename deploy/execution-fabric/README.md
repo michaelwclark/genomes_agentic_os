@@ -267,11 +267,14 @@ coincidental process or host-manager restart.
 
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
 independently deployable service in
-`services/execution-fabric-leadership-witness`. It uses DynamoDB conditional
-transactions to arbitrate one leader, advance a monotonic epoch, return an
-identity-bound fence receipt, check fresh health/replica-lag/config evidence,
-reject stale expected-leader/epoch requests, and preserve durable audit
-records. A two-host ping check is not a witness.
+`services/execution-fabric-leadership-witness`. Its canonical provider-neutral
+deployment uses a singleton SQLite authority on a third host. Each mutation
+commits under `BEGIN IMMEDIATE`, WAL, and `synchronous=FULL` before returning.
+The optional DynamoDB adapter preserves the same conditional contract. Both
+advance a monotonic epoch, return an identity-bound fence receipt, check fresh
+health/replica-lag/config evidence, reject stale expected-leader/epoch
+requests, and preserve durable audit records. A two-host ping check is not a
+witness, and two candidates are not a quorum.
 
 Every worker is configured with its host's stable gateway on port 3181. The
 gateway routes to genomesbox or bigmac only from a short-lived, signed witness
@@ -279,12 +282,14 @@ proof. It does not infer leadership from one failed health check, and it stops
 routing when a cached proof expires. Promotion and manual failback therefore
 do not require editing worker configuration.
 
-The portable AWS deployment template and activation runbook are under
-`witness/`. Source availability does not activate the witness. A real
-independent AWS stack, HTTPS/network policy, provider-managed secrets,
-candidate reporters, alarms, and a successful failover/failback drill remain
-operator prerequisites. Automatic promotion stays disabled until those
-receipts exist.
+The portable OCI manifest, installer, Tailscale-only bind preflight, monitor,
+and activation runbook are under `witness/`. Source availability does not
+activate the witness. A real independent host, immutable image, network policy,
+protected secrets, durable state, candidate reporters, alarms, and a successful
+failover/failback drill remain operator prerequisites. The AWS CloudFormation
+template is an optional provider adapter, not a prerequisite. Without an
+independent host, select `manual_fail_closed`; no witness starts and automatic
+promotion must remain disabled.
 
 Additional activation prerequisites are deliberately explicit:
 

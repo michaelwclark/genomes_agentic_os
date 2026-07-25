@@ -346,6 +346,34 @@ cannot replace it during startup.
 The CLI's redacted preview and local reload receipts remain below
 `harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads/`.
 
+## Independent leadership witness
+
+The witness is a provider-neutral, digest-pinned OCI service. Its canonical
+portable deployment runs once on a declared third host, binds the process only
+to that host's configured Tailscale IP, and stores authority in a durable
+SQLite volume. SQLite uses WAL, `synchronous=FULL`, and
+`BEGIN IMMEDIATE`; the mutation and immutable audit stream commit before the
+API returns. DynamoDB remains an optional storage/deployment adapter.
+
+Install and activate the portable assets explicitly:
+
+```bash
+installers/execution-fabric/install-witness.sh \
+  --apply --source-root /path/to/genomes_agentic_os --release <release>
+installers/execution-fabric/activate-witness.sh --apply
+```
+
+Monitor `deploy/execution-fabric/witness/bin/monitor.sh` through the host
+supervisor. It writes a durable health receipt and emits the canonical
+`runtime.execution_fabric.health` alert when liveness or durable readiness
+fails. A container restart is not a readiness receipt.
+
+If no independent witness host exists, configure
+`WITNESS_MODE=manual_fail_closed`. No witness container starts,
+`FABRIC_AUTO_FAILOVER` and `FABRIC_ENABLE_PROMOTION` must remain false, and the
+system makes no two-node split-brain-safety claim. A ping between genomesbox
+and bigmac cannot tell which side of a partition is authoritative.
+
 If activation finds historical nonterminal SQLite rows that are missing from or
 status-drifted against YAML, it refuses the switch. Reconcile from filesystem
 mode before trying again:

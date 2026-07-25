@@ -9,7 +9,10 @@ const signingKeys = generateKeyPairSync("ed25519");
 const config: WitnessConfig = {
   host: "127.0.0.1",
   port: 3195,
+  witnessHostId: "witness-1",
   clusterId: "test-fabric",
+  store: "sqlite",
+  stateFile: "/tmp/test-witness.sqlite3",
   tableName: "test-witness",
   initialLeader: "genomesbox",
   initialTimelineId: 1,

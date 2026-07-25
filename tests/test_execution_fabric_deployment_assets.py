@@ -79,6 +79,7 @@ def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
         "linux",
         "macos",
         "kubernetes",
+        "oci_witness",
         "aws_witness",
     }
     assert installer_manifest["platforms"]["linux"]["activator"].endswith(
@@ -462,7 +463,26 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     service = SOURCE_ROOT / "services" / "execution-fabric-leadership-witness"
     deployment = DEPLOY / "witness"
     assert (service / "Dockerfile").is_file()
+    assert (service / "src" / "sqlite-store.ts").is_file()
     assert (service / "src" / "dynamo-store.ts").is_file()
+    manifest = _yaml(deployment / "manifest.yml")
+    assert manifest["container"]["immutable_digest_required"] is True
+    assert manifest["container"]["network_mode"] == "host"
+    assert manifest["container"]["bind_variable"] == "WITNESS_TAILSCALE_IP"
+    assert manifest["safety"]["candidate_host_may_run_witness"] is False
+    assert manifest["safety"]["two_candidate_hosts_are_not_quorum"] is True
+    assert manifest["safety"]["no_witness_behavior"] == "manual_fail_closed"
+    preflight = (deployment / "bin/preflight.sh").read_text(encoding="utf-8")
+    runner = (deployment / "bin/run.sh").read_text(encoding="utf-8")
+    assert "tailscale ip -4" in preflight
+    assert 'grep -Fx "$WITNESS_TAILSCALE_IP"' in preflight
+    assert "candidate tokens must name at least two unique candidates" in preflight
+    assert "--network host" in runner
+    assert "--read-only" in runner
+    assert "--cap-drop ALL" in runner
+    assert "--security-opt no-new-privileges" in runner
+    assert (deployment / "bin/preflight.sh").stat().st_mode & 0o111
+    assert (deployment / "bin/run.sh").stat().st_mode & 0o111
     template = (deployment / "cloudformation.yml").read_text(encoding="utf-8")
     assert "AllowedPattern: \"^.+@sha256:[a-f0-9]{64}$\"" in template
     assert "PointInTimeRecoveryEnabled: true" in template
@@ -572,15 +592,114 @@ def test_witness_cloudwatch_alarms_cover_service_alb_and_dynamodb_health() -> No
     assert operations == {"GetItem", "PutItem", "Query", "TransactWriteItems"}
 
 
-def test_witness_runbook_documents_alarm_destination_and_readback() -> None:
+def test_witness_runbook_documents_portable_health_alerts_and_optional_aws() -> None:
     runbook = (DEPLOY / "witness/RUNBOOK.md").read_text(encoding="utf-8")
-    assert "AlarmTopicArn" in runbook
-    assert "CreateAlarmTopic=true" in runbook
-    assert "without an external action" in runbook
-    assert "WitnessAlarmNames" in runbook
-    assert "WitnessAlarmTopicArn" in runbook
-    assert "describe-alarms" in runbook
-    assert "task role receives no SNS or CloudWatch permissions" in runbook
+    assert "manual_fail_closed" in runbook
+    assert "runtime.execution_fabric.health" in runbook
+    assert "health.json" in runbook
+    assert "SQLite" in runbook
+    assert "optional `cloudformation.yml`" in runbook
+    monitor = (DEPLOY / "witness/bin/monitor.sh").read_text(encoding="utf-8")
+    assert "execution-fabric-witness-health/v1" in monitor
+    assert "witness_notify critical" in monitor
+    assert "automaticPromotion" in monitor
+
+
+def test_witness_manual_mode_is_explicit_inert_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    environment = tmp_path / "witness.env"
+    environment.write_text(
+        "\n".join(
+            (
+                "WITNESS_MODE=manual_fail_closed",
+                "FABRIC_AUTO_FAILOVER=false",
+                "FABRIC_ENABLE_PROMOTION=false",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    preflight = subprocess.run(
+        [str(DEPLOY / "witness/bin/preflight.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "WITNESS_ENV_FILE": str(environment)},
+    )
+    assert preflight.returncode == 0, preflight.stderr
+    assert "no witness container will start" in preflight.stdout
+
+    unsafe = environment.read_text(encoding="utf-8").replace(
+        "FABRIC_ENABLE_PROMOTION=false",
+        "FABRIC_ENABLE_PROMOTION=true",
+    )
+    environment.write_text(unsafe, encoding="utf-8")
+    blocked = subprocess.run(
+        [str(DEPLOY / "witness/bin/preflight.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "WITNESS_ENV_FILE": str(environment)},
+    )
+    assert blocked.returncode == 78
+    assert "requires automatic failover and promotion disabled" in blocked.stderr
+
+
+def test_witness_installer_is_inert_and_manual_activation_starts_nothing(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "installed-witness"
+    environment = tmp_path / "config" / "witness.env"
+    subprocess.run(
+        [
+            str(INSTALLERS / "install-witness.sh"),
+            "--apply",
+            "--source-root",
+            str(SOURCE_ROOT),
+            "--release",
+            "test-release",
+            "--install-root",
+            str(install_root),
+            "--environment-file",
+            str(environment),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    current = install_root / "current"
+    assert current.is_symlink()
+    assert (current / "manifest.yml").is_file()
+    assert not environment.exists()
+    assert Path(f"{environment}.example").is_file()
+
+    environment.write_text(
+        "\n".join(
+            (
+                "WITNESS_MODE=manual_fail_closed",
+                "FABRIC_AUTO_FAILOVER=false",
+                "FABRIC_ENABLE_PROMOTION=false",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    activated = subprocess.run(
+        [
+            str(INSTALLERS / "activate-witness.sh"),
+            "--apply",
+            "--install-root",
+            str(install_root),
+            "--environment-file",
+            str(environment),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert activated.returncode == 0, activated.stderr
+    assert "no witness container will start" in activated.stdout
 
 
 def test_watchdog_alerts_locally_and_never_bypasses_promotion_contract() -> None:
@@ -1012,10 +1131,13 @@ def test_shell_assets_are_syntax_valid() -> None:
         [
             INSTALLERS / "install-linux.sh",
             INSTALLERS / "install-macos.sh",
+            INSTALLERS / "install-witness.sh",
             INSTALLERS / "activate-linux.sh",
             INSTALLERS / "activate-macos.sh",
+            INSTALLERS / "activate-witness.sh",
         ]
     )
+    scripts.extend(sorted((DEPLOY / "witness/bin").glob("*.sh")))
     assert scripts
     for script in scripts:
         subprocess.run(["sh", "-n", str(script)], check=True)
@@ -1459,7 +1581,10 @@ def test_documentation_exposes_the_implemented_witness_and_activation_boundary()
     readme = (DEPLOY / "README.md").read_text(encoding="utf-8")
     normalized = " ".join(readme.split())
     assert "/api/v1/admin/leadership/*" in readme
-    assert "DynamoDB conditional transactions" in normalized
+    assert "canonical provider-neutral deployment" in normalized
+    assert "singleton SQLite authority" in normalized
+    assert "AWS CloudFormation template is an optional provider adapter" in normalized
+    assert "manual_fail_closed" in normalized
     assert "Source availability does not activate the witness" in normalized
     assert "operator prerequisites" in normalized
     assert re.search(r"Failback is always manual", readme)

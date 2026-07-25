@@ -12,6 +12,28 @@ They do not copy secrets, do not rewrite
 operator provisions `runtime.env`, the referenced secret files, and an image
 lock with immutable digests.
 
+## Independent witness installer
+
+The provider-neutral witness uses its own focused installer and canonical
+operator environment:
+
+```sh
+installers/execution-fabric/install-witness.sh \
+  --apply --source-root /path/to/genomes_agentic_os --release <release>
+installers/execution-fabric/activate-witness.sh --apply
+```
+
+Installation copies only immutable deployment assets and remains inert.
+Activation preflights the exact Tailscale bind IP, digest-pinned OCI image,
+independent host identity, candidate-scoped credentials, and durable state
+mount before Docker or Podman starts anything. AWS, Fargate, and
+CloudFormation are optional adapters, not prerequisites.
+
+When no independent third host is configured, set
+`WITNESS_MODE=manual_fail_closed`. The activator starts no witness and requires
+automatic failover and promotion to remain disabled. Two execution candidates
+do not become a safe quorum by agreeing with themselves.
+
 Keep datastore credentials out of `runtime.env`. Both hosts require protected
 `secrets/postgres-password`, `secrets/valkey-app-password`, and
 `secrets/valkey-health-password` files containing URL-safe tokens of at least

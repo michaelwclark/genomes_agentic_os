@@ -66,6 +66,17 @@ export interface WitnessStore {
   listAudit(limit: number): Promise<AuditRecord[]>;
 }
 
+export type WitnessStoreSnapshot = {
+  schemaVersion: "execution-fabric-witness-store/v1";
+  state?: LeadershipState;
+  candidates: CandidateRecord[];
+  plans: FailbackPlan[];
+  configRotations: ConfigDigestRotationReceipt[];
+  configRotationAborts: ConfigDigestRotationAbortReceipt[];
+  configRotationPreparations: ConfigDigestRotationPreparation[];
+  audit: AuditRecord[];
+};
+
 function rotationCandidateEligible(
   candidate: CandidateRecord | undefined,
   expected: ConfigDigestRotationPreparationMutation["candidates"][number],
@@ -168,22 +179,70 @@ function eligible(
 }
 
 export class InMemoryWitnessStore implements WitnessStore {
-  private state?: LeadershipState;
-  private readonly candidates = new Map<string, CandidateRecord>();
-  private readonly plans = new Map<string, FailbackPlan>();
-  private readonly configRotations = new Map<
+  protected state: LeadershipState | undefined;
+  protected readonly candidates = new Map<string, CandidateRecord>();
+  protected readonly plans = new Map<string, FailbackPlan>();
+  protected readonly configRotations = new Map<
     string,
     ConfigDigestRotationReceipt
   >();
-  private readonly configRotationAborts = new Map<
+  protected readonly configRotationAborts = new Map<
     string,
     ConfigDigestRotationAbortReceipt
   >();
-  private readonly configRotationPreparations = new Map<
+  protected readonly configRotationPreparations = new Map<
     string,
     ConfigDigestRotationPreparation
   >();
-  private readonly audit: AuditRecord[] = [];
+  protected readonly audit: AuditRecord[] = [];
+
+  protected didMutate(): void {}
+
+  protected exportSnapshot(): WitnessStoreSnapshot {
+    return structuredClone({
+      schemaVersion: "execution-fabric-witness-store/v1",
+      ...(this.state ? { state: this.state } : {}),
+      candidates: [...this.candidates.values()],
+      plans: [...this.plans.values()],
+      configRotations: [...this.configRotations.values()],
+      configRotationAborts: [...this.configRotationAborts.values()],
+      configRotationPreparations: [
+        ...this.configRotationPreparations.values(),
+      ],
+      audit: this.audit,
+    });
+  }
+
+  protected restoreSnapshot(snapshot: WitnessStoreSnapshot): void {
+    if (snapshot.schemaVersion !== "execution-fabric-witness-store/v1") {
+      throw new Error("unsupported portable witness store schema");
+    }
+    this.state = snapshot.state ? structuredClone(snapshot.state) : undefined;
+    this.candidates.clear();
+    for (const item of snapshot.candidates) {
+      this.candidates.set(item.candidate, structuredClone(item));
+    }
+    this.plans.clear();
+    for (const item of snapshot.plans) {
+      this.plans.set(item.tokenHash, structuredClone(item));
+    }
+    this.configRotations.clear();
+    for (const item of snapshot.configRotations) {
+      this.configRotations.set(item.rotationId, structuredClone(item));
+    }
+    this.configRotationAborts.clear();
+    for (const item of snapshot.configRotationAborts) {
+      this.configRotationAborts.set(item.rotationId, structuredClone(item));
+    }
+    this.configRotationPreparations.clear();
+    for (const item of snapshot.configRotationPreparations) {
+      this.configRotationPreparations.set(
+        item.rotationId,
+        structuredClone(item),
+      );
+    }
+    this.audit.splice(0, this.audit.length, ...structuredClone(snapshot.audit));
+  }
 
   private requireState(): LeadershipState {
     if (!this.state) throw new Error("leadership state is not initialized");
@@ -197,6 +256,7 @@ export class InMemoryWitnessStore implements WitnessStore {
     if (!this.state) {
       this.state = structuredClone(state);
       this.audit.push(structuredClone(audit));
+      this.didMutate();
     }
     return structuredClone(this.state);
   }
@@ -247,6 +307,7 @@ export class InMemoryWitnessStore implements WitnessStore {
     }
     this.candidates.set(candidate.candidate, structuredClone(candidate));
     this.audit.push(structuredClone(audit));
+    this.didMutate();
   }
 
   async getConfigDigestRotation(
@@ -325,6 +386,7 @@ export class InMemoryWitnessStore implements WitnessStore {
       structuredClone(mutation.preparation),
     );
     this.audit.push(structuredClone(mutation.audit));
+    this.didMutate();
     return structuredClone(mutation.preparation);
   }
 
@@ -361,6 +423,7 @@ export class InMemoryWitnessStore implements WitnessStore {
       structuredClone(mutation.receipt),
     );
     this.audit.push(structuredClone(mutation.audit));
+    this.didMutate();
     return structuredClone(mutation.receipt);
   }
 
@@ -407,6 +470,7 @@ export class InMemoryWitnessStore implements WitnessStore {
       structuredClone(mutation.receipt),
     );
     this.audit.push(structuredClone(mutation.audit));
+    this.didMutate();
     return structuredClone(mutation.receipt);
   }
 
@@ -450,6 +514,7 @@ export class InMemoryWitnessStore implements WitnessStore {
     }
     this.state = structuredClone(mutation.nextState);
     this.audit.push(structuredClone(mutation.audit));
+    this.didMutate();
     return structuredClone(this.state);
   }
 
@@ -474,6 +539,7 @@ export class InMemoryWitnessStore implements WitnessStore {
     }
     this.plans.set(plan.tokenHash, structuredClone(plan));
     this.audit.push(structuredClone(audit));
+    this.didMutate();
   }
 
   async putFailbackPreparation(
@@ -497,6 +563,7 @@ export class InMemoryWitnessStore implements WitnessStore {
     }
     this.plans.set(plan.tokenHash, structuredClone(plan));
     this.audit.push(structuredClone(audit));
+    this.didMutate();
   }
 
   async getFailbackPlan(tokenHash: string): Promise<FailbackPlan | null> {
@@ -541,11 +608,13 @@ export class InMemoryWitnessStore implements WitnessStore {
     this.state = structuredClone(mutation.nextState);
     this.plans.delete(mutation.planTokenHash);
     this.audit.push(structuredClone(mutation.audit));
+    this.didMutate();
     return structuredClone(this.state);
   }
 
   async appendAudit(audit: AuditRecord): Promise<void> {
     this.audit.push(structuredClone(audit));
+    this.didMutate();
   }
 
   async listAudit(limit: number): Promise<AuditRecord[]> {

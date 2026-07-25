@@ -300,12 +300,16 @@ Resources:
             - ContainerPort: 3195
               Protocol: tcp
           Environment:
-            - Name: WITNESS_HOST
+            - Name: WITNESS_BIND_IP
               Value: 0.0.0.0
             - Name: WITNESS_PORT
               Value: "3195"
+            - Name: WITNESS_HOST_ID
+              Value: !Sub "${EnvironmentName}-aws-witness"
             - Name: WITNESS_CLUSTER_ID
               Value: !Ref ClusterId
+            - Name: WITNESS_STORE
+              Value: dynamodb
             - Name: WITNESS_TABLE_NAME
               Value: !Ref WitnessTable
             - Name: WITNESS_INITIAL_LEADER
