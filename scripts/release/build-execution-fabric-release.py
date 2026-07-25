@@ -42,14 +42,51 @@ def validate_versions() -> dict:
     init_match = re.search(r'__version__\s*=\s*"([^"]+)"', package_init)
     if not init_match:
         raise ValueError("src/genomes_agentic_os/__init__.py has no __version__")
-    control = load_json(ROOT / "services/execution-fabric-control-plane/package.json")
-    witness = load_json(ROOT / "services/execution-fabric-leadership-witness/package.json")
+    control_root = ROOT / "services/execution-fabric-control-plane"
+    witness_root = ROOT / "services/execution-fabric-leadership-witness"
+    control = load_json(control_root / "package.json")
+    control_lock = load_json(control_root / "package-lock.json")
+    witness = load_json(witness_root / "package.json")
+    witness_lock = load_json(witness_root / "package-lock.json")
+    chart = yaml.safe_load(
+        (ROOT / "deploy/execution-fabric/helm/los-agents/Chart.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    uv = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    uv_projects = [
+        package
+        for package in uv.get("package", [])
+        if package.get("name") == str(static["python_package"])
+    ]
+    if len(uv_projects) != 1:
+        raise ValueError(
+            "uv.lock must contain exactly one genomes-agentic-os project record"
+        )
+
+    def lock_root_version(lock: dict, name: str) -> str:
+        packages = lock.get("packages")
+        if not isinstance(packages, dict) or not isinstance(packages.get(""), dict):
+            raise ValueError(f"{name} package-lock.json has no root package record")
+        return str(packages[""]["version"])
+
     versions = {
         "release": str(static["release_version"]),
         "python": python_version,
         "python_runtime": init_match.group(1),
+        "python_lock": str(uv_projects[0]["version"]),
         "control_plane": str(control["version"]),
+        "control_plane_lock": str(control_lock["version"]),
+        "control_plane_lock_root": lock_root_version(
+            control_lock, "control-plane"
+        ),
         "leadership_witness": str(witness["version"]),
+        "leadership_witness_lock": str(witness_lock["version"]),
+        "leadership_witness_lock_root": lock_root_version(
+            witness_lock, "leadership-witness"
+        ),
+        "worker_chart": str(chart["version"]),
+        "worker_app": str(chart["appVersion"]),
     }
     if len(set(versions.values())) != 1:
         raise ValueError(f"release versions differ: {versions}")

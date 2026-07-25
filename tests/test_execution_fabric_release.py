@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import resources
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tomllib
@@ -31,10 +32,45 @@ def test_release_versions_and_contracts_are_coherent() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_release_validator_covers_every_canonical_version_source() -> None:
+    namespace = runpy.run_path(str(SCRIPT))
+    validated = namespace["validate_versions"]()
+    versions = validated["versions"]
+    assert set(versions) == {
+        "release",
+        "python",
+        "python_runtime",
+        "python_lock",
+        "control_plane",
+        "control_plane_lock",
+        "control_plane_lock_root",
+        "leadership_witness",
+        "leadership_witness_lock",
+        "leadership_witness_lock_root",
+        "worker_chart",
+        "worker_app",
+    }
+    assert len(set(versions.values())) == 1
+
+
 def test_release_checksum_staging_file_is_outside_the_asset_directory() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert 'mktemp "${RUNNER_TEMP}/execution-fabric-SHA256SUMS.' in workflow
     assert "SHA256SUMS.tmp" not in workflow
+
+
+def test_release_workflow_requires_main_ancestry_and_immutable_release() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert 'git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"' in workflow
+    assert 'git merge-base --is-ancestor "${GITHUB_SHA}" origin/main' in workflow
+    assert 'gh release view "${TAG}"' in workflow
+    assert "--clobber" not in workflow
+    assert 'gh release create "${TAG}"' in workflow
+
+
+def test_ci_runs_the_real_witness_oci_smoke() -> None:
+    workflow = (ROOT / ".github/workflows/test.yml").read_text(encoding="utf-8")
+    assert "tests/scripts/run-witness-oci-smoke.sh" in workflow
 
 
 def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> None:

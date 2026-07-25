@@ -292,8 +292,9 @@ promotion must remain disabled.
 
 Additional activation prerequisites are deliberately explicit:
 
-- the release pipeline must publish the control-plane and worker images and
-  generate a real digest-only image lock;
+- the release pipeline must publish the control-plane, leadership-witness, and
+  worker images and generate a real digest-only image lock containing all
+  three;
 - the worker executable must implement the existing `/api/v1` worker protocol;
 - the initial PostgreSQL base backup and replication slot must be verified
   before enabling automatic promotion;

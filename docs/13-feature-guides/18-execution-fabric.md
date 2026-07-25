@@ -453,10 +453,10 @@ The Python wheel stays small and exposes
 `genomes_agentic_os/resources/release-assets.json` so tools can discover the
 matching release bundle. Deployments, installers, canonical config, schema,
 image lock, checksums, SBOM, and emergency bundle are GitHub release assets and
-remain in the source distribution. The tag workflow builds both service
-images, records their GHCR digests, validates Python/service/API versions plus
-config/schema hashes, and lets exactly one job create or refresh the GitHub
-release.
+remain in the source distribution. The tag workflow builds the control-plane,
+leadership-witness, and worker images, records all three GHCR digests, validates
+Python/service/API versions plus config/schema hashes, and lets exactly one job
+create the immutable GitHub release.
 
 Local release preflight:
 
@@ -465,7 +465,8 @@ python scripts/release/build-execution-fabric-release.py --validate-only
 python scripts/release/build-execution-fabric-release.py \
   --output-dir dist/release \
   --control-plane-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
-  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
+  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
+  --worker-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
 ```
 
 The builder rejects mutable tags. Publishing is intentionally reserved for a

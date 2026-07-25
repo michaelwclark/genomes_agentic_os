@@ -133,6 +133,9 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - name: Install deployment-test dependencies
         run: python -m pip install --disable-pip-version-check -e '.[dev]'
       - uses: azure/setup-helm@v4
@@ -193,6 +196,8 @@ jobs:
             -e FABRIC_WORKER_ACCEPTED_QUEUES=codex \
             -e FABRIC_WORKER_CAPABILITIES=codex.task \
             genomes-agentic-os-worker:ci --validate-routes
+      - name: Run witness OCI durability smoke
+        run: tests/scripts/run-witness-oci-smoke.sh
 
   secret-scan:
     runs-on: ubuntu-latest
