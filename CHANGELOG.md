@@ -5,6 +5,54 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.4.2] - 2026-07-25
+
+### Added
+- A provider-neutral leadership witness that runs as a digest-pinned OCI image
+  on an independent third host, stores authority in durable SQLite, binds to an
+  operator-selected private address, and emits health receipts and Agentic OS
+  alerts through a supervised monitor.
+- End-to-end witness durability checks covering explicit first bootstrap,
+  restart recovery, missing or corrupt state, concurrent promotion attempts,
+  response-loss replay, immutable container configuration, and protected
+  state and secret mounts.
+
+### Fixed
+- Witness promotion now commits the authority transition, audit record, and
+  signed receipt in one durable transaction before local database promotion;
+  retries recover the original receipt instead of guessing new state.
+- Runtime installation is separate from explicit activation, repeated
+  activation is idempotent, paths containing spaces remain intact, PostgreSQL
+  replication slots follow their target host, datastore credentials stay in
+  protected files, and backup health requires a disposable restore.
+- Release validation now covers Python metadata and lock state, both Node
+  services and their npm lock roots, the worker Helm chart, and the static
+  release manifest. Tagged releases must be reachable from `main`, cannot
+  replace existing release assets, and run the real witness OCI smoke in CI.
+
+### Changed
+- The independent witness has no cloud-provider deployment dependency. When a
+  third host is unavailable, `manual_fail_closed` starts no witness and keeps
+  automatic promotion and failover disabled.
+- Cross-host run artifacts continue to use the S3-compatible object protocol,
+  including MinIO deployments, without coupling leadership authority to the
+  artifact store.
+
+### Dependencies
+- Updated `pnpm/action-setup` from v4 to v6 in CI (#92).
+
+## [0.4.1] - 2026-07-25
+
+### Fixed
+- Preserved strict `not_required` Auto-Dev stage receipts when the surrounding
+  work item already has a reviewed subject revision.
+- Generated `SHA256SUMS` from published assets only by keeping checksum staging
+  outside the release asset directory.
+
+### Changed
+- Advanced the Python package, runtime module, Node services, Helm chart, and
+  release manifest together under one canonical version.
+
 ## [0.4.0] - 2026-07-24
 
 ### Added
