@@ -30,6 +30,12 @@ def test_release_versions_and_contracts_are_coherent() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_release_checksum_staging_file_is_outside_the_asset_directory() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert 'mktemp "${RUNNER_TEMP}/execution-fabric-SHA256SUMS.' in workflow
+    assert "SHA256SUMS.tmp" not in workflow
+
+
 def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> None:
     digest = "a" * 64
     result = subprocess.run(

@@ -570,7 +570,8 @@ def _load_stage_receipts(
                 terminal_revision if name in TERMINAL_REVISION_STAGES else subject_revision
             )
             if (
-                name in REVISION_SENSITIVE_STAGES
+                status == "completed"
+                and name in REVISION_SENSITIVE_STAGES
                 and expected_revision
                 and receipt_revision != expected_revision
             ):

@@ -454,7 +454,10 @@ def _health_gate(
 
     for stage in ("groom", "detective", "create_artifacts", "document"):
         record_stage(stage)
-    record_stage("review_others", revision=subject_revision, not_required=True)
+    # Policy skips intentionally carry no source revision. Projection must
+    # still preserve the terminal not_required receipt once a reviewed head
+    # exists for the surrounding work item.
+    record_stage("review_others", not_required=True)
     record_stage("qa", revision=subject_revision)
     record_stage("finalize", revision=subject_revision)
     record_stage("release", revision=terminal_revision)
