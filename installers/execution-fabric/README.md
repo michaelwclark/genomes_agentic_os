@@ -26,6 +26,12 @@ shared installer contract instead of carrying separate literals.
 observer, watchdog, and backup timers. `install-macos.sh` installs launchd
 definitions for the bigmac warm standby, worker, observer, and watchdog.
 
+The Linux backup timer invokes `bin/backup-health.sh`, which accepts only the
+canonical `${FABRIC_RUNTIME_STATE_DIR}/backup-health.json` destination and
+validates the newly generated run ID. The underlying backup is not healthy
+until it has been restored into an isolated disposable database, queried, and
+removed; the validator also verifies the hash-bound restore-manifest sidecar.
+
 Both installers are inert without `--apply`. Service activation is a separate,
 explicit operation:
 

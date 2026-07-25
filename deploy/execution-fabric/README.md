@@ -301,7 +301,15 @@ the validator after every release/config change and before every drill.
 - Dependency and API containers have readiness health checks; observer and
   healer liveness/restart state remains independently visible in Compose and
   the host service manager.
-- PostgreSQL backups are written to a dedicated volume by the `backup` profile.
+- The backup timer calls `installers/bin/backup-health.sh`. Each run writes a
+  custom-format dump, restores it into a uniquely named disposable database,
+  queries restored catalog objects and every restored table, removes that
+  database, and only then atomically publishes
+  `execution-fabric-backup-health/v1`. The receipt binds the backup SHA-256 to
+  a hashed `execution-fabric-postgres-restore-manifest/v1` sidecar. A dump-list
+  check alone is never accepted as restore evidence. Configure
+  `FABRIC_BACKUP_HEALTH_RECEIPT_FILE` as
+  `${FABRIC_RUNTIME_STATE_DIR}/backup-health.json`.
 - The observer writes bounded snapshots atomically.
 - The health observer writes durable, versioned findings and alarm intents.
 - The healer enforces allow-list, idempotency, epoch fencing, cooldown, hourly

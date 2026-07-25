@@ -376,10 +376,12 @@ services:
       PGUSER: ${FABRIC_POSTGRES_USER:-fabric}
       PGPASSFILE: /run/secrets/postgres-pgpass
       FABRIC_BACKUP_RETENTION_DAYS: ${FABRIC_BACKUP_RETENTION_DAYS:-14}
+      FABRIC_BACKUP_HEALTH_RECEIPT_FILE: /var/lib/execution-fabric-ha/backup-health.json
     secrets:
       - postgres-pgpass
     volumes:
       - postgres-backups:/var/backups/postgresql
+      - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
       - ./scripts/postgres-backup.sh:/usr/local/bin/fabric-postgres-backup:ro
     networks: [fabric-private]
     entrypoint: ["/usr/local/bin/fabric-postgres-backup"]
