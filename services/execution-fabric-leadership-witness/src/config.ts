@@ -4,10 +4,25 @@ import { z } from "zod";
 const digest = /^[a-f0-9]{64}$/;
 
 const environmentSchema = z.object({
-  WITNESS_HOST: z.string().default("0.0.0.0"),
+  WITNESS_TAILSCALE_IP: z.string().ip().optional(),
+  WITNESS_BIND_IP: z.string().ip().optional(),
   WITNESS_PORT: z.coerce.number().int().min(1).max(65535).default(3195),
+  WITNESS_HOST_ID: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
   WITNESS_CLUSTER_ID: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
-  WITNESS_TABLE_NAME: z.string().regex(/^[a-zA-Z0-9_.-]{3,255}$/),
+  WITNESS_STATE_FILE: z
+    .string()
+    .min(1)
+    .default("/var/lib/execution-fabric-witness/witness.sqlite3"),
+  WITNESS_BOOTSTRAP_ONCE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  WITNESS_PROCESS_LEASE_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(10)
+    .max(300)
+    .default(30),
   WITNESS_INITIAL_LEADER: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
   WITNESS_INITIAL_TIMELINE_ID: z.coerce.number().int().min(1),
   WITNESS_INITIAL_CONFIG_DIGEST: z.string().regex(digest),
@@ -57,8 +72,6 @@ const environmentSchema = z.object({
   WITNESS_LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  AWS_REGION: z.string().min(1),
-  AWS_ENDPOINT_URL_DYNAMODB: z.string().url().optional(),
 });
 
 function secret(path: string, variable: string): string {
@@ -110,8 +123,11 @@ function candidateTokens(path: string): Record<string, string> {
 export type WitnessConfig = {
   host: string;
   port: number;
+  witnessHostId: string;
   clusterId: string;
-  tableName: string;
+  stateFile: string;
+  bootstrapOnce: boolean;
+  processLeaseSeconds: number;
   initialLeader: string;
   initialTimelineId: number;
   initialConfigDigest: string;
@@ -127,14 +143,19 @@ export type WitnessConfig = {
   adminToken: string;
   signingPrivateKey: string;
   logLevel: z.infer<typeof environmentSchema>["WITNESS_LOG_LEVEL"];
-  region: string;
-  dynamoEndpoint?: string;
 };
 
 export function loadConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): WitnessConfig {
   const parsed = environmentSchema.parse(environment);
+  if (
+    Boolean(parsed.WITNESS_TAILSCALE_IP) === Boolean(parsed.WITNESS_BIND_IP)
+  ) {
+    throw new Error(
+      "set exactly one of WITNESS_TAILSCALE_IP or WITNESS_BIND_IP",
+    );
+  }
   if (
     parsed.WITNESS_LEADER_BASELINE_MAX_AGE_SECONDS <=
     parsed.WITNESS_CANDIDATE_FRESHNESS_SECONDS
@@ -159,6 +180,11 @@ export function loadConfig(
       "WITNESS_CANDIDATE_TOKENS_FILE must include WITNESS_INITIAL_LEADER",
     );
   }
+  if (parsed.WITNESS_HOST_ID in scopedCandidateTokens) {
+    throw new Error(
+      "WITNESS_HOST_ID must be independent from every leadership candidate",
+    );
+  }
   if (
     new Set([
       adminToken,
@@ -173,10 +199,13 @@ export function loadConfig(
     parsed.WITNESS_SIGNING_PRIVATE_KEY_FILE,
   );
   return {
-    host: parsed.WITNESS_HOST,
+    host: parsed.WITNESS_TAILSCALE_IP ?? parsed.WITNESS_BIND_IP!,
     port: parsed.WITNESS_PORT,
+    witnessHostId: parsed.WITNESS_HOST_ID,
     clusterId: parsed.WITNESS_CLUSTER_ID,
-    tableName: parsed.WITNESS_TABLE_NAME,
+    stateFile: parsed.WITNESS_STATE_FILE,
+    bootstrapOnce: parsed.WITNESS_BOOTSTRAP_ONCE,
+    processLeaseSeconds: parsed.WITNESS_PROCESS_LEASE_SECONDS,
     initialLeader: parsed.WITNESS_INITIAL_LEADER,
     initialTimelineId: parsed.WITNESS_INITIAL_TIMELINE_ID,
     initialConfigDigest: parsed.WITNESS_INITIAL_CONFIG_DIGEST,
@@ -194,9 +223,5 @@ export function loadConfig(
     adminToken,
     signingPrivateKey,
     logLevel: parsed.WITNESS_LOG_LEVEL,
-    region: parsed.AWS_REGION,
-    ...(parsed.AWS_ENDPOINT_URL_DYNAMODB
-      ? { dynamoEndpoint: parsed.AWS_ENDPOINT_URL_DYNAMODB }
-      : {}),
   };
 }

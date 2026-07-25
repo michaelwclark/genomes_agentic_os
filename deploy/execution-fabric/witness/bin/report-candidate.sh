@@ -10,7 +10,7 @@ usage() {
 candidate=$1
 digest=$2
 
-: "${FABRIC_LEADERSHIP_API_BASE:?witness HTTPS base is required}"
+: "${FABRIC_LEADERSHIP_API_BASE:?witness API base is required}"
 : "${FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE:?host-scoped witness candidate token file is required}"
 : "${FABRIC_DATABASE_URL:?PostgreSQL connection URL is required}"
 [ -s "$FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE" ] || {
@@ -25,8 +25,8 @@ case "$digest" in
 esac
 [ "${#digest}" -eq 64 ] || usage
 case "$FABRIC_LEADERSHIP_API_BASE" in
-  https://*) ;;
-  *) echo "witness base must use HTTPS" >&2; exit 78 ;;
+  https://*|http://100.*|http://\[fd7a:115c:a1e0:*) ;;
+  *) echo "witness base must use HTTPS or a literal Tailscale IP" >&2; exit 78 ;;
 esac
 
 token=$(tr -d '\r\n' <"$FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE")

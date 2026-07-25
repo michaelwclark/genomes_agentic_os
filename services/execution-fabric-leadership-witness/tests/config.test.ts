@@ -28,8 +28,9 @@ function environment() {
     { mode: 0o600 },
   );
   return {
+    WITNESS_TAILSCALE_IP: "100.100.100.100",
+    WITNESS_HOST_ID: "witness-1",
     WITNESS_CLUSTER_ID: "test-fabric",
-    WITNESS_TABLE_NAME: "test-witness",
     WITNESS_INITIAL_LEADER: "genomesbox",
     WITNESS_INITIAL_TIMELINE_ID: "1",
     WITNESS_INITIAL_CONFIG_DIGEST: "c".repeat(64),
@@ -37,7 +38,6 @@ function environment() {
     WITNESS_READER_TOKEN_FILE: reader,
     WITNESS_CANDIDATE_TOKENS_FILE: candidates,
     WITNESS_SIGNING_PRIVATE_KEY_FILE: signingKey,
-    AWS_REGION: "us-east-1",
   };
 }
 
@@ -45,6 +45,8 @@ describe("witness config", () => {
   it("requires file-backed, distinct secrets and a pinned config digest", () => {
     const config = loadConfig(environment());
     expect(config.port).toBe(3195);
+    expect(config.host).toBe("100.100.100.100");
+    expect(config.bootstrapOnce).toBe(false);
     expect(config.initialConfigDigest).toHaveLength(64);
 
     const valid = environment();
@@ -60,5 +62,20 @@ describe("witness config", () => {
         WITNESS_INITIAL_CONFIG_DIGEST: "not-a-digest",
       }),
     ).toThrow();
+
+    expect(() =>
+      loadConfig({
+        ...environment(),
+        WITNESS_HOST_ID: "genomesbox",
+      }),
+    ).toThrow(/independent/);
+
+    expect(
+      loadConfig({
+        ...environment(),
+        WITNESS_BOOTSTRAP_ONCE: "true",
+        WITNESS_PROCESS_LEASE_SECONDS: "45",
+      }),
+    ).toMatchObject({ bootstrapOnce: true, processLeaseSeconds: 45 });
   });
 });

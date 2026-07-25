@@ -133,6 +133,15 @@ export function buildServer(
   server.post("/api/v1/admin/leadership/promote", async (request) =>
     witness.promote(promotionSchema.parse(request.body)),
   );
+  server.get(
+    "/api/v1/admin/leadership/promotions/:promotionId",
+    async (request) => {
+      const { promotionId } = z
+        .object({ promotionId: z.string().uuid() })
+        .parse(request.params);
+      return witness.promotion(promotionId);
+    },
+  );
   server.post(
     "/api/v1/admin/leadership/config-digest-rotations/prepare",
     async (request) =>

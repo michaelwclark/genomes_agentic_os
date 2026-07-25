@@ -227,12 +227,13 @@ observer, and healer roles. The observer records missing deliveries; the
 healer republishes every eligible queued PostgreSQL task using the task UUID as
 the BullMQ job ID and stores a verified repair receipt.
 
-The independently deployable DynamoDB witness implements conditional
-leadership arbitration, candidate evidence, monotonic witness epochs, and
-Ed25519-signed promotion/failback receipts. The control plane continuously
-reports its local candidate evidence, verifies short-lived signed witness
-proofs, and self-fences readiness plus every admission, claim, completion,
-effect, repair, and configuration mutation before proof expiry.
+The independently deployable provider-neutral witness uses one durable SQLite
+authority on a third host to implement conditional leadership arbitration,
+candidate evidence, monotonic witness epochs, and Ed25519-signed
+promotion/failback receipts. The control plane continuously reports its local
+candidate evidence, verifies short-lived signed witness proofs, and self-fences
+readiness plus every admission, claim, completion, effect, repair, and
+configuration mutation before proof expiry.
 
 A promoted host must supply the signed transfer receipt. Startup verifies the
 signature, cluster, leader, epoch, receipt ID, expiry, policy digest, and current

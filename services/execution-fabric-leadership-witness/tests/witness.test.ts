@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import type { WitnessConfig } from "../src/config.js";
-import type { CandidateUpdate } from "../src/contracts.js";
+import type { CandidateUpdate, PromotionRequest } from "../src/contracts.js";
 import { InMemoryWitnessStore } from "../src/store.js";
 import {
   LeadershipWitness,
@@ -13,8 +13,11 @@ const signingKeys = generateKeyPairSync("ed25519");
 const config: WitnessConfig = {
   host: "127.0.0.1",
   port: 3195,
+  witnessHostId: "witness-1",
   clusterId: "test-fabric",
-  tableName: "test-witness",
+  stateFile: "/tmp/test-witness.sqlite3",
+  bootstrapOnce: false,
+  processLeaseSeconds: 30,
   initialLeader: "genomesbox",
   initialTimelineId: 1,
   initialConfigDigest: "a".repeat(64),
@@ -35,7 +38,6 @@ const config: WitnessConfig = {
     format: "pem",
   }).toString(),
   logLevel: "silent",
-  region: "us-east-1",
   allowDegradedPrimary: true,
   maxDegradedPrimarySeconds: 3600,
 };
@@ -51,6 +53,17 @@ function fixture() {
   > &
     Partial<CandidateUpdate>;
   class TestWitness extends LeadershipWitness {
+    override promote(
+      request: Omit<PromotionRequest, "promotionId"> &
+        Partial<Pick<PromotionRequest, "promotionId">>,
+    ) {
+      return super.promote({
+        ...request,
+        promotionId:
+          request.promotionId ??
+          `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`,
+      });
+    }
     override updateCandidate(candidate: string, update: TestUpdate) {
       const inRecovery = candidate !== "genomesbox";
       const receiveWalPosition = update.receiveWalPosition ?? 1_000;
@@ -647,12 +660,14 @@ describe("leadership witness", () => {
       configDigest: config.initialConfigDigest,
     });
 
-    const receipt = await witness.promote({
+    const promotionRequest = {
+      promotionId: "00000000-0000-4000-8000-000000000201",
       candidate: "bigmac",
       expectedLeader: "genomesbox",
       expectedEpoch: 1,
       incidentDigest: "b".repeat(64),
-    });
+    };
+    const receipt = await witness.promote(promotionRequest);
     expect(receipt.decision).toBe("promoted");
     expect(receipt.fabricEpoch).toBe(2);
     expect(receipt.fenceToken).toMatch(/^v2\./);
@@ -674,6 +689,16 @@ describe("leadership witness", () => {
       epoch: 2,
       configDigest: config.initialConfigDigest,
     });
+    await expect(witness.promote(promotionRequest)).resolves.toEqual(receipt);
+    await expect(witness.promotion(promotionRequest.promotionId)).resolves.toEqual(
+      receipt,
+    );
+    await expect(
+      witness.promote({
+        ...promotionRequest,
+        incidentDigest: "c".repeat(64),
+      }),
+    ).rejects.toThrow(/already used/);
 
     await expect(
       witness.promote({

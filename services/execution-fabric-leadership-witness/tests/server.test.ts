@@ -9,8 +9,11 @@ const signingKeys = generateKeyPairSync("ed25519");
 const config: WitnessConfig = {
   host: "127.0.0.1",
   port: 3195,
+  witnessHostId: "witness-1",
   clusterId: "test-fabric",
-  tableName: "test-witness",
+  stateFile: "/tmp/test-witness.sqlite3",
+  bootstrapOnce: false,
+  processLeaseSeconds: 30,
   initialLeader: "genomesbox",
   initialTimelineId: 1,
   initialConfigDigest: "a".repeat(64),
@@ -32,7 +35,6 @@ const config: WitnessConfig = {
     })
     .toString(),
   logLevel: "silent",
-  region: "us-east-1",
 };
 
 async function fixture() {

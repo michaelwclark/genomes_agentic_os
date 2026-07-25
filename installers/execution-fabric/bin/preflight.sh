@@ -39,6 +39,22 @@ esac
 }
 : "${FABRIC_TAILSCALE_IP:?Tailscale bind address is required}"
 : "${FABRIC_CLUSTER_ID:?fabric cluster id is required}"
+case "${FABRIC_WITNESS_MODE:-independent}" in
+  independent) ;;
+  manual_fail_closed)
+    [ "${FABRIC_AUTO_FAILOVER:-false}" != true ] &&
+      [ "${FABRIC_ENABLE_PROMOTION:-false}" != true ] || {
+      echo "manual_fail_closed requires automatic failover and promotion disabled" >&2
+      exit 78
+    }
+    echo "managed remote activation is intentionally blocked without an independent witness; filesystem/local queue mode remains available" >&2
+    exit 78
+    ;;
+  *)
+    echo "FABRIC_WITNESS_MODE must be independent or manual_fail_closed" >&2
+    exit 78
+    ;;
+esac
 : "${FABRIC_LEADERSHIP_API_BASE:?independent witness API is required}"
 : "${FABRIC_LEADERSHIP_TOKEN_FILE:?witness token file is required}"
 : "${FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE:?host-scoped witness candidate token file is required}"

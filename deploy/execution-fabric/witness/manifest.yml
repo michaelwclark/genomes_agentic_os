@@ -1,0 +1,43 @@
+schema_version: execution-fabric-witness-deployment/v1
+id: execution-fabric-leadership-witness
+canonical_environment: witness.env
+example_environment: witness.env.example
+candidate_client_example: candidate-reporter.env.example
+modes:
+  independent:
+    starts_container: true
+    requires_independent_host: true
+    automatic_promotion_eligible_after_drill: true
+  manual_fail_closed:
+    starts_container: false
+    requires_independent_host: false
+    automatic_promotion_eligible_after_drill: false
+container:
+  image_variable: FABRIC_WITNESS_IMAGE
+  immutable_digest_required: true
+  network_mode: host
+  bind_variable: WITNESS_TAILSCALE_IP
+  state_directory_variable: WITNESS_STATE_DIR
+  numeric_identity:
+    uid_variable: WITNESS_UID
+    gid_variable: WITNESS_GID
+    default: "3195:3195"
+  default_state_file: /var/lib/execution-fabric-witness/witness.sqlite3
+health:
+  liveness: /healthz
+  readiness: /readyz
+  monitor: bin/monitor.sh
+  supervisor:
+    service: systemd/genomes-agentic-os-execution-fabric-witness-monitor.service
+    timer: systemd/genomes-agentic-os-execution-fabric-witness-monitor.timer
+  promotion_eligibility_requires: execution-fabric-witness-promotion-eligibility/v1
+  alert_source: runtime.execution_fabric.health
+safety:
+  singleton_container: true
+  singleton_storage_lease: true
+  explicit_one_time_bootstrap: true
+  missing_or_corrupt_initialized_state: fail_closed
+  candidate_host_may_run_witness: false
+  two_candidate_hosts_are_not_quorum: true
+  automatic_failback: false
+  no_witness_behavior: manual_fail_closed

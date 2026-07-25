@@ -19,9 +19,10 @@ platforms:
     installer: deploy/execution-fabric/helm/los-agents
     service_manager: helm
     role: worker
-  aws_witness:
-    installer: deploy/execution-fabric/witness/cloudformation.yml
-    service_manager: ecs_fargate
+  oci_witness:
+    installer: installers/execution-fabric/install-witness.sh
+    activator: installers/execution-fabric/activate-witness.sh
+    service_manager: docker_or_podman
     role: independent_leadership_witness
 runtime_contract:
   api_version: v1
@@ -30,6 +31,9 @@ runtime_contract:
   automatic_failback: false
   leadership_api_required_for_promotion: true
   witness_activation_requires_operator: true
+  witness_default_platform: oci_witness
+  witness_no_independent_host_mode: manual_fail_closed
+  two_host_split_brain_safe_without_witness: false
   artifact_replication_mode: active_active_single_writer
   artifact_replication_receipt_required_for_promotion: true
   host_worker_executable: installers/execution-fabric/bin/python-worker.sh

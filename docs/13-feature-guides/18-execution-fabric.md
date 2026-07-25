@@ -346,6 +346,36 @@ cannot replace it during startup.
 The CLI's redacted preview and local reload receipts remain below
 `harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads/`.
 
+## Independent leadership witness
+
+The witness is a provider-neutral, digest-pinned OCI service. Its canonical
+portable deployment runs once on a declared third host, binds the process only
+to that host's configured Tailscale IP, and stores authority in a durable
+SQLite volume. SQLite uses WAL, `synchronous=FULL`, and
+`BEGIN IMMEDIATE`; the mutation, replay receipt, and immutable audit stream
+commit before the API returns. The shipped witness is SQLite-only and has no
+cloud-provider deployment dependency.
+
+Install and activate the portable assets explicitly:
+
+```bash
+installers/execution-fabric/install-witness.sh \
+  --apply --source-root /path/to/genomes_agentic_os --release <release>
+installers/execution-fabric/activate-witness.sh --apply
+```
+
+The installer enables a systemd timer for
+`deploy/execution-fabric/witness/bin/monitor.sh`. It writes separate service
+availability and drill-backed promotion-eligibility fields and emits the canonical
+`runtime.execution_fabric.health` alert when liveness or durable readiness
+fails. A container restart is not a readiness receipt.
+
+If no independent witness host exists, configure
+`WITNESS_MODE=manual_fail_closed`. No witness container starts,
+`FABRIC_AUTO_FAILOVER` and `FABRIC_ENABLE_PROMOTION` must remain false, and the
+system makes no two-node split-brain-safety claim. A ping between genomesbox
+and bigmac cannot tell which side of a partition is authoritative.
+
 If activation finds historical nonterminal SQLite rows that are missing from or
 status-drifted against YAML, it refuses the switch. Reconcile from filesystem
 mode before trying again:
@@ -423,10 +453,10 @@ The Python wheel stays small and exposes
 `genomes_agentic_os/resources/release-assets.json` so tools can discover the
 matching release bundle. Deployments, installers, canonical config, schema,
 image lock, checksums, SBOM, and emergency bundle are GitHub release assets and
-remain in the source distribution. The tag workflow builds both service
-images, records their GHCR digests, validates Python/service/API versions plus
-config/schema hashes, and lets exactly one job create or refresh the GitHub
-release.
+remain in the source distribution. The tag workflow builds the control-plane,
+leadership-witness, and worker images, records all three GHCR digests, validates
+Python/service/API versions plus config/schema hashes, and lets exactly one job
+create the immutable GitHub release.
 
 Local release preflight:
 
@@ -435,7 +465,8 @@ python scripts/release/build-execution-fabric-release.py --validate-only
 python scripts/release/build-execution-fabric-release.py \
   --output-dir dist/release \
   --control-plane-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
-  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
+  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
+  --worker-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
 ```
 
 The builder rejects mutable tags. Publishing is intentionally reserved for a

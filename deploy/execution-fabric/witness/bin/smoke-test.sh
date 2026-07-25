@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
 
-: "${FABRIC_LEADERSHIP_API_BASE:?witness HTTPS base is required}"
+: "${FABRIC_LEADERSHIP_API_BASE:?witness API base is required}"
 : "${FABRIC_LEADERSHIP_TOKEN_FILE:?witness token file is required}"
 case "$FABRIC_LEADERSHIP_API_BASE" in
-  https://*) ;;
-  *) echo "witness base must use HTTPS" >&2; exit 78 ;;
+  https://*|http://100.*|http://\[fd7a:115c:a1e0:*) ;;
+  *) echo "witness base must use HTTPS or a literal Tailscale IP" >&2; exit 78 ;;
 esac
 [ -s "$FABRIC_LEADERSHIP_TOKEN_FILE" ] || exit 78
 token=$(tr -d '\r\n' <"$FABRIC_LEADERSHIP_TOKEN_FILE")

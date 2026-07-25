@@ -1,211 +1,155 @@
 # Leadership witness deployment and operations
 
-## Boundary
+## Choose the safety mode
 
-Deploy this stack into an AWS account and region whose failure domain is
-independent from `genomesbox` and `bigmac`. The repository does not select an
-account, create secrets, or enable promotion. The operator supplies all network
-IDs, an ACM certificate, an existing ECS cluster, and digest-pinned images.
+The canonical portable contract has two explicit modes:
 
-## Provision
+- `independent`: start one digest-pinned OCI witness on a declared third host
+  outside `genomesbox` and `bigmac`.
+- `manual_fail_closed`: start no witness, require
+  `FABRIC_AUTO_FAILOVER=false` and `FABRIC_ENABLE_PROMOTION=false`, and make no
+  two-node split-brain-safety claim.
 
-1. Build, scan, sign, and publish the witness container. Record the immutable
+A Tailscale ping between two candidate hosts is not a witness. Loss of the
+independent authority fences new promotion decisions; it does not let either
+candidate vote for itself.
+
+## Provision an independent host
+
+1. Choose a stable witness host ID that is absent from the candidate-token map.
+2. Install Docker or Podman and Tailscale. Restrict the witness port to the two
+   candidates and operator identities with Tailscale ACLs and the host firewall.
+3. Build, scan, sign, and publish the witness image. Record only the immutable
    `image@sha256:...` reference.
-2. Select a digest-pinned AWS CLI bootstrap image.
-3. Create distinct random reader and admin bearer tokens, a JSON map containing
-   one unique candidate token per host, and one Ed25519 PKCS8 private key in
-   Secrets Manager. Distribute each host only its candidate token, the reader
-   token where status readback is required, and only the corresponding SPKI
-   public key to control-plane and gateway hosts. Keep the admin token
-   operator-controlled. Do not put secret values into parameters, environment
-   files, logs, or this repository.
-4. Make the task subnets private with outbound AWS API access. Restrict the ALB
-   security group to approved operator/host egress addresses; restrict the task
-   security group to port 3195 from the ALB security group only.
-5. Select one alarm-destination mode in the operator-owned parameters:
+4. Create distinct reader and admin bearer-token files, a JSON map containing
+   one unique token per candidate, and one Ed25519 PKCS8 private key. Files must
+   remain outside the repository and readable only by the witness operator.
+   Distribute candidate hosts only their scoped token, the reader token where
+   needed, and the public key. Keep the admin token operator-controlled.
+5. Copy `witness.env.example` to the canonical operator-owned `witness.env`.
+   Set the exact `WITNESS_TAILSCALE_IP`, host and cluster IDs, digest-pinned
+   image, state directory, secret paths, initial leader, and reviewed policy
+   digest. Set `WITNESS_BOOTSTRAP_ONCE=true` only for the first start; after
+   the `.initialized` sentinel and `.backup` exist, return it to `false`.
+6. Pull the exact image digest, then install inert assets:
 
-   - set `AlarmTopicArn` to an existing same-account or cross-account topic
-     whose policy permits these CloudWatch alarms;
-   - set `CreateAlarmTopic=true` with an empty `AlarmTopicArn` to create an
-     encrypted stack-managed topic; or
-   - leave both defaults to create every alarm without an external action.
-
-   A managed topic has no subscriptions. Subscription creation and destination
-   ownership remain explicit operator actions. Supplying an existing ARN takes
-   precedence over `CreateAlarmTopic=true`, so the stack does not create an
-   unused second topic.
-6. Enable Container Insights on the supplied ECS cluster. The running-task
-   alarm treats a missing `ECS/ContainerInsights` metric as breaching rather
-   than quietly declaring an unobserved service healthy.
-7. Validate and deploy:
-
-   ```bash
-   aws cloudformation validate-template \
-     --template-body file://cloudformation.yml
-
-   aws cloudformation deploy \
-     --template-file cloudformation.yml \
-     --stack-name execution-fabric-witness \
-     --capabilities CAPABILITY_IAM \
-     --parameter-overrides file://operator-owned-parameters.json
+   ```sh
+   installers/execution-fabric/install-witness.sh \
+     --apply \
+     --source-root /path/to/genomes_agentic_os \
+     --release <release>
    ```
 
-   The operator parameter file is local and must not be committed.
+7. Preflight without mutation:
 
-8. Verify stack completion, two healthy ECS tasks, HTTPS certificate validity,
-   DynamoDB point-in-time recovery, TTL, encryption, retained deletion policy,
-   ALB deletion protection, and all seven CloudWatch alarms. Read
-   `WitnessAlarmNames` and, when configured, `WitnessAlarmTopicArn` from stack
-   outputs rather than reconstructing names.
-9. Set `FABRIC_LEADERSHIP_API_BASE` and a local
-   `FABRIC_LEADERSHIP_TOKEN_FILE`, then run `bin/smoke-test.sh`.
+   ```sh
+   WITNESS_ENV_FILE=/etc/genomes-agentic-os/execution-fabric-witness/witness.env \
+     /opt/genomes-agentic-os/execution-fabric-witness/current/bin/preflight.sh
+   ```
 
-## Candidate reporting
+   Preflight proves the bind IP belongs to this Tailscale node, the image is
+   digest-pinned and locally installed, the candidate map excludes the witness,
+   both candidates have unique scoped tokens, secrets exist, and the portable
+   state path is mounted under the canonical container directory.
+8. Activate explicitly:
 
-Each host Compose profile runs `candidate-reporter`. It reports its own
-database recovery state, timeline, receive and replay LSNs, measured replay
-lag, absolute WAL positions, upstream system ID, receiver state and
-last-message time, database clock, and canonicalized Execution Fabric config SHA-256 every
-bounded interval. It does not accept caller-supplied health or lag. Monitor the
-durable host-side health receipt with:
+   ```sh
+   installers/execution-fabric/activate-witness.sh --apply
+   ```
 
-```bash
-installers/execution-fabric/bin/candidate-reporter-health.sh --require-active
-installers/execution-fabric/bin/candidate-reporter-health.sh --require-standby
-```
+   The OCI runner uses host networking so the process itself binds only to the
+   configured Tailscale IP. It drops all capabilities, enables
+   `no-new-privileges`, makes the root filesystem read-only, and mounts only
+   the numeric-identity state directory and one protected prepared-secrets
+   directory. Host secret sources are never made container-readable directly.
+9. Run `bin/health.sh`, authenticated `bin/smoke-test.sh`, and
+   `bin/monitor.sh`. Read back `/readyz`, the signed status, current container
+   digest, state-file durability, and the Agentic OS alert receipt.
 
-Never report `healthy` from a remote ping alone. The report must be derived from
-local PostgreSQL role/readiness, replication position, and the effective
-schema-validated config digest. Candidate observations expire automatically for
-eligibility even though their audit record remains durable. The host freshness
-monitor alerts independently of the primary API and watchdog. Promotion and
-failback scripts require the appropriate fresh mode-specific receipt.
+## Health and alarms
 
-The status response must show a fresh `leaderWalPosition`,
-`leaderBaselineAt`, and `upstreamSystemId`. Candidate eligibility is calculated
-against that upstream baseline. Never promote based only on a candidate's local
-receive/replay difference: a disconnected standby can report a zero local gap
-while remaining behind the primary. The shipped primary profile bootstraps with
-local commits and no synchronous target, which keeps application mutations
-fenced. Run `enable-postgres-durable-primary.sh` only after a standby is
-streaming; the script enables and reads back `synchronous_commit=remote_apply`
-with one synchronous standby. That verified receipt is required for the
-promised zero acknowledged-write-loss mode.
+`bin/monitor.sh` writes the atomic
+`execution-fabric-witness-health/v2` receipt to
+`WITNESS_RUNTIME_STATE_DIR/health.json`.
 
-## Promotion
+- `availability=available` means both liveness and durable readiness passed.
+- `automaticPromotionEligible=true` additionally requires a current,
+  cluster-bound `execution-fabric-witness-promotion-eligibility/v1` drill
+  receipt. Health alone never grants promotion eligibility.
+- `critical` disables any promotion assumption and emits the canonical
+  `runtime.execution_fabric.health` alert through `agentic-os-notify`.
+- `manual_fail_closed` records that no automatic promotion authority exists.
 
-Promotion is permitted only after:
+The witness installer installs and enables a 30-second systemd timer for the
+monitor. Exercise the notification path with an
+operator-approved test. Do not stop the witness merely to make the pager sing.
 
-- the status endpoint shows `currentLeader=genomesbox`;
-- `promotionAllowed=true`;
-- `bigmac` is eligible and inside the configured lag limit;
-- the watchdog has a durable outage incident receipt;
-- the emergency bundle validates;
-- an approved drill has proven the exact release;
-- the operator has explicitly enabled automatic promotion.
+Container restart policy is a recovery aid, not health proof. Alert on:
 
-Promotion waits for the former leader's entire signed proof-lease window to
-expire; a single negative health report is not revocation. The promotion
-command sends the expected leader and epoch. DynamoDB atomically
-checks those values, checks both leader and candidate evidence, advances the
-epoch, and stores the audit receipt. Before PostgreSQL is promoted, the local
-installer verifies the Ed25519 signature and exact cluster, leader, epoch,
-receipt ID, expiry, and current witness readback. A stale request returns HTTP
-409 and must never be retried with guessed values.
+- container absence or restart loops;
+- `/healthz` or `/readyz` failure;
+- stale monitor receipt;
+- state-volume capacity or I/O errors;
+- candidate-report freshness;
+- signing-key or token rotation failure.
+
+## Candidate reporting and promotion
+
+Each candidate reporter derives health from its local PostgreSQL role,
+timeline, receive/replay LSNs, absolute WAL positions, receiver state,
+last-message time, database clock, and canonical policy digest. Remote ping
+health is insufficient. The current leader must publish a fresh upstream WAL
+baseline; a disconnected standby can otherwise report zero local lag while
+remaining behind.
+
+Promotion requires:
+
+- a fresh signed witness proof;
+- expected leader and epoch readback;
+- complete expiry of the prior proof lease;
+- fresh eligible standby evidence on the same timeline and upstream system;
+- fresh backup-restore and bidirectional artifact-replication receipts;
+- a valid emergency bundle and successful drill;
+- explicit operator enablement of automatic promotion.
+
+The witness advances the epoch and durably records the signed fence receipt
+before local PostgreSQL promotion begins. `promote.sh` stores its operation
+journal before CAS, looks up the exact `promotionId` after response loss, and
+resumes idempotently if PostgreSQL is already primary. A stale request returns
+HTTP 409 and must never be retried with guessed values.
 
 ## Manual failback
 
-1. On `bigmac`, authorize a state- and epoch-bound standby reseed:
+Failback remains the existing four-step guarded flow:
 
-   ```bash
-   installers/execution-fabric/bin/failback.sh --prepare
-   ```
+1. `failback.sh --prepare`
+2. `failback.sh --reseed --preparation-file PATH`
+3. `failback.sh --plan --preparation-file PATH`, then review and
+   `failback.sh --approve --operator ID`
+4. `failback.sh --apply --approval-file PATH`
 
-2. Use the returned preparation receipt to rebuild `genomesbox`, then request a
-   transfer plan only after the witness reports the target eligible:
+The witness atomically consumes the exact approval-bound plan and issues a new
+signed epoch. Reused plans, stale approvals, stale timelines, and ambiguous
+data volumes fail closed.
 
-   ```bash
-   installers/execution-fabric/bin/failback.sh \
-     --reseed \
-     --preparation-file /exact/path/to/failback.reseed-authorization.json
+## Backup and restore
 
-   installers/execution-fabric/bin/failback.sh \
-     --plan \
-     --preparation-file /exact/path/to/failback.reseed-authorization.json
-   ```
+For the default SQLite adapter, back up with a consistent SQLite backup or
+while the witness container is stopped. Preserve the database and WAL as one
+recovery unit. Periodically restore into a disposable host, start the same
+digest-pinned image on an isolated test IP, and verify:
 
-3. Review the exact source, target, epoch, expiry, replication state, timeline,
-   and config digest. Record an approval artifact bound to the transfer plan:
+- schema/readiness;
+- leader, epoch, fence digest, and policy digest;
+- candidate records and pending one-use plans;
+- audit tail and signed public-key continuity.
 
-   ```bash
-   installers/execution-fabric/bin/failback.sh \
-     --approve \
-     --operator 'operator-identity'
-   ```
+A restored file is never automatically authoritative. Reconnect candidate
+hosts only after incident-command review and an exact signed drill.
 
-4. Apply with the returned approval file:
+## Credential and image rotation
 
-   ```bash
-   installers/execution-fabric/bin/failback.sh \
-     --apply \
-     --approval-file /exact/path/to/failback.approval.json
-   ```
-
-5. The preparation phase creates the replication slot, rebuilds `genomesbox`
-   from the still-witnessed `bigmac` primary, and stores measured eligibility.
-   The apply phase stops `bigmac` mutation roles before asking the witness to
-   advance the epoch. The witness verifies the approval hash and freshness,
-   atomically consumes the transfer plan, and returns a new signed fence
-   receipt. `genomesbox` validates that receipt and current witness state before
-   PostgreSQL promotion. Its application mutations remain fenced until
-   durable-primary activation proves the rebuilt `bigmac` standby.
-6. Only after `genomesbox` is active does the installer erase and rebuild
-   `bigmac` as the new standby. Treat a failure in this final reseed as a
-   critical degraded-redundancy incident, but do not roll leadership backward.
-   Reused plans, stale approvals, stale timelines, and ambiguous data volumes
-   fail closed.
-
-## Backup, alarm, and recovery
-
-- The stack installs seven concrete alarms:
-  `ecs-running-task-count`, `alb-unhealthy-targets`, `alb-5xx`, `target-5xx`,
-  `dynamodb-read-throttles`, `dynamodb-write-throttles`, and
-  `dynamodb-system-errors`. The DynamoDB system-error alarm aggregates only the
-  witness operations it uses: `GetItem`, `PutItem`, `Query`, and
-  `TransactWriteItems`.
-- Alarm and recovery actions use the selected SNS topic only when one is
-  configured. The stack-managed topic policy permits only CloudWatch alarm
-  publications from this account and the stack's environment-name alarm
-  prefix; the ECS task role receives no SNS or CloudWatch permissions.
-- Verify alarm configuration and current state after every deployment:
-
-  ```bash
-  alarm_names=$(aws cloudformation describe-stacks \
-    --stack-name execution-fabric-witness \
-    --query "Stacks[0].Outputs[?OutputKey=='WitnessAlarmNames'].OutputValue" \
-    --output text)
-  aws cloudwatch describe-alarms --alarm-names ${alarm_names//,/ }
-  ```
-
-  Exercise the notification path through an operator-approved test alarm or
-  controlled target-health drill. Do not break the witness merely to make a
-  pager beep.
-- Host candidate-freshness receipts and promotion/failback gates remain
-  separate from AWS infrastructure alarms. CloudWatch health is not leadership
-  authority.
-- Retain CloudWatch logs and DynamoDB point-in-time recovery across stack
-  deletion. Test table restore in a non-production account.
-- A DynamoDB restore is not automatically authoritative. Recover into a new
-  table, verify the latest audit/leader/epoch with the incident commander, then
-  deploy a new task definition that points at that table.
-- Rotate reader, candidate, admin, and signing credentials independently by
-  forcing a new ECS deployment and distributing only the credentials needed
-  by each host. Never rotate the signing key during an unresolved promotion or
-  failback.
-
-## Activation prerequisite
-
-The implementation and template are portable, but AWS activation remains an
-operator action. Until a real stack, endpoint, secrets, alarms, candidate
-reporters, and successful promotion/failback drill have provider readback,
-automatic promotion must remain disabled.
+Rotate reader, candidate, admin, and signing credentials independently. Never
+rotate the signing key during an unresolved promotion, failback, or policy
+rotation. Replace a running immutable image explicitly; the runner refuses to
+silently mutate an existing container to a different digest.
