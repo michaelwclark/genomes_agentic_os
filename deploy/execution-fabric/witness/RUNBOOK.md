@@ -22,7 +22,22 @@ IDs, an ACM certificate, an existing ECS cluster, and digest-pinned images.
 4. Make the task subnets private with outbound AWS API access. Restrict the ALB
    security group to approved operator/host egress addresses; restrict the task
    security group to port 3195 from the ALB security group only.
-5. Validate and deploy:
+5. Select one alarm-destination mode in the operator-owned parameters:
+
+   - set `AlarmTopicArn` to an existing same-account or cross-account topic
+     whose policy permits these CloudWatch alarms;
+   - set `CreateAlarmTopic=true` with an empty `AlarmTopicArn` to create an
+     encrypted stack-managed topic; or
+   - leave both defaults to create every alarm without an external action.
+
+   A managed topic has no subscriptions. Subscription creation and destination
+   ownership remain explicit operator actions. Supplying an existing ARN takes
+   precedence over `CreateAlarmTopic=true`, so the stack does not create an
+   unused second topic.
+6. Enable Container Insights on the supplied ECS cluster. The running-task
+   alarm treats a missing `ECS/ContainerInsights` metric as breaching rather
+   than quietly declaring an unobserved service healthy.
+7. Validate and deploy:
 
    ```bash
    aws cloudformation validate-template \
@@ -37,10 +52,12 @@ IDs, an ACM certificate, an existing ECS cluster, and digest-pinned images.
 
    The operator parameter file is local and must not be committed.
 
-6. Verify stack completion, two healthy ECS tasks, HTTPS certificate validity,
+8. Verify stack completion, two healthy ECS tasks, HTTPS certificate validity,
    DynamoDB point-in-time recovery, TTL, encryption, retained deletion policy,
-   and ALB deletion protection.
-7. Set `FABRIC_LEADERSHIP_API_BASE` and a local
+   ALB deletion protection, and all seven CloudWatch alarms. Read
+   `WitnessAlarmNames` and, when configured, `WitnessAlarmTopicArn` from stack
+   outputs rather than reconstructing names.
+9. Set `FABRIC_LEADERSHIP_API_BASE` and a local
    `FABRIC_LEADERSHIP_TOKEN_FILE`, then run `bin/smoke-test.sh`.
 
 ## Candidate reporting
@@ -150,8 +167,32 @@ receipt ID, expiry, and current witness readback. A stale request returns HTTP
 
 ## Backup, alarm, and recovery
 
-- Alarm on fewer than two healthy ECS tasks, ALB 5xx, target response time,
-  DynamoDB throttling/system errors, and absence of fresh candidate reports.
+- The stack installs seven concrete alarms:
+  `ecs-running-task-count`, `alb-unhealthy-targets`, `alb-5xx`, `target-5xx`,
+  `dynamodb-read-throttles`, `dynamodb-write-throttles`, and
+  `dynamodb-system-errors`. The DynamoDB system-error alarm aggregates only the
+  witness operations it uses: `GetItem`, `PutItem`, `Query`, and
+  `TransactWriteItems`.
+- Alarm and recovery actions use the selected SNS topic only when one is
+  configured. The stack-managed topic policy permits only CloudWatch alarm
+  publications from this account and the stack's environment-name alarm
+  prefix; the ECS task role receives no SNS or CloudWatch permissions.
+- Verify alarm configuration and current state after every deployment:
+
+  ```bash
+  alarm_names=$(aws cloudformation describe-stacks \
+    --stack-name execution-fabric-witness \
+    --query "Stacks[0].Outputs[?OutputKey=='WitnessAlarmNames'].OutputValue" \
+    --output text)
+  aws cloudwatch describe-alarms --alarm-names ${alarm_names//,/ }
+  ```
+
+  Exercise the notification path through an operator-approved test alarm or
+  controlled target-health drill. Do not break the witness merely to make a
+  pager beep.
+- Host candidate-freshness receipts and promotion/failback gates remain
+  separate from AWS infrastructure alarms. CloudWatch health is not leadership
+  authority.
 - Retain CloudWatch logs and DynamoDB point-in-time recovery across stack
   deletion. Test table restore in a non-production account.
 - A DynamoDB restore is not automatically authoritative. Recover into a new

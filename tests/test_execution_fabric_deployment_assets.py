@@ -24,6 +24,29 @@ def _yaml(path: Path) -> dict:
     return value
 
 
+def _cloudformation(path: Path) -> dict:
+    class CloudFormationLoader(yaml.SafeLoader):
+        pass
+
+    def construct_intrinsic(
+        loader: CloudFormationLoader,
+        tag_suffix: str,
+        node: yaml.Node,
+    ) -> dict:
+        if isinstance(node, yaml.ScalarNode):
+            value = loader.construct_scalar(node)
+        elif isinstance(node, yaml.SequenceNode):
+            value = loader.construct_sequence(node)
+        else:
+            value = loader.construct_mapping(node)
+        return {tag_suffix: value}
+
+    CloudFormationLoader.add_multi_constructor("!", construct_intrinsic)
+    value = yaml.load(path.read_text(encoding="utf-8"), Loader=CloudFormationLoader)
+    assert isinstance(value, dict)
+    return value
+
+
 def _all_text(root: Path) -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
@@ -453,6 +476,111 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     docs = (DEPLOY / "README.md").read_text(encoding="utf-8")
     assert "does not yet expose" not in docs
     assert "operator prerequisites" in docs
+
+
+def test_witness_alarm_destination_is_optional_and_least_privilege() -> None:
+    template = _cloudformation(DEPLOY / "witness/cloudformation.yml")
+    parameters = template["Parameters"]
+    resources = template["Resources"]
+    assert parameters["AlarmTopicArn"]["Default"] == ""
+    assert parameters["CreateAlarmTopic"]["Default"] == "false"
+    assert parameters["CreateAlarmTopic"]["AllowedValues"] == ["true", "false"]
+    assert resources["WitnessAlarmTopic"]["Condition"] == "CreateManagedAlarmTopic"
+    assert (
+        resources["WitnessAlarmTopicPolicy"]["Properties"]["PolicyDocument"][
+            "Statement"
+        ][0]["Principal"]["Service"]
+        == "cloudwatch.amazonaws.com"
+    )
+    task_actions = {
+        action
+        for policy in resources["TaskRole"]["Properties"]["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        for action in statement["Action"]
+    }
+    assert not any(
+        action.startswith(("sns:", "cloudwatch:")) for action in task_actions
+    )
+    outputs = template["Outputs"]
+    assert outputs["WitnessAlarmTopicArn"]["Condition"] == "HasAlarmDestination"
+    assert "WitnessAlarmNames" in outputs
+
+
+def test_witness_cloudwatch_alarms_cover_service_alb_and_dynamodb_health() -> None:
+    template = _cloudformation(DEPLOY / "witness/cloudformation.yml")
+    resources = template["Resources"]
+    alarm_names = {
+        name
+        for name, resource in resources.items()
+        if resource["Type"] == "AWS::CloudWatch::Alarm"
+    }
+    assert alarm_names == {
+        "WitnessRunningTaskCountAlarm",
+        "WitnessUnhealthyTargetsAlarm",
+        "WitnessAlb5xxAlarm",
+        "WitnessTarget5xxAlarm",
+        "WitnessReadThrottleAlarm",
+        "WitnessWriteThrottleAlarm",
+        "WitnessDynamoSystemErrorsAlarm",
+    }
+    for name in alarm_names:
+        properties = resources[name]["Properties"]
+        assert "AlarmActions" in properties
+        assert "OKActions" in properties
+        assert properties["EvaluationPeriods"] >= 1
+        assert properties["DatapointsToAlarm"] >= 1
+
+    running = resources["WitnessRunningTaskCountAlarm"]["Properties"]
+    assert running["Namespace"] == "ECS/ContainerInsights"
+    assert running["MetricName"] == "RunningTaskCount"
+    assert running["TreatMissingData"] == "breaching"
+    assert running["Threshold"] == {"Ref": "DesiredCount"}
+
+    unhealthy = resources["WitnessUnhealthyTargetsAlarm"]["Properties"]
+    assert unhealthy["MetricName"] == "UnHealthyHostCount"
+    assert {row["Name"] for row in unhealthy["Dimensions"]} == {
+        "LoadBalancer",
+        "TargetGroup",
+    }
+    assert (
+        resources["WitnessAlb5xxAlarm"]["Properties"]["MetricName"]
+        == "HTTPCode_ELB_5XX_Count"
+    )
+    assert (
+        resources["WitnessTarget5xxAlarm"]["Properties"]["MetricName"]
+        == "HTTPCode_Target_5XX_Count"
+    )
+    assert (
+        resources["WitnessReadThrottleAlarm"]["Properties"]["MetricName"]
+        == "ReadThrottleEvents"
+    )
+    assert (
+        resources["WitnessWriteThrottleAlarm"]["Properties"]["MetricName"]
+        == "WriteThrottleEvents"
+    )
+
+    error_metrics = resources["WitnessDynamoSystemErrorsAlarm"]["Properties"][
+        "Metrics"
+    ]
+    operations = {
+        dimension["Value"]
+        for query in error_metrics
+        if "MetricStat" in query
+        for dimension in query["MetricStat"]["Metric"]["Dimensions"]
+        if dimension["Name"] == "Operation"
+    }
+    assert operations == {"GetItem", "PutItem", "Query", "TransactWriteItems"}
+
+
+def test_witness_runbook_documents_alarm_destination_and_readback() -> None:
+    runbook = (DEPLOY / "witness/RUNBOOK.md").read_text(encoding="utf-8")
+    assert "AlarmTopicArn" in runbook
+    assert "CreateAlarmTopic=true" in runbook
+    assert "without an external action" in runbook
+    assert "WitnessAlarmNames" in runbook
+    assert "WitnessAlarmTopicArn" in runbook
+    assert "describe-alarms" in runbook
+    assert "task role receives no SNS or CloudWatch permissions" in runbook
 
 
 def test_watchdog_alerts_locally_and_never_bypasses_promotion_contract() -> None:
