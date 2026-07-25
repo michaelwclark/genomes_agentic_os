@@ -164,6 +164,8 @@ def test_client_sends_both_config_reload_fences(tmp_path: Path) -> None:
         transport=transport,
     )
     result = client.reload_config(
+        rotation_id="00000000-0000-4000-8000-000000000001",
+        preparation_token="cpr1.payload.signature",
         expected_current_fingerprint="a" * 64,
         expected_candidate_fingerprint="b" * 64,
     )
@@ -172,6 +174,8 @@ def test_client_sends_both_config_reload_fences(tmp_path: Path) -> None:
     assert request.full_url.endswith("/api/v1/admin/config/reload")
     assert request.headers["Authorization"] == "Bearer admin-secret"
     assert json.loads(request.data) == {
+        "rotationId": "00000000-0000-4000-8000-000000000001",
+        "preparationToken": "cpr1.payload.signature",
         "expectedCurrentFingerprint": "a" * 64,
         "expectedCandidateFingerprint": "b" * 64,
     }

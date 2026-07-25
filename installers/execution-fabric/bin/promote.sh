@@ -51,6 +51,19 @@ fabric_require_command node
 : "${FABRIC_LEADERSHIP_PUBLIC_KEY_FILE:?witness public key is required}"
 : "${FABRIC_LEADERSHIP_RECEIPT_FILE:?leadership receipt destination is required}"
 
+# A failed leader may have committed a prepared policy to synchronously
+# replicated PostgreSQL without receiving the witness response. Finish that
+# exact signed rotation before evaluating normal promotion eligibility.
+if ! "$script_dir/rotate-policy.sh" --resume \
+  >"$FABRIC_RUNTIME_STATE_DIR/policy-rotation-resume.log"
+then
+  fabric_notify critical \
+    "Execution Fabric takeover blocked by policy recovery" \
+    "A prepared policy rotation could not be safely resumed on $FABRIC_HOST_ID." \
+    "execution-fabric-policy-rotation-recovery"
+  exit 75
+fi
+
 "$script_dir/validate-emergency-bundle.sh" "$FABRIC_EMERGENCY_BUNDLE_DIR"
 "$script_dir/validate-artifact-replication-receipt.sh"
 "$script_dir/validate-backup-health-receipt.sh"
@@ -186,7 +199,11 @@ done
 "$script_dir/enable-postgres-durable-primary.sh" \
   --apply --expected-leader "$FABRIC_STANDBY_HOST_ID" --degraded-primary \
   >"$FABRIC_RUNTIME_STATE_DIR/post-promotion-durability.json"
-$compose --profile promoted up -d control-plane observer healer
+# Keep every promoted control-plane role supervised. The scheduler performs
+# its own authority check and admits no occurrence when the canonical degraded
+# policy disables it; starting the role here also means enabling that policy
+# later cannot leave schedules silently dormant until a host-manager restart.
+$compose --profile promoted up -d control-plane observer healer scheduler
 
 local_api="http://${FABRIC_TAILSCALE_IP}:3180"
 ready=false

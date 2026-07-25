@@ -382,7 +382,7 @@ def test_command_center_snapshot_exposes_named_queue_and_worker_health(tmp_path:
     assert snapshot["runtime"]["tasks"][0]["id"] == "gui-codex"
     assert snapshot["runtime"]["tasks"][0]["queue_name"] == "codex"
     assert snapshot["runtime"]["captured_at"]
-    assert snapshot["runtime"]["max_interactive_running"] == 1
+    assert snapshot["runtime"]["max_interactive_running"] == 2
     assert snapshot["runtime"]["workers"] == []
     assert snapshot["runtime"]["running_tasks"] == []
     assert snapshot["runtime"]["completed"] == 0

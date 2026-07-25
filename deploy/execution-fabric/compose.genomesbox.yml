@@ -123,6 +123,8 @@ services:
     secrets:
       - minio-root-user
       - minio-root-password
+      - artifact-observer-access-key
+      - artifact-observer-secret-key
     entrypoint:
       - /bin/sh
       - -ec
@@ -132,7 +134,24 @@ services:
         mc mb --ignore-existing "fabric/$${FABRIC_ARTIFACT_BUCKET}" &&
         (mc ilm rule add --expire-days "$${FABRIC_ARTIFACT_RETENTION_DAYS}"
         "fabric/$${FABRIC_ARTIFACT_BUCKET}" ||
-        mc ilm rule ls "fabric/$${FABRIC_ARTIFACT_BUCKET}")
+        mc ilm rule ls "fabric/$${FABRIC_ARTIFACT_BUCKET}") &&
+        (mc admin user add fabric
+        "$$(cat /run/secrets/artifact-observer-access-key)"
+        "$$(cat /run/secrets/artifact-observer-secret-key)" ||
+        mc admin user info fabric
+        "$$(cat /run/secrets/artifact-observer-access-key)") &&
+        printf '%s\n'
+        '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::__BUCKET__"]},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::__BUCKET__/*"]}]}'
+        | sed "s/__BUCKET__/$${FABRIC_ARTIFACT_BUCKET}/g"
+        > /tmp/execution-fabric-observer-readonly.json &&
+        mc admin policy create fabric execution-fabric-observer-readonly
+        /tmp/execution-fabric-observer-readonly.json &&
+        mc admin policy attach fabric execution-fabric-observer-readonly
+        --user "$$(cat /run/secrets/artifact-observer-access-key)" &&
+        mc alias set observer http://minio:9000
+        "$$(cat /run/secrets/artifact-observer-access-key)"
+        "$$(cat /run/secrets/artifact-observer-secret-key)" &&
+        mc ls "observer/$${FABRIC_ARTIFACT_BUCKET}" >/dev/null
     networks: [fabric-private]
     security_opt: ["no-new-privileges:true"]
 
@@ -223,45 +242,23 @@ services:
     environment:
       FABRIC_HOST_ID: genomesbox
       FABRIC_DATABASE_URL: ${FABRIC_DATABASE_URL:?set via protected runtime environment}
-      FABRIC_VALKEY_URL: ${FABRIC_VALKEY_URL:?set via protected runtime environment}
       FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
       FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
-      FABRIC_API_TOKEN_FILE: /run/secrets/fabric-api-token
-      FABRIC_SUBMIT_TOKEN_FILE: /run/secrets/fabric-submit-token
-      FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /run/secrets/fabric-worker-bootstrap-credentials
-      FABRIC_ADMIN_TOKEN_FILE: /run/secrets/fabric-admin-token
-      FABRIC_RELIABILITY_SOURCE_TOKENS_FILE: /run/secrets/fabric-reliability-source-tokens
-      FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE: /run/secrets/fabric-effect-consumer-credentials
-      FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE: /run/secrets/fabric-alarm-dispatcher-credentials
       FABRIC_ARTIFACT_ENDPOINT: http://minio:9000
       FABRIC_ARTIFACT_REGION: ${FABRIC_ARTIFACT_REGION:-us-east-1}
       FABRIC_ARTIFACT_BUCKET: ${FABRIC_ARTIFACT_BUCKET:-execution-fabric-artifacts}
-      FABRIC_ARTIFACT_ACCESS_KEY_FILE: /run/secrets/minio-root-user
-      FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/minio-root-password
+      FABRIC_ARTIFACT_ACCESS_KEY_FILE: /run/secrets/artifact-observer-access-key
+      FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/artifact-observer-secret-key
       FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
-      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
-      FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
-      FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
-      FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
       FABRIC_OBSERVER_INTERVAL_MS: ${FABRIC_OBSERVER_INTERVAL_MS:-15000}
       FABRIC_LOG_LEVEL: info
     secrets:
-      - fabric-api-token
-      - fabric-submit-token
-      - fabric-worker-bootstrap-credentials
-      - fabric-admin-token
-      - fabric-reliability-source-tokens
-      - fabric-effect-consumer-credentials
-      - fabric-alarm-dispatcher-credentials
-      - minio-root-user
-      - minio-root-password
-      - fabric-leadership-token
-      - fabric-leadership-candidate-token
-      - fabric-leadership-public-key
+      - artifact-observer-access-key
+      - artifact-observer-secret-key
     volumes:
       - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
-    networks: [fabric-private, fabric-egress]
+    networks: [fabric-private]
     read_only: true
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
@@ -416,6 +413,10 @@ secrets:
     file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/valkey-health-password
   minio-root-password:
     file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/minio-root-password
+  artifact-observer-access-key:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/artifact-observer-access-key
+  artifact-observer-secret-key:
+    file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/artifact-observer-secret-key
   fabric-admin-token:
     file: ${FABRIC_SECRETS_DIR:?set runtime secret directory}/fabric-admin-token
   fabric-api-token:

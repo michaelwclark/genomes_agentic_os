@@ -25,6 +25,16 @@ promotions, split-brain leadership, epoch rollback, and failback-plan reuse.
 - Failback is manual. A safe plan returns a short-lived, one-use token. Commit
   requires a separately recorded operator approval bound to the SHA-256 of that
   token, rejects stale approvals, and atomically consumes the plan.
+- Policy rotation is prepare/commit and fail-closed. Commit requires a fresh,
+  healthy, non-leader streaming candidate to prove the candidate digest was
+  replayed from PostgreSQL on the prepared timeline and upstream system.
+  Unconsumed preparations remain visible after expiry. Expiry blocks using the
+  token for a new database reload, but fresh standby-applied evidence may
+  complete recovery of an already replicated rotation. Fresh standby evidence
+  of the old digest may abort an expired preparation that never reached the
+  database, but its observation, lag, and receiver timestamps must all be
+  strictly post-expiry. The witness permits only one unresolved preparation
+  per cluster.
 - Candidate observations, rejected plans, plans, promotions, and failbacks are
   retained as immutable audit items. DynamoDB point-in-time recovery and table
   retention are enabled by the deployment template.
@@ -39,6 +49,11 @@ promotions, split-brain leadership, epoch rollback, and failback-plan reuse.
 | `GET` | `/api/v1/admin/leadership/status` | Reader | Leader, epoch, candidate eligibility, promotion gate |
 | `PUT` | `/api/v1/admin/leadership/candidates/{candidate}` | Matching candidate | Measured PostgreSQL recovery, timeline, LSN, lag, and config observation |
 | `POST` | `/api/v1/admin/leadership/promote` | Admin | Conditional monotonic promotion |
+| `POST` | `/api/v1/admin/leadership/config-digest-rotations/prepare` | Admin | Bind a candidate digest to current leader, epoch, replication identity, and WAL floor |
+| `POST` | `/api/v1/admin/leadership/config-digest-rotations/commit` | Admin | Commit only after fresh standby-applied causal proof |
+| `GET` | `/api/v1/admin/leadership/config-digest-rotations/{rotationId}/preparation` | Admin | Recover one durable preparation, including expiry state |
+| `POST` | `/api/v1/admin/leadership/config-digest-rotations/abort` | Admin | Resolve an expired pre-database preparation from fresh standby-old proof |
+| `GET` | `/api/v1/admin/leadership/config-digest-rotations/{rotationId}/abort` | Admin | Read back the durable abort receipt |
 | `POST` | `/api/v1/admin/leadership/failback-plan` | Admin | Short-lived manual plan |
 | `POST` | `/api/v1/admin/leadership/failback-commit` | Admin | Approval-bound, one-use failback |
 | `GET` | `/api/v1/admin/leadership/audit` | Admin | Durable audit history |

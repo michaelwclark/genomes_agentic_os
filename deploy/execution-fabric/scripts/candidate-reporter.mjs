@@ -94,6 +94,9 @@ async function replicationSnapshot(databaseUrl) {
                     (SELECT last_msg_receipt_time FROM receiver),
                     TIMESTAMPTZ '1970-01-01T00:00:00Z')
              END AS last_message_at,
+             (SELECT policy_fingerprint
+                FROM fabric_state
+               WHERE singleton=true) AS applied_config_digest,
              clock_timestamp() AS measured_at
       FROM positions
     `);
@@ -112,6 +115,10 @@ async function replicationSnapshot(databaseUrl) {
     ) {
       throw new Error("PostgreSQL WAL position is outside the safe integer range");
     }
+    const appliedConfigDigest = String(row.applied_config_digest ?? "");
+    if (!/^[a-f0-9]{64}$/.test(appliedConfigDigest)) {
+      throw new Error("PostgreSQL durable policy fingerprint is unavailable");
+    }
     return {
       inRecovery: row.in_recovery === true,
       timelineId: Number(row.timeline_id),
@@ -123,6 +130,7 @@ async function replicationSnapshot(databaseUrl) {
       upstreamSystemId: String(row.upstream_system_id),
       receiverState: String(row.receiver_state),
       lastMessageAt: new Date(row.last_message_at).toISOString(),
+      appliedConfigDigest,
       lagMeasuredAt: new Date(row.measured_at).toISOString(),
     };
   } finally {
@@ -150,11 +158,14 @@ async function reportOnce() {
   const attemptedAt = new Date().toISOString();
   try {
     const replication = await replicationSnapshot(databaseUrl);
-    const configDigest = await policyFingerprint(policyFile);
+    const policyCandidateDigest = await policyFingerprint(policyFile);
+    const { appliedConfigDigest, ...replicationEvidence } = replication;
     const payload = {
       healthy: true,
-      ...replication,
-      configDigest,
+      ...replicationEvidence,
+      configDigest: appliedConfigDigest,
+      policyCandidateDigest,
+      policyCandidateObservedAt: attemptedAt,
       observedAt: attemptedAt,
     };
     const response = await fetch(
@@ -177,8 +188,10 @@ async function reportOnce() {
       hostId,
       status: "healthy",
       mode: replication.inRecovery ? "standby" : "active",
-      ...replication,
-      configDigest,
+      ...replicationEvidence,
+      configDigest: appliedConfigDigest,
+      policyCandidateDigest,
+      policyCandidateObservedAt: attemptedAt,
       lastAttemptAt: attemptedAt,
       lastSuccessfulAt: new Date().toISOString(),
       lastError: null,
@@ -203,6 +216,8 @@ async function reportOnce() {
       receiverState: previous?.receiverState ?? null,
       lastMessageAt: previous?.lastMessageAt ?? null,
       configDigest: previous?.configDigest ?? null,
+      policyCandidateDigest: previous?.policyCandidateDigest ?? null,
+      policyCandidateObservedAt: previous?.policyCandidateObservedAt ?? null,
       lastAttemptAt: attemptedAt,
       lastSuccessfulAt: previous?.lastSuccessfulAt ?? null,
       lastError: error instanceof Error ? error.message.slice(0, 512) : "unknown error",

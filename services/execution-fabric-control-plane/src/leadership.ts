@@ -11,6 +11,7 @@ const signedLeadershipSchema = z.object({
   leader: z.string().min(1),
   epoch: z.number().int().min(1),
   receiptId: z.string().min(1),
+  configDigest: z.string().regex(/^[a-f0-9]{64}$/),
   issuedAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
   authorityMode: z
@@ -36,7 +37,25 @@ const transferReceiptSchema = z.object({
   fenceToken: z.string().min(1),
 });
 
+const configRotationPreparationProofSchema = z
+  .object({
+    v: z.literal(1),
+    type: z.literal("config_digest_rotation_preparation"),
+    clusterId: z.string().min(1),
+    rotationId: z.string().uuid(),
+    expectedLeader: z.string().min(1),
+    expectedEpoch: z.number().int().min(1),
+    expectedCurrentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    candidateDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    issuedAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
+
 export type LeadershipProof = z.infer<typeof signedLeadershipSchema>;
+export type ConfigRotationPreparationProof = z.infer<
+  typeof configRotationPreparationProofSchema
+>;
 
 export class LeadershipFencedError extends Error {
   constructor(message: string) {
@@ -101,6 +120,39 @@ export function verifyLeadershipToken(
     throw new LeadershipFencedError("leadership token payload is invalid");
   }
   return signedLeadershipSchema.parse(decoded);
+}
+
+export function verifyConfigRotationPreparationToken(
+  token: string,
+  publicKey: string,
+): ConfigRotationPreparationProof {
+  const [version, payload, signature, ...extra] = token.split(".");
+  if (version !== "cpr1" || !payload || !signature || extra.length) {
+    throw new LeadershipFencedError(
+      "configuration rotation preparation token has an invalid envelope",
+    );
+  }
+  if (
+    !verify(
+      null,
+      Buffer.from(payload),
+      publicKey,
+      Buffer.from(signature, "base64url"),
+    )
+  ) {
+    throw new LeadershipFencedError(
+      "configuration rotation preparation signature is invalid",
+    );
+  }
+  try {
+    return configRotationPreparationProofSchema.parse(
+      JSON.parse(Buffer.from(payload, "base64url").toString("utf8")),
+    );
+  } catch {
+    throw new LeadershipFencedError(
+      "configuration rotation preparation payload is invalid",
+    );
+  }
 }
 
 export class LeadershipGuard {
@@ -203,13 +255,19 @@ export class LeadershipGuard {
 
   private validateProof(
     token: string,
-    expected: { leader: string; epoch: number; receiptId?: string },
+    expected: {
+      leader: string;
+      epoch: number;
+      configDigest: string;
+      receiptId?: string;
+    },
   ): LeadershipProof {
     const proof = verifyLeadershipToken(token, this.config.witnessPublicKey);
     if (
       proof.cluster !== this.config.clusterId ||
       proof.leader !== expected.leader ||
       proof.epoch !== expected.epoch ||
+      proof.configDigest !== expected.configDigest ||
       (expected.receiptId !== undefined &&
         proof.receiptId !== expected.receiptId)
     ) {
@@ -266,6 +324,7 @@ export class LeadershipGuard {
       const proof = this.validateProof(status.leadershipToken, {
         leader: status.currentLeader,
         epoch: status.fabricEpoch,
+        configDigest: status.configDigest,
       });
       const databaseState = await this.ledger.systemSnapshot();
       const receipt = this.loadTransferReceipt();
@@ -294,6 +353,7 @@ export class LeadershipGuard {
         this.validateProof(receipt.fenceToken, {
           leader: receipt.currentLeader,
           epoch: receipt.fabricEpoch,
+          configDigest: status.configDigest,
           receiptId: receipt.receiptId,
         });
         if (!this.recoveryHoldUntil) {
@@ -349,6 +409,11 @@ export class LeadershipGuard {
     if (this.proof.leader !== this.config.hostId) {
       throw new LeadershipFencedError("this host is not the witnessed leader");
     }
+    if (this.proof.configDigest !== this.configDigest()) {
+      throw new LeadershipFencedError(
+        "local policy digest differs from the signed witness proof",
+      );
+    }
     if (new Date(this.proof.expiresAt).getTime() <= this.now().getTime()) {
       this.lastError = "leadership proof expired before witness renewal";
       throw new LeadershipFencedError(this.lastError);
@@ -387,6 +452,40 @@ export class LeadershipGuard {
         "degraded-primary PostgreSQL durability requires synchronous_commit=on, fsync=on, full_page_writes=on, and archive_mode=on",
       );
     }
+  }
+
+  authorizePolicyRotation(input: {
+    rotationId: string;
+    preparationToken: string;
+    expectedCurrentDigest: string;
+    candidateDigest: string;
+  }): ConfigRotationPreparationProof {
+    this.assertMutation();
+    if (!this.proof) {
+      throw new LeadershipFencedError("leadership is unverified");
+    }
+    const preparation = verifyConfigRotationPreparationToken(
+      input.preparationToken,
+      this.config.witnessPublicKey,
+    );
+    if (
+      preparation.clusterId !== this.config.clusterId ||
+      preparation.rotationId !== input.rotationId ||
+      preparation.expectedLeader !== this.config.hostId ||
+      preparation.expectedEpoch !== this.proof.epoch ||
+      preparation.expectedCurrentDigest !== input.expectedCurrentDigest ||
+      preparation.candidateDigest !== input.candidateDigest
+    ) {
+      throw new LeadershipFencedError(
+        "configuration rotation preparation is not bound to this leader, epoch, or digest transition",
+      );
+    }
+    if (new Date(preparation.expiresAt).getTime() <= this.now().getTime()) {
+      throw new LeadershipFencedError(
+        "configuration rotation preparation has expired",
+      );
+    }
+    return preparation;
   }
 
   assertTaskMutation(taskType: string): void {

@@ -35,11 +35,14 @@ host ID, pool ID, queue set, capability set, and concurrency. The installed
 worker itself receives only its one scoped token file; it never receives the
 server-side map.
 
-The protected secret directory must also contain `minio-root-user` and
-`minio-root-password`, or equivalent scoped object-store credentials when the
-endpoint is external. They are mounted only into the control-plane roles and
-MinIO bootstrap; workers never receive them. Artifact lifecycle, retention,
-replication, and recovery validation are separate from installer activation.
+The protected secret directory must also contain `minio-root-user`,
+`minio-root-password`, `artifact-observer-access-key`, and
+`artifact-observer-secret-key`, or equivalent scoped object-store credentials
+when the endpoint is external. Root credentials are mounted into MinIO
+bootstrap and the API/healer roles that mint or reconcile task-scoped artifact
+access. The observer receives only its dedicated read-only identity; workers
+receive neither identity. Artifact lifecycle, retention, replication, and
+recovery validation are separate from installer activation.
 
 After both MinIO sites are installed, run
 `bin/reconcile-artifact-replication.sh` once and retain its receipt. Both host
@@ -48,3 +51,44 @@ Promotion and manual failback call
 `bin/validate-artifact-replication-receipt.sh`; neither can proceed on a stale
 or one-way result. A former leader must be resynchronized and pass a new
 bidirectional canary before it is accepted as the standby again.
+
+## Fenced policy rotation
+
+Do not call the control-plane config-reload endpoint by itself. Copy the same
+reviewed `harness/config/execution-fabric.yml` to both configured hosts, wait
+for both candidate reporters to publish its SHA-256 digest, then run this on
+the witnessed leader:
+
+```sh
+bin/rotate-policy.sh OLD_DIGEST NEW_DIGEST
+```
+
+The command first writes a signed, expiring preparation to the independent
+witness. Candidate reports keep the currently applied PostgreSQL digest
+separate from the staged disk-policy digest, so staging never makes ordinary
+promotion eligibility lie. The control plane accepts no reload without that
+signed preparation. It then transactionally rotates PostgreSQL while holding
+the current leadership lease. Before the witness can commit, a fresh,
+non-leader candidate report must prove that a healthy streaming standby has
+replayed the PostgreSQL change and observes the candidate digest on the
+prepared timeline and upstream system. Only then can the witness consume the
+preparation at the exact leader and epoch. Signed leadership proofs carry the
+policy digest, so every mutation is immediately fenced during the short
+handoff. The command waits for active-authority readback and writes
+`policy-rotation-<uuid>.receipt.json`.
+
+If the process or network fails after the database commit, rerun the identical
+command. It reuses the pending rotation ID and resumes the idempotent witness
+mutation. Unconsumed preparations remain discoverable after their preparation
+token expires; expiry prevents a new PostgreSQL reload, but it does not erase a
+database-committed recovery path. Before every takeover, `promote.sh` invokes
+`rotate-policy.sh --resume`. If the candidate digest reached synchronously
+replicated PostgreSQL, bigmac can publish the required fresh standby evidence
+and finish the witness commit even after genomesbox disappears. If an expired
+preparation never reached PostgreSQL, the same path uses fresh standby evidence
+of the old digest to conditionally abort it before promotion. That observation,
+lag measurement, and receiver timestamp must all be strictly newer than the
+preparation expiry, closing the database-commit/reporting race. The witness
+permits only one unresolved preparation, so recovery cannot become ambiguous.
+A different rotation is rejected until the pending operation is resolved; do
+not delete that record to bulldoze through a conflict.

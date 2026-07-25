@@ -5,6 +5,7 @@ import type { TaskRecord } from "../src/contracts.js";
 import type { DeliveryPort } from "../src/delivery.js";
 import { ExecutionFabric } from "../src/fabric.js";
 import type { LedgerPort } from "../src/ledger.js";
+import type { LeadershipGuard } from "../src/leadership.js";
 import { buildServer } from "../src/server.js";
 import { createTestPolicy } from "./policy-fixture.js";
 import type { ArtifactStore } from "../src/artifacts.js";
@@ -136,6 +137,8 @@ function fixture() {
     activatePolicyReload: vi.fn().mockImplementation(async (input) => ({
       schemaVersion: "execution-fabric-config-reload-receipt/v1",
       receiptId: randomUUID(),
+      rotationId: input.rotationId,
+      preparationTokenHash: input.preparationTokenHash,
       expectedCurrentFingerprint: input.expectedCurrentFingerprint,
       expectedCandidateFingerprint: input.expectedCandidateFingerprint,
       appliedFingerprint: input.expectedCandidateFingerprint,
@@ -154,7 +157,25 @@ function fixture() {
     close: vi.fn(),
   } satisfies DeliveryPort;
   const { policy } = createTestPolicy();
-  const fabric = new ExecutionFabric(ledger, delivery, 120, 0, policy);
+  const leadership = {
+    assertMutation: vi.fn(),
+    assertTaskMutation: vi.fn(),
+    assertEffectMutation: vi.fn(),
+    assertSchedulerMutation: vi.fn(),
+    authorizePolicyRotation: vi.fn().mockReturnValue({
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      expectedEpoch: 1,
+    }),
+    snapshot: vi.fn().mockReturnValue({ state: "active" }),
+  } as unknown as LeadershipGuard;
+  const fabric = new ExecutionFabric(
+    ledger,
+    delivery,
+    120,
+    0,
+    policy,
+    leadership,
+  );
   const artifactId = randomUUID();
   const artifact = {
     artifactId,
@@ -274,6 +295,7 @@ function fixture() {
     reliability,
     task,
     fabric,
+    leadership,
   };
 }
 
@@ -811,19 +833,34 @@ describe("HTTP contract", () => {
   });
 
   it("keeps config reload on the admin credential", async () => {
-    const { server, ledger, fabric } = fixture();
+    const { server, ledger, fabric, leadership } = fixture();
     const fingerprint = fabric.policy.snapshot().appliedFingerprint;
+    const rotationId = randomUUID();
+    const preparationToken = "cpr1.payload.signature";
     const denied = await server.inject({
       method: "POST",
       url: "/api/v1/admin/config/reload",
       headers: { authorization: `Bearer ${config.apiToken}` },
     });
     expect(denied.statusCode).toBe(401);
+    const unprepared = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/config/reload",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+      payload: {
+        expectedCurrentFingerprint: fingerprint,
+        expectedCandidateFingerprint: fingerprint,
+      },
+    });
+    expect(unprepared.statusCode).toBe(400);
+    expect(ledger.activatePolicyReload).not.toHaveBeenCalled();
     const applied = await server.inject({
       method: "POST",
       url: "/api/v1/admin/config/reload",
       headers: { authorization: `Bearer ${config.adminToken}` },
       payload: {
+        rotationId,
+        preparationToken,
         expectedCurrentFingerprint: fingerprint,
         expectedCandidateFingerprint: fingerprint,
       },
@@ -836,14 +873,32 @@ describe("HTTP contract", () => {
       expectedCurrentFingerprint: fingerprint,
       expectedCandidateFingerprint: fingerprint,
       appliedFingerprint: fingerprint,
+      rotationId,
     });
     expect(ledger.activatePolicyReload).toHaveBeenCalledOnce();
+    expect(ledger.activatePolicyReload).toHaveBeenCalledWith({
+      rotationId,
+      preparationTokenHash:
+        "0d1b4f4f14b47a69d41311d57c0ec31583804d173d4a930ed16adf63a1ead8b1",
+      authorizationExpiresAt: expect.any(String),
+      expectedEpoch: 1,
+      expectedCurrentFingerprint: fingerprint,
+      expectedCandidateFingerprint: fingerprint,
+    });
+    expect(leadership.authorizePolicyRotation).toHaveBeenCalledWith({
+      rotationId,
+      preparationToken,
+      expectedCurrentDigest: fingerprint,
+      candidateDigest: fingerprint,
+    });
 
     const stale = await server.inject({
       method: "POST",
       url: "/api/v1/admin/config/reload",
       headers: { authorization: `Bearer ${config.adminToken}` },
       payload: {
+        rotationId: randomUUID(),
+        preparationToken,
         expectedCurrentFingerprint: "0".repeat(64),
         expectedCandidateFingerprint: fingerprint,
       },

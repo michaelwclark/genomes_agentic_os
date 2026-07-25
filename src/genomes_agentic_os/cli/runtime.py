@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from ..execution_fabric_config import ExecutionFabricConfigError
 from ..execution_fabric_config import load_execution_fabric_config
@@ -483,6 +483,8 @@ def _write_config_reload_receipt(root: str, payload: dict) -> Path:
 def handle_execution_fabric_config_reload(args: argparse.Namespace) -> int:
     effective = load_execution_fabric_config(args.root)
     expected = str(args.expected_fingerprint or "").strip()
+    rotation_id = str(args.rotation_id or "").strip()
+    preparation_token_file = str(args.preparation_token_file or "").strip()
     if effective.value["execution_fabric"]["transport"].get("mode") != "remote":
         raise ExecutionFabricConfigError(
             "runtime config reload is a remote control-plane operation; "
@@ -504,6 +506,7 @@ def handle_execution_fabric_config_reload(args: argparse.Namespace) -> int:
         "fingerprint": effective.fingerprint,
         "expected_fingerprint": expected or None,
         "expected_current_fingerprint": current_fingerprint,
+        "rotation_id": rotation_id or None,
         "dry_run": not args.apply,
         "applied": False,
     }
@@ -515,20 +518,55 @@ def handle_execution_fabric_config_reload(args: argparse.Namespace) -> int:
         _print_structured(
             {
                 **plan,
-                "ready": bool(expected),
-                "blockers": []
-                if expected
-                else ["--expected-fingerprint is required for --apply"],
+                "ready": bool(expected and rotation_id and preparation_token_file),
+                "blockers": [
+                    blocker
+                    for present, blocker in (
+                        (
+                            bool(expected),
+                            "--expected-fingerprint is required for --apply",
+                        ),
+                        (
+                            bool(rotation_id),
+                            "--rotation-id is required for --apply",
+                        ),
+                        (
+                            bool(preparation_token_file),
+                            "--preparation-token-file is required for --apply",
+                        ),
+                    )
+                    if not present
+                ],
             },
             json_output=args.json,
         )
         return 0
-    if not expected:
+    if not expected or not rotation_id or not preparation_token_file:
         raise ExecutionFabricConfigError(
-            "--expected-fingerprint is required when applying a remote config reload"
+            "--expected-fingerprint, --rotation-id, and --preparation-token-file "
+            "are required when applying a remote config reload"
+        )
+    try:
+        UUID(rotation_id)
+    except ValueError as error:
+        raise ExecutionFabricConfigError("--rotation-id must be a UUID") from error
+    token_path = Path(preparation_token_file).expanduser().resolve()
+    try:
+        preparation_token = token_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ExecutionFabricConfigError(
+            "witness preparation token file is unreadable"
+        ) from error
+    if not preparation_token.startswith("cpr1.") or len(
+        preparation_token.split(".")
+    ) != 3:
+        raise ExecutionFabricConfigError(
+            "witness preparation token file has an invalid envelope"
         )
     admin_settings = resolve_remote_settings(args.root, role="admin")
     reload_result = ExecutionFabricClient(admin_settings).reload_config(
+        rotation_id=rotation_id,
+        preparation_token=preparation_token,
         expected_current_fingerprint=current_fingerprint,
         expected_candidate_fingerprint=effective.fingerprint,
     )
@@ -945,6 +983,14 @@ def register(subparsers) -> None:
     fabric_config_reload_parser.add_argument(
         "--expected-fingerprint",
         help="Validated local fingerprint required with --apply.",
+    )
+    fabric_config_reload_parser.add_argument(
+        "--rotation-id",
+        help="Witness-prepared rotation UUID required with --apply.",
+    )
+    fabric_config_reload_parser.add_argument(
+        "--preparation-token-file",
+        help="Path to the signed witness preparation token required with --apply.",
     )
     _add_safe_mutation_mode(fabric_config_reload_parser)
     _add_json_arg(fabric_config_reload_parser)

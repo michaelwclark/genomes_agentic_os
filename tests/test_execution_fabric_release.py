@@ -71,6 +71,8 @@ def test_wheel_resource_index_keeps_large_assets_out_of_installed_root() -> None
     )
     value = json.loads(index.read_text(encoding="utf-8"))
     assert value["portable_bundle"].endswith(".tar.gz")
+    assert value["repository_env"] == "GENOMES_AGENTIC_OS_RELEASE_REPOSITORY"
+    assert "{repository}" in value["release_url_template"]
     assert value["release_url_template"].startswith("https://github.com/")
 
 

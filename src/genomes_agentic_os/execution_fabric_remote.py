@@ -664,6 +664,8 @@ class ExecutionFabricClient:
     def reload_config(
         self,
         *,
+        rotation_id: str,
+        preparation_token: str,
         expected_current_fingerprint: str,
         expected_candidate_fingerprint: str,
     ) -> dict[str, Any]:
@@ -672,6 +674,8 @@ class ExecutionFabricClient:
             "POST",
             "/api/v1/admin/config/reload",
             {
+                "rotationId": rotation_id,
+                "preparationToken": preparation_token,
                 "expectedCurrentFingerprint": expected_current_fingerprint,
                 "expectedCandidateFingerprint": expected_candidate_fingerprint,
             },
@@ -1461,10 +1465,18 @@ def _team_pr_ai_review_worker(
             "team PR review requires provider-read author_identity",
             retryable=False,
         )
-    profile_path = (
-        os_root
-        / "domains/los/02-projects/los_app_los_django/config/development.yml"
+    profile_candidates = sorted(
+        (os_root / "domains").glob(
+            "*/02-projects/los_app_los_django/config/development.yml"
+        )
     )
+    if len(profile_candidates) != 1:
+        raise TaskExecutionError(
+            "authorship_policy_unavailable",
+            "Team PR review requires exactly one installed canonical project profile",
+            retryable=False,
+        )
+    profile_path = profile_candidates[0]
     try:
         profile = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
         ours = {
@@ -1488,16 +1500,18 @@ def _team_pr_ai_review_worker(
             retryable=False,
         )
     author_kind = "ours" if author_identity.lower() in ours else "others"
-    helper_path = (
-        os_root
-        / "lib/programs/domains/los/team_pr_sync/scripts/team_pr_review_fabric.py"
+    helper_candidates = sorted(
+        (os_root / "lib/programs/domains").glob(
+            "*/team_pr_sync/scripts/team_pr_review_fabric.py"
+        )
     )
-    if not helper_path.is_file():
+    if len(helper_candidates) != 1 or not helper_candidates[0].is_file():
         raise TaskExecutionError(
             "team_pr_helper_unavailable",
-            "installed Team PR review helper is unavailable",
+            "Team PR review requires exactly one installed helper",
             retryable=False,
         )
+    helper_path = helper_candidates[0]
     command = shlex.join(
         [
             "python3",

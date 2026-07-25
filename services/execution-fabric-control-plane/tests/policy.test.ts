@@ -164,6 +164,31 @@ describe("canonical policy", () => {
     expect(policy.snapshot().state).toBe("applied");
   });
 
+  it("lets long-running roles adopt only the database-approved disk fingerprint", () => {
+    const { policy, source, value } = createTestPolicy();
+    const original = policy.snapshot().appliedFingerprint;
+    value.execution_fabric.degraded_primary.allow_scheduler = true;
+    writeFileSync(source, stringify(value));
+    const candidate = policy.prepareReload().candidateFingerprint;
+
+    expect(() =>
+      policy.synchronizeApprovedFingerprint(original),
+    ).toThrow(/differs from the applied policy/);
+    expect(
+      policy.effective().execution_fabric.degraded_primary.allow_scheduler,
+    ).toBe(false);
+    const synchronized =
+      policy.synchronizeApprovedFingerprint(candidate);
+    expect(synchronized.appliedFingerprint).toBe(candidate);
+    expect(synchronized.state).toBe("applied");
+    expect(
+      policy.effective().execution_fabric.degraded_primary.allow_scheduler,
+    ).toBe(true);
+    expect(() =>
+      policy.synchronizeApprovedFingerprint("f".repeat(64)),
+    ).toThrow(/database-approved fingerprint/);
+  });
+
   it("enforces queue to pool capability and worker capacity mapping", () => {
     const { policy } = createTestPolicy();
     expect(() =>

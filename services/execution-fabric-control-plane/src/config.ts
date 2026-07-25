@@ -87,6 +87,43 @@ const environmentSchema = z.object({
     .default("info"),
 });
 
+const observerEnvironmentSchema = z.object({
+  FABRIC_HOST_ID: z.string().min(1).max(128),
+  FABRIC_DATABASE_URL: z.string().url(),
+  FABRIC_POLICY_CONFIG_FILE: z.string().min(1),
+  FABRIC_POLICY_SCHEMA_FILE: z.string().min(1),
+  FABRIC_ARTIFACT_ENDPOINT: z.string().url().default("http://minio:9000"),
+  FABRIC_ARTIFACT_REGION: z.string().min(1).max(64).default("us-east-1"),
+  FABRIC_ARTIFACT_BUCKET: z
+    .string()
+    .min(3)
+    .max(63)
+    .regex(/^[a-z0-9][a-z0-9.-]+[a-z0-9]$/)
+    .default("execution-fabric-artifacts"),
+  FABRIC_ARTIFACT_ACCESS_KEY_FILE: z.string().min(1),
+  FABRIC_ARTIFACT_SECRET_KEY_FILE: z.string().min(1),
+  FABRIC_ARTIFACT_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("true"),
+  FABRIC_ARTIFACT_UPLOAD_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(900)
+    .default(300),
+  FABRIC_ARTIFACT_DOWNLOAD_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(3600)
+    .default(300),
+  FABRIC_ARTIFACT_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(104857600)
+    .default(10485760),
+  FABRIC_CLUSTER_ID: z.string().regex(/^[a-zA-Z0-9._-]{1,128}$/),
+});
+
 export type Config = {
   host: string;
   port: number;
@@ -146,6 +183,16 @@ export type Config = {
   leadershipRecoveryHoldSeconds: number;
   logLevel: z.infer<typeof environmentSchema>["FABRIC_LOG_LEVEL"];
 };
+
+export type ObserverConfig = Pick<
+  Config,
+  | "hostId"
+  | "databaseUrl"
+  | "policyConfigPath"
+  | "policySchemaPath"
+  | "artifactStore"
+  | "clusterId"
+>;
 
 function readSecretFile(path: string, variable: string): string {
   const value = readFileSync(path, "utf8").trim();
@@ -398,5 +445,41 @@ export function loadConfig(
     leadershipRecoveryHoldSeconds:
       parsed.FABRIC_LEADERSHIP_RECOVERY_HOLD_SECONDS,
     logLevel: parsed.FABRIC_LOG_LEVEL,
+  };
+}
+
+/**
+ * Load only the observer's read/health dependencies.
+ *
+ * The observer must never parse or receive submitter, worker-bootstrap,
+ * administrator, effect-consumer, alarm-dispatcher, or witness credentials.
+ */
+export function loadObserverConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+): ObserverConfig {
+  const parsed = observerEnvironmentSchema.parse(environment);
+  return {
+    hostId: parsed.FABRIC_HOST_ID,
+    databaseUrl: parsed.FABRIC_DATABASE_URL,
+    policyConfigPath: parsed.FABRIC_POLICY_CONFIG_FILE,
+    policySchemaPath: parsed.FABRIC_POLICY_SCHEMA_FILE,
+    artifactStore: {
+      endpoint: parsed.FABRIC_ARTIFACT_ENDPOINT,
+      region: parsed.FABRIC_ARTIFACT_REGION,
+      bucket: parsed.FABRIC_ARTIFACT_BUCKET,
+      accessKeyId: readSecretFile(
+        parsed.FABRIC_ARTIFACT_ACCESS_KEY_FILE,
+        "FABRIC_ARTIFACT_ACCESS_KEY_FILE",
+      ),
+      secretAccessKey: readSecretFile(
+        parsed.FABRIC_ARTIFACT_SECRET_KEY_FILE,
+        "FABRIC_ARTIFACT_SECRET_KEY_FILE",
+      ),
+      forcePathStyle: parsed.FABRIC_ARTIFACT_FORCE_PATH_STYLE === "true",
+      uploadTtlSeconds: parsed.FABRIC_ARTIFACT_UPLOAD_TTL_SECONDS,
+      downloadTtlSeconds: parsed.FABRIC_ARTIFACT_DOWNLOAD_TTL_SECONDS,
+      maxBytes: parsed.FABRIC_ARTIFACT_MAX_BYTES,
+    },
+    clusterId: parsed.FABRIC_CLUSTER_ID,
   };
 }

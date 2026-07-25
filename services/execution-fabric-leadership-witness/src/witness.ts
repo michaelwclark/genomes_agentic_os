@@ -1,15 +1,24 @@
 import {
   createHash,
+  createPublicKey,
   randomBytes,
   randomUUID,
   sign,
   timingSafeEqual,
+  verify,
 } from "node:crypto";
 import type { WitnessConfig } from "./config.js";
 import type {
   AuditRecord,
   CandidateRecord,
   CandidateUpdate,
+  ConfigDigestCandidateCondition,
+  ConfigDigestRotationAbortReceipt,
+  ConfigDigestRotationAbortRequest,
+  ConfigDigestRotationCommitRequest,
+  ConfigDigestRotationPreparation,
+  ConfigDigestRotationReceipt,
+  ConfigDigestRotationRequest,
   Eligibility,
   FailbackCommitRequest,
   FailbackPrepareRequest,
@@ -175,6 +184,7 @@ export class LeadershipWitness {
     occurredAt: string,
     authorityMode: LeadershipState["authorityMode"],
     degradedUntil: string | null,
+    configDigest: string,
   ): string {
     const expiresAt = new Date(
       new Date(occurredAt).getTime() +
@@ -189,6 +199,7 @@ export class LeadershipWitness {
         receiptId,
         authorityMode,
         degradedUntil,
+        configDigest,
         issuedAt: occurredAt,
         expiresAt,
       }),
@@ -199,6 +210,95 @@ export class LeadershipWitness {
       this.config.signingPrivateKey,
     ).toString("base64url");
     return `v2.${payload}.${signature}`;
+  }
+
+  private configRotationPreparationToken(
+    request: ConfigDigestRotationRequest,
+    issuedAt: string,
+    expiresAt: string,
+  ): string {
+    const payload = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        type: "config_digest_rotation_preparation",
+        clusterId: this.config.clusterId,
+        rotationId: request.rotationId,
+        expectedLeader: request.expectedLeader,
+        expectedEpoch: request.expectedEpoch,
+        expectedCurrentDigest: request.expectedCurrentDigest,
+        candidateDigest: request.candidateDigest,
+        issuedAt,
+        expiresAt,
+      }),
+    ).toString("base64url");
+    const signature = sign(
+      null,
+      Buffer.from(payload),
+      this.config.signingPrivateKey,
+    ).toString("base64url");
+    return `cpr1.${payload}.${signature}`;
+  }
+
+  private validConfigRotationPreparationToken(
+    token: string,
+    preparation: ConfigDigestRotationPreparation,
+  ): boolean {
+    const [version, payload, signature, extra] = token.split(".");
+    if (
+      version !== "cpr1" ||
+      !payload ||
+      !signature ||
+      extra !== undefined
+    ) {
+      return false;
+    }
+    try {
+      if (
+        !verify(
+          null,
+          Buffer.from(payload),
+          createPublicKey(this.config.signingPrivateKey),
+          Buffer.from(signature, "base64url"),
+        )
+      ) {
+        return false;
+      }
+      const decoded = JSON.parse(
+        Buffer.from(payload, "base64url").toString("utf8"),
+      ) as Record<string, unknown>;
+      return (
+        decoded.v === 1 &&
+        decoded.type === "config_digest_rotation_preparation" &&
+        decoded.clusterId === this.config.clusterId &&
+        decoded.rotationId === preparation.rotationId &&
+        decoded.expectedLeader === preparation.expectedLeader &&
+        decoded.expectedEpoch === preparation.expectedEpoch &&
+        decoded.expectedCurrentDigest ===
+          preparation.expectedCurrentDigest &&
+        decoded.candidateDigest === preparation.candidateDigest &&
+        decoded.issuedAt === preparation.issuedAt &&
+        decoded.expiresAt === preparation.expiresAt
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private configRotationRequestDigest(
+    request: ConfigDigestRotationRequest,
+    candidateHosts: string[],
+  ): string {
+    return sha256(
+      JSON.stringify({
+        clusterId: this.config.clusterId,
+        rotationId: request.rotationId,
+        expectedLeader: request.expectedLeader,
+        expectedEpoch: request.expectedEpoch,
+        expectedCurrentDigest: request.expectedCurrentDigest,
+        candidateDigest: request.candidateDigest,
+        candidateHosts,
+      }),
+    );
   }
 
   async initialize(): Promise<LeadershipState> {
@@ -236,9 +336,10 @@ export class LeadershipWitness {
   }
 
   async status() {
-    const [state, candidates] = await Promise.all([
+    const [state, candidates, rotationPreparations] = await Promise.all([
       this.store.getState(),
       this.store.listCandidates(),
+      this.store.listConfigDigestRotationPreparations(),
     ]);
     const nowEpoch = Math.floor(this.now().getTime() / 1000);
     const candidateMap = Object.fromEntries(
@@ -267,6 +368,9 @@ export class LeadershipWitness {
                     state.leaderWalPosition - candidate.replayWalPosition,
                   ),
             configDigest: candidate.configDigest,
+            policyCandidateDigest: candidate.policyCandidateDigest ?? null,
+            policyCandidateObservedAt:
+              candidate.policyCandidateObservedAt ?? null,
             observedAt: candidate.observedAt,
             ...this.eligibility(candidate, state, nowEpoch),
           },
@@ -308,6 +412,7 @@ export class LeadershipWitness {
       sampledAt,
       state.authorityMode,
       state.degradedUntil,
+      state.configDigest,
     );
     return {
       apiVersion: "execution-fabric-leadership/v1",
@@ -316,6 +421,12 @@ export class LeadershipWitness {
       promotionAllowed,
       leaderEligibility,
       candidates: candidateMap,
+      pendingConfigDigestRotations: rotationPreparations
+        .sort((left, right) => left.rotationId.localeCompare(right.rotationId))
+        .map((preparation) => ({
+          ...preparation,
+          expired: preparation.expiresAtEpoch < nowEpoch,
+        })),
       safety: {
         maxReplicaLagBytes: this.config.maxReplicaLagBytes,
         candidateFreshnessSeconds: this.config.candidateFreshnessSeconds,
@@ -362,13 +473,57 @@ export class LeadershipWitness {
         "WAL receiver last-message time exceeds the allowed clock-skew window",
       );
     }
+    const [state, candidates] = await Promise.all([
+      this.store.getState(),
+      this.store.listCandidates(),
+    ]);
+    const previous = candidates.find((item) => item.candidate === candidate);
+    let policyCandidate:
+      | Pick<
+          CandidateRecord,
+          "policyCandidateDigest" | "policyCandidateObservedAt"
+        >
+      | undefined;
+    if (update.policyCandidateDigest !== undefined) {
+      const policyCandidateObservedAt =
+        update.policyCandidateObservedAt ?? observedAt;
+      const policyCandidateObservedAtEpoch = Math.floor(
+        new Date(policyCandidateObservedAt).getTime() / 1000,
+      );
+      if (
+        Math.abs(policyCandidateObservedAtEpoch - nowEpoch) >
+        this.config.maxReportSkewSeconds
+      ) {
+        throw new WitnessConflictError(
+          "staged policy observation exceeds the allowed clock-skew window",
+        );
+      }
+      policyCandidate = {
+        policyCandidateDigest: update.policyCandidateDigest,
+        policyCandidateObservedAt: new Date(
+          policyCandidateObservedAt,
+        ).toISOString(),
+      };
+    } else if (
+      previous?.policyCandidateDigest &&
+      previous.policyCandidateObservedAt &&
+      Math.floor(
+        new Date(previous.policyCandidateObservedAt).getTime() / 1000,
+      ) >=
+        nowEpoch - this.config.candidateFreshnessSeconds
+    ) {
+      policyCandidate = {
+        policyCandidateDigest: previous.policyCandidateDigest,
+        policyCandidateObservedAt: previous.policyCandidateObservedAt,
+      };
+    }
     const record: CandidateRecord = {
       candidate,
       ...update,
+      ...policyCandidate,
       observedAt,
       observedAtEpoch,
     };
-    const state = await this.store.getState();
     const isCurrentLeaderBaseline =
       candidate === state.currentLeader &&
       !record.inRecovery &&
@@ -392,6 +547,9 @@ export class LeadershipWitness {
         receiverState: record.receiverState,
         lastMessageAt: record.lastMessageAt,
         configDigest: record.configDigest,
+        policyCandidateDigest: record.policyCandidateDigest ?? null,
+        policyCandidateObservedAt:
+          record.policyCandidateObservedAt ?? null,
         observedAt,
       }),
         isCurrentLeaderBaseline
@@ -409,6 +567,641 @@ export class LeadershipWitness {
       throw error;
     }
     return record;
+  }
+
+  async configDigestRotation(rotationId: string) {
+    const receipt = await this.store.getConfigDigestRotation(rotationId);
+    if (!receipt) {
+      throw new WitnessNotFoundError(
+        "configuration digest rotation receipt was not found",
+      );
+    }
+    return receipt;
+  }
+
+  async configDigestRotationAbort(rotationId: string) {
+    const receipt =
+      await this.store.getConfigDigestRotationAbort(rotationId);
+    if (!receipt) {
+      throw new WitnessNotFoundError(
+        "configuration digest rotation abort receipt was not found",
+      );
+    }
+    return receipt;
+  }
+
+  async configDigestRotationPreparation(rotationId: string) {
+    const preparation =
+      await this.store.getConfigDigestRotationPreparation(rotationId);
+    if (!preparation) {
+      throw new WitnessNotFoundError(
+        "configuration digest rotation preparation was not found",
+      );
+    }
+    return preparation;
+  }
+
+  async prepareConfigDigestRotation(
+    request: ConfigDigestRotationRequest,
+  ): Promise<ConfigDigestRotationPreparation> {
+    const candidateHosts = Object.keys(this.config.candidateTokens).sort();
+    if (candidateHosts.length < 2) {
+      throw new WitnessConflictError(
+        "configuration digest rotation requires at least two configured failover hosts",
+      );
+    }
+    const requestDigest = this.configRotationRequestDigest(
+      request,
+      candidateHosts,
+    );
+    const [
+      existingReceipt,
+      existingAbort,
+      existingPreparation,
+      activePreparations,
+    ] = await Promise.all([
+      this.store.getConfigDigestRotation(request.rotationId),
+      this.store.getConfigDigestRotationAbort(request.rotationId),
+      this.store.getConfigDigestRotationPreparation(request.rotationId),
+      this.store.listConfigDigestRotationPreparations(),
+    ]);
+    if (existingReceipt) {
+      throw new WitnessConflictError(
+        "configuration rotation id was already committed",
+      );
+    }
+    if (existingAbort) {
+      throw new WitnessConflictError(
+        "configuration rotation id was already aborted",
+      );
+    }
+    const nowEpoch = Math.floor(this.now().getTime() / 1000);
+    if (existingPreparation) {
+      if (safeEqual(existingPreparation.requestDigest, requestDigest)) {
+        return existingPreparation;
+      }
+      throw new WitnessConflictError(
+        "configuration rotation id was already used by another request",
+      );
+    }
+    if (activePreparations.length > 0) {
+      throw new WitnessConflictError(
+        `another unresolved configuration rotation is active: ${activePreparations[0]!.rotationId}`,
+      );
+    }
+
+    const [state, candidates] = await Promise.all([
+      this.store.getState(),
+      this.store.listCandidates(),
+    ]);
+    if (
+      state.currentLeader !== request.expectedLeader ||
+      state.fabricEpoch !== request.expectedEpoch ||
+      state.configDigest !== request.expectedCurrentDigest
+    ) {
+      throw new WitnessConflictError(
+        "configuration rotation expected leader, epoch, or digest is stale",
+      );
+    }
+    if (
+      state.leaderWalPosition === null ||
+      state.leaderBaselineAt === null ||
+      state.upstreamSystemId === null
+    ) {
+      throw new WitnessConflictError(
+        "configuration rotation requires a complete leader WAL baseline",
+      );
+    }
+
+    const candidateFreshAfterEpoch =
+      nowEpoch - this.config.candidateFreshnessSeconds;
+    const leaderBaselineFreshAfterEpoch =
+      nowEpoch - this.config.leaderBaselineMaxAgeSeconds;
+    const baselineEpoch = Math.floor(
+      new Date(state.leaderBaselineAt).getTime() / 1000,
+    );
+    if (
+      !Number.isFinite(baselineEpoch) ||
+      baselineEpoch < leaderBaselineFreshAfterEpoch
+    ) {
+      throw new WitnessConflictError(
+        "configuration rotation leader WAL baseline is stale",
+      );
+    }
+
+    const candidateMap = new Map(
+      candidates.map((candidate) => [candidate.candidate, candidate]),
+    );
+    const conditions: ConfigDigestCandidateCondition[] = [];
+    const reasons: string[] = [];
+    for (const host of candidateHosts) {
+      const candidate = candidateMap.get(host);
+      const isLeader = host === state.currentLeader;
+      const expectedInRecovery = !isLeader;
+      const expectedReceiverState = isLeader
+        ? "not_applicable"
+        : "streaming";
+      const minimumReplayWalPosition = isLeader
+        ? state.leaderWalPosition
+        : Math.max(
+            0,
+            state.leaderWalPosition - this.config.maxReplicaLagBytes,
+          );
+      conditions.push({
+        candidate: host,
+        inRecovery: expectedInRecovery,
+        receiverState: expectedReceiverState,
+        minimumReplayWalPosition,
+      });
+      if (!candidate) {
+        reasons.push(`${host}:candidate_not_reported`);
+        continue;
+      }
+      if (!candidate.healthy) reasons.push(`${host}:candidate_unhealthy`);
+      if (candidate.inRecovery !== expectedInRecovery) {
+        reasons.push(`${host}:recovery_role_mismatch`);
+      }
+      if (candidate.receiverState !== expectedReceiverState) {
+        reasons.push(`${host}:receiver_state_mismatch`);
+      }
+      if (candidate.observedAtEpoch < candidateFreshAfterEpoch) {
+        reasons.push(`${host}:candidate_observation_stale`);
+      }
+      if (
+        Math.floor(new Date(candidate.lagMeasuredAt).getTime() / 1000) <
+        candidateFreshAfterEpoch
+      ) {
+        reasons.push(`${host}:lag_measurement_stale`);
+      }
+      if (
+        Math.floor(new Date(candidate.lastMessageAt).getTime() / 1000) <
+        candidateFreshAfterEpoch
+      ) {
+        reasons.push(`${host}:receiver_message_stale`);
+      }
+      if (candidate.configDigest !== state.configDigest) {
+        reasons.push(`${host}:applied_config_digest_mismatch`);
+      }
+      if (candidate.policyCandidateDigest !== request.candidateDigest) {
+        reasons.push(`${host}:policy_candidate_digest_mismatch`);
+      }
+      if (
+        Math.floor(
+          new Date(candidate.policyCandidateObservedAt ?? "").getTime() /
+            1000,
+        ) < candidateFreshAfterEpoch
+      ) {
+        reasons.push(`${host}:policy_candidate_observation_stale`);
+      }
+      if (candidate.timelineId !== state.timelineId) {
+        reasons.push(`${host}:timeline_mismatch`);
+      }
+      if (candidate.upstreamSystemId !== state.upstreamSystemId) {
+        reasons.push(`${host}:upstream_system_id_mismatch`);
+      }
+      if (candidate.replayWalPosition < minimumReplayWalPosition) {
+        reasons.push(`${host}:upstream_wal_gap_exceeds_limit`);
+      }
+      if (
+        expectedInRecovery &&
+        candidate.replicaLagBytes > this.config.maxReplicaLagBytes
+      ) {
+        reasons.push(`${host}:replica_lag_exceeds_limit`);
+      }
+    }
+    if (reasons.length) {
+      throw new WitnessConflictError(
+        `configuration rotation candidates are not eligible: ${reasons.join(",")}`,
+      );
+    }
+
+    const issuedAt = this.timestamp();
+    const expiresAtEpoch = nowEpoch + this.config.planTtlSeconds;
+    const expiresAt = new Date(expiresAtEpoch * 1000).toISOString();
+    const preparationToken = this.configRotationPreparationToken(
+      request,
+      issuedAt,
+      expiresAt,
+    );
+    const preparation: ConfigDigestRotationPreparation = {
+      apiVersion: "execution-fabric-leadership/v1",
+      decision: "config_digest_rotation_prepared",
+      rotationId: request.rotationId,
+      requestDigest,
+      expectedLeader: state.currentLeader,
+      expectedEpoch: state.fabricEpoch,
+      expectedCurrentDigest: state.configDigest,
+      candidateDigest: request.candidateDigest,
+      candidateHosts,
+      expectedTimelineId: state.timelineId,
+      expectedLeaderWalPosition: state.leaderWalPosition,
+      expectedUpstreamSystemId: state.upstreamSystemId,
+      minimumStandbyReplayWalPosition: Math.max(
+        0,
+        state.leaderWalPosition - this.config.maxReplicaLagBytes,
+      ),
+      maxReplicaLagBytes: this.config.maxReplicaLagBytes,
+      preparationToken,
+      preparationTokenHash: sha256(preparationToken),
+      issuedAt,
+      expiresAt,
+      expiresAtEpoch,
+    };
+    try {
+      return await this.store.prepareConfigDigestRotation({
+        preparation,
+        expectedLeader: request.expectedLeader,
+        expectedEpoch: request.expectedEpoch,
+        expectedCurrentDigest: request.expectedCurrentDigest,
+        candidateDigest: request.candidateDigest,
+        expectedTimelineId: state.timelineId,
+        expectedLeaderWalPosition: state.leaderWalPosition,
+        expectedUpstreamSystemId: state.upstreamSystemId,
+        leaderBaselineFreshAfterEpoch,
+        candidateFreshAfterEpoch,
+        policyCandidateFreshAfterEpoch: candidateFreshAfterEpoch,
+        receiverFreshAfterEpoch: candidateFreshAfterEpoch,
+        maxReplicaLagBytes: this.config.maxReplicaLagBytes,
+        candidates: conditions,
+        audit: {
+          auditId: `${request.rotationId}:prepare`,
+          eventType: "config_digest_rotation_prepared",
+          actor: "authenticated_admin",
+          occurredAt: issuedAt,
+          requestDigest,
+          detail: {
+            expectedLeader: state.currentLeader,
+            expectedEpoch: state.fabricEpoch,
+            expectedCurrentDigest: state.configDigest,
+            candidateDigest: request.candidateDigest,
+            candidateHosts,
+            preparationTokenHash: preparation.preparationTokenHash,
+            expiresAt,
+          },
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof ConditionalWriteError)) throw error;
+      const replay =
+        await this.store.getConfigDigestRotationPreparation(
+          request.rotationId,
+        );
+      if (
+        replay &&
+        safeEqual(replay.requestDigest, requestDigest)
+      ) {
+        return replay;
+      }
+      const active =
+        await this.store.listConfigDigestRotationPreparations();
+      throw new WitnessConflictError(
+        replay
+          ? "configuration rotation id was already used by another request"
+          : active.length > 0
+            ? `another unresolved configuration rotation is active: ${active[0]!.rotationId}`
+            : "configuration digest rotation conditions changed before preparation",
+      );
+    }
+  }
+
+  async commitConfigDigestRotation(
+    request: ConfigDigestRotationCommitRequest,
+  ): Promise<ConfigDigestRotationReceipt> {
+    const preparationTokenHash = sha256(request.preparationToken);
+    const [existing, existingAbort] = await Promise.all([
+      this.store.getConfigDigestRotation(request.rotationId),
+      this.store.getConfigDigestRotationAbort(request.rotationId),
+    ]);
+    if (existing) {
+      if (
+        safeEqual(existing.preparationTokenHash, preparationTokenHash)
+      ) {
+        return existing;
+      }
+      throw new WitnessConflictError(
+        "configuration rotation id was already committed with another preparation",
+      );
+    }
+    if (existingAbort) {
+      throw new WitnessConflictError(
+        "configuration rotation was already aborted",
+      );
+    }
+    const preparation =
+      await this.store.getConfigDigestRotationPreparation(request.rotationId);
+    if (!preparation) {
+      throw new WitnessNotFoundError(
+        "configuration digest rotation preparation is missing or already consumed",
+      );
+    }
+    if (
+      !safeEqual(preparation.preparationTokenHash, preparationTokenHash) ||
+      !this.validConfigRotationPreparationToken(
+        request.preparationToken,
+        preparation,
+      )
+    ) {
+      throw new WitnessConflictError(
+        "configuration digest rotation preparation token is invalid or mismatched",
+      );
+    }
+    const nowEpoch = Math.floor(this.now().getTime() / 1000);
+    const [state, candidates] = await Promise.all([
+      this.store.getState(),
+      this.store.listCandidates(),
+    ]);
+    if (
+      state.currentLeader !== preparation.expectedLeader ||
+      state.fabricEpoch !== preparation.expectedEpoch ||
+      state.configDigest !== preparation.expectedCurrentDigest
+    ) {
+      throw new WitnessConflictError(
+        "configuration digest rotation preparation is stale for current leadership",
+      );
+    }
+    const candidateFreshAfterEpoch =
+      nowEpoch - this.config.candidateFreshnessSeconds;
+    const commitCandidate = candidates
+      .filter(
+        (candidate) =>
+          preparation.candidateHosts.includes(candidate.candidate) &&
+          candidate.candidate !== preparation.expectedLeader &&
+          candidate.healthy &&
+          candidate.inRecovery &&
+          candidate.receiverState === "streaming" &&
+          candidate.observedAtEpoch >= candidateFreshAfterEpoch &&
+          Math.floor(
+            new Date(candidate.lagMeasuredAt).getTime() / 1000,
+          ) >= candidateFreshAfterEpoch &&
+          Math.floor(
+            new Date(candidate.lastMessageAt).getTime() / 1000,
+          ) >= candidateFreshAfterEpoch &&
+          candidate.configDigest === preparation.candidateDigest &&
+          candidate.timelineId === preparation.expectedTimelineId &&
+          candidate.upstreamSystemId ===
+            preparation.expectedUpstreamSystemId &&
+          candidate.replayWalPosition >=
+            preparation.minimumStandbyReplayWalPosition &&
+          candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+      )
+      .sort((left, right) =>
+        left.candidate.localeCompare(right.candidate),
+      )[0];
+    if (!commitCandidate) {
+      throw new WitnessConflictError(
+        "configuration digest rotation commit requires fresh healthy non-leader evidence that the database applied the candidate digest",
+      );
+    }
+    const committedAt = this.timestamp();
+    const receipt: ConfigDigestRotationReceipt = {
+      apiVersion: "execution-fabric-leadership/v1",
+      decision: "config_digest_rotated",
+      rotationId: preparation.rotationId,
+      requestDigest: preparation.requestDigest,
+      currentLeader: state.currentLeader,
+      fabricEpoch: state.fabricEpoch,
+      previousConfigDigest: state.configDigest,
+      configDigest: preparation.candidateDigest,
+      candidateHosts: preparation.candidateHosts,
+      preparationTokenHash,
+      committedAt,
+    };
+    try {
+      return await this.store.commitConfigDigestRotation({
+        preparation,
+        preparationTokenHash,
+        candidateFreshAfterEpoch,
+        receiverFreshAfterEpoch: candidateFreshAfterEpoch,
+        commitCandidate: {
+          candidate: commitCandidate.candidate,
+          inRecovery: true,
+          receiverState: "streaming",
+          minimumReplayWalPosition:
+            preparation.minimumStandbyReplayWalPosition,
+        },
+        nextState: {
+          ...state,
+          configDigest: preparation.candidateDigest,
+          updatedAt: committedAt,
+        },
+        receipt,
+        audit: {
+          auditId: `${request.rotationId}:commit`,
+          eventType: "config_digest_rotated",
+          actor: "authenticated_admin",
+          occurredAt: committedAt,
+          requestDigest: preparation.requestDigest,
+          detail: {
+            currentLeader: state.currentLeader,
+            fabricEpoch: state.fabricEpoch,
+            previousConfigDigest: state.configDigest,
+            configDigest: preparation.candidateDigest,
+            candidateHosts: preparation.candidateHosts,
+            preparationTokenHash,
+            appliedEvidenceHost: commitCandidate.candidate,
+            preparationExpiredAtCommit:
+              preparation.expiresAtEpoch < nowEpoch,
+          },
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof ConditionalWriteError)) throw error;
+      const replay = await this.store.getConfigDigestRotation(
+        request.rotationId,
+      );
+      if (
+        replay &&
+        safeEqual(replay.preparationTokenHash, preparationTokenHash)
+      ) {
+        return replay;
+      }
+      throw new WitnessConflictError(
+        replay
+          ? "configuration rotation id was already committed with another preparation"
+          : "configuration digest rotation preparation changed before commit",
+      );
+    }
+  }
+
+  async abortConfigDigestRotation(
+    request: ConfigDigestRotationAbortRequest,
+  ): Promise<ConfigDigestRotationAbortReceipt> {
+    const preparationTokenHash = sha256(request.preparationToken);
+    const [existingAbort, existingCommit] = await Promise.all([
+      this.store.getConfigDigestRotationAbort(request.rotationId),
+      this.store.getConfigDigestRotation(request.rotationId),
+    ]);
+    if (existingAbort) {
+      if (
+        safeEqual(
+          existingAbort.preparationTokenHash,
+          preparationTokenHash,
+        )
+      ) {
+        return existingAbort;
+      }
+      throw new WitnessConflictError(
+        "configuration rotation id was already aborted with another preparation",
+      );
+    }
+    if (existingCommit) {
+      throw new WitnessConflictError(
+        "configuration rotation was already committed",
+      );
+    }
+    const preparation =
+      await this.store.getConfigDigestRotationPreparation(request.rotationId);
+    if (!preparation) {
+      throw new WitnessNotFoundError(
+        "configuration digest rotation preparation is missing or already resolved",
+      );
+    }
+    if (
+      !safeEqual(preparation.preparationTokenHash, preparationTokenHash) ||
+      !this.validConfigRotationPreparationToken(
+        request.preparationToken,
+        preparation,
+      )
+    ) {
+      throw new WitnessConflictError(
+        "configuration digest rotation preparation token is invalid or mismatched",
+      );
+    }
+    const nowEpoch = Math.floor(this.now().getTime() / 1000);
+    if (preparation.expiresAtEpoch >= nowEpoch) {
+      throw new WitnessConflictError(
+        "configuration digest rotation preparation cannot be aborted before expiry",
+      );
+    }
+    const [state, candidates] = await Promise.all([
+      this.store.getState(),
+      this.store.listCandidates(),
+    ]);
+    if (
+      state.currentLeader !== preparation.expectedLeader ||
+      state.fabricEpoch !== preparation.expectedEpoch ||
+      state.configDigest !== preparation.expectedCurrentDigest
+    ) {
+      throw new WitnessConflictError(
+        "configuration digest rotation preparation is stale for current leadership",
+      );
+    }
+    const evidenceAfterEpoch = Math.max(
+      preparation.expiresAtEpoch,
+      nowEpoch - this.config.candidateFreshnessSeconds,
+    );
+    const safeNonLeaderCandidates = candidates
+      .filter(
+        (candidate) =>
+          preparation.candidateHosts.includes(candidate.candidate) &&
+          candidate.candidate !== preparation.expectedLeader &&
+          candidate.healthy &&
+          candidate.inRecovery &&
+          candidate.receiverState === "streaming" &&
+          candidate.observedAtEpoch > evidenceAfterEpoch &&
+          Math.floor(
+            new Date(candidate.lagMeasuredAt).getTime() / 1000,
+          ) > evidenceAfterEpoch &&
+          Math.floor(
+            new Date(candidate.lastMessageAt).getTime() / 1000,
+          ) > evidenceAfterEpoch &&
+          candidate.timelineId === preparation.expectedTimelineId &&
+          candidate.upstreamSystemId ===
+            preparation.expectedUpstreamSystemId &&
+          candidate.replayWalPosition >=
+            preparation.minimumStandbyReplayWalPosition &&
+          candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+      )
+      .sort((left, right) =>
+        left.candidate.localeCompare(right.candidate),
+      );
+    if (
+      safeNonLeaderCandidates.some(
+        (candidate) =>
+          candidate.configDigest === preparation.candidateDigest,
+      )
+    ) {
+      throw new WitnessConflictError(
+        "configuration digest rotation cannot be aborted because a standby applied the candidate digest",
+      );
+    }
+    const evidenceCandidate = safeNonLeaderCandidates.find(
+      (candidate) =>
+        candidate.configDigest === preparation.expectedCurrentDigest,
+    );
+    if (!evidenceCandidate) {
+      throw new WitnessConflictError(
+        "configuration digest rotation abort requires fresh healthy non-leader evidence that the database remains on the current digest",
+      );
+    }
+    const abortedAt = this.timestamp();
+    const receipt: ConfigDigestRotationAbortReceipt = {
+      apiVersion: "execution-fabric-leadership/v1",
+      decision: "config_digest_rotation_aborted",
+      rotationId: preparation.rotationId,
+      requestDigest: preparation.requestDigest,
+      currentLeader: state.currentLeader,
+      fabricEpoch: state.fabricEpoch,
+      configDigest: state.configDigest,
+      candidateDigest: preparation.candidateDigest,
+      evidenceHost: evidenceCandidate.candidate,
+      preparationTokenHash,
+      expiredAt: preparation.expiresAt,
+      abortedAt,
+    };
+    try {
+      return await this.store.abortConfigDigestRotation({
+        preparation,
+        preparationTokenHash,
+        nowEpoch,
+        evidenceAfterEpoch,
+        evidenceCandidate: {
+          candidate: evidenceCandidate.candidate,
+          inRecovery: true,
+          receiverState: "streaming",
+          minimumReplayWalPosition:
+            preparation.minimumStandbyReplayWalPosition,
+        },
+        candidateDigestGuardHosts: preparation.candidateHosts.filter(
+          (host) =>
+            host !== preparation.expectedLeader &&
+            host !== evidenceCandidate.candidate,
+        ),
+        receipt,
+        audit: {
+          auditId: `${request.rotationId}:abort`,
+          eventType: "config_digest_rotation_aborted",
+          actor: "authenticated_admin",
+          occurredAt: abortedAt,
+          requestDigest: preparation.requestDigest,
+          detail: {
+            currentLeader: state.currentLeader,
+            fabricEpoch: state.fabricEpoch,
+            configDigest: state.configDigest,
+            candidateDigest: preparation.candidateDigest,
+            evidenceHost: evidenceCandidate.candidate,
+            preparationTokenHash,
+            expiredAt: preparation.expiresAt,
+          },
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof ConditionalWriteError)) throw error;
+      const replay = await this.store.getConfigDigestRotationAbort(
+        request.rotationId,
+      );
+      if (
+        replay &&
+        safeEqual(replay.preparationTokenHash, preparationTokenHash)
+      ) {
+        return replay;
+      }
+      throw new WitnessConflictError(
+        replay
+          ? "configuration rotation id was already aborted with another preparation"
+          : "configuration digest rotation preparation changed before abort",
+      );
+    }
   }
 
   async promote(request: PromotionRequest) {
@@ -474,6 +1267,7 @@ export class LeadershipWitness {
       occurredAt,
       authorityMode,
       degradedUntil,
+      state.configDigest,
     );
     const nextState: LeadershipState = {
       currentLeader: request.candidate,
@@ -797,6 +1591,7 @@ export class LeadershipWitness {
       occurredAt,
       "synchronous",
       null,
+      plan.configDigest,
     );
     const nextState: LeadershipState = {
       currentLeader: plan.to,

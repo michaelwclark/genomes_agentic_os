@@ -14,6 +14,7 @@ function token(leader: string, epoch: number, expiresAt: string): string {
       leader,
       epoch,
       receiptId: "status:fence",
+      configDigest: "a".repeat(64),
       issuedAt: "2026-07-24T20:00:00.000Z",
       expiresAt,
     }),

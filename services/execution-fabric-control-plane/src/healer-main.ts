@@ -71,6 +71,7 @@ await runPeriodicRole({
   signal: controller.signal,
   once: process.env.FABRIC_RUN_ONCE === "1",
   tick: async () => {
+    await runtime.fabric.synchronizePolicy();
     const receipts = await healer.runOnce();
     process.stdout.write(
       `${JSON.stringify({

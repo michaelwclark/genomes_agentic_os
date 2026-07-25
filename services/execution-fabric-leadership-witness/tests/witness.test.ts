@@ -87,7 +87,516 @@ function fixture() {
   };
 }
 
+type RotationTestWitness = ReturnType<typeof fixture>["witness"];
+
 describe("leadership witness", () => {
+  const rotationRequest = {
+    rotationId: "00000000-0000-4000-8000-000000000101",
+    expectedLeader: "genomesbox",
+    expectedEpoch: 1,
+    expectedCurrentDigest: config.initialConfigDigest,
+    candidateDigest: "b".repeat(64),
+  };
+
+  async function seedRotationCandidates(
+    witness: RotationTestWitness,
+    overrides: Partial<Record<string, Partial<CandidateUpdate>>> = {},
+  ) {
+    await witness.updateCandidate("genomesbox", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: config.initialConfigDigest,
+    });
+    for (const candidate of Object.keys(config.candidateTokens)) {
+      await witness.updateCandidate(candidate, {
+        healthy: true,
+        replicaLagBytes: 0,
+        receiveWalPosition: 2_000,
+        replayWalPosition: 2_000,
+        configDigest: config.initialConfigDigest,
+        policyCandidateDigest: rotationRequest.candidateDigest,
+        ...(overrides[candidate] ?? {}),
+      });
+    }
+  }
+
+  it("prepares durably, survives stale host reports, and atomically commits one idempotent receipt", async () => {
+    const { witness, advance } = fixture();
+    await witness.initialize();
+    await seedRotationCandidates(witness);
+
+    const [preparation, prepareReplay] = await Promise.all([
+      witness.prepareConfigDigestRotation(rotationRequest),
+      witness.prepareConfigDigestRotation(rotationRequest),
+    ]);
+    expect(prepareReplay).toEqual(preparation);
+    expect(preparation).toMatchObject({
+      decision: "config_digest_rotation_prepared",
+      rotationId: rotationRequest.rotationId,
+      expectedLeader: "genomesbox",
+      expectedEpoch: 1,
+      expectedCurrentDigest: config.initialConfigDigest,
+      candidateDigest: rotationRequest.candidateDigest,
+      candidateHosts: ["bigmac", "genomesbox", "recovery-host"],
+      expiresAt: "2026-07-24T20:15:00.000Z",
+    });
+    expect(preparation.preparationToken).toMatch(/^cpr1\./);
+    const [, payload, signature] = preparation.preparationToken.split(".");
+    expect(
+      verify(
+        null,
+        Buffer.from(payload!),
+        signingKeys.publicKey,
+        Buffer.from(signature!, "base64url"),
+      ),
+    ).toBe(true);
+    expect(
+      JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")),
+    ).toEqual({
+      v: 1,
+      type: "config_digest_rotation_preparation",
+      clusterId: config.clusterId,
+      rotationId: rotationRequest.rotationId,
+      expectedLeader: "genomesbox",
+      expectedEpoch: 1,
+      expectedCurrentDigest: config.initialConfigDigest,
+      candidateDigest: rotationRequest.candidateDigest,
+      issuedAt: "2026-07-24T20:00:00.000Z",
+      expiresAt: "2026-07-24T20:15:00.000Z",
+    });
+    expect(
+      await witness.configDigestRotationPreparation(rotationRequest.rotationId),
+    ).toEqual(preparation);
+    expect(
+      await witness.prepareConfigDigestRotation(rotationRequest),
+    ).toEqual(preparation);
+    expect(await witness.status()).toMatchObject({
+      currentLeader: "genomesbox",
+      fabricEpoch: 1,
+      configDigest: config.initialConfigDigest,
+      pendingConfigDigestRotations: [
+        { rotationId: rotationRequest.rotationId },
+      ],
+    });
+
+    const commitRequest = {
+      rotationId: rotationRequest.rotationId,
+      preparationToken: preparation.preparationToken,
+    };
+    await expect(
+      witness.commitConfigDigestRotation(commitRequest),
+    ).rejects.toThrow(/database applied the candidate digest/);
+
+    // The old leader may go stale or die, but one fresh standby must prove its
+    // replicated database has applied the prepared fingerprint.
+    advance(91);
+    await witness.updateCandidate("bigmac", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: rotationRequest.candidateDigest,
+    });
+    const [first, replay] = await Promise.all([
+      witness.commitConfigDigestRotation(commitRequest),
+      witness.commitConfigDigestRotation(commitRequest),
+    ]);
+    expect(replay).toEqual(first);
+    expect(first).toMatchObject({
+      decision: "config_digest_rotated",
+      rotationId: rotationRequest.rotationId,
+      currentLeader: "genomesbox",
+      fabricEpoch: 1,
+      previousConfigDigest: config.initialConfigDigest,
+      configDigest: rotationRequest.candidateDigest,
+      candidateHosts: ["bigmac", "genomesbox", "recovery-host"],
+      preparationTokenHash: preparation.preparationTokenHash,
+    });
+    expect(await witness.configDigestRotation(rotationRequest.rotationId)).toEqual(
+      first,
+    );
+    expect(await witness.status()).toMatchObject({
+      currentLeader: "genomesbox",
+      fabricEpoch: 1,
+      configDigest: rotationRequest.candidateDigest,
+      pendingConfigDigestRotations: [],
+    });
+    await expect(
+      witness.configDigestRotationPreparation(rotationRequest.rotationId),
+    ).rejects.toBeInstanceOf(WitnessNotFoundError);
+    const audit = await witness.audit(50);
+    expect(
+      audit.filter(
+        (record) =>
+          record.eventType === "config_digest_rotation_prepared",
+      ),
+    ).toHaveLength(1);
+    expect(
+      audit.filter((record) => record.eventType === "config_digest_rotated"),
+    ).toHaveLength(1);
+  });
+
+  it("fails closed for missing, mismatched, stale, timeline-drifted, and WAL-unsafe host reports", async () => {
+    const cases: Array<{
+      name: string;
+      seed: (witness: RotationTestWitness) => Promise<void>;
+      after?: (advance: (seconds: number) => void) => void;
+      reason: RegExp;
+    }> = [
+      {
+        name: "missing",
+        seed: async (witness) => {
+          await witness.updateCandidate("genomesbox", {
+            healthy: true,
+            replicaLagBytes: 0,
+            configDigest: config.initialConfigDigest,
+          });
+          for (const candidate of ["genomesbox", "bigmac"]) {
+            await witness.updateCandidate(candidate, {
+              healthy: true,
+              replicaLagBytes: 0,
+              configDigest: config.initialConfigDigest,
+              policyCandidateDigest: rotationRequest.candidateDigest,
+            });
+          }
+        },
+        reason: /recovery-host:candidate_not_reported/,
+      },
+      {
+        name: "applied digest",
+        seed: async (witness) =>
+          seedRotationCandidates(witness, {
+            bigmac: { configDigest: "c".repeat(64) },
+          }),
+        reason: /bigmac:applied_config_digest_mismatch/,
+      },
+      {
+        name: "staged digest",
+        seed: async (witness) =>
+          seedRotationCandidates(witness, {
+            bigmac: { policyCandidateDigest: "c".repeat(64) },
+          }),
+        reason: /bigmac:policy_candidate_digest_mismatch/,
+      },
+      {
+        name: "stale",
+        seed: async (witness) => seedRotationCandidates(witness),
+        after: (advance) => advance(91),
+        reason: /candidate_observation_stale/,
+      },
+      {
+        name: "timeline",
+        seed: async (witness) =>
+          seedRotationCandidates(witness, {
+            bigmac: { timelineId: 2 },
+          }),
+        reason: /bigmac:timeline_mismatch/,
+      },
+      {
+        name: "wal",
+        seed: async (witness) =>
+          seedRotationCandidates(witness, {
+            bigmac: {
+              receiveWalPosition: 1_000,
+              replayWalPosition: 1_000,
+            },
+          }),
+        reason: /bigmac:upstream_wal_gap_exceeds_limit/,
+      },
+      {
+        name: "upstream",
+        seed: async (witness) =>
+          seedRotationCandidates(witness, {
+            bigmac: { upstreamSystemId: "7700000000000000000" },
+          }),
+        reason: /bigmac:upstream_system_id_mismatch/,
+      },
+    ];
+    for (const testCase of cases) {
+      const { witness, advance } = fixture();
+      await witness.initialize();
+      await testCase.seed(witness);
+      testCase.after?.(advance);
+      await expect(
+        witness.prepareConfigDigestRotation({
+          ...rotationRequest,
+          rotationId: rotationRequest.rotationId.replace(/101$/, "102"),
+        }),
+        testCase.name,
+      ).rejects.toThrow(testCase.reason);
+    }
+  });
+
+  it("keeps expired preparations discoverable and commits them only after fresh applied standby evidence", async () => {
+    const { witness, advance } = fixture();
+    await witness.initialize();
+    await seedRotationCandidates(witness);
+    const preparation =
+      await witness.prepareConfigDigestRotation(rotationRequest);
+    await expect(
+      witness.prepareConfigDigestRotation({
+        ...rotationRequest,
+        candidateDigest: "c".repeat(64),
+      }),
+    ).rejects.toThrow(/already used/);
+    await expect(
+      witness.commitConfigDigestRotation({
+        rotationId: rotationRequest.rotationId,
+        preparationToken: `${preparation.preparationToken.slice(0, -1)}${
+          preparation.preparationToken.endsWith("A") ? "B" : "A"
+        }`,
+      }),
+    ).rejects.toThrow(/invalid or mismatched/);
+    advance(901);
+    expect(await witness.status()).toMatchObject({
+      pendingConfigDigestRotations: [
+        {
+          rotationId: rotationRequest.rotationId,
+          expired: true,
+        },
+      ],
+    });
+    expect(
+      await witness.configDigestRotationPreparation(rotationRequest.rotationId),
+    ).toEqual(preparation);
+    expect(
+      await witness.prepareConfigDigestRotation(rotationRequest),
+    ).toEqual(preparation);
+    await expect(
+      witness.commitConfigDigestRotation({
+        rotationId: rotationRequest.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).rejects.toThrow(/database applied the candidate digest/);
+    await witness.updateCandidate("bigmac", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: rotationRequest.candidateDigest,
+    });
+    await expect(
+      witness.commitConfigDigestRotation({
+        rotationId: rotationRequest.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).resolves.toMatchObject({
+      decision: "config_digest_rotated",
+      configDigest: rotationRequest.candidateDigest,
+    });
+    await expect(
+      witness.configDigestRotation(
+        "00000000-0000-4000-8000-000000000999",
+      ),
+    ).rejects.toBeInstanceOf(WitnessNotFoundError);
+  });
+
+  it("preserves staged policy fields across applied-health updates only within their freshness lease", async () => {
+    const { witness, advance } = fixture();
+    await witness.initialize();
+    await witness.updateCandidate("genomesbox", {
+      healthy: true,
+      replicaLagBytes: 0,
+      configDigest: config.initialConfigDigest,
+      policyCandidateDigest: rotationRequest.candidateDigest,
+    });
+    advance(30);
+    await witness.updateCandidate("genomesbox", {
+      healthy: true,
+      replicaLagBytes: 0,
+      configDigest: config.initialConfigDigest,
+    });
+    expect((await witness.status()).candidates.genomesbox).toMatchObject({
+      configDigest: config.initialConfigDigest,
+      policyCandidateDigest: rotationRequest.candidateDigest,
+      policyCandidateObservedAt: "2026-07-24T20:00:00.000Z",
+    });
+    advance(61);
+    await witness.updateCandidate("genomesbox", {
+      healthy: true,
+      replicaLagBytes: 0,
+      configDigest: config.initialConfigDigest,
+    });
+    expect((await witness.status()).candidates.genomesbox).toMatchObject({
+      configDigest: config.initialConfigDigest,
+      policyCandidateDigest: null,
+      policyCandidateObservedAt: null,
+    });
+  });
+
+  it("enforces one unresolved preparation per cluster", async () => {
+    const { witness } = fixture();
+    await witness.initialize();
+    await seedRotationCandidates(witness);
+    const first = await witness.prepareConfigDigestRotation(rotationRequest);
+    const secondRequest = {
+      ...rotationRequest,
+      rotationId: "00000000-0000-4000-8000-000000000104",
+      candidateDigest: "c".repeat(64),
+    };
+    for (const candidate of Object.keys(config.candidateTokens)) {
+      await witness.updateCandidate(candidate, {
+        healthy: true,
+        replicaLagBytes: 0,
+        receiveWalPosition: 2_000,
+        replayWalPosition: 2_000,
+        configDigest: config.initialConfigDigest,
+        policyCandidateDigest: secondRequest.candidateDigest,
+      });
+    }
+    await expect(
+      witness.prepareConfigDigestRotation(secondRequest),
+    ).rejects.toThrow(/another unresolved configuration rotation is active/);
+    expect(
+      await witness.configDigestRotationPreparation(first.rotationId),
+    ).toEqual(first);
+  });
+
+  it("aborts an expired abandoned preparation with fresh old-digest standby evidence and releases the singleton", async () => {
+    const { witness, advance } = fixture();
+    await witness.initialize();
+    await seedRotationCandidates(witness);
+    const preparation =
+      await witness.prepareConfigDigestRotation(rotationRequest);
+    const abortRequest = {
+      rotationId: preparation.rotationId,
+      preparationToken: preparation.preparationToken,
+    };
+    await expect(
+      witness.abortConfigDigestRotation(abortRequest),
+    ).rejects.toThrow(/cannot be aborted before expiry/);
+
+    advance(901);
+    await witness.updateCandidate("bigmac", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: config.initialConfigDigest,
+    });
+    const receipt = await witness.abortConfigDigestRotation(abortRequest);
+    expect(receipt).toMatchObject({
+      decision: "config_digest_rotation_aborted",
+      rotationId: preparation.rotationId,
+      currentLeader: "genomesbox",
+      fabricEpoch: 1,
+      configDigest: config.initialConfigDigest,
+      candidateDigest: rotationRequest.candidateDigest,
+      evidenceHost: "bigmac",
+    });
+    expect(await witness.abortConfigDigestRotation(abortRequest)).toEqual(
+      receipt,
+    );
+    expect(
+      await witness.configDigestRotationAbort(preparation.rotationId),
+    ).toEqual(receipt);
+    expect(await witness.status()).toMatchObject({
+      currentLeader: "genomesbox",
+      fabricEpoch: 1,
+      configDigest: config.initialConfigDigest,
+      pendingConfigDigestRotations: [],
+    });
+    expect(
+      (await witness.audit(50)).filter(
+        (record) =>
+          record.eventType === "config_digest_rotation_aborted",
+      ),
+    ).toHaveLength(1);
+
+    const nextRequest = {
+      ...rotationRequest,
+      rotationId: "00000000-0000-4000-8000-000000000104",
+      candidateDigest: "c".repeat(64),
+    };
+    for (const candidate of Object.keys(config.candidateTokens)) {
+      await witness.updateCandidate(candidate, {
+        healthy: true,
+        replicaLagBytes: 0,
+        receiveWalPosition: 2_000,
+        replayWalPosition: 2_000,
+        configDigest: config.initialConfigDigest,
+        policyCandidateDigest: nextRequest.candidateDigest,
+      });
+    }
+    await expect(
+      witness.prepareConfigDigestRotation(nextRequest),
+    ).resolves.toMatchObject({ rotationId: nextRequest.rotationId });
+  });
+
+  it("never aborts when any configured standby reports the candidate digest applied", async () => {
+    const { witness, advance } = fixture();
+    await witness.initialize();
+    await seedRotationCandidates(witness);
+    const preparation =
+      await witness.prepareConfigDigestRotation(rotationRequest);
+    advance(901);
+    await witness.updateCandidate("bigmac", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: rotationRequest.candidateDigest,
+    });
+    await witness.updateCandidate("recovery-host", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: config.initialConfigDigest,
+    });
+    await expect(
+      witness.abortConfigDigestRotation({
+        rotationId: preparation.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).rejects.toThrow(/a standby applied the candidate digest/);
+  });
+
+  it("does not abort from an old-digest report observed just before expiry", async () => {
+    const { witness, advance } = fixture();
+    await witness.initialize();
+    await seedRotationCandidates(witness);
+    const preparation =
+      await witness.prepareConfigDigestRotation(rotationRequest);
+
+    advance(899);
+    await witness.updateCandidate("bigmac", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: config.initialConfigDigest,
+    });
+    // The database can commit between this old report and expiry. The report
+    // remains generically fresh, but it is not causally post-expiry evidence.
+    advance(2);
+    await expect(
+      witness.abortConfigDigestRotation({
+        rotationId: preparation.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).rejects.toThrow(/database remains on the current digest/);
+
+    await witness.updateCandidate("bigmac", {
+      healthy: true,
+      replicaLagBytes: 0,
+      receiveWalPosition: 2_000,
+      replayWalPosition: 2_000,
+      configDigest: rotationRequest.candidateDigest,
+    });
+    await expect(
+      witness.commitConfigDigestRotation({
+        rotationId: preparation.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).resolves.toMatchObject({
+      decision: "config_digest_rotated",
+      configDigest: rotationRequest.candidateDigest,
+    });
+  });
+
   it("fails closed until the current leader has a candidate-health baseline", async () => {
     const { witness } = fixture();
     await witness.initialize();
@@ -120,11 +629,23 @@ describe("leadership witness", () => {
       healthy: true,
       replicaLagBytes: 12,
       configDigest: config.initialConfigDigest,
+      policyCandidateDigest: "c".repeat(64),
     });
 
     const status = await witness.status();
     expect(status.promotionAllowed).toBe(true);
     expect(status.currentLeader).toBe("genomesbox");
+    const [, statusPayload] = status.leadershipToken.split(".");
+    expect(
+      JSON.parse(
+        Buffer.from(statusPayload!, "base64url").toString("utf8"),
+      ),
+    ).toMatchObject({
+      v: 2,
+      leader: "genomesbox",
+      epoch: 1,
+      configDigest: config.initialConfigDigest,
+    });
 
     const receipt = await witness.promote({
       candidate: "bigmac",
@@ -144,6 +665,15 @@ describe("leadership witness", () => {
         Buffer.from(signature!, "base64url"),
       ),
     ).toBe(true);
+    expect(
+      JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")),
+    ).toMatchObject({
+      v: 2,
+      cluster: config.clusterId,
+      leader: "bigmac",
+      epoch: 2,
+      configDigest: config.initialConfigDigest,
+    });
 
     await expect(
       witness.promote({
@@ -496,6 +1026,17 @@ describe("leadership witness", () => {
     expect(receipt.decision).toBe("committed");
     expect(receipt.currentLeader).toBe("genomesbox");
     expect(receipt.fabricEpoch).toBe(3);
+    const [, failbackPayload] = receipt.fenceToken.split(".");
+    expect(
+      JSON.parse(
+        Buffer.from(failbackPayload!, "base64url").toString("utf8"),
+      ),
+    ).toMatchObject({
+      v: 2,
+      leader: "genomesbox",
+      epoch: 3,
+      configDigest: config.initialConfigDigest,
+    });
 
     await expect(
       witness.commitFailback({

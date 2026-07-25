@@ -76,6 +76,16 @@ Docker secrets and gives workers only short-lived task/attempt uploads. Monitor
 `object_store_unavailable` and `artifact_upload_failure` findings independently
 from queue healing.
 
+The observer has a deliberately smaller runtime contract than the API. It
+receives PostgreSQL access, canonical policy files, cluster identity, and a
+dedicated, configured-bucket-scoped read-only MinIO identity stored as
+`artifact-observer-access-key`/`artifact-observer-secret-key`. It does not
+receive Valkey, submitter, worker-bootstrap, administrator, effect-consumer,
+alarm-dispatcher, reliability-source, or witness credentials, and it has no
+egress network. Each persistence transaction locks and rechecks the active
+PostgreSQL leader, epoch, and wall-clock lease immediately before commit, so a
+former leader cannot create, resolve, or cancel health state after takeover.
+
 Retention is deletion policy, not backup. Run
 `reconcile-artifact-replication.sh` after both sites are reachable. It enables
 bucket versioning and MinIO server-side replication in both directions,
@@ -150,8 +160,10 @@ The signed witness token carries `authorityMode=degraded_primary` and a bounded
 `degradedUntil`; PostgreSQL must prove `synchronous_commit=on`, `fsync=on`,
 `full_page_writes=on`, and `archive_mode=on`. Canonical
 `execution_fabric.degraded_primary` task/effect allowlists constrain work, and
-the scheduler stays fenced. The independent sticky critical alert remains
-active until a standby is reseeded and `remote_apply` is read back.
+the scheduler role remains supervised but its own authority check admits no
+occurrence unless `degraded_primary.allow_scheduler` is enabled. The
+independent sticky critical alert remains active until a standby is reseeded
+and `remote_apply` is read back.
 
 Observer, effect-consumer, alarm-dispatcher, reliability-source, worker,
 submitter, and admin credentials are separate. `fabric-api-token` is GET-only.
@@ -191,12 +203,15 @@ failback activation.
 4. Only an Ed25519-verified API receipt whose cluster, leader, epoch, receipt
    ID, expiry, and current witness readback all match authorizes PostgreSQL
    promotion and the `promoted` Compose profile.
-5. Promotion proves the new primary role and starts API, observer, and healer
-   under the signed degraded-primary envelope. The scheduler does not start.
-   A durable `degraded-primary.receipt.json` and repeated independent critical
-   alert make the lost redundancy unmissable. When the former primary is
-   reseeded and streaming synchronously, the failback path automatically
-   restores `remote_apply`; unrestricted work resumes only after readback.
+5. Promotion proves the new primary role and starts API, observer, healer, and
+   scheduler under the signed degraded-primary envelope. The scheduler remains
+   supervised but admits occurrences only when the canonical degraded-primary
+   policy explicitly allows them. A durable `degraded-primary.receipt.json`
+   and repeated independent critical alert make the lost redundancy
+   unmissable. When the former primary is reseeded and streaming
+   synchronously, the failback path restores `remote_apply`, reads it back, and
+   explicitly starts the scheduler so a prior standby-side supervisor exit
+   cannot leave scheduled work dormant.
 6. The control plane transactionally installs the new epoch before readiness.
    Old workers, attempts, effects, and a restarted former primary are rejected
    by witness, database-leader, epoch, and lease-token fencing.
@@ -204,6 +219,34 @@ failback activation.
    first authorizes only standby reseed. After the rebuilt target reports fresh
    eligibility, the operator requests a short-lived transfer plan, approves its
    exact hash, and applies the epoch transfer through the versioned API.
+
+Policy rotation is a fenced, resumable two-authority operation, not a raw API
+call. `installers/execution-fabric/bin/rotate-policy.sh` first requires fresh
+candidate reports from both configured hosts for both the applied database
+digest and reviewed staged digest, then creates a signed, expiring preparation
+in the witness. The control-plane API refuses an unprepared reload. The current
+leased leader transactionally records that digest in PostgreSQL, then consumes
+the witness preparation only after a fresh, healthy, non-leader streaming
+standby proves it replayed that change on the prepared timeline and upstream
+system. The commit remains bound to the exact old digest, leader, and epoch.
+Every signed authority proof binds the digest, making the bounded handoff
+fail-closed. The rotation is idempotent and discoverable from the witness, so
+the standby promotion path can finish a database-committed rotation after the
+old leader disappears. Unconsumed preparations stay visible after token expiry:
+an expired token cannot authorize a new database reload, but fresh
+standby-applied evidence can recover and commit an already replicated change.
+If an expired preparation never reached PostgreSQL, fresh standby evidence of
+the old digest can conditionally abort it before promotion. Its observation,
+lag, and receiver timestamps must all be strictly post-expiry. The witness
+allows only one unresolved preparation per cluster.
+Scheduler, healer, and observer processes compare their disk candidate with
+the durable fingerprint on each tick and adopt only an exact match. Startup
+can initialize an empty fingerprint or accept an identical one; it can never
+replace an existing authority outside this explicit rotation protocol.
+Unapproved edits remain fail-closed and observable as config drift. The final
+receipt proves PostgreSQL, witness, local policy, and renewed active leadership
+all agree, so an approved `allow_scheduler` change does not depend on a
+coincidental process or host-manager restart.
 
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
 independently deployable service in

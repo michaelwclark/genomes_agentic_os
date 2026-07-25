@@ -174,4 +174,8 @@ jq -n \
 fabric_atomic_write \
   "$FABRIC_RUNTIME_STATE_DIR/postgres-durability.receipt.json" \
   "$receipt_temp"
+# A standby-side launchd invocation may have exited before promotion. Starting
+# the scheduler here binds its lifecycle to the measured remote_apply gate,
+# while the degraded-primary branch above keeps it stopped.
+$compose --profile "$compose_profile" up -d --no-deps scheduler
 cat "$receipt_temp"

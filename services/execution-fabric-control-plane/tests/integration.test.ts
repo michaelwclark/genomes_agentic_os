@@ -48,7 +48,8 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
   beforeEach(async () => {
     await pool.query(
       `TRUNCATE fabric_effect_outbox,fabric_events,fabric_attempts,
-         fabric_runs,fabric_workers,fabric_tasks RESTART IDENTITY CASCADE`,
+         fabric_runs,fabric_workers,fabric_tasks,
+         fabric_config_reload_receipts RESTART IDENTITY CASCADE`,
     );
     await pool.query(
       `UPDATE fabric_state SET current_epoch=1,leader_host_id=NULL,
@@ -519,6 +520,9 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
       0,
       policy,
     );
+    await pool.query(
+      "UPDATE fabric_state SET policy_fingerprint=NULL WHERE singleton=true",
+    );
     await bounded.ready();
     const old = await bounded.admit({
       namespace: "capped_tenant",
@@ -575,6 +579,443 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     expect(claims).toHaveLength(1);
     expect(claims[0]!.task.id).toBe(old.task.id);
   });
+
+  it("rolls back a stale observer pass after leadership changes", async () => {
+    const oldLedger = new PostgresLedger(pool, 45, "genomesbox");
+    const newLedger = new PostgresLedger(pool, 45, "bigmac");
+    const oldStore = new PostgresReliabilityStore(pool, "genomesbox");
+    const lease = new Date(Date.now() + 60_000).toISOString();
+    await oldLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "observer-epoch-1",
+      fenceDigest: "a".repeat(64),
+      leaseExpiresAt: lease,
+      recoveryHoldUntil: null,
+    });
+    const originalScope = `observer-original-${randomUUID()}`;
+    const staleScope = `observer-stale-${randomUUID()}`;
+    const original = await oldStore.persistObservations(
+      [
+        {
+          kind: "queue_without_capacity",
+          scopeType: "queue",
+          scopeId: originalScope,
+          severity: "warning",
+          summary: "Original leader observation",
+          details: { depth: 3 },
+        },
+      ],
+      1,
+    );
+    expect(original).toHaveLength(1);
+
+    await newLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "bigmac",
+      fabricEpoch: 2,
+      receiptId: "observer-epoch-2",
+      fenceDigest: "b".repeat(64),
+      leaseExpiresAt: lease,
+      recoveryHoldUntil: null,
+    });
+    await expect(
+      oldStore.persistObservations(
+        [
+          {
+            kind: "queue_without_capacity",
+            scopeType: "queue",
+            scopeId: staleScope,
+            severity: "critical",
+            summary: "Stale former-leader observation",
+            details: { depth: 99 },
+          },
+        ],
+        1,
+      ),
+    ).rejects.toBeInstanceOf(FencedError);
+
+    const rows = await pool.query<{ scope_id: string; status: string }>(
+      `SELECT scope_id,status
+       FROM fabric_health_findings
+       WHERE scope_id = ANY($1::text[])
+       ORDER BY scope_id`,
+      [[originalScope, staleScope]],
+    );
+    expect(rows.rows).toEqual([{ scope_id: originalScope, status: "open" }]);
+  });
+
+  it("lets only the current leased leader rotate durable policy authority", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "b".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    const standbyLedger = new PostgresLedger(pool, 45, "bigmac");
+    const restartedRoleLedger = new PostgresLedger(pool, 45);
+
+    await expect(
+      restartedRoleLedger.activatePolicy(candidateFingerprint),
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "policy-epoch-1",
+      fenceDigest: "c".repeat(64),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      recoveryHoldUntil: null,
+    });
+    await expect(
+      standbyLedger.activatePolicyReload({
+        rotationId: randomUUID(),
+        preparationTokenHash: "d".repeat(64),
+        authorizationExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        expectedEpoch: 1,
+        expectedCurrentFingerprint: currentFingerprint,
+        expectedCandidateFingerprint: candidateFingerprint,
+      }),
+    ).rejects.toBeInstanceOf(FencedError);
+
+    const rotationId = randomUUID();
+    const reloadInput = {
+      rotationId,
+      preparationTokenHash: "e".repeat(64),
+      authorizationExpiresAt: new Date(Date.now() + 3_000).toISOString(),
+      expectedEpoch: 1,
+      expectedCurrentFingerprint: currentFingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+    };
+    const receipt = await leaderLedger.activatePolicyReload(reloadInput);
+    expect(receipt).toMatchObject({
+      hostId: "genomesbox",
+      fabricEpoch: 1,
+      expectedCurrentFingerprint: currentFingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      appliedFingerprint: candidateFingerprint,
+    });
+    await pool.query(
+      `SELECT pg_sleep(
+         GREATEST(
+           0,
+           EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp()))
+         ) + 0.05
+       )`,
+      [reloadInput.authorizationExpiresAt],
+    );
+    expect(await leaderLedger.activatePolicyReload(reloadInput)).toEqual(receipt);
+    await expect(
+      leaderLedger.activatePolicyReload({
+        ...reloadInput,
+        expectedEpoch: 2,
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    await expect(
+      leaderLedger.activatePolicy(currentFingerprint),
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect((await leaderLedger.systemSnapshot()).databasePolicyFingerprint).toBe(
+      candidateFingerprint,
+    );
+  });
+
+  it("rejects a signed policy authorization that expires while its transaction waits", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "f".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "expiry-race-epoch-1",
+      fenceDigest: "9".repeat(64),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      recoveryHoldUntil: null,
+    });
+
+    const blocker = await pool.connect();
+    const rotationId = randomUUID();
+    const authorizationExpiresAt = new Date(
+      Date.now() + 2_000,
+    ).toISOString();
+    let activationError: unknown;
+    let transactionStartedAt: Date | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtext('agentic-os-execution-fabric-policy'))",
+      );
+
+      const activationDone = leaderLedger
+        .activatePolicyReload({
+          rotationId,
+          preparationTokenHash: "7".repeat(64),
+          authorizationExpiresAt,
+          expectedEpoch: 1,
+          expectedCurrentFingerprint: currentFingerprint,
+          expectedCandidateFingerprint: candidateFingerprint,
+        })
+        .catch((error: unknown) => {
+          activationError = error;
+        });
+
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await pool.query<{ xact_start: Date }>(
+          `SELECT activity.xact_start
+             FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity ON activity.pid=lock.pid
+            WHERE activity.datname=current_database()
+              AND activity.pid <> pg_backend_pid()
+              AND lock.locktype='advisory'
+              AND NOT lock.granted
+            LIMIT 1`,
+        );
+        if (waiting.rows[0]?.xact_start) {
+          transactionStartedAt = waiting.rows[0].xact_start;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      await blocker.query(
+        `SELECT pg_sleep(
+           GREATEST(
+             0,
+             EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp()))
+           ) + 0.05
+         )`,
+        [authorizationExpiresAt],
+      );
+      await blocker.query("COMMIT");
+      await activationDone;
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+
+    expect(transactionStartedAt).toBeDefined();
+    expect(transactionStartedAt!.getTime()).toBeLessThan(
+      new Date(authorizationExpiresAt).getTime(),
+    );
+    expect(activationError).toBeInstanceOf(FencedError);
+    const state = await pool.query<{ policy_fingerprint: string | null }>(
+      "SELECT policy_fingerprint FROM fabric_state WHERE singleton=true",
+    );
+    expect(state.rows[0]?.policy_fingerprint).toBe(currentFingerprint);
+    const receipts = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM fabric_config_reload_receipts
+        WHERE rotation_id=$1`,
+      [rotationId],
+    );
+    expect(Number(receipts.rows[0]?.count ?? 0)).toBe(0);
+  }, 10_000);
+
+  it("rejects a leader lease that expires while its policy transaction waits", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "6".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    const leaseExpiresAt = new Date(Date.now() + 2_000).toISOString();
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "lease-race-epoch-1",
+      fenceDigest: "8".repeat(64),
+      leaseExpiresAt,
+      recoveryHoldUntil: null,
+    });
+
+    const blocker = await pool.connect();
+    const rotationId = randomUUID();
+    let activationError: unknown;
+    let transactionStartedAt: Date | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtext('agentic-os-execution-fabric-policy'))",
+      );
+
+      const activationDone = leaderLedger
+        .activatePolicyReload({
+          rotationId,
+          preparationTokenHash: "5".repeat(64),
+          authorizationExpiresAt: new Date(
+            Date.now() + 60_000,
+          ).toISOString(),
+          expectedEpoch: 1,
+          expectedCurrentFingerprint: currentFingerprint,
+          expectedCandidateFingerprint: candidateFingerprint,
+        })
+        .catch((error: unknown) => {
+          activationError = error;
+        });
+
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await pool.query<{ xact_start: Date }>(
+          `SELECT activity.xact_start
+             FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity ON activity.pid=lock.pid
+            WHERE activity.datname=current_database()
+              AND activity.pid <> pg_backend_pid()
+              AND lock.locktype='advisory'
+              AND NOT lock.granted
+            LIMIT 1`,
+        );
+        if (waiting.rows[0]?.xact_start) {
+          transactionStartedAt = waiting.rows[0].xact_start;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      await blocker.query(
+        `SELECT pg_sleep(
+           GREATEST(
+             0,
+             EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp()))
+           ) + 0.05
+         )`,
+        [leaseExpiresAt],
+      );
+      await blocker.query("COMMIT");
+      await activationDone;
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+
+    expect(transactionStartedAt).toBeDefined();
+    expect(transactionStartedAt!.getTime()).toBeLessThan(
+      new Date(leaseExpiresAt).getTime(),
+    );
+    expect(activationError).toBeInstanceOf(FencedError);
+    const state = await pool.query<{ policy_fingerprint: string | null }>(
+      "SELECT policy_fingerprint FROM fabric_state WHERE singleton=true",
+    );
+    expect(state.rows[0]?.policy_fingerprint).toBe(currentFingerprint);
+    const receipts = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM fabric_config_reload_receipts
+        WHERE rotation_id=$1`,
+      [rotationId],
+    );
+    expect(Number(receipts.rows[0]?.count ?? 0)).toBe(0);
+  }, 10_000);
+
+  it("rejects a same-host policy reload after leadership advances through an epoch ABA", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "4".repeat(64);
+    const originalLeader = new PostgresLedger(pool, 45, "genomesbox");
+    const otherLeader = new PostgresLedger(pool, 45, "bigmac");
+    const leaseExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    await originalLeader.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "aba-epoch-1",
+      fenceDigest: "3".repeat(64),
+      leaseExpiresAt,
+      recoveryHoldUntil: null,
+    });
+
+    const blocker = await pool.connect();
+    const rotationId = randomUUID();
+    let activationError: unknown;
+    let transactionStartedAt: Date | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtext('agentic-os-execution-fabric-policy'))",
+      );
+
+      const activationDone = originalLeader
+        .activatePolicyReload({
+          rotationId,
+          preparationTokenHash: "2".repeat(64),
+          authorizationExpiresAt: new Date(
+            Date.now() + 60_000,
+          ).toISOString(),
+          expectedEpoch: 1,
+          expectedCurrentFingerprint: currentFingerprint,
+          expectedCandidateFingerprint: candidateFingerprint,
+        })
+        .catch((error: unknown) => {
+          activationError = error;
+        });
+
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await pool.query<{ xact_start: Date }>(
+          `SELECT activity.xact_start
+             FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity ON activity.pid=lock.pid
+            WHERE activity.datname=current_database()
+              AND activity.pid <> pg_backend_pid()
+              AND lock.locktype='advisory'
+              AND NOT lock.granted
+            LIMIT 1`,
+        );
+        if (waiting.rows[0]?.xact_start) {
+          transactionStartedAt = waiting.rows[0].xact_start;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      await otherLeader.activateLeadership({
+        clusterId: "test-fabric",
+        leaderHostId: "bigmac",
+        fabricEpoch: 2,
+        receiptId: "aba-epoch-2",
+        fenceDigest: "1".repeat(64),
+        leaseExpiresAt,
+        recoveryHoldUntil: null,
+      });
+      await originalLeader.activateLeadership({
+        clusterId: "test-fabric",
+        leaderHostId: "genomesbox",
+        fabricEpoch: 3,
+        receiptId: "aba-epoch-3",
+        fenceDigest: "0".repeat(64),
+        leaseExpiresAt,
+        recoveryHoldUntil: null,
+      });
+
+      await blocker.query("COMMIT");
+      await activationDone;
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+
+    expect(transactionStartedAt).toBeDefined();
+    expect(activationError).toBeInstanceOf(FencedError);
+    const state = await pool.query<{
+      current_epoch: string | number;
+      leader_host_id: string | null;
+      policy_fingerprint: string | null;
+    }>(
+      `SELECT current_epoch,leader_host_id,policy_fingerprint
+         FROM fabric_state
+        WHERE singleton=true`,
+    );
+    expect(state.rows[0]).toMatchObject({
+      current_epoch: "3",
+      leader_host_id: "genomesbox",
+      policy_fingerprint: currentFingerprint,
+    });
+    const receipts = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM fabric_config_reload_receipts
+        WHERE rotation_id=$1`,
+      [rotationId],
+    );
+    expect(Number(receipts.rows[0]?.count ?? 0)).toBe(0);
+  }, 10_000);
 
   it("advances leadership transactionally and fences the old host, workers, attempts, and effects", async () => {
     const oldLedger = new PostgresLedger(pool, 45, "genomesbox");

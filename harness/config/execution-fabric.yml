@@ -35,7 +35,9 @@ execution_fabric:
   admission:
     global_max_running: 6
     reserved_interactive_slots: 1
-    max_interactive_running: 1
+    # Team PR review is intentionally a two-wide interactive lane. This
+    # global ceiling must not silently collapse that queue back to one.
+    max_interactive_running: 2
     provider_limits:
       codex: 2
       claude: 2

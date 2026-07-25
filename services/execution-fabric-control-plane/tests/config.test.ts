@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, loadObserverConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
   function environment() {
@@ -118,6 +118,30 @@ describe("loadConfig", () => {
         FABRIC_QUEUE_PREFIX: "contains spaces",
       }),
     ).toThrow();
+  });
+
+  it("loads the observer without reading any privileged control-plane credential", () => {
+    const valid = environment();
+    const observer = loadObserverConfig({
+      ...valid,
+      FABRIC_API_TOKEN_FILE: "/must-not-be-read/api",
+      FABRIC_SUBMIT_TOKEN_FILE: "/must-not-be-read/submit",
+      FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: "/must-not-be-read/workers",
+      FABRIC_ADMIN_TOKEN_FILE: "/must-not-be-read/admin",
+      FABRIC_RELIABILITY_SOURCE_TOKENS_FILE: "/must-not-be-read/reliability",
+      FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE: "/must-not-be-read/effects",
+      FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE: "/must-not-be-read/alarms",
+      FABRIC_LEADERSHIP_TOKEN_FILE: "/must-not-be-read/witness",
+      FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: "/must-not-be-read/candidate",
+      FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: "/must-not-be-read/public-key",
+    });
+    expect(observer.hostId).toBe("host-a");
+    expect(observer.artifactStore.accessKeyId).toBe("d".repeat(32));
+    expect(observer).not.toHaveProperty("apiToken");
+    expect(observer).not.toHaveProperty("submitToken");
+    expect(observer).not.toHaveProperty("workerBootstrapCredentials");
+    expect(observer).not.toHaveProperty("adminToken");
+    expect(observer).not.toHaveProperty("leadershipToken");
   });
 
   it("fails closed for missing, weak, or shared credentials", () => {

@@ -241,11 +241,22 @@ export class PostgresReliabilityStore {
     private readonly hostId: string,
   ) {}
 
-  async currentEpoch(): Promise<number> {
-    const result = await this.pool.query<{ current_epoch: string }>(
-      "SELECT current_epoch FROM fabric_state WHERE singleton=true",
+  async observerState(): Promise<{
+    fabricEpoch: number;
+    databasePolicyFingerprint: string | null;
+  }> {
+    const result = await this.pool.query<{
+      current_epoch: string;
+      policy_fingerprint: string | null;
+    }>(
+      `SELECT current_epoch,policy_fingerprint
+       FROM fabric_state WHERE singleton=true`,
     );
-    return Number(result.rows[0]?.current_epoch ?? 1);
+    return {
+      fabricEpoch: Number(result.rows[0]?.current_epoch ?? 1),
+      databasePolicyFingerprint:
+        result.rows[0]?.policy_fingerprint ?? null,
+    };
   }
 
   async collect(expectedPolicy: string | PolicySnapshot): Promise<FindingObservation[]> {
@@ -477,6 +488,7 @@ export class PostgresReliabilityStore {
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtext('agentic-os-execution-fabric-observer'))",
       );
+      await this.assertObserverLeadership(client, fabricEpoch);
       const observedFingerprints: string[] = [];
       const findings: HealthFinding[] = [];
       for (const observation of observations) {
@@ -569,6 +581,10 @@ export class PostgresReliabilityStore {
          WHERE a.finding_id=f.id AND f.status='resolved'
            AND a.status IN ('pending','failed')`,
       );
+      // Use the wall clock, not transaction-start time, so a lease that
+      // expires during a slow observation pass rolls the entire transaction
+      // back instead of letting a stale former leader resolve alarms.
+      await this.assertObserverLeadership(client, fabricEpoch);
       await client.query("COMMIT");
       return findings;
     } catch (error) {
@@ -576,6 +592,34 @@ export class PostgresReliabilityStore {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  private async assertObserverLeadership(
+    client: pg.PoolClient,
+    expectedEpoch: number,
+  ): Promise<void> {
+    const state = await client.query<{
+      current_epoch: string;
+      leader_host_id: string | null;
+      lease_valid: boolean;
+    }>(
+      `SELECT current_epoch,leader_host_id,
+              leader_lease_expires_at > clock_timestamp() AS lease_valid
+       FROM fabric_state
+       WHERE singleton=true
+       FOR UPDATE`,
+    );
+    const current = state.rows[0];
+    if (
+      !current ||
+      Number(current.current_epoch) !== expectedEpoch ||
+      current.leader_host_id !== this.hostId ||
+      current.lease_valid !== true
+    ) {
+      throw new FencedError(
+        "observer is not the current unexpired PostgreSQL leader",
+      );
     }
   }
 

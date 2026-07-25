@@ -4,6 +4,9 @@ import { z } from "zod";
 import type { WitnessConfig } from "./config.js";
 import {
   candidateUpdateSchema,
+  configDigestRotationAbortSchema,
+  configDigestRotationCommitSchema,
+  configDigestRotationSchema,
   failbackCommitSchema,
   failbackPrepareSchema,
   failbackPlanSchema,
@@ -129,6 +132,54 @@ export function buildServer(
   );
   server.post("/api/v1/admin/leadership/promote", async (request) =>
     witness.promote(promotionSchema.parse(request.body)),
+  );
+  server.post(
+    "/api/v1/admin/leadership/config-digest-rotations/prepare",
+    async (request) =>
+      witness.prepareConfigDigestRotation(
+        configDigestRotationSchema.parse(request.body),
+      ),
+  );
+  server.post(
+    "/api/v1/admin/leadership/config-digest-rotations/commit",
+    async (request) =>
+      witness.commitConfigDigestRotation(
+        configDigestRotationCommitSchema.parse(request.body),
+      ),
+  );
+  server.post(
+    "/api/v1/admin/leadership/config-digest-rotations/abort",
+    async (request) =>
+      witness.abortConfigDigestRotation(
+        configDigestRotationAbortSchema.parse(request.body),
+      ),
+  );
+  server.get(
+    "/api/v1/admin/leadership/config-digest-rotations/:rotationId",
+    async (request) => {
+      const { rotationId } = z
+        .object({ rotationId: z.string().uuid() })
+        .parse(request.params);
+      return witness.configDigestRotation(rotationId);
+    },
+  );
+  server.get(
+    "/api/v1/admin/leadership/config-digest-rotations/:rotationId/preparation",
+    async (request) => {
+      const { rotationId } = z
+        .object({ rotationId: z.string().uuid() })
+        .parse(request.params);
+      return witness.configDigestRotationPreparation(rotationId);
+    },
+  );
+  server.get(
+    "/api/v1/admin/leadership/config-digest-rotations/:rotationId/abort",
+    async (request) => {
+      const { rotationId } = z
+        .object({ rotationId: z.string().uuid() })
+        .parse(request.params);
+      return witness.configDigestRotationAbort(rotationId);
+    },
   );
   server.post("/api/v1/admin/leadership/failback-plan", async (request) =>
     witness.planFailback(failbackPlanSchema.parse(request.body)),

@@ -176,6 +176,10 @@ export const reliabilityObservationSchema = z
 
 export const configReloadSchema = z
   .object({
+    rotationId: z.string().uuid(),
+    preparationToken: z
+      .string()
+      .regex(/^cpr1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
     expectedCurrentFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     expectedCandidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })

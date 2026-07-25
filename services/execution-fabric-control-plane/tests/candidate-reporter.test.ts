@@ -44,6 +44,8 @@ describe("portable candidate reporter heartbeat", () => {
       receiverState: "streaming",
       lastMessageAt: new Date().toISOString(),
       configDigest: "a".repeat(64),
+      policyCandidateDigest: "b".repeat(64),
+      policyCandidateObservedAt: new Date().toISOString(),
       lastAttemptAt: new Date().toISOString(),
       lastSuccessfulAt: new Date().toISOString(),
       lastError: null,
@@ -68,6 +70,8 @@ describe("portable candidate reporter heartbeat", () => {
     expect(source).toContain("receiverState");
     expect(source).toContain("lastMessageAt");
     expect(source).toContain("clock_timestamp()");
+    expect(source).toContain("applied_config_digest");
+    expect(source).toContain("policyCandidateDigest");
     expect(source).toContain("FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE");
     expect(source).not.toContain("FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE");
   });

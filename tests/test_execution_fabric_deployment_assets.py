@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import plistlib
 import re
 import subprocess
@@ -195,6 +196,82 @@ def test_primary_and_warm_standby_roles_are_separate() -> None:
     assert primary["services"]["valkey"].get("ports") is None
 
 
+def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credentials() -> None:
+    forbidden_environment = {
+        "FABRIC_VALKEY_URL",
+        "FABRIC_API_TOKEN_FILE",
+        "FABRIC_SUBMIT_TOKEN_FILE",
+        "FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE",
+        "FABRIC_ADMIN_TOKEN_FILE",
+        "FABRIC_RELIABILITY_SOURCE_TOKENS_FILE",
+        "FABRIC_EFFECT_CONSUMER_CREDENTIALS_FILE",
+        "FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE",
+        "FABRIC_LEADERSHIP_API_BASE",
+        "FABRIC_LEADERSHIP_TOKEN_FILE",
+        "FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE",
+        "FABRIC_LEADERSHIP_PUBLIC_KEY_FILE",
+    }
+    for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
+        compose = _yaml(DEPLOY / name)
+        observer = compose["services"]["observer"]
+        assert forbidden_environment.isdisjoint(observer["environment"])
+        assert set(observer["secrets"]) == {
+            "artifact-observer-access-key",
+            "artifact-observer-secret-key",
+        }
+        assert observer["networks"] == ["fabric-private"]
+        assert observer["environment"]["FABRIC_ARTIFACT_ACCESS_KEY_FILE"] == (
+            "/run/secrets/artifact-observer-access-key"
+        )
+        assert observer["environment"]["FABRIC_ARTIFACT_SECRET_KEY_FILE"] == (
+            "/run/secrets/artifact-observer-secret-key"
+        )
+        assert "minio-root-user" not in observer["secrets"]
+        assert "minio-root-password" not in observer["secrets"]
+        assert {
+            "minio-root-user",
+            "minio-root-password",
+            "artifact-observer-access-key",
+            "artifact-observer-secret-key",
+        } <= set(compose["services"]["minio-init"]["secrets"])
+        init_command = compose["services"]["minio-init"]["entrypoint"][-1]
+        assert "execution-fabric-observer-readonly" in init_command
+        assert "s3:GetBucketLocation" in init_command
+        assert "s3:ListBucket" in init_command
+        assert "s3:GetObject" in init_command
+        assert "s3:PutObject" not in init_command
+        assert 'mc ls "observer/$${FABRIC_ARTIFACT_BUCKET}"' in init_command
+        assert set(compose["services"]["minio"]["secrets"]) == {
+            "minio-root-user",
+            "minio-root-password",
+        }
+
+
+def test_scheduler_lifecycle_follows_promotion_and_durability_gates() -> None:
+    promotion = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
+    durable = (
+        INSTALLERS / "bin" / "enable-postgres-durable-primary.sh"
+    ).read_text(encoding="utf-8")
+    promoted_start = (
+        "$compose --profile promoted up -d control-plane observer healer scheduler"
+    )
+    durable_start = '$compose --profile "$compose_profile" up -d --no-deps scheduler'
+    scheduler_main = (
+        SOURCE_ROOT
+        / "services"
+        / "execution-fabric-control-plane"
+        / "src"
+        / "scheduler-main.ts"
+    ).read_text(encoding="utf-8")
+    assert promoted_start in promotion
+    assert promotion.index("--degraded-primary") < promotion.index(promoted_start)
+    assert durable_start in durable
+    assert durable.index("synchronous_commit = 'remote_apply'") < durable.index(
+        durable_start
+    )
+    assert "await runtime.fabric.synchronizePolicy()" in scheduler_main
+
+
 def test_promotion_is_api_fenced_before_any_local_mutation() -> None:
     script = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
     assert "/api/v1/admin/leadership/status" in script
@@ -315,6 +392,259 @@ def test_watchdog_alerts_locally_and_never_bypasses_promotion_contract() -> None
     assert "`runtime.execution_fabric.health`" in deployment_docs
     assert "`harness/registries/alerts.yml`" in deployment_docs
     assert "No deployment-specific alert registry exists" in deployment_docs
+
+
+def test_policy_rotation_is_fenced_resumable_and_receipted() -> None:
+    script = (INSTALLERS / "bin" / "rotate-policy.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "policy-rotation.pending.json" in script
+    assert "/api/v1/admin/config/reload" in script
+    assert "/api/v1/admin/leadership/config-digest-rotations/prepare" in script
+    assert "/api/v1/admin/leadership/config-digest-rotations/commit" in script
+    assert "/api/v1/admin/leadership/config-digest-rotations/abort" in script
+    assert "pendingConfigDigestRotations" in script
+    assert "preparationToken" in script
+    assert "--resume" in script
+    assert ".candidates[$primary].configDigest == $current" in script
+    assert ".candidates[$standby].configDigest == $current" in script
+    assert ".candidates[$primary].policyCandidateDigest == $candidate" in script
+    assert ".candidates[$standby].policyCandidateDigest == $candidate" in script
+    assert '.controlPlane.leadership.state=="active"' in script
+    assert "policy-rotation-$rotation_id.receipt.json" in script
+    assert "FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE" in script
+    promotion = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
+    assert '"$script_dir/rotate-policy.sh" --resume' in promotion
+
+
+def test_policy_rotation_runs_prepare_reload_commit_and_readback(
+    tmp_path: Path,
+) -> None:
+    old_digest = "a" * 64
+    new_digest = "b" * 64
+    rotation_id = "00000000-0000-4000-8000-000000000001"
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    tokens = tmp_path / "tokens"
+    state.mkdir()
+    fake_bin.mkdir()
+    tokens.mkdir()
+    for name in ("api", "admin", "witness-admin"):
+        (tokens / name).write_text(f"{name}-token\n", encoding="utf-8")
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        f"""#!/bin/sh
+set -eu
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    http://*) url=$1 ;;
+    --data) shift ;;
+  esac
+  shift
+done
+case "$url" in
+  http://witness/api/v1/admin/leadership/status)
+    if [ -f "$FAKE_STATE_DIR/reloaded" ]; then
+      replicated={new_digest}
+    else
+      replicated={old_digest}
+    fi
+    printf '%s\\n' '{{"currentLeader":"genomesbox","fabricEpoch":7,
+      "configDigest":"{old_digest}","pendingConfigDigestRotations":[],
+      "candidates":{{
+        "genomesbox":{{"healthy":true,"configDigest":"'"$replicated"'",
+          "policyCandidateDigest":"{new_digest}"}},
+        "bigmac":{{"healthy":true,"configDigest":"'"$replicated"'",
+          "policyCandidateDigest":"{new_digest}"}}}}}}'
+    ;;
+  http://witness/api/v1/admin/leadership/config-digest-rotations/prepare)
+    printf '%s\\n' '{{"apiVersion":"execution-fabric-leadership/v1",
+      "decision":"config_digest_rotation_prepared",
+      "rotationId":"{rotation_id}","requestDigest":"{old_digest}",
+      "expectedLeader":"genomesbox","expectedEpoch":7,
+      "expectedCurrentDigest":"{old_digest}",
+      "candidateDigest":"{new_digest}",
+      "candidateHosts":["bigmac","genomesbox"],
+      "preparationToken":"cpr1.payload.signature",
+      "preparationTokenHash":"{old_digest}",
+      "issuedAt":"2026-07-25T00:00:00Z",
+      "expiresAt":"2026-07-25T00:05:00Z","expiresAtEpoch":1784937900}}'
+    ;;
+  http://control/api/v1/admin/config/reload)
+    : >"$FAKE_STATE_DIR/reloaded"
+    printf '%s\\n' '{{"appliedFingerprint":"{new_digest}",
+      "receipt":{{"rotationId":"{rotation_id}",
+      "appliedFingerprint":"{new_digest}"}}}}'
+    ;;
+  http://witness/api/v1/admin/leadership/config-digest-rotations/commit)
+    : >"$FAKE_STATE_DIR/committed"
+    printf '%s\\n' '{{"apiVersion":"execution-fabric-leadership/v1",
+      "decision":"config_digest_rotated","rotationId":"{rotation_id}",
+      "requestDigest":"{old_digest}","currentLeader":"genomesbox",
+      "fabricEpoch":7,"previousConfigDigest":"{old_digest}",
+      "configDigest":"{new_digest}","candidateHosts":["bigmac","genomesbox"],
+      "preparationTokenHash":"{old_digest}",
+      "committedAt":"2026-07-25T00:00:05Z"}}'
+    ;;
+  http://control/api/v1/status?limit=1)
+    if [ -f "$FAKE_STATE_DIR/reloaded" ]; then
+      applied={new_digest}
+    else
+      applied={old_digest}
+    fi
+    printf '%s\\n' '{{"config":{{"appliedFingerprint":"'"$applied"'"}},
+      "controlPlane":{{"databasePolicyFingerprint":"'"$applied"'",
+      "leadership":{{"state":"active"}}}}}}'
+    ;;
+  *) exit 22 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_logger = fake_bin / "logger"
+    fake_logger.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_logger.chmod(0o755)
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path / 'os'}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                "FABRIC_API_BASE=http://control",
+                f"FABRIC_API_TOKEN_FILE={tokens / 'api'}",
+                f"FABRIC_ADMIN_TOKEN_FILE={tokens / 'admin'}",
+                "FABRIC_LEADERSHIP_API_BASE=http://witness",
+                f"FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE={tokens / 'witness-admin'}",
+                "FABRIC_HOST_ID=genomesbox",
+                "FABRIC_PRIMARY_HOST_ID=genomesbox",
+                "FABRIC_STANDBY_HOST_ID=bigmac",
+                f"FAKE_STATE_DIR={state}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(INSTALLERS / "bin" / "rotate-policy.sh"),
+            old_digest,
+            new_digest,
+            rotation_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = Path(result.stdout.strip())
+    assert receipt.is_file()
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert payload["rotationId"] == rotation_id
+    assert payload["witness"]["decision"] == "config_digest_rotated"
+    assert (state / "committed").is_file()
+    assert not (state / "policy-rotation.pending.json").exists()
+
+
+def test_policy_rotation_resume_aborts_expired_pre_database_preparation(
+    tmp_path: Path,
+) -> None:
+    old_digest = "a" * 64
+    new_digest = "b" * 64
+    rotation_id = "00000000-0000-4000-8000-000000000002"
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    tokens = tmp_path / "tokens"
+    state.mkdir()
+    fake_bin.mkdir()
+    tokens.mkdir()
+    for name in ("api", "admin", "witness-admin"):
+        (tokens / name).write_text(f"{name}-token\n", encoding="utf-8")
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        f"""#!/bin/sh
+set -eu
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    http://*) url=$1 ;;
+    --data) shift ;;
+  esac
+  shift
+done
+case "$url" in
+  http://witness/api/v1/admin/leadership/status)
+    printf '%s\\n' '{{"currentLeader":"genomesbox","fabricEpoch":7,
+      "configDigest":"{old_digest}",
+      "pendingConfigDigestRotations":[{{
+        "rotationId":"{rotation_id}","expectedLeader":"genomesbox",
+        "expectedEpoch":7,"expectedCurrentDigest":"{old_digest}",
+        "candidateDigest":"{new_digest}",
+        "preparationToken":"cpr1.payload.signature","expired":true}}],
+      "candidates":{{
+        "genomesbox":{{"healthy":false,"configDigest":"{old_digest}"}},
+        "bigmac":{{"healthy":true,"configDigest":"{old_digest}"}}}}}}'
+    ;;
+  http://witness/api/v1/admin/leadership/config-digest-rotations/abort)
+    : >"$FAKE_STATE_DIR/aborted"
+    printf '%s\\n' '{{"apiVersion":"execution-fabric-leadership/v1",
+      "decision":"config_digest_rotation_aborted",
+      "rotationId":"{rotation_id}","requestDigest":"{old_digest}",
+      "currentLeader":"genomesbox","fabricEpoch":7,
+      "configDigest":"{old_digest}","candidateDigest":"{new_digest}",
+      "evidenceHost":"bigmac","preparationTokenHash":"{old_digest}",
+      "expiredAt":"2026-07-25T00:05:00Z",
+      "abortedAt":"2026-07-25T00:06:00Z"}}'
+    ;;
+  *) exit 22 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_logger = fake_bin / "logger"
+    fake_logger.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_logger.chmod(0o755)
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path / 'os'}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                "FABRIC_API_BASE=http://control",
+                f"FABRIC_API_TOKEN_FILE={tokens / 'api'}",
+                f"FABRIC_ADMIN_TOKEN_FILE={tokens / 'admin'}",
+                "FABRIC_LEADERSHIP_API_BASE=http://witness",
+                f"FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE={tokens / 'witness-admin'}",
+                "FABRIC_HOST_ID=bigmac",
+                "FABRIC_PRIMARY_HOST_ID=genomesbox",
+                "FABRIC_STANDBY_HOST_ID=bigmac",
+                f"FAKE_STATE_DIR={state}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [str(INSTALLERS / "bin" / "rotate-policy.sh"), "--resume"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "aborted expired pre-database policy rotation" in result.stdout
+    assert (state / "aborted").is_file()
 
 
 def test_candidate_reporting_is_measured_fresh_and_independently_alerted() -> None:

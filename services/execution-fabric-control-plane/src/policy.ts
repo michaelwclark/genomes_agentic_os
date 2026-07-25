@@ -597,6 +597,50 @@ export class PolicyManager {
     return this.snapshot();
   }
 
+  /**
+   * Converge a long-running role only to the fingerprint already authorized
+   * in PostgreSQL by the admin reload transaction.
+   *
+   * This never treats an arbitrary disk edit as authority. A scheduler,
+   * healer, or observer may adopt the disk candidate only when its exact
+   * fingerprint matches the durable database fingerprint.
+   */
+  synchronizeApprovedFingerprint(
+    approvedFingerprint: string | null,
+  ): PolicySnapshot {
+    const observed = this.check();
+    if (!approvedFingerprint) {
+      throw new PolicyError(
+        "config_drift",
+        "database has no approved policy fingerprint",
+      );
+    }
+    if (observed.appliedFingerprint === approvedFingerprint) {
+      if (observed.state !== "applied") {
+        throw new PolicyError(
+          observed.state === "invalid" ? "config_invalid" : "config_drift",
+          observed.lastError ??
+            "canonical policy differs from the database-approved policy",
+        );
+      }
+      return observed;
+    }
+    if (observed.diskFingerprint !== approvedFingerprint) {
+      throw new PolicyError(
+        observed.state === "invalid" ? "config_invalid" : "config_drift",
+        "disk policy does not match the database-approved fingerprint",
+      );
+    }
+    const prepared = this.prepareReload();
+    if (prepared.candidateFingerprint !== approvedFingerprint) {
+      throw new PolicyError(
+        "config_drift",
+        "disk policy changed while synchronizing the approved fingerprint",
+      );
+    }
+    return this.activatePrepared(prepared);
+  }
+
   snapshot(): PolicySnapshot {
     return {
       schemaVersion: "execution-fabric-policy-status/v1",

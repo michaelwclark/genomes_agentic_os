@@ -26,8 +26,20 @@ export const candidateUpdateSchema = z.object({
   ]),
   lastMessageAt: z.string().datetime(),
   configDigest: digestSchema,
+  policyCandidateDigest: digestSchema.optional(),
+  policyCandidateObservedAt: z.string().datetime().optional(),
   observedAt: z.string().datetime().optional(),
 }).strict().superRefine((candidate, context) => {
+  if (
+    candidate.policyCandidateObservedAt !== undefined &&
+    candidate.policyCandidateDigest === undefined
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["policyCandidateObservedAt"],
+      message: "staged policy observation requires a staged policy digest",
+    });
+  }
   if (candidate.replayWalPosition > candidate.receiveWalPosition) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -91,6 +103,33 @@ export const promotionSchema = z.object({
   }
 });
 
+export const configDigestRotationSchema = z
+  .object({
+    rotationId: z.string().uuid(),
+    expectedLeader: hostIdSchema,
+    expectedEpoch: z.number().int().min(1),
+    expectedCurrentDigest: digestSchema,
+    candidateDigest: digestSchema,
+  })
+  .strict()
+  .refine(
+    (value) => value.expectedCurrentDigest !== value.candidateDigest,
+    {
+      path: ["candidateDigest"],
+      message: "candidate digest must differ from the current digest",
+    },
+  );
+
+export const configDigestRotationCommitSchema = z
+  .object({
+    rotationId: z.string().uuid(),
+    preparationToken: z.string().regex(/^cpr1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+  })
+  .strict();
+
+export const configDigestRotationAbortSchema =
+  configDigestRotationCommitSchema;
+
 export const failbackPlanSchema = z
   .object({
     from: hostIdSchema,
@@ -124,6 +163,15 @@ export const failbackPrepareSchema = z
 
 export type CandidateUpdate = z.infer<typeof candidateUpdateSchema>;
 export type PromotionRequest = z.infer<typeof promotionSchema>;
+export type ConfigDigestRotationRequest = z.infer<
+  typeof configDigestRotationSchema
+>;
+export type ConfigDigestRotationCommitRequest = z.infer<
+  typeof configDigestRotationCommitSchema
+>;
+export type ConfigDigestRotationAbortRequest = z.infer<
+  typeof configDigestRotationAbortSchema
+>;
 export type FailbackPlanRequest = z.infer<typeof failbackPlanSchema>;
 export type FailbackPrepareRequest = z.infer<typeof failbackPrepareSchema>;
 export type FailbackCommitRequest = z.infer<typeof failbackCommitSchema>;
@@ -154,6 +202,9 @@ export type AuditRecord = {
   eventType:
     | "initialized"
     | "candidate_updated"
+    | "config_digest_rotation_prepared"
+    | "config_digest_rotation_aborted"
+    | "config_digest_rotated"
     | "promotion_committed"
     | "failback_reseed_authorized"
     | "failback_planned"
@@ -167,6 +218,104 @@ export type AuditRecord = {
   newEpoch?: number;
   requestDigest?: string;
   detail: Record<string, unknown>;
+};
+
+export type ConfigDigestRotationPreparation = {
+  apiVersion: "execution-fabric-leadership/v1";
+  decision: "config_digest_rotation_prepared";
+  rotationId: string;
+  requestDigest: string;
+  expectedLeader: string;
+  expectedEpoch: number;
+  expectedCurrentDigest: string;
+  candidateDigest: string;
+  candidateHosts: string[];
+  expectedTimelineId: number;
+  expectedLeaderWalPosition: number;
+  expectedUpstreamSystemId: string;
+  minimumStandbyReplayWalPosition: number;
+  maxReplicaLagBytes: number;
+  preparationToken: string;
+  preparationTokenHash: string;
+  issuedAt: string;
+  expiresAt: string;
+  expiresAtEpoch: number;
+};
+
+export type ConfigDigestRotationReceipt = {
+  apiVersion: "execution-fabric-leadership/v1";
+  decision: "config_digest_rotated";
+  rotationId: string;
+  requestDigest: string;
+  currentLeader: string;
+  fabricEpoch: number;
+  previousConfigDigest: string;
+  configDigest: string;
+  candidateHosts: string[];
+  preparationTokenHash: string;
+  committedAt: string;
+};
+
+export type ConfigDigestRotationAbortReceipt = {
+  apiVersion: "execution-fabric-leadership/v1";
+  decision: "config_digest_rotation_aborted";
+  rotationId: string;
+  requestDigest: string;
+  currentLeader: string;
+  fabricEpoch: number;
+  configDigest: string;
+  candidateDigest: string;
+  evidenceHost: string;
+  preparationTokenHash: string;
+  expiredAt: string;
+  abortedAt: string;
+};
+
+export type ConfigDigestCandidateCondition = {
+  candidate: string;
+  inRecovery: boolean;
+  receiverState: CandidateRecord["receiverState"];
+  minimumReplayWalPosition: number;
+};
+
+export type ConfigDigestRotationPreparationMutation = {
+  preparation: ConfigDigestRotationPreparation;
+  expectedLeader: string;
+  expectedEpoch: number;
+  expectedCurrentDigest: string;
+  candidateDigest: string;
+  expectedTimelineId: number;
+  expectedLeaderWalPosition: number;
+  expectedUpstreamSystemId: string;
+  leaderBaselineFreshAfterEpoch: number;
+  candidateFreshAfterEpoch: number;
+  policyCandidateFreshAfterEpoch: number;
+  receiverFreshAfterEpoch: number;
+  maxReplicaLagBytes: number;
+  candidates: ConfigDigestCandidateCondition[];
+  audit: AuditRecord;
+};
+
+export type ConfigDigestRotationCommitMutation = {
+  preparation: ConfigDigestRotationPreparation;
+  preparationTokenHash: string;
+  candidateFreshAfterEpoch: number;
+  receiverFreshAfterEpoch: number;
+  commitCandidate: ConfigDigestCandidateCondition;
+  nextState: LeadershipState;
+  receipt: ConfigDigestRotationReceipt;
+  audit: AuditRecord;
+};
+
+export type ConfigDigestRotationAbortMutation = {
+  preparation: ConfigDigestRotationPreparation;
+  preparationTokenHash: string;
+  nowEpoch: number;
+  evidenceAfterEpoch: number;
+  evidenceCandidate: ConfigDigestCandidateCondition;
+  candidateDigestGuardHosts: string[];
+  receipt: ConfigDigestRotationAbortReceipt;
+  audit: AuditRecord;
 };
 
 export type FailbackPlan = {

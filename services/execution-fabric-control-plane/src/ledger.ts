@@ -165,6 +165,8 @@ export type LeadershipActivation = {
 export type ConfigReloadReceipt = {
   schemaVersion: "execution-fabric-config-reload-receipt/v1";
   receiptId: string;
+  rotationId: string;
+  preparationTokenHash: string;
   expectedCurrentFingerprint: string;
   expectedCandidateFingerprint: string;
   appliedFingerprint: string;
@@ -202,6 +204,10 @@ export interface LedgerPort {
   systemSnapshot(): Promise<SystemSnapshot>;
   activatePolicy(fingerprint: string): Promise<void>;
   activatePolicyReload(input: {
+    rotationId: string;
+    preparationTokenHash: string;
+    authorizationExpiresAt: string;
+    expectedEpoch: number;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
   }): Promise<ConfigReloadReceipt>;
@@ -1402,34 +1408,24 @@ export class PostgresLedger implements LedgerPort {
       );
       const current = state.rows[0]?.policy_fingerprint ?? null;
       if (current === fingerprint) return;
-      const active = await client.query<{
-        tasks: string;
-        workers: string;
-      }>(
-        `SELECT
-           (SELECT count(*) FROM fabric_tasks
-             WHERE status IN ('queued','running'))::text AS tasks,
-           (SELECT count(*) FROM fabric_workers
-             WHERE lease_expires_at > now())::text AS workers`,
-      );
-      if (
-        current !== null &&
-        (Number(active.rows[0]?.tasks ?? 0) > 0 ||
-          Number(active.rows[0]?.workers ?? 0) > 0)
-      ) {
+      if (current !== null) {
         throw new ConflictError(
-          "policy activation requires a drained queue and no live workers",
+          "database policy fingerprint differs from this process; use the fenced admin reload protocol",
         );
       }
       await client.query(
         `UPDATE fabric_state SET policy_fingerprint=$1,updated_at=now()
-         WHERE singleton=true`,
+         WHERE singleton=true AND policy_fingerprint IS NULL`,
         [fingerprint],
       );
     });
   }
 
   async activatePolicyReload(input: {
+    rotationId: string;
+    preparationTokenHash: string;
+    authorizationExpiresAt: string;
+    expectedEpoch: number;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
   }): Promise<ConfigReloadReceipt> {
@@ -1441,17 +1437,76 @@ export class PostgresLedger implements LedgerPort {
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtext('agentic-os-execution-fabric-policy'))",
       );
+      const replay = await client.query<{
+        id: string;
+        rotation_id: string;
+        preparation_token_hash: string;
+        expected_current_fingerprint: string;
+        expected_candidate_fingerprint: string;
+        applied_fingerprint: string;
+        fabric_epoch: string | number;
+        host_id: string;
+        applied_at: string;
+      }>(
+        `SELECT id,rotation_id,preparation_token_hash,
+                expected_current_fingerprint,expected_candidate_fingerprint,
+                applied_fingerprint,fabric_epoch,host_id,applied_at
+           FROM fabric_config_reload_receipts
+          WHERE rotation_id=$1`,
+        [input.rotationId],
+      );
+      const prior = replay.rows[0];
+      if (prior) {
+        if (
+          prior.preparation_token_hash !== input.preparationTokenHash ||
+          Number(prior.fabric_epoch) !== input.expectedEpoch ||
+          prior.expected_current_fingerprint !==
+            input.expectedCurrentFingerprint ||
+          prior.expected_candidate_fingerprint !==
+            input.expectedCandidateFingerprint
+        ) {
+          throw new ConflictError(
+            "configuration rotation id was already used by another request",
+          );
+        }
+        return {
+          schemaVersion: "execution-fabric-config-reload-receipt/v1",
+          receiptId: prior.id,
+          rotationId: prior.rotation_id,
+          preparationTokenHash: prior.preparation_token_hash,
+          expectedCurrentFingerprint: prior.expected_current_fingerprint,
+          expectedCandidateFingerprint:
+            prior.expected_candidate_fingerprint,
+          appliedFingerprint: prior.applied_fingerprint,
+          fabricEpoch: Number(prior.fabric_epoch),
+          hostId: prior.host_id,
+          appliedAt: iso(prior.applied_at),
+        };
+      }
       const state = await client.query<{
         policy_fingerprint: string | null;
         current_epoch: string | number;
+        leader_host_id: string | null;
+        leader_lease_expires_at: string | null;
       }>(
-        `SELECT policy_fingerprint,current_epoch FROM fabric_state
+        `SELECT policy_fingerprint,current_epoch,leader_host_id,
+                leader_lease_expires_at
+           FROM fabric_state
          WHERE singleton=true FOR UPDATE`,
       );
       const current = state.rows[0]?.policy_fingerprint ?? null;
       if (current !== input.expectedCurrentFingerprint) {
         throw new ConflictError(
           "database policy fingerprint does not match expectedCurrentFingerprint",
+        );
+      }
+      if (
+        state.rows[0]?.leader_host_id !== hostId ||
+        !state.rows[0]?.leader_lease_expires_at ||
+        new Date(state.rows[0].leader_lease_expires_at).getTime() <= Date.now()
+      ) {
+        throw new FencedError(
+          "policy reload requires this host to hold the current unexpired leadership lease",
         );
       }
       const active = await client.query<{ tasks: string; workers: string }>(
@@ -1471,19 +1526,39 @@ export class PostgresLedger implements LedgerPort {
       }
       const receiptId = randomUUID();
       const appliedAt = new Date().toISOString();
-      const fabricEpoch = Number(state.rows[0]?.current_epoch ?? 1);
-      await client.query(
+      const fabricEpoch = input.expectedEpoch;
+      const updated = await client.query(
         `UPDATE fabric_state SET policy_fingerprint=$1,updated_at=now()
-         WHERE singleton=true`,
-        [input.expectedCandidateFingerprint],
+         WHERE singleton=true
+           AND policy_fingerprint=$2
+           AND leader_host_id=$3
+           AND leader_lease_expires_at > clock_timestamp()
+           AND clock_timestamp() < $4::timestamptz
+           AND current_epoch=$5
+         RETURNING policy_fingerprint`,
+        [
+          input.expectedCandidateFingerprint,
+          input.expectedCurrentFingerprint,
+          hostId,
+          input.authorizationExpiresAt,
+          input.expectedEpoch,
+        ],
       );
+      if (updated.rowCount !== 1) {
+        throw new FencedError(
+          "policy reload lost leadership or signed durable policy authority before commit",
+        );
+      }
       await client.query(
         `INSERT INTO fabric_config_reload_receipts(
-           id,expected_current_fingerprint,expected_candidate_fingerprint,
+           id,rotation_id,preparation_token_hash,
+           expected_current_fingerprint,expected_candidate_fingerprint,
            applied_fingerprint,fabric_epoch,host_id,applied_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           receiptId,
+          input.rotationId,
+          input.preparationTokenHash,
           input.expectedCurrentFingerprint,
           input.expectedCandidateFingerprint,
           input.expectedCandidateFingerprint,
@@ -1495,6 +1570,8 @@ export class PostgresLedger implements LedgerPort {
       return {
         schemaVersion: "execution-fabric-config-reload-receipt/v1",
         receiptId,
+        rotationId: input.rotationId,
+        preparationTokenHash: input.preparationTokenHash,
         expectedCurrentFingerprint: input.expectedCurrentFingerprint,
         expectedCandidateFingerprint: input.expectedCandidateFingerprint,
         appliedFingerprint: input.expectedCandidateFingerprint,
@@ -1621,7 +1698,8 @@ export class PostgresLedger implements LedgerPort {
   private async assertDatabaseLeadership(client: pg.PoolClient): Promise<void> {
     const result = await client.query(
       `SELECT 1 FROM fabric_state WHERE singleton=true
-         AND leader_host_id=$1 AND leader_lease_expires_at > now()`,
+         AND leader_host_id=$1
+         AND leader_lease_expires_at > clock_timestamp()`,
       [this.hostId],
     );
     if (!result.rowCount) {

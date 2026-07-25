@@ -264,9 +264,10 @@ admission, and is fenced by the current fabric epoch and unexpired leader
 lease. Operators can inspect `/api/v1/snapshots/schedules`; schedule create,
 update, enable, and disable operations remain admin-scoped. Normal primary and
 synchronously durable promoted-standby profiles run it. A degraded-primary
-takeover deliberately keeps it stopped unless canonical
-`degraded_primary.allow_scheduler` is explicitly enabled; occurrences remain
-durable and resume idempotently after redundancy is restored.
+takeover keeps the role supervised, but its leadership controller admits no
+occurrence unless canonical `degraded_primary.allow_scheduler` is explicitly
+enabled; occurrences remain durable and resume idempotently after redundancy
+is restored.
 
 ## Selecting the writer
 
@@ -305,8 +306,7 @@ and must read back with zero drift. Producers also run the same idempotent
 reconciliation before enqueueing, so a valid edit cannot remain silently
 stale.
 
-For the remote control plane, use a fingerprint-fenced reload instead of
-restarting services around an unverified edit:
+The CLI can preview and prepare a fingerprint-fenced reload:
 
 ```bash
 agentic-os runtime config diff --root ~/agentic_os --json
@@ -316,14 +316,34 @@ agentic-os runtime config reload \
 agentic-os runtime config reload \
   --root ~/agentic_os \
   --expected-fingerprint <sha256> \
+  --rotation-id <witness-prepared-uuid> \
+  --preparation-token-file <protected-token-file> \
   --apply
 ```
 
-Apply requires the distinct admin credential. The CLI reads the observer
-projection before mutation and sends both the current applied fingerprint and
-the operator-confirmed candidate fingerprint. The server rejects either
-mismatch before activation. The CLI then reads the observer projection back,
-verifies the candidate fingerprint, and writes a redacted receipt below
+Apply requires the distinct admin credential. In the two-host remote fabric,
+do not use that raw apply as the complete operation. Install the reviewed file
+on both hosts, wait for both candidate reporters to publish its digest, and run
+`installers/execution-fabric/bin/rotate-policy.sh OLD_SHA NEW_SHA` on the
+witnessed leader. It coordinates the PostgreSQL authority and independent
+witness at the exact leader and epoch. The API rejects every reload without
+the signed, expiring witness preparation; signed leadership proofs bind the
+policy digest and fence the handoff immediately. The preparation is
+discoverable across hosts, so standby promotion can finish a
+database-committed rotation after the old leader disappears. Witness commit is
+not a client assertion: a fresh, healthy, non-leader streaming report must
+prove the standby replayed the candidate digest on the prepared timeline and
+upstream system. Unconsumed preparations remain listed after expiry. Expiry
+blocks a new database reload but does not erase recovery of a change already
+present on the synchronous standby. If the expired preparation never reached
+PostgreSQL, fresh standby proof of the old digest conditionally aborts it before
+promotion. The observation, lag measurement, and receiver timestamp must all
+be strictly post-expiry. Only one unresolved preparation is allowed per
+cluster. The command waits for renewed active leadership and writes the final
+operator receipt. A stale role can adopt an identical durable fingerprint but
+cannot replace it during startup.
+
+The CLI's redacted preview and local reload receipts remain below
 `harness/shared_factory/06-runs-and-logs/execution-fabric/config-reloads/`.
 
 If activation finds historical nonterminal SQLite rows that are missing from or
@@ -352,7 +372,9 @@ must satisfy all of these limits before it changes a task from `queued` to
 
 `admission.max_interactive_running` separately caps native Command Center turns
 only while `execution_fabric` is selected. Filesystem mode retains the legacy
-uncapped cross-conversation behavior.
+uncapped cross-conversation behavior. The shipped value is two so the Team PR
+review queue's two-worker contract is not silently collapsed by a stricter
+global interactive ceiling.
 
 At capacity, the task remains queued. Heartbeats extend worker and task leases.
 Expired work is requeued until its attempt budget is exhausted, then moves to a

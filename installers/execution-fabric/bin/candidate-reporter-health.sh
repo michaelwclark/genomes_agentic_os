@@ -81,6 +81,8 @@ jq -e \
    and .hostId==$hostId
    and (.lastSuccessfulAt | type=="string")
    and (.configDigest | type=="string" and test("^[a-f0-9]{64}$"))
+   and (.policyCandidateDigest | type=="string" and test("^[a-f0-9]{64}$"))
+   and (.policyCandidateObservedAt | type=="string")
    and (.timelineId | type=="number" and .>=1)
    and (.receiveWalPosition | type=="number" and .>=0)
    and (.replayWalPosition | type=="number")

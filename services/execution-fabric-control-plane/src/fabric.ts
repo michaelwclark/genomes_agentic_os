@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   Assignment,
   AttemptCompletion,
@@ -171,11 +172,30 @@ export class ExecutionFabric {
     await this.ledger.activatePolicy(this.policy.snapshot().appliedFingerprint);
   }
 
+  async synchronizePolicy(): Promise<void> {
+    const state = await this.ledger.systemSnapshot();
+    this.policy.synchronizeApprovedFingerprint(
+      state.databasePolicyFingerprint,
+    );
+  }
+
   async reloadPolicy(input: {
+    rotationId: string;
+    preparationToken: string;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
   }): Promise<Record<string, unknown>> {
-    this.assertMutation();
+    if (!this.leadership) {
+      throw new ConflictError(
+        "remote policy reload requires a signed witness preparation",
+      );
+    }
+    const authorization = this.leadership.authorizePolicyRotation({
+      rotationId: input.rotationId,
+      preparationToken: input.preparationToken,
+      expectedCurrentDigest: input.expectedCurrentFingerprint,
+      candidateDigest: input.expectedCandidateFingerprint,
+    });
     const prepared = this.policy.prepareReload();
     if (prepared.previousFingerprint !== input.expectedCurrentFingerprint) {
       throw new ConflictError(
@@ -189,7 +209,16 @@ export class ExecutionFabric {
         "disk policy does not match expectedCandidateFingerprint",
       );
     }
-    const receipt = await this.ledger.activatePolicyReload(input);
+    const receipt = await this.ledger.activatePolicyReload({
+      rotationId: input.rotationId,
+      preparationTokenHash: createHash("sha256")
+        .update(input.preparationToken)
+        .digest("hex"),
+      authorizationExpiresAt: authorization.expiresAt,
+      expectedEpoch: authorization.expectedEpoch,
+      expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+      expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+    });
     const snapshot = this.policy.activatePrepared(prepared);
     return { ...snapshot, receipt, appliedFingerprint: snapshot.appliedFingerprint };
   }

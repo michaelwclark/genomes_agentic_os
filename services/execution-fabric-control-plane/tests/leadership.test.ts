@@ -4,6 +4,7 @@ import type { LedgerPort } from "../src/ledger.js";
 import {
   LeadershipFencedError,
   LeadershipGuard,
+  verifyConfigRotationPreparationToken,
   verifyLeadershipToken,
 } from "../src/leadership.js";
 
@@ -20,6 +21,7 @@ function token(
   expiresAt: string,
   authorityMode: "synchronous" | "degraded_primary" = "synchronous",
   degradedUntil: string | null = null,
+  configDigest = digest,
 ): string {
   const payload = Buffer.from(
     JSON.stringify({
@@ -28,6 +30,7 @@ function token(
       leader,
       epoch,
       receiptId,
+      configDigest,
       issuedAt,
       expiresAt,
       authorityMode,
@@ -37,6 +40,30 @@ function token(
   return `v2.${payload}.${sign(null, Buffer.from(payload), privateKey).toString(
     "base64url",
   )}`;
+}
+
+function preparationToken(
+  expiresAt = "2026-07-24T20:01:00.000Z",
+): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      v: 1,
+      type: "config_digest_rotation_preparation",
+      clusterId: "test-fabric",
+      rotationId: "00000000-0000-4000-8000-000000000001",
+      expectedLeader: "bigmac",
+      expectedEpoch: 2,
+      expectedCurrentDigest: digest,
+      candidateDigest: "b".repeat(64),
+      issuedAt: "2026-07-24T20:00:00.000Z",
+      expiresAt,
+    }),
+  ).toString("base64url");
+  return `cpr1.${payload}.${sign(
+    null,
+    Buffer.from(payload),
+    privateKey,
+  ).toString("base64url")}`;
 }
 
 function fixture(
@@ -255,6 +282,58 @@ describe("leadership fencing", () => {
     const { guard } = fixture({ leader: "genomesbox" });
     await expect(guard.start()).rejects.toBeInstanceOf(LeadershipFencedError);
     expect(() => guard.assertMutation()).toThrow(/witness does not name/);
+  });
+
+  it("fences every mutation immediately when local policy outgrows its signed proof", async () => {
+    const { guard } = fixture();
+    await guard.start();
+    expect(() => guard.assertMutation()).not.toThrow();
+    (guard as unknown as { configDigest: () => string }).configDigest = () =>
+      "b".repeat(64);
+    expect(() => guard.assertMutation()).toThrow(
+      /local policy digest differs from the signed witness proof/,
+    );
+    guard.stop();
+  });
+
+  it("authorizes only the exact signed and unexpired witness policy preparation", async () => {
+    const { guard } = fixture();
+    await guard.start();
+    const preparation = preparationToken();
+    expect(
+      verifyConfigRotationPreparationToken(preparation, publicKey),
+    ).toMatchObject({
+      rotationId: "00000000-0000-4000-8000-000000000001",
+      expectedLeader: "bigmac",
+      expectedEpoch: 2,
+    });
+    expect(
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparation,
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toMatchObject({ candidateDigest: "b".repeat(64) });
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000002",
+        preparationToken: preparation,
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toThrow(/not bound/);
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(
+          "2026-07-24T19:59:59.000Z",
+        ),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toThrow(/expired/);
+    guard.stop();
   });
 
   it("validates transfer receipt and enforces recovery hold", async () => {

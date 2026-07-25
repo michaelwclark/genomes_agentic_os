@@ -1,6 +1,12 @@
 import type {
   AuditRecord,
   CandidateRecord,
+  ConfigDigestRotationAbortMutation,
+  ConfigDigestRotationAbortReceipt,
+  ConfigDigestRotationCommitMutation,
+  ConfigDigestRotationPreparation,
+  ConfigDigestRotationPreparationMutation,
+  ConfigDigestRotationReceipt,
   FailbackCommitMutation,
   FailbackPlan,
   LeadershipState,
@@ -30,6 +36,27 @@ export interface WitnessStore {
     audit: AuditRecord,
     leaderBaseline?: LeaderBaselineUpdate,
   ): Promise<void>;
+  getConfigDigestRotation(
+    rotationId: string,
+  ): Promise<ConfigDigestRotationReceipt | null>;
+  getConfigDigestRotationAbort(
+    rotationId: string,
+  ): Promise<ConfigDigestRotationAbortReceipt | null>;
+  getConfigDigestRotationPreparation(
+    rotationId: string,
+  ): Promise<ConfigDigestRotationPreparation | null>;
+  listConfigDigestRotationPreparations(): Promise<
+    ConfigDigestRotationPreparation[]
+  >;
+  prepareConfigDigestRotation(
+    mutation: ConfigDigestRotationPreparationMutation,
+  ): Promise<ConfigDigestRotationPreparation>;
+  commitConfigDigestRotation(
+    mutation: ConfigDigestRotationCommitMutation,
+  ): Promise<ConfigDigestRotationReceipt>;
+  abortConfigDigestRotation(
+    mutation: ConfigDigestRotationAbortMutation,
+  ): Promise<ConfigDigestRotationAbortReceipt>;
   promote(mutation: PromotionMutation): Promise<LeadershipState>;
   putFailbackPreparation(plan: FailbackPlan, audit: AuditRecord): Promise<void>;
   putFailbackPlan(plan: FailbackPlan, audit: AuditRecord): Promise<void>;
@@ -37,6 +64,86 @@ export interface WitnessStore {
   commitFailback(mutation: FailbackCommitMutation): Promise<LeadershipState>;
   appendAudit(audit: AuditRecord): Promise<void>;
   listAudit(limit: number): Promise<AuditRecord[]>;
+}
+
+function rotationCandidateEligible(
+  candidate: CandidateRecord | undefined,
+  expected: ConfigDigestRotationPreparationMutation["candidates"][number],
+  mutation: ConfigDigestRotationPreparationMutation,
+): boolean {
+  return Boolean(
+    candidate?.candidate === expected.candidate &&
+      candidate.healthy &&
+      candidate.inRecovery === expected.inRecovery &&
+      candidate.receiverState === expected.receiverState &&
+      candidate.observedAtEpoch >= mutation.candidateFreshAfterEpoch &&
+      Math.floor(new Date(candidate.lagMeasuredAt).getTime() / 1000) >=
+        mutation.candidateFreshAfterEpoch &&
+      Math.floor(new Date(candidate.lastMessageAt).getTime() / 1000) >=
+        mutation.receiverFreshAfterEpoch &&
+      candidate.configDigest === mutation.expectedCurrentDigest &&
+      candidate.policyCandidateDigest === mutation.candidateDigest &&
+      Math.floor(
+        new Date(candidate.policyCandidateObservedAt ?? "").getTime() / 1000,
+      ) >= mutation.policyCandidateFreshAfterEpoch &&
+      candidate.timelineId === mutation.expectedTimelineId &&
+      candidate.upstreamSystemId === mutation.expectedUpstreamSystemId &&
+      candidate.replayWalPosition >= expected.minimumReplayWalPosition &&
+      (!expected.inRecovery ||
+        candidate.replicaLagBytes <= mutation.maxReplicaLagBytes),
+  );
+}
+
+function rotationCommitCandidateEligible(
+  candidate: CandidateRecord | undefined,
+  mutation: ConfigDigestRotationCommitMutation,
+): boolean {
+  const expected = mutation.commitCandidate;
+  const preparation = mutation.preparation;
+  return Boolean(
+    expected.candidate !== preparation.expectedLeader &&
+      preparation.candidateHosts.includes(expected.candidate) &&
+      candidate?.candidate === expected.candidate &&
+      candidate.healthy &&
+      candidate.inRecovery &&
+      candidate.receiverState === "streaming" &&
+      candidate.observedAtEpoch >= mutation.candidateFreshAfterEpoch &&
+      Math.floor(new Date(candidate.lagMeasuredAt).getTime() / 1000) >=
+        mutation.candidateFreshAfterEpoch &&
+      Math.floor(new Date(candidate.lastMessageAt).getTime() / 1000) >=
+        mutation.receiverFreshAfterEpoch &&
+      candidate.configDigest === preparation.candidateDigest &&
+      candidate.timelineId === preparation.expectedTimelineId &&
+      candidate.upstreamSystemId === preparation.expectedUpstreamSystemId &&
+      candidate.replayWalPosition >= expected.minimumReplayWalPosition &&
+      candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+  );
+}
+
+function rotationAbortCandidateEligible(
+  candidate: CandidateRecord | undefined,
+  mutation: ConfigDigestRotationAbortMutation,
+): boolean {
+  const expected = mutation.evidenceCandidate;
+  const preparation = mutation.preparation;
+  return Boolean(
+    expected.candidate !== preparation.expectedLeader &&
+      preparation.candidateHosts.includes(expected.candidate) &&
+      candidate?.candidate === expected.candidate &&
+      candidate.healthy &&
+      candidate.inRecovery &&
+      candidate.receiverState === "streaming" &&
+      candidate.observedAtEpoch > mutation.evidenceAfterEpoch &&
+      Math.floor(new Date(candidate.lagMeasuredAt).getTime() / 1000) >
+        mutation.evidenceAfterEpoch &&
+      Math.floor(new Date(candidate.lastMessageAt).getTime() / 1000) >
+        mutation.evidenceAfterEpoch &&
+      candidate.configDigest === preparation.expectedCurrentDigest &&
+      candidate.timelineId === preparation.expectedTimelineId &&
+      candidate.upstreamSystemId === preparation.expectedUpstreamSystemId &&
+      candidate.replayWalPosition >= expected.minimumReplayWalPosition &&
+      candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+  );
 }
 
 function eligible(
@@ -64,6 +171,18 @@ export class InMemoryWitnessStore implements WitnessStore {
   private state?: LeadershipState;
   private readonly candidates = new Map<string, CandidateRecord>();
   private readonly plans = new Map<string, FailbackPlan>();
+  private readonly configRotations = new Map<
+    string,
+    ConfigDigestRotationReceipt
+  >();
+  private readonly configRotationAborts = new Map<
+    string,
+    ConfigDigestRotationAbortReceipt
+  >();
+  private readonly configRotationPreparations = new Map<
+    string,
+    ConfigDigestRotationPreparation
+  >();
   private readonly audit: AuditRecord[] = [];
 
   private requireState(): LeadershipState {
@@ -128,6 +247,167 @@ export class InMemoryWitnessStore implements WitnessStore {
     }
     this.candidates.set(candidate.candidate, structuredClone(candidate));
     this.audit.push(structuredClone(audit));
+  }
+
+  async getConfigDigestRotation(
+    rotationId: string,
+  ): Promise<ConfigDigestRotationReceipt | null> {
+    const receipt = this.configRotations.get(rotationId);
+    return receipt ? structuredClone(receipt) : null;
+  }
+
+  async getConfigDigestRotationAbort(
+    rotationId: string,
+  ): Promise<ConfigDigestRotationAbortReceipt | null> {
+    const receipt = this.configRotationAborts.get(rotationId);
+    return receipt ? structuredClone(receipt) : null;
+  }
+
+  async getConfigDigestRotationPreparation(
+    rotationId: string,
+  ): Promise<ConfigDigestRotationPreparation | null> {
+    const preparation = this.configRotationPreparations.get(rotationId);
+    return preparation ? structuredClone(preparation) : null;
+  }
+
+  async listConfigDigestRotationPreparations(): Promise<
+    ConfigDigestRotationPreparation[]
+  > {
+    return [...this.configRotationPreparations.values()].map((preparation) =>
+      structuredClone(preparation),
+    );
+  }
+
+  async prepareConfigDigestRotation(
+    mutation: ConfigDigestRotationPreparationMutation,
+  ): Promise<ConfigDigestRotationPreparation> {
+    if (
+      this.configRotations.has(mutation.preparation.rotationId) ||
+      this.configRotationAborts.has(mutation.preparation.rotationId) ||
+      this.configRotationPreparations.size > 0
+    ) {
+      throw new ConditionalWriteError("configuration rotation id already exists");
+    }
+    const state = this.requireState();
+    const baselineEpoch = Math.floor(
+      new Date(state.leaderBaselineAt ?? "").getTime() / 1000,
+    );
+    if (
+      state.currentLeader !== mutation.expectedLeader ||
+      state.fabricEpoch !== mutation.expectedEpoch ||
+      state.configDigest !== mutation.expectedCurrentDigest ||
+      state.timelineId !== mutation.expectedTimelineId ||
+      state.leaderWalPosition !== mutation.expectedLeaderWalPosition ||
+      state.upstreamSystemId !== mutation.expectedUpstreamSystemId ||
+      !Number.isFinite(baselineEpoch) ||
+      baselineEpoch < mutation.leaderBaselineFreshAfterEpoch
+    ) {
+      throw new ConditionalWriteError(
+        "configuration rotation leadership baseline changed",
+      );
+    }
+    if (
+      mutation.candidates.length < 2 ||
+      !mutation.candidates.every((condition) =>
+        rotationCandidateEligible(
+          this.candidates.get(condition.candidate),
+          condition,
+          mutation,
+        ),
+      )
+    ) {
+      throw new ConditionalWriteError(
+        "configuration rotation candidates are not eligible",
+      );
+    }
+    this.configRotationPreparations.set(
+      mutation.preparation.rotationId,
+      structuredClone(mutation.preparation),
+    );
+    this.audit.push(structuredClone(mutation.audit));
+    return structuredClone(mutation.preparation);
+  }
+
+  async commitConfigDigestRotation(
+    mutation: ConfigDigestRotationCommitMutation,
+  ): Promise<ConfigDigestRotationReceipt> {
+    if (this.configRotations.has(mutation.preparation.rotationId)) {
+      throw new ConditionalWriteError("configuration rotation id already exists");
+    }
+    const preparation = this.configRotationPreparations.get(
+      mutation.preparation.rotationId,
+    );
+    const state = this.requireState();
+    if (
+      !preparation ||
+      preparation.requestDigest !== mutation.preparation.requestDigest ||
+      preparation.preparationTokenHash !== mutation.preparationTokenHash ||
+      state.currentLeader !== preparation.expectedLeader ||
+      state.fabricEpoch !== preparation.expectedEpoch ||
+      state.configDigest !== preparation.expectedCurrentDigest ||
+      !rotationCommitCandidateEligible(
+        this.candidates.get(mutation.commitCandidate.candidate),
+        mutation,
+      )
+    ) {
+      throw new ConditionalWriteError(
+        "configuration rotation preparation is missing, consumed, stale, or lacks applied standby evidence",
+      );
+    }
+    this.state = structuredClone(mutation.nextState);
+    this.configRotationPreparations.delete(preparation.rotationId);
+    this.configRotations.set(
+      preparation.rotationId,
+      structuredClone(mutation.receipt),
+    );
+    this.audit.push(structuredClone(mutation.audit));
+    return structuredClone(mutation.receipt);
+  }
+
+  async abortConfigDigestRotation(
+    mutation: ConfigDigestRotationAbortMutation,
+  ): Promise<ConfigDigestRotationAbortReceipt> {
+    if (
+      this.configRotations.has(mutation.preparation.rotationId) ||
+      this.configRotationAborts.has(mutation.preparation.rotationId)
+    ) {
+      throw new ConditionalWriteError(
+        "configuration rotation id is already resolved",
+      );
+    }
+    const preparation = this.configRotationPreparations.get(
+      mutation.preparation.rotationId,
+    );
+    const state = this.requireState();
+    if (
+      !preparation ||
+      preparation.requestDigest !== mutation.preparation.requestDigest ||
+      preparation.preparationTokenHash !== mutation.preparationTokenHash ||
+      preparation.expiresAtEpoch >= mutation.nowEpoch ||
+      state.currentLeader !== preparation.expectedLeader ||
+      state.fabricEpoch !== preparation.expectedEpoch ||
+      state.configDigest !== preparation.expectedCurrentDigest ||
+      mutation.candidateDigestGuardHosts.some(
+        (host) =>
+          this.candidates.get(host)?.configDigest ===
+          preparation.candidateDigest,
+      ) ||
+      !rotationAbortCandidateEligible(
+        this.candidates.get(mutation.evidenceCandidate.candidate),
+        mutation,
+      )
+    ) {
+      throw new ConditionalWriteError(
+        "configuration rotation abort is premature, stale, or lacks old-digest standby evidence",
+      );
+    }
+    this.configRotationPreparations.delete(preparation.rotationId);
+    this.configRotationAborts.set(
+      preparation.rotationId,
+      structuredClone(mutation.receipt),
+    );
+    this.audit.push(structuredClone(mutation.audit));
+    return structuredClone(mutation.receipt);
   }
 
   async promote(mutation: PromotionMutation): Promise<LeadershipState> {

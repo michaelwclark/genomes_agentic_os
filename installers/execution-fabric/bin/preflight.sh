@@ -172,11 +172,11 @@ grep -Eq '^  runtime\.execution_fabric\.health:' \
 case "$expected_role" in
   primary)
     compose_file="$FABRIC_DEPLOYMENT_DIR/compose.genomesbox.yml"
-    required_secrets="postgres-password postgres-replication-password postgres-pgpass postgres-failback-pgpass valkey-acl valkey-health-password minio-root-password fabric-api-token fabric-submit-token fabric-admin-token"
+    required_secrets="postgres-password postgres-replication-password postgres-pgpass postgres-failback-pgpass valkey-acl valkey-health-password minio-root-user minio-root-password artifact-observer-access-key artifact-observer-secret-key fabric-api-token fabric-submit-token fabric-admin-token"
     ;;
   standby)
     compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
-    required_secrets="postgres-replication-pgpass valkey-acl valkey-health-password minio-root-password fabric-api-token fabric-submit-token fabric-admin-token"
+    required_secrets="postgres-replication-pgpass valkey-acl valkey-health-password minio-root-user minio-root-password artifact-observer-access-key artifact-observer-secret-key fabric-api-token fabric-submit-token fabric-admin-token"
     ;;
 esac
 
