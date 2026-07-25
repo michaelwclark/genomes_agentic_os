@@ -4,7 +4,9 @@ import json
 import os
 import plistlib
 import re
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import jsonschema
@@ -30,6 +32,12 @@ def _all_text(root: Path) -> str:
     )
 
 
+def _write_executable(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
 def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
     assert (DEPLOY / "README.md").is_file()
     assert (INSTALLERS / "README.md").is_file()
@@ -50,6 +58,15 @@ def test_deployment_assets_are_discoverable_from_one_focused_root() -> None:
         "kubernetes",
         "aws_witness",
     }
+    assert installer_manifest["platforms"]["linux"]["activator"].endswith(
+        "activate-linux.sh"
+    )
+    assert installer_manifest["platforms"]["macos"]["activator"].endswith(
+        "activate-macos.sh"
+    )
+    assert installer_manifest["runtime_contract"]["host_worker_executable"].endswith(
+        "bin/python-worker.sh"
+    )
 
 
 def test_emergency_bundle_manifest_matches_schema() -> None:
@@ -805,11 +822,267 @@ def test_shell_assets_are_syntax_valid() -> None:
     scripts = sorted((INSTALLERS / "bin").glob("*.sh"))
     scripts.extend(sorted(DEPLOY.glob("scripts/*.sh")))
     scripts.extend(
-        [INSTALLERS / "install-linux.sh", INSTALLERS / "install-macos.sh"]
+        [
+            INSTALLERS / "install-linux.sh",
+            INSTALLERS / "install-macos.sh",
+            INSTALLERS / "activate-linux.sh",
+            INSTALLERS / "activate-macos.sh",
+        ]
     )
     assert scripts
     for script in scripts:
         subprocess.run(["sh", "-n", str(script)], check=True)
+
+
+def test_linux_activation_is_explicit_preflight_gated_and_repeatable(
+    tmp_path: Path,
+) -> None:
+    installer = tmp_path / "installer"
+    installer.mkdir()
+    shutil.copy2(INSTALLERS / "activate-linux.sh", installer / "activate-linux.sh")
+    activation_log = tmp_path / "activation.log"
+    _write_executable(
+        installer / "bin/preflight.sh",
+        """#!/bin/sh
+printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
+[ "${PREFLIGHT_FAIL:-false}" != true ]
+""",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "id",
+        """#!/bin/sh
+[ "${1:-}" = -u ] && printf '0\n'
+""",
+    )
+    _write_executable(
+        fake_bin / "systemctl",
+        """#!/bin/sh
+printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
+""",
+    )
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    blocked = subprocess.run(
+        ["sh", str(installer / "activate-linux.sh"), "--apply"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**env, "PREFLIGHT_FAIL": "true"},
+    )
+    assert blocked.returncode != 0
+    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+        "preflight primary"
+    ]
+
+    activation_log.write_text("", encoding="utf-8")
+    for _ in range(2):
+        subprocess.run(
+            ["sh", str(installer / "activate-linux.sh"), "--apply"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "preflight primary"
+    assert lines.index("systemctl daemon-reload") > lines.index("preflight primary")
+    assert not any("--now" in line or "restart" in line for line in lines)
+    assert lines.count(
+        "systemctl start genomes-agentic-os-execution-fabric-primary.service"
+    ) == 2
+
+
+def test_macos_activation_preflights_before_bootstrap_and_skips_loaded_jobs(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installer = tmp_path / "installer"
+    installer.mkdir()
+    shutil.copy2(INSTALLERS / "activate-macos.sh", installer / "activate-macos.sh")
+    activation_log = tmp_path / "activation.log"
+    launch_state = tmp_path / "launch-state"
+    launch_state.mkdir()
+    _write_executable(
+        installer / "bin/preflight.sh",
+        """#!/bin/sh
+printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
+[ "${PREFLIGHT_FAIL:-false}" != true ]
+""",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(
+        fake_bin / "id",
+        """#!/bin/sh
+[ "${1:-}" = -u ] && printf '501\n'
+""",
+    )
+    _write_executable(
+        fake_bin / "launchctl",
+        """#!/bin/sh
+case "$1" in
+  print)
+    label=${2##*/}
+    [ -f "$LAUNCH_STATE/$label" ]
+    ;;
+  bootstrap)
+    label=$(basename "$3" .plist)
+    printf 'bootstrap %s\n' "$label" >>"$ACTIVATION_LOG"
+    : >"$LAUNCH_STATE/$label"
+    ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    launch_agents = home / "Library/LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    suffixes = (
+        "standby",
+        "worker",
+        "observer",
+        "watchdog",
+        "alarm-dispatcher",
+        "artifact-replication",
+        "candidate-reporter-health",
+        "scheduler-role",
+    )
+    for suffix in suffixes:
+        (
+            launch_agents
+            / f"com.genomes.agentic-os.execution-fabric.{suffix}.plist"
+        ).write_text("<plist/>", encoding="utf-8")
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "HOME": str(home),
+        "LAUNCH_STATE": str(launch_state),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    blocked = subprocess.run(
+        ["sh", str(installer / "activate-macos.sh"), "--apply"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**env, "PREFLIGHT_FAIL": "true"},
+    )
+    assert blocked.returncode != 0
+    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+        "preflight standby"
+    ]
+
+    activation_log.write_text("", encoding="utf-8")
+    for _ in range(2):
+        subprocess.run(
+            ["sh", str(installer / "activate-macos.sh"), "--apply"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "preflight standby"
+    assert lines.count("preflight standby") == 2
+    assert len([line for line in lines if line.startswith("bootstrap ")]) == len(
+        suffixes
+    )
+
+
+def test_installers_can_activate_an_existing_current_release_without_recopy() -> None:
+    for platform in ("linux", "macos"):
+        script = (INSTALLERS / f"install-{platform}.sh").read_text(encoding="utf-8")
+        assert "already_installed=true" in script
+        assert "release is installed but is not current" in script
+        assert f"activate-{platform}.sh" in script
+        assert '"$activator" --apply' in script
+        assert "cp -R" in script.split("else", maxsplit=1)[1]
+
+
+def test_macos_installer_rerun_activates_existing_release_without_reinstall(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    activation_log = tmp_path / "activation.log"
+    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(fake_bin / "plutil", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        fake_bin / "launchctl",
+        """#!/bin/sh
+case "$1" in
+  print) exit 1 ;;
+  bootstrap) printf 'bootstrap %s\n' "$3" >>"$ACTIVATION_LOG" ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    env = {
+        **os.environ,
+        "ACTIVATION_LOG": str(activation_log),
+        "HOME": str(home),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+    command = [
+        "sh",
+        str(INSTALLERS / "install-macos.sh"),
+        "--apply",
+        "--source-root",
+        str(SOURCE_ROOT),
+        "--release",
+        "test-release",
+    ]
+    subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+
+    release = (
+        home
+        / "Library/Application Support/GenomesAgenticOS/execution-fabric"
+        / "releases/test-release"
+    )
+    _write_executable(
+        release / "installers/bin/preflight.sh",
+        """#!/bin/sh
+printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
+""",
+    )
+    activated = subprocess.run(
+        [*command, "--enable"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert activated.returncode == 0, activated.stderr
+    lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "preflight standby"
+    assert len([line for line in lines if line.startswith("bootstrap ")]) == 8
+    assert "preflight %s" in (
+        release / "installers/bin/preflight.sh"
+    ).read_text(encoding="utf-8")
+
+
+def test_packaged_python_worker_is_the_default_governed_host_entrypoint() -> None:
+    launcher = INSTALLERS / "bin/python-worker.sh"
+    result = subprocess.run(
+        ["sh", str(launcher), "--preflight"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "FABRIC_WORKER_PYTHON": sys.executable,
+            "PYTHONPATH": str(SOURCE_ROOT / "src"),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    worker = (INSTALLERS / "bin/worker.sh").read_text(encoding="utf-8")
+    preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
+    assert '${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}' in worker
+    assert '"$worker_executable" --preflight' in preflight
 
 
 def test_workers_use_stable_signed_leader_gateway_and_receipts_are_verified() -> None:

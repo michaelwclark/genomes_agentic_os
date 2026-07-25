@@ -6,7 +6,7 @@ script_dir=$(CDPATH="" cd -- "$(dirname -- "$0")" && pwd)
 . "$script_dir/_lib.sh"
 fabric_load_runtime
 
-: "${FABRIC_WORKER_EXECUTABLE:?FABRIC_WORKER_EXECUTABLE is required}"
+FABRIC_WORKER_EXECUTABLE=${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}
 
 if [ ! -x "$FABRIC_WORKER_EXECUTABLE" ]; then
   echo "configured worker executable is unavailable: $FABRIC_WORKER_EXECUTABLE" >&2

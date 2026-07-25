@@ -97,6 +97,17 @@ do
   fi
 done
 if [ "$expected_role" = standby ]; then
+  worker_executable=${FABRIC_WORKER_EXECUTABLE:-"$script_dir/python-worker.sh"}
+  [ -x "$worker_executable" ] || {
+    echo "host worker executable is unavailable: $worker_executable" >&2
+    exit 78
+  }
+  if [ "$worker_executable" = "$script_dir/python-worker.sh" ]; then
+    "$worker_executable" --preflight || {
+      echo "packaged Python worker failed its import preflight" >&2
+      exit 78
+    }
+  fi
   : "${FABRIC_ALARM_DISPATCHER_TOKEN_FILE:?alarm dispatcher token file is required}"
   dispatcher_id=${FABRIC_ALARM_DISPATCHER_CONSUMER_ID:-standby-agentic-os-notifier}
   dispatcher_source=${FABRIC_ALARM_DISPATCHER_SOURCE:-agentic-os-notify}

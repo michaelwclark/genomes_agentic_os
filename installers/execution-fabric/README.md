@@ -20,13 +20,40 @@ container port. Keep the replication pgpass entry aligned when overriding it.
 observer, watchdog, and backup timers. `install-macos.sh` installs launchd
 definitions for the bigmac warm standby, worker, observer, and watchdog.
 
-Both installers are inert without `--apply`. Service loading is a separate
-`--enable` choice so package installation is not mistaken for runtime
-activation.
+Both installers are inert without `--apply`. Service activation is a separate,
+explicit operation:
 
-The worker definition executes `FABRIC_WORKER_EXECUTABLE`. No worker binary is
-invented by the deployment layer; it must implement the public `/api/v1`
-register, heartbeat, claim, complete, and fail protocol.
+```sh
+# Linux, after runtime.env and every referenced secret/config file are ready.
+sudo /opt/genomes-agentic-os/execution-fabric/current/installers/activate-linux.sh --apply
+
+# macOS, after runtime.env and every referenced secret/config file are ready.
+"$HOME/Library/Application Support/GenomesAgenticOS/execution-fabric/current/installers/activate-macos.sh" --apply
+```
+
+The activators run the complete `bin/preflight.sh` role check before the first
+`systemctl` or `launchctl` mutation. A failed preflight starts nothing.
+Successful activation is idempotent: systemd starts already-active units
+without restarting them, and the macOS activator skips labels already loaded in
+the user launchd domain.
+
+`install-*.sh --enable` remains an explicit install-and-activate convenience
+and delegates to the same activator. Re-running the installer for the same
+current release does not copy the release again or exit 73; adding `--enable`
+activates that inert release. It still refuses an incomplete release or a
+previous release that is installed but is not the selected `current` release,
+so an installer rerun cannot become an accidental rollback.
+
+The host worker has a package-owned executable at
+`current/installers/bin/python-worker.sh`. `bin/worker.sh` selects it by default
+and points it at the stable signed-leader gateway. The executable launches the
+shipped `genomes_agentic_os.execution_fabric_worker` module, so an operator no
+longer needs to create an untracked wrapper. Set `FABRIC_WORKER_PYTHON` when the
+package lives in a dedicated virtual environment; it may be an absolute path or
+an executable name. `FABRIC_WORKER_EXECUTABLE` remains an explicit advanced
+override for another governed worker implementation of the public `/api/v1`
+register, heartbeat, claim, complete, and fail protocol. Standby preflight
+verifies that the default Python module is importable before launchd is touched.
 
 Control-plane roles require
 `FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE`, a protected JSON map keyed by

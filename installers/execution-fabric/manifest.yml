@@ -7,10 +7,12 @@ canonical_instance_config: harness/config/execution-fabric.yml
 platforms:
   linux:
     installer: installers/execution-fabric/install-linux.sh
+    activator: installers/execution-fabric/activate-linux.sh
     service_manager: systemd
     role: primary
   macos:
     installer: installers/execution-fabric/install-macos.sh
+    activator: installers/execution-fabric/activate-macos.sh
     service_manager: launchd
     role: warm_standby
   kubernetes:
@@ -30,3 +32,4 @@ runtime_contract:
   witness_activation_requires_operator: true
   artifact_replication_mode: active_active_single_writer
   artifact_replication_receipt_required_for_promotion: true
+  host_worker_executable: installers/execution-fabric/bin/python-worker.sh
