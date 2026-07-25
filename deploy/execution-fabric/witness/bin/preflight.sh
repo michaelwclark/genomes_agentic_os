@@ -127,6 +127,13 @@ case "$WITNESS_STATE_FILE" in
     exit 78
     ;;
 esac
+state_relative=${WITNESS_STATE_FILE#/var/lib/execution-fabric-witness/}
+case "/$state_relative/" in
+  */../*|*/./*)
+    echo "portable WITNESS_STATE_FILE cannot contain relative path segments" >&2
+    exit 78
+    ;;
+esac
 
 "$container_runtime" image inspect "$FABRIC_WITNESS_IMAGE" >/dev/null 2>&1 || {
   echo "digest-pinned witness image is not installed locally" >&2
@@ -136,6 +143,21 @@ esac
 mkdir -p "$WITNESS_STATE_DIR" \
   "${WITNESS_RUNTIME_STATE_DIR:-$WITNESS_STATE_DIR/monitor}" \
   "$WITNESS_PREPARED_SECRETS_DIR"
+host_database="$WITNESS_STATE_DIR/$state_relative"
+host_sentinel="${host_database}.initialized"
+host_backup="${host_database}.backup"
+if [ -e "$host_sentinel" ]; then
+  [ -s "$host_database" ] && [ -s "$host_backup" ] || {
+    echo "initialized witness state is incomplete; restore database, sentinel, and backup together" >&2
+    exit 78
+  }
+elif [ -e "$host_database" ] || [ -e "$host_backup" ]; then
+  echo "witness database or backup exists without its bootstrap sentinel" >&2
+  exit 78
+elif [ "${WITNESS_BOOTSTRAP_ONCE:-false}" != true ]; then
+  echo "first witness start requires WITNESS_BOOTSTRAP_ONCE=true" >&2
+  exit 78
+fi
 chown "$WITNESS_UID:$WITNESS_GID" "$WITNESS_STATE_DIR" \
   "$WITNESS_PREPARED_SECRETS_DIR" || {
   echo "cannot assign protected witness state to numeric runtime identity $WITNESS_UID:$WITNESS_GID" >&2

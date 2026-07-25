@@ -13,6 +13,21 @@ fi
 
 runtime=${WITNESS_CONTAINER_RUNTIME:-docker}
 name=${WITNESS_CONTAINER_NAME:-genomes-agentic-os-execution-fabric-witness}
+witness_wait_ready() {
+  timeout=${WITNESS_START_TIMEOUT_SECONDS:-30}
+  attempt=0
+  while [ "$attempt" -lt "$timeout" ]; do
+    if "$script_dir/health.sh" >/dev/null 2>&1; then
+      printf '%s\n' "witness ready: $name"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  "$runtime" logs --tail 100 "$name" >&2 || true
+  echo "witness container did not become durably ready" >&2
+  return 70
+}
 if "$runtime" container inspect "$name" >/dev/null 2>&1; then
   running=$("$runtime" inspect --format '{{.State.Running}}' "$name")
   installed_image=$("$runtime" inspect --format '{{.Config.Image}}' "$name")
@@ -25,10 +40,11 @@ if "$runtime" container inspect "$name" >/dev/null 2>&1; then
     exit 0
   fi
   "$runtime" start "$name" >/dev/null
-  exit 0
+  witness_wait_ready
+  exit $?
 fi
 
-exec "$runtime" run --detach \
+"$runtime" run --detach \
   --name "$name" \
   --restart unless-stopped \
   --network host \
@@ -44,4 +60,5 @@ exec "$runtime" run --detach \
   --env WITNESS_CANDIDATE_TOKENS_FILE=/run/secrets/execution-fabric-witness/candidate-tokens.json \
   --env WITNESS_ADMIN_TOKEN_FILE=/run/secrets/execution-fabric-witness/admin-token \
   --env WITNESS_SIGNING_PRIVATE_KEY_FILE=/run/secrets/execution-fabric-witness/signing-private-key.pem \
-  "$FABRIC_WITNESS_IMAGE"
+  "$FABRIC_WITNESS_IMAGE" >/dev/null
+witness_wait_ready

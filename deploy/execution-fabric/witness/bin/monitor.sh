@@ -34,7 +34,8 @@ if output=$("$script_dir/health.sh" 2>&1); then
     jq -e --arg cluster "$WITNESS_CLUSTER_ID" --arg now "$now" '
       .schemaVersion=="execution-fabric-witness-promotion-eligibility/v1" and
       .clusterId==$cluster and .eligible==true and
-      (.expiresAt | type=="string") and .expiresAt>$now
+      (.expiresAt | type=="string") and
+      ((.expiresAt | fromdateiso8601) > ($now | fromdateiso8601))
     ' "$eligibility_receipt" >/dev/null 2>&1; then
     eligibility=true
     eligibility_reason=validated_drill_receipt
