@@ -925,7 +925,7 @@ def register(subparsers) -> None:
     runtime_status_parser.set_defaults(handler=handle_runtime_status)
     runtime_fallback_parser = runtime_subparsers.add_parser(
         "fallback",
-        help="Inspect or operate genomesbox-primary, bigmac-local fallback safety.",
+        help="Inspect or operate primary-control-plane to host-local fallback safety.",
     )
     runtime_fallback_subparsers = runtime_fallback_parser.add_subparsers(
         dest="fallback_command", required=True
@@ -937,14 +937,14 @@ def register(subparsers) -> None:
     _add_json_arg(fallback_status_parser)
     fallback_status_parser.set_defaults(handler=handle_runtime_fallback_status)
     fallback_probe_parser = runtime_fallback_subparsers.add_parser(
-        "probe", help="Probe genomesbox and activate local fallback after sustained failure."
+        "probe", help="Probe the primary control plane and activate local fallback after sustained failure."
     )
     fallback_probe_parser.add_argument("--root", default=DEFAULT_ROOT)
     _add_safe_mutation_mode(fallback_probe_parser)
     _add_json_arg(fallback_probe_parser)
     fallback_probe_parser.set_defaults(handler=handle_runtime_fallback_probe)
     fallback_activate_parser = runtime_fallback_subparsers.add_parser(
-        "activate", help="Manually latch bigmac into local fallback mode."
+        "activate", help="Manually latch this host into local fallback mode."
     )
     fallback_activate_parser.add_argument("--root", default=DEFAULT_ROOT)
     fallback_activate_parser.add_argument("--reason", default="operator_requested")
@@ -952,7 +952,7 @@ def register(subparsers) -> None:
     _add_json_arg(fallback_activate_parser)
     fallback_activate_parser.set_defaults(handler=handle_runtime_fallback_activate)
     fallback_failback_parser = runtime_fallback_subparsers.add_parser(
-        "failback", help="Return to genomesbox only after its readiness is proven."
+        "failback", help="Return to the primary only after its readiness is proven."
     )
     fallback_failback_parser.add_argument("--root", default=DEFAULT_ROOT)
     _add_safe_mutation_mode(fallback_failback_parser)
