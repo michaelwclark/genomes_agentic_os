@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - Installed Compose releases now mount canonical queue policy and managed schema
   from `FABRIC_OS_ROOT` instead of invalid source-tree-relative paths.
+- Emergency bundles now consume the released seven-image JSON lock through one
+  strict env materializer and reject missing witness/worker pins or drift
+  between canonical and runtime lock forms.
 
 ## [0.4.2] - 2026-07-25
 

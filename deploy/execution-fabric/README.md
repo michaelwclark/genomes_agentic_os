@@ -23,6 +23,18 @@ resolves each one to a Linux AMD64/ARM64 index digest and the release builder
 rejects missing, mutable, or repository-substituted references. Runtime config
 uses only the seven exact digest references in the lock.
 
+The released JSON lock is the only authored image-lock format. Materialize its
+deterministic seven-variable runtime projection with:
+
+```bash
+installers/execution-fabric/bin/materialize-image-lock.sh \
+  execution-fabric-image-lock.json > images.lock.env
+```
+
+The materializer rejects missing, extra, mutable, or all-zero references. It
+covers the control plane, leadership witness, worker, PostgreSQL, Valkey,
+MinIO, and MinIO client. Do not maintain a second hand-written env lock.
+
 ## Canonical configuration
 
 Do not add host-specific queue-policy files here. Runtime installation consumes:
@@ -368,7 +380,8 @@ The portable OCI manifest, installer, Tailscale-only bind preflight, monitor,
 and activation runbook are under `witness/`. Source availability does not
 activate the witness. Full HA requires a real independent host, immutable
 image, network policy, protected secrets, durable state, candidate reporters,
-alarms, and a successful failover/failback drill. A personal installation may
+alarms, and a successful failover/failback drill remain full-HA operator prerequisites.
+A personal installation may
 instead select `standalone_primary`, which starts the signed witness alongside
 genomesbox but never authorizes promotion or failback. Select
 `manual_fail_closed` when neither authority is intended; no witness starts and
@@ -394,7 +407,8 @@ Additional activation prerequisites are deliberately explicit:
 `emergency-bundle/manifest.yml` is the discoverable, versioned contract. The
 builder creates a checksum manifest containing:
 
-- the immutable image lock;
+- the canonical immutable JSON image lock and its deterministic env
+  materialization;
 - Compose, systemd, launchd, and Helm deployment assets;
 - the four canonical instance configuration files;
 - promotion, failback, drill, observer, and watchdog commands;
@@ -402,6 +416,8 @@ builder creates a checksum manifest containing:
 
 Secrets are never copied. Build output is written outside the source tree. Run
 the validator after every release/config change and before every drill.
+The builder accepts the published JSON lock as `--image-lock`; validation
+regenerates `images.lock.env` and requires an exact byte match.
 
 ## Readiness and drills
 

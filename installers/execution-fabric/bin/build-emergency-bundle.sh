@@ -42,7 +42,9 @@ mkdir -p "$bundle/source" "$bundle/config"
 
 cp -R "$source_root/deploy/execution-fabric" "$bundle/source/deploy"
 cp -R "$source_root/installers/execution-fabric" "$bundle/source/installers"
-cp "$image_lock" "$bundle/images.lock.env"
+cp "$image_lock" "$bundle/execution-fabric-image-lock.json"
+"$script_dir/materialize-image-lock.sh" \
+  "$bundle/execution-fabric-image-lock.json" >"$bundle/images.lock.env"
 
 copy_config() {
   relative=$1

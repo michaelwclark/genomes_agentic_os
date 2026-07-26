@@ -15,12 +15,14 @@ required_files="
 RELEASE
 CHECKSUMS.sha256
 images.lock.env
+execution-fabric-image-lock.json
 config/harness/config/execution-fabric.yml
 source/deploy/compose.genomesbox.yml
 source/deploy/compose.bigmac.yml
 source/deploy/emergency-bundle/manifest.yml
 source/installers/bin/promote.sh
 source/installers/bin/failback.sh
+source/installers/bin/materialize-image-lock.sh
 "
 for relative in $required_files; do
   [ -s "$bundle/$relative" ] || {
@@ -29,28 +31,18 @@ for relative in $required_files; do
   }
 done
 
-if grep -E '(^|[=:[:space:]])[^#[:space:]]+:latest([[:space:]]|$)' "$bundle/images.lock.env" >/dev/null; then
-  echo "latest image tags are prohibited" >&2
+materialized=$(mktemp "${TMPDIR:-/tmp}/execution-fabric-image-lock.XXXXXX")
+trap 'rm -f "$materialized"' EXIT HUP INT TERM
+if ! "$bundle/source/installers/bin/materialize-image-lock.sh" \
+  "$bundle/execution-fabric-image-lock.json" >"$materialized"
+then
+  echo "canonical execution fabric image lock is invalid" >&2
   exit 78
 fi
-
-for variable in \
-  FABRIC_CONTROL_PLANE_IMAGE \
-  FABRIC_POSTGRES_IMAGE \
-  FABRIC_VALKEY_IMAGE \
-  FABRIC_MINIO_IMAGE \
-  FABRIC_MINIO_CLIENT_IMAGE
-do
-  value=$(sed -n "s/^${variable}=//p" "$bundle/images.lock.env")
-  printf '%s\n' "$value" | grep -Eq '^.+@sha256:[a-f0-9]{64}$' || {
-    echo "$variable must be locked to an immutable sha256 digest" >&2
-    exit 78
-  }
-  printf '%s\n' "$value" | grep -Eq '@sha256:0{64}$' && {
-    echo "$variable uses the prohibited all-zero placeholder digest" >&2
-    exit 78
-  }
-done
+cmp -s "$materialized" "$bundle/images.lock.env" || {
+  echo "materialized image environment does not match the canonical JSON lock" >&2
+  exit 78
+}
 
 [ "$(sed -n 's/^secrets_included=//p' "$bundle/RELEASE")" = false ] || {
   echo "bundle claims to include secrets; refusing validation" >&2

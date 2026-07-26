@@ -35,15 +35,41 @@
     "image_lock": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["file", "format", "required_variables", "reference_pattern"],
+      "required": [
+        "file",
+        "format",
+        "materialized_file",
+        "materialized_format",
+        "required_images",
+        "required_variables",
+        "reference_pattern"
+      ],
       "properties": {
-        "file": {"const": "images.lock.env"},
-        "format": {"const": "env"},
+        "file": {"const": "execution-fabric-image-lock.json"},
+        "format": {"const": "json"},
+        "materialized_file": {"const": "images.lock.env"},
+        "materialized_format": {"const": "env"},
+        "required_images": {
+          "const": [
+            "control_plane",
+            "leadership_witness",
+            "worker",
+            "postgres",
+            "valkey",
+            "minio",
+            "minio_client"
+          ]
+        },
         "required_variables": {
-          "type": "array",
-          "minItems": 5,
-          "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^FABRIC_[A-Z0-9_]+_IMAGE$"}
+          "const": [
+            "FABRIC_CONTROL_PLANE_IMAGE",
+            "FABRIC_WITNESS_IMAGE",
+            "FABRIC_WORKER_IMAGE",
+            "FABRIC_POSTGRES_IMAGE",
+            "FABRIC_VALKEY_IMAGE",
+            "FABRIC_MINIO_IMAGE",
+            "FABRIC_MINIO_CLIENT_IMAGE"
+          ]
         },
         "reference_pattern": {"type": "string", "minLength": 1}
       }

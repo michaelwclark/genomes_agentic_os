@@ -517,6 +517,13 @@ digests. It records all seven exact repository digests, validates
 Python/service/API versions plus config/schema/source-manifest hashes, and lets
 exactly one job create the immutable GitHub release.
 
+`execution-fabric-image-lock.json` is the sole authored lock. The released
+`materialize-image-lock.sh` validates its exact seven-image schema and emits
+the deterministic `FABRIC_*_IMAGE` projection used by Compose and recovery
+tooling. Emergency bundles retain the JSON source and derived env projection,
+then regenerate and compare the latter during validation. A recovery bundle
+therefore cannot omit or independently substitute the witness or worker image.
+
 Local release preflight:
 
 ```bash

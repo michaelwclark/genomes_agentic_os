@@ -297,8 +297,9 @@ def build(
     }
     manifest_path = output / "execution-fabric-release-manifest.json"
     write_json(manifest_path, manifest)
+    image_lock_path = output / "execution-fabric-image-lock.json"
     write_json(
-        output / "execution-fabric-image-lock.json",
+        image_lock_path,
         {
             "schema_version": "execution-fabric-image-lock/v1",
             "release_version": validated["versions"]["release"],
@@ -318,6 +319,7 @@ def build(
             schema,
             STATIC_MANIFEST,
             manifest_path,
+            image_lock_path,
         ],
     )
     assets = sorted(path for path in output.iterdir() if path.is_file())

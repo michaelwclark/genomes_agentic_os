@@ -1587,19 +1587,27 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         target.write_text("schema_version: 1\n", encoding="utf-8")
 
     digest = "1" * 64
-    image_lock = tmp_path / "images.lock.env"
-    image_lock.write_text(
-        "\n".join(
-            f"{name}=example.invalid/{name.lower()}@sha256:{digest}"
-            for name in (
-                "FABRIC_CONTROL_PLANE_IMAGE",
-                "FABRIC_POSTGRES_IMAGE",
-                "FABRIC_VALKEY_IMAGE",
-                "FABRIC_MINIO_IMAGE",
-                "FABRIC_MINIO_CLIENT_IMAGE",
-            )
+    images = {
+        name: f"example.invalid/{name.replace('_', '-')}@sha256:{digest}"
+        for name in (
+            "control_plane",
+            "leadership_witness",
+            "worker",
+            "postgres",
+            "valkey",
+            "minio",
+            "minio_client",
         )
-        + "\n",
+    }
+    image_lock = tmp_path / "execution-fabric-image-lock.json"
+    image_lock.write_text(
+        json.dumps(
+            {
+                "schema_version": "execution-fabric-image-lock/v1",
+                "release_version": "test-release",
+                "images": images,
+            }
+        ),
         encoding="utf-8",
     )
     output = tmp_path / "bundle"
@@ -1629,7 +1637,71 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         text=True,
     )
     assert (output / "CHECKSUMS.sha256").is_file()
+    assert json.loads(
+        (output / "execution-fabric-image-lock.json").read_text(encoding="utf-8")
+    )["images"] == images
+    materialized = (output / "images.lock.env").read_text(encoding="utf-8")
+    for variable in (
+        "FABRIC_CONTROL_PLANE_IMAGE",
+        "FABRIC_WITNESS_IMAGE",
+        "FABRIC_WORKER_IMAGE",
+        "FABRIC_POSTGRES_IMAGE",
+        "FABRIC_VALKEY_IMAGE",
+        "FABRIC_MINIO_IMAGE",
+        "FABRIC_MINIO_CLIENT_IMAGE",
+    ):
+        assert f"{variable}=" in materialized
     assert "secrets_included=false" in (output / "RELEASE").read_text(encoding="utf-8")
+
+    (output / "images.lock.env").write_text(
+        materialized.replace("FABRIC_WITNESS_IMAGE=", "FABRIC_WITNESS_IMAGE=mutable:"),
+        encoding="utf-8",
+    )
+    invalid = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/validate-emergency-bundle.sh"), str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert invalid.returncode == 78
+    assert "does not match the canonical JSON lock" in invalid.stderr
+
+
+def test_image_lock_materializer_rejects_missing_or_mutable_images(
+    tmp_path: Path,
+) -> None:
+    digest = "2" * 64
+    lock = {
+        "schema_version": "execution-fabric-image-lock/v1",
+        "release_version": "test-release",
+        "images": {
+            name: f"example.invalid/{name.replace('_', '-')}@sha256:{digest}"
+            for name in (
+                "control_plane",
+                "leadership_witness",
+                "worker",
+                "postgres",
+                "valkey",
+                "minio",
+                "minio_client",
+            )
+        },
+    }
+    lock_path = tmp_path / "lock.json"
+    command = [
+        "sh",
+        str(INSTALLERS / "bin/materialize-image-lock.sh"),
+        str(lock_path),
+    ]
+    lock["images"].pop("leadership_witness")
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    missing = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert missing.returncode != 0
+
+    lock["images"]["leadership_witness"] = "example.invalid/witness:latest"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    mutable = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert mutable.returncode != 0
 
 
 def test_documentation_exposes_the_implemented_witness_and_activation_boundary() -> None:
@@ -1673,6 +1745,7 @@ def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_moun
         ) in text
 
     preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
+    assert "FABRIC_MINIO_CLIENT_IMAGE" in preflight
     assert "standalone_primary requires automatic failover" in preflight
     assert ".effective.execution_fabric.standalone_primary.enabled==true" in preflight
     assert ".effective.execution_fabric.standalone_primary.host_id==$host" in preflight

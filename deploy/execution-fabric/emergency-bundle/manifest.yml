@@ -17,10 +17,22 @@ required_assets:
   - deploy/execution-fabric/witness
   - installers/execution-fabric
 image_lock:
-  file: images.lock.env
-  format: env
+  file: execution-fabric-image-lock.json
+  format: json
+  materialized_file: images.lock.env
+  materialized_format: env
+  required_images:
+    - control_plane
+    - leadership_witness
+    - worker
+    - postgres
+    - valkey
+    - minio
+    - minio_client
   required_variables:
     - FABRIC_CONTROL_PLANE_IMAGE
+    - FABRIC_WITNESS_IMAGE
+    - FABRIC_WORKER_IMAGE
     - FABRIC_POSTGRES_IMAGE
     - FABRIC_VALKEY_IMAGE
     - FABRIC_MINIO_IMAGE

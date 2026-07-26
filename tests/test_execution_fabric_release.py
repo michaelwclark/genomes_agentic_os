@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 import subprocess
 import sys
+import tarfile
 import tomllib
 
 import pytest
@@ -186,6 +187,24 @@ def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> 
         )
     )
     assert image_lock["images"] == manifest["images"]
+    materialized = subprocess.run(
+        [
+            "sh",
+            str(
+                ROOT
+                / "installers/execution-fabric/bin/materialize-image-lock.sh"
+            ),
+            str(tmp_path / "execution-fabric-image-lock.json"),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert materialized.returncode == 0, materialized.stderr
+    assert len(materialized.stdout.splitlines()) == 7
+    assert "FABRIC_WITNESS_IMAGE=" in materialized.stdout
+    assert "FABRIC_WORKER_IMAGE=" in materialized.stdout
     digest_image = runpy.run_path(str(SCRIPT))["DIGEST_IMAGE"]
     for image in image_lock["images"].values():
         assert digest_image.fullmatch(image)
@@ -195,6 +214,13 @@ def test_release_builder_emits_digest_locked_portable_assets(tmp_path: Path) -> 
     assert source_contract["path"] == str(IMAGE_SOURCES.relative_to(ROOT))
     assert len(source_contract["sha256"]) == 64
     assert (tmp_path / "execution-fabric-emergency-bundle.tar.gz").is_file()
+    with tarfile.open(
+        tmp_path / "execution-fabric-emergency-bundle.tar.gz", "r:gz"
+    ) as archive:
+        assert (
+            "release-generated/execution-fabric-image-lock.json"
+            in archive.getnames()
+        )
     assert "execution-fabric-image-lock.json" in (
         tmp_path / "SHA256SUMS"
     ).read_text(encoding="utf-8")

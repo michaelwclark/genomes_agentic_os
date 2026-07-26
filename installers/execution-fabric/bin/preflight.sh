@@ -298,7 +298,8 @@ for variable in \
   FABRIC_CONTROL_PLANE_IMAGE \
   FABRIC_POSTGRES_IMAGE \
   FABRIC_VALKEY_IMAGE \
-  FABRIC_MINIO_IMAGE
+  FABRIC_MINIO_IMAGE \
+  FABRIC_MINIO_CLIENT_IMAGE
 do
   eval "value=\${$variable:-}"
   printf '%s\n' "$value" | grep -Eq '^.+@sha256:[a-f0-9]{64}$' || {

@@ -12,6 +12,13 @@ They do not copy secrets, do not rewrite
 operator provisions `runtime.env`, the referenced secret files, and an image
 lock with immutable digests.
 
+Release artifacts publish one canonical `execution-fabric-image-lock.json`.
+Use `bin/materialize-image-lock.sh LOCK.json` to produce its shell-safe,
+deterministic env projection. The helper validates exactly seven digest-pinned
+images, including leadership witness and worker. `build-emergency-bundle.sh`
+accepts that JSON directly and includes both it and the derived env form; bundle
+validation regenerates the projection and rejects drift.
+
 ## Personal standalone genomesbox primary
 
 Set `FABRIC_WITNESS_MODE=standalone_primary` only on the configured Linux
