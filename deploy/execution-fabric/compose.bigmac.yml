@@ -290,6 +290,8 @@ services:
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
 
   healer:
     image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
@@ -362,6 +364,8 @@ services:
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
 
   scheduler:
     extends:
@@ -396,6 +400,8 @@ services:
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3181/healthz || exit 1"]
 
 networks:
   fabric-private:

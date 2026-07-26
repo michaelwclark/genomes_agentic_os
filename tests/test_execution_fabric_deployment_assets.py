@@ -297,6 +297,14 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
             "dist/src/main.js",
         ]
         observer = compose["services"]["observer"]
+        assert observer["healthcheck"]["test"] == ["CMD-SHELL", "kill -0 1"]
+        assert compose["services"]["healer"]["healthcheck"]["test"] == [
+            "CMD-SHELL",
+            "kill -0 1",
+        ]
+        assert compose["services"]["gateway"]["healthcheck"]["test"][-1].endswith(
+            "127.0.0.1:3181/healthz || exit 1"
+        )
         assert forbidden_environment.isdisjoint(observer["environment"])
         assert set(observer["secrets"]) == {
             "postgres-password",

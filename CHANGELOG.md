@@ -16,6 +16,9 @@ All notable changes to this project are documented here. The format follows
 - Preserve the control-plane image command when Compose overrides its
   datastore-secret entrypoint; without the explicit command the container
   exited successfully before opening the API or applying its schema.
+- Validate every artifact/API credential that the control plane requires at
+  preflight and override image-default health checks for loop and gateway roles
+  so healthy workers are not reported against the control-plane port.
 
 ## [0.5.1] - 2026-07-26
 
