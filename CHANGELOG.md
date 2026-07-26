@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-25
 
 ### Added
 - Personal `remote_with_local_fallback` transport for genomesbox-primary
