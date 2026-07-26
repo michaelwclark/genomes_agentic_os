@@ -28,6 +28,20 @@ if [[ -n "${TRANSCRIPT}" && "${TRANSCRIPT}" == *.jsonl && -f "${TRANSCRIPT}" ]];
   N_TURNS="$(wc -l < "${TRANSCRIPT}" 2>/dev/null | tr -d ' ' || echo 0)"
 fi
 
+# CC-383: per-tool-call byte accounting, derived from the transcript we already
+# have here. Backgrounded and fully best-effort — telemetry must never delay or
+# fail a Stop hook, and stdout below must stay byte-identical.
+if [[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]]; then
+  (
+    python3 -m genomes_agentic_os.tool_byte_accounting \
+      --transcript "${TRANSCRIPT}" \
+      --session-id "${SESSION_ID}" \
+      --verified-at "${TS}" \
+      >> "${LOG_FILE}" 2>&1 || true
+  ) &
+  disown 2>/dev/null || true
+fi
+
 CONTENT="${HOST}/${AGENT} session ${SESSION_ID} ended ${TS}: cwd=${CWD}, turns=${N_TURNS}, transcript=${TRANSCRIPT:-none}"
 PERSONA="${AGENT}-${HOST}"
 RPC_BODY="$(jq -n \
