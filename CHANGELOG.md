@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.4] - 2026-07-26
+
+### Fixed
+- Preserve the valid JSON boolean `false` when the personal-fallback watchdog
+  reads primary readiness. The previous `jq -e` invocation activated the local
+  fallback state but exited before emitting the required critical alert.
+- Add an executable watchdog regression proving that a standby-to-active
+  transition with `primary_ready=false` returns successfully and invokes the
+  Agentic OS notifier at critical severity.
+
 ## [0.5.3] - 2026-07-26
 
 ### Fixed

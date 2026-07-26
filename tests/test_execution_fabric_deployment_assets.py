@@ -956,6 +956,60 @@ def test_candidate_reporting_is_measured_fresh_and_independently_alerted() -> No
     assert "candidate-reporter service is missing" in preflight
 
 
+def test_personal_fallback_watchdog_alerts_when_primary_ready_is_false(
+    tmp_path: Path,
+) -> None:
+    os_root = tmp_path / "os"
+    notifier = os_root / "harness/bin/agentic-os-notify"
+    receipt = tmp_path / "notification.txt"
+    _write_executable(
+        notifier,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$NOTIFY_RECEIPT\"\n",
+    )
+    fake_cli = tmp_path / "agentic-os"
+    _write_executable(
+        fake_cli,
+        """#!/bin/sh
+case "$3" in
+  status) printf '%s\n' '{"status":"standby"}' ;;
+  probe) printf '%s\n' '{"status":"active","primary_ready":false}' ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={os_root}",
+                f"FABRIC_AGENTIC_OS_CLI={fake_cli}",
+                f"FABRIC_RUNTIME_STATE_DIR={tmp_path / 'state'}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [str(INSTALLERS / "bin" / "personal-fallback-watchdog.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+            "NOTIFY_RECEIPT": str(receipt),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["primary_ready"] is False
+    notification = receipt.read_text(encoding="utf-8")
+    assert "--level critical" in notification
+    assert "Execution Fabric local fallback ACTIVE" in notification
+    assert "execution-fabric-personal-fallback-active" in notification
+
+
 def test_deployment_reuses_canonical_instance_configuration() -> None:
     manifest = _yaml(DEPLOY / "emergency-bundle" / "manifest.yml")
     canonical = set(manifest["canonical_configs"])
