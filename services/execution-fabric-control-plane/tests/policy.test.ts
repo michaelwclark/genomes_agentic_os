@@ -98,6 +98,35 @@ describe("canonical policy", () => {
     expect(admitted.priority).toBe(50);
   });
 
+  it("accepts personal fallback policy and validates its strict bounds", () => {
+    const { policy } = createTestPolicy((value) => {
+      value.execution_fabric.transport.mode = "remote_with_local_fallback";
+      value.execution_fabric.transport.fallback = {
+        failure_threshold: 3,
+        state_path: "runtime/execution-fabric-fallback.json",
+      };
+    });
+    expect(policy.effective().execution_fabric.transport?.mode).toBe(
+      "remote_with_local_fallback",
+    );
+
+    for (const fallback of [
+      { failure_threshold: 1, state_path: "runtime/fallback.json" },
+      {
+        failure_threshold: 3,
+        state_path: "runtime/fallback.json",
+        surprise: true,
+      },
+    ]) {
+      const { source, value } = createTestPolicy();
+      value.execution_fabric.transport.fallback = fallback;
+      writeFileSync(source, stringify(value));
+      expect(
+        () => new PolicyManager(source, "/schemas/execution-fabric.schema.json"),
+      ).toThrow(/Unrecognized key|invalid policy|greater than or equal to 2/);
+    }
+  });
+
   it("rejects unknown fields, queues, task types, and excessive retries", () => {
     const value = testPolicyValue() as Record<string, any>;
     value.execution_fabric.surprise = true;

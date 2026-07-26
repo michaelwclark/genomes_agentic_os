@@ -113,7 +113,7 @@ const canonicalPolicySchema = z
           .strict(),
         transport: z
           .object({
-            mode: z.enum(["local", "remote"]),
+            mode: z.enum(["local", "remote", "remote_with_local_fallback"]),
             control_plane_url: z.string().nullable(),
             request_timeout_seconds: z.number().int().min(1).max(300),
             long_poll_seconds: z.number().int().min(0).max(30),
@@ -121,6 +121,13 @@ const canonicalPolicySchema = z
             worker_token_env: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
             observer_token_env: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
             admin_token_env: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+            fallback: z
+              .object({
+                failure_threshold: z.number().int().min(2).max(60),
+                state_path: z.string().min(1),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
           .optional(),
