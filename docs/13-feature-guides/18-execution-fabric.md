@@ -499,9 +499,12 @@ The Python wheel stays small and exposes
 matching release bundle. Deployments, installers, canonical config, schema,
 image lock, checksums, SBOM, and emergency bundle are GitHub release assets and
 remain in the source distribution. The tag workflow builds the control-plane,
-leadership-witness, and worker images, records all three GHCR digests, validates
-Python/service/API versions plus config/schema hashes, and lets exactly one job
-create the immutable GitHub release.
+leadership-witness, and worker images, then resolves the four reviewed
+third-party source tags in
+`deploy/execution-fabric/release-image-sources.json` to Linux AMD64/ARM64 index
+digests. It records all seven exact repository digests, validates
+Python/service/API versions plus config/schema/source-manifest hashes, and lets
+exactly one job create the immutable GitHub release.
 
 Local release preflight:
 
@@ -509,9 +512,13 @@ Local release preflight:
 python scripts/release/build-execution-fabric-release.py --validate-only
 python scripts/release/build-execution-fabric-release.py \
   --output-dir dist/release \
-  --control-plane-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
-  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
-  --worker-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
+  --control-plane-image ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-control-plane@sha256:DIGEST \
+  --witness-image ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-leadership-witness@sha256:DIGEST \
+  --worker-image ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-worker@sha256:DIGEST \
+  --postgres-image docker.io/library/postgres@sha256:DIGEST \
+  --valkey-image docker.io/valkey/valkey@sha256:DIGEST \
+  --minio-image docker.io/minio/minio@sha256:DIGEST \
+  --minio-client-image docker.io/minio/mc@sha256:DIGEST
 ```
 
 The builder rejects mutable tags. Publishing is intentionally reserved for a

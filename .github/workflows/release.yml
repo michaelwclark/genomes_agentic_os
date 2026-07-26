@@ -41,6 +41,100 @@ jobs:
           test "${GITHUB_REF_NAME}" = "v${version}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+  dependency-images:
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      postgres: ${{ steps.resolve.outputs.postgres }}
+      valkey: ${{ steps.resolve.outputs.valkey }}
+      minio: ${{ steps.resolve.outputs.minio }}
+      minio_client: ${{ steps.resolve.outputs.minio_client }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: docker/setup-buildx-action@v3
+      - id: resolve
+        name: Resolve reviewed dependency tags to multi-arch index digests
+        run: |
+          python <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+
+          source_path = Path("deploy/execution-fabric/release-image-sources.json")
+          source_manifest = json.loads(source_path.read_text(encoding="utf-8"))
+          expected_names = ("postgres", "valkey", "minio", "minio_client")
+          if source_manifest.get("schema_version") != "execution-fabric-release-image-sources/v1":
+              raise SystemExit("unsupported dependency image source schema")
+          sources = source_manifest.get("images")
+          if not isinstance(sources, dict) or set(sources) != set(expected_names):
+              raise SystemExit("dependency image source manifest is incomplete")
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a", encoding="utf-8") as output:
+              for name in expected_names:
+                  entry = sources[name]
+                  if not isinstance(entry, dict) or set(entry) != {"repository", "tag"}:
+                      raise SystemExit(f"invalid dependency image source: {name}")
+                  repository = entry["repository"]
+                  tag = entry["tag"]
+                  source = f"{repository}:{tag}"
+                  result = subprocess.run(
+                      [
+                          "docker",
+                          "buildx",
+                          "imagetools",
+                          "inspect",
+                          "--format",
+                          "{{json .Manifest}}",
+                          source,
+                      ],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+                  descriptor = json.loads(result.stdout)
+                  if descriptor.get("mediaType") not in {
+                      "application/vnd.oci.image.index.v1+json",
+                      "application/vnd.docker.distribution.manifest.list.v2+json",
+                  }:
+                      raise SystemExit(f"{source} is not a multi-arch image index")
+                  manifests = descriptor.get("manifests")
+                  if not isinstance(manifests, list) or not manifests:
+                      raise SystemExit(f"{source} has no indexed platform manifests")
+                  platforms = {
+                      f"{platform.get('os')}/{platform.get('architecture')}"
+                      for item in manifests
+                      if isinstance(item, dict)
+                      and isinstance((platform := item.get("platform")), dict)
+                  }
+                  required_platforms = {"linux/amd64", "linux/arm64"}
+                  if not required_platforms.issubset(platforms):
+                      raise SystemExit(
+                          f"{source} lacks required platforms: "
+                          + ", ".join(sorted(required_platforms - platforms))
+                      )
+                  digest = descriptor.get("digest")
+                  if (
+                      not isinstance(digest, str)
+                      or not digest.startswith("sha256:")
+                      or len(digest) != 71
+                      or any(character not in "0123456789abcdef" for character in digest[7:])
+                  ):
+                      raise SystemExit(f"{source} returned an invalid index digest")
+                  exact_reference = f"{repository}@{digest}"
+                  fingerprint = hashlib.sha256(exact_reference.encode()).hexdigest()
+                  print(f"resolved {name} index {fingerprint[:12]}")
+                  output.write(f"{name}={exact_reference}\n")
+          PY
+
   control-plane-image:
     needs: validate
     runs-on: ubuntu-latest
@@ -136,7 +230,7 @@ jobs:
           push-to-registry: true
 
   assets:
-    needs: [validate, control-plane-image, witness-image, worker-image]
+    needs: [validate, dependency-images, control-plane-image, witness-image, worker-image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -152,7 +246,11 @@ jobs:
             --output-dir dist/release \
             --control-plane-image "ghcr.io/${owner}/genomes-agentic-os-execution-fabric-control-plane@${{ needs.control-plane-image.outputs.digest }}" \
             --witness-image "ghcr.io/${owner}/genomes-agentic-os-execution-fabric-leadership-witness@${{ needs.witness-image.outputs.digest }}" \
-            --worker-image "ghcr.io/${owner}/genomes-agentic-os-execution-fabric-worker@${{ needs.worker-image.outputs.digest }}"
+            --worker-image "ghcr.io/${owner}/genomes-agentic-os-execution-fabric-worker@${{ needs.worker-image.outputs.digest }}" \
+            --postgres-image "${{ needs.dependency-images.outputs.postgres }}" \
+            --valkey-image "${{ needs.dependency-images.outputs.valkey }}" \
+            --minio-image "${{ needs.dependency-images.outputs.minio }}" \
+            --minio-client-image "${{ needs.dependency-images.outputs.minio_client }}"
       - uses: anchore/sbom-action@v0
         with:
           path: .

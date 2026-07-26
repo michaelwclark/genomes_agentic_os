@@ -15,9 +15,13 @@ The full replicated topology is:
   generic GAOS worker chart only. LOSMON environment/Jira handlers remain in a
   separate LOS domain image and deployment.
 
-Every image reference is supplied by a generated image lock and must use an
-immutable `@sha256:` digest. Compose refuses to start when an image variable is
-missing. The source package deliberately does not invent release digests.
+Every image reference is supplied by the generated
+`execution-fabric-image-lock.json` and must use an immutable `@sha256:` digest.
+Compose refuses to start when an image variable is missing. The reviewed
+third-party source tags live only in `release-image-sources.json`; release CI
+resolves each one to a Linux AMD64/ARM64 index digest and the release builder
+rejects missing, mutable, or repository-substituted references. Runtime config
+uses only the seven exact digest references in the lock.
 
 ## Canonical configuration
 
@@ -371,8 +375,9 @@ promotion must remain disabled.
 Additional activation prerequisites are deliberately explicit:
 
 - the release pipeline must publish the control-plane, leadership-witness, and
-  worker images and generate a real digest-only image lock containing all
-  three;
+  worker images, resolve the reviewed PostgreSQL, Valkey, MinIO, and MinIO
+  client multi-arch indexes, and generate one digest-only image lock containing
+  all seven;
 - the worker executable must implement the existing `/api/v1` worker protocol;
 - the initial PostgreSQL base backup and replication slot must be verified
   before enabling automatic promotion;
