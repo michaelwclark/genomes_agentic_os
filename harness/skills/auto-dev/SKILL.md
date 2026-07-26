@@ -150,6 +150,10 @@ tracked in the Auto-Dev `ARCHIVE_SOON.md` ledger.
 Health is manually runnable. Auto-Dev does not enable a cleanup schedule or
 automation; a future adapter must invoke the same state and receipt contract.
 
+Starting a watcher is not a passing result. failed checks must be inspected, fixed, pushed, and
+re-verified at the exact PR head; record `copilot_clean=passed`
+only after the provider readback confirms no actionable Copilot threads remain.
+
 For several tickets, Everything creates one packet and `autodev.json` per
 ticket. Resume only the selected packet with `--state`. A finished packet is
 immutable history; use `agentic-os auto-dev reopen --state <finished-packet>

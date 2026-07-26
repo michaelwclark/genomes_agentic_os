@@ -28,8 +28,11 @@ dev_factory:
     owner: example
     name: example-app
     root: /tmp/example-app
+    path: /tmp/example-app
     default_base_branch: main
     branch_template: feature/{tracker_id}-{slug}
+  branch:
+    base: main
   validation:
     commands:
       targeted_tests: npm test

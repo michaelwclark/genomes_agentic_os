@@ -1,0 +1,10 @@
+{
+  "base": "develop",
+  "branch": "feature/FLYWL-0000-update-node-version",
+  "commit": "384ae79ccfaa3fd5fd0a2bb7b2f7829115263072",
+  "created_at": "2026-06-25T19:38:00Z",
+  "number": 25442,
+  "state": "OPEN",
+  "title": "FLYWL-0000: update pytest workflow actions to Node 24",
+  "url": "https://github.com/thesummitgrp/los-app-los-django/pull/25442"
+}

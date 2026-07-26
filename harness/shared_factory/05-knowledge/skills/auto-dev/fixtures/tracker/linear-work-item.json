@@ -1,0 +1,9 @@
+{
+  "identifier": "LIN-42",
+  "url": "https://linear.app/example/issue/LIN-42/fixture-linear-item",
+  "title": "Fixture Linear item",
+  "description": "Acceptance Criteria:\n- The Linear adapter normalizes the item.\n- Claim uses assignee, label, and workflow state.",
+  "state": {"type": "unstarted", "name": "Todo"},
+  "assignee": null,
+  "labels": {"nodes": []}
+}

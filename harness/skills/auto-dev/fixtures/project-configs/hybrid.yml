@@ -27,8 +27,11 @@ dev_factory:
     owner: example
     name: hybrid-app
     root: /tmp/hybrid-app
+    path: /tmp/hybrid-app
     default_base_branch: main
     branch_template: feature/{tracker_id}-{slug}
+  branch:
+    base: main
   validation:
     commands:
       targeted_tests: pytest

@@ -1,0 +1,49 @@
+id: example_linear_primary
+dev_factory:
+  enabled: true
+  queue_source:
+    mode: tracker
+    tracker_queue_enabled: true
+  tracker:
+    kind: linear
+    connection: linear_genome
+    team_id: example-team
+    spec_source: linear
+    ac_source: description
+    workflow_source: linear
+    personal_todo: none
+    claim:
+      assignee: autodev@example.com
+      label: autodev-claimed
+      state: started
+      reread_required: true
+    state_map:
+      claimed: started
+      pr_open: started
+      ready_for_merge: completed
+      merged: completed
+      blocked: canceled
+  repo:
+    provider: github
+    owner: example
+    name: example-app
+    path: /tmp/example-app
+    root: /tmp/example-app
+    default_base_branch: main
+    branch_template: feature/{tracker_id}-{slug}
+  branch:
+    base: main
+    naming: feature/{tracker_id}-{slug}
+  validation:
+    commands:
+      targeted_tests: npm test
+      pre_commit: npm run lint
+  finishing_review:
+    required: true
+    reviewer_mode: human
+  merge:
+    policy: never_auto
+  projection:
+    notion:
+      enabled: false
+      mode: projection_only

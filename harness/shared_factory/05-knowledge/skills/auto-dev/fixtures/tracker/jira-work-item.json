@@ -1,0 +1,11 @@
+{
+  "key": "FLYWL-0001",
+  "url": "https://venturesgo.atlassian.net/browse/FLYWL-0001",
+  "fields": {
+    "summary": "Fixture Jira item",
+    "description": "Acceptance Criteria:\n- The state ledger reaches ready_for_merge.\n- The merge policy remains never_auto.",
+    "status": {"name": "To Do"},
+    "assignee": null,
+    "labels": []
+  }
+}

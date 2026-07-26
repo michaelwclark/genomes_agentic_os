@@ -24,6 +24,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import project_context
+import run_store
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - Agentic OS declares pyyaml available.
@@ -41,6 +44,7 @@ FINISHING_HELPER = (
     / "finishing_touches_review_helper.py"
 )
 REVIEWER_TEMPLATE = ROOT / "harness" / "skills" / "auto-dev" / "templates" / "reviewer-prompt.md"
+RUNSTORE_ENV_VAR = "AUTO_DEV_RUNSTORE"
 
 NON_TERMINAL_STATES = {
     "discovered",
@@ -97,6 +101,7 @@ CLAUDE_CLI_STRIPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 SKIP_RECEIPT_TYPES = {"validation_downgrade", "reviewer_override", "paid_model_fallback"}
 LOCAL_PATH_RE = re.compile(r"(?:(?:/Users|/home|/private|/tmp)/[^\s)>\]]+|~/(?:[^\s)>\]]+))")
 NOTION_RE = re.compile(r"https?://(?:www\.)?(?:notion\.so|notion\.site|app\.notion\.com)/[^\s)>\]]+", re.I)
+LINEAR_RE = re.compile(r"https?://(?:www\.)?linear\.app/[^\s)>\]]+", re.I)
 OS_INTERNAL_RE = re.compile(r"\b(?:Agentic OS|auto_dev_queue|harness/skills|work-items/0[1-4]-|artifacts/auto-dev)\b")
 SECRET_RE = re.compile(
     r"\b(?:Authorization\s*:\s*(?:Bearer|Basic)\s+\S+|API_KEY|TOKEN|SECRET|PASSWORD|PASS|PRIVATE_KEY|ACCESS_KEY)\s*[:=]?\s*[^\s]+",
@@ -468,6 +473,7 @@ def scrub_text(text: str) -> list[str]:
     checks = [
         ("local_path", LOCAL_PATH_RE),
         ("private_notion_link", NOTION_RE),
+        ("linear_url", LINEAR_RE),
         ("os_internal_reference", OS_INTERNAL_RE),
         ("secret_fragment", SECRET_RE),
     ]
@@ -475,6 +481,32 @@ def scrub_text(text: str) -> list[str]:
         if pattern.search(text):
             findings.append(name)
     return sorted(set(findings))
+
+
+def runstore_enabled() -> bool:
+    return os.environ.get(RUNSTORE_ENV_VAR, "off").lower() == "sqlite"
+
+
+def state_refs(state: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    tracker = state.get("tracker") or {}
+    return {
+        "work_item_id": state["work_item_id"],
+        "project": state["project"],
+        "tracker_kind": tracker.get("kind"),
+        "tracker_id": tracker.get("id"),
+        "work_item_path": str(run_dir),
+        "pr_url": (state.get("pr") or {}).get("url"),
+        "blocker": ((state.get("blocked") or {}).get("reason")),
+    }
+
+
+def sync_runstore(state: dict[str, Any], run_dir: Path, event: dict[str, Any] | None = None) -> None:
+    if not runstore_enabled():
+        return
+    store = run_store.create_run_store()
+    store.upsert_state(state["run_id"], state["current_state"], bool(state["terminal"]), state["updated_at"], state_refs(state, run_dir))
+    if event is not None:
+        store.record_step(state["run_id"], event["seq"], event["from"], event["to"], event["idempotency_key"], event["ts"], event.get("receipt"))
 
 
 def sanitize_receipt_summary(text: str) -> str:
@@ -582,6 +614,7 @@ def command_init(args: argparse.Namespace) -> int:
     save_state(args.run_dir, state)
     if not ledger_path(args.run_dir).exists():
         ledger_path(args.run_dir).write_text("", encoding="utf-8")
+    sync_runstore(state, args.run_dir)
     print(json.dumps({"ok": True, "state": "discovered", "state_path": str(state_path(args.run_dir))}, indent=2))
     return 0
 
@@ -621,6 +654,7 @@ def command_transition(args: argparse.Namespace) -> int:
     if args.to == "blocked":
         state["blocked"] = {"reason": args.reason, "receipt": args.receipt, "at": utc_now()}
     save_state(args.run_dir, state)
+    sync_runstore(state, args.run_dir, event)
     print(json.dumps({"ok": True, "from": from_state, "to": args.to, "seq": event["seq"]}, indent=2))
     return 0
 
@@ -676,6 +710,19 @@ def command_claim(args: argparse.Namespace) -> int:
     if claim_is_live(state.get("claim")):
         print(json.dumps({"ok": False, "reason": "duplicate_claim", "claim": state.get("claim")}, indent=2))
         return 2
+    if runstore_enabled():
+        refs = state_refs(state, args.run_dir)
+        claim_refs = {
+            key: refs[key]
+            for key in ("project", "work_item_path", "tracker_kind", "tracker_id")
+        }
+        verdict = run_store.create_run_store().claim(
+            state["work_item_id"], state["run_id"], args.owner_run_id, socket.gethostname(), os.getpid(),
+            args.heartbeat_ttl_seconds, current_state=state["current_state"], **claim_refs,
+        )
+        if not verdict.granted:
+            print(json.dumps({"ok": False, "reason": verdict.reason}, indent=2))
+            return 2
     state["claim"] = {
         "owner_run_id": args.owner_run_id,
         "host": socket.gethostname(),
@@ -705,6 +752,7 @@ def command_claim(args: argparse.Namespace) -> int:
         state["previous_state"] = from_state
         state["current_state"] = to_state
     save_state(args.run_dir, state)
+    sync_runstore(state, args.run_dir)
     print(json.dumps({"ok": True, "state": state["current_state"], "claim": state["claim"]}, indent=2))
     return 0
 
@@ -714,6 +762,8 @@ def command_release(args: argparse.Namespace) -> int:
     released = state.get("claim")
     state["claim"] = None
     save_state(args.run_dir, state)
+    if runstore_enabled():
+        run_store.create_run_store().release(state["run_id"])
     print(json.dumps({"ok": True, "released": bool(released), "reason": args.reason}, indent=2))
     return 0
 
@@ -1432,12 +1482,35 @@ def command_scrub(args: argparse.Namespace) -> int:
     findings = scrub_text(text)
     scrubbed = LOCAL_PATH_RE.sub("[REDACTED_LOCAL_PATH]", text)
     scrubbed = NOTION_RE.sub("[REDACTED_NOTION_LINK]", scrubbed)
+    scrubbed = LINEAR_RE.sub("[REDACTED_LINEAR_LINK]", scrubbed)
     scrubbed = SECRET_RE.sub("[REDACTED_SECRET]", scrubbed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(scrubbed, encoding="utf-8")
     result = {"ok": not findings, "findings": findings, "output": str(args.output)}
     print(json.dumps(result, indent=2))
     return 2 if findings else 0
+
+
+def command_context_load(args: argparse.Namespace) -> int:
+    try:
+        dev_factory = project_context.load_dev_factory(args.project_config)
+    except project_context.ConfigMissingError as exc:
+        print(json.dumps({"ok": False, "reason": str(exc)}, indent=2))
+        return 2
+    tracker = dev_factory["tracker"]
+    repo = dev_factory["repo"]
+    branch = dev_factory["branch"]
+    print(json.dumps({"ok": True, "summary": {"spec_source": tracker["spec_source"], "merge_policy": dev_factory["merge"]["policy"], "repo_path": repo["path"], "base_branch": branch["base"]}}, indent=2))
+    return 0
+
+
+def command_list_in_flight(args: argparse.Namespace) -> int:
+    if not runstore_enabled():
+        print(json.dumps({"ok": False, "reason": "runstore_disabled"}, indent=2))
+        return 1
+    rows = [row.__dict__ for row in run_store.create_run_store().list_in_flight(args.project)]
+    print(json.dumps({"ok": True, "rows": rows}, indent=2))
+    return 0
 
 
 def load_cases(fixtures: Path) -> list[dict[str, Any]]:
@@ -1782,6 +1855,14 @@ def build_parser() -> argparse.ArgumentParser:
     scrub_parser.add_argument("--input", type=Path, required=True)
     scrub_parser.add_argument("--output", type=Path, required=True)
     scrub_parser.set_defaults(func=command_scrub)
+
+    context_parser = subparsers.add_parser("context-load")
+    context_parser.add_argument("--project-config", type=Path, required=True)
+    context_parser.set_defaults(func=command_context_load)
+
+    in_flight_parser = subparsers.add_parser("list-in-flight")
+    in_flight_parser.add_argument("--project")
+    in_flight_parser.set_defaults(func=command_list_in_flight)
 
     fixture_parser = subparsers.add_parser("fixture-test")
     fixture_parser.add_argument("--fixtures", type=Path, required=True)

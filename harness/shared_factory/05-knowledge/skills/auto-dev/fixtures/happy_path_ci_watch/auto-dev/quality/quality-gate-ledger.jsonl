@@ -1,0 +1,4 @@
+{"command":"python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/pytest-fast.yml')); print('yaml-ok')\"","gate":"yaml_parse","result":"passed","ts":"2026-06-25T19:34:00Z"}
+{"command":"rg -n \"actions-checkout@v|actions-setup-python@v\" .github/workflows/pytest-fast.yml","gate":"action_reference_check","result":"passed","ts":"2026-06-25T19:34:00Z"}
+{"command":"git diff --check","gate":"diff_whitespace","result":"passed","ts":"2026-06-25T19:34:00Z"}
+{"command":".venv/bin/pre-commit run --files .github/workflows/pytest-fast.yml","gate":"pre_commit_changed_file","result":"passed_with_no_matching_hooks","ts":"2026-06-25T19:38:00Z"}

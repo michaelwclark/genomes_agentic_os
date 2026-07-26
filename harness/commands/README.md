@@ -31,6 +31,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`composio-debug-bundle.md`](composio-debug-bundle.md) | Capture a sanitized Composio diagnostics bundle. |
 | [`develop.md`](develop.md) | Run one or many tracker-backed programming tasks through canonical delivery. |
 | [`project-domain-investigate.md`](project-domain-investigate.md) | Retrieve bounded, evidence-backed project domain context before development. |
+| [`pr-review.md`](pr-review.md) | Review a pull request through the canonical evidence-backed review workflow. |
 | [`os-add-bug.md`](os-add-bug.md) | Route and capture a bug or missed enforcement. |
 | [`os-add-spec.md`](os-add-spec.md) | Add a canonical Spec through project policy. |
 | [`os-auto-add-feature.md`](os-auto-add-feature.md) | Legacy feature alias for automatic Spec intake. |

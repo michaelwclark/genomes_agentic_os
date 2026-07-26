@@ -1,0 +1,27 @@
+{
+  "project": {
+    "id": "los_app_los_django",
+    "dev_factory": {
+      "pull_request": {
+        "target_policy": {
+          "profile": "registry_gitflow",
+          "default": "develop",
+          "release_fix_version_prefixes": ["10", "10.0"],
+          "release_targets": ["develop", "active_release_branch"],
+          "propagation": "cherry_pick"
+        }
+      }
+    }
+  },
+  "ticket": {"key": "FLYWL-2", "type": "Story", "fix_version": "10.0"},
+  "registry": {
+    "branches": {"next_major": "release/v10.0.0", "active_release_fix_version": "10.0"}
+  },
+  "existing_targets": ["develop", "release/v10.0.0"],
+  "expected": {
+    "route": "release",
+    "required_branches": ["develop", "release/v10.0.0"],
+    "missing_targets": [],
+    "family_complete": true
+  }
+}

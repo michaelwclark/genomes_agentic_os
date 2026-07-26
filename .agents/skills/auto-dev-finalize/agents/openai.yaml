@@ -1,0 +1,7 @@
+interface:
+  display_name: Auto Dev Finalize
+  short_description: Drive every open gitflow PR for one tracker ticket to merged
+    or explicitly blocked. Per-PR subagent assessment
+  default_prompt: Use the Agentic OS Auto Dev Finalize skill.
+policy:
+  allow_implicit_invocation: true
