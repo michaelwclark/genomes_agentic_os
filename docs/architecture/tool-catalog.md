@@ -239,7 +239,7 @@ separate source of truth.
 | `session-prayer-start.sh` | `SessionStart` | Commits the session and work to Jesus before startup work begins. |
 | `memory-session-start.sh` | `SessionStart` | Injects Genome's Brain memory discipline at session start/resume/clear and routes durable writes to the correct substrate (registered twice in `hooks.yml`, as `memory-session-start` and `memory-write-router`). |
 | `memory-stop.sh` | `Stop` | Compatibility no-op stub — memory guidance now lives in `SessionStart` to avoid Stop-hook continuation loops. |
-| `harness-emit-trace.sh` | `Stop` | Fire-and-forget `AGENT_TRACE` memory record built from hook payload metadata. |
+| `harness-emit-trace.sh` | `Stop` | Fire-and-forget `AGENT_TRACE` memory record built from hook payload metadata, plus per-tool-call byte accounting derived from the session transcript (`tool_byte_accounting`, appended to `~/.local/state/harness/tool-byte-accounting/<session>.jsonl`). Both are best-effort and never alter the hook's stdout contract. |
 | `context-mode-cache-heal.mjs` | `SessionStart` | Repairs stale Claude context-mode plugin cache symlinks after auto-updates. |
 | `conversation-auto-log.py` | `Stop` | Writes redacted conversation transcripts + tool-call sidecars to the routed project or active work item. |
 | `work-item-routing-guard.py` | `PostToolUse` | Advisory only, never blocks (always exits 0): nudges an agent away from misfiling a lifecycle/handoff packet into a code repo's `.features/` instead of the canonical OS work item. |

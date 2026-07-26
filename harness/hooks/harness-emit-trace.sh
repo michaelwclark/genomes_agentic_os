@@ -28,6 +28,48 @@ if [[ -n "${TRANSCRIPT}" && "${TRANSCRIPT}" == *.jsonl && -f "${TRANSCRIPT}" ]];
   N_TURNS="$(wc -l < "${TRANSCRIPT}" 2>/dev/null | tr -d ' ' || echo 0)"
 fi
 
+# CC-383: per-tool-call byte accounting, derived from the transcript we already
+# have here. Backgrounded and fully best-effort — telemetry must never delay or
+# fail a Stop hook, and stdout below must stay byte-identical.
+#
+# The interpreter is resolved rather than assumed: bare `python3` is usually the
+# system one and cannot import the package, which would make this silently emit
+# nothing. Probe candidates and use the first that can actually import it.
+resolve_accounting_python() {
+  local candidate
+  for candidate in \
+    "${AGENTIC_OS_PYTHON:-}" \
+    python3 \
+    "${HOME}/Library/Application Support/AgenticOS"/*/bin/python3 \
+    "${HOME}/.local/share/uv/tools"/*/bin/python3
+  do
+    [[ -n "${candidate}" ]] || continue
+    command -v "${candidate}" >/dev/null 2>&1 || [[ -x "${candidate}" ]] || continue
+    if "${candidate}" -c 'import genomes_agentic_os.tool_byte_accounting' 2>/dev/null; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]]; then
+  (
+    ACCOUNTING_PY="$(resolve_accounting_python || true)"
+    if [[ -n "${ACCOUNTING_PY}" ]]; then
+      "${ACCOUNTING_PY}" -m genomes_agentic_os.tool_byte_accounting \
+        --transcript "${TRANSCRIPT}" \
+        --session-id "${SESSION_ID}" \
+        --verified-at "${TS}" \
+        >> "${LOG_FILE}" 2>&1 || true
+    else
+      printf '%s tool_byte_accounting skipped: no interpreter could import the package\n' \
+        "${TS}" >> "${LOG_FILE}" 2>/dev/null || true
+    fi
+  ) &
+  disown 2>/dev/null || true
+fi
+
 CONTENT="${HOST}/${AGENT} session ${SESSION_ID} ended ${TS}: cwd=${CWD}, turns=${N_TURNS}, transcript=${TRANSCRIPT:-none}"
 PERSONA="${AGENT}-${HOST}"
 RPC_BODY="$(jq -n \
