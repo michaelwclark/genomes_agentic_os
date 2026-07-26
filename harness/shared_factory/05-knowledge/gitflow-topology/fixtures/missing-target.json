@@ -1,0 +1,30 @@
+{
+  "project": {
+    "id": "los_app_los_django",
+    "dev_factory": {
+      "pull_request": {
+        "target_policy": {
+          "profile": "registry_gitflow",
+          "default": "develop",
+          "propagation": "cherry_pick"
+        }
+      }
+    }
+  },
+  "ticket": {"key": "FLYWL-4", "type": "Hotfix", "fix_version": "9.12.8"},
+  "registry": {
+    "branches": {
+      "next_hotfix": "hotfix/v9.12.8",
+      "next_hotfix_fix_version": "9.12.8",
+      "next_major": "release/v10.0.0"
+    },
+    "targeting_rules": {"hotfix": ["next_hotfix", "next_major", "develop"]}
+  },
+  "existing_targets": ["hotfix/v9.12.8", "develop"],
+  "expected": {
+    "route": "hotfix",
+    "required_branches": ["hotfix/v9.12.8", "release/v10.0.0", "develop"],
+    "missing_targets": ["release/v10.0.0"],
+    "family_complete": false
+  }
+}

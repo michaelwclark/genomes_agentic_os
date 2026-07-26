@@ -1,0 +1,7 @@
+interface:
+  display_name: GitFlow PR Create
+  short_description: Plan or create missing tracker-keyed PR-family targets through
+    the deterministic GitFlow topology resolver wit
+  default_prompt: Use the Agentic OS GitFlow PR Create skill.
+policy:
+  allow_implicit_invocation: true

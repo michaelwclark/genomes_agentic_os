@@ -1,0 +1,25 @@
+api_version: agentic-os-library-object/v1
+kind: reference
+id: gitflow-topology
+title: GitFlow PR Topology
+description: Canonical deterministic F2 contract and resolver for mapping a tracker
+  item to its required 1-N pull-request target family.
+status: active
+scope:
+  level: root
+  domain: null
+  project: null
+owner:
+  type: operator
+  id: Genome
+entrypoint: CONTRACT.md
+tags:
+- reference
+dependencies: []
+aliases:
+- harness/shared_factory/05-knowledge/gitflow-topology
+runtime:
+  root: runtime/objects/references/reference/root/gitflow-topology
+validation:
+  commands:
+  - python3 -m unittest discover -s lib/references/root/gitflow-topology/tests -p 'test_*.py'

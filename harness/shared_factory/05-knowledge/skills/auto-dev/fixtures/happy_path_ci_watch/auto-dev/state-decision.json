@@ -1,0 +1,12 @@
+{
+  "active_blockers": [],
+  "decision": "ci_watch",
+  "failures": [],
+  "generated_at": "2026-06-25T19:43:15.119852+00:00",
+  "next_action": "Resume from the next legal state transition.",
+  "run_id": "flywl-0000-update-node-version-20260625",
+  "schema_version": 1,
+  "state": "ci_watch",
+  "state_hash": "1bbdfac1c1ec99e2bd87daf8b3cd1a158bf0e705d5e1cd844c2232c233d807ac",
+  "terminal": false
+}

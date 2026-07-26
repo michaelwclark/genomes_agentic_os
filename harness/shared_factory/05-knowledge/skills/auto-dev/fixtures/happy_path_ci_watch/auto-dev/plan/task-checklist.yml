@@ -1,0 +1,15 @@
+tasks:
+  - task: create_work_item
+    status: done
+  - task: create_worktree
+    status: done
+  - task: verify_node24_action_tags
+    status: done
+  - task: update_pytest_workflow_actions
+    status: done
+  - task: local_validation
+    status: done
+  - task: commit_push_pr
+    status: pending
+  - task: github_actions_validation
+    status: pending

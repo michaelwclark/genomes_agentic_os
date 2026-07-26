@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "name": "happy_path_ci_watch",
+  "source_run_id": "flywl-0000-update-node-version-20260625",
+  "source_tracker_ref": "FLYWL-0000",
+  "source_pr_url": "https://github.com/thesummitgrp/los-app-los-django/pull/25442",
+  "canonical_state": "auto-dev/state.json",
+  "legacy_state": "auto-dev/state.legacy.yml",
+  "stale_lock_removed": true
+}

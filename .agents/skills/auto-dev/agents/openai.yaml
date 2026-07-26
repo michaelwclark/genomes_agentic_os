@@ -1,0 +1,7 @@
+interface:
+  display_name: Auto Dev
+  short_description: 'Run a Jira or Linear tracker item through project-aware SDLC
+    orchestration, state-machine receipts, finishing '
+  default_prompt: Use the Agentic OS Auto Dev skill.
+policy:
+  allow_implicit_invocation: true

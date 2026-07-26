@@ -162,6 +162,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/gitflow-pr-create.md",
         },
         {
+            "id": "pr-review",
+            "command": "/pr-review",
+            "description": "Review, report on, or authority-aware merge another author's pull request.",
+            "source": "harness/commands/pr-review.md",
+        },
+        {
             "id": "auto-dev-release",
             "command": "/auto-dev-release",
             "description": "Create and verify versions, tags, packages, changelogs, and provider releases.",
