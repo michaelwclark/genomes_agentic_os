@@ -28,7 +28,10 @@ set -e
 
 after_status=$(jq -er '.status' "$result_file")
 before_status=$(printf '%s\n' "$before" | jq -r '.status // "unknown"')
-primary_ready=$(jq -er '.primary_ready' "$result_file")
+# A healthy JSON boolean may legitimately be false during an outage. `jq -e`
+# maps false to exit status 1, which would make `set -e` abort before the
+# critical fallback notification is emitted.
+primary_ready=$(jq -r '.primary_ready' "$result_file")
 
 if [ "$after_status" = active ] && [ "$before_status" != active ]; then
   fabric_notify critical \
