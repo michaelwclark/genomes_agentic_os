@@ -1,0 +1,6 @@
+interface:
+  display_name: Pull Request
+  short_description: Orchestrated GitHub PR review skill.
+  default_prompt: Use the Agentic OS Pull Request skill.
+policy:
+  allow_implicit_invocation: true

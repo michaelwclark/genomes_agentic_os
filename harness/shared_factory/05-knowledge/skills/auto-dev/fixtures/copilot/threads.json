@@ -1,0 +1,21 @@
+{
+  "rounds": 1,
+  "max_rounds_without_progress": 3,
+  "threads": [
+    {
+      "id": "T1",
+      "classification": "bug",
+      "body": "This looks like a bug in the empty-state path."
+    },
+    {
+      "id": "T2",
+      "classification": "false_positive",
+      "body": "Already handled by the existing test."
+    },
+    {
+      "id": "T3",
+      "classification": "product_decision",
+      "body": "Needs a product decision on acceptance scope."
+    }
+  ]
+}

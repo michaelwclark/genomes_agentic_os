@@ -1,0 +1,26 @@
+api_version: agentic-os-library-object/v1
+kind: automation
+id: gitflow-topology-drift
+title: GitFlow Topology Drift Proposals
+description: Disabled-by-default proposal generator for missing PR targets when project
+  branch topology changes.
+status: active
+scope:
+  level: root
+  domain: null
+  project: null
+owner:
+  type: operator
+  id: Genome
+entrypoint: automation.md
+tags:
+- automation
+dependencies:
+- reference:root:gitflow-topology
+- skill:root:gitflow-pr-create
+aliases:
+- harness/shared_factory/04-automations/engineering/gitflow-topology-drift
+runtime:
+  root: runtime/objects/automations/automation/root/gitflow-topology-drift
+validation:
+  commands: []

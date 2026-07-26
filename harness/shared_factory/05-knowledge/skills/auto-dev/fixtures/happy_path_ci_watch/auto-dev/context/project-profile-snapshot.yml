@@ -1,0 +1,13 @@
+project_id: los_app_los_django
+tracker_mode: jira_primary
+repo_root: /Users/genome/projects/los/app/los-app-los-django
+worktree_policy: project
+base_branch: origin/develop
+branch: feature/FLYWL-0000-update-node-version
+validation:
+  local:
+    - yaml_parse
+    - git_diff_check
+  final: github_actions
+projection:
+  notion_operator_projection: optional

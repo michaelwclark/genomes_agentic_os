@@ -1,0 +1,48 @@
+id: example_hybrid
+dev_factory:
+  enabled: true
+  queue_source:
+    mode: tracker
+    tracker_queue_enabled: true
+  tracker:
+    kind: hybrid
+    spec_source: jira
+    ac_source: description
+    workflow_source: jira
+    personal_todo: linear
+    jira:
+      connection: jira_genome
+      project_key: FLYWL
+      claim:
+        assignee: autodev
+        label: autodev-claimed
+        state: In Progress
+        reread_required: true
+    linear:
+      connection: linear_genome
+      team_id: personal-example
+      mirror_only: true
+  repo:
+    provider: github
+    owner: example
+    name: hybrid-app
+    path: /tmp/hybrid-app
+    root: /tmp/hybrid-app
+    default_base_branch: main
+    branch_template: feature/{tracker_id}-{slug}
+  branch:
+    base: main
+    naming: feature/{tracker_id}-{slug}
+  validation:
+    commands:
+      targeted_tests: pytest
+      pre_commit: ruff check .
+  finishing_review:
+    required: true
+    reviewer_mode: human
+  merge:
+    policy: never_auto
+  projection:
+    notion:
+      enabled: false
+      mode: projection_only

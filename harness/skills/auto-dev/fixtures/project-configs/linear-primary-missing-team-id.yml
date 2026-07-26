@@ -1,0 +1,52 @@
+id: example_linear_primary_missing_team_id
+# AC10 negative fixture: spec_source is linear but the required linear team_id is
+# null. Loading this dev_factory config MUST block with config_missing — never
+# fall back to any LOS default (SKILL.md "Load `project.yml dev_factory`" contract).
+dev_factory:
+  enabled: true
+  queue_source:
+    mode: tracker
+    tracker_queue_enabled: true
+  tracker:
+    kind: linear
+    connection: linear_genome
+    team_id: null
+    spec_source: linear
+    ac_source: description
+    workflow_source: linear
+    personal_todo: none
+    claim:
+      assignee: autodev@example.com
+      label: autodev-claimed
+      state: started
+      reread_required: true
+    state_map:
+      claimed: started
+      pr_open: started
+      ready_for_merge: completed
+      merged: completed
+      blocked: canceled
+  repo:
+    provider: github
+    owner: example
+    name: example-app
+    path: /tmp/example-app
+    root: /tmp/example-app
+    default_base_branch: main
+    branch_template: feature/{tracker_id}-{slug}
+  branch:
+    base: main
+    naming: feature/{tracker_id}-{slug}
+  validation:
+    commands:
+      targeted_tests: npm test
+      pre_commit: npm run lint
+  finishing_review:
+    required: true
+    reviewer_mode: human
+  merge:
+    policy: never_auto
+  projection:
+    notion:
+      enabled: false
+      mode: projection_only

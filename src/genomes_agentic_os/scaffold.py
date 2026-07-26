@@ -737,7 +737,16 @@ def _is_managed_auto_dev_compatibility_readme(path: Path) -> bool:
         AUTO_DEV_POLICY_COMPATIBILITY_BREADCRUMB,
         *_MANAGED_LEGACY_AUTO_DEV_READMES,
     )
-    return any(content == item.encode("utf-8") for item in managed)
+    if any(content == item.encode("utf-8") for item in managed):
+        return True
+    # These two pre-migration package-owned planes predate the generated
+    # breadcrumb. Keep their narrowly identifiable headings collapsible while
+    # preserving every other user-authored README as a conflict.
+    return content.startswith(
+        b"# DEV_STANDARDS (Composable Markdown Contract)\n\nCreated: 2026-07-18."
+    ) or content.startswith(
+        b"# QA Gates (Composable Markdown Contract)\n\nCreated: 2026-07-19."
+    )
 
 
 def migrate_auto_dev_policy_directories(parent: Path, result: ScaffoldResult) -> None:
@@ -2969,6 +2978,20 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     os_root = expand_path(root)
     result = ScaffoldResult()
     result.extend(mirror_visible_capability_assets(os_root))
+    write_file_once(
+        harness_path(
+            os_root,
+            "shared_factory",
+            "04-automations",
+            "engineering",
+            "gitflow-topology-drift",
+            "MEMORY.md",
+        ),
+        "# Memory\n\n"
+        "Durable, non-secret findings and operator decisions for this proposal-only "
+        "automation belong here.\n",
+        result,
+    )
     copy_file(
         harness_source_dir() / "config" / "long-running-execution.yml",
         harness_path(os_root, "config", "long-running-execution.yml"),

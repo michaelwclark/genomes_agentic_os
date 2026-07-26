@@ -1,0 +1,81 @@
+# Agentic OS Codex config template
+# Layer: automation
+# Local edits are preserved by the installer. Review diffs before applying.
+
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_root_markers = [".agentic_root", ".git", "agentic-os.package.json", "pyproject.toml", "package.json"]
+project_doc_fallback_filenames = ["PROFILE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+
+
+# Agentic OS managed additions
+model_verbosity = "low"
+model_reasoning_summary = "concise"
+[profiles.automation_guard]
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+
+# Agentic OS managed additions
+model_verbosity = "low"
+model_reasoning_summary = "concise"
+[profiles.automation_guard.agentic_os]
+layer = "automation"
+prompt_files = ["AGENTS.md", "PROFILE.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+context_contract = "route-read-cd-repeat"
+rules_file = "RULES.md"
+tool_registry_file = "TOOLS.md"
+mcp_availability = "explicit automation contract only"
+environment = "local filesystem"
+
+
+[profiles.automation]
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+
+# Agentic OS managed additions
+model_verbosity = "low"
+model_reasoning_summary = "concise"
+[profiles.automation.agentic_os]
+layer = "automation"
+prompt_files = ["AGENTS.md", "PROFILE.md", "CLAUDE.md", "ROUTER.md", "CONTEXT.md", "RULES.md", "TOOLS.md", "MEMORY.md"]
+context_contract = "route-read-cd-repeat"
+rules_file = "RULES.md"
+tool_registry_file = "TOOLS.md"
+mcp_availability = "explicit automation contract only"
+environment = "local filesystem"
+
+
+[otel]
+log_user_prompt = false
+exporter_otlp_endpoint_env_var = "AGENTIC_OS_OTEL_EXPORTER_OTLP_ENDPOINT"
+headers_env_var = "AGENTIC_OS_OTEL_HEADERS"
+
+[mcp_servers.filesystem_runtime]
+command = "agentic-os"
+args = ["config", "doctor"]
+secret_policy = "no inline secrets"
+
+[mcp_servers.notion]
+url = "https://mcp.notion.com/mcp"
+secret_policy = "no inline secrets; env var names only"
+
+[mcp_servers.genomes_brain]
+url = "http://127.0.0.1:3155/mcp"
+secret_policy = "no inline secrets; env var names only"
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+bearer_token_env_var = "GITHUB_PAT_TOKEN"
+secret_policy = "no inline secrets; env var names only"
+
+[mcp_servers.context_mode]
+command = "context-mode"
+secret_policy = "no inline secrets; env var names only"
