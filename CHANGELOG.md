@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.2] - 2026-07-26
+
+### Fixed
+- Generate the MinIO observer policy using POSIX shell built-ins. The pinned
+  MinIO client image does not ship `sed`, so v0.5.1 could create the bucket and
+  observer user but could not complete a fresh primary bootstrap.
+- Add a deployment-contract regression that rejects the unavailable external
+  command and unresolved bucket placeholder.
+
 ## [0.5.1] - 2026-07-26
 
 ### Fixed

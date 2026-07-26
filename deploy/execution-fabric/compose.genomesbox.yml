@@ -196,9 +196,9 @@ services:
         "$$(cat /run/secrets/artifact-observer-secret-key)" ||
         mc admin user info fabric
         "$$(cat /run/secrets/artifact-observer-access-key)") &&
-        printf '%s\n'
-        '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::__BUCKET__"]},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::__BUCKET__/*"]}]}'
-        | sed "s/__BUCKET__/$${FABRIC_ARTIFACT_BUCKET}/g"
+        printf
+        '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}\n'
+        "$${FABRIC_ARTIFACT_BUCKET}" "$${FABRIC_ARTIFACT_BUCKET}"
         > /tmp/execution-fabric-observer-readonly.json &&
         mc admin policy create fabric execution-fabric-observer-readonly
         /tmp/execution-fabric-observer-readonly.json &&
