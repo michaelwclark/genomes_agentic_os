@@ -1464,7 +1464,7 @@ def test_personal_client_preflight_accepts_scoped_worker_and_alarm_clients(
                                 "id": "pr_reviewers",
                                 "enabled": True,
                                 "queues": ["pr_reviews"],
-                                "capacity": {"max_tasks_per_worker": 1},
+                                "capacity": {"max_tasks_per_worker": 2},
                             }
                         ],
                     }
@@ -1511,7 +1511,7 @@ esac
                 "FABRIC_WORKER_POOL_ID=pr_reviewers",
                 "FABRIC_WORKER_ACCEPTED_QUEUES=pr_reviews",
                 "FABRIC_WORKER_CAPABILITIES=pr_review",
-                "FABRIC_WORKER_MAX_CONCURRENCY=1",
+                "FABRIC_WORKER_MAX_CONCURRENCY=2",
                 f"AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE={worker_token}",
                 f"FABRIC_ALARM_DISPATCHER_TOKEN_FILE={alarm_token}",
                 "FABRIC_ALARM_DISPATCHER_CONSUMER_ID=bigmac-agentic-os-notifier",
@@ -1539,6 +1539,28 @@ esac
 
     assert result.returncode == 0, result.stderr
     assert "personal client preflight passed" in result.stdout
+
+    runtime_env.write_text(
+        runtime_env.read_text(encoding="utf-8").replace(
+            "FABRIC_WORKER_MAX_CONCURRENCY=2",
+            "FABRIC_WORKER_MAX_CONCURRENCY=1",
+        ),
+        encoding="utf-8",
+    )
+    undersized = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/preflight-personal-client.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CONFIG_SHOW": str(config_show),
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+    assert undersized.returncode == 78
+    assert "conflicts with canonical policy" in undersized.stderr
 
 
 def test_installers_can_activate_an_existing_current_release_without_recopy() -> None:

@@ -144,7 +144,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "valid", "routes": routes}, sort_keys=True))
         return 0
     prepare_root(root)
-    settings = resolve_remote_settings(root, role="worker")
+    settings = resolve_remote_settings(
+        root,
+        role="worker",
+        endpoint_override=os.environ.get("FABRIC_API_BASE"),
+    )
     queues = _csv("FABRIC_WORKER_ACCEPTED_QUEUES")
     capabilities = _csv("FABRIC_WORKER_CAPABILITIES")
     validate_worker_routes(root, queues, capabilities)

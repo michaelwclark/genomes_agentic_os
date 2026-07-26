@@ -154,8 +154,9 @@ def resolve_remote_settings(
     environ: Mapping[str, str] | None = None,
     role: str = "observer",
     host_alias: str | None = None,
+    endpoint_override: str | None = None,
 ) -> RemoteFabricSettings:
-    """Resolve the canonical transport policy and fail closed in remote mode."""
+    """Resolve canonical transport/auth policy and an optional governed endpoint."""
     environment = os.environ if environ is None else environ
     effective = load_execution_fabric_config(
         root,
@@ -200,7 +201,8 @@ def resolve_remote_settings(
                 )
             fallback_active = state.get("status") == "active"
     if mode in {"remote", "remote_with_local_fallback"}:
-        url = _validate_remote_url(str(transport.get("control_plane_url") or ""))
+        configured_url = str(transport.get("control_plane_url") or "")
+        url = _validate_remote_url(endpoint_override or configured_url)
     if mode == "remote" or (
         mode == "remote_with_local_fallback" and not fallback_active
     ):

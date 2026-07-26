@@ -133,6 +133,28 @@ def test_remote_settings_accepts_operator_mounted_token_file(tmp_path: Path) -> 
         )
 
 
+def test_remote_settings_can_route_worker_through_governed_gateway(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+
+    settings = resolve_remote_settings(
+        root,
+        role="worker",
+        environ={"TEST_WORKER_TOKEN": "worker-secret"},
+        endpoint_override="http://100.64.0.2:3181/",
+    )
+
+    assert settings.control_plane_url == "http://100.64.0.2:3181"
+    with pytest.raises(ExecutionFabricConfigError, match="literal Tailscale"):
+        resolve_remote_settings(
+            root,
+            role="worker",
+            environ={"TEST_WORKER_TOKEN": "worker-secret"},
+            endpoint_override="http://192.168.1.20:3181",
+        )
+
+
 def test_personal_fallback_latches_after_sustained_failure_and_requires_manual_failback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

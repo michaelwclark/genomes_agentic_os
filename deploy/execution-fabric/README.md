@@ -112,7 +112,7 @@ is not required for a personal harness. With
 control plane and bigmac retains its existing local SQLite queue as a separate
 continuity plane. Install the release normally, set `FABRIC_OS_ROOT` and the
 absolute `FABRIC_AGENTIC_OS_CLI` path in bigmac's protected `runtime.env`, then
-activate only the lightweight watchdog:
+activate the lightweight personal client plane:
 
 ```bash
 ~/Library/Application\ Support/GenomesAgenticOS/execution-fabric/current/installers/activate-macos.sh \
@@ -125,7 +125,9 @@ validates their exact canonical worker identity and capacity, shipped routes,
 distinct local token files, notifier, and signed-leader gateway without
 requiring the standby datastore profile or copying server-side credential maps
 to bigmac. The host worker reads the installed OS root without rewriting its
-policy or host registries.
+policy or host registries, routes every remote claim through the signed gateway,
+and must claim the canonical two-wide `pr_reviews` capacity rather than quietly
+starting with one slot.
 
 The watchdog probes once per minute, latches after the configured sustained
 failure threshold, and sends critical alerts through the canonical Agentic OS

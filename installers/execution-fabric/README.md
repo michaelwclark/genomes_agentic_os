@@ -66,7 +66,9 @@ existing Agentic OS policy and registries and never runs the disposable OCI
 bootstrap that materializes pod-local config. The control plane remains the
 authority that verifies the scoped bootstrap credential against the exact
 durable worker registration; bigmac holds only its one worker token and one
-separate alarm-dispatcher token.
+separate alarm-dispatcher token. The current `pr_reviewers` policy requires the
+host worker to claim both review slots, and its runtime endpoint is the signed
+gateway rather than the primary API address used by the fallback probe.
 
 ## Independent witness installer
 

@@ -99,6 +99,60 @@ def test_installed_host_preparation_preserves_canonical_root(
     assert hosts.read_text(encoding="utf-8") == "hosts-sentinel\n"
 
 
+def test_host_worker_routes_client_through_explicit_gateway(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    observed: dict[str, object] = {}
+    gateway = "http://100.117.29.53:3181"
+    for name, value in {
+        "AGENTIC_OS_ROOT": str(tmp_path),
+        "FABRIC_API_BASE": gateway,
+        "FABRIC_WORKER_ID": "bigmac-pr-reviewer-1",
+        "FABRIC_WORKER_BOOTSTRAP_ID": "bigmac-pr-reviewer-1",
+        "FABRIC_HOST_ID": "bigmac",
+        "FABRIC_WORKER_ACCEPTED_QUEUES": "pr_reviews",
+        "FABRIC_WORKER_CAPABILITIES": "pr_review",
+        "FABRIC_WORKER_MAX_CONCURRENCY": "2",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    monkeypatch.setattr(worker, "prepare_root", lambda _root: None)
+    monkeypatch.setattr(worker, "validate_worker_routes", lambda *_args: [])
+
+    settings = object()
+
+    def resolve(root: Path, *, role: str, endpoint_override: str) -> object:
+        observed.update(
+            {"root": root, "role": role, "endpoint_override": endpoint_override}
+        )
+        return settings
+
+    monkeypatch.setattr(worker, "resolve_remote_settings", resolve)
+    monkeypatch.setattr(
+        worker,
+        "ExecutionFabricClient",
+        lambda value: observed.update({"client_settings": value}) or object(),
+    )
+
+    class FakeWorker:
+        def __init__(self, _client: object, **_kwargs: object) -> None:
+            pass
+
+        def work(self) -> dict[str, bool]:
+            return {"failed": False}
+
+    monkeypatch.setattr(worker, "RemoteFabricWorker", FakeWorker)
+
+    assert worker.main([]) == 0
+    assert observed == {
+        "root": tmp_path,
+        "role": "worker",
+        "endpoint_override": gateway,
+        "client_settings": settings,
+    }
+
+
 def test_healthcheck_uses_current_worker_receipt_and_heartbeat_age(
     tmp_path: Path,
     monkeypatch,

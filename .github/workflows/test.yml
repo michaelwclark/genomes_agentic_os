@@ -169,12 +169,15 @@ jobs:
           FABRIC_MINIO_CLIENT_IMAGE: minio/mc:latest
           FABRIC_CONTROL_PLANE_IMAGE: ghcr.io/example/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           FABRIC_TAILSCALE_IP: 100.64.0.2
+          FABRIC_PRIMARY_HOST_ID: genomesbox
+          FABRIC_STANDBY_HOST_ID: bigmac
           FABRIC_PRIMARY_TAILSCALE_IP: 100.64.0.2
           FABRIC_STANDBY_TAILSCALE_IP: 100.64.0.3
           FABRIC_DATABASE_URL: postgresql://fabric:unused@postgres/execution_fabric
           FABRIC_VALKEY_URL: redis://valkey:6379
           FABRIC_SECRETS_DIR: /tmp/fabric-secrets
           FABRIC_RUNTIME_STATE_DIR: /tmp/fabric-state
+          FABRIC_OS_ROOT: ${{ github.workspace }}
           FABRIC_CLUSTER_ID: ci
           FABRIC_LEADERSHIP_API_BASE: https://witness.example.test
           FABRIC_LEADERSHIP_TOKEN_FILE: /tmp/fabric-secrets/witness-token

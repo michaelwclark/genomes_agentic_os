@@ -144,7 +144,10 @@ jq -e \
     ($pools | length)==1 and
     ($pools[0].queues | sort)==$queue_set and
     $pools[0].enabled==true and
-    $pools[0].capacity.max_tasks_per_worker >= $concurrency and
+    (($pool=="pr_reviewers" and $queue_set==["pr_reviews"] and
+      $pools[0].capacity.max_tasks_per_worker==$concurrency) or
+     ($pool!="pr_reviewers" and
+      $pools[0].capacity.max_tasks_per_worker >= $concurrency)) and
     ($queues_found | length)==($queue_set | length) and
     all($queues_found[]; .enabled==true and .worker_pool==$pool) and
     $fabric.admission.host_limits[$host] >= $concurrency
