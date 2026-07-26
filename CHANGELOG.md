@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.5] - 2026-07-26
+
+### Fixed
+- Invoke the canonical Agentic OS notifier with the configured released Python
+  runtime when one is available. macOS launchd otherwise resolves the notifier's
+  env-based shebang to Apple's bare Python, which lacks required packages and
+  could drop a critical fallback alert before it reached durable history.
+- Exercise the personal-fallback alert through the configured worker Python so
+  deployment tests cover the same dependency boundary used on bigmac.
+
 ## [0.5.4] - 2026-07-26
 
 ### Fixed

@@ -964,7 +964,14 @@ def test_personal_fallback_watchdog_alerts_when_primary_ready_is_false(
     receipt = tmp_path / "notification.txt"
     _write_executable(
         notifier,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >\"$NOTIFY_RECEIPT\"\n",
+        """#!/definitely/missing-python
+import os
+from pathlib import Path
+import sys
+Path(os.environ["NOTIFY_RECEIPT"]).write_text(
+    f"selected={os.environ.get('SELECTED_INTERPRETER')} " + " ".join(sys.argv[1:]) + "\\n"
+)
+""",
     )
     fake_cli = tmp_path / "agentic-os"
     _write_executable(
@@ -983,6 +990,7 @@ esac
             (
                 f"FABRIC_OS_ROOT={os_root}",
                 f"FABRIC_AGENTIC_OS_CLI={fake_cli}",
+                f"FABRIC_AGENTIC_OS_PYTHON={sys.executable}",
                 f"FABRIC_RUNTIME_STATE_DIR={tmp_path / 'state'}",
                 "",
             )
@@ -1005,9 +1013,76 @@ esac
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["primary_ready"] is False
     notification = receipt.read_text(encoding="utf-8")
+    assert "selected=None" in notification
     assert "--level critical" in notification
     assert "Execution Fabric local fallback ACTIVE" in notification
     assert "execution-fabric-personal-fallback-active" in notification
+
+
+def test_fabric_notify_resolves_absolute_named_and_cli_sibling_python(
+    tmp_path: Path,
+) -> None:
+    lib = INSTALLERS / "bin" / "_lib.sh"
+    for mode in ("absolute", "name", "cli_sibling"):
+        case_root = tmp_path / mode
+        os_root = case_root / "os"
+        receipt = case_root / "receipt.txt"
+        notifier = os_root / "harness/bin/agentic-os-notify"
+        _write_executable(
+            notifier,
+            """#!/definitely/missing-python
+import os
+from pathlib import Path
+import sys
+Path(os.environ["NOTIFY_RECEIPT"]).write_text(
+    f"selected={os.environ['SELECTED_INTERPRETER']} " + " ".join(sys.argv[1:]) + "\\n"
+)
+""",
+        )
+        fake_bin = case_root / "bin"
+        wrapper = fake_bin / ("governed-python" if mode == "name" else "python")
+        _write_executable(
+            wrapper,
+            """#!/bin/sh
+export SELECTED_INTERPRETER="$INTERPRETER_MARKER"
+exec "$REAL_PYTHON" "$@"
+""",
+        )
+        cli = fake_bin / "agentic-os"
+        worker_python = "missing-python"
+        agentic_python = ""
+        if mode == "absolute":
+            agentic_python = str(wrapper)
+        elif mode == "name":
+            worker_python = "governed-python"
+
+        result = subprocess.run(
+            [
+                "/bin/sh",
+                "-c",
+                f'. "{lib}"; fabric_notify critical "Fallback" "Primary down" "fallback-key"',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "FABRIC_OS_ROOT": str(os_root),
+                "FABRIC_AGENTIC_OS_CLI": str(cli),
+                "FABRIC_AGENTIC_OS_PYTHON": agentic_python,
+                "FABRIC_WORKER_PYTHON": worker_python,
+                "NOTIFY_RECEIPT": str(receipt),
+                "INTERPRETER_MARKER": mode,
+                "REAL_PYTHON": sys.executable,
+            },
+        )
+
+        assert result.returncode == 0, result.stderr
+        notification = receipt.read_text(encoding="utf-8")
+        assert f"selected={mode}" in notification
+        assert "--level critical" in notification
+        assert "--dedupe-key fallback-key" in notification
 
 
 def test_deployment_reuses_canonical_instance_configuration() -> None:
