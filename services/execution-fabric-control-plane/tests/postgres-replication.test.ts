@@ -118,4 +118,50 @@ describe("PostgreSQL replication measurement", () => {
       ).resolves.toMatchObject({ mutationDurabilityReady: false });
     },
   );
+
+  it.each(["local", "on"])(
+    "accepts %s local durability only for a standalone primary with no sync target",
+    async (synchronousCommit) => {
+      const query = vi.fn().mockResolvedValue({
+        rows: [
+          {
+            in_recovery: false,
+            synchronous_commit: synchronousCommit,
+            synchronous_standby_names: "",
+            synchronous_standby_count: 0,
+            fsync: "on",
+            full_page_writes: "on",
+            archive_mode: "on",
+            measured_at: "2026-07-24T20:00:00.000Z",
+          },
+        ],
+      });
+      await expect(
+        measurePostgresMutationDurability({ query } as unknown as pg.Pool),
+      ).resolves.toMatchObject({
+        mutationDurabilityReady: false,
+        standalonePrimaryDurabilityReady: true,
+      });
+    },
+  );
+
+  it("rejects standalone durability with a sync target or disabled WAL safeguards", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          in_recovery: false,
+          synchronous_commit: "local",
+          synchronous_standby_names: "FIRST 1 (fabric_standby)",
+          synchronous_standby_count: 1,
+          fsync: "off",
+          full_page_writes: "on",
+          archive_mode: "on",
+          measured_at: "2026-07-24T20:00:00.000Z",
+        },
+      ],
+    });
+    await expect(
+      measurePostgresMutationDurability({ query } as unknown as pg.Pool),
+    ).resolves.toMatchObject({ standalonePrimaryDurabilityReady: false });
+  });
 });

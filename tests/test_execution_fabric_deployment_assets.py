@@ -85,10 +85,14 @@ def test_emergency_bundle_manifest_matches_schema() -> None:
 def test_compose_images_are_required_external_immutable_lock_variables() -> None:
     for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
         compose = _yaml(DEPLOY / name)
-        for service in compose["services"].values():
+        for service_name, service in compose["services"].items():
             image = service["image"]
             assert image.startswith("${FABRIC_")
-            assert ":?" in image
+            if service_name == "leadership-witness":
+                assert service["profiles"] == ["standalone-primary"]
+                assert "FABRIC_WITNESS_IMAGE" in image
+            else:
+                assert ":?" in image
             assert ":latest" not in image
     assert ":latest" not in _all_text(DEPLOY)
 
@@ -958,7 +962,97 @@ def test_systemd_units_cover_primary_observer_watchdog_and_backups() -> None:
         unit_dir / "genomes-agentic-os-execution-fabric-primary.service"
     ).read_text(encoding="utf-8")
     assert "EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env" in primary
-    assert "--profile primary" in primary
+    assert "installers/bin/run-primary.sh start" in primary
+    primary_runner = (INSTALLERS / "bin/run-primary.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '--profile primary' in primary_runner
+    assert '--profile standalone-primary' in primary_runner
+
+
+def test_standalone_primary_runner_bootstraps_once_then_waits_before_primary(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path / 'os'}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                f"FABRIC_DEPLOYMENT_DIR={tmp_path / 'deploy'}",
+                "FABRIC_WITNESS_MODE=standalone_primary",
+                "FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false",
+                "FABRIC_LEADERSHIP_API_BASE=http://witness",
+                "FABRIC_CLUSTER_ID=test-cluster",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    _write_executable(
+        fake_bin / "install",
+        """#!/bin/sh
+for argument in "$@"; do target=$argument; done
+mkdir -p "$target"
+""",
+    )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+printf 'bootstrap=%s %s\n' "${FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE:-unset}" "$*" >>"$DOCKER_LOG"
+case " $* " in
+  *" leadership-witness "*)
+    if [ "${FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE:-false}" = true ]; then
+      mkdir -p "$FABRIC_RUNTIME_STATE_DIR/standalone-witness"
+      printf 'database\n' >"$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3"
+      printf 'sentinel\n' >"$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3.initialized"
+    fi
+    ;;
+esac
+""",
+    )
+    _write_executable(
+        fake_bin / "curl",
+        """#!/bin/sh
+[ -s "$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3" ]
+[ -s "$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3.initialized" ]
+""",
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "DOCKER_LOG": str(docker_log),
+        "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
+    }
+    subprocess.run(
+        ["sh", str(INSTALLERS / "bin/run-primary.sh"), "start"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    lines = docker_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("bootstrap=true ")
+    assert "up -d leadership-witness" in lines[0]
+    assert lines[1].startswith("bootstrap=false ")
+    assert "--force-recreate leadership-witness" in lines[1]
+    assert lines[2].startswith("bootstrap=false ")
+    assert "--profile primary --profile standalone-primary up" in lines[2]
+    assert (state / "standalone-witness.bootstrap-complete").is_file()
+
+    docker_log.write_text("", encoding="utf-8")
+    subprocess.run(
+        ["sh", str(INSTALLERS / "bin/run-primary.sh"), "start"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert "bootstrap=true" not in docker_log.read_text(encoding="utf-8")
 
 
 def test_launchd_definitions_are_valid_and_cover_required_bigmac_roles() -> None:
@@ -1067,6 +1161,20 @@ printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
 [ "${PREFLIGHT_FAIL:-false}" != true ]
 """,
     )
+    shutil.copy2(INSTALLERS / "bin/_lib.sh", installer / "bin/_lib.sh")
+    runtime_state = tmp_path / "runtime-state"
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={runtime_state}",
+                "FABRIC_WITNESS_MODE=independent",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
     fake_bin = tmp_path / "bin"
     _write_executable(
         fake_bin / "id",
@@ -1083,6 +1191,7 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     env = {
         **os.environ,
         "ACTIVATION_LOG": str(activation_log),
+        "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
     }
 
@@ -1114,6 +1223,42 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     assert lines.count(
         "systemctl start genomes-agentic-os-execution-fabric-primary.service"
     ) == 2
+
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={runtime_state}",
+                "FABRIC_WITNESS_MODE=standalone_primary",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    activation_log.write_text("", encoding="utf-8")
+    subprocess.run(
+        ["sh", str(installer / "activate-linux.sh"), "--apply"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    standalone_lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert any(
+        "systemctl disable --now "
+        "genomes-agentic-os-execution-fabric-artifact-replication.timer" in line
+        for line in standalone_lines
+    )
+    assert not any(
+        line.startswith("systemctl enable ")
+        and "artifact-replication.timer" in line
+        for line in standalone_lines
+    )
+    assert not any(
+        line.startswith("systemctl start ")
+        and "artifact-replication.timer" in line
+        for line in standalone_lines
+    )
 
 
 def test_macos_activation_preflights_before_bootstrap_and_skips_loaded_jobs(
@@ -1498,3 +1643,55 @@ def test_documentation_exposes_the_implemented_witness_and_activation_boundary()
     assert "Source availability does not activate the witness" in normalized
     assert "operator prerequisites" in normalized
     assert re.search(r"Failback is always manual", readme)
+
+
+def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_mounts() -> None:
+    primary = _yaml(DEPLOY / "compose.genomesbox.yml")
+    witness = primary["services"]["leadership-witness"]
+    assert witness["profiles"] == ["standalone-primary"]
+    assert witness["environment"]["WITNESS_STANDALONE_PRIMARY_HOST_ID"] == (
+        "${FABRIC_PRIMARY_HOST_ID:?set primary host identity}"
+    )
+    assert witness["environment"]["WITNESS_ALLOW_DEGRADED_PRIMARY"] == "false"
+    assert witness["volumes"] == [
+        "${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}/standalone-witness:"
+        "/var/lib/execution-fabric-witness"
+    ]
+    assert "standalone-witness-data" not in primary.get("volumes", {})
+
+    for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
+        text = (DEPLOY / name).read_text(encoding="utf-8")
+        assert "../../harness/config/execution-fabric.yml" not in text
+        assert "../../schemas/execution-fabric.schema.json" not in text
+        assert (
+            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/"
+            "execution-fabric.yml"
+        ) in text
+        assert (
+            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/"
+            "execution-fabric.schema.json"
+        ) in text
+
+    preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
+    assert "standalone_primary requires automatic failover" in preflight
+    assert ".effective.execution_fabric.standalone_primary.enabled==true" in preflight
+    assert ".effective.execution_fabric.standalone_primary.host_id==$host" in preflight
+    assert "keep FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false" in preflight
+    assert "standalone-witness.bootstrap-complete" in preflight
+
+    primary_runner = (INSTALLERS / "bin/run-primary.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=true" in primary_runner
+    assert "standalone-witness.bootstrap-complete" in primary_runner
+    assert "wait_for_standalone_witness" in primary_runner
+    assert "--force-recreate leadership-witness" in primary_runner
+
+    activation = (INSTALLERS / "activate-linux.sh").read_text(encoding="utf-8")
+    assert '"${FABRIC_WITNESS_MODE:-independent}" != standalone_primary' in activation
+    assert "systemctl disable --now" in activation
+
+    rotation = (INSTALLERS / "bin/rotate-policy.sh").read_text(encoding="utf-8")
+    assert 'FABRIC_WITNESS_MODE:-independent}" = standalone_primary' in rotation
+    assert '.authorityMode=="standalone_primary"' in rotation
+    assert "standalone-primary policy maintenance must run on its exact primary host" in rotation

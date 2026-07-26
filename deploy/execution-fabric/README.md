@@ -5,7 +5,7 @@ Fabric. It keeps deployment mechanics separate from the generic control-plane
 service and from the one editable instance policy at
 `harness/config/execution-fabric.yml`.
 
-The production topology is:
+The full replicated topology is:
 
 - `genomesbox`: PostgreSQL primary, Valkey delivery index, MinIO artifact store,
   API, durable health observer, deterministic healer, and active gateway.
@@ -34,6 +34,59 @@ Do not add host-specific queue-policy files here. Runtime installation consumes:
 
 The deployment environment selects endpoints, immutable images, storage, and
 role. It does not redefine queues or alerts.
+
+Installed Compose mounts the editable policy and its managed schema from the
+absolute `FABRIC_OS_ROOT` paths. Release-relative `../../harness` paths are not
+valid after immutable deployment assets move under `/opt` or the macOS
+Application Support directory.
+
+## Personal standalone primary authority
+
+A personal installation may run the shared queue normally on genomesbox
+without pretending the co-located witness is an independent failure domain.
+This is an explicit non-HA authority mode:
+
+- canonical `execution_fabric.standalone_primary` must be enabled and name the
+  exact `genomesbox` host ID;
+- `FABRIC_WITNESS_MODE=standalone_primary` starts the digest-pinned witness
+  profile on genomesbox, with one host-scoped candidate credential;
+- each signed proof is renewable and expires after 90 seconds by default;
+- PostgreSQL must be a local primary with `synchronous_commit=local` or `on`,
+  no synchronous standby target, `fsync=on`, `full_page_writes=on`, and
+  `archive_mode=on`;
+- task, effect, and scheduler mutations operate normally while that exact
+  proof and durability measurement remain valid;
+- promotion, failback, automatic failover, and any bigmac shared-ledger
+  authority are disabled.
+
+The host preflight compares `FABRIC_POLICY_FINGERPRINT` with the canonical
+policy readback before starting anything. The co-located witness uses a
+distinct logical service identity and durable SQLite state, but its placement
+does not make it quorum. If genomesbox is lost, shared work waits there and
+bigmac follows the separate personal fallback contract below.
+
+Keep `FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false`. On first activation the
+Linux runner alone grants that capability for one bounded witness start, waits
+for `/readyz`, verifies the SQLite database and bootstrap sentinel, writes
+`standalone-witness.bootstrap-complete` outside the witness state directory,
+and immediately recreates the witness with bootstrap disabled. Later starts
+fail closed if that marker exists but either durable file is missing. The
+primary profile starts only after witness readiness, preventing candidate and
+proof consumers from racing initial authority.
+
+The normal `rotate-policy.sh` command is the governed standalone maintenance
+path. Preparation requires the exact healthy local primary to report the
+current and staged digests. PostgreSQL commits the candidate fingerprint, and
+ordinary mutations remain fenced while the witness still holds the old digest.
+Commit requires a fresh local applied-digest report, advances witness state
+without changing leader or epoch, and restores short-lived authority.
+`--resume` completes or safely aborts interrupted maintenance from fresh local
+evidence. This is neither promotion nor failover.
+
+The cross-host artifact-replication timer is intentionally disabled in this
+mode. Primary, scheduler, observer, backup, and candidate-reporter health units
+remain active; an HA-only replication check would otherwise report the
+intentionally absent standby forever.
 
 ## Personal fallback activation
 
@@ -235,7 +288,7 @@ failback activation.
    `runtime.execution_fabric.health` and level `critical`, and the existing
    `harness/registries/alerts.yml` policy delivers the desktop toast and durable
    alert history on bigmac. No deployment-specific alert registry exists.
-3. If automatic promotion is enabled, the watchdog invokes the promotion
+3. In the full replicated topology, if automatic promotion is enabled, the watchdog invokes the promotion
    command. Promotion validates the emergency bundle, a fresh local standby
    candidate-health receipt, replica lag, witness lease, expected leader, and
    current epoch through `/api/v1`. The signed promotion request's incident
@@ -289,10 +342,12 @@ all agree, so an approved `allow_scheduler` change does not depend on a
 coincidental process or host-manager restart.
 
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
-independently deployable service in
+deployable service in
 `services/execution-fabric-leadership-witness`. Its canonical provider-neutral
-deployment uses a singleton SQLite authority on a third host and has no
-cloud-provider deployment dependency. Each mutation
+deployment for full HA uses a singleton SQLite authority on a third host and has no
+cloud-provider deployment dependency. Personal `standalone_primary` instead
+runs that signed authority co-located on genomesbox and disables every
+leadership transfer. Each mutation
 commits under `BEGIN IMMEDIATE`, WAL, and `synchronous=FULL` before returning.
 It advances a monotonic epoch, returns an identity-bound fence receipt, checks fresh
 health/replica-lag/config evidence, reject stale expected-leader/epoch

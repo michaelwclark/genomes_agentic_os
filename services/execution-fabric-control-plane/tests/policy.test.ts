@@ -127,6 +127,31 @@ describe("canonical policy", () => {
     }
   });
 
+  it("requires an exact standalone-primary opt-in and host identity", () => {
+    const { policy } = createTestPolicy((value) => {
+      value.execution_fabric.standalone_primary = {
+        enabled: true,
+        host_id: "genomesbox",
+      };
+    });
+    expect(policy.effective().execution_fabric.standalone_primary).toEqual({
+      enabled: true,
+      host_id: "genomesbox",
+    });
+
+    for (const standalone of [
+      { enabled: true, host_id: "" },
+      { enabled: true, host_id: "genomesbox", surprise: true },
+    ]) {
+      const { source, value } = createTestPolicy();
+      value.execution_fabric.standalone_primary = standalone;
+      writeFileSync(source, stringify(value));
+      expect(
+        () => new PolicyManager(source, "/schemas/execution-fabric.schema.json"),
+      ).toThrow(/Unrecognized key|invalid policy|at least 1 character/);
+    }
+  });
+
   it("rejects unknown fields, queues, task types, and excessive retries", () => {
     const value = testPolicyValue() as Record<string, any>;
     value.execution_fabric.surprise = true;

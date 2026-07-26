@@ -12,6 +12,17 @@ All notable changes to this project are documented here. The format follows
   installations. A durable bigmac latch activates its existing local queue
   only after sustained primary readiness failures, alerts through Agentic OS,
   and requires explicit readiness-gated failback.
+- Explicit non-HA `standalone_primary` authority for genomesbox, backed by a
+  co-located short-lived signed witness, exact-host canonical policy opt-in,
+  local PostgreSQL durability proof, normal scheduler/effect/task operation,
+  and disabled shared-ledger promotion and failback.
+- Runner-bounded one-shot standalone witness bootstrap, readiness-before-primary
+  ordering, governed local policy rotation, and personal-mode suppression of
+  the HA-only artifact-replication timer.
+
+### Fixed
+- Installed Compose releases now mount canonical queue policy and managed schema
+  from `FABRIC_OS_ROOT` instead of invalid source-tree-relative paths.
 
 ## [0.4.2] - 2026-07-25
 

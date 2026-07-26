@@ -41,6 +41,19 @@ function environment() {
   };
 }
 
+function standaloneEnvironment() {
+  const value = environment();
+  writeFileSync(
+    value.WITNESS_CANDIDATE_TOKENS_FILE,
+    JSON.stringify({ genomesbox: "c".repeat(32) }),
+    { mode: 0o600 },
+  );
+  return {
+    ...value,
+    WITNESS_STANDALONE_PRIMARY_HOST_ID: "genomesbox",
+  };
+}
+
 describe("witness config", () => {
   it("requires file-backed, distinct secrets and a pinned config digest", () => {
     const config = loadConfig(environment());
@@ -77,5 +90,32 @@ describe("witness config", () => {
         WITNESS_PROCESS_LEASE_SECONDS: "45",
       }),
     ).toMatchObject({ bootstrapOnce: true, processLeaseSeconds: 45 });
+  });
+
+  it("accepts one exact short-lived standalone primary and rejects HA mixing", () => {
+    expect(loadConfig(standaloneEnvironment())).toMatchObject({
+      initialLeader: "genomesbox",
+      standalonePrimaryHostId: "genomesbox",
+      candidateTokens: { genomesbox: "c".repeat(32) },
+    });
+    expect(() =>
+      loadConfig({
+        ...standaloneEnvironment(),
+        WITNESS_STANDALONE_PRIMARY_HOST_ID: "bigmac",
+      }),
+    ).toThrow(/must equal WITNESS_INITIAL_LEADER/);
+    expect(() =>
+      loadConfig({
+        ...standaloneEnvironment(),
+        WITNESS_ALLOW_DEGRADED_PRIMARY: "true",
+      }),
+    ).toThrow(/cannot be combined/);
+    expect(() =>
+      loadConfig({
+        ...standaloneEnvironment(),
+        WITNESS_CANDIDATE_FRESHNESS_SECONDS: "301",
+        WITNESS_LEADER_BASELINE_MAX_AGE_SECONDS: "600",
+      }),
+    ).toThrow(/must not exceed 300 seconds/);
   });
 });

@@ -193,6 +193,27 @@ def test_schema_and_cross_reference_validation_are_strict(tmp_path: Path) -> Non
         load_execution_fabric_config(root)
 
 
+def test_standalone_primary_requires_explicit_exact_host_config(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    path = root / "harness/config/execution-fabric.yml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded["execution_fabric"]["standalone_primary"] = {
+        "enabled": True,
+        "host_id": "genomesbox",
+    }
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    effective = load_execution_fabric_config(root)
+    assert effective.value["execution_fabric"]["standalone_primary"] == {
+        "enabled": True,
+        "host_id": "genomesbox",
+    }
+
+    loaded["execution_fabric"]["standalone_primary"]["unexpected"] = True
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ExecutionFabricConfigError, match="Additional properties"):
+        load_execution_fabric_config(root)
+
+
 def test_effective_config_applies_host_and_invocation_overrides_by_stable_id(
     tmp_path: Path,
 ) -> None:

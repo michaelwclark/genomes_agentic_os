@@ -46,6 +46,8 @@ export async function buildFabricRuntime() {
       recoveryHoldSeconds: config.leadershipRecoveryHoldSeconds,
       degradedPolicy: () =>
         policy.effective().execution_fabric.degraded_primary,
+      standalonePolicy: () =>
+        policy.effective().execution_fabric.standalone_primary,
     },
     ledger,
     () => policy.snapshot().appliedFingerprint,

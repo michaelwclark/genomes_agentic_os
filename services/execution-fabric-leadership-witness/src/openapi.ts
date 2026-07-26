@@ -4,7 +4,7 @@ export const openApiDocument = {
     title: "Agentic OS Execution Fabric Leadership Witness",
     version: "1.0.0",
     description:
-      "Independent, authenticated, monotonic leadership and failback arbitration.",
+      "Authenticated, monotonic leadership arbitration, including an explicit non-HA standalone-primary mode that disables promotion and failback.",
   },
   components: {
     securitySchemes: {
@@ -119,7 +119,7 @@ export const openApiDocument = {
           fabricEpoch: { type: "integer", minimum: 2 },
           clusterId: { type: "string" },
           fenceToken: { type: "string" },
-          authorityMode: { type: "string", enum: ["synchronous", "degraded_primary"] },
+          authorityMode: { type: "string", enum: ["synchronous", "degraded_primary", "standalone_primary"] },
           degradedUntil: { type: ["string", "null"], format: "date-time" },
           committedAt: { type: "string", format: "date-time" },
         },
@@ -191,7 +191,9 @@ export const openApiDocument = {
           },
           candidateHosts: {
             type: "array",
-            minItems: 2,
+            minItems: 1,
+            description:
+              "One exact current leader only in standalone-primary maintenance mode; at least two failover hosts otherwise.",
             uniqueItems: true,
             items: { type: "string" },
           },
@@ -249,7 +251,9 @@ export const openApiDocument = {
           },
           candidateHosts: {
             type: "array",
-            minItems: 2,
+            minItems: 1,
+            description:
+              "One exact current leader only in standalone-primary maintenance mode; at least two failover hosts otherwise.",
             uniqueItems: true,
             items: { type: "string" },
           },

@@ -187,7 +187,7 @@ export type LeadershipState = {
   upstreamSystemId: string | null;
   updatedAt: string;
   fenceDigest: string;
-  authorityMode: "synchronous" | "degraded_primary";
+  authorityMode: "synchronous" | "degraded_primary" | "standalone_primary";
   degradedUntil: string | null;
   degradedIncidentDigest: string | null;
 };

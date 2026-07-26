@@ -12,6 +12,38 @@ They do not copy secrets, do not rewrite
 operator provisions `runtime.env`, the referenced secret files, and an image
 lock with immutable digests.
 
+## Personal standalone genomesbox primary
+
+Set `FABRIC_WITNESS_MODE=standalone_primary` only on the configured Linux
+primary. The canonical policy must independently opt in the exact host through
+`execution_fabric.standalone_primary.enabled` and `.host_id`. Preflight reads
+that policy through the installed Agentic OS CLI, matches its SHA-256
+fingerprint to `FABRIC_POLICY_FINGERPRINT`, verifies the singleton candidate
+credential, requires a digest-pinned witness image, and rejects automatic
+failover or promotion.
+
+The Linux primary runner adds the `standalone-primary` Compose profile in this
+mode. The signed witness is co-located on genomesbox, renewable, and
+short-lived; it is not an independent witness or quorum. The control plane
+accepts normal task, effect, and scheduler mutations only while PostgreSQL
+directly proves local durable-primary settings. Bigmac never starts a promoted
+shared ledger under this mode and continues through its separate local
+personal-fallback latch.
+
+Leave `FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false` in `runtime.env`. The
+runner supplies it only to the first witness container, waits for readiness,
+records a host-side completion marker, and recreates the container without the
+capability before starting the primary profile. A completion marker with a
+missing SQLite database or bootstrap sentinel blocks activation and requires a
+restore; it never silently creates replacement authority state.
+
+Policy changes use `bin/rotate-policy.sh` on genomesbox. Standalone mode runs a
+fail-closed local maintenance transaction: prepare, database reload, candidate
+readback, witness commit, and active-state readback. `--resume` resolves an
+interrupted transaction. Promotion and failback remain unavailable. Activation
+also leaves the HA-only artifact-replication timer disabled while retaining the
+primary, scheduler, observer, backup, and candidate-reporter health units.
+
 ## Independent witness installer
 
 The provider-neutral witness uses its own focused installer and canonical

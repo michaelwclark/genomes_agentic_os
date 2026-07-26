@@ -102,6 +102,12 @@ const canonicalPolicySchema = z
     schema_version: z.literal(1),
     execution_fabric: z
       .object({
+        standalone_primary: z
+          .object({
+            enabled: z.boolean(),
+            host_id: scopeId,
+          })
+          .strict(),
         degraded_primary: z
           .object({
             allow_degraded_primary: z.boolean(),

@@ -1,5 +1,11 @@
 schema_version: 1
 execution_fabric:
+  # Personal installs may opt one exact host into a non-HA shared primary.
+  # This never authorizes bigmac to promote the shared PostgreSQL ledger;
+  # bigmac continues through transport.fallback when genomesbox is offline.
+  standalone_primary:
+    enabled: false
+    host_id: genomesbox
   # A witness-approved takeover can continue without a third host, but only
   # inside this explicit, signed, time-bounded mutation envelope. Set
   # allow_degraded_primary to false to fail closed until a synchronous standby

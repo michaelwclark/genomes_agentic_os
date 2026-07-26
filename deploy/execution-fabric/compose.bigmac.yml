@@ -59,7 +59,7 @@ services:
       - postgres-password
       - fabric-leadership-candidate-token
     volumes:
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ./scripts/candidate-reporter.mjs:/app/dist/candidate-reporter.mjs:ro
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
     networks: [fabric-private, fabric-egress]
@@ -235,8 +235,8 @@ services:
       - fabric-leadership-public-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
     ports:
       - "${FABRIC_TAILSCALE_IP:?set the bigmac Tailscale IP}:3180:3180"
@@ -282,8 +282,8 @@ services:
       - artifact-observer-secret-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
     networks: [fabric-private]
     read_only: true
     tmpfs: ["/tmp"]
@@ -353,8 +353,8 @@ services:
       - fabric-leadership-public-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
     networks: [fabric-private, fabric-egress]
     read_only: true
