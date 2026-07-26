@@ -24,6 +24,7 @@ from genomes_agentic_os.execution_fabric_remote import (
     TaskExecutionError,
     build_remote_runtime_snapshot,
     execute_assignment,
+    materialize_approval_state,
     resolve_remote_settings,
     validate_task_route,
     validate_worker_routes,
@@ -339,6 +340,18 @@ def test_task_route_rejects_unknown_or_mismatched_queue_work(tmp_path: Path) -> 
         validate_task_route(root, "made_up", "script")
     with pytest.raises(ValueError, match="not accepted"):
         validate_task_route(root, "non_llm", "llm.codex")
+
+
+def test_route_approval_class_materializes_to_run_queue_state() -> None:
+    assert materialize_approval_state("not_required") == "not_required"
+    assert materialize_approval_state("policy_gated") == "approved"
+    assert materialize_approval_state("explicit") == "required"
+    assert (
+        materialize_approval_state("explicit", explicit_operator_apply=True)
+        == "approved"
+    )
+    with pytest.raises(ValueError, match="unknown execution-fabric approval class"):
+        materialize_approval_state("surprise")
 
 
 def test_client_surfaces_safe_api_error_without_token(tmp_path: Path) -> None:
@@ -847,6 +860,21 @@ def test_cli_submit_preserves_explicit_local_degraded_mode(
         main(
             [
                 "runtime",
+                "queue-mode",
+                "apply",
+                "execution_fabric",
+                "--root",
+                str(root),
+                "--apply",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "runtime",
                 "submit",
                 "--root",
                 str(root),
@@ -868,6 +896,7 @@ def test_cli_submit_preserves_explicit_local_degraded_mode(
     assert result["status"] == "submitted-local-degraded"
     assert result["transport"]["mode"] == "local"
     assert result["queue_item"]["id"] == "local-one"
+    assert result["queue_item"]["approval_state"] == "approved"
 
 
 def test_cli_submit_allows_commandless_domain_task_for_harness_target(
