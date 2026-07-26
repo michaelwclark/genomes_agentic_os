@@ -28,7 +28,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "mode": {"enum": ["local", "remote"]},
+            "mode": {"enum": ["local", "remote", "remote_with_local_fallback"]},
             "control_plane_url": {"type": ["string", "null"], "minLength": 1},
             "request_timeout_seconds": {
               "type": "integer",
@@ -55,6 +55,14 @@
             "admin_token_env": {
               "type": "string",
               "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "fallback": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "failure_threshold": {"type": "integer", "minimum": 2, "maximum": 60},
+                "state_path": {"type": "string", "minLength": 1}
+              }
             }
           }
         },
@@ -231,7 +239,7 @@
             "admin_token_env"
           ],
           "properties": {
-            "mode": {"enum": ["local", "remote"]},
+            "mode": {"enum": ["local", "remote", "remote_with_local_fallback"]},
             "control_plane_url": {
               "type": ["string", "null"],
               "minLength": 1,
@@ -270,6 +278,14 @@
               "pattern": "^[A-Z][A-Z0-9_]*$",
               "minLength": 1,
               "maxLength": 128
+            },
+            "fallback": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "failure_threshold": {"type": "integer", "minimum": 2, "maximum": 60},
+                "state_path": {"type": "string", "minLength": 1}
+              }
             }
           }
         },

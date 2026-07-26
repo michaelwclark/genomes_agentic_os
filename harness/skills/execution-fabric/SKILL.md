@@ -24,6 +24,11 @@ concurrency, lease, retry, or dead-letter design and readiness work.
 6. Validate with `agentic-os runtime config validate`. Preview
    `runtime config reconcile`, then apply only while `execution_fabric` is the
    authoritative mode. Refresh program discovery after an approved change.
+7. For a personal genomesbox-primary topology, prefer
+   `transport.mode: remote_with_local_fallback` over enterprise HA when the
+   accepted contract is local bigmac continuity, sustained-failure activation,
+   loud alerts, and explicit failback. Inspect the latch with
+   `agentic-os runtime fallback status`.
 
 ## Guardrails
 
@@ -33,3 +38,5 @@ concurrency, lease, retry, or dead-letter design and readiness work.
 - Do not silently launch work when the selected queue or provider is saturated.
 - Do not copy host identity, host routing, or alert policy into Execution
   Fabric config; use the canonical dependency paths reported by config status.
+- Do not auto-fail back after genomesbox recovers. Prove readiness and use the
+  explicit failback command so local work is not silently abandoned.

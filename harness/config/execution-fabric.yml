@@ -32,6 +32,11 @@ execution_fabric:
     worker_token_env: AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN
     observer_token_env: AGENTIC_OS_EXECUTION_FABRIC_OBSERVER_TOKEN
     admin_token_env: AGENTIC_OS_EXECUTION_FABRIC_ADMIN_TOKEN
+    # Personal safety mode is opt-in with mode: remote_with_local_fallback.
+    # The latch is host-local mutable state; failback is always explicit.
+    fallback:
+      failure_threshold: 3
+      state_path: harness/shared_factory/00-control-plane/execution-fabric-fallback.json
   admission:
     global_max_running: 6
     reserved_interactive_slots: 1

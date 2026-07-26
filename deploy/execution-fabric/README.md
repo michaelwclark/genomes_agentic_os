@@ -35,6 +35,29 @@ Do not add host-specific queue-policy files here. Runtime installation consumes:
 The deployment environment selects endpoints, immutable images, storage, and
 role. It does not redefine queues or alerts.
 
+## Personal fallback activation
+
+The full standby profile remains available for consensus-grade failover, but it
+is not required for a personal harness. With
+`transport.mode: remote_with_local_fallback`, genomesbox runs the shared
+control plane and bigmac retains its existing local SQLite queue as a separate
+continuity plane. Install the release normally, set `FABRIC_OS_ROOT` and the
+absolute `FABRIC_AGENTIC_OS_CLI` path in bigmac's protected `runtime.env`, then
+activate only the lightweight watchdog:
+
+```bash
+~/Library/Application\ Support/GenomesAgenticOS/execution-fabric/current/installers/activate-macos.sh \
+  --apply --personal-fallback
+```
+
+The watchdog probes once per minute, latches after the configured sustained
+failure threshold, and sends critical alerts through the canonical Agentic OS
+notification route. It does not start PostgreSQL, Valkey, MinIO, or a second
+shared control plane on bigmac. This keeps the fallback small and predictable:
+local bigmac automations continue, while genomesbox-owned queued work waits for
+genomesbox to return. Failback is always an explicit, readiness-gated CLI
+operation.
+
 ## Datastore credential boundary
 
 `runtime.env` must not contain `FABRIC_DATABASE_URL`, `FABRIC_VALKEY_URL`, or

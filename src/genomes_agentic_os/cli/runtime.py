@@ -15,9 +15,13 @@ from ..execution_fabric_config import redact_execution_fabric_config
 from ..execution_fabric_config import resolve_execution_fabric_host_id
 from ..execution_fabric_config import show_execution_fabric_config
 from ..execution_fabric_remote import (
+    activate_personal_fallback,
+    clear_personal_fallback,
     ExecutionFabricClient,
     RemoteFabricWorker,
     build_remote_runtime_snapshot,
+    personal_fallback_status,
+    probe_personal_fallback,
     resolve_remote_settings,
     validate_task_route,
 )
@@ -386,6 +390,33 @@ def handle_runtime_status(args: argparse.Namespace) -> int:
         result["transport"] = settings.public()
         result["degraded_mode"] = True
     print(json.dumps(result, sort_keys=True) if args.json else format_runtime_snapshot(result))
+    return 0
+
+
+def handle_runtime_fallback_status(args: argparse.Namespace) -> int:
+    _print_structured(personal_fallback_status(args.root), json_output=args.json)
+    return 0
+
+
+def handle_runtime_fallback_probe(args: argparse.Namespace) -> int:
+    result = probe_personal_fallback(args.root, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
+    return 0 if result.get("primary_ready") or result.get("status") == "active" else 1
+
+
+def handle_runtime_fallback_activate(args: argparse.Namespace) -> int:
+    result = activate_personal_fallback(
+        args.root,
+        dry_run=not args.apply,
+        reason=args.reason,
+    )
+    _print_structured(result, json_output=args.json)
+    return 0
+
+
+def handle_runtime_fallback_failback(args: argparse.Namespace) -> int:
+    result = clear_personal_fallback(args.root, dry_run=not args.apply)
+    _print_structured(result, json_output=args.json)
     return 0
 
 
@@ -892,6 +923,41 @@ def register(subparsers) -> None:
     runtime_status_parser.add_argument("--limit", type=_positive_int, default=200)
     _add_json_arg(runtime_status_parser)
     runtime_status_parser.set_defaults(handler=handle_runtime_status)
+    runtime_fallback_parser = runtime_subparsers.add_parser(
+        "fallback",
+        help="Inspect or operate genomesbox-primary, bigmac-local fallback safety.",
+    )
+    runtime_fallback_subparsers = runtime_fallback_parser.add_subparsers(
+        dest="fallback_command", required=True
+    )
+    fallback_status_parser = runtime_fallback_subparsers.add_parser(
+        "status", help="Read durable personal fallback state."
+    )
+    fallback_status_parser.add_argument("--root", default=DEFAULT_ROOT)
+    _add_json_arg(fallback_status_parser)
+    fallback_status_parser.set_defaults(handler=handle_runtime_fallback_status)
+    fallback_probe_parser = runtime_fallback_subparsers.add_parser(
+        "probe", help="Probe genomesbox and activate local fallback after sustained failure."
+    )
+    fallback_probe_parser.add_argument("--root", default=DEFAULT_ROOT)
+    _add_safe_mutation_mode(fallback_probe_parser)
+    _add_json_arg(fallback_probe_parser)
+    fallback_probe_parser.set_defaults(handler=handle_runtime_fallback_probe)
+    fallback_activate_parser = runtime_fallback_subparsers.add_parser(
+        "activate", help="Manually latch bigmac into local fallback mode."
+    )
+    fallback_activate_parser.add_argument("--root", default=DEFAULT_ROOT)
+    fallback_activate_parser.add_argument("--reason", default="operator_requested")
+    _add_safe_mutation_mode(fallback_activate_parser)
+    _add_json_arg(fallback_activate_parser)
+    fallback_activate_parser.set_defaults(handler=handle_runtime_fallback_activate)
+    fallback_failback_parser = runtime_fallback_subparsers.add_parser(
+        "failback", help="Return to genomesbox only after its readiness is proven."
+    )
+    fallback_failback_parser.add_argument("--root", default=DEFAULT_ROOT)
+    _add_safe_mutation_mode(fallback_failback_parser)
+    _add_json_arg(fallback_failback_parser)
+    fallback_failback_parser.set_defaults(handler=handle_runtime_fallback_failback)
     queue_mode_parser = runtime_subparsers.add_parser(
         "queue-mode",
         help="Read, plan, apply, or roll back the runtime queue backend selector.",
