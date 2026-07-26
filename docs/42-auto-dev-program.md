@@ -252,6 +252,8 @@ the SQLite work registry, or delivery transitions.
 agentic-os auto-dev everything <domain> <project> <ticket> --apply
 agentic-os auto-dev adopt <domain> <project> <ticket> \
   --state <existing-pre-vNext-packet> --run-id <stable-id> --apply
+agentic-os auto-dev reconcile-historical --state <development-task-state.json> \
+  --evidence <historical-delivery-evidence.json> --idempotency-key <key> --apply
 agentic-os auto-dev reopen --state <finished-packet> \
   --run-id <new-id> --reason "<QA or support reason>" --stage qa --apply
 agentic-os auto-dev document <domain> <project> <ticket> --apply
@@ -265,6 +267,14 @@ before `autodev.json` existed. It requires the exact packet, its one canonical
 work-state row, and a matching source key. If that row already owns an active
 registered worktree, adoption verifies the Git registration and branch before
 attaching it; it never creates a replacement packet or checkout.
+
+`auto-dev reconcile-historical` repairs only a legacy `worktree_ready`
+delivery ledger. It requires complete typed receipts and exact provider-read
+merge, release, and install identities. It snapshots validated evidence in the
+existing packet, advances only the missing delivery states, and refuses a
+revision, PR-authority, release, or install mismatch before any transition.
+It cannot manufacture absent standalone stage receipts, so it preserves the
+normal Closeout and Health truth gates.
 
 `auto-dev reopen` is the only supported post-Health reactivation path. It
 requires a Health-completed packet in `03-complete` and a terminal, closed

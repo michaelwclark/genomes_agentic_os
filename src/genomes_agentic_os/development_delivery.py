@@ -4281,6 +4281,155 @@ def run_development_stage(
     return persist_delivery_revision_metadata()
 
 
+HISTORICAL_DELIVERY_RECONCILIATION_SCHEMA = "auto-dev-historical-delivery-reconciliation/v1"
+
+
+def reconcile_historical_delivery(
+    state_file: str | Path,
+    *,
+    evidence_file: str | Path,
+    idempotency_key: str,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Bind a legacy ``worktree_ready`` task to provider-read delivery evidence.
+
+    This is deliberately not a shortcut for Closeout: callers must provide a
+    complete, typed receipt for every missing delivery state.  The function
+    first cross-checks the reviewed head, merge, release, and installed
+    revision, then snapshots the supplied proof inside the packet before any
+    state transition.  It never deletes or relocates a packet or worktree.
+    """
+    task = TaskState(Path(state_file).expanduser().resolve())
+    current = task.read()
+    if current.get("state") != "worktree_ready":
+        raise DevelopmentDeliveryError(
+            "historical reconciliation requires an exact legacy worktree_ready task"
+        )
+    work_item_raw = str(current.get("work_item") or "").strip()
+    autodev_raw = str(current.get("autodev_path") or "").strip()
+    if not work_item_raw or not autodev_raw:
+        raise DevelopmentDeliveryError(
+            "historical reconciliation requires linked packet and autodev.json state"
+        )
+    work_item = Path(work_item_raw).expanduser().resolve()
+    autodev = Path(autodev_raw).expanduser().resolve()
+    if not work_item.is_dir() or not autodev.is_file():
+        raise DevelopmentDeliveryError("historical reconciliation packet linkage is unreadable")
+    evidence_path = Path(evidence_file).expanduser().resolve()
+    try:
+        source = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DevelopmentDeliveryError("historical reconciliation evidence must be valid JSON") from exc
+    if not isinstance(source, Mapping) or source.get("schema") != HISTORICAL_DELIVERY_RECONCILIATION_SCHEMA:
+        raise DevelopmentDeliveryError(
+            f"historical reconciliation evidence must use {HISTORICAL_DELIVERY_RECONCILIATION_SCHEMA}"
+        )
+    subject = str(source.get("subject_revision") or "").strip()
+    terminal = str(source.get("terminal_revision") or "").strip()
+    if not re.fullmatch(r"[a-fA-F0-9]{7,64}", subject) or not re.fullmatch(r"[a-fA-F0-9]{7,64}", terminal):
+        raise DevelopmentDeliveryError("historical reconciliation requires exact subject_revision and terminal_revision")
+    merge = source.get("merge")
+    release = source.get("release")
+    install = source.get("install")
+    receipts = source.get("delivery_receipts")
+    if not all(isinstance(item, Mapping) for item in (merge, release, install, receipts)):
+        raise DevelopmentDeliveryError("historical reconciliation requires merge, release, install, and delivery_receipts objects")
+    if not (
+        merge.get("readback_verified") is True
+        and str(merge.get("source_head_sha") or "") == subject
+        and str(merge.get("merge_sha") or "") == terminal
+        and str(merge.get("provider") or "").strip()
+        and str(merge.get("pull_request") or "").strip()
+        and str(merge.get("repository") or "").strip()
+        and merge.get("author_kind") in {"ours", "others"}
+    ):
+        raise DevelopmentDeliveryError("historical merge evidence does not bind the reviewed head to the exact merged revision")
+    if not (
+        release.get("readback_verified") is True
+        and str(release.get("revision") or "") == terminal
+        and str(release.get("tag") or "").strip()
+    ):
+        raise DevelopmentDeliveryError("historical release evidence must read back a tag bound to terminal_revision")
+    if not (
+        install.get("readback_verified") is True
+        and str(install.get("revision") or "") == terminal
+        and str(install.get("artifact_ref") or "").strip()
+        and str(install.get("environment") or "").strip()
+    ):
+        raise DevelopmentDeliveryError("historical install evidence must read back the exact terminal_revision")
+    required = list(FORWARD_STATES[FORWARD_STATES.index("worktree_ready") + 1 :])
+    if set(receipts) != set(required):
+        raise DevelopmentDeliveryError("historical reconciliation must provide one receipt for every missing delivery state")
+    normalized: dict[str, dict[str, Any]] = {}
+    for name in required:
+        row = receipts.get(name)
+        if not isinstance(row, Mapping) or row.get("schema") != "development-stage-evidence/v1" or row.get("state") != name:
+            raise DevelopmentDeliveryError(f"historical {name} receipt is not typed for its exact delivery state")
+        if not str(row.get("summary") or "").strip() or not row.get("verified_at") or not isinstance(row.get("evidence"), (Mapping, list)):
+            raise DevelopmentDeliveryError(f"historical {name} receipt lacks terminal structured evidence")
+        normalized[name] = dict(row)
+    pr_keys = ("provider", "pull_request", "repository", "author_kind")
+    for name in ("pr_open", "ready_for_merge", "merged"):
+        row = normalized[name].get("evidence")
+        if not isinstance(row, Mapping) or any(str(row.get(key) or "") != str(merge.get(key) or "") for key in pr_keys):
+            raise DevelopmentDeliveryError(f"historical {name} receipt does not match the provider-read merge authority")
+    if normalized["ready_for_merge"]["evidence"].get("subject_revision") != subject:
+        raise DevelopmentDeliveryError("historical ready_for_merge receipt does not match subject_revision")
+    merged_evidence = normalized["merged"]["evidence"]
+    if not isinstance(merged_evidence, Mapping) or merged_evidence.get("source_head_sha") != subject or merged_evidence.get("merge_sha") != terminal:
+        raise DevelopmentDeliveryError("historical merged receipt does not match the reviewed and terminal revisions")
+    deployed = normalized["post_deploy_validation"]["evidence"]
+    if not isinstance(deployed, Mapping) or deployed.get("deployed_revision") != terminal or deployed.get("artifact_ref") != install.get("artifact_ref") or deployed.get("environment") != install.get("environment"):
+        raise DevelopmentDeliveryError("historical deployment receipt does not match installed provider evidence")
+    # This establishes that the missing delivery ledger is compatible with the
+    # already-recorded Auto-Dev predecessor chain before any durable mutation.
+    try:
+        require_auto_dev_predecessors(autodev, "closeout")
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(f"historical reconciliation cannot bypass missing Auto-Dev evidence: {exc}") from exc
+    digest = hashlib.sha256(json.dumps(source, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    output_dir = work_item / "artifacts" / "development-delivery" / "historical-reconciliation"
+    receipt_path = output_dir / f"{digest[:20]}.json"
+    plan = {
+        "schema": HISTORICAL_DELIVERY_RECONCILIATION_SCHEMA,
+        "status": "planned" if not apply else "reconciled",
+        "task_state": str(task.path),
+        "work_item": str(work_item),
+        "subject_revision": subject,
+        "terminal_revision": terminal,
+        "receipt": str(receipt_path),
+        "states": required,
+        "preserved": {"packet": str(work_item), "worktree": current.get("worktree")},
+    }
+    if not apply:
+        return plan
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if receipt_path.exists():
+        existing = _read_mapping(receipt_path)
+        if existing.get("idempotency_key") != idempotency_key or existing.get("evidence_sha256") != digest:
+            raise DevelopmentDeliveryError("historical reconciliation receipt already exists with different evidence")
+    else:
+        _atomic_json(receipt_path, {**source, "evidence_sha256": digest, "idempotency_key": idempotency_key, "reconciled_at": utc_now()})
+    evidence_dir = output_dir / "receipts" / digest[:20]
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    refs: dict[str, str] = {}
+    for name, row in normalized.items():
+        path = evidence_dir / f"{name}.json"
+        _atomic_json(path, row)
+        refs[name] = str(path)
+    for stage, start, end in (
+        ("readiness", "worktree_ready", "planned"),
+        ("implementation", "planned", "local_validation"),
+        ("review", "local_validation", "ready_for_merge"),
+        ("merge", "ready_for_merge", "merged"),
+        ("deploy", "merged", "post_deploy_validation"),
+        ("closeout", "post_deploy_validation", "delivery_complete"),
+    ):
+        selected = {name: refs[name] for name in FORWARD_STATES[FORWARD_STATES.index(start) + 1 : FORWARD_STATES.index(end) + 1]}
+        run_development_stage(task.path, stage=stage, receipts=selected, idempotency_prefix=f"{idempotency_key}:{stage}")
+    return {**plan, "status": "reconciled", "receipt": str(receipt_path), "task": task.read()}
+
+
 def validate_workflow_contracts(repository_root: str | Path) -> list[str]:
     findings: list[str] = []
     base = expand_path(repository_root) / "harness" / "shared_factory" / "04-workflows" / "development_delivery"

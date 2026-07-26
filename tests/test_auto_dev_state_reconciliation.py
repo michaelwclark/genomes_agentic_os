@@ -110,6 +110,104 @@ def _work_item_packets(project: Path) -> list[Path]:
     return sorted(packets)
 
 
+def _historical_delivery_evidence(subject: str, terminal: str) -> dict[str, object]:
+    """Minimal provider-read legacy ledger used by reconciliation tests."""
+    states = delivery.FORWARD_STATES[delivery.FORWARD_STATES.index("worktree_ready") + 1 :]
+    receipts: dict[str, object] = {
+        name: {
+            "schema": "development-stage-evidence/v1",
+            "state": name,
+            "status": "completed",
+            "summary": f"Historical {name} evidence.",
+            "verified_at": "2026-07-26T00:00:00Z",
+            "evidence": {"historical": True},
+        }
+        for name in states
+    }
+    authority = {
+        "provider": "github",
+        "pull_request": "https://github.example/acme/app/pull/7",
+        "repository": "acme/app",
+        "author_kind": "ours",
+        "readback_verified": True,
+    }
+    receipts["pr_open"]["evidence"] = dict(authority)
+    receipts["ready_for_merge"]["evidence"] = {
+        **authority,
+        "checks_verified": True,
+        "reviews_verified": True,
+        "subject_revision": subject,
+    }
+    receipts["merged"]["evidence"] = {
+        **authority, "source_head_sha": subject, "merge_sha": terminal
+    }
+    receipts["post_deploy_validation"]["evidence"] = {
+        "deployed_revision": terminal,
+        "artifact_ref": "pkg@sha256:fixture",
+        "environment": "production",
+        "readback_verified": True,
+    }
+    receipts["delivery_complete"]["evidence"] = {"closeout_verified": True}
+    return {
+        "schema": "auto-dev-historical-delivery-reconciliation/v1",
+        "subject_revision": subject,
+        "terminal_revision": terminal,
+        "merge": {**authority, "source_head_sha": subject, "merge_sha": terminal},
+        "release": {"tag": "v1.2.3", "revision": terminal, "readback_verified": True},
+        "install": {
+            "revision": terminal,
+            "artifact_ref": "pkg@sha256:fixture",
+            "environment": "production",
+            "readback_verified": True,
+        },
+        "delivery_receipts": receipts,
+    }
+
+
+def test_historical_reconciliation_plans_only_for_exact_bound_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _fake_worktree(monkeypatch, "CC-398", base_sha)
+    run = delivery.start_development_run(root, "acme", "app", ["CC-398"], run_id="legacy", apply=True)
+    state = Path(run["tasks"][0]["state_ref"])
+    evidence = _historical_delivery_evidence("a" * 40, "b" * 40)
+    evidence_path = tmp_path / "historical.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    monkeypatch.setattr(delivery, "require_auto_dev_predecessors", lambda *_args, **_kwargs: {})
+
+    result = delivery.reconcile_historical_delivery(
+        state, evidence_file=evidence_path, idempotency_key="cc-398:reconcile", apply=False
+    )
+
+    assert result["status"] == "planned"
+    assert TaskState(state).read()["state"] == "worktree_ready"
+    assert not Path(result["receipt"]).exists()
+
+
+def test_historical_reconciliation_rejects_install_revision_mismatch_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _fake_worktree(monkeypatch, "CC-399", base_sha)
+    run = delivery.start_development_run(root, "acme", "app", ["CC-399"], run_id="legacy-mismatch", apply=True)
+    state = Path(run["tasks"][0]["state_ref"])
+    evidence = _historical_delivery_evidence("a" * 40, "b" * 40)
+    evidence["install"]["revision"] = "c" * 40
+    evidence_path = tmp_path / "historical-mismatch.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    with pytest.raises(delivery.DevelopmentDeliveryError, match="install evidence"):
+        delivery.reconcile_historical_delivery(
+            state, evidence_file=evidence_path, idempotency_key="cc-399:reconcile", apply=True
+        )
+    assert TaskState(state).read()["state"] == "worktree_ready"
+
+
 def test_canonical_work_state_tracks_delivery_and_never_regresses_or_clears_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

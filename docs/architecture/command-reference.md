@@ -2066,6 +2066,25 @@ match. It preserves that identity and reuses an existing worktree only after
 the project registry, Git worktree metadata, and branch all match. It never
 creates a replacement packet or checkout.
 
+Reconcile a legacy task that is already at `worktree_ready` only when the
+complete missing delivery ledger is backed by exact provider-read merge,
+release, and install evidence:
+
+```bash
+agentic-os auto-dev reconcile-historical \
+  --state <development-task-state.json> \
+  --evidence <historical-delivery-evidence.json> \
+  --idempotency-key <stable-key> --apply
+```
+
+The evidence uses `auto-dev-historical-delivery-reconciliation/v1`. It must
+bind one reviewed head to the merged revision, a provider-read release tag and
+installed artifact to that revision, and typed receipts for every missing
+delivery state. The command rejects any mismatch before mutation, snapshots
+the evidence inside the existing packet, and preserves the packet/worktree. It
+does not invent missing Auto-Dev stage evidence; Closeout and Health remain
+blocked until their ordinary receipt gates are satisfied.
+
 Reopen immutable post-Health history for a fresh QA or development run:
 
 ```bash
