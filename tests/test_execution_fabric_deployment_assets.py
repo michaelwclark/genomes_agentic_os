@@ -292,6 +292,10 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
     }
     for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
         compose = _yaml(DEPLOY / name)
+        assert compose["services"]["control-plane"]["command"] == [
+            "node",
+            "dist/src/main.js",
+        ]
         observer = compose["services"]["observer"]
         assert forbidden_environment.isdisjoint(observer["environment"])
         assert set(observer["secrets"]) == {

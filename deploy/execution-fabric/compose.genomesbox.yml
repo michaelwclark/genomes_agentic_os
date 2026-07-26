@@ -215,6 +215,7 @@ services:
     image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
     profiles: ["primary"]
     restart: unless-stopped
+    command: ["node", "dist/src/main.js"]
     depends_on:
       postgres:
         condition: service_healthy

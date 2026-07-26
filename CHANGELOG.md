@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
   observer user but could not complete a fresh primary bootstrap.
 - Add a deployment-contract regression that rejects the unavailable external
   command and unresolved bucket placeholder.
+- Preserve the control-plane image command when Compose overrides its
+  datastore-secret entrypoint; without the explicit command the container
+  exited successfully before opening the API or applying its schema.
 
 ## [0.5.1] - 2026-07-26
 
