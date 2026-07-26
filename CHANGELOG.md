@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.0] - 2026-07-25
+
+### Added
+- Personal `remote_with_local_fallback` transport for genomesbox-primary
+  installations. A durable bigmac latch activates its existing local queue
+  only after sustained primary readiness failures, alerts through Agentic OS,
+  and requires explicit readiness-gated failback.
+
 ## [0.4.2] - 2026-07-25
 
 ### Added

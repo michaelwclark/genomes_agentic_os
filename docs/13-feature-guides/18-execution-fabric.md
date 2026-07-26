@@ -46,7 +46,8 @@ The source-owned program under
 contract and compatibility definition assets. The effective instance config
 contains:
 
-- one explicit `transport` selector (`local` or authenticated `remote`) and its
+- one explicit `transport` selector (`local`, authenticated `remote`, or
+  `remote_with_local_fallback`) and its
   control-plane URL/timeouts plus distinct submit, worker, observer, and admin
   token environment-variable names;
 - five bounded queue definitions for Codex, Claude, Team PR review, LOS
@@ -122,6 +123,50 @@ Arbitrary LAN/public HTTP and hostname-based plain HTTP are rejected. Tailscale
 Serve HTTPS remains preferred. The service deployment must enforce bearer
 authentication on every `/api/v1` task, worker, attempt, effect, and snapshot
 route; client-side headers alone are not an authorization boundary.
+
+### Personal genomesbox-primary fallback
+
+For a personal two-host setup that values continuity over consensus-grade HA,
+use the explicit fallback transport on bigmac:
+
+```yaml
+execution_fabric:
+  transport:
+    mode: remote_with_local_fallback
+    control_plane_url: http://100.64.0.2:3180
+    request_timeout_seconds: 20
+    long_poll_seconds: 20
+    submit_token_env: AGENTIC_OS_EXECUTION_FABRIC_SUBMIT_TOKEN
+    worker_token_env: AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN
+    observer_token_env: AGENTIC_OS_EXECUTION_FABRIC_OBSERVER_TOKEN
+    admin_token_env: AGENTIC_OS_EXECUTION_FABRIC_ADMIN_TOKEN
+    fallback:
+      failure_threshold: 3
+      state_path: harness/shared_factory/00-control-plane/execution-fabric-fallback.json
+```
+
+An independent watchdog runs `runtime fallback probe --apply` once per minute.
+Three consecutive readiness failures latch bigmac onto its existing local
+durable SQLite queue. The latch is durable across process and host restarts.
+New bigmac work continues locally; work already accepted by genomesbox remains
+there until the primary returns. This deliberately avoids retrying an uncertain
+remote admission into a second backend.
+
+Recovery never switches back automatically. Inspect the latch and perform the
+readiness-gated failback explicitly:
+
+```bash
+agentic-os runtime fallback status --root ~/agentic_os --json
+agentic-os runtime fallback probe --root ~/agentic_os --apply --json
+agentic-os runtime fallback activate --reason maintenance --root ~/agentic_os --apply --json
+agentic-os runtime fallback failback --root ~/agentic_os --apply --json
+```
+
+This mode makes no automatic split-brain or zero-data-loss claim. It is for a
+personal harness: genomesbox owns the shared ledger when healthy, while bigmac
+can continue its own automations locally during an outage. Alerts use the
+canonical `runtime.execution_fabric.health` route and failback requires proven
+genomesbox readiness.
 
 Submit a remote-safe, commandless task, run a bounded worker, and inspect the
 same contract:

@@ -41,7 +41,12 @@ DEFAULT_TRANSPORT = {
     "worker_token_env": "AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN",
     "observer_token_env": "AGENTIC_OS_EXECUTION_FABRIC_OBSERVER_TOKEN",
     "admin_token_env": "AGENTIC_OS_EXECUTION_FABRIC_ADMIN_TOKEN",
+    "fallback": {
+        "failure_threshold": 3,
+        "state_path": "harness/shared_factory/00-control-plane/execution-fabric-fallback.json",
+    },
 }
+FALLBACK_STATE_SCHEMA = "agentic-os-execution-fabric-fallback/v1"
 
 
 class ExecutionFabricRemoteError(RuntimeError):
@@ -84,10 +89,15 @@ class RemoteFabricSettings:
     long_poll_seconds: int
     auth_token_env: str
     auth_token: str | None = field(default=None, repr=False)
+    fallback_active: bool = False
+    fallback_state_path: str | None = None
+    fallback_failure_threshold: int = 3
 
     @property
     def remote(self) -> bool:
-        return self.mode == "remote"
+        return self.mode == "remote" or (
+            self.mode == "remote_with_local_fallback" and not self.fallback_active
+        )
 
     def public(self) -> dict[str, Any]:
         return {
@@ -97,6 +107,9 @@ class RemoteFabricSettings:
             "long_poll_seconds": self.long_poll_seconds,
             "auth_token_env": self.auth_token_env,
             "authenticated": bool(self.auth_token),
+            "effective_mode": "remote" if self.remote else "local",
+            "fallback_active": self.fallback_active,
+            "fallback_state_path": self.fallback_state_path,
         }
 
 
@@ -151,18 +164,46 @@ def resolve_remote_settings(
     )
     configured = effective.value["execution_fabric"].get("transport") or {}
     transport = {**DEFAULT_TRANSPORT, **configured}
+    fallback = {
+        **DEFAULT_TRANSPORT["fallback"],
+        **dict(configured.get("fallback") or {}),
+    }
     mode = str(transport["mode"])
-    if mode not in {"local", "remote"}:
+    if mode not in {"local", "remote", "remote_with_local_fallback"}:
         raise ExecutionFabricConfigError(
-            "execution_fabric.transport.mode must be local or remote"
+            "execution_fabric.transport.mode must be local, remote, or "
+            "remote_with_local_fallback"
         )
     if role not in {"submit", "worker", "observer", "admin"}:
         raise ExecutionFabricConfigError(f"unknown Execution Fabric credential role: {role}")
     token_env = str(transport[f"{role}_token_env"])
     url = None
     token = None
-    if mode == "remote":
+    fallback_state_path = None
+    fallback_active = False
+    fallback_failure_threshold = int(fallback["failure_threshold"])
+    if mode == "remote_with_local_fallback":
+        fallback_state_path = str(
+            (expand_path(root) / str(fallback["state_path"])).resolve()
+        )
+        state_file = Path(fallback_state_path)
+        if state_file.exists():
+            try:
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ExecutionFabricConfigError(
+                    "execution_fabric fallback state is unreadable or invalid"
+                ) from exc
+            if state.get("schema_version") != FALLBACK_STATE_SCHEMA:
+                raise ExecutionFabricConfigError(
+                    "execution_fabric fallback state has an unsupported schema"
+                )
+            fallback_active = state.get("status") == "active"
+    if mode in {"remote", "remote_with_local_fallback"}:
         url = _validate_remote_url(str(transport.get("control_plane_url") or ""))
+    if mode == "remote" or (
+        mode == "remote_with_local_fallback" and not fallback_active
+    ):
         token = str(environment.get(token_env) or "").strip()
         token_file = str(environment.get(f"{token_env}_FILE") or "").strip()
         if token and token_file:
@@ -189,7 +230,200 @@ def resolve_remote_settings(
         long_poll_seconds=int(transport["long_poll_seconds"]),
         auth_token_env=token_env,
         auth_token=token,
+        fallback_active=fallback_active,
+        fallback_state_path=fallback_state_path,
+        fallback_failure_threshold=fallback_failure_threshold,
     )
+
+
+def _fallback_policy(root: str | Path) -> tuple[str, Path, int, int]:
+    effective = load_execution_fabric_config(root).value["execution_fabric"]
+    configured = dict(effective.get("transport") or {})
+    transport = {**DEFAULT_TRANSPORT, **configured}
+    if str(transport["mode"]) != "remote_with_local_fallback":
+        raise ExecutionFabricConfigError(
+            "personal fallback commands require transport.mode="
+            "remote_with_local_fallback"
+        )
+    fallback = {
+        **DEFAULT_TRANSPORT["fallback"],
+        **dict(configured.get("fallback") or {}),
+    }
+    url = _validate_remote_url(str(transport.get("control_plane_url") or ""))
+    state_path = (expand_path(root) / str(fallback["state_path"])).resolve()
+    return (
+        url,
+        state_path,
+        int(fallback["failure_threshold"]),
+        int(transport["request_timeout_seconds"]),
+    )
+
+
+def _read_fallback_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "schema_version": FALLBACK_STATE_SCHEMA,
+            "status": "standby",
+            "consecutive_failures": 0,
+        }
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ExecutionFabricConfigError(
+            "execution_fabric fallback state is unreadable or invalid"
+        ) from exc
+    if state.get("schema_version") != FALLBACK_STATE_SCHEMA:
+        raise ExecutionFabricConfigError(
+            "execution_fabric fallback state has an unsupported schema"
+        )
+    return state
+
+
+def _write_fallback_state(path: Path, state: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(dict(state), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def _primary_ready(url: str, timeout: int) -> tuple[bool, str | None]:
+    request = urllib.request.Request(f"{url}/readyz", method="GET")
+    try:
+        response = urllib.request.urlopen(request, timeout=float(timeout))  # noqa: S310
+        try:
+            status = int(getattr(response, "status", getattr(response, "code", 200)))
+        finally:
+            response.close()
+        ready = 200 <= status < 300
+        return ready, None if ready else f"http_{status}"
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return False, type(getattr(exc, "reason", exc)).__name__
+
+
+def personal_fallback_status(root: str | Path) -> dict[str, Any]:
+    url, state_path, threshold, _ = _fallback_policy(root)
+    return {
+        **_read_fallback_state(state_path),
+        "primary_url": url,
+        "failure_threshold": threshold,
+        "state_path": str(state_path),
+        "manual_failback": True,
+    }
+
+
+def probe_personal_fallback(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
+    url, state_path, threshold, timeout = _fallback_policy(root)
+    before = _read_fallback_state(state_path)
+    ready, error = _primary_ready(url, timeout)
+    now = _utc_now()
+    after = {
+        **before,
+        "schema_version": FALLBACK_STATE_SCHEMA,
+        "checked_at": now,
+        "primary_ready": ready,
+    }
+    if ready:
+        after["consecutive_failures"] = 0
+        after.pop("last_error", None)
+        if before.get("status") == "active":
+            after["status"] = "active"
+            after.setdefault("primary_recovered_at", now)
+        else:
+            after["status"] = "standby"
+    else:
+        failures = int(before.get("consecutive_failures") or 0) + 1
+        after["consecutive_failures"] = failures
+        after["last_error"] = error or "unready"
+        if before.get("status") == "active" or failures >= threshold:
+            after["status"] = "active"
+            after.setdefault("activated_at", now)
+            after["activation_reason"] = "sustained_primary_unavailable"
+        else:
+            after["status"] = "standby"
+    if not dry_run:
+        _write_fallback_state(state_path, after)
+    return {
+        **after,
+        "primary_url": url,
+        "failure_threshold": threshold,
+        "state_path": str(state_path),
+        "manual_failback": True,
+        "dry_run": dry_run,
+        "applied": not dry_run,
+    }
+
+
+def activate_personal_fallback(
+    root: str | Path, *, dry_run: bool = True, reason: str = "operator_requested"
+) -> dict[str, Any]:
+    url, state_path, threshold, _ = _fallback_policy(root)
+    state = _read_fallback_state(state_path)
+    state.update(
+        {
+            "schema_version": FALLBACK_STATE_SCHEMA,
+            "status": "active",
+            "activated_at": state.get("activated_at") or _utc_now(),
+            "activation_reason": reason,
+            "primary_ready": False,
+            "consecutive_failures": max(
+                threshold, int(state.get("consecutive_failures") or 0)
+            ),
+        }
+    )
+    if not dry_run:
+        _write_fallback_state(state_path, state)
+    return {
+        **state,
+        "primary_url": url,
+        "failure_threshold": threshold,
+        "state_path": str(state_path),
+        "manual_failback": True,
+        "dry_run": dry_run,
+        "applied": not dry_run,
+    }
+
+
+def clear_personal_fallback(root: str | Path, *, dry_run: bool = True) -> dict[str, Any]:
+    url, state_path, threshold, timeout = _fallback_policy(root)
+    ready, error = _primary_ready(url, timeout)
+    if not ready:
+        raise ExecutionFabricRemoteError(
+            f"refusing failback because primary readiness is not proven: {error or 'unready'}"
+        )
+    before = _read_fallback_state(state_path)
+    now = _utc_now()
+    after = {
+        "schema_version": FALLBACK_STATE_SCHEMA,
+        "status": "standby",
+        "consecutive_failures": 0,
+        "primary_ready": True,
+        "checked_at": now,
+        "cleared_at": now,
+        "previous_activation": before.get("activated_at"),
+    }
+    if not dry_run:
+        _write_fallback_state(state_path, after)
+    return {
+        **after,
+        "primary_url": url,
+        "failure_threshold": threshold,
+        "state_path": str(state_path),
+        "manual_failback": True,
+        "dry_run": dry_run,
+        "applied": not dry_run,
+    }
 
 
 def validate_task_route(

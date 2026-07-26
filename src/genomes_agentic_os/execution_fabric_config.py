@@ -316,7 +316,7 @@ def _json_pointer(parts: list[Any]) -> str:
 def _validate_cross_references(config: dict[str, Any]) -> None:
     fabric = config["execution_fabric"]
     transport = fabric.get("transport") or {}
-    if transport.get("mode", "local") == "remote" and not str(
+    if transport.get("mode", "local") in {"remote", "remote_with_local_fallback"} and not str(
         transport.get("control_plane_url") or ""
     ).strip():
         raise ExecutionFabricConfigError(

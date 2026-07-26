@@ -14,8 +14,11 @@ import yaml
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.execution_fabric_config import ExecutionFabricConfigError
 from genomes_agentic_os.execution_fabric_remote import (
+    activate_personal_fallback,
+    clear_personal_fallback,
     ExecutionFabricApiError,
     ExecutionFabricClient,
+    ExecutionFabricRemoteError,
     RemoteFabricSettings,
     RemoteFabricWorker,
     TaskExecutionError,
@@ -25,6 +28,8 @@ from genomes_agentic_os.execution_fabric_remote import (
     validate_task_route,
     validate_worker_routes,
     drain_artifact_spool,
+    personal_fallback_status,
+    probe_personal_fallback,
     _spool_artifact,
 )
 from genomes_agentic_os.runtime_ops import runtime_init
@@ -48,6 +53,23 @@ def _root(tmp_path: Path, *, remote: bool = True) -> Path:
             "worker_token_env": "TEST_WORKER_TOKEN",
             "observer_token_env": "TEST_FABRIC_TOKEN",
             "admin_token_env": "TEST_ADMIN_TOKEN",
+        }
+    )
+    config_path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    return root
+
+
+def _fallback_root(tmp_path: Path) -> Path:
+    root = _root(tmp_path)
+    config_path = root / "harness/config/execution-fabric.yml"
+    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    loaded["execution_fabric"]["transport"].update(
+        {
+            "mode": "remote_with_local_fallback",
+            "fallback": {
+                "failure_threshold": 3,
+                "state_path": "harness/shared_factory/00-control-plane/fallback.json",
+            },
         }
     )
     config_path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
@@ -109,6 +131,58 @@ def test_remote_settings_accepts_operator_mounted_token_file(tmp_path: Path) -> 
                 "TEST_WORKER_TOKEN_FILE": str(token_file),
             },
         )
+
+
+def test_personal_fallback_latches_after_sustained_failure_and_requires_manual_failback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fallback_root(tmp_path)
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (False, "connection_refused"),
+    )
+
+    for expected in (1, 2, 3):
+        result = probe_personal_fallback(root, dry_run=False)
+        assert result["consecutive_failures"] == expected
+    assert result["status"] == "active"
+    assert personal_fallback_status(root)["manual_failback"] is True
+
+    settings = resolve_remote_settings(root, environ={})
+    assert settings.mode == "remote_with_local_fallback"
+    assert settings.remote is False
+    assert settings.fallback_active is True
+    assert settings.public()["effective_mode"] == "local"
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (True, None),
+    )
+    recovered = probe_personal_fallback(root, dry_run=False)
+    assert recovered["status"] == "active"
+    assert recovered["primary_ready"] is True
+
+    cleared = clear_personal_fallback(root, dry_run=False)
+    assert cleared["status"] == "standby"
+    remote = resolve_remote_settings(root, environ={"TEST_FABRIC_TOKEN": "secret"})
+    assert remote.remote is True
+
+
+def test_personal_fallback_manual_activation_and_failback_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _fallback_root(tmp_path)
+    activated = activate_personal_fallback(root, dry_run=False, reason="maintenance")
+    assert activated["status"] == "active"
+    assert activated["activation_reason"] == "maintenance"
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.execution_fabric_remote._primary_ready",
+        lambda _url, _timeout: (False, "timeout"),
+    )
+    with pytest.raises(ExecutionFabricRemoteError, match="readiness is not proven"):
+        clear_personal_fallback(root, dry_run=False)
+    assert personal_fallback_status(root)["status"] == "active"
 
 
 def test_client_sends_bearer_auth_and_exact_v1_contract(tmp_path: Path) -> None:
