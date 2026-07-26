@@ -16,6 +16,7 @@ from ..auto_dev_orchestration import (
 from ..development_delivery import (
     DEVELOPMENT_POLICY_PLANES,
     DevelopmentDeliveryError,
+    reconcile_historical_delivery,
     reopen_auto_dev_item,
     start_development_run,
 )
@@ -197,6 +198,17 @@ def handle_adopt(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_reconcile_historical(args: argparse.Namespace) -> int:
+    result = reconcile_historical_delivery(
+        args.state,
+        evidence_file=args.evidence,
+        idempotency_key=args.idempotency_key,
+        apply=args.apply,
+    )
+    _print(result, json_output=args.json)
+    return 0
+
+
 def handle_reopen(args: argparse.Namespace) -> int:
     result = reopen_auto_dev_item(
         args.root,
@@ -280,6 +292,21 @@ def register(subparsers) -> None:
     adopt.add_argument("--root", default=DEFAULT_ROOT)
     _common_output(adopt)
     adopt.set_defaults(handler=handle_adopt)
+
+    reconcile = sub.add_parser(
+        "reconcile-historical",
+        help="Bind provider-read historical delivery evidence to one legacy worktree_ready task.",
+    )
+    reconcile.add_argument("--state", required=True, help="Exact development task state.json.")
+    reconcile.add_argument(
+        "--evidence",
+        required=True,
+        help="auto-dev-historical-delivery-reconciliation/v1 JSON with the complete missing delivery ledger.",
+    )
+    reconcile.add_argument("--idempotency-key", required=True)
+    reconcile.add_argument("--apply", action="store_true")
+    _common_output(reconcile)
+    reconcile.set_defaults(handler=handle_reconcile_historical)
 
     reopen = sub.add_parser(
         "reopen",
