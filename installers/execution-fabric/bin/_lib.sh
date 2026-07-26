@@ -135,12 +135,34 @@ fabric_notify() {
   dedupe=$4
   notifier="$FABRIC_OS_ROOT/harness/bin/agentic-os-notify"
   if [ -x "$notifier" ]; then
-    "$notifier" \
-      --source runtime.execution_fabric.health \
-      --level "$level" \
-      --title "$title" \
-      --message "$message" \
-      --dedupe-key "$dedupe" || true
+    notifier_python=
+    for python_candidate in \
+      "${FABRIC_AGENTIC_OS_PYTHON:-}" \
+      "$([ -z "${FABRIC_AGENTIC_OS_CLI:-}" ] || printf '%s/python' "$(dirname -- "$FABRIC_AGENTIC_OS_CLI")")" \
+      "${FABRIC_WORKER_PYTHON:-}"
+    do
+      [ -n "$python_candidate" ] || continue
+      case "$python_candidate" in
+        */*) [ ! -x "$python_candidate" ] || notifier_python=$python_candidate ;;
+        *) notifier_python=$(command -v "$python_candidate" 2>/dev/null || true) ;;
+      esac
+      [ -z "$notifier_python" ] || break
+    done
+    if [ -n "$notifier_python" ]; then
+      "$notifier_python" "$notifier" \
+        --source runtime.execution_fabric.health \
+        --level "$level" \
+        --title "$title" \
+        --message "$message" \
+        --dedupe-key "$dedupe" || true
+    else
+      "$notifier" \
+        --source runtime.execution_fabric.health \
+        --level "$level" \
+        --title "$title" \
+        --message "$message" \
+        --dedupe-key "$dedupe" || true
+    fi
   else
     logger -t genomes-agentic-os-execution-fabric "$level: $title - $message" || true
   fi
