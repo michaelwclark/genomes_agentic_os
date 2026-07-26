@@ -458,6 +458,12 @@ def test_independent_witness_is_digest_pinned_and_durable() -> None:
     service = SOURCE_ROOT / "services" / "execution-fabric-leadership-witness"
     deployment = DEPLOY / "witness"
     assert (service / "Dockerfile").is_file()
+    dockerfile = (service / "Dockerfile").read_text(encoding="utf-8")
+    assert "FROM --platform=$BUILDPLATFORM" in dockerfile
+    assert "npm prune --omit=dev --ignore-scripts" in dockerfile
+    assert "COPY --from=build /app/node_modules ./node_modules" in dockerfile
+    runtime_stage = dockerfile.split(" AS runtime", maxsplit=1)[1]
+    assert "RUN npm ci" not in runtime_stage
     assert (service / "src" / "sqlite-store.ts").is_file()
     assert not (service / "src" / "dynamo-store.ts").exists()
     assert not (deployment / "cloudformation.yml").exists()

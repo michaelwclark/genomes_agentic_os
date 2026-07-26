@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.1] - 2026-07-26
+
+### Fixed
+- Build and prune the leadership-witness production dependency tree on the
+  native BuildKit platform, avoiding QEMU execution during multi-architecture
+  release assembly.
+- Preserve the v0.5.0 tag as the receipt for the failed unpublished release;
+  v0.5.1 is the first installable personal-primary release.
+
 ## [0.5.0] - 2026-07-25
 
 ### Added
