@@ -51,6 +51,23 @@ interrupted transaction. Promotion and failback remain unavailable. Activation
 also leaves the HA-only artifact-replication timer disabled while retaining the
 primary, scheduler, observer, backup, and candidate-reporter health units.
 
+On bigmac, `activate-macos.sh --apply --personal-fallback` is the complete
+personal client-plane activation, not a standby activation. Its dedicated
+preflight verifies the canonical `remote_with_local_fallback` policy, exact
+host/worker/pool/queue/capability/concurrency binding, shipped worker routes,
+distinct scoped worker and alarm-dispatcher token files, the canonical desktop
+notifier, and a currently routable signed-leader gateway. Only after that whole
+set passes does launchd start the host worker, alarm dispatcher, and fallback
+watchdog. It does not start or require standby PostgreSQL, Valkey, MinIO,
+promotion/failback roles, or local copies of server-side credential maps.
+
+The packaged host worker uses `installed_host` root mode. It reads bigmac's
+existing Agentic OS policy and registries and never runs the disposable OCI
+bootstrap that materializes pod-local config. The control plane remains the
+authority that verifies the scoped bootstrap credential against the exact
+durable worker registration; bigmac holds only its one worker token and one
+separate alarm-dispatcher token.
+
 ## Independent witness installer
 
 The provider-neutral witness uses its own focused installer and canonical

@@ -176,6 +176,14 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
         "harness/registries/hosts-routing.yml"
     )
     assert first["canonical_dependencies"]["alerts"].endswith("harness/registries/alerts.yml")
+    pr_review_pool = next(
+        pool
+        for pool in load_execution_fabric_config(root).value["execution_fabric"][
+            "worker_pools"
+        ]
+        if pool["id"] == "pr_reviewers"
+    )
+    assert pr_review_pool["capacity"]["max_tasks_per_worker"] == 2
 
     _edit(root)
     second = execution_fabric_config_status(root)

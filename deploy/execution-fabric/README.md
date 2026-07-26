@@ -119,10 +119,20 @@ activate only the lightweight watchdog:
   --apply --personal-fallback
 ```
 
+The client plane runs three independent launchd jobs: the scoped remote worker,
+the scoped alarm dispatcher, and the fallback watchdog. A dedicated preflight
+validates their exact canonical worker identity and capacity, shipped routes,
+distinct local token files, notifier, and signed-leader gateway without
+requiring the standby datastore profile or copying server-side credential maps
+to bigmac. The host worker reads the installed OS root without rewriting its
+policy or host registries.
+
 The watchdog probes once per minute, latches after the configured sustained
 failure threshold, and sends critical alerts through the canonical Agentic OS
 notification route. It does not start PostgreSQL, Valkey, MinIO, or a second
-shared control plane on bigmac. This keeps the fallback small and predictable:
+shared control plane on bigmac. The remote worker and alarm dispatcher naturally
+stop receiving shared work while the gateway is unavailable; bigmac's existing
+local runtime continues under the fallback latch. This keeps the fallback small and predictable:
 local bigmac automations continue, while genomesbox-owned queued work waits for
 genomesbox to return. Failback is always an explicit, readiness-gated CLI
 operation.

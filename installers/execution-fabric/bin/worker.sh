@@ -17,5 +17,10 @@ fi
 # signed witness leadership proof and fences itself when that proof expires.
 : "${FABRIC_GATEWAY_API_BASE:?stable per-host gateway API base is required}"
 FABRIC_API_BASE=$FABRIC_GATEWAY_API_BASE
-export FABRIC_API_BASE
+# The packaged macOS/Linux worker runs against the canonical installed OS root.
+# Portable OCI workers invoke the Python module directly and retain its
+# disposable-root bootstrap behavior.
+AGENTIC_OS_ROOT=${AGENTIC_OS_ROOT:-$FABRIC_OS_ROOT}
+FABRIC_WORKER_ROOT_MODE=installed_host
+export FABRIC_API_BASE AGENTIC_OS_ROOT FABRIC_WORKER_ROOT_MODE
 exec "$FABRIC_WORKER_EXECUTABLE"

@@ -317,7 +317,9 @@ execution_fabric:
       capacity:
         min_workers: 0
         max_workers: 2
-        max_tasks_per_worker: 1
+        # One bigmac host worker may use the full two-wide review lane. The
+        # queue and interactive admission ceilings remain the final caps.
+        max_tasks_per_worker: 2
       lease:
         timeout_seconds: 3900
         heartbeat_seconds: 30

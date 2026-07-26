@@ -145,7 +145,16 @@ execution_fabric:
       state_path: harness/shared_factory/00-control-plane/execution-fabric-fallback.json
 ```
 
-An independent watchdog runs `runtime fallback probe --apply` once per minute.
+Personal activation preflights and starts three client-plane jobs on bigmac:
+the remote host worker, the durable alarm dispatcher, and the independent
+fallback watchdog. The preflight binds worker ID, bootstrap ID, host, pool,
+queue set, capability set, and concurrency to canonical policy; validates the
+shipped routes and distinct scoped token files; and requires a routable signed
+gateway. It does not require standby PostgreSQL/Valkey/MinIO or local copies of
+the control plane's credential maps. The server verifies the exact bootstrap
+and dispatcher bindings when each client connects.
+
+The watchdog runs `runtime fallback probe --apply` once per minute.
 Three consecutive readiness failures latch bigmac onto its existing local
 durable SQLite queue. The latch is durable across process and host restarts.
 New bigmac work continues locally; work already accepted by genomesbox remains

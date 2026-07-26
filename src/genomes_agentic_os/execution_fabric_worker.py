@@ -16,6 +16,7 @@ from .execution_fabric_remote import (
     resolve_remote_settings,
     validate_worker_routes,
 )
+from .execution_fabric_config import load_execution_fabric_config
 from .runtime_ops import runtime_init
 
 
@@ -84,6 +85,29 @@ def bootstrap(root: Path) -> None:
     )
 
 
+def prepare_root(root: Path, *, validate_only: bool = False) -> None:
+    """Prepare either a disposable worker root or a governed installed root.
+
+    OCI workers own a disposable root and may materialize their pod-local
+    routing. Host-native workers must instead consume the existing Agentic OS
+    policy and registries without rewriting them. The explicit mode keeps the
+    two trust boundaries separate and makes the safe host behavior opt-in.
+    """
+    mode = str(os.environ.get("FABRIC_WORKER_ROOT_MODE") or "portable").strip()
+    if mode == "portable":
+        if validate_only:
+            runtime_init(root)
+        else:
+            bootstrap(root)
+        return
+    if mode == "installed_host":
+        load_execution_fabric_config(root, environ=os.environ)
+        return
+    raise ValueError(
+        "FABRIC_WORKER_ROOT_MODE must be portable or installed_host"
+    )
+
+
 def healthcheck(root: Path) -> int:
     worker_id = _required("FABRIC_WORKER_ID")
     path = (
@@ -111,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     if args == ["--healthcheck"]:
         return healthcheck(root)
     if args == ["--validate-routes"]:
-        runtime_init(root)
+        prepare_root(root, validate_only=True)
         routes = validate_worker_routes(
             root,
             _csv("FABRIC_WORKER_ACCEPTED_QUEUES"),
@@ -119,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps({"status": "valid", "routes": routes}, sort_keys=True))
         return 0
-    bootstrap(root)
+    prepare_root(root)
     settings = resolve_remote_settings(root, role="worker")
     queues = _csv("FABRIC_WORKER_ACCEPTED_QUEUES")
     capabilities = _csv("FABRIC_WORKER_CAPABILITIES")

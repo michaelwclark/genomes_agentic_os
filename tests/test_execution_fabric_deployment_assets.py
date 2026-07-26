@@ -1357,6 +1357,190 @@ esac
     )
 
 
+def test_macos_personal_activation_starts_only_client_plane_after_preflight(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installer = tmp_path / "installer"
+    installer.mkdir()
+    shutil.copy2(INSTALLERS / "activate-macos.sh", installer / "activate-macos.sh")
+    activation_log = tmp_path / "activation.log"
+    _write_executable(
+        installer / "bin/preflight-personal-client.sh",
+        "#!/bin/sh\nprintf 'preflight personal-client\\n' >>\"$ACTIVATION_LOG\"\n",
+    )
+    _write_executable(
+        installer / "bin/preflight.sh",
+        "#!/bin/sh\nprintf 'unexpected standby preflight\\n' >>\"$ACTIVATION_LOG\"\nexit 1\n",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(fake_bin / "id", "#!/bin/sh\nprintf '501\\n'\n")
+    _write_executable(
+        fake_bin / "launchctl",
+        """#!/bin/sh
+case "$1" in
+  print) exit 1 ;;
+  bootstrap) printf 'bootstrap %s\n' "$(basename "$3" .plist)" >>"$ACTIVATION_LOG" ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    launch_agents = home / "Library/LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    for suffix in ("worker", "alarm-dispatcher", "personal-fallback"):
+        (launch_agents / f"com.genomes.agentic-os.execution-fabric.{suffix}.plist").write_text(
+            "<plist/>", encoding="utf-8"
+        )
+
+    result = subprocess.run(
+        [
+            "sh",
+            str(installer / "activate-macos.sh"),
+            "--apply",
+            "--personal-fallback",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "ACTIVATION_LOG": str(activation_log),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+        "preflight personal-client",
+        "bootstrap com.genomes.agentic-os.execution-fabric.worker",
+        "bootstrap com.genomes.agentic-os.execution-fabric.alarm-dispatcher",
+        "bootstrap com.genomes.agentic-os.execution-fabric.personal-fallback",
+    ]
+
+
+def test_personal_client_preflight_uses_only_scoped_client_credentials() -> None:
+    preflight = (INSTALLERS / "bin/preflight-personal-client.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE" in preflight
+    assert "FABRIC_ALARM_DISPATCHER_TOKEN_FILE" in preflight
+    assert "FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE" not in preflight
+    assert "FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE" not in preflight
+    assert "postgres-password" not in preflight
+    assert "FABRIC_ENABLE_PROMOTION" in preflight
+    assert "--validate-routes" in preflight
+
+
+def test_personal_client_preflight_accepts_scoped_worker_and_alarm_clients(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "os"
+    notifier = root / "harness/bin/agentic-os-notify"
+    _write_executable(notifier, "#!/bin/sh\nexit 0\n")
+    fake_bin = tmp_path / "bin"
+    cli = fake_bin / "agentic-os"
+    config_show = tmp_path / "config-show.json"
+    config_show.write_text(
+        json.dumps(
+            {
+                "effective": {
+                    "execution_fabric": {
+                        "transport": {
+                            "mode": "remote_with_local_fallback",
+                            "control_plane_url": "http://100.117.29.53:3180",
+                        },
+                        "admission": {"host_limits": {"bigmac": 4}},
+                        "queues": [
+                            {
+                                "id": "pr_reviews",
+                                "enabled": True,
+                                "worker_pool": "pr_reviewers",
+                            }
+                        ],
+                        "worker_pools": [
+                            {
+                                "id": "pr_reviewers",
+                                "enabled": True,
+                                "queues": ["pr_reviews"],
+                                "capacity": {"max_tasks_per_worker": 1},
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_executable(
+        cli,
+        """#!/bin/sh
+case " $* " in
+  *" runtime config show "*) cat "$CONFIG_SHOW" ;;
+  *" runtime fallback status "*) printf '{"status":"standby"}\n' ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    _write_executable(
+        fake_bin / "curl",
+        "#!/bin/sh\nprintf '{\"state\":\"routable\",\"leader\":\"genomesbox\"}\\n'\n",
+    )
+    worker_executable = fake_bin / "worker"
+    _write_executable(worker_executable, "#!/bin/sh\nexit 0\n")
+    worker_token = tmp_path / "worker-token"
+    alarm_token = tmp_path / "alarm-token"
+    worker_token.write_text("w" * 48, encoding="utf-8")
+    alarm_token.write_text("a" * 48, encoding="utf-8")
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={root}",
+                f"FABRIC_RUNTIME_STATE_DIR={tmp_path / 'state'}",
+                "FABRIC_HOST_ID=bigmac",
+                "FABRIC_PRIMARY_HOST_ID=genomesbox",
+                "FABRIC_STANDBY_HOST_ID=bigmac",
+                "FABRIC_AUTO_FAILOVER=false",
+                "FABRIC_ENABLE_PROMOTION=false",
+                f"FABRIC_AGENTIC_OS_CLI={cli}",
+                "FABRIC_GATEWAY_API_BASE=http://100.117.29.53:3181",
+                "FABRIC_WORKER_ID=bigmac-pr-reviewer-1",
+                "FABRIC_WORKER_BOOTSTRAP_ID=bigmac-pr-reviewer-1",
+                "FABRIC_WORKER_POOL_ID=pr_reviewers",
+                "FABRIC_WORKER_ACCEPTED_QUEUES=pr_reviews",
+                "FABRIC_WORKER_CAPABILITIES=pr_review",
+                "FABRIC_WORKER_MAX_CONCURRENCY=1",
+                f"AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE={worker_token}",
+                f"FABRIC_ALARM_DISPATCHER_TOKEN_FILE={alarm_token}",
+                "FABRIC_ALARM_DISPATCHER_CONSUMER_ID=bigmac-agentic-os-notifier",
+                "FABRIC_ALARM_DISPATCHER_SOURCE=agentic-os-notify",
+                f"FABRIC_WORKER_EXECUTABLE={worker_executable}",
+                f"FABRIC_WORKER_PYTHON={sys.executable}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/preflight-personal-client.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CONFIG_SHOW": str(config_show),
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "personal client preflight passed" in result.stdout
+
+
 def test_installers_can_activate_an_existing_current_release_without_recopy() -> None:
     for platform in ("linux", "macos"):
         script = (INSTALLERS / f"install-{platform}.sh").read_text(encoding="utf-8")

@@ -36,6 +36,12 @@ runtime_contract:
   personal_primary_authority: standalone_primary
   personal_primary_is_ha: false
   personal_primary_promotion_allowed: false
+  personal_client_roles:
+    - host_worker
+    - alarm_dispatcher
+    - fallback_watchdog
+  personal_client_standby_datastores_required: false
+  personal_client_server_credential_maps_required: false
   two_host_split_brain_safe_without_witness: false
   artifact_replication_mode: active_active_single_writer
   artifact_replication_receipt_required_for_promotion: true
