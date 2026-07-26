@@ -1,10 +1,15 @@
-FROM node:22.14.0-alpine3.21 AS build
+# Compile and assemble the pure-JavaScript production dependency tree on the
+# native builder architecture. Running npm through QEMU made cross-platform
+# releases nondeterministically crash with SIGILL before an image existed.
+FROM --platform=$BUILDPLATFORM node:22.14.0-alpine3.21 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
-RUN npm run build
+RUN npm run build \
+  && npm prune --omit=dev --ignore-scripts \
+  && npm cache clean --force
 
 FROM node:22.14.0-alpine3.21 AS runtime
 ENV NODE_ENV=production
@@ -17,7 +22,7 @@ RUN addgroup -S -g "$WITNESS_GID" witness \
   && chown witness:witness /var/lib/execution-fabric-witness \
   && chmod 0700 /var/lib/execution-fabric-witness
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 USER witness
 EXPOSE 3195
