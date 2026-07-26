@@ -1,0 +1,7 @@
+interface:
+  display_name: Quiet Workon Orchestrate
+  short_description: Preferred LOS coding/testing orchestration entrypoint with quiet
+    chat, subagents, receipt-backed artifacts, qu
+  default_prompt: Use the Agentic OS Quiet Workon Orchestrate skill.
+policy:
+  allow_implicit_invocation: true

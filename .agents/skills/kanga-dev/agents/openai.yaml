@@ -1,0 +1,7 @@
+interface:
+  display_name: Kanga Dev
+  short_description: "Operate Kanga local development across the five KANGA-LIFE repos\
+    \ \u2014 repo paths, gitflow/conventional-commit rul"
+  default_prompt: Use the Agentic OS Kanga Dev skill.
+policy:
+  allow_implicit_invocation: true

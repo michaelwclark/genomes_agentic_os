@@ -1,0 +1,6 @@
+interface:
+  display_name: Control Plane Bootstrap
+  short_description: Plan a Notion-backed or file-backed operating control plane.
+  default_prompt: Use the Agentic OS Control Plane Bootstrap skill.
+policy:
+  allow_implicit_invocation: true

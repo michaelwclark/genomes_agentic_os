@@ -1,0 +1,7 @@
+interface:
+  display_name: Kanga Report
+  short_description: Generate a Kanga progress report from git/PR activity, Linear
+    KAN issue movement, and OS decisions, with a gua
+  default_prompt: Use the Agentic OS Kanga Report skill.
+policy:
+  allow_implicit_invocation: true

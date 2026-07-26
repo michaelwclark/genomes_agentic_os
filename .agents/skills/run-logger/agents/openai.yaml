@@ -1,0 +1,6 @@
+interface:
+  display_name: Run Logger
+  short_description: Record non-trivial OS execution into run logs and closeout surfaces.
+  default_prompt: Use the Agentic OS Run Logger skill.
+policy:
+  allow_implicit_invocation: true

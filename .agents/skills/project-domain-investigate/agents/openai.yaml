@@ -1,0 +1,7 @@
+interface:
+  display_name: Project Domain Investigate
+  short_description: Retrieve bounded, evidence-backed project-domain context and
+    emit a development context receipt.
+  default_prompt: Use the Agentic OS Project Domain Investigate skill.
+policy:
+  allow_implicit_invocation: true

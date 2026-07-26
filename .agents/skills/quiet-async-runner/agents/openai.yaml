@@ -1,0 +1,7 @@
+interface:
+  display_name: Quiet Async Runner
+  short_description: 'Govern any process expected over two minutes through a central
+    registry, bounded logs and resources, progress '
+  default_prompt: Use the Agentic OS Quiet Async Runner skill.
+policy:
+  allow_implicit_invocation: true

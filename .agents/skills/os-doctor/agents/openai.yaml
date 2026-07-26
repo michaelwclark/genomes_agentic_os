@@ -1,0 +1,6 @@
+interface:
+  display_name: OS Doctor
+  short_description: Validate installed OS structure and report drift.
+  default_prompt: Use the Agentic OS OS Doctor skill.
+policy:
+  allow_implicit_invocation: true

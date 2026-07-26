@@ -1,0 +1,7 @@
+interface:
+  display_name: AgenticOSGui
+  short_description: Operate the domain/project-focused desktop conversation driver
+    over native Claude and Codex task state.
+  default_prompt: Use the Agentic OS AgenticOSGui skill.
+policy:
+  allow_implicit_invocation: true

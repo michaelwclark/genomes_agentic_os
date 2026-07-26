@@ -1,0 +1,6 @@
+interface:
+  display_name: Orchestrate
+  short_description: Coordinate subagents, verification, and integration.
+  default_prompt: Use the Agentic OS Orchestrate skill.
+policy:
+  allow_implicit_invocation: true

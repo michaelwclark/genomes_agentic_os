@@ -1,0 +1,6 @@
+interface:
+  display_name: Context Pack Builder
+  short_description: Assemble focused context packs for repeatable OS workflows.
+  default_prompt: Use the Agentic OS Context Pack Builder skill.
+policy:
+  allow_implicit_invocation: true

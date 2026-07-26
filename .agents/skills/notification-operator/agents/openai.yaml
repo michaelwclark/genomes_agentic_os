@@ -1,0 +1,7 @@
+interface:
+  display_name: Notification Operator
+  short_description: Send one governed local macOS notification for an operator-actionable
+    Agentic OS condition without creating al
+  default_prompt: Use the Agentic OS Notification Operator skill.
+policy:
+  allow_implicit_invocation: true

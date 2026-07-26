@@ -1,0 +1,7 @@
+interface:
+  display_name: Agentic OS Operating Contract
+  short_description: Apply the shared Agentic OS routing, context, tool-use, workflow,
+    automation, and closeout contract across Cla
+  default_prompt: Use the Agentic OS Agentic OS Operating Contract skill.
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: AOS Product Orchestrator
+  short_description: Groom Agentic OS self-improvement proposals into spec packets
+    and Linear issues.
+  default_prompt: Use the Agentic OS AOS Product Orchestrator skill.
+policy:
+  allow_implicit_invocation: true

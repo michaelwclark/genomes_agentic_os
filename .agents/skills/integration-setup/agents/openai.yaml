@@ -1,0 +1,7 @@
+interface:
+  display_name: Integration Setup
+  short_description: Prepare, dry-run, or diagnose runtime integrations before automation
+    uses them.
+  default_prompt: Use the Agentic OS Integration Setup skill.
+policy:
+  allow_implicit_invocation: true

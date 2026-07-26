@@ -1,0 +1,7 @@
+interface:
+  display_name: Room Builder
+  short_description: Turn discovery answers into OS rooms, routers, references, and
+    context contracts.
+  default_prompt: Use the Agentic OS Room Builder skill.
+policy:
+  allow_implicit_invocation: true

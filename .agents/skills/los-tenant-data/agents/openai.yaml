@@ -1,0 +1,4 @@
+interface:
+  display_name: "LOS Tenant Data"
+  short_description: "Research and safely operate LOS tenant state"
+  default_prompt: "Use $los-tenant-data to select the local-first LOS tenant data workflow for this request."

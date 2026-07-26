@@ -1,0 +1,7 @@
+interface:
+  display_name: Event Graph Operator
+  short_description: Append events, inspect the ledger, test chain rules, and process
+    follow-up work.
+  default_prompt: Use the Agentic OS Event Graph Operator skill.
+policy:
+  allow_implicit_invocation: true

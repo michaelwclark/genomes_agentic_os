@@ -1,0 +1,7 @@
+interface:
+  display_name: OS Authoring Guard
+  short_description: Apply compact Agentic OS authoring rules to commands, skills,
+    workflows, automations, tools, registries, and w
+  default_prompt: Use the Agentic OS OS Authoring Guard skill.
+policy:
+  allow_implicit_invocation: true

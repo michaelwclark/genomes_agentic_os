@@ -1,0 +1,6 @@
+interface:
+  display_name: Automation Qualifier
+  short_description: Decide whether a process is safe to automate.
+  default_prompt: Use the Agentic OS Automation Qualifier skill.
+policy:
+  allow_implicit_invocation: true

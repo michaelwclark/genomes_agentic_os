@@ -1,0 +1,7 @@
+interface:
+  display_name: Commit All
+  short_description: Commit all local changes in logical groups until the repository
+    is clean.
+  default_prompt: Use the Agentic OS Commit All skill.
+policy:
+  allow_implicit_invocation: true

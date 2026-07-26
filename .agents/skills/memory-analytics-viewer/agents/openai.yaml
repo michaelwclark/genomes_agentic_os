@@ -1,0 +1,7 @@
+interface:
+  display_name: Memory Analytics Viewer
+  short_description: "Inspect unified-memory retrieval analytics \u2014 summary, recent\
+    \ runs, method rollups, current-vs-grep-sidecar com"
+  default_prompt: Use the Agentic OS Memory Analytics Viewer skill.
+policy:
+  allow_implicit_invocation: true

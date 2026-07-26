@@ -1,0 +1,7 @@
+interface:
+  display_name: Thread Finalizer
+  short_description: Finalize substantial Agentic OS threads with worklog, next-action,
+    memory, evidence, and Notion projection rec
+  default_prompt: Use the Agentic OS Thread Finalizer skill.
+policy:
+  allow_implicit_invocation: true

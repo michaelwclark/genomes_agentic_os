@@ -1,0 +1,7 @@
+interface:
+  display_name: Linear Product Orchestrator
+  short_description: Groom source-backed product and engineering tickets into Linear
+    for any project (Kanga team KAN, Clarks Consul
+  default_prompt: Use the Agentic OS Linear Product Orchestrator skill.
+policy:
+  allow_implicit_invocation: true

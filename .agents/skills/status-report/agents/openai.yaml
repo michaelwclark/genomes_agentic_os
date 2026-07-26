@@ -1,0 +1,7 @@
+interface:
+  display_name: Status Report
+  short_description: 'Generate recent-work Agentic OS status reports with filesystem
+    markdown, Notion projection, dirty-state scan, '
+  default_prompt: Use the Agentic OS Status Report skill.
+policy:
+  allow_implicit_invocation: true
