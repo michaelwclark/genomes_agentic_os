@@ -192,9 +192,16 @@ jobs:
           docker compose --profile standby --profile promoted -f deploy/execution-fabric/compose.bigmac.yml config -q
       - name: Build service and worker images
         run: |
-          docker build -t execution-fabric-control-plane:ci services/execution-fabric-control-plane
-          docker build -t execution-fabric-leadership-witness:ci services/execution-fabric-leadership-witness
-          docker build -t genomes-agentic-os-worker:ci -f services/execution-fabric-worker/Dockerfile .
+          build_image() {
+            if docker build "$@"; then
+              return 0
+            fi
+            echo "Container registry request failed; retrying this build once" >&2
+            docker build "$@"
+          }
+          build_image -t execution-fabric-control-plane:ci services/execution-fabric-control-plane
+          build_image -t execution-fabric-leadership-witness:ci services/execution-fabric-leadership-witness
+          build_image -t genomes-agentic-os-worker:ci -f services/execution-fabric-worker/Dockerfile .
           docker run --rm \
             -e FABRIC_WORKER_ACCEPTED_QUEUES=codex \
             -e FABRIC_WORKER_CAPABILITIES=codex.task \
