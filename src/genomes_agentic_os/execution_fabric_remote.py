@@ -544,6 +544,29 @@ def validate_task_route(
     }
 
 
+def materialize_approval_state(
+    approval_class: str,
+    *,
+    explicit_operator_apply: bool = False,
+) -> str:
+    """Translate route policy into the run-queue approval vocabulary.
+
+    ``approval_class`` describes how a canonical route is authorized, while
+    ``approval_state`` records the authorization state of one materialized run.
+    Policy-gated work has already passed the closed route validator. Explicit
+    local work is approved only when the operator invoked the mutating
+    ``--apply`` path; callers that merely materialize such a route must leave it
+    awaiting approval.
+    """
+    if approval_class == "not_required":
+        return "not_required"
+    if approval_class == "policy_gated":
+        return "approved"
+    if approval_class == "explicit":
+        return "approved" if explicit_operator_apply else "required"
+    raise ValueError(f"unknown execution-fabric approval class: {approval_class!r}")
+
+
 Transport = Callable[[urllib.request.Request, float], Any]
 DomainWorkerHandler = Callable[
     [Path, Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]],
@@ -1652,7 +1675,7 @@ def _portable_harness_worker(
         "task_type": str(task["taskType"]),
         "queue_name": str(task["queue"]),
         "execution_target": target,
-        "approval_state": str(route["approval_class"]),
+        "approval_state": materialize_approval_state(str(route["approval_class"])),
         "mutation_class": str(route["mutation_class"]),
         "domain_worker": f"{harness}_task",
         "instruction_ref": instruction_ref,
@@ -2020,7 +2043,7 @@ def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[
         "queue_name": str(task.get("queue") or ""),
         "command": shlex.join(argv),
         "execution_target": route["execution_target"],
-        "approval_state": route["approval_class"],
+        "approval_state": materialize_approval_state(str(route["approval_class"])),
         "mutation_class": route["mutation_class"],
     }
     return _run_prepared_worker_item(os_root, assignment, item, effects=[])

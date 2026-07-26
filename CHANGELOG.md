@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.3] - 2026-07-26
+
+### Fixed
+- Translate canonical route approval classes into the run queue's distinct
+  approval-state vocabulary. Policy-gated remote work records `approved`, and
+  an explicitly applied local fallback submission records `approved`, instead
+  of persisting invalid `policy_gated` or `explicit` enum values.
+- Exercise explicit local fallback admission against the SQLite execution
+  fabric so the genomesbox-offline path is release-gated by the same state
+  contract used on bigmac.
+
 ## [0.5.2] - 2026-07-26
 
 ### Fixed

@@ -20,6 +20,7 @@ from ..execution_fabric_remote import (
     ExecutionFabricClient,
     RemoteFabricWorker,
     build_remote_runtime_snapshot,
+    materialize_approval_state,
     personal_fallback_status,
     probe_personal_fallback,
     resolve_remote_settings,
@@ -271,7 +272,10 @@ def handle_runtime_submit(args: argparse.Namespace) -> int:
         "due_at": args.available_at,
         **payload,
         "execution_target": args.execution_target or route["execution_target"],
-        "approval_state": route["approval_class"],
+        "approval_state": materialize_approval_state(
+            str(route["approval_class"]),
+            explicit_operator_apply=True,
+        ),
     }
     result = append_run_queue_item(args.root, local_item)
     _print_structured(
