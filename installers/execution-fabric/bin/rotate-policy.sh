@@ -47,7 +47,20 @@ fabric_require_command jq
 : "${FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE:?witness admin token file is required}"
 : "${FABRIC_HOST_ID:?stable host identity is required}"
 : "${FABRIC_PRIMARY_HOST_ID:?stable primary host identity is required}"
-: "${FABRIC_STANDBY_HOST_ID:?stable standby host identity is required}"
+standalone_primary=false
+evidence_host=${FABRIC_STANDBY_HOST_ID:-}
+evidence_label=standby
+if [ "${FABRIC_WITNESS_MODE:-independent}" = standalone_primary ]; then
+  standalone_primary=true
+  evidence_host=$FABRIC_PRIMARY_HOST_ID
+  evidence_label=local-primary
+  [ "$FABRIC_HOST_ID" = "$FABRIC_PRIMARY_HOST_ID" ] || {
+    echo "standalone-primary policy maintenance must run on its exact primary host" >&2
+    exit 78
+  }
+else
+  : "${FABRIC_STANDBY_HOST_ID:?stable standby host identity is required}"
+fi
 
 pending_path="$FABRIC_RUNTIME_STATE_DIR/policy-rotation.pending.json"
 witness_status=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-witness-status.XXXXXX")
@@ -95,25 +108,25 @@ if [ "$mode" = resume ]; then
   preparation_token=$(jq -er '.preparationToken' "$preparation")
   preparation_expired=$(jq -er '.expired' "$preparation")
   jq -e \
-    --arg standby "$FABRIC_STANDBY_HOST_ID" \
+    --arg evidenceHost "$evidence_host" \
     --arg leader "$expected_leader" \
     --arg current "$expected_current" \
     --argjson epoch "$expected_epoch" \
     '.currentLeader==$leader and .fabricEpoch==$epoch and
      .configDigest==$current and
-     .candidates[$standby].healthy==true' \
+     .candidates[$evidenceHost].healthy==true' \
     "$witness_status" >/dev/null || {
     fabric_notify critical \
       "Execution Fabric policy recovery blocked" \
-      "Prepared rotation $rotation_id has no safe standby evidence; takeover remains fail-closed." \
+      "Prepared rotation $rotation_id has no safe $evidence_label evidence; execution remains fail-closed." \
       "execution-fabric-policy-rotation-$rotation_id"
     exit 75
   }
-  standby_digest=$(jq -er \
-    --arg standby "$FABRIC_STANDBY_HOST_ID" \
-    '.candidates[$standby].configDigest' \
+  evidence_digest=$(jq -er \
+    --arg evidenceHost "$evidence_host" \
+    '.candidates[$evidenceHost].configDigest' \
     "$witness_status")
-  if [ "$standby_digest" = "$expected_current" ]; then
+  if [ "$evidence_digest" = "$expected_current" ]; then
     if [ "$preparation_expired" != true ]; then
       fabric_notify critical \
         "Execution Fabric policy recovery waiting" \
@@ -150,15 +163,15 @@ if [ "$mode" = resume ]; then
     fi
     fabric_notify warning \
       "Execution Fabric abandoned policy rotation resolved" \
-      "Expired rotation $rotation_id never reached PostgreSQL and was safely aborted from fresh standby evidence." \
+      "Expired rotation $rotation_id never reached PostgreSQL and was safely aborted from fresh $evidence_label evidence." \
       "execution-fabric-policy-rotation-$rotation_id"
     printf '%s\n' "aborted expired pre-database policy rotation $rotation_id"
     exit 0
   fi
-  [ "$standby_digest" = "$candidate_digest" ] || {
+  [ "$evidence_digest" = "$candidate_digest" ] || {
     fabric_notify critical \
       "Execution Fabric policy recovery blocked" \
-      "Prepared rotation $rotation_id has an unexpected standby digest; takeover remains fail-closed." \
+      "Prepared rotation $rotation_id has an unexpected $evidence_label digest; execution remains fail-closed." \
       "execution-fabric-policy-rotation-$rotation_id"
     exit 75
   }
@@ -203,21 +216,38 @@ else
       echo "new policy rotation must run on the witnessed current leader" >&2
       exit 75
     }
-    jq -e \
-      --arg primary "$FABRIC_PRIMARY_HOST_ID" \
-      --arg standby "$FABRIC_STANDBY_HOST_ID" \
-      --arg current "$expected_current" \
-      --arg candidate "$candidate_digest" \
-      '.candidates[$primary].healthy == true and
-       .candidates[$primary].configDigest == $current and
-       .candidates[$primary].policyCandidateDigest == $candidate and
-       .candidates[$standby].healthy == true and
-       .candidates[$standby].configDigest == $current and
-       .candidates[$standby].policyCandidateDigest == $candidate' \
-      "$witness_status" >/dev/null || {
-      echo "both configured hosts must report current and staged policy digests" >&2
-      exit 75
-    }
+    if [ "$standalone_primary" = true ]; then
+      jq -e \
+        --arg primary "$FABRIC_PRIMARY_HOST_ID" \
+        --arg current "$expected_current" \
+        --arg candidate "$candidate_digest" \
+        '.authorityMode=="standalone_primary" and
+         .currentLeader==$primary and
+         .candidates[$primary].healthy == true and
+         .candidates[$primary].inRecovery == false and
+         .candidates[$primary].configDigest == $current and
+         .candidates[$primary].policyCandidateDigest == $candidate' \
+        "$witness_status" >/dev/null || {
+        echo "standalone-primary must report exact current and staged policy digests" >&2
+        exit 75
+      }
+    else
+      jq -e \
+        --arg primary "$FABRIC_PRIMARY_HOST_ID" \
+        --arg standby "$FABRIC_STANDBY_HOST_ID" \
+        --arg current "$expected_current" \
+        --arg candidate "$candidate_digest" \
+        '.candidates[$primary].healthy == true and
+         .candidates[$primary].configDigest == $current and
+         .candidates[$primary].policyCandidateDigest == $candidate and
+         .candidates[$standby].healthy == true and
+         .candidates[$standby].configDigest == $current and
+         .candidates[$standby].policyCandidateDigest == $candidate' \
+        "$witness_status" >/dev/null || {
+        echo "both configured hosts must report current and staged policy digests" >&2
+        exit 75
+      }
+    fi
     prepare_body=$(jq -cn \
       --arg rotationId "$rotation_id" \
       --arg expectedLeader "$leader" \
@@ -307,7 +337,7 @@ else
 fi
 
 if [ "$mode" = rotate ]; then
-  replica_applied=false
+  evidence_applied=false
   attempt=0
   while [ "$attempt" -lt 18 ]; do
     attempt=$((attempt + 1))
@@ -316,21 +346,21 @@ if [ "$mode" = rotate ]; then
       "/api/v1/admin/leadership/status" \
       "$FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE" >"$witness_status" 2>/dev/null &&
       jq -e \
-        --arg standby "$FABRIC_STANDBY_HOST_ID" \
+        --arg evidenceHost "$evidence_host" \
         --arg digest "$candidate_digest" \
-        '.candidates[$standby].healthy==true and
-         .candidates[$standby].configDigest==$digest' \
+        '.candidates[$evidenceHost].healthy==true and
+         .candidates[$evidenceHost].configDigest==$digest' \
         "$witness_status" >/dev/null
     then
-      replica_applied=true
+      evidence_applied=true
       break
     fi
     sleep 5
   done
-  [ "$replica_applied" = true ] || {
+  [ "$evidence_applied" = true ] || {
     fabric_notify critical \
       "Execution Fabric policy rotation awaiting replication" \
-      "PostgreSQL committed rotation $rotation_id, but the standby has not reported the applied digest. Rerun --resume; mutations remain fenced." \
+      "PostgreSQL committed rotation $rotation_id, but the $evidence_label has not reported the applied digest. Rerun --resume; mutations remain fenced." \
       "execution-fabric-policy-rotation-$rotation_id"
     exit 75
   }

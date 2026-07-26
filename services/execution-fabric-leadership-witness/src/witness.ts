@@ -177,6 +177,46 @@ export class LeadershipWitness {
     return { eligible: reasons.length === 0, reasons };
   }
 
+  private standaloneEligibility(
+    candidate: CandidateRecord | undefined,
+    state: LeadershipState,
+    nowEpoch: number,
+  ): Eligibility {
+    const reasons: string[] = [];
+    if (!candidate) {
+      return { eligible: false, reasons: ["candidate_not_reported"] };
+    }
+    if (!candidate.healthy) reasons.push("candidate_unhealthy");
+    if (candidate.inRecovery) reasons.push("standalone_primary_in_recovery");
+    if (candidate.receiverState !== "not_applicable") {
+      reasons.push("standalone_primary_receiver_state_invalid");
+    }
+    if (
+      candidate.observedAtEpoch <
+      nowEpoch - this.config.candidateFreshnessSeconds
+    ) {
+      reasons.push("candidate_observation_stale");
+    }
+    for (const [field, value] of [
+      ["replica_lag_measurement_stale", candidate.lagMeasuredAt],
+      ["wal_receiver_message_stale", candidate.lastMessageAt],
+    ] as const) {
+      if (
+        Math.floor(new Date(value).getTime() / 1000) <
+        nowEpoch - this.config.candidateFreshnessSeconds
+      ) {
+        reasons.push(field);
+      }
+    }
+    if (candidate.timelineId !== state.timelineId) {
+      reasons.push("timeline_mismatch");
+    }
+    if (candidate.configDigest !== state.configDigest) {
+      reasons.push("config_digest_mismatch");
+    }
+    return { eligible: reasons.length === 0, reasons };
+  }
+
   private leadershipToken(
     leader: string,
     epoch: number,
@@ -315,7 +355,9 @@ export class LeadershipWitness {
       fenceDigest: sha256(
         `bootstrap:${this.config.clusterId}:${this.config.initialLeader}:1`,
       ),
-      authorityMode: "synchronous",
+      authorityMode: this.config.standalonePrimaryHostId
+        ? "standalone_primary"
+        : "synchronous",
       degradedUntil: null,
       degradedIncidentDigest: null,
     };
@@ -396,7 +438,19 @@ export class LeadershipWitness {
         leaderCandidate.observedAtEpoch <
           nowEpoch - this.config.candidateFreshnessSeconds,
     );
+    const standalonePrimary =
+      state.authorityMode === "standalone_primary" &&
+      this.config.standalonePrimaryHostId === state.currentLeader;
+    const standaloneEligibility = standalonePrimary
+      ? this.standaloneEligibility(leaderCandidate, state, nowEpoch)
+      : null;
+    if (standaloneEligibility && !standaloneEligibility.eligible) {
+      throw new WitnessConflictError(
+        `standalone-primary proof renewal rejected: ${standaloneEligibility.reasons.join(",")}`,
+      );
+    }
     const promotionAllowed =
+      !standalonePrimary &&
       leaderHasBaseline &&
       leaderLeaseExpired &&
       candidates.some(
@@ -420,6 +474,7 @@ export class LeadershipWitness {
       ...state,
       promotionAllowed,
       leaderEligibility,
+      standaloneEligibility,
       candidates: candidateMap,
       pendingConfigDigestRotations: rotationPreparations
         .sort((left, right) => left.rotationId.localeCompare(right.rotationId))
@@ -433,6 +488,8 @@ export class LeadershipWitness {
         leaderBaselineMaxAgeSeconds:
           this.config.leaderBaselineMaxAgeSeconds,
         automaticFailback: false,
+        automaticPromotion: !standalonePrimary,
+        standalonePrimary,
       },
       sampledAt,
       leadershipToken,
@@ -605,7 +662,11 @@ export class LeadershipWitness {
     request: ConfigDigestRotationRequest,
   ): Promise<ConfigDigestRotationPreparation> {
     const candidateHosts = Object.keys(this.config.candidateTokens).sort();
-    if (candidateHosts.length < 2) {
+    const standaloneRotation =
+      this.config.standalonePrimaryHostId !== undefined &&
+      candidateHosts.length === 1 &&
+      candidateHosts[0] === this.config.standalonePrimaryHostId;
+    if (candidateHosts.length < 2 && !standaloneRotation) {
       throw new WitnessConflictError(
         "configuration digest rotation requires at least two configured failover hosts",
       );
@@ -661,6 +722,15 @@ export class LeadershipWitness {
     ) {
       throw new WitnessConflictError(
         "configuration rotation expected leader, epoch, or digest is stale",
+      );
+    }
+    if (
+      standaloneRotation &&
+      (state.authorityMode !== "standalone_primary" ||
+        state.currentLeader !== this.config.standalonePrimaryHostId)
+    ) {
+      throw new WitnessConflictError(
+        "standalone-primary configuration rotation requires exact current-host authority",
       );
     }
     if (
@@ -921,14 +991,22 @@ export class LeadershipWitness {
     }
     const candidateFreshAfterEpoch =
       nowEpoch - this.config.candidateFreshnessSeconds;
+    const standaloneRotation =
+      state.authorityMode === "standalone_primary" &&
+      this.config.standalonePrimaryHostId === state.currentLeader &&
+      preparation.candidateHosts.length === 1 &&
+      preparation.candidateHosts[0] === state.currentLeader;
     const commitCandidate = candidates
       .filter(
         (candidate) =>
           preparation.candidateHosts.includes(candidate.candidate) &&
-          candidate.candidate !== preparation.expectedLeader &&
+          (standaloneRotation
+            ? candidate.candidate === preparation.expectedLeader
+            : candidate.candidate !== preparation.expectedLeader) &&
           candidate.healthy &&
-          candidate.inRecovery &&
-          candidate.receiverState === "streaming" &&
+          candidate.inRecovery === !standaloneRotation &&
+          candidate.receiverState ===
+            (standaloneRotation ? "not_applicable" : "streaming") &&
           candidate.observedAtEpoch >= candidateFreshAfterEpoch &&
           Math.floor(
             new Date(candidate.lagMeasuredAt).getTime() / 1000,
@@ -942,14 +1020,17 @@ export class LeadershipWitness {
             preparation.expectedUpstreamSystemId &&
           candidate.replayWalPosition >=
             preparation.minimumStandbyReplayWalPosition &&
-          candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+          (standaloneRotation ||
+            candidate.replicaLagBytes <= preparation.maxReplicaLagBytes),
       )
       .sort((left, right) =>
         left.candidate.localeCompare(right.candidate),
       )[0];
     if (!commitCandidate) {
       throw new WitnessConflictError(
-        "configuration digest rotation commit requires fresh healthy non-leader evidence that the database applied the candidate digest",
+        standaloneRotation
+          ? "standalone-primary configuration rotation commit requires fresh healthy local evidence that the database applied the candidate digest"
+          : "configuration digest rotation commit requires fresh healthy non-leader evidence that the database applied the candidate digest",
       );
     }
     const committedAt = this.timestamp();
@@ -974,8 +1055,8 @@ export class LeadershipWitness {
         receiverFreshAfterEpoch: candidateFreshAfterEpoch,
         commitCandidate: {
           candidate: commitCandidate.candidate,
-          inRecovery: true,
-          receiverState: "streaming",
+          inRecovery: !standaloneRotation,
+          receiverState: standaloneRotation ? "not_applicable" : "streaming",
           minimumReplayWalPosition:
             preparation.minimumStandbyReplayWalPosition,
         },
@@ -1090,14 +1171,22 @@ export class LeadershipWitness {
       preparation.expiresAtEpoch,
       nowEpoch - this.config.candidateFreshnessSeconds,
     );
-    const safeNonLeaderCandidates = candidates
+    const standaloneRotation =
+      state.authorityMode === "standalone_primary" &&
+      this.config.standalonePrimaryHostId === state.currentLeader &&
+      preparation.candidateHosts.length === 1 &&
+      preparation.candidateHosts[0] === state.currentLeader;
+    const safeEvidenceCandidates = candidates
       .filter(
         (candidate) =>
           preparation.candidateHosts.includes(candidate.candidate) &&
-          candidate.candidate !== preparation.expectedLeader &&
+          (standaloneRotation
+            ? candidate.candidate === preparation.expectedLeader
+            : candidate.candidate !== preparation.expectedLeader) &&
           candidate.healthy &&
-          candidate.inRecovery &&
-          candidate.receiverState === "streaming" &&
+          candidate.inRecovery === !standaloneRotation &&
+          candidate.receiverState ===
+            (standaloneRotation ? "not_applicable" : "streaming") &&
           candidate.observedAtEpoch > evidenceAfterEpoch &&
           Math.floor(
             new Date(candidate.lagMeasuredAt).getTime() / 1000,
@@ -1110,28 +1199,33 @@ export class LeadershipWitness {
             preparation.expectedUpstreamSystemId &&
           candidate.replayWalPosition >=
             preparation.minimumStandbyReplayWalPosition &&
-          candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+          (standaloneRotation ||
+            candidate.replicaLagBytes <= preparation.maxReplicaLagBytes),
       )
       .sort((left, right) =>
         left.candidate.localeCompare(right.candidate),
       );
     if (
-      safeNonLeaderCandidates.some(
+      safeEvidenceCandidates.some(
         (candidate) =>
           candidate.configDigest === preparation.candidateDigest,
       )
     ) {
       throw new WitnessConflictError(
-        "configuration digest rotation cannot be aborted because a standby applied the candidate digest",
+        standaloneRotation
+          ? "configuration digest rotation cannot be aborted because the local database applied the candidate digest"
+          : "configuration digest rotation cannot be aborted because a standby applied the candidate digest",
       );
     }
-    const evidenceCandidate = safeNonLeaderCandidates.find(
+    const evidenceCandidate = safeEvidenceCandidates.find(
       (candidate) =>
         candidate.configDigest === preparation.expectedCurrentDigest,
     );
     if (!evidenceCandidate) {
       throw new WitnessConflictError(
-        "configuration digest rotation abort requires fresh healthy non-leader evidence that the database remains on the current digest",
+        standaloneRotation
+          ? "standalone-primary configuration rotation abort requires fresh healthy local evidence that the database remains on the current digest"
+          : "configuration digest rotation abort requires fresh healthy non-leader evidence that the database remains on the current digest",
       );
     }
     const abortedAt = this.timestamp();
@@ -1157,8 +1251,8 @@ export class LeadershipWitness {
         evidenceAfterEpoch,
         evidenceCandidate: {
           candidate: evidenceCandidate.candidate,
-          inRecovery: true,
-          receiverState: "streaming",
+          inRecovery: !standaloneRotation,
+          receiverState: standaloneRotation ? "not_applicable" : "streaming",
           minimumReplayWalPosition:
             preparation.minimumStandbyReplayWalPosition,
         },
@@ -1220,6 +1314,14 @@ export class LeadershipWitness {
       this.store.getState(),
       this.store.listCandidates(),
     ]);
+    if (
+      this.config.standalonePrimaryHostId ||
+      state.authorityMode === "standalone_primary"
+    ) {
+      throw new WitnessConflictError(
+        "promotion is disabled for standalone-primary authority",
+      );
+    }
     if (request.candidate === request.expectedLeader) {
       throw new WitnessConflictError("candidate is already the expected leader");
     }
@@ -1370,6 +1472,11 @@ export class LeadershipWitness {
   }
 
   async planFailback(request: FailbackPlanRequest) {
+    if (this.config.standalonePrimaryHostId) {
+      throw new WitnessConflictError(
+        "failback is disabled for standalone-primary authority",
+      );
+    }
     const [state, candidates] = await Promise.all([
       this.store.getState(),
       this.store.listCandidates(),
@@ -1487,6 +1594,11 @@ export class LeadershipWitness {
   }
 
   async prepareFailback(request: FailbackPrepareRequest) {
+    if (this.config.standalonePrimaryHostId) {
+      throw new WitnessConflictError(
+        "failback is disabled for standalone-primary authority",
+      );
+    }
     const state = await this.store.getState();
     const nowEpoch = Math.floor(this.now().getTime() / 1000);
     if (state.currentLeader !== request.from) {
@@ -1561,6 +1673,11 @@ export class LeadershipWitness {
   }
 
   async commitFailback(request: FailbackCommitRequest) {
+    if (this.config.standalonePrimaryHostId) {
+      throw new WitnessConflictError(
+        "failback is disabled for standalone-primary authority",
+      );
+    }
     const tokenHash = sha256(request.planToken);
     if (!safeEqual(tokenHash, request.approval.planTokenHash)) {
       throw new WitnessConflictError(

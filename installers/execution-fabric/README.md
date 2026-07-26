@@ -12,6 +12,64 @@ They do not copy secrets, do not rewrite
 operator provisions `runtime.env`, the referenced secret files, and an image
 lock with immutable digests.
 
+Release artifacts publish one canonical `execution-fabric-image-lock.json`.
+Use `bin/materialize-image-lock.sh LOCK.json` to produce its shell-safe,
+deterministic env projection. The helper validates exactly seven digest-pinned
+images, including leadership witness and worker. `build-emergency-bundle.sh`
+accepts that JSON directly and includes both it and the derived env form; bundle
+validation regenerates the projection and rejects drift.
+
+## Personal standalone genomesbox primary
+
+Set `FABRIC_WITNESS_MODE=standalone_primary` only on the configured Linux
+primary. The canonical policy must independently opt in the exact host through
+`execution_fabric.standalone_primary.enabled` and `.host_id`. Preflight reads
+that policy through the installed Agentic OS CLI, matches its SHA-256
+fingerprint to `FABRIC_POLICY_FINGERPRINT`, verifies the singleton candidate
+credential, requires a digest-pinned witness image, and rejects automatic
+failover or promotion.
+
+The Linux primary runner adds the `standalone-primary` Compose profile in this
+mode. The signed witness is co-located on genomesbox, renewable, and
+short-lived; it is not an independent witness or quorum. The control plane
+accepts normal task, effect, and scheduler mutations only while PostgreSQL
+directly proves local durable-primary settings. Bigmac never starts a promoted
+shared ledger under this mode and continues through its separate local
+personal-fallback latch.
+
+Leave `FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false` in `runtime.env`. The
+runner supplies it only to the first witness container, waits for readiness,
+records a host-side completion marker, and recreates the container without the
+capability before starting the primary profile. A completion marker with a
+missing SQLite database or bootstrap sentinel blocks activation and requires a
+restore; it never silently creates replacement authority state.
+
+Policy changes use `bin/rotate-policy.sh` on genomesbox. Standalone mode runs a
+fail-closed local maintenance transaction: prepare, database reload, candidate
+readback, witness commit, and active-state readback. `--resume` resolves an
+interrupted transaction. Promotion and failback remain unavailable. Activation
+also leaves the HA-only artifact-replication timer disabled while retaining the
+primary, scheduler, observer, backup, and candidate-reporter health units.
+
+On bigmac, `activate-macos.sh --apply --personal-fallback` is the complete
+personal client-plane activation, not a standby activation. Its dedicated
+preflight verifies the canonical `remote_with_local_fallback` policy, exact
+host/worker/pool/queue/capability/concurrency binding, shipped worker routes,
+distinct scoped worker and alarm-dispatcher token files, the canonical desktop
+notifier, and a currently routable signed-leader gateway. Only after that whole
+set passes does launchd start the host worker, alarm dispatcher, and fallback
+watchdog. It does not start or require standby PostgreSQL, Valkey, MinIO,
+promotion/failback roles, or local copies of server-side credential maps.
+
+The packaged host worker uses `installed_host` root mode. It reads bigmac's
+existing Agentic OS policy and registries and never runs the disposable OCI
+bootstrap that materializes pod-local config. The control plane remains the
+authority that verifies the scoped bootstrap credential against the exact
+durable worker registration; bigmac holds only its one worker token and one
+separate alarm-dispatcher token. The current `pr_reviewers` policy requires the
+host worker to claim both review slots, and its runtime endpoint is the signed
+gateway rather than the primary API address used by the fallback probe.
+
 ## Independent witness installer
 
 The provider-neutral witness uses its own focused installer and canonical

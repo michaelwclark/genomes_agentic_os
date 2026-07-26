@@ -31,6 +31,7 @@ export type PostgresMutationDurabilitySnapshot = {
   archiveMode?: string;
   mutationDurabilityReady: boolean;
   degradedPrimaryDurabilityReady?: boolean;
+  standalonePrimaryDurabilityReady?: boolean;
   measuredAt: string;
 };
 
@@ -206,6 +207,14 @@ export async function measurePostgresMutationDurability(
     degradedPrimaryDurabilityReady:
       !row.in_recovery &&
       synchronousCommit === "on" &&
+      fsync &&
+      fullPageWrites &&
+      archiveMode === "on",
+    standalonePrimaryDurabilityReady:
+      !row.in_recovery &&
+      (synchronousCommit === "on" || synchronousCommit === "local") &&
+      synchronousStandbyNames.trim().length === 0 &&
+      synchronousStandbyCount === 0 &&
       fsync &&
       fullPageWrites &&
       archiveMode === "on",

@@ -8,6 +8,10 @@ export function testPolicyValue(): Record<string, unknown> {
   return {
     schema_version: 1,
     execution_fabric: {
+      standalone_primary: {
+        enabled: false,
+        host_id: "genomesbox",
+      },
       degraded_primary: {
         allow_degraded_primary: false,
         max_duration_seconds: 3600,

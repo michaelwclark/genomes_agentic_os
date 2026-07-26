@@ -7,6 +7,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "standalone_primary": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "host_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:-]{1,128}$"
+            }
+          }
+        },
         "degraded_primary": {
           "type": "object",
           "additionalProperties": false,
@@ -199,8 +210,20 @@
     "execution_fabric": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["degraded_primary", "admission", "scheduling", "task_routes", "queues", "worker_pools"],
+      "required": ["standalone_primary", "degraded_primary", "admission", "scheduling", "task_routes", "queues", "worker_pools"],
       "properties": {
+        "standalone_primary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "host_id"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "host_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:-]{1,128}$"
+            }
+          }
+        },
         "degraded_primary": {
           "type": "object",
           "additionalProperties": false,

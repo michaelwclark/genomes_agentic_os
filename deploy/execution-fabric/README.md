@@ -5,7 +5,7 @@ Fabric. It keeps deployment mechanics separate from the generic control-plane
 service and from the one editable instance policy at
 `harness/config/execution-fabric.yml`.
 
-The production topology is:
+The full replicated topology is:
 
 - `genomesbox`: PostgreSQL primary, Valkey delivery index, MinIO artifact store,
   API, durable health observer, deterministic healer, and active gateway.
@@ -15,9 +15,25 @@ The production topology is:
   generic GAOS worker chart only. LOSMON environment/Jira handlers remain in a
   separate LOS domain image and deployment.
 
-Every image reference is supplied by a generated image lock and must use an
-immutable `@sha256:` digest. Compose refuses to start when an image variable is
-missing. The source package deliberately does not invent release digests.
+Every image reference is supplied by the generated
+`execution-fabric-image-lock.json` and must use an immutable `@sha256:` digest.
+Compose refuses to start when an image variable is missing. The reviewed
+third-party source tags live only in `release-image-sources.json`; release CI
+resolves each one to a Linux AMD64/ARM64 index digest and the release builder
+rejects missing, mutable, or repository-substituted references. Runtime config
+uses only the seven exact digest references in the lock.
+
+The released JSON lock is the only authored image-lock format. Materialize its
+deterministic seven-variable runtime projection with:
+
+```bash
+installers/execution-fabric/bin/materialize-image-lock.sh \
+  execution-fabric-image-lock.json > images.lock.env
+```
+
+The materializer rejects missing, extra, mutable, or all-zero references. It
+covers the control plane, leadership witness, worker, PostgreSQL, Valkey,
+MinIO, and MinIO client. Do not maintain a second hand-written env lock.
 
 ## Canonical configuration
 
@@ -35,6 +51,59 @@ Do not add host-specific queue-policy files here. Runtime installation consumes:
 The deployment environment selects endpoints, immutable images, storage, and
 role. It does not redefine queues or alerts.
 
+Installed Compose mounts the editable policy and its managed schema from the
+absolute `FABRIC_OS_ROOT` paths. Release-relative `../../harness` paths are not
+valid after immutable deployment assets move under `/opt` or the macOS
+Application Support directory.
+
+## Personal standalone primary authority
+
+A personal installation may run the shared queue normally on genomesbox
+without pretending the co-located witness is an independent failure domain.
+This is an explicit non-HA authority mode:
+
+- canonical `execution_fabric.standalone_primary` must be enabled and name the
+  exact `genomesbox` host ID;
+- `FABRIC_WITNESS_MODE=standalone_primary` starts the digest-pinned witness
+  profile on genomesbox, with one host-scoped candidate credential;
+- each signed proof is renewable and expires after 90 seconds by default;
+- PostgreSQL must be a local primary with `synchronous_commit=local` or `on`,
+  no synchronous standby target, `fsync=on`, `full_page_writes=on`, and
+  `archive_mode=on`;
+- task, effect, and scheduler mutations operate normally while that exact
+  proof and durability measurement remain valid;
+- promotion, failback, automatic failover, and any bigmac shared-ledger
+  authority are disabled.
+
+The host preflight compares `FABRIC_POLICY_FINGERPRINT` with the canonical
+policy readback before starting anything. The co-located witness uses a
+distinct logical service identity and durable SQLite state, but its placement
+does not make it quorum. If genomesbox is lost, shared work waits there and
+bigmac follows the separate personal fallback contract below.
+
+Keep `FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false`. On first activation the
+Linux runner alone grants that capability for one bounded witness start, waits
+for `/readyz`, verifies the SQLite database and bootstrap sentinel, writes
+`standalone-witness.bootstrap-complete` outside the witness state directory,
+and immediately recreates the witness with bootstrap disabled. Later starts
+fail closed if that marker exists but either durable file is missing. The
+primary profile starts only after witness readiness, preventing candidate and
+proof consumers from racing initial authority.
+
+The normal `rotate-policy.sh` command is the governed standalone maintenance
+path. Preparation requires the exact healthy local primary to report the
+current and staged digests. PostgreSQL commits the candidate fingerprint, and
+ordinary mutations remain fenced while the witness still holds the old digest.
+Commit requires a fresh local applied-digest report, advances witness state
+without changing leader or epoch, and restores short-lived authority.
+`--resume` completes or safely aborts interrupted maintenance from fresh local
+evidence. This is neither promotion nor failover.
+
+The cross-host artifact-replication timer is intentionally disabled in this
+mode. Primary, scheduler, observer, backup, and candidate-reporter health units
+remain active; an HA-only replication check would otherwise report the
+intentionally absent standby forever.
+
 ## Personal fallback activation
 
 The full standby profile remains available for consensus-grade failover, but it
@@ -43,17 +112,29 @@ is not required for a personal harness. With
 control plane and bigmac retains its existing local SQLite queue as a separate
 continuity plane. Install the release normally, set `FABRIC_OS_ROOT` and the
 absolute `FABRIC_AGENTIC_OS_CLI` path in bigmac's protected `runtime.env`, then
-activate only the lightweight watchdog:
+activate the lightweight personal client plane:
 
 ```bash
 ~/Library/Application\ Support/GenomesAgenticOS/execution-fabric/current/installers/activate-macos.sh \
   --apply --personal-fallback
 ```
 
+The client plane runs three independent launchd jobs: the scoped remote worker,
+the scoped alarm dispatcher, and the fallback watchdog. A dedicated preflight
+validates their exact canonical worker identity and capacity, shipped routes,
+distinct local token files, notifier, and signed-leader gateway without
+requiring the standby datastore profile or copying server-side credential maps
+to bigmac. The host worker reads the installed OS root without rewriting its
+policy or host registries, routes every remote claim through the signed gateway,
+and must claim the canonical two-wide `pr_reviews` capacity rather than quietly
+starting with one slot.
+
 The watchdog probes once per minute, latches after the configured sustained
 failure threshold, and sends critical alerts through the canonical Agentic OS
 notification route. It does not start PostgreSQL, Valkey, MinIO, or a second
-shared control plane on bigmac. This keeps the fallback small and predictable:
+shared control plane on bigmac. The remote worker and alarm dispatcher naturally
+stop receiving shared work while the gateway is unavailable; bigmac's existing
+local runtime continues under the fallback latch. This keeps the fallback small and predictable:
 local bigmac automations continue, while genomesbox-owned queued work waits for
 genomesbox to return. Failback is always an explicit, readiness-gated CLI
 operation.
@@ -235,7 +316,7 @@ failback activation.
    `runtime.execution_fabric.health` and level `critical`, and the existing
    `harness/registries/alerts.yml` policy delivers the desktop toast and durable
    alert history on bigmac. No deployment-specific alert registry exists.
-3. If automatic promotion is enabled, the watchdog invokes the promotion
+3. In the full replicated topology, if automatic promotion is enabled, the watchdog invokes the promotion
    command. Promotion validates the emergency bundle, a fresh local standby
    candidate-health receipt, replica lag, witness lease, expected leader, and
    current epoch through `/api/v1`. The signed promotion request's incident
@@ -289,10 +370,12 @@ all agree, so an approved `allow_scheduler` change does not depend on a
 coincidental process or host-manager restart.
 
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
-independently deployable service in
+deployable service in
 `services/execution-fabric-leadership-witness`. Its canonical provider-neutral
-deployment uses a singleton SQLite authority on a third host and has no
-cloud-provider deployment dependency. Each mutation
+deployment for full HA uses a singleton SQLite authority on a third host and has no
+cloud-provider deployment dependency. Personal `standalone_primary` instead
+runs that signed authority co-located on genomesbox and disables every
+leadership transfer. Each mutation
 commits under `BEGIN IMMEDIATE`, WAL, and `synchronous=FULL` before returning.
 It advances a monotonic epoch, returns an identity-bound fence receipt, checks fresh
 health/replica-lag/config evidence, reject stale expected-leader/epoch
@@ -307,17 +390,21 @@ do not require editing worker configuration.
 
 The portable OCI manifest, installer, Tailscale-only bind preflight, monitor,
 and activation runbook are under `witness/`. Source availability does not
-activate the witness. A real independent host, immutable image, network policy,
-protected secrets, durable state, candidate reporters, alarms, and a successful
-failover/failback drill remain operator prerequisites. Without an
-independent host, select `manual_fail_closed`; no witness starts and automatic
-promotion must remain disabled.
+activate the witness. Full HA requires a real independent host, immutable
+image, network policy, protected secrets, durable state, candidate reporters,
+alarms, and a successful failover/failback drill remain full-HA operator prerequisites.
+A personal installation may
+instead select `standalone_primary`, which starts the signed witness alongside
+genomesbox but never authorizes promotion or failback. Select
+`manual_fail_closed` when neither authority is intended; no witness starts and
+automatic promotion must remain disabled.
 
 Additional activation prerequisites are deliberately explicit:
 
 - the release pipeline must publish the control-plane, leadership-witness, and
-  worker images and generate a real digest-only image lock containing all
-  three;
+  worker images, resolve the reviewed PostgreSQL, Valkey, MinIO, and MinIO
+  client multi-arch indexes, and generate one digest-only image lock containing
+  all seven;
 - the worker executable must implement the existing `/api/v1` worker protocol;
 - the initial PostgreSQL base backup and replication slot must be verified
   before enabling automatic promotion;
@@ -332,7 +419,8 @@ Additional activation prerequisites are deliberately explicit:
 `emergency-bundle/manifest.yml` is the discoverable, versioned contract. The
 builder creates a checksum manifest containing:
 
-- the immutable image lock;
+- the canonical immutable JSON image lock and its deterministic env
+  materialization;
 - Compose, systemd, launchd, and Helm deployment assets;
 - the four canonical instance configuration files;
 - promotion, failback, drill, observer, and watchdog commands;
@@ -340,6 +428,8 @@ builder creates a checksum manifest containing:
 
 Secrets are never copied. Build output is written outside the source tree. Run
 the validator after every release/config change and before every drill.
+The builder accepts the published JSON lock as `--image-lock`; validation
+regenerates `images.lock.env` and requires an exact byte match.
 
 ## Readiness and drills
 

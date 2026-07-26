@@ -1,6 +1,50 @@
 name: genomes-agentic-os-execution-fabric
 
 services:
+  leadership-witness:
+    image: ${FABRIC_WITNESS_IMAGE:-standalone-witness-disabled}
+    profiles: ["standalone-primary"]
+    restart: unless-stopped
+    environment:
+      WITNESS_BIND_IP: 0.0.0.0
+      WITNESS_PORT: "3195"
+      WITNESS_HOST_ID: genomesbox-witness
+      WITNESS_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
+      WITNESS_STATE_FILE: /var/lib/execution-fabric-witness/witness.sqlite3
+      WITNESS_BOOTSTRAP_ONCE: ${FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE:-false}
+      WITNESS_INITIAL_LEADER: ${FABRIC_PRIMARY_HOST_ID:?set primary host identity}
+      WITNESS_INITIAL_TIMELINE_ID: ${FABRIC_STANDALONE_INITIAL_TIMELINE_ID:-1}
+      WITNESS_INITIAL_CONFIG_DIGEST: ${FABRIC_POLICY_FINGERPRINT:-standalone-witness-disabled}
+      WITNESS_CANDIDATE_FRESHNESS_SECONDS: ${FABRIC_STANDALONE_PROOF_TTL_SECONDS:-90}
+      WITNESS_LEADER_BASELINE_MAX_AGE_SECONDS: ${FABRIC_LEADER_BASELINE_MAX_AGE_SECONDS:-300}
+      WITNESS_STANDALONE_PRIMARY_HOST_ID: ${FABRIC_PRIMARY_HOST_ID:?set primary host identity}
+      WITNESS_ALLOW_DEGRADED_PRIMARY: "false"
+      WITNESS_READER_TOKEN_FILE: /run/secrets/fabric-leadership-token
+      WITNESS_CANDIDATE_TOKENS_FILE: /run/secrets/fabric-leadership-candidate-tokens
+      WITNESS_ADMIN_TOKEN_FILE: /run/secrets/fabric-leadership-admin-token
+      WITNESS_SIGNING_PRIVATE_KEY_FILE: /run/secrets/fabric-leadership-signing-private-key
+      WITNESS_LOG_LEVEL: info
+    secrets:
+      - fabric-leadership-token
+      - fabric-leadership-candidate-tokens
+      - fabric-leadership-admin-token
+      - fabric-leadership-signing-private-key
+    volumes:
+      - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}/standalone-witness:/var/lib/execution-fabric-witness
+    ports:
+      - "${FABRIC_TAILSCALE_IP:?set the genomesbox Tailscale IP}:3195:3195"
+    networks: [fabric-private, fabric-egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3195/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   postgres:
     image: ${FABRIC_POSTGRES_IMAGE:?set an immutable postgres image digest}
     profiles: ["primary"]
@@ -49,7 +93,8 @@ services:
       FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
       FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
       FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
-      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_WITNESS_MODE: ${FABRIC_WITNESS_MODE:-independent}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_CONTAINER_API_BASE:-${FABRIC_LEADERSHIP_API_BASE:?set witness API}}
       FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
       FABRIC_CANDIDATE_REPORT_INTERVAL_SECONDS: ${FABRIC_CANDIDATE_REPORT_INTERVAL_SECONDS:-30}
       FABRIC_CANDIDATE_HEARTBEAT_MAX_AGE_SECONDS: ${FABRIC_CANDIDATE_HEARTBEAT_MAX_AGE_SECONDS:-75}
@@ -57,7 +102,7 @@ services:
       - postgres-password
       - fabric-leadership-candidate-token
     volumes:
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
       - ./scripts/candidate-reporter.mjs:/app/dist/candidate-reporter.mjs:ro
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
     networks: [fabric-private, fabric-egress]
@@ -207,7 +252,7 @@ services:
       FABRIC_ARTIFACT_DOWNLOAD_TTL_SECONDS: ${FABRIC_ARTIFACT_DOWNLOAD_TTL_SECONDS:-300}
       FABRIC_ARTIFACT_MAX_BYTES: ${FABRIC_ARTIFACT_MAX_BYTES:-10485760}
       FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
-      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_CONTAINER_API_BASE:-${FABRIC_LEADERSHIP_API_BASE:?set witness API}}
       FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
       FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
       FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
@@ -232,8 +277,8 @@ services:
       - fabric-leadership-public-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
     ports:
       - "${FABRIC_TAILSCALE_IP:?set the genomesbox Tailscale IP}:3180:3180"
@@ -279,8 +324,8 @@ services:
       - artifact-observer-secret-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
     networks: [fabric-private]
     read_only: true
     tmpfs: ["/tmp"]
@@ -321,7 +366,7 @@ services:
       FABRIC_ARTIFACT_ACCESS_KEY_FILE: /run/secrets/minio-root-user
       FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/minio-root-password
       FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
-      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_CONTAINER_API_BASE:-${FABRIC_LEADERSHIP_API_BASE:?set witness API}}
       FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
       FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
       FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
@@ -350,8 +395,8 @@ services:
       - fabric-leadership-public-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ../../harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ../../schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
     networks: [fabric-private, fabric-egress]
     read_only: true
@@ -377,7 +422,7 @@ services:
       FABRIC_GATEWAY_HOST: 0.0.0.0
       FABRIC_GATEWAY_PORT: "3181"
       FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
-      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_API_BASE:?set independent witness API}
+      FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_CONTAINER_API_BASE:-${FABRIC_LEADERSHIP_API_BASE:?set witness API}}
       FABRIC_LEADERSHIP_TOKEN_FILE: /run/secrets/fabric-leadership-token
       FABRIC_LEADERSHIP_PUBLIC_KEY_FILE: /run/secrets/fabric-leadership-public-key
       FABRIC_GATEWAY_LEADER_ENDPOINTS: >-
@@ -465,6 +510,12 @@ secrets:
     file: ${FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE:?set alarm dispatcher credential map file}
   fabric-leadership-token:
     file: ${FABRIC_LEADERSHIP_TOKEN_FILE:?set witness token file}
+  fabric-leadership-candidate-tokens:
+    file: ${FABRIC_LEADERSHIP_CANDIDATE_TOKENS_FILE:-${FABRIC_SECRETS_DIR}/fabric-leadership-candidate-tokens}
+  fabric-leadership-admin-token:
+    file: ${FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE:-${FABRIC_SECRETS_DIR}/fabric-leadership-admin-token}
+  fabric-leadership-signing-private-key:
+    file: ${FABRIC_LEADERSHIP_SIGNING_PRIVATE_KEY_FILE:-${FABRIC_SECRETS_DIR}/fabric-leadership-signing-private-key}
   fabric-leadership-candidate-token:
     file: ${FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE:?set host-scoped witness candidate token file}
   fabric-leadership-public-key:

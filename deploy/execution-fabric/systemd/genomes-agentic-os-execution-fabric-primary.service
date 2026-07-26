@@ -10,9 +10,9 @@ RemainAfterExit=yes
 EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env
 WorkingDirectory=/opt/genomes-agentic-os/execution-fabric/current/deploy
 ExecStartPre=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/preflight.sh primary
-ExecStart=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile primary up -d --remove-orphans
+ExecStart=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/run-primary.sh start
 ExecStartPost=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/wait-ready.sh
-ExecStop=/usr/bin/docker compose --env-file /etc/genomes-agentic-os/execution-fabric/runtime.env -f compose.genomesbox.yml --profile primary stop
+ExecStop=/opt/genomes-agentic-os/execution-fabric/current/installers/bin/run-primary.sh stop
 TimeoutStartSec=180
 TimeoutStopSec=90
 

@@ -39,8 +39,25 @@ esac
 }
 : "${FABRIC_TAILSCALE_IP:?Tailscale bind address is required}"
 : "${FABRIC_CLUSTER_ID:?fabric cluster id is required}"
+standalone_primary=false
 case "${FABRIC_WITNESS_MODE:-independent}" in
   independent) ;;
+  standalone_primary)
+    [ "$expected_role" = primary ] || {
+      echo "standalone_primary authority is valid only on the configured primary host" >&2
+      exit 78
+    }
+    [ "${FABRIC_AUTO_FAILOVER:-false}" = false ] &&
+      [ "${FABRIC_ENABLE_PROMOTION:-false}" = false ] || {
+      echo "standalone_primary requires automatic failover and shared-ledger promotion disabled" >&2
+      exit 78
+    }
+    [ "$FABRIC_HOST_ID" = "$FABRIC_PRIMARY_HOST_ID" ] || {
+      echo "standalone_primary host must equal FABRIC_PRIMARY_HOST_ID" >&2
+      exit 78
+    }
+    standalone_primary=true
+    ;;
   manual_fail_closed)
     [ "${FABRIC_AUTO_FAILOVER:-false}" != true ] &&
       [ "${FABRIC_ENABLE_PROMOTION:-false}" != true ] || {
@@ -51,7 +68,7 @@ case "${FABRIC_WITNESS_MODE:-independent}" in
     exit 78
     ;;
   *)
-    echo "FABRIC_WITNESS_MODE must be independent or manual_fail_closed" >&2
+    echo "FABRIC_WITNESS_MODE must be independent, standalone_primary, or manual_fail_closed" >&2
     exit 78
     ;;
 esac
@@ -86,6 +103,74 @@ esac
   echo "reliability source token map is missing or empty" >&2
   exit 78
 }
+if [ "$standalone_primary" = true ]; then
+  : "${FABRIC_AGENTIC_OS_CLI:?standalone-primary requires the installed Agentic OS CLI}"
+  : "${FABRIC_POLICY_FINGERPRINT:?standalone-primary requires the canonical policy fingerprint}"
+  : "${FABRIC_WITNESS_IMAGE:?standalone-primary requires the pinned witness image}"
+  [ "${FABRIC_LEADERSHIP_CONTAINER_API_BASE:-}" = "http://leadership-witness:3195" ] || {
+    echo "standalone-primary containers must use the co-located leadership-witness route" >&2
+    exit 78
+  }
+  : "${FABRIC_LEADERSHIP_CANDIDATE_TOKENS_FILE:?standalone-primary requires the witness candidate token map}"
+  : "${FABRIC_LEADERSHIP_SIGNING_PRIVATE_KEY_FILE:?standalone-primary requires the witness signing private key}"
+  [ "${FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE:-false}" = false ] || {
+    echo "standalone witness bootstrap is runner-governed; keep FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false" >&2
+    exit 78
+  }
+  witness_state_dir="$FABRIC_RUNTIME_STATE_DIR/standalone-witness"
+  witness_database="$witness_state_dir/witness.sqlite3"
+  witness_sentinel="$witness_database.initialized"
+  witness_host_marker="$FABRIC_RUNTIME_STATE_DIR/standalone-witness.bootstrap-complete"
+  if [ -e "$witness_host_marker" ] &&
+    { [ ! -s "$witness_database" ] || [ ! -s "$witness_sentinel" ]; }
+  then
+    echo "standalone witness was initialized but durable state is incomplete; restore its database and sentinel" >&2
+    exit 78
+  fi
+  if { [ -e "$witness_database" ] && [ ! -e "$witness_sentinel" ]; } ||
+    { [ ! -e "$witness_database" ] && [ -e "$witness_sentinel" ]; }
+  then
+    echo "standalone witness database and bootstrap sentinel are inconsistent" >&2
+    exit 78
+  fi
+  [ -x "$FABRIC_AGENTIC_OS_CLI" ] || {
+    echo "configured Agentic OS CLI is not executable" >&2
+    exit 78
+  }
+  for secret_file in \
+    "$FABRIC_LEADERSHIP_CANDIDATE_TOKENS_FILE" \
+    "$FABRIC_LEADERSHIP_SIGNING_PRIVATE_KEY_FILE"
+  do
+    [ -s "$secret_file" ] || {
+      echo "standalone-primary witness secret is missing or empty" >&2
+      exit 78
+    }
+  done
+  jq -e \
+    --arg host "$FABRIC_HOST_ID" \
+    --rawfile token "$FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE" '
+      type=="object" and length==1 and
+      (.[$host] | type=="string") and
+      .[$host]==($token | gsub("[\\r\\n]+$"; ""))
+    ' "$FABRIC_LEADERSHIP_CANDIDATE_TOKENS_FILE" >/dev/null || {
+    echo "standalone-primary candidate map must contain only this host and match its scoped token" >&2
+    exit 78
+  }
+  policy_temp=$(mktemp "${TMPDIR:-/tmp}/fabric-standalone-policy.XXXXXX")
+  trap 'rm -f "$policy_temp"' EXIT HUP INT TERM
+  "$FABRIC_AGENTIC_OS_CLI" runtime config show \
+    --root "$FABRIC_OS_ROOT" --json >"$policy_temp"
+  jq -e \
+    --arg host "$FABRIC_HOST_ID" \
+    --arg fingerprint "$FABRIC_POLICY_FINGERPRINT" '
+      .fingerprint==$fingerprint and
+      .effective.execution_fabric.standalone_primary.enabled==true and
+      .effective.execution_fabric.standalone_primary.host_id==$host
+    ' "$policy_temp" >/dev/null || {
+    echo "canonical policy does not opt this exact host into standalone-primary authority" >&2
+    exit 78
+  }
+fi
 if [ ! -s "$FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE" ] ||
   ! jq -e '
     type=="object" and length>0 and
@@ -213,7 +298,8 @@ for variable in \
   FABRIC_CONTROL_PLANE_IMAGE \
   FABRIC_POSTGRES_IMAGE \
   FABRIC_VALKEY_IMAGE \
-  FABRIC_MINIO_IMAGE
+  FABRIC_MINIO_IMAGE \
+  FABRIC_MINIO_CLIENT_IMAGE
 do
   eval "value=\${$variable:-}"
   printf '%s\n' "$value" | grep -Eq '^.+@sha256:[a-f0-9]{64}$' || {
@@ -221,9 +307,16 @@ do
     exit 78
   }
 done
+if [ "$standalone_primary" = true ]; then
+  printf '%s\n' "$FABRIC_WITNESS_IMAGE" | grep -Eq '^.+@sha256:[a-f0-9]{64}$' || {
+    echo "FABRIC_WITNESS_IMAGE must contain an immutable sha256 image digest" >&2
+    exit 78
+  }
+fi
 
 for relative in \
   harness/config/execution-fabric.yml \
+  harness/schemas/execution-fabric.schema.json \
   harness/registries/hosts-routing.yml \
   harness/registries/alerts.yml
 do
@@ -280,11 +373,21 @@ docker compose \
   --env-file "$FABRIC_RUNTIME_ENV_FILE" \
   -f "$compose_file" \
   config --quiet
-docker compose \
+set -- --profile "$expected_role"
+if [ "$standalone_primary" = true ]; then
+  set -- "$@" --profile standalone-primary
+fi
+services=$(docker compose \
   --env-file "$FABRIC_RUNTIME_ENV_FILE" \
   -f "$compose_file" \
-  --profile "$expected_role" \
-  config --services | grep -qx candidate-reporter || {
+  "$@" config --services)
+printf '%s\n' "$services" | grep -qx candidate-reporter || {
   echo "candidate-reporter service is missing from the $expected_role profile" >&2
   exit 78
 }
+if [ "$standalone_primary" = true ]; then
+  printf '%s\n' "$services" | grep -qx leadership-witness || {
+    echo "leadership-witness service is missing from the standalone-primary profile" >&2
+    exit 78
+  }
+fi

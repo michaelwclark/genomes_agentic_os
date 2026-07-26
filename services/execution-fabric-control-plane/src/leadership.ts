@@ -15,7 +15,7 @@ const signedLeadershipSchema = z.object({
   issuedAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
   authorityMode: z
-    .enum(["synchronous", "degraded_primary"])
+    .enum(["synchronous", "degraded_primary", "standalone_primary"])
     .default("synchronous"),
   degradedUntil: z.string().datetime().nullable().default(null),
 });
@@ -80,6 +80,10 @@ export type LeadershipGuardConfig = {
     allowed_task_types: string[];
     allowed_effect_types: string[];
     allow_scheduler: boolean;
+  };
+  standalonePolicy?: () => {
+    enabled: boolean;
+    host_id: string;
   };
 };
 
@@ -179,6 +183,19 @@ export class LeadershipGuard {
         allow_scheduler: false,
       }
     );
+  }
+
+  private standalonePolicy() {
+    return (
+      this.config.standalonePolicy?.() ?? {
+        enabled: false,
+        host_id: "",
+      }
+    );
+  }
+
+  private isStandaloneAuthority(): boolean {
+    return this.proof?.authorityMode === "standalone_primary";
   }
 
   constructor(
@@ -427,6 +444,24 @@ export class LeadershipGuard {
       );
     }
     if (this.durability?.mutationDurabilityReady) return;
+    if (this.proof.authorityMode === "standalone_primary") {
+      const standalone = this.standalonePolicy();
+      if (
+        !standalone.enabled ||
+        standalone.host_id !== this.config.hostId ||
+        this.proof.degradedUntil !== null
+      ) {
+        throw new LeadershipFencedError(
+          "standalone-primary authority requires exact canonical policy opt-in for this host",
+        );
+      }
+      if (!this.durability?.standalonePrimaryDurabilityReady) {
+        throw new LeadershipFencedError(
+          "standalone-primary PostgreSQL durability requires a local primary, synchronous_commit=on or local, no synchronous standbys, fsync=on, full_page_writes=on, and archive_mode=on",
+        );
+      }
+      return;
+    }
     const degradedPolicy = this.degradedPolicy();
     if (
       this.proof.authorityMode !== "degraded_primary" ||
@@ -490,6 +525,7 @@ export class LeadershipGuard {
 
   assertTaskMutation(taskType: string): void {
     this.assertMutation();
+    if (this.isStandaloneAuthority()) return;
     if (
       !this.durability?.mutationDurabilityReady &&
       !this.degradedPolicy().allowed_task_types.includes(taskType)
@@ -502,6 +538,7 @@ export class LeadershipGuard {
 
   assertEffectMutation(effectTypes: string[]): void {
     this.assertMutation();
+    if (this.isStandaloneAuthority()) return;
     if (!this.durability?.mutationDurabilityReady) {
       const allowed = new Set(
         this.degradedPolicy().allowed_effect_types,
@@ -517,6 +554,7 @@ export class LeadershipGuard {
 
   assertSchedulerMutation(): void {
     this.assertMutation();
+    if (this.isStandaloneAuthority()) return;
     if (
       !this.durability?.mutationDurabilityReady &&
       !this.degradedPolicy().allow_scheduler

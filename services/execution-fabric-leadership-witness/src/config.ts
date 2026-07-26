@@ -55,6 +55,10 @@ const environmentSchema = z.object({
     .min(1)
     .max(300)
     .default(30),
+  WITNESS_STANDALONE_PRIMARY_HOST_ID: z
+    .string()
+    .regex(/^[a-zA-Z0-9._-]{1,128}$/)
+    .optional(),
   WITNESS_ALLOW_DEGRADED_PRIMARY: z
     .enum(["true", "false"])
     .default("false")
@@ -109,9 +113,9 @@ function candidateTokens(path: string): Record<string, string> {
       z.string().regex(/^\S{32,}$/),
     )
     .parse(decoded);
-  if (Object.keys(parsed).length < 2) {
+  if (Object.keys(parsed).length < 1) {
     throw new Error(
-      "WITNESS_CANDIDATE_TOKENS_FILE must contain at least two host-scoped tokens",
+      "WITNESS_CANDIDATE_TOKENS_FILE must contain at least one host-scoped token",
     );
   }
   if (new Set(Object.values(parsed)).size !== Object.keys(parsed).length) {
@@ -136,6 +140,7 @@ export type WitnessConfig = {
   leaderBaselineMaxAgeSeconds: number;
   planTtlSeconds: number;
   maxReportSkewSeconds: number;
+  standalonePrimaryHostId?: string;
   allowDegradedPrimary?: boolean;
   maxDegradedPrimarySeconds?: number;
   readerToken: string;
@@ -175,6 +180,39 @@ export function loadConfig(
   const scopedCandidateTokens = candidateTokens(
     parsed.WITNESS_CANDIDATE_TOKENS_FILE,
   );
+  const candidateHostIds = Object.keys(scopedCandidateTokens);
+  if (parsed.WITNESS_STANDALONE_PRIMARY_HOST_ID) {
+    if (
+      parsed.WITNESS_STANDALONE_PRIMARY_HOST_ID !==
+      parsed.WITNESS_INITIAL_LEADER
+    ) {
+      throw new Error(
+        "WITNESS_STANDALONE_PRIMARY_HOST_ID must equal WITNESS_INITIAL_LEADER",
+      );
+    }
+    if (
+      candidateHostIds.length !== 1 ||
+      candidateHostIds[0] !== parsed.WITNESS_STANDALONE_PRIMARY_HOST_ID
+    ) {
+      throw new Error(
+        "standalone-primary witness must contain exactly one token for its configured host",
+      );
+    }
+    if (parsed.WITNESS_ALLOW_DEGRADED_PRIMARY) {
+      throw new Error(
+        "standalone-primary and degraded-primary witness authority cannot be combined",
+      );
+    }
+    if (parsed.WITNESS_CANDIDATE_FRESHNESS_SECONDS > 300) {
+      throw new Error(
+        "standalone-primary leadership proof lifetime must not exceed 300 seconds",
+      );
+    }
+  } else if (candidateHostIds.length < 2) {
+    throw new Error(
+      "independent witness mode requires at least two host-scoped tokens",
+    );
+  }
   if (!(parsed.WITNESS_INITIAL_LEADER in scopedCandidateTokens)) {
     throw new Error(
       "WITNESS_CANDIDATE_TOKENS_FILE must include WITNESS_INITIAL_LEADER",
@@ -215,6 +253,12 @@ export function loadConfig(
       parsed.WITNESS_LEADER_BASELINE_MAX_AGE_SECONDS,
     planTtlSeconds: parsed.WITNESS_PLAN_TTL_SECONDS,
     maxReportSkewSeconds: parsed.WITNESS_MAX_REPORT_SKEW_SECONDS,
+    ...(parsed.WITNESS_STANDALONE_PRIMARY_HOST_ID
+      ? {
+          standalonePrimaryHostId:
+            parsed.WITNESS_STANDALONE_PRIMARY_HOST_ID,
+        }
+      : {}),
     allowDegradedPrimary: parsed.WITNESS_ALLOW_DEGRADED_PRIMARY,
     maxDegradedPrimarySeconds:
       parsed.WITNESS_MAX_DEGRADED_PRIMARY_SECONDS,

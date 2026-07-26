@@ -169,12 +169,15 @@ jobs:
           FABRIC_MINIO_CLIENT_IMAGE: minio/mc:latest
           FABRIC_CONTROL_PLANE_IMAGE: ghcr.io/example/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           FABRIC_TAILSCALE_IP: 100.64.0.2
+          FABRIC_PRIMARY_HOST_ID: genomesbox
+          FABRIC_STANDBY_HOST_ID: bigmac
           FABRIC_PRIMARY_TAILSCALE_IP: 100.64.0.2
           FABRIC_STANDBY_TAILSCALE_IP: 100.64.0.3
           FABRIC_DATABASE_URL: postgresql://fabric:unused@postgres/execution_fabric
           FABRIC_VALKEY_URL: redis://valkey:6379
           FABRIC_SECRETS_DIR: /tmp/fabric-secrets
           FABRIC_RUNTIME_STATE_DIR: /tmp/fabric-state
+          FABRIC_OS_ROOT: ${{ github.workspace }}
           FABRIC_CLUSTER_ID: ci
           FABRIC_LEADERSHIP_API_BASE: https://witness.example.test
           FABRIC_LEADERSHIP_TOKEN_FILE: /tmp/fabric-secrets/witness-token
@@ -189,9 +192,16 @@ jobs:
           docker compose --profile standby --profile promoted -f deploy/execution-fabric/compose.bigmac.yml config -q
       - name: Build service and worker images
         run: |
-          docker build -t execution-fabric-control-plane:ci services/execution-fabric-control-plane
-          docker build -t execution-fabric-leadership-witness:ci services/execution-fabric-leadership-witness
-          docker build -t genomes-agentic-os-worker:ci -f services/execution-fabric-worker/Dockerfile .
+          build_image() {
+            if docker build "$@"; then
+              return 0
+            fi
+            echo "Container registry request failed; retrying this build once" >&2
+            docker build "$@"
+          }
+          build_image -t execution-fabric-control-plane:ci services/execution-fabric-control-plane
+          build_image -t execution-fabric-leadership-witness:ci services/execution-fabric-leadership-witness
+          build_image -t genomes-agentic-os-worker:ci -f services/execution-fabric-worker/Dockerfile .
           docker run --rm \
             -e FABRIC_WORKER_ACCEPTED_QUEUES=codex \
             -e FABRIC_WORKER_CAPABILITIES=codex.task \

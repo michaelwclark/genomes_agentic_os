@@ -113,16 +113,27 @@ function rotationCandidateEligible(
 function rotationCommitCandidateEligible(
   candidate: CandidateRecord | undefined,
   mutation: ConfigDigestRotationCommitMutation,
+  state: LeadershipState,
 ): boolean {
   const expected = mutation.commitCandidate;
   const preparation = mutation.preparation;
+  const standalonePrimary =
+    state.authorityMode === "standalone_primary" &&
+    preparation.candidateHosts.length === 1 &&
+    preparation.candidateHosts[0] === preparation.expectedLeader;
   return Boolean(
-    expected.candidate !== preparation.expectedLeader &&
+    (standalonePrimary
+      ? expected.candidate === preparation.expectedLeader &&
+        expected.inRecovery === false &&
+        expected.receiverState === "not_applicable"
+      : expected.candidate !== preparation.expectedLeader &&
+        expected.inRecovery === true &&
+        expected.receiverState === "streaming") &&
       preparation.candidateHosts.includes(expected.candidate) &&
       candidate?.candidate === expected.candidate &&
       candidate.healthy &&
-      candidate.inRecovery &&
-      candidate.receiverState === "streaming" &&
+      candidate.inRecovery === expected.inRecovery &&
+      candidate.receiverState === expected.receiverState &&
       candidate.observedAtEpoch >= mutation.candidateFreshAfterEpoch &&
       Math.floor(new Date(candidate.lagMeasuredAt).getTime() / 1000) >=
         mutation.candidateFreshAfterEpoch &&
@@ -132,23 +143,35 @@ function rotationCommitCandidateEligible(
       candidate.timelineId === preparation.expectedTimelineId &&
       candidate.upstreamSystemId === preparation.expectedUpstreamSystemId &&
       candidate.replayWalPosition >= expected.minimumReplayWalPosition &&
-      candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+      (!expected.inRecovery ||
+        candidate.replicaLagBytes <= preparation.maxReplicaLagBytes),
   );
 }
 
 function rotationAbortCandidateEligible(
   candidate: CandidateRecord | undefined,
   mutation: ConfigDigestRotationAbortMutation,
+  state: LeadershipState,
 ): boolean {
   const expected = mutation.evidenceCandidate;
   const preparation = mutation.preparation;
+  const standalonePrimary =
+    state.authorityMode === "standalone_primary" &&
+    preparation.candidateHosts.length === 1 &&
+    preparation.candidateHosts[0] === preparation.expectedLeader;
   return Boolean(
-    expected.candidate !== preparation.expectedLeader &&
+    (standalonePrimary
+      ? expected.candidate === preparation.expectedLeader &&
+        expected.inRecovery === false &&
+        expected.receiverState === "not_applicable"
+      : expected.candidate !== preparation.expectedLeader &&
+        expected.inRecovery === true &&
+        expected.receiverState === "streaming") &&
       preparation.candidateHosts.includes(expected.candidate) &&
       candidate?.candidate === expected.candidate &&
       candidate.healthy &&
-      candidate.inRecovery &&
-      candidate.receiverState === "streaming" &&
+      candidate.inRecovery === expected.inRecovery &&
+      candidate.receiverState === expected.receiverState &&
       candidate.observedAtEpoch > mutation.evidenceAfterEpoch &&
       Math.floor(new Date(candidate.lagMeasuredAt).getTime() / 1000) >
         mutation.evidenceAfterEpoch &&
@@ -158,7 +181,8 @@ function rotationAbortCandidateEligible(
       candidate.timelineId === preparation.expectedTimelineId &&
       candidate.upstreamSystemId === preparation.expectedUpstreamSystemId &&
       candidate.replayWalPosition >= expected.minimumReplayWalPosition &&
-      candidate.replicaLagBytes <= preparation.maxReplicaLagBytes,
+      (!expected.inRecovery ||
+        candidate.replicaLagBytes <= preparation.maxReplicaLagBytes),
   );
 }
 
@@ -381,7 +405,14 @@ export class InMemoryWitnessStore implements WitnessStore {
       );
     }
     if (
-      mutation.candidates.length < 2 ||
+      (mutation.candidates.length < 2 &&
+        !(
+          state.authorityMode === "standalone_primary" &&
+          mutation.candidates.length === 1 &&
+          mutation.candidates[0]?.candidate === state.currentLeader &&
+          mutation.candidates[0]?.inRecovery === false &&
+          mutation.candidates[0]?.receiverState === "not_applicable"
+        )) ||
       !mutation.candidates.every((condition) =>
         rotationCandidateEligible(
           this.candidates.get(condition.candidate),
@@ -423,6 +454,7 @@ export class InMemoryWitnessStore implements WitnessStore {
       !rotationCommitCandidateEligible(
         this.candidates.get(mutation.commitCandidate.candidate),
         mutation,
+        state,
       )
     ) {
       throw new ConditionalWriteError(
@@ -471,6 +503,7 @@ export class InMemoryWitnessStore implements WitnessStore {
       !rotationAbortCandidateEligible(
         this.candidates.get(mutation.evidenceCandidate.candidate),
         mutation,
+        state,
       )
     ) {
       throw new ConditionalWriteError(

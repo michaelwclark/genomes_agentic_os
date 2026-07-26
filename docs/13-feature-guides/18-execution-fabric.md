@@ -145,7 +145,16 @@ execution_fabric:
       state_path: harness/shared_factory/00-control-plane/execution-fabric-fallback.json
 ```
 
-An independent watchdog runs `runtime fallback probe --apply` once per minute.
+Personal activation preflights and starts three client-plane jobs on bigmac:
+the remote host worker, the durable alarm dispatcher, and the independent
+fallback watchdog. The preflight binds worker ID, bootstrap ID, host, pool,
+queue set, capability set, and concurrency to canonical policy; validates the
+shipped routes and distinct scoped token files; and requires a routable signed
+gateway. It does not require standby PostgreSQL/Valkey/MinIO or local copies of
+the control plane's credential maps. The server verifies the exact bootstrap
+and dispatcher bindings when each client connects.
+
+The watchdog runs `runtime fallback probe --apply` once per minute.
 Three consecutive readiness failures latch bigmac onto its existing local
 durable SQLite queue. The latch is durable across process and host restarts.
 New bigmac work continues locally; work already accepted by genomesbox remains
@@ -415,11 +424,22 @@ availability and drill-backed promotion-eligibility fields and emits the canonic
 `runtime.execution_fabric.health` alert when liveness or durable readiness
 fails. A container restart is not a readiness receipt.
 
-If no independent witness host exists, configure
-`WITNESS_MODE=manual_fail_closed`. No witness container starts,
-`FABRIC_AUTO_FAILOVER` and `FABRIC_ENABLE_PROMOTION` must remain false, and the
-system makes no two-node split-brain-safety claim. A ping between genomesbox
-and bigmac cannot tell which side of a partition is authoritative.
+For a personal genomesbox-owned installation without leadership transfer,
+configure `FABRIC_WITNESS_MODE=standalone_primary`, enable the exact genomesbox
+host in canonical `execution_fabric.standalone_primary`, and keep
+`FABRIC_AUTO_FAILOVER=false` plus `FABRIC_ENABLE_PROMOTION=false`. The Linux
+primary runner starts a digest-pinned, co-located signing service with durable
+SQLite state and short renewable proofs. This preserves normal shared queue,
+scheduler, and effect operation while genomesbox is healthy, but it is not an
+independent failure domain and makes no HA claim. When genomesbox is offline,
+shared work waits and bigmac's separate local fallback queue provides personal
+continuity; bigmac never promotes the shared ledger.
+
+If neither an independent witness nor the personal co-located authority is
+desired, configure `WITNESS_MODE=manual_fail_closed`. No witness container
+starts, `FABRIC_AUTO_FAILOVER` and `FABRIC_ENABLE_PROMOTION` must remain false,
+and the system makes no two-node split-brain-safety claim. A ping between
+genomesbox and bigmac cannot tell which side of a partition is authoritative.
 
 If activation finds historical nonterminal SQLite rows that are missing from or
 status-drifted against YAML, it refuses the switch. Reconcile from filesystem
@@ -499,9 +519,19 @@ The Python wheel stays small and exposes
 matching release bundle. Deployments, installers, canonical config, schema,
 image lock, checksums, SBOM, and emergency bundle are GitHub release assets and
 remain in the source distribution. The tag workflow builds the control-plane,
-leadership-witness, and worker images, records all three GHCR digests, validates
-Python/service/API versions plus config/schema hashes, and lets exactly one job
-create the immutable GitHub release.
+leadership-witness, and worker images, then resolves the four reviewed
+third-party source tags in
+`deploy/execution-fabric/release-image-sources.json` to Linux AMD64/ARM64 index
+digests. It records all seven exact repository digests, validates
+Python/service/API versions plus config/schema/source-manifest hashes, and lets
+exactly one job create the immutable GitHub release.
+
+`execution-fabric-image-lock.json` is the sole authored lock. The released
+`materialize-image-lock.sh` validates its exact seven-image schema and emits
+the deterministic `FABRIC_*_IMAGE` projection used by Compose and recovery
+tooling. Emergency bundles retain the JSON source and derived env projection,
+then regenerate and compare the latter during validation. A recovery bundle
+therefore cannot omit or independently substitute the witness or worker image.
 
 Local release preflight:
 
@@ -509,9 +539,13 @@ Local release preflight:
 python scripts/release/build-execution-fabric-release.py --validate-only
 python scripts/release/build-execution-fabric-release.py \
   --output-dir dist/release \
-  --control-plane-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
-  --witness-image ghcr.io/OWNER/IMAGE@sha256:DIGEST \
-  --worker-image ghcr.io/OWNER/IMAGE@sha256:DIGEST
+  --control-plane-image ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-control-plane@sha256:DIGEST \
+  --witness-image ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-leadership-witness@sha256:DIGEST \
+  --worker-image ghcr.io/michaelwclark/genomes-agentic-os-execution-fabric-worker@sha256:DIGEST \
+  --postgres-image docker.io/library/postgres@sha256:DIGEST \
+  --valkey-image docker.io/valkey/valkey@sha256:DIGEST \
+  --minio-image docker.io/minio/minio@sha256:DIGEST \
+  --minio-client-image docker.io/minio/mc@sha256:DIGEST
 ```
 
 The builder rejects mutable tags. Publishing is intentionally reserved for a

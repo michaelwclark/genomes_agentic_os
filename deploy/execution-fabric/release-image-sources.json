@@ -1,0 +1,21 @@
+{
+  "schema_version": "execution-fabric-release-image-sources/v1",
+  "images": {
+    "postgres": {
+      "repository": "docker.io/library/postgres",
+      "tag": "17.10-alpine"
+    },
+    "valkey": {
+      "repository": "docker.io/valkey/valkey",
+      "tag": "8.1.9-alpine"
+    },
+    "minio": {
+      "repository": "docker.io/minio/minio",
+      "tag": "RELEASE.2025-09-07T16-13-09Z"
+    },
+    "minio_client": {
+      "repository": "docker.io/minio/mc",
+      "tag": "RELEASE.2025-08-13T08-35-41Z"
+    }
+  }
+}

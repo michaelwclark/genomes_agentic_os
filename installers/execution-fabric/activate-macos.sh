@@ -33,35 +33,30 @@ preflight="$script_dir/bin/preflight.sh"
 domain="gui/$(id -u)"
 launch_agents="$HOME/Library/LaunchAgents"
 if [ "$personal_fallback" = true ]; then
-  script="$script_dir/bin/personal-fallback-watchdog.sh"
-  [ -x "$script" ] || {
-    echo "personal fallback watchdog is unavailable: $script" >&2
+  personal_preflight="$script_dir/bin/preflight-personal-client.sh"
+  [ -x "$personal_preflight" ] || {
+    echo "personal client preflight is unavailable: $personal_preflight" >&2
     exit 69
   }
-  FABRIC_RUNTIME_ENV_FILE=${FABRIC_RUNTIME_ENV_FILE:-"$HOME/Library/Application Support/GenomesAgenticOS/execution-fabric/runtime.env"}
-  export FABRIC_RUNTIME_ENV_FILE
-  set -a
-  # shellcheck disable=SC1090
-  . "$FABRIC_RUNTIME_ENV_FILE"
-  set +a
-  : "${FABRIC_OS_ROOT:?FABRIC_OS_ROOT is required}"
-  : "${FABRIC_AGENTIC_OS_CLI:?FABRIC_AGENTIC_OS_CLI is required}"
-  [ -x "$FABRIC_AGENTIC_OS_CLI" ] || {
-    echo "configured Agentic OS CLI is not executable: $FABRIC_AGENTIC_OS_CLI" >&2
-    exit 69
-  }
-  "$FABRIC_AGENTIC_OS_CLI" runtime fallback status \
-    --root "$FABRIC_OS_ROOT" --json >/dev/null
-  label="com.genomes.agentic-os.execution-fabric.personal-fallback"
-  plist="$launch_agents/$label.plist"
-  [ -r "$plist" ] || {
-    echo "installed launchd definition is unavailable: $plist" >&2
-    exit 69
-  }
-  if ! launchctl print "$domain/$label" >/dev/null 2>&1; then
-    launchctl bootstrap "$domain" "$plist"
-  fi
-  echo "Execution Fabric personal fallback watchdog is active"
+  "$personal_preflight"
+  personal_labels="worker alarm-dispatcher personal-fallback"
+  # Resolve the complete mutation set before launchctl starts the first job.
+  for suffix in $personal_labels; do
+    label="com.genomes.agentic-os.execution-fabric.$suffix"
+    plist="$launch_agents/$label.plist"
+    [ -r "$plist" ] || {
+      echo "installed launchd definition is unavailable: $plist" >&2
+      exit 69
+    }
+  done
+  for suffix in $personal_labels; do
+    label="com.genomes.agentic-os.execution-fabric.$suffix"
+    plist="$launch_agents/$label.plist"
+    if ! launchctl print "$domain/$label" >/dev/null 2>&1; then
+      launchctl bootstrap "$domain" "$plist"
+    fi
+  done
+  echo "Execution Fabric personal worker, alarm dispatcher, and fallback watchdog are active"
   exit 0
 fi
 

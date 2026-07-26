@@ -147,8 +147,15 @@ async function reportOnce() {
   if (!hostId || !databaseUrl || !witnessBase || !tokenFile || !policyFile) {
     throw new Error("candidate reporter configuration is incomplete");
   }
-  if (!/^https:\/\//.test(witnessBase)) {
-    throw new Error("candidate reporter requires an HTTPS witness URL");
+  const standaloneLocalWitness =
+    process.env.FABRIC_WITNESS_MODE === "standalone_primary" &&
+    /^http:\/\/(?:127\.0\.0\.1|localhost|leadership-witness)(?::[0-9]+)?(?:\/|$)/.test(
+      witnessBase,
+    );
+  if (!/^https:\/\//.test(witnessBase) && !standaloneLocalWitness) {
+    throw new Error(
+      "candidate reporter requires HTTPS except for the explicit co-located standalone-primary witness",
+    );
   }
   const token = (await readFile(tokenFile, "utf8")).trim();
   if (!/^\S{32,}$/.test(token)) {

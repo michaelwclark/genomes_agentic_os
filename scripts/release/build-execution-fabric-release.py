@@ -18,7 +18,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_MANIFEST = ROOT / "release/execution-fabric-manifest.yml"
-DIGEST_IMAGE = re.compile(r"^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[0-9a-f]{64}$")
+DEPENDENCY_IMAGE_SOURCES = (
+    ROOT / "deploy/execution-fabric/release-image-sources.json"
+)
+DEPENDENCY_IMAGE_NAMES = ("postgres", "valkey", "minio", "minio_client")
+DIGEST_IMAGE = re.compile(
+    r"^(?P<repository>[a-z0-9.-]+(?:/[a-z0-9._-]+)+)"
+    r"@sha256:(?P<digest>[0-9a-f]{64})$"
+)
+SOURCE_REPOSITORY = re.compile(r"^[a-z0-9.-]+(?:/[a-z0-9._-]+)+$")
+SOURCE_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 
 
 def digest(path: Path) -> str:
@@ -32,8 +41,67 @@ def load_json(path: Path) -> dict:
     return value
 
 
+def load_dependency_image_sources(
+    path: Path = DEPENDENCY_IMAGE_SOURCES,
+) -> dict[str, dict[str, str]]:
+    value = load_json(path)
+    if set(value) != {"schema_version", "images"}:
+        raise ValueError(
+            f"{path} must contain only schema_version and images"
+        )
+    if value["schema_version"] != "execution-fabric-release-image-sources/v1":
+        raise ValueError(f"{path} has an unsupported schema_version")
+    images = value["images"]
+    if not isinstance(images, dict) or set(images) != set(DEPENDENCY_IMAGE_NAMES):
+        raise ValueError(
+            f"{path} images must contain exactly: "
+            + ", ".join(DEPENDENCY_IMAGE_NAMES)
+        )
+
+    validated: dict[str, dict[str, str]] = {}
+    for name in DEPENDENCY_IMAGE_NAMES:
+        image = images[name]
+        if not isinstance(image, dict) or set(image) != {"repository", "tag"}:
+            raise ValueError(
+                f"{path} image {name} must contain only repository and tag"
+            )
+        repository = image["repository"]
+        tag = image["tag"]
+        if not isinstance(repository, str) or not SOURCE_REPOSITORY.fullmatch(
+            repository
+        ):
+            raise ValueError(f"{path} image {name} has an invalid repository")
+        if not isinstance(tag, str) or not SOURCE_TAG.fullmatch(tag):
+            raise ValueError(f"{path} image {name} has an invalid reviewed tag")
+        if tag.lower() == "latest" or "@" in tag or tag.startswith("sha256:"):
+            raise ValueError(
+                f"{path} image {name} must use a reviewed, non-latest source tag"
+            )
+        validated[name] = {"repository": repository, "tag": tag}
+    return validated
+
+
+def validate_digest_image(
+    name: str,
+    image: str,
+    *,
+    expected_repository: str,
+) -> str:
+    match = DIGEST_IMAGE.fullmatch(image)
+    if not match:
+        raise ValueError(
+            f"{name} image must be an immutable repository@sha256 reference"
+        )
+    if match.group("repository") != expected_repository:
+        raise ValueError(
+            f"{name} image repository must be {expected_repository}"
+        )
+    return image
+
+
 def validate_versions() -> dict:
     static = yaml.safe_load(STATIC_MANIFEST.read_text(encoding="utf-8"))
+    dependency_image_sources = load_dependency_image_sources()
     python = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     python_version = str(python["project"]["version"])
     package_init = (ROOT / "src/genomes_agentic_os/__init__.py").read_text(
@@ -100,7 +168,11 @@ def validate_versions() -> dict:
         path = ROOT / str(static["contracts"][contract])
         if not path.is_file():
             raise ValueError(f"release contract missing: {path.relative_to(ROOT)}")
-    return {"static": static, "versions": versions}
+    return {
+        "static": static,
+        "versions": versions,
+        "dependency_image_sources": dependency_image_sources,
+    }
 
 
 def add_file(archive: tarfile.TarFile, source: Path, name: str) -> None:
@@ -149,16 +221,54 @@ def build(
     control_image: str,
     witness_image: str,
     worker_image: str,
+    postgres_image: str,
+    valkey_image: str,
+    minio_image: str,
+    minio_client_image: str,
 ) -> None:
     validated = validate_versions()
-    if not DIGEST_IMAGE.fullmatch(control_image):
-        raise ValueError("control-plane image must be a digest-pinned GHCR reference")
-    if not DIGEST_IMAGE.fullmatch(witness_image):
-        raise ValueError("witness image must be a digest-pinned GHCR reference")
-    if not DIGEST_IMAGE.fullmatch(worker_image):
-        raise ValueError("worker image must be a digest-pinned GHCR reference")
-    output.mkdir(parents=True, exist_ok=True)
     static = validated["static"]
+    dependency_sources = validated["dependency_image_sources"]
+    images = {
+        "control_plane": validate_digest_image(
+            "control-plane",
+            control_image,
+            expected_repository=str(static["services"]["control_plane"]["image"]),
+        ),
+        "leadership_witness": validate_digest_image(
+            "witness",
+            witness_image,
+            expected_repository=str(
+                static["services"]["leadership_witness"]["image"]
+            ),
+        ),
+        "worker": validate_digest_image(
+            "worker",
+            worker_image,
+            expected_repository=str(static["services"]["worker"]["image"]),
+        ),
+        "postgres": validate_digest_image(
+            "postgres",
+            postgres_image,
+            expected_repository=dependency_sources["postgres"]["repository"],
+        ),
+        "valkey": validate_digest_image(
+            "valkey",
+            valkey_image,
+            expected_repository=dependency_sources["valkey"]["repository"],
+        ),
+        "minio": validate_digest_image(
+            "minio",
+            minio_image,
+            expected_repository=dependency_sources["minio"]["repository"],
+        ),
+        "minio_client": validate_digest_image(
+            "minio-client",
+            minio_client_image,
+            expected_repository=dependency_sources["minio_client"]["repository"],
+        ),
+    }
+    output.mkdir(parents=True, exist_ok=True)
     config = ROOT / str(static["contracts"]["config"])
     schema = ROOT / str(static["contracts"]["schema"])
     manifest = {
@@ -169,11 +279,7 @@ def build(
             "name": static["python_package"],
             "version": validated["versions"]["python"],
         },
-        "images": {
-            "control_plane": control_image,
-            "leadership_witness": witness_image,
-            "worker": worker_image,
-        },
+        "images": images,
         "contracts": {
             "config": {
                 "path": str(config.relative_to(ROOT)),
@@ -183,12 +289,17 @@ def build(
                 "path": str(schema.relative_to(ROOT)),
                 "sha256": digest(schema),
             },
+            "dependency_image_sources": {
+                "path": str(DEPENDENCY_IMAGE_SOURCES.relative_to(ROOT)),
+                "sha256": digest(DEPENDENCY_IMAGE_SOURCES),
+            },
         },
     }
     manifest_path = output / "execution-fabric-release-manifest.json"
     write_json(manifest_path, manifest)
+    image_lock_path = output / "execution-fabric-image-lock.json"
     write_json(
-        output / "execution-fabric-image-lock.json",
+        image_lock_path,
         {
             "schema_version": "execution-fabric-image-lock/v1",
             "release_version": validated["versions"]["release"],
@@ -208,6 +319,7 @@ def build(
             schema,
             STATIC_MANIFEST,
             manifest_path,
+            image_lock_path,
         ],
     )
     assets = sorted(path for path in output.iterdir() if path.is_file())
@@ -224,19 +336,37 @@ def main() -> int:
     parser.add_argument("--control-plane-image")
     parser.add_argument("--witness-image")
     parser.add_argument("--worker-image")
+    parser.add_argument("--postgres-image")
+    parser.add_argument("--valkey-image")
+    parser.add_argument("--minio-image")
+    parser.add_argument("--minio-client-image")
     args = parser.parse_args()
     validate_versions()
     if args.validate_only:
         return 0
-    if not args.control_plane_image or not args.witness_image or not args.worker_image:
+    image_arguments = {
+        "--control-plane-image": args.control_plane_image,
+        "--witness-image": args.witness_image,
+        "--worker-image": args.worker_image,
+        "--postgres-image": args.postgres_image,
+        "--valkey-image": args.valkey_image,
+        "--minio-image": args.minio_image,
+        "--minio-client-image": args.minio_client_image,
+    }
+    missing = [name for name, value in image_arguments.items() if not value]
+    if missing:
         parser.error(
-            "digest-pinned --control-plane-image, --witness-image, and --worker-image are required"
+            "digest-pinned image arguments are required: " + ", ".join(missing)
         )
     build(
         args.output_dir,
         args.control_plane_image,
         args.witness_image,
         args.worker_image,
+        args.postgres_image,
+        args.valkey_image,
+        args.minio_image,
+        args.minio_client_image,
     )
     return 0
 

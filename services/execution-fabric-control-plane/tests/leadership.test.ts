@@ -19,7 +19,10 @@ function token(
   receiptId: string,
   issuedAt: string,
   expiresAt: string,
-  authorityMode: "synchronous" | "degraded_primary" = "synchronous",
+  authorityMode:
+    | "synchronous"
+    | "degraded_primary"
+    | "standalone_primary" = "synchronous",
   degradedUntil: string | null = null,
   configDigest = digest,
 ): string {
@@ -74,6 +77,8 @@ function fixture(
     persistedHold?: boolean;
     durabilityReady?: boolean;
     degraded?: boolean;
+    standalone?: boolean;
+    standalonePolicyHost?: string;
   } = {},
 ) {
   let now = new Date("2026-07-24T20:00:00.000Z");
@@ -86,7 +91,11 @@ function fixture(
       "status:fence",
       now.toISOString(),
       new Date(now.getTime() + 60_000).toISOString(),
-      options.degraded ? "degraded_primary" : "synchronous",
+      options.standalone
+        ? "standalone_primary"
+        : options.degraded
+          ? "degraded_primary"
+          : "synchronous",
       options.degraded
         ? new Date(now.getTime() + 3_600_000).toISOString()
         : null,
@@ -153,6 +162,10 @@ function fixture(
         allowed_effect_types: ["agentic_os.alert.publish"],
         allow_scheduler: false,
       }),
+      standalonePolicy: () => ({
+        enabled: options.standalone === true,
+        host_id: options.standalonePolicyHost ?? "bigmac",
+      }),
     },
     ledger,
     () => digest,
@@ -193,6 +206,9 @@ function fixture(
         archiveMode: "on",
         degradedPrimaryDurabilityReady:
           options.degraded === true &&
+          options.durabilityReady === false,
+        standalonePrimaryDurabilityReady:
+          options.standalone === true &&
           options.durabilityReady === false,
         measuredAt: now.toISOString(),
       }),
@@ -407,6 +423,36 @@ describe("leadership fencing", () => {
       state: "active",
       authorityMode: "degraded_primary",
     });
+    guard.stop();
+  });
+
+  it("allows normal task, effect, and scheduler mutations on an opted-in standalone primary", async () => {
+    const { guard } = fixture({
+      durabilityReady: false,
+      standalone: true,
+    });
+    await guard.start();
+    expect(() => guard.assertTaskMutation("production.deploy")).not.toThrow();
+    expect(() =>
+      guard.assertEffectMutation(["provider.effect"]),
+    ).not.toThrow();
+    expect(() => guard.assertSchedulerMutation()).not.toThrow();
+    expect(guard.snapshot()).toMatchObject({
+      state: "active",
+      authorityMode: "standalone_primary",
+      durability: { standalonePrimaryDurabilityReady: true },
+    });
+    guard.stop();
+  });
+
+  it("fences standalone authority when canonical opt-in names another host", async () => {
+    const { guard } = fixture({
+      durabilityReady: false,
+      standalone: true,
+      standalonePolicyHost: "genomesbox",
+    });
+    await guard.start();
+    expect(() => guard.assertMutation()).toThrow(/exact canonical policy opt-in/);
     guard.stop();
   });
 });

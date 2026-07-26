@@ -100,6 +100,50 @@ function fixture() {
   };
 }
 
+function standaloneFixture() {
+  let now = new Date("2026-07-24T20:00:00.000Z");
+  const standaloneConfig: WitnessConfig = {
+    ...config,
+    standalonePrimaryHostId: "genomesbox",
+    allowDegradedPrimary: false,
+    candidateTokens: {
+      genomesbox: config.candidateTokens.genomesbox!,
+    },
+  };
+  const witness = new LeadershipWitness(
+    standaloneConfig,
+    new InMemoryWitnessStore(),
+    {
+      now: () => now,
+      randomId: () => "standalone-receipt",
+    },
+  );
+  const update = (overrides: Partial<CandidateUpdate> = {}) =>
+    witness.updateCandidate("genomesbox", {
+      healthy: true,
+      inRecovery: false,
+      timelineId: 1,
+      receiveLsn: "0/100",
+      replayLsn: "0/100",
+      receiveWalPosition: 1_000,
+      replayWalPosition: 1_000,
+      replicaLagBytes: 0,
+      lagMeasuredAt: now.toISOString(),
+      upstreamSystemId: "7600000000000000000",
+      receiverState: "not_applicable",
+      lastMessageAt: now.toISOString(),
+      configDigest: standaloneConfig.initialConfigDigest,
+      ...overrides,
+    });
+  return {
+    witness,
+    update,
+    advance(seconds: number) {
+      now = new Date(now.getTime() + seconds * 1000);
+    },
+  };
+}
+
 type RotationTestWitness = ReturnType<typeof fixture>["witness"];
 
 describe("leadership witness", () => {
@@ -134,6 +178,118 @@ describe("leadership witness", () => {
       });
     }
   }
+
+  it("renews short-lived standalone proof only from the exact fresh primary and disables transfers", async () => {
+    const { witness, update, advance } = standaloneFixture();
+    await witness.initialize();
+    await expect(witness.status()).rejects.toThrow(/proof renewal rejected/);
+    await update();
+    const status = await witness.status();
+    expect(status).toMatchObject({
+      currentLeader: "genomesbox",
+      authorityMode: "standalone_primary",
+      promotionAllowed: false,
+      safety: {
+        automaticPromotion: false,
+        automaticFailback: false,
+        standalonePrimary: true,
+      },
+    });
+    const [, payload] = status.leadershipToken.split(".");
+    expect(
+      JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")),
+    ).toMatchObject({
+      leader: "genomesbox",
+      authorityMode: "standalone_primary",
+      degradedUntil: null,
+      issuedAt: "2026-07-24T20:00:00.000Z",
+      expiresAt: "2026-07-24T20:01:30.000Z",
+    });
+
+    await expect(
+      witness.promote({
+        promotionId: "00000000-0000-4000-8000-000000000999",
+        candidate: "bigmac",
+        expectedLeader: "genomesbox",
+        expectedEpoch: 1,
+        incidentDigest: "f".repeat(64),
+      }),
+    ).rejects.toThrow(/promotion is disabled/);
+    await expect(
+      witness.prepareFailback({
+        from: "genomesbox",
+        to: "bigmac",
+        mode: "standby_reseed",
+      }),
+    ).rejects.toThrow(/failback is disabled/);
+
+    advance(91);
+    await expect(witness.status()).rejects.toThrow(/proof renewal rejected/);
+  });
+
+  it("rotates standalone policy under fenced local maintenance evidence", async () => {
+    const { witness, update } = standaloneFixture();
+    await witness.initialize();
+    const candidateDigest = "b".repeat(64);
+    await update({ policyCandidateDigest: candidateDigest });
+    const preparation = await witness.prepareConfigDigestRotation({
+      rotationId: "00000000-0000-4000-8000-000000000777",
+      expectedLeader: "genomesbox",
+      expectedEpoch: 1,
+      expectedCurrentDigest: config.initialConfigDigest,
+      candidateDigest,
+    });
+    expect(preparation.candidateHosts).toEqual(["genomesbox"]);
+
+    await update({
+      configDigest: candidateDigest,
+      policyCandidateDigest: candidateDigest,
+    });
+    await expect(
+      witness.commitConfigDigestRotation({
+        rotationId: preparation.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).resolves.toMatchObject({
+      decision: "config_digest_rotated",
+      currentLeader: "genomesbox",
+      previousConfigDigest: config.initialConfigDigest,
+      configDigest: candidateDigest,
+      candidateHosts: ["genomesbox"],
+    });
+    await expect(witness.status()).resolves.toMatchObject({
+      authorityMode: "standalone_primary",
+      configDigest: candidateDigest,
+    });
+  });
+
+  it("aborts expired standalone maintenance only from fresh old-digest evidence", async () => {
+    const { witness, update, advance } = standaloneFixture();
+    await witness.initialize();
+    const candidateDigest = "b".repeat(64);
+    await update({ policyCandidateDigest: candidateDigest });
+    const preparation = await witness.prepareConfigDigestRotation({
+      rotationId: "00000000-0000-4000-8000-000000000778",
+      expectedLeader: "genomesbox",
+      expectedEpoch: 1,
+      expectedCurrentDigest: config.initialConfigDigest,
+      candidateDigest,
+    });
+
+    advance(config.planTtlSeconds + 1);
+    await update({ policyCandidateDigest: candidateDigest });
+    await expect(
+      witness.abortConfigDigestRotation({
+        rotationId: preparation.rotationId,
+        preparationToken: preparation.preparationToken,
+      }),
+    ).resolves.toMatchObject({
+      decision: "config_digest_rotation_aborted",
+      currentLeader: "genomesbox",
+      configDigest: config.initialConfigDigest,
+      evidenceHost: "genomesbox",
+    });
+  });
 
   it("prepares durably, survives stale host reports, and atomically commits one idempotent receipt", async () => {
     const { witness, advance } = fixture();

@@ -85,10 +85,14 @@ def test_emergency_bundle_manifest_matches_schema() -> None:
 def test_compose_images_are_required_external_immutable_lock_variables() -> None:
     for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
         compose = _yaml(DEPLOY / name)
-        for service in compose["services"].values():
+        for service_name, service in compose["services"].items():
             image = service["image"]
             assert image.startswith("${FABRIC_")
-            assert ":?" in image
+            if service_name == "leadership-witness":
+                assert service["profiles"] == ["standalone-primary"]
+                assert "FABRIC_WITNESS_IMAGE" in image
+            else:
+                assert ":?" in image
             assert ":latest" not in image
     assert ":latest" not in _all_text(DEPLOY)
 
@@ -958,7 +962,97 @@ def test_systemd_units_cover_primary_observer_watchdog_and_backups() -> None:
         unit_dir / "genomes-agentic-os-execution-fabric-primary.service"
     ).read_text(encoding="utf-8")
     assert "EnvironmentFile=/etc/genomes-agentic-os/execution-fabric/runtime.env" in primary
-    assert "--profile primary" in primary
+    assert "installers/bin/run-primary.sh start" in primary
+    primary_runner = (INSTALLERS / "bin/run-primary.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '--profile primary' in primary_runner
+    assert '--profile standalone-primary' in primary_runner
+
+
+def test_standalone_primary_runner_bootstraps_once_then_waits_before_primary(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path / 'os'}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                f"FABRIC_DEPLOYMENT_DIR={tmp_path / 'deploy'}",
+                "FABRIC_WITNESS_MODE=standalone_primary",
+                "FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false",
+                "FABRIC_LEADERSHIP_API_BASE=http://witness",
+                "FABRIC_CLUSTER_ID=test-cluster",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    _write_executable(
+        fake_bin / "install",
+        """#!/bin/sh
+for argument in "$@"; do target=$argument; done
+mkdir -p "$target"
+""",
+    )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+printf 'bootstrap=%s %s\n' "${FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE:-unset}" "$*" >>"$DOCKER_LOG"
+case " $* " in
+  *" leadership-witness "*)
+    if [ "${FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE:-false}" = true ]; then
+      mkdir -p "$FABRIC_RUNTIME_STATE_DIR/standalone-witness"
+      printf 'database\n' >"$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3"
+      printf 'sentinel\n' >"$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3.initialized"
+    fi
+    ;;
+esac
+""",
+    )
+    _write_executable(
+        fake_bin / "curl",
+        """#!/bin/sh
+[ -s "$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3" ]
+[ -s "$FABRIC_RUNTIME_STATE_DIR/standalone-witness/witness.sqlite3.initialized" ]
+""",
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "DOCKER_LOG": str(docker_log),
+        "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
+    }
+    subprocess.run(
+        ["sh", str(INSTALLERS / "bin/run-primary.sh"), "start"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    lines = docker_log.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("bootstrap=true ")
+    assert "up -d leadership-witness" in lines[0]
+    assert lines[1].startswith("bootstrap=false ")
+    assert "--force-recreate leadership-witness" in lines[1]
+    assert lines[2].startswith("bootstrap=false ")
+    assert "--profile primary --profile standalone-primary up" in lines[2]
+    assert (state / "standalone-witness.bootstrap-complete").is_file()
+
+    docker_log.write_text("", encoding="utf-8")
+    subprocess.run(
+        ["sh", str(INSTALLERS / "bin/run-primary.sh"), "start"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert "bootstrap=true" not in docker_log.read_text(encoding="utf-8")
 
 
 def test_launchd_definitions_are_valid_and_cover_required_bigmac_roles() -> None:
@@ -1067,6 +1161,20 @@ printf 'preflight %s\n' "$1" >>"$ACTIVATION_LOG"
 [ "${PREFLIGHT_FAIL:-false}" != true ]
 """,
     )
+    shutil.copy2(INSTALLERS / "bin/_lib.sh", installer / "bin/_lib.sh")
+    runtime_state = tmp_path / "runtime-state"
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={runtime_state}",
+                "FABRIC_WITNESS_MODE=independent",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
     fake_bin = tmp_path / "bin"
     _write_executable(
         fake_bin / "id",
@@ -1083,6 +1191,7 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     env = {
         **os.environ,
         "ACTIVATION_LOG": str(activation_log),
+        "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
     }
 
@@ -1114,6 +1223,42 @@ printf 'systemctl %s\n' "$*" >>"$ACTIVATION_LOG"
     assert lines.count(
         "systemctl start genomes-agentic-os-execution-fabric-primary.service"
     ) == 2
+
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={runtime_state}",
+                "FABRIC_WITNESS_MODE=standalone_primary",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    activation_log.write_text("", encoding="utf-8")
+    subprocess.run(
+        ["sh", str(installer / "activate-linux.sh"), "--apply"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    standalone_lines = activation_log.read_text(encoding="utf-8").splitlines()
+    assert any(
+        "systemctl disable --now "
+        "genomes-agentic-os-execution-fabric-artifact-replication.timer" in line
+        for line in standalone_lines
+    )
+    assert not any(
+        line.startswith("systemctl enable ")
+        and "artifact-replication.timer" in line
+        for line in standalone_lines
+    )
+    assert not any(
+        line.startswith("systemctl start ")
+        and "artifact-replication.timer" in line
+        for line in standalone_lines
+    )
 
 
 def test_macos_activation_preflights_before_bootstrap_and_skips_loaded_jobs(
@@ -1210,6 +1355,212 @@ esac
     assert len([line for line in lines if line.startswith("bootstrap ")]) == len(
         suffixes
     )
+
+
+def test_macos_personal_activation_starts_only_client_plane_after_preflight(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installer = tmp_path / "installer"
+    installer.mkdir()
+    shutil.copy2(INSTALLERS / "activate-macos.sh", installer / "activate-macos.sh")
+    activation_log = tmp_path / "activation.log"
+    _write_executable(
+        installer / "bin/preflight-personal-client.sh",
+        "#!/bin/sh\nprintf 'preflight personal-client\\n' >>\"$ACTIVATION_LOG\"\n",
+    )
+    _write_executable(
+        installer / "bin/preflight.sh",
+        "#!/bin/sh\nprintf 'unexpected standby preflight\\n' >>\"$ACTIVATION_LOG\"\nexit 1\n",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(fake_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+    _write_executable(fake_bin / "id", "#!/bin/sh\nprintf '501\\n'\n")
+    _write_executable(
+        fake_bin / "launchctl",
+        """#!/bin/sh
+case "$1" in
+  print) exit 1 ;;
+  bootstrap) printf 'bootstrap %s\n' "$(basename "$3" .plist)" >>"$ACTIVATION_LOG" ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    launch_agents = home / "Library/LaunchAgents"
+    launch_agents.mkdir(parents=True)
+    for suffix in ("worker", "alarm-dispatcher", "personal-fallback"):
+        (launch_agents / f"com.genomes.agentic-os.execution-fabric.{suffix}.plist").write_text(
+            "<plist/>", encoding="utf-8"
+        )
+
+    result = subprocess.run(
+        [
+            "sh",
+            str(installer / "activate-macos.sh"),
+            "--apply",
+            "--personal-fallback",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "ACTIVATION_LOG": str(activation_log),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert activation_log.read_text(encoding="utf-8").splitlines() == [
+        "preflight personal-client",
+        "bootstrap com.genomes.agentic-os.execution-fabric.worker",
+        "bootstrap com.genomes.agentic-os.execution-fabric.alarm-dispatcher",
+        "bootstrap com.genomes.agentic-os.execution-fabric.personal-fallback",
+    ]
+
+
+def test_personal_client_preflight_uses_only_scoped_client_credentials() -> None:
+    preflight = (INSTALLERS / "bin/preflight-personal-client.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE" in preflight
+    assert "FABRIC_ALARM_DISPATCHER_TOKEN_FILE" in preflight
+    assert "FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE" not in preflight
+    assert "FABRIC_ALARM_DISPATCHER_CREDENTIALS_FILE" not in preflight
+    assert "postgres-password" not in preflight
+    assert "FABRIC_ENABLE_PROMOTION" in preflight
+    assert "--validate-routes" in preflight
+
+
+def test_personal_client_preflight_accepts_scoped_worker_and_alarm_clients(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "os"
+    notifier = root / "harness/bin/agentic-os-notify"
+    _write_executable(notifier, "#!/bin/sh\nexit 0\n")
+    fake_bin = tmp_path / "bin"
+    cli = fake_bin / "agentic-os"
+    config_show = tmp_path / "config-show.json"
+    config_show.write_text(
+        json.dumps(
+            {
+                "effective": {
+                    "execution_fabric": {
+                        "transport": {
+                            "mode": "remote_with_local_fallback",
+                            "control_plane_url": "http://100.117.29.53:3180",
+                        },
+                        "admission": {"host_limits": {"bigmac": 4}},
+                        "queues": [
+                            {
+                                "id": "pr_reviews",
+                                "enabled": True,
+                                "worker_pool": "pr_reviewers",
+                            }
+                        ],
+                        "worker_pools": [
+                            {
+                                "id": "pr_reviewers",
+                                "enabled": True,
+                                "queues": ["pr_reviews"],
+                                "capacity": {"max_tasks_per_worker": 2},
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_executable(
+        cli,
+        """#!/bin/sh
+case " $* " in
+  *" runtime config show "*) cat "$CONFIG_SHOW" ;;
+  *" runtime fallback status "*) printf '{"status":"standby"}\n' ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    _write_executable(
+        fake_bin / "curl",
+        "#!/bin/sh\nprintf '{\"state\":\"routable\",\"leader\":\"genomesbox\"}\\n'\n",
+    )
+    worker_executable = fake_bin / "worker"
+    _write_executable(worker_executable, "#!/bin/sh\nexit 0\n")
+    worker_token = tmp_path / "worker-token"
+    alarm_token = tmp_path / "alarm-token"
+    worker_token.write_text("w" * 48, encoding="utf-8")
+    alarm_token.write_text("a" * 48, encoding="utf-8")
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={root}",
+                f"FABRIC_RUNTIME_STATE_DIR={tmp_path / 'state'}",
+                "FABRIC_HOST_ID=bigmac",
+                "FABRIC_PRIMARY_HOST_ID=genomesbox",
+                "FABRIC_STANDBY_HOST_ID=bigmac",
+                "FABRIC_AUTO_FAILOVER=false",
+                "FABRIC_ENABLE_PROMOTION=false",
+                f"FABRIC_AGENTIC_OS_CLI={cli}",
+                "FABRIC_GATEWAY_API_BASE=http://100.117.29.53:3181",
+                "FABRIC_WORKER_ID=bigmac-pr-reviewer-1",
+                "FABRIC_WORKER_BOOTSTRAP_ID=bigmac-pr-reviewer-1",
+                "FABRIC_WORKER_POOL_ID=pr_reviewers",
+                "FABRIC_WORKER_ACCEPTED_QUEUES=pr_reviews",
+                "FABRIC_WORKER_CAPABILITIES=pr_review",
+                "FABRIC_WORKER_MAX_CONCURRENCY=2",
+                f"AGENTIC_OS_EXECUTION_FABRIC_WORKER_TOKEN_FILE={worker_token}",
+                f"FABRIC_ALARM_DISPATCHER_TOKEN_FILE={alarm_token}",
+                "FABRIC_ALARM_DISPATCHER_CONSUMER_ID=bigmac-agentic-os-notifier",
+                "FABRIC_ALARM_DISPATCHER_SOURCE=agentic-os-notify",
+                f"FABRIC_WORKER_EXECUTABLE={worker_executable}",
+                f"FABRIC_WORKER_PYTHON={sys.executable}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/preflight-personal-client.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CONFIG_SHOW": str(config_show),
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "personal client preflight passed" in result.stdout
+
+    runtime_env.write_text(
+        runtime_env.read_text(encoding="utf-8").replace(
+            "FABRIC_WORKER_MAX_CONCURRENCY=2",
+            "FABRIC_WORKER_MAX_CONCURRENCY=1",
+        ),
+        encoding="utf-8",
+    )
+    undersized = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/preflight-personal-client.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CONFIG_SHOW": str(config_show),
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime_env),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+    assert undersized.returncode == 78
+    assert "conflicts with canonical policy" in undersized.stderr
 
 
 def test_installers_can_activate_an_existing_current_release_without_recopy() -> None:
@@ -1442,19 +1793,27 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         target.write_text("schema_version: 1\n", encoding="utf-8")
 
     digest = "1" * 64
-    image_lock = tmp_path / "images.lock.env"
-    image_lock.write_text(
-        "\n".join(
-            f"{name}=example.invalid/{name.lower()}@sha256:{digest}"
-            for name in (
-                "FABRIC_CONTROL_PLANE_IMAGE",
-                "FABRIC_POSTGRES_IMAGE",
-                "FABRIC_VALKEY_IMAGE",
-                "FABRIC_MINIO_IMAGE",
-                "FABRIC_MINIO_CLIENT_IMAGE",
-            )
+    images = {
+        name: f"example.invalid/{name.replace('_', '-')}@sha256:{digest}"
+        for name in (
+            "control_plane",
+            "leadership_witness",
+            "worker",
+            "postgres",
+            "valkey",
+            "minio",
+            "minio_client",
         )
-        + "\n",
+    }
+    image_lock = tmp_path / "execution-fabric-image-lock.json"
+    image_lock.write_text(
+        json.dumps(
+            {
+                "schema_version": "execution-fabric-image-lock/v1",
+                "release_version": "test-release",
+                "images": images,
+            }
+        ),
         encoding="utf-8",
     )
     output = tmp_path / "bundle"
@@ -1484,7 +1843,71 @@ def test_bundle_builder_and_validator_round_trip(tmp_path: Path) -> None:
         text=True,
     )
     assert (output / "CHECKSUMS.sha256").is_file()
+    assert json.loads(
+        (output / "execution-fabric-image-lock.json").read_text(encoding="utf-8")
+    )["images"] == images
+    materialized = (output / "images.lock.env").read_text(encoding="utf-8")
+    for variable in (
+        "FABRIC_CONTROL_PLANE_IMAGE",
+        "FABRIC_WITNESS_IMAGE",
+        "FABRIC_WORKER_IMAGE",
+        "FABRIC_POSTGRES_IMAGE",
+        "FABRIC_VALKEY_IMAGE",
+        "FABRIC_MINIO_IMAGE",
+        "FABRIC_MINIO_CLIENT_IMAGE",
+    ):
+        assert f"{variable}=" in materialized
     assert "secrets_included=false" in (output / "RELEASE").read_text(encoding="utf-8")
+
+    (output / "images.lock.env").write_text(
+        materialized.replace("FABRIC_WITNESS_IMAGE=", "FABRIC_WITNESS_IMAGE=mutable:"),
+        encoding="utf-8",
+    )
+    invalid = subprocess.run(
+        ["sh", str(INSTALLERS / "bin/validate-emergency-bundle.sh"), str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert invalid.returncode == 78
+    assert "does not match the canonical JSON lock" in invalid.stderr
+
+
+def test_image_lock_materializer_rejects_missing_or_mutable_images(
+    tmp_path: Path,
+) -> None:
+    digest = "2" * 64
+    lock = {
+        "schema_version": "execution-fabric-image-lock/v1",
+        "release_version": "test-release",
+        "images": {
+            name: f"example.invalid/{name.replace('_', '-')}@sha256:{digest}"
+            for name in (
+                "control_plane",
+                "leadership_witness",
+                "worker",
+                "postgres",
+                "valkey",
+                "minio",
+                "minio_client",
+            )
+        },
+    }
+    lock_path = tmp_path / "lock.json"
+    command = [
+        "sh",
+        str(INSTALLERS / "bin/materialize-image-lock.sh"),
+        str(lock_path),
+    ]
+    lock["images"].pop("leadership_witness")
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    missing = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert missing.returncode != 0
+
+    lock["images"]["leadership_witness"] = "example.invalid/witness:latest"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    mutable = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert mutable.returncode != 0
 
 
 def test_documentation_exposes_the_implemented_witness_and_activation_boundary() -> None:
@@ -1498,3 +1921,56 @@ def test_documentation_exposes_the_implemented_witness_and_activation_boundary()
     assert "Source availability does not activate the witness" in normalized
     assert "operator prerequisites" in normalized
     assert re.search(r"Failback is always manual", readme)
+
+
+def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_mounts() -> None:
+    primary = _yaml(DEPLOY / "compose.genomesbox.yml")
+    witness = primary["services"]["leadership-witness"]
+    assert witness["profiles"] == ["standalone-primary"]
+    assert witness["environment"]["WITNESS_STANDALONE_PRIMARY_HOST_ID"] == (
+        "${FABRIC_PRIMARY_HOST_ID:?set primary host identity}"
+    )
+    assert witness["environment"]["WITNESS_ALLOW_DEGRADED_PRIMARY"] == "false"
+    assert witness["volumes"] == [
+        "${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}/standalone-witness:"
+        "/var/lib/execution-fabric-witness"
+    ]
+    assert "standalone-witness-data" not in primary.get("volumes", {})
+
+    for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
+        text = (DEPLOY / name).read_text(encoding="utf-8")
+        assert "../../harness/config/execution-fabric.yml" not in text
+        assert "../../schemas/execution-fabric.schema.json" not in text
+        assert (
+            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/"
+            "execution-fabric.yml"
+        ) in text
+        assert (
+            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/"
+            "execution-fabric.schema.json"
+        ) in text
+
+    preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
+    assert "FABRIC_MINIO_CLIENT_IMAGE" in preflight
+    assert "standalone_primary requires automatic failover" in preflight
+    assert ".effective.execution_fabric.standalone_primary.enabled==true" in preflight
+    assert ".effective.execution_fabric.standalone_primary.host_id==$host" in preflight
+    assert "keep FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=false" in preflight
+    assert "standalone-witness.bootstrap-complete" in preflight
+
+    primary_runner = (INSTALLERS / "bin/run-primary.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "FABRIC_STANDALONE_WITNESS_BOOTSTRAP_ONCE=true" in primary_runner
+    assert "standalone-witness.bootstrap-complete" in primary_runner
+    assert "wait_for_standalone_witness" in primary_runner
+    assert "--force-recreate leadership-witness" in primary_runner
+
+    activation = (INSTALLERS / "activate-linux.sh").read_text(encoding="utf-8")
+    assert '"${FABRIC_WITNESS_MODE:-independent}" != standalone_primary' in activation
+    assert "systemctl disable --now" in activation
+
+    rotation = (INSTALLERS / "bin/rotate-policy.sh").read_text(encoding="utf-8")
+    assert 'FABRIC_WITNESS_MODE:-independent}" = standalone_primary' in rotation
+    assert '.authorityMode=="standalone_primary"' in rotation
+    assert "standalone-primary policy maintenance must run on its exact primary host" in rotation

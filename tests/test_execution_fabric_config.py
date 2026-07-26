@@ -176,6 +176,14 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
         "harness/registries/hosts-routing.yml"
     )
     assert first["canonical_dependencies"]["alerts"].endswith("harness/registries/alerts.yml")
+    pr_review_pool = next(
+        pool
+        for pool in load_execution_fabric_config(root).value["execution_fabric"][
+            "worker_pools"
+        ]
+        if pool["id"] == "pr_reviewers"
+    )
+    assert pr_review_pool["capacity"]["max_tasks_per_worker"] == 2
 
     _edit(root)
     second = execution_fabric_config_status(root)
@@ -190,6 +198,27 @@ def test_schema_and_cross_reference_validation_are_strict(tmp_path: Path) -> Non
     path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
 
     with pytest.raises(ExecutionFabricConfigError, match="unknown worker pool"):
+        load_execution_fabric_config(root)
+
+
+def test_standalone_primary_requires_explicit_exact_host_config(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    path = root / "harness/config/execution-fabric.yml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded["execution_fabric"]["standalone_primary"] = {
+        "enabled": True,
+        "host_id": "genomesbox",
+    }
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    effective = load_execution_fabric_config(root)
+    assert effective.value["execution_fabric"]["standalone_primary"] == {
+        "enabled": True,
+        "host_id": "genomesbox",
+    }
+
+    loaded["execution_fabric"]["standalone_primary"]["unexpected"] = True
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ExecutionFabricConfigError, match="Additional properties"):
         load_execution_fabric_config(root)
 
 
