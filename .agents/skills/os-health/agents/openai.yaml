@@ -1,0 +1,7 @@
+interface:
+  display_name: OS Health
+  short_description: Inspect Mac host speed risks and Agentic OS generated-artifact
+    hygiene with observe-only reports and approval-
+  default_prompt: Use the Agentic OS OS Health skill.
+policy:
+  allow_implicit_invocation: true

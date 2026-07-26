@@ -1,0 +1,7 @@
+interface:
+  display_name: Composio CLI
+  short_description: Help users operate the published Composio CLI to discover tools,
+    connect accounts, inspect schemas, execute to
+  default_prompt: Use the Agentic OS Composio CLI skill.
+policy:
+  allow_implicit_invocation: true

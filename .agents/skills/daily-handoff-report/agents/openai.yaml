@@ -1,0 +1,7 @@
+interface:
+  display_name: Daily Handoff Report
+  short_description: 'Generate or refine the rolling daily Agentic OS handoff report
+    with prompt-file sections, source focus areas, '
+  default_prompt: Use the Agentic OS Daily Handoff Report skill.
+policy:
+  allow_implicit_invocation: true

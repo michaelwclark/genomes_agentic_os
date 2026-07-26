@@ -1,0 +1,7 @@
+interface:
+  display_name: Spec Groomer
+  short_description: Groom rough software ideas into source-backed implementation
+    specs with original intent, capability discovery,
+  default_prompt: Use the Agentic OS Spec Groomer skill.
+policy:
+  allow_implicit_invocation: true

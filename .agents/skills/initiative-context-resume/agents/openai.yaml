@@ -1,0 +1,7 @@
+interface:
+  display_name: Initiative Context Resume
+  short_description: Create or refresh durable context packs and discovery indexes
+    for long-running initiatives or subprojects so f
+  default_prompt: Use the Agentic OS Initiative Context Resume skill.
+policy:
+  allow_implicit_invocation: true

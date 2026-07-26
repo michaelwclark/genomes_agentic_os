@@ -1,0 +1,7 @@
+interface:
+  display_name: Spec Intake Router
+  short_description: Create spec and future-work intake items using doc-config before
+    filesystem or Notion writes.
+  default_prompt: Use the Agentic OS Spec Intake Router skill.
+policy:
+  allow_implicit_invocation: true

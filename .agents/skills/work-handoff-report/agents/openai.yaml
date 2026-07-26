@@ -1,0 +1,7 @@
+interface:
+  display_name: Work Handoff Report
+  short_description: 'Generate or refine a multi-topic Agentic OS work handoff prompt
+    pack with continuation prompts, source links, '
+  default_prompt: Use the Agentic OS Work Handoff Report skill.
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: Learning Promoter
+  short_description: Promote durable run learnings into the right OS knowledge surface.
+  default_prompt: Use the Agentic OS Learning Promoter skill.
+policy:
+  allow_implicit_invocation: true

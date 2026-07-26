@@ -1,0 +1,7 @@
+interface:
+  display_name: Kanga Make Release
+  short_description: "Cut a Kanga release \u2014 promote develop (beta) to main (production\
+    \ channel) across all five Kanga repos with pre"
+  default_prompt: Use the Agentic OS Kanga Make Release skill.
+policy:
+  allow_implicit_invocation: true

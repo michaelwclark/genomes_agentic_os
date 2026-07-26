@@ -1,0 +1,7 @@
+interface:
+  display_name: Finishing Touches Review
+  short_description: Run a deterministic cross-model finishing review loop before
+    PR readiness or after PR creation when checks are
+  default_prompt: Use the Agentic OS Finishing Touches Review skill.
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: Execution Fabric
+  short_description: Inspect, design, and validate optional named queues and bounded
+    worker pools while preserving the filesystem q
+  default_prompt: Use the Agentic OS Execution Fabric skill.
+policy:
+  allow_implicit_invocation: true

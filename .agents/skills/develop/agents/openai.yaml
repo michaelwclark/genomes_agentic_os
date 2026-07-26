@@ -1,0 +1,7 @@
+interface:
+  display_name: Develop
+  short_description: Canonical 1-N programming delivery with project profiles, isolated
+    worktrees, quality and repair loops, releas
+  default_prompt: Use the Agentic OS Develop skill.
+policy:
+  allow_implicit_invocation: true

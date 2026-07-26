@@ -1,0 +1,7 @@
+interface:
+  display_name: Client Automation Brief
+  short_description: Turn customer workflow discovery into an automation or workflow
+    brief.
+  default_prompt: Use the Agentic OS Client Automation Brief skill.
+policy:
+  allow_implicit_invocation: true

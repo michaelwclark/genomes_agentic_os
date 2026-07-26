@@ -1,0 +1,7 @@
+interface:
+  display_name: Add Env
+  short_description: Append environment variables to ~/.zshenv on bigmac, genomesbox,
+    and the Mac laptop in one step.
+  default_prompt: Use the Agentic OS Add Env skill.
+policy:
+  allow_implicit_invocation: true

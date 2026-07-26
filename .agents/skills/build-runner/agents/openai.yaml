@@ -1,0 +1,7 @@
+interface:
+  display_name: Build Runner
+  short_description: Drive a Kanban-backed implementation queue through orchestrated
+    build phases.
+  default_prompt: Use the Agentic OS Build Runner skill.
+policy:
+  allow_implicit_invocation: true

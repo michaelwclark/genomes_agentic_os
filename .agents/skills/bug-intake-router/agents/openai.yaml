@@ -1,0 +1,7 @@
+interface:
+  display_name: Bug Intake Router
+  short_description: Capture bug reports and missed enforcement through doc-config
+    and project work-items.
+  default_prompt: Use the Agentic OS Bug Intake Router skill.
+policy:
+  allow_implicit_invocation: true

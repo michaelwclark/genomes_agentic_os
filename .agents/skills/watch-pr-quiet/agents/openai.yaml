@@ -1,0 +1,7 @@
+interface:
+  display_name: Watch PR Quiet
+  short_description: Monitor GitHub pull request checks through file-based watcher
+    artifacts instead of repeated chat polling.
+  default_prompt: Use the Agentic OS Watch PR Quiet skill.
+policy:
+  allow_implicit_invocation: true

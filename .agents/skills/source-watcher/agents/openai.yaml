@@ -1,0 +1,6 @@
+interface:
+  display_name: Source Watcher
+  short_description: Configure or audit provider-agnostic connected source watchers.
+  default_prompt: Use the Agentic OS Source Watcher skill.
+policy:
+  allow_implicit_invocation: true

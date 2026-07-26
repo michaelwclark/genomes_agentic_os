@@ -1,0 +1,7 @@
+interface:
+  display_name: Spec Engine
+  short_description: Operate the canonical idea-to-built Spec lifecycle across layered
+    project policy and filesystem, Linear, or Ji
+  default_prompt: Use the Agentic OS Spec Engine skill.
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: OS Cleaner
+  short_description: Reconcile Agentic OS worktree and work-item state after Jira
+    terminal statuses or merged pull requests.
+  default_prompt: Use the Agentic OS OS Cleaner skill.
+policy:
+  allow_implicit_invocation: true

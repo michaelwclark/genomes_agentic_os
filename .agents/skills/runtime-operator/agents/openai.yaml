@@ -1,0 +1,7 @@
+interface:
+  display_name: Runtime Operator
+  short_description: Operate runtime registries, heartbeats, schedules, run queues,
+    and tracking.
+  default_prompt: Use the Agentic OS Runtime Operator skill.
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: Artifact Naming
+  short_description: Inspect, migrate, or restore configurable date-prefixed durable
+    Agentic OS entity names.
+  default_prompt: Use the Agentic OS Artifact Naming skill.
+policy:
+  allow_implicit_invocation: true

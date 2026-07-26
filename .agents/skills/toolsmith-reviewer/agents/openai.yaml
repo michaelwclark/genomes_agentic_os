@@ -1,0 +1,6 @@
+interface:
+  display_name: Toolsmith Reviewer
+  short_description: Review redacted evidence bundles and propose draft-only OS improvements.
+  default_prompt: Use the Agentic OS Toolsmith Reviewer skill.
+policy:
+  allow_implicit_invocation: true

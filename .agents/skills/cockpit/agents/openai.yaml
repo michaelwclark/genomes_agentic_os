@@ -1,0 +1,7 @@
+interface:
+  display_name: Agentic OS Cockpit
+  short_description: Build or open the local engineering cockpit for conversations,
+    work, reviews, reports, sources, hosts, automat
+  default_prompt: Use the Agentic OS Agentic OS Cockpit skill.
+policy:
+  allow_implicit_invocation: true

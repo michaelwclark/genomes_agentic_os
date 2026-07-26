@@ -1,0 +1,7 @@
+interface:
+  display_name: LOS Fast Workon
+  short_description: Use when the user wants to work a LOS Jira ticket or non-trivial
+    LOS task in a dedicated fast worktree.
+  default_prompt: Use the Agentic OS LOS Fast Workon skill.
+policy:
+  allow_implicit_invocation: true

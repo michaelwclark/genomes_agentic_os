@@ -1,0 +1,7 @@
+interface:
+  display_name: Make Skill
+  short_description: Codex-visible adapter for Agentic OS /make-skill; create or update
+    reusable skills, commands, workflows, or in
+  default_prompt: Use the Agentic OS Make Skill skill.
+policy:
+  allow_implicit_invocation: true

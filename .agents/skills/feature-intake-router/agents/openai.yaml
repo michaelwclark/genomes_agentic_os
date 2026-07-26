@@ -1,0 +1,7 @@
+interface:
+  display_name: Feature Intake Router
+  short_description: Create feature and idea intake work items using doc-config before
+    filesystem or Notion writes.
+  default_prompt: Use the Agentic OS Feature Intake Router skill.
+policy:
+  allow_implicit_invocation: true

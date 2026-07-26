@@ -1,0 +1,7 @@
+interface:
+  display_name: LOS Quiet Workon
+  short_description: Use when working or resuming LOS Jira implementation in a fast
+    worktree with minimal chat output.
+  default_prompt: Use the Agentic OS LOS Quiet Workon skill.
+policy:
+  allow_implicit_invocation: true

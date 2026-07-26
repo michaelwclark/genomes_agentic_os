@@ -1,0 +1,6 @@
+interface:
+  display_name: OS Navigator
+  short_description: Route work through installed Agentic OS rooms.
+  default_prompt: Use the Agentic OS OS Navigator skill.
+policy:
+  allow_implicit_invocation: true

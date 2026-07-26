@@ -1,0 +1,7 @@
+interface:
+  display_name: Context Audit
+  short_description: Audit room, workflow, automation, or customer OS context load
+    contracts.
+  default_prompt: Use the Agentic OS Context Audit skill.
+policy:
+  allow_implicit_invocation: true

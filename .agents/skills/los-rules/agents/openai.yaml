@@ -1,0 +1,4 @@
+interface:
+  display_name: "LOS Rules Explorer"
+  short_description: "Analyze local LOS rules-engine snapshots"
+  default_prompt: "Use $los-rules to inspect, search, compare, or check freshness for local redacted LOS rules-engine snapshots before using a live shell."

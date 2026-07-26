@@ -1,0 +1,4 @@
+interface:
+  display_name: "LOS Tenant Runtime Operation"
+  short_description: "Build safe LOS Tenant Runtime Operations"
+  default_prompt: "Use $los-tenant-runtime-operation to reuse or build a read-only LOS Tenant Runtime Operation for an investigation."

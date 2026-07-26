@@ -1,0 +1,7 @@
+interface:
+  display_name: Doc Config Router
+  short_description: Route document captures to the configured Agentic OS filesystem
+    and Notion destinations.
+  default_prompt: Use the Agentic OS Doc Config Router skill.
+policy:
+  allow_implicit_invocation: true
