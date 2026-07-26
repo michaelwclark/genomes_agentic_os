@@ -415,11 +415,22 @@ availability and drill-backed promotion-eligibility fields and emits the canonic
 `runtime.execution_fabric.health` alert when liveness or durable readiness
 fails. A container restart is not a readiness receipt.
 
-If no independent witness host exists, configure
-`WITNESS_MODE=manual_fail_closed`. No witness container starts,
-`FABRIC_AUTO_FAILOVER` and `FABRIC_ENABLE_PROMOTION` must remain false, and the
-system makes no two-node split-brain-safety claim. A ping between genomesbox
-and bigmac cannot tell which side of a partition is authoritative.
+For a personal genomesbox-owned installation without leadership transfer,
+configure `FABRIC_WITNESS_MODE=standalone_primary`, enable the exact genomesbox
+host in canonical `execution_fabric.standalone_primary`, and keep
+`FABRIC_AUTO_FAILOVER=false` plus `FABRIC_ENABLE_PROMOTION=false`. The Linux
+primary runner starts a digest-pinned, co-located signing service with durable
+SQLite state and short renewable proofs. This preserves normal shared queue,
+scheduler, and effect operation while genomesbox is healthy, but it is not an
+independent failure domain and makes no HA claim. When genomesbox is offline,
+shared work waits and bigmac's separate local fallback queue provides personal
+continuity; bigmac never promotes the shared ledger.
+
+If neither an independent witness nor the personal co-located authority is
+desired, configure `WITNESS_MODE=manual_fail_closed`. No witness container
+starts, `FABRIC_AUTO_FAILOVER` and `FABRIC_ENABLE_PROMOTION` must remain false,
+and the system makes no two-node split-brain-safety claim. A ping between
+genomesbox and bigmac cannot tell which side of a partition is authoritative.
 
 If activation finds historical nonterminal SQLite rows that are missing from or
 status-drifted against YAML, it refuses the switch. Reconcile from filesystem

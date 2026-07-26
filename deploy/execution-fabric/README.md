@@ -366,11 +366,13 @@ do not require editing worker configuration.
 
 The portable OCI manifest, installer, Tailscale-only bind preflight, monitor,
 and activation runbook are under `witness/`. Source availability does not
-activate the witness. A real independent host, immutable image, network policy,
-protected secrets, durable state, candidate reporters, alarms, and a successful
-failover/failback drill remain operator prerequisites. Without an
-independent host, select `manual_fail_closed`; no witness starts and automatic
-promotion must remain disabled.
+activate the witness. Full HA requires a real independent host, immutable
+image, network policy, protected secrets, durable state, candidate reporters,
+alarms, and a successful failover/failback drill. A personal installation may
+instead select `standalone_primary`, which starts the signed witness alongside
+genomesbox but never authorizes promotion or failback. Select
+`manual_fail_closed` when neither authority is intended; no witness starts and
+automatic promotion must remain disabled.
 
 Additional activation prerequisites are deliberately explicit:
 
