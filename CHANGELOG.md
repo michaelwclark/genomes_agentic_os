@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.2] - 2026-07-26
+
+### Fixed
+- Generate the MinIO observer policy using POSIX shell built-ins. The pinned
+  MinIO client image does not ship `sed`, so v0.5.1 could create the bucket and
+  observer user but could not complete a fresh primary bootstrap.
+- Add a deployment-contract regression that rejects the unavailable external
+  command and unresolved bucket placeholder.
+- Preserve the control-plane image command when Compose overrides its
+  datastore-secret entrypoint; without the explicit command the container
+  exited successfully before opening the API or applying its schema.
+- Validate every artifact/API credential that the control plane requires at
+  preflight and override image-default health checks for loop and gateway roles
+  so healthy workers are not reported against the control-plane port.
+
 ## [0.5.1] - 2026-07-26
 
 ### Fixed

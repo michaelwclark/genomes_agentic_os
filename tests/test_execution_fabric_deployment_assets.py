@@ -292,7 +292,19 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
     }
     for name in ("compose.genomesbox.yml", "compose.bigmac.yml"):
         compose = _yaml(DEPLOY / name)
+        assert compose["services"]["control-plane"]["command"] == [
+            "node",
+            "dist/src/main.js",
+        ]
         observer = compose["services"]["observer"]
+        assert observer["healthcheck"]["test"] == ["CMD-SHELL", "kill -0 1"]
+        assert compose["services"]["healer"]["healthcheck"]["test"] == [
+            "CMD-SHELL",
+            "kill -0 1",
+        ]
+        assert compose["services"]["gateway"]["healthcheck"]["test"][-1].endswith(
+            "127.0.0.1:3181/healthz || exit 1"
+        )
         assert forbidden_environment.isdisjoint(observer["environment"])
         assert set(observer["secrets"]) == {
             "postgres-password",
@@ -320,6 +332,8 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
         assert "s3:ListBucket" in init_command
         assert "s3:GetObject" in init_command
         assert "s3:PutObject" not in init_command
+        assert "__BUCKET__" not in init_command
+        assert "| sed " not in init_command
         assert 'mc ls "observer/$${FABRIC_ARTIFACT_BUCKET}"' in init_command
         assert set(compose["services"]["minio"]["secrets"]) == {
             "minio-root-user",

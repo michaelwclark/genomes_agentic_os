@@ -1,5 +1,5 @@
 schema_version: execution-fabric-release/v1
-release_version: 0.5.1
+release_version: 0.5.2
 service_api_version: 1.0.0
 python_package: genomes-agentic-os
 services:

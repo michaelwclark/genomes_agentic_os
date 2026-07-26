@@ -354,7 +354,12 @@ for secret in $required_secrets; do
   }
 done
 
-for secret in postgres-password valkey-app-password valkey-health-password; do
+for secret in \
+  postgres-password valkey-app-password valkey-health-password \
+  minio-root-user minio-root-password \
+  artifact-observer-access-key artifact-observer-secret-key \
+  fabric-api-token fabric-submit-token fabric-admin-token
+do
   secret_value=$(cat "$FABRIC_SECRETS_DIR/$secret")
   case "$secret_value" in
     ''|*[!A-Za-z0-9._~-]*)
