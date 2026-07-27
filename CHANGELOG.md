@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.6] - 2026-07-26
+
+### Changed
+- Recover and register generated harness skill adapters.
+- Consolidate Auto-Dev PR delivery, GitFlow topology, review, and quality-gate workflows.
+
 ## [0.5.5] - 2026-07-26
 
 ### Fixed
