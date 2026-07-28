@@ -4,11 +4,14 @@ provider: github
 artifact_type: pull-request
 mode: compose
 required_sections:
-  - Description of the Feature or Problem
-  - Description of the Change
-  - Associated Work
-  - Test Evidence
-  - Risk
+  - Linked Work
+  - Summary
+  - Change Scope
+  - Safety, Compatibility, and Rollout
+  - Validation
+  - Reviewer Focus
+validation:
+  - linked_work_has_tracker_hyperlink
 format:
   renderer: github_markdown
 approval:
@@ -25,4 +28,5 @@ readback:
 Verify base branch and head SHA. Use checkboxes only for actual author actions;
 do not pre-check evidence that was not performed. Call out migrations, feature
 flags, tenant/config interaction, operational rollout, and rollback when
-relevant.
+relevant. Preserve the required `Linked Work` tracker hyperlink during provider
+readback.
