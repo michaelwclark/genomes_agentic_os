@@ -1,0 +1,47 @@
+name: Docs
+
+# Builds the Docusaurus site. The build is also the link check: the site sets
+# `onBrokenLinks: 'throw'`, so any unresolvable internal link across `docs/` or
+# `operating-manual/` fails this job.
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "operating-manual/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "operating-manual/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck config and components
+        run: npm run typecheck
+      - name: Build site and check every internal link
+        run: npm run build

@@ -350,7 +350,7 @@ resources; its receipts and manifests are the prior-run resume and audit record.
 ## Compatibility and retirement
 
 The maintained overlap ledger is
-[`ARCHIVE_SOON.md`](../harness/shared_factory/00-programs/auto_dev/ARCHIVE_SOON.md).
+[`ARCHIVE_SOON.md`](https://github.com/michaelwclark/genomes_agentic_os/blob/main/harness/shared_factory/00-programs/auto_dev/ARCHIVE_SOON.md).
 It distinguishes canonical owners, trigger/evidence engines worth keeping, and
 duplicated state/formatting/orchestration that can be archived only after parity
 and rollback evidence.

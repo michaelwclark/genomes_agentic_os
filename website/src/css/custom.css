@@ -1,0 +1,63 @@
+/**
+ * Global styles. Infima variables are overridden here.
+ *
+ * The palette is a warm amber against near-black, chosen to read as a
+ * workshop tool rather than a product marketing site.
+ */
+
+:root {
+  --ifm-color-primary: #a4650a;
+  --ifm-color-primary-dark: #945b09;
+  --ifm-color-primary-darker: #8b5609;
+  --ifm-color-primary-darkest: #734707;
+  --ifm-color-primary-light: #b46f0b;
+  --ifm-color-primary-lighter: #bd740b;
+  --ifm-color-primary-lightest: #d5820d;
+
+  --ifm-code-font-size: 92%;
+  --ifm-global-radius: 0.5rem;
+  --ifm-heading-font-weight: 650;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+
+  --aos-hero-top: #faf6ef;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #e8a33c;
+  --ifm-color-primary-dark: #e59529;
+  --ifm-color-primary-darker: #dd8d1f;
+  --ifm-color-primary-darkest: #b6741a;
+  --ifm-color-primary-lighter: #edb865;
+  --ifm-color-primary-lightest: #f1c684;
+
+  --ifm-background-color: #16130f;
+  --ifm-background-surface-color: #1e1a15;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+
+  --aos-hero-top: #201a12;
+}
+
+/* Long CLI output and wide tables scroll inside their own box rather than
+   pushing the page sideways. */
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* The handbook is dense; give body copy a little more room to breathe. */
+.markdown > p,
+.markdown > ul,
+.markdown > ol {
+  line-height: 1.7;
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Callouts used by the plain-language pages. */
+.markdown blockquote {
+  border-left: 3px solid var(--ifm-color-primary);
+}
