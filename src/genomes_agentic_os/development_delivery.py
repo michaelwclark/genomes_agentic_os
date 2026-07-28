@@ -33,6 +33,7 @@ from .auto_dev_orchestration import (
     materialize_auto_dev_policy_decision,
     read_auto_dev_state,
     require_auto_dev_predecessors,
+    resolve_evidence_file,
     same_pull_request_authority,
     sync_delivery_projection,
     validate_recorded_auto_dev_health,
@@ -3962,7 +3963,8 @@ def run_development_stage(
                 and evidence.get("author_kind") in {"ours", "others"}
             ):
                 raise DevelopmentDeliveryError(
-                    "pr_open receipt requires provider, pull_request, and readback_verified"
+                    "pr_open receipt requires evidence.readback_verified=true and "
+                    "evidence.author_kind set to ours or others"
                 )
             pull_request_authority(target, evidence)
         if target == "ready_for_merge":
@@ -4315,7 +4317,10 @@ def reconcile_historical_delivery(
     autodev = Path(autodev_raw).expanduser().resolve()
     if not work_item.is_dir() or not autodev.is_file():
         raise DevelopmentDeliveryError("historical reconciliation packet linkage is unreadable")
-    evidence_path = Path(evidence_file).expanduser().resolve()
+    try:
+        evidence_path = resolve_evidence_file(evidence_file)
+    except AutoDevStateError as exc:
+        raise DevelopmentDeliveryError(str(exc)) from exc
     try:
         source = json.loads(evidence_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

@@ -4743,6 +4743,71 @@ def test_auto_dev_health_rejects_cleanup_without_receipt_audit(tmp_path: Path) -
         )
 
 
+def test_pr_open_receipt_error_names_the_fields_that_branch_checks(
+    tmp_path: Path,
+) -> None:
+    """The message must be a replacement instruction, not a mislabelled diagnosis."""
+
+    task = _state(tmp_path)
+    for state_name in delivery.FORWARD_STATES[
+        1 : delivery.FORWARD_STATES.index("pre_pr_review") + 1
+    ]:
+        task.transition(
+            state_name,
+            receipt=f"setup:{state_name}",
+            idempotency_key=f"setup:{state_name}",
+        )
+    evidence = _provider_authority(task, pull_request="github:acme/app#1")
+    evidence["author_kind"] = ""
+    with pytest.raises(DevelopmentDeliveryError) as caught:
+        run_development_stage(
+            task.path,
+            stage="review",
+            receipts={
+                "pr_open": _stage_receipt(tmp_path / "pr-open", "pr_open", evidence=evidence)
+            },
+            idempotency_prefix="cc-1:pr-open-message",
+        )
+    message = str(caught.value)
+    assert "readback_verified" in message
+    assert "author_kind" in message
+    assert "ours" in message and "others" in message
+    # provider/pull_request are enforced by a different check; naming them here
+    # sent callers to add fields that were already present.
+    assert "provider" not in message
+    assert "pull_request" not in message
+
+
+def test_record_rejects_inline_evidence_json_with_a_usage_error() -> None:
+    inline = json.dumps({"schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA, "stage": "qa"})
+    with pytest.raises(AutoDevStateError) as caught:
+        auto_dev.resolve_evidence_file(inline)
+    message = str(caught.value)
+    assert "--evidence expects a file path, not inline JSON" in message
+    assert "Auto-Dev state not found" not in message
+
+
+def test_record_rejects_inline_json_bound_to_the_positional_state(
+    tmp_path: Path,
+) -> None:
+    inline = json.dumps({"schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA, "stage": "qa"})
+    with pytest.raises(AutoDevStateError, match="not inline JSON"):
+        record_auto_dev_stage(
+            inline,
+            stage="qa",
+            evidence_file=str(tmp_path / "evidence.json"),
+            idempotency_key="cc-1:inline-state",
+        )
+
+
+def test_missing_evidence_file_reports_the_evidence_flag_not_the_state() -> None:
+    with pytest.raises(AutoDevStateError) as caught:
+        auto_dev.resolve_evidence_file("/nonexistent/evidence.json")
+    message = str(caught.value)
+    assert message.startswith("--evidence file not found:")
+    assert "Auto-Dev state not found" not in message
+
+
 def test_workflow_docs_are_complete_and_shallow() -> None:
     repository = Path(__file__).resolve().parents[1]
     assert validate_workflow_contracts(repository) == []
