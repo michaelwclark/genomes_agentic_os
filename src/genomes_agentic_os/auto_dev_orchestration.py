@@ -391,6 +391,26 @@ def _file_lock(path: Path):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def resolve_evidence_file(raw: str | Path, flag: str = "--evidence") -> Path:
+    """Reject inline JSON so a file-path flag never reports a bogus missing path.
+
+    Passing the receipt body directly makes the JSON resolve as a relative
+    filesystem path, and the resulting "not found" error reads like a path bug
+    rather than the usage error it is.
+    """
+
+    text = str(raw).strip()
+    if text.startswith(("{", "[")):
+        raise AutoDevStateError(
+            f"{flag} expects a file path, not inline JSON; write the JSON to a "
+            "file first and pass that path"
+        )
+    path = Path(text).expanduser().resolve()
+    if not path.is_file():
+        raise AutoDevStateError(f"{flag} file not found: {path}")
+    return path
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise AutoDevStateError(f"Auto-Dev state not found: {path}")
@@ -3541,6 +3561,11 @@ def record_auto_dev_stage(
     idempotency_key: str,
 ) -> dict[str, Any]:
     """Record a completed or policy-skipped workflow from typed evidence."""
+    if str(state_file).strip().startswith(("{", "[")):
+        raise AutoDevStateError(
+            "state expects a work-item directory or autodev.json path, not inline "
+            "JSON; pass the evidence body to --evidence as a file path"
+        )
     state_path = Path(state_file).expanduser().resolve()
     if state_path.is_dir():
         state_path = state_path / "autodev.json"
@@ -3553,7 +3578,7 @@ def record_auto_dev_stage(
         raise AutoDevStateError(
             f"{name} is owned by Development Delivery; record it with agentic-os develop stage"
         )
-    evidence_path = Path(evidence_file).expanduser().resolve()
+    evidence_path = resolve_evidence_file(evidence_file)
     evidence = _read_json(evidence_path)
     expected_schema = (
         AUTO_DEV_HEALTH_EVIDENCE_SCHEMA if name == "health" else AUTO_DEV_STAGE_EVIDENCE_SCHEMA
