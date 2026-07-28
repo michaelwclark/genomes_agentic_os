@@ -102,6 +102,10 @@ SECRET_RE = re.compile(
     r"(?:authorization\s*:\s*(?:bearer|basic)\s+\S+)|"
     r"(?:api[_-]?key|token|secret|password|private[_-]?key|access[_-]?key)\s*[:=]\s*[^\s]{8,})"
 )
+TRACKER_MARKDOWN_LINK_RE = re.compile(
+    r"\[[^\]\n]+\]\(https?://[^\s)]+/(?:browse/[A-Za-z][A-Za-z0-9]+-\d+|issue/[A-Za-z][A-Za-z0-9]+-\d+(?:[^\s)]*)|issues/\d+)\)",
+    re.IGNORECASE,
+)
 BUILTIN_VALIDATIONS = frozenset(
     {
         "required_sections_present",
@@ -110,6 +114,7 @@ BUILTIN_VALIDATIONS = frozenset(
         "evidence_is_sanitized",
         "adf_renders_without_markdown_artifacts",
         "jira_native_rendering",
+        "linked_work_has_tracker_hyperlink",
     }
 )
 
@@ -500,11 +505,12 @@ TYPE_LAYOUTS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
         ("Evidence", ("evidence",)),
     ],
     "pull-request": [
-        ("Description of the Feature or Problem", ("problem", "summary")),
-        ("Description of the Change", ("change", "implementation")),
-        ("Associated Work", ("associated_work", "tickets")),
-        ("Test Evidence", ("test_evidence", "tests")),
-        ("Risk", ("risks", "risk")),
+        ("Linked Work", ("linked_work", "associated_work", "tickets")),
+        ("Summary", ("summary", "problem")),
+        ("Change Scope", ("change_scope", "change", "implementation")),
+        ("Safety, Compatibility, and Rollout", ("safety_compatibility_and_rollout", "risks", "risk")),
+        ("Validation", ("validation", "test_evidence", "tests")),
+        ("Reviewer Focus", ("reviewer_focus", "review")),
     ],
 }
 
@@ -774,6 +780,16 @@ def validate_rendered_artifact(path: str | Path) -> dict[str, Any]:
     for section in required:
         if section.casefold() not in headings:
             findings.append({"code": "missing_required_section", "message": f"required heading is absent: {section}"})
+    validations = {str(item) for item in effective.get("validation") or []}
+    if "linked_work_has_tracker_hyperlink" in validations:
+        linked_work = re.search(r"^##\s+Linked Work\s*$([\s\S]*?)(?=^##\s|\Z)", body, re.MULTILINE)
+        if not linked_work or not TRACKER_MARKDOWN_LINK_RE.search(linked_work.group(1)):
+            findings.append(
+                {
+                    "code": "missing_tracker_hyperlink",
+                    "message": "Linked Work must contain a Markdown hyperlink to a Jira, Linear, or GitHub work item",
+                }
+            )
     for receipt in artifact.get("evidence_contract") or []:
         if not isinstance(receipt, Mapping) or receipt.get("status") not in {"verified", "satisfied", "captured"}:
             requirement = receipt.get("requirement") if isinstance(receipt, Mapping) else "unknown"

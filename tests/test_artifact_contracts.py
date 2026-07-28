@@ -233,6 +233,108 @@ def test_external_safety_blocks_paths_private_links_and_secrets(tmp_path: Path) 
     }
 
 
+def test_pull_request_requires_a_linked_tracker_hyperlink(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    _contract(
+        root / "harness/artifact-config/any/pull-request.md",
+        provider="any",
+        artifact_type="pull-request",
+        extra={
+            "required_sections": [
+                "Linked Work",
+                "Summary",
+                "Change Scope",
+                "Safety, Compatibility, and Rollout",
+                "Validation",
+                "Reviewer Focus",
+            ],
+            "validation": ["linked_work_has_tracker_hyperlink"],
+        },
+    )
+    evidence = root / "evidence.yml"
+    evidence.write_text(
+        yaml.safe_dump(
+            _artifact_evidence(
+                {
+                    "title": "Tracker-linked PR",
+                    "summary": "Enforce linked tracker work for pull requests.",
+                    "linked_work": ["[ENG-123](https://linear.app/acme/issue/ENG-123/enforce-pr-contracts)"],
+                    "change_scope": "Add a shared artifact-contract validation.",
+                    "safety_compatibility_and_rollout": "No runtime or data impact.",
+                    "validation": "Focused artifact-contract tests pass.",
+                    "reviewer_focus": "Verify Jira and Linear URLs are accepted.",
+                }
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    artifact = root / "rendered.json"
+    artifact.write_text(json.dumps(render_artifact(root, "github", "pull-request", evidence)), encoding="utf-8")
+    assert validate_rendered_artifact(artifact)["valid"] is True
+
+    evidence.write_text(
+        yaml.safe_dump(
+            _artifact_evidence(
+                {
+                    "title": "GitHub issue-linked PR",
+                    "summary": "GitHub issues satisfy the same contract when they are the tracker of record.",
+                    "linked_work": ["[#123](https://github.com/michaelwclark/genomes_agentic_os/issues/123)"],
+                    "change_scope": "No code change.",
+                    "safety_compatibility_and_rollout": "No impact.",
+                    "validation": "Focused artifact-contract tests pass.",
+                    "reviewer_focus": "Verify the GitHub issue link is accepted.",
+                }
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    artifact.write_text(json.dumps(render_artifact(root, "github", "pull-request", evidence)), encoding="utf-8")
+    assert validate_rendered_artifact(artifact)["valid"] is True
+
+    evidence.write_text(
+        yaml.safe_dump(
+            _artifact_evidence(
+                {
+                    "title": "Jira-linked PR",
+                    "summary": "Jira tracker links satisfy the same contract.",
+                    "linked_work": ["[FLYWL-3021](https://venturesgo.atlassian.net/browse/FLYWL-3021)"],
+                    "change_scope": "No code change.",
+                    "safety_compatibility_and_rollout": "No impact.",
+                    "validation": "Focused artifact-contract tests pass.",
+                    "reviewer_focus": "Verify the Jira link is accepted.",
+                }
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    artifact.write_text(json.dumps(render_artifact(root, "github", "pull-request", evidence)), encoding="utf-8")
+    assert validate_rendered_artifact(artifact)["valid"] is True
+
+    evidence.write_text(
+        yaml.safe_dump(
+            _artifact_evidence(
+                {
+                    "title": "Plain ticket PR",
+                    "summary": "A bare ticket key must not pass.",
+                    "linked_work": ["ENG-123"],
+                    "change_scope": "No code change.",
+                    "safety_compatibility_and_rollout": "No impact.",
+                    "validation": "None.",
+                    "reviewer_focus": "Verify validation rejects the body.",
+                }
+            ),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    artifact.write_text(json.dumps(render_artifact(root, "github", "pull-request", evidence)), encoding="utf-8")
+    findings = {item["code"] for item in validate_rendered_artifact(artifact)["findings"]}
+    assert findings == {"missing_tracker_hyperlink"}
+
+
 def test_evidence_semantic_governance_and_live_readback_fail_closed(tmp_path: Path) -> None:
     root = _root(tmp_path)
     _contract(

@@ -98,8 +98,9 @@ Do not claim completion from a provider create/update response alone.
   child pages, and images for non-trivial flows.
 - Confluence: search for the canonical page first, preserve owner/status/
   last-verified data, and avoid knowledge forks.
-- GitHub: behavior/change/tests/risk, exact repo/base/head, no local/private OS
-  references.
+- GitHub: render the effective PR template, including a `Linked Work` Markdown
+  hyperlink to the supplied Jira, Linear, or GitHub work item; then verify exact
+  repo/base/head and no local/private OS references.
 - Slack: outcome or ask first, compact decisive evidence, owner, next action.
 - Filesystem: routed folder, stable naming, atomic write, relative receipt.
 

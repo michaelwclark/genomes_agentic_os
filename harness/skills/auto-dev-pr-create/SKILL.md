@@ -23,8 +23,11 @@ policy or review behavior.
    `not_applicable`. Fail closed on a missing required target, stale registry,
    unresolved alias, ambiguous source, or an unreceipted manual mismatch.
 5. Render and apply GitHub artifacts through `$auto-dev-create-artifacts`.
-   Re-read the provider immediately before every write and after every result.
-   Existing open or merged equivalents are idempotent success.
+   The effective pull-request contract must include `Linked Work` with a visible
+   Markdown hyperlink to its Jira, Linear, or GitHub work item; a bare ticket
+   key never satisfies the contract. Re-read the provider immediately before
+   every write and after every result. Existing open or merged equivalents are
+   idempotent success.
 6. When `qa.assessment.always_create` is enabled, create or reuse one Jira QA
    Automation Assessment subtask under the root Jira after the application PR
    opens. Read it back and bind an `auto-dev-qa-assessment/v1` receipt—with Jira
