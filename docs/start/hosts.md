@@ -41,7 +41,7 @@ work on its own when the primary is unreachable.
 ## Checking a host is healthy
 
 ```bash
-agentic-os host health-report --host bigmac
+agentic-os host health-report --host example-host
 ```
 
 This runs a set of configured probes — disk space, system load, whether specific
