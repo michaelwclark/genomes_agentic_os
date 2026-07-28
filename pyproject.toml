@@ -14,9 +14,22 @@ dependencies = [
   "jsonschema>=4",
 ]
 
+# Installed by CI and by anyone using pip: `pip install -e '.[dev]'`.
+# Keep in sync with the uv-facing `[dependency-groups] dev` below.
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "commitizen>=4.16",
+  "pre-commit>=4.6",
+]
+
+# Installed by default by uv, so `uv run pytest` works in a fresh worktree
+# without a pre-existing .venv. Mirrors the `dev` extra above.
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "commitizen>=4.16",
+  "pre-commit>=4.6",
 ]
 
 [project.scripts]
@@ -31,3 +44,21 @@ genomes_agentic_os = ["resources/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Conventional Commits enforcement and the single source of the release version.
+#
+# `version_provider = "pep621"` makes `[project] version` above the one place a
+# version is written, so `cz bump` moves it and nothing else has to be kept in
+# step. `tag_format` matches the existing v0.5.6-style tags and the equality
+# check the Release workflow performs against pyproject.
+#
+# Changelog generation stays off on purpose: CHANGELOG.md is a hand-curated
+# Keep a Changelog file, and commitizen would rewrite it in its own format.
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+tag_format = "v$version"
+annotated_tag = true
+major_version_zero = true
+update_changelog_on_bump = false
+changelog_file = "CHANGELOG.md"
