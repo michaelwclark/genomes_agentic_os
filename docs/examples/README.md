@@ -6,8 +6,8 @@ not carry live state.
 
 | Example | Demonstrates |
 | --- | --- |
-| [`acme_consulting/`](acme_consulting/) | Consulting/client delivery domain language. |
-| [`lending_ops/`](lending_ops/) | Lending operations and regulated-work boundaries. |
-| [`personal/`](personal/) | Personal administration and private-context routing. |
+| [`acme_consulting/`](acme_consulting/README.md) | Consulting/client delivery domain language. |
+| [`lending_ops/`](lending_ops/README.md) | Lending operations and regulated-work boundaries. |
+| [`personal/`](personal/README.md) | Personal administration and private-context routing. |
 
 Copy ideas and conventions, not hard-coded identifiers or state.

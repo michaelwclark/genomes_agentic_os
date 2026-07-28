@@ -82,7 +82,7 @@ separation, dependencies passed in, no hidden globals); the mechanism is Pythoni
 The apparent repeated name is the standard Python `src` layout: `src/` is an
 import-isolation root, while `genomes_agentic_os/` is the importable package.
 This prevents a checkout from accidentally shadowing the installed package
-during tests. See [`../../src/README.md`](../../src/README.md) for the short
+during tests. See [`../../src/README.md`](https://github.com/michaelwclark/genomes_agentic_os/blob/main/src/README.md) for the short
 navigation guide.
 
 ### 4.1 Layering
