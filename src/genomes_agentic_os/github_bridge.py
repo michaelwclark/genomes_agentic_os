@@ -1,0 +1,114 @@
+"""Versioned subprocess boundary for the TypeScript GitHub port.
+
+The Agentic OS source package is Python while ``@genomes/github`` is an ESM
+package.  This module deliberately makes that runtime boundary explicit rather
+than pretending the TypeScript port can be imported by Python.  It speaks one
+JSON request and response per process invocation; credentials are passed only
+through the child environment and never appear in returned errors.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
+
+
+BRIDGE_VERSION = 1
+
+
+class GitHubBridgeError(RuntimeError):
+    """A safe, structured failure returned by the GitHub bridge."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+BridgeRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def command_from_environment(environ: Mapping[str, str] | None = None) -> list[str] | None:
+    """Return the explicitly configured bridge command, never invoking a shell."""
+    value = (environ or os.environ).get("GENOMES_GITHUB_BRIDGE_COMMAND", "").strip()
+    return shlex.split(value) if value else None
+
+
+def call_github_bridge(
+    command: Sequence[str],
+    request: Mapping[str, Any],
+    *,
+    token: str,
+    runner: BridgeRunner = subprocess.run,
+    timeout: float = 30,
+) -> dict[str, Any]:
+    """Call one bridge operation and return its versioned result.
+
+    ``command`` is an argv sequence, not shell text.  The token is supplied to
+    the child only as ``GITHUB_TOKEN`` and no child stderr is propagated into a
+    raised error, avoiding accidental credential disclosure.
+    """
+    if not command:
+        raise GitHubBridgeError("BRIDGE_UNCONFIGURED", "GitHub bridge command is not configured")
+    payload = {"version": BRIDGE_VERSION, **dict(request)}
+    child_env = dict(os.environ)
+    child_env["GITHUB_TOKEN"] = token
+    try:
+        completed = runner(
+            list(command),
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            check=False,
+            env=child_env,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitHubBridgeError("BRIDGE_UNAVAILABLE", "GitHub bridge could not be executed") from exc
+
+    if completed.returncode != 0:
+        raise GitHubBridgeError("BRIDGE_FAILED", "GitHub bridge exited unsuccessfully")
+    try:
+        response = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned invalid JSON") from exc
+    if not isinstance(response, dict) or response.get("version") != BRIDGE_VERSION:
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned an unsupported response")
+    if response.get("ok") is not True:
+        error = response.get("error") if isinstance(response.get("error"), dict) else {}
+        code = str(error.get("code") or "BRIDGE_OPERATION_FAILED")
+        raise GitHubBridgeError(code, "GitHub bridge operation failed")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge result must be an object")
+    return result
+
+
+def list_pull_requests(
+    command: Sequence[str],
+    *,
+    owner: str,
+    repo: str,
+    token: str,
+    state: str = "all",
+    limit: int = 30,
+    runner: BridgeRunner = subprocess.run,
+) -> list[dict[str, Any]]:
+    """Return JSON-safe pull request summaries from the shared GitHub port."""
+    result = call_github_bridge(
+        command,
+        {
+            "operation": "listPullRequests",
+            "repo": {"owner": owner, "repo": repo},
+            "filter": {"state": state, "limit": limit},
+        },
+        token=token,
+        runner=runner,
+    )
+    pull_requests = result.get("pullRequests")
+    if not isinstance(pull_requests, list) or not all(isinstance(item, dict) for item in pull_requests):
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned invalid pull requests")
+    return [dict(item) for item in pull_requests]

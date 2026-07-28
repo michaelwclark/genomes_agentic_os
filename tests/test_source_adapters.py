@@ -30,6 +30,7 @@ from genomes_agentic_os.source_providers import (
     poll_github_source,
     poll_slack_source,
 )
+import genomes_agentic_os.source_providers as source_providers
 from genomes_agentic_os.source_watch import (
     connected_systems,
     ensure_registries,
@@ -336,6 +337,37 @@ class TestCheckConfigForSecrets:
 # ---------------------------------------------------------------------------
 
 class TestFetchGithubEvents:
+    def test_prs_use_shared_port_bridge_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GENOMES_GITHUB_BRIDGE_COMMAND", "node bridge.mjs")
+        observed: dict[str, object] = {}
+
+        def fake_port(command, **kwargs):
+            observed["command"] = command
+            observed.update(kwargs)
+            return [{
+                "number": 42,
+                "title": "Add feature X",
+                "state": "open",
+                "url": "https://github.com/testorg/testrepo/pull/42",
+                "author": "testuser",
+                "headBranch": "feature-x",
+                "baseBranch": "main",
+                "headSha": "abc123",
+                "draft": False,
+                "labels": ["enhancement"],
+                "openedAt": "2026-06-01T10:00:00.000Z",
+                "updatedAt": "2026-06-02T12:00:00.000Z",
+            }]
+
+        monkeypatch.setattr(source_providers, "list_pull_requests", fake_port)
+
+        items = fetch_github_events("testorg", "testrepo", token="fake_token", event_types=["pull_request"])
+
+        assert observed["command"] == ["node", "bridge.mjs"]
+        assert observed["state"] == "all"
+        assert items[0]["updated_at"] == "2026-06-02T12:00:00.000Z"
+        assert items[0]["_idempotency_key"] == "github:pr:testorg:testrepo:42"
+
     def test_pr_fixture_returns_trimmed_items(self) -> None:
         fetcher = _make_pr_then_issues_fetcher()
         items = fetch_github_events(

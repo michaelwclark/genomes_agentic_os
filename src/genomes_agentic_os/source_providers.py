@@ -4,8 +4,9 @@ Architecture
 ------------
 Each adapter (GitHub, Slack) exposes a single ``fetch_*`` function that:
   - resolves the credential from the env var named in the connected-system config
-  - calls the provider API via an injectable ``fetcher`` callable (defaults to
-    ``urllib.request.urlopen``) so tests never touch the network
+  - calls its selected provider transport via an injectable boundary so tests
+    never touch the network; GitHub pull requests may use the shared platform
+    bridge when ``GENOMES_GITHUB_BRIDGE_COMMAND`` is explicitly configured
   - returns a list of normalised item dicts (provider-id-keyed)
   - falls back to an empty list with a ``dry_run_reason`` marker when the env var
     is absent — identical observable output to the existing registry dry-run path
@@ -46,6 +47,8 @@ import re
 import urllib.error
 import urllib.request
 from typing import Any, Callable
+
+from .github_bridge import command_from_environment, list_pull_requests
 
 # ---------------------------------------------------------------------------
 # Token-shaped value guard
@@ -202,6 +205,31 @@ def _trim_github_item(item: dict[str, Any], keep: frozenset[str]) -> dict[str, A
     return trimmed
 
 
+def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the shared port's PR vocabulary to the source-watch event shape.
+
+    The source-watch registry predates the shared GitHub port, so its persisted
+    field names are intentionally retained here.  This is a narrow adapter, not
+    a second GitHub client: the bridge owns provider calls and normalization.
+    """
+    labels = item.get("labels") if isinstance(item.get("labels"), list) else []
+    return {
+        "number": item.get("number"),
+        "title": item.get("title", ""),
+        "state": "closed" if item.get("state") == "merged" else item.get("state", "open"),
+        "created_at": item.get("openedAt", ""),
+        "updated_at": item.get("updatedAt", ""),
+        "merged_at": item.get("mergedAt"),
+        "closed_at": item.get("closedAt"),
+        "html_url": item.get("url", ""),
+        "user": {"login": item.get("author", "")},
+        "head": {"ref": item.get("headBranch", ""), "sha": item.get("headSha", "")},
+        "base": {"ref": item.get("baseBranch", "")},
+        "draft": bool(item.get("draft", False)),
+        "labels": [{"name": label} for label in labels if isinstance(label, str)],
+    }
+
+
 def fetch_github_events(
     owner: str,
     repo: str,
@@ -252,11 +280,22 @@ def fetch_github_events(
     want_issues = any(t in event_types for t in ("issues", "issue"))
 
     if want_prs:
-        url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
-        if since:
-            # PRs endpoint doesn't support ?since — we post-filter
-            pass
-        data = _get_json(url, headers, fetcher)
+        bridge_command = command_from_environment()
+        if bridge_command:
+            data: Any = [
+                _bridge_pull_request_to_source_item(item)
+                for item in list_pull_requests(
+                    bridge_command,
+                    owner=owner,
+                    repo=repo,
+                    token=token,
+                    state="all",
+                    limit=30,
+                )
+            ]
+        else:
+            url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
+            data = _get_json(url, headers, fetcher)
         for item in data if isinstance(data, list) else []:
             if since and item.get("updated_at", "") < since:
                 continue
@@ -360,12 +399,18 @@ def poll_github_source(
             since=since,
             fetcher=fetcher,
         )
+        bridge_active = bool(command_from_environment()) and any(
+            event_type == "pull_request" for event_type in event_types
+        )
+        provider = "platform_github_port" if bridge_active else "direct_api"
+        if bridge_active and any(event_type in ("issues", "issue") for event_type in event_types):
+            provider = "platform_github_port+direct_api"
         return {
             "ok": True,
             "live": True,
             "items": items,
             "item_count": len(items),
-            "provider": "direct_api",
+            "provider": provider,
             "credential_env": env_name,
             "dry_run_reason": None,
         }
