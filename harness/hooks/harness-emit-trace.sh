@@ -5,7 +5,7 @@
 # block hook completion.
 set -uo pipefail
 
-MCP_URL="${LOSMON_MEMORY_MCP_URL:-http://127.0.0.1:3155/mcp}"
+MCP_URL="${GENOMES_BRAIN_MCP_URL:-${LOSMON_MEMORY_MCP_URL:-http://127.0.0.1:3155/mcp}}"
 LOG_DIR="${HOME}/.local/state/harness"
 LOG_FILE="${LOG_DIR}/emit-trace.log"
 AGENT="${1:-unknown}"
@@ -41,6 +41,7 @@ resolve_accounting_python() {
     "${AGENTIC_OS_PYTHON:-}" \
     python3 \
     "${HOME}/Library/Application Support/AgenticOS"/*/bin/python3 \
+    "${HOME}/Library/Application Support/AgenticOS/releases"/*/runtime/bin/python3 \
     "${HOME}/.local/share/uv/tools"/*/bin/python3
   do
     [[ -n "${candidate}" ]] || continue
