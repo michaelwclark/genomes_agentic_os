@@ -14,7 +14,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Server-side half of Conventional Commits enforcement. The commit-msg hook
+  # can be skipped with `git commit --no-verify`; this cannot.
+  #
+  # Pull requests only, and scoped to the commits the pull request actually
+  # adds. Running over pushed history would fail on legacy commits predating
+  # the convention. Merge commits are exempt via commitizen's default
+  # allowed_prefixes.
+  commit-messages:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A rev-range needs both endpoints present; the default depth-1
+          # checkout has neither.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install commitizen
+        run: python -m pip install --disable-pip-version-check commitizen
+      - name: Check every commit added by this pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: cz check --rev-range "${BASE_SHA}..${HEAD_SHA}"
+
   python:
+    name: Python suite and packaging
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
