@@ -2,7 +2,7 @@
 
 Architecture
 ------------
-Each adapter (GitHub, Slack) exposes a single ``fetch_*`` function that:
+Each adapter (GitHub, Jira, Slack) exposes a single ``fetch_*`` function that:
   - resolves the credential from the env var named in the connected-system config
   - calls its selected provider transport via an injectable boundary so tests
     never touch the network; GitHub issues and pull requests require the shared
@@ -50,9 +50,15 @@ from typing import Any, Callable
 
 from .github_bridge import (
     GitHubBridgeError,
-    command_from_environment,
+    command_from_environment as github_command_from_environment,
     list_issues,
     list_pull_requests,
+)
+from .jira_bridge import (
+    JiraBridgeClient,
+    JiraBridgeError,
+    auth_from_environment as jira_auth_from_environment,
+    command_from_environment as jira_command_from_environment,
 )
 
 # ---------------------------------------------------------------------------
@@ -339,7 +345,7 @@ def fetch_github_events(
     want_prs = any(t in event_types for t in ("pull_request",))
     want_issues = any(t in event_types for t in ("issues", "issue"))
 
-    bridge_command = command_from_environment()
+    bridge_command = github_command_from_environment()
     if (want_prs or want_issues) and not bridge_command:
         raise GitHubBridgeError(
             "BRIDGE_UNCONFIGURED",
@@ -495,6 +501,152 @@ def poll_github_source(
                 "code": exc.code,
                 "message": str(exc),
             }],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Jira adapter
+# ---------------------------------------------------------------------------
+
+
+def _jira_issue_to_source_item(issue: dict[str, Any]) -> dict[str, Any]:
+    """Trim one shared-port Jira issue to the established watch event shape."""
+    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    project = issue.get("project") if isinstance(issue.get("project"), dict) else {}
+    status = issue.get("status") if isinstance(issue.get("status"), dict) else {}
+    issue_type = issue.get("issueType") if isinstance(issue.get("issueType"), dict) else {}
+    return {
+        "id": issue.get("id"),
+        "key": issue.get("key"),
+        "url": issue.get("url"),
+        "summary": issue.get("summary"),
+        "project_key": project.get("key"),
+        "status": status.get("name"),
+        "issue_type": issue_type.get("name"),
+        "updated_at": fields.get("updated"),
+        "labels": fields.get("labels") if isinstance(fields.get("labels"), list) else [],
+        "_provider": "jira",
+        "_event_type": "issue",
+        "_idempotency_key": f"jira:issue:{issue.get('key')}:{fields.get('updated') or ''}",
+    }
+
+
+def fetch_jira_issues(
+    jql: str,
+    *,
+    client: JiraBridgeClient,
+) -> list[dict[str, Any]]:
+    """Exhaust the shared Jira search port and return trimmed issue summaries."""
+    page = client.request(
+        "searchIssues",
+        {"jql": jql, "fields": ["updated", "labels"]},
+    )
+    values = page.get("values") if isinstance(page, dict) else None
+    if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
+        raise JiraBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge returned invalid search results"
+        )
+    if page.get("complete") is not True:
+        raise JiraBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge returned an incomplete unbounded search"
+        )
+    return [_jira_issue_to_source_item(item) for item in values]
+
+
+def poll_jira_source(
+    source: dict[str, Any],
+    system: dict[str, Any],
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+    client: JiraBridgeClient | None = None,
+) -> dict[str, Any]:
+    """Poll a Jira JQL watch through the shared bridge, never direct HTTP."""
+    del fetcher
+    external_ref = source.get("external_ref") or {}
+    violations = check_config_for_secrets(external_ref)
+    violations += check_config_for_secrets(
+        {key: value for key, value in source.items() if isinstance(value, str)}
+    )
+    if violations:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_jira_port",
+            "findings": [
+                {
+                    "severity": "blocker",
+                    "code": "SECRETS_IN_CONFIG",
+                    "message": "token-shaped Jira config values are not allowed",
+                }
+            ],
+        }
+    if client is None:
+        command = jira_command_from_environment()
+        base_url = os.environ.get("JIRA_BASE_URL", "").strip()
+        if not command or not base_url:
+            return {
+                "ok": True,
+                "live": False,
+                "items": [],
+                "item_count": 0,
+                "provider": "platform_jira_port",
+                "dry_run_reason": "Jira bridge command or base URL is not configured",
+            }
+        try:
+            auth = jira_auth_from_environment()
+        except JiraBridgeError as exc:
+            return {
+                "ok": False,
+                "live": False,
+                "items": [],
+                "item_count": 0,
+                "provider": "platform_jira_port",
+                "findings": [
+                    {"severity": "blocker", "code": exc.code, "message": str(exc)}
+                ],
+            }
+        client = JiraBridgeClient(command, base_url, auth)
+    project = str(external_ref.get("project_key") or "").strip()
+    jql = str(external_ref.get("jql") or "").strip()
+    if not jql and project:
+        jql = f'project = "{project}" ORDER BY updated DESC'
+    if not jql:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_jira_port",
+            "findings": [
+                {
+                    "severity": "blocker",
+                    "code": "INVALID_REQUEST",
+                    "message": "Jira watch requires jql or project_key",
+                }
+            ],
+        }
+    try:
+        items = fetch_jira_issues(jql, client=client)
+        return {
+            "ok": True,
+            "live": True,
+            "items": items,
+            "item_count": len(items),
+            "provider": "platform_jira_port",
+            "dry_run_reason": None,
+        }
+    except JiraBridgeError as exc:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_jira_port",
+            "findings": [
+                {"severity": "blocker", "code": exc.code, "message": str(exc)}
+            ],
         }
 
 
@@ -680,6 +832,7 @@ def poll_slack_source(
 
 _ADAPTERS: dict[str, Any] = {
     "github": poll_github_source,
+    "jira": poll_jira_source,
     "slack": poll_slack_source,
 }
 

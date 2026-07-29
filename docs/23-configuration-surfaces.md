@@ -243,14 +243,21 @@ Each tool reads env vars from the process environment, with automatic fallback t
 
 | Variable | Default | Auth route |
 |---|---|---|
-| `ATLASSIAN_CLIENT_ID` / `JIRA_OAUTH_CLIENT_ID` | — | OAuth (preferred) |
-| `ATLASSIAN_CLIENT_SECRET` / `JIRA_OAUTH_CLIENT_SECRET` | — | OAuth |
-| `ATLASSIAN_VENTURESGO_CLOUDID` / `ATLASSIAN_JIRA_CLOUDID` / `JIRA_CLOUD_ID` / `ATLASSIAN_CLOUD_ID` | — | OAuth cloud ID |
+| `GENOMES_JIRA_BRIDGE_COMMAND` | — | Reviewed `@genomes/jira` bridge argv; required for live operations |
+| `JIRA_OAUTH_TOKEN` / `ATLASSIAN_ACCESS_TOKEN` | — | Injected OAuth bearer (preferred) |
+| `ATLASSIAN_JIRA_CLOUDID` / `JIRA_CLOUD_ID` / `ATLASSIAN_CLOUD_ID` | — | OAuth cloud ID |
 | `ATLASSIAN_BASE_URL` / `JIRA_OAUTH_BASE_URL` | Derived from cloud ID | OAuth gateway URL |
-| `ATLASSIAN_OAUTH_AUDIENCE` | `api.atlassian.com` | OAuth audience |
-| `JIRA_VENTURESGO_API_TOKEN` / `JIRA_API_TOKEN` | — | Basic auth (fallback) |
-| `JIRA_VENTURESGO_EMAIL` / `JIRA_EMAIL` | `svc_jiraapi@thesummitgrp.com` | Basic auth email |
-| `JIRA_VENTURESGO_BASE_URL` | `https://venturesgo.atlassian.net` | Basic auth base URL |
+| `JIRA_API_TOKEN` | — | Basic auth (fallback) |
+| `JIRA_EMAIL` | — | Basic auth email |
+| `JIRA_BASE_URL` | — | Basic-auth tenant URL; Spec Engine and source-watch bridge base |
+| `JIRA_BROWSE_BASE` / `JIRA_SITE_URL` | — | Expected tenant site URL for identity preflight |
+| `JIRA_DEFAULT_ISSUE_TYPE_ID` / `JIRA_ISSUE_TYPE_ID` | — | Expected issue-type ID for mutation preflight |
+| `JIRA_ACCOUNT_ID` / `ATLASSIAN_ACCOUNT_ID` | — | Optional expected account ID for mutation preflight |
+
+The wrapper no longer mints OAuth client-credential tokens or constructs Jira
+HTTP requests. A bearer/session provider must inject the short-lived bearer;
+the reviewed platform bridge owns Jira transport, retries, safe errors, and
+provider readback.
 
 ### agentic-os-automation-run-summary
 
