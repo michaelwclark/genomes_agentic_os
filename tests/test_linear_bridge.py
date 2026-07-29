@@ -14,6 +14,7 @@ from genomes_agentic_os.linear_bridge import (
     LinearBridgeError,
     auth_from_environment,
     call_linear_bridge,
+    client_from_environment,
     command_from_environment,
 )
 
@@ -44,6 +45,23 @@ def test_command_and_auth_modes_are_explicit() -> None:
         auth_from_environment({})
     with pytest.raises(LinearBridgeError, match="Exactly one"):
         auth_from_environment({"LINEAR_TOKEN": "one", "LINEAR_API_KEY": "two"})
+
+
+def test_custom_token_environment_is_resolved_without_explicit_token() -> None:
+    client = client_from_environment(
+        {
+            "GENOMES_LINEAR_BRIDGE_COMMAND": "node /tmp/linear.js",
+            "LINEAR_CC_TOKEN": "workspace-token",
+        },
+        token_env="LINEAR_CC_TOKEN",
+    )
+    assert client.auth == {"LINEAR_TOKEN": "workspace-token"}
+
+    with pytest.raises(LinearBridgeError, match="LINEAR_CC_TOKEN is missing"):
+        client_from_environment(
+            {"GENOMES_LINEAR_BRIDGE_COMMAND": "node /tmp/linear.js"},
+            token_env="LINEAR_CC_TOKEN",
+        )
 
 
 def test_request_is_versioned_and_credentials_stay_out_of_payload() -> None:

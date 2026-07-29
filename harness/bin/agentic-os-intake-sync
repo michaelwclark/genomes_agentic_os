@@ -112,7 +112,11 @@ def _ensure_agentic_os_runtime() -> None:
 
 _ensure_agentic_os_runtime()
 
-from genomes_agentic_os.linear_bridge import LinearBridgeError, client_from_environment
+from genomes_agentic_os.linear_bridge import (
+    LinearBridgeError,
+    client_from_environment,
+    command_from_environment,
+)
 
 try:
     import yaml
@@ -159,7 +163,7 @@ def _request(url: str, method: str = "GET", headers: dict = None, body=None, ret
         except urllib.error.HTTPError as e:
             raw = e.read().decode(errors="replace")
             if e.code == 429 and attempt < retries - 1:
-                # Respect rate limit: wait 65 seconds (Linear's window is 60s)
+                # Back off the remaining Notion-only HTTP request path.
                 wait = 65
                 print(f"  [rate-limit] 429 on {url}, waiting {wait}s before retry {attempt + 2}/{retries}...")
                 time.sleep(wait)
@@ -280,7 +284,7 @@ def build_linear_description(page_id: str, body_excerpt: str) -> str:
     description = ""
     if body_excerpt:
         description += body_excerpt + "\n\n"
-    description += f"---\n**Source:** OS Work Intake\n`notion:{page_id}`"
+    description += f"---\n**Source:** OS Work Intake\nnotion:{page_id}"
     return description
 
 
@@ -620,6 +624,16 @@ def _linear_token_env(cfg: dict) -> str:
     return "LINEAR_TOKEN"
 
 
+def _linear_bridge_command_error() -> str | None:
+    try:
+        command = command_from_environment()
+    except LinearBridgeError as exc:
+        return str(exc)
+    if not command:
+        return "GENOMES_LINEAR_BRIDGE_COMMAND is not configured"
+    return None
+
+
 def _linear_token_remediation(team_label: str, token_env: str) -> str:
     return (
         f"Create a personal API key in the Linear workspace that owns team {team_label} "
@@ -673,6 +687,22 @@ def run_doctor(
     )
 
     token_env = _linear_token_env(cfg)
+    bridge_command_error = _linear_bridge_command_error()
+    checks.append(
+        {
+            "name": "linear_bridge_command",
+            "ok": bridge_command_error is None,
+            **({"error": bridge_command_error} if bridge_command_error else {}),
+        }
+    )
+    if bridge_command_error:
+        _add_finding(
+            findings,
+            "blocker",
+            "linear_bridge_unconfigured",
+            bridge_command_error,
+            "Set GENOMES_LINEAR_BRIDGE_COMMAND to the reviewed built Linear bridge and re-run doctor.",
+        )
     if not token_linear:
         _add_finding(
             findings,
@@ -693,7 +723,7 @@ def run_doctor(
     team_id = cfg.get("team_id")
     team_label = _team_label(cfg)
     token_check_ok = False
-    if token_linear:
+    if token_linear and not bridge_command_error:
         try:
             visibility = linear_get_token_visibility(token_linear)
             visible_teams = visibility["teams"]
@@ -1227,8 +1257,10 @@ def main() -> None:
         ),
         epilog="""
 ENVIRONMENT:
-  LINEAR_TOKEN        Linear personal API token (value used directly as Authorization header).
-                      Override the env var name via `token_env` in intake-sync.yml.
+  LINEAR_TOKEN        Linear personal API token, passed only to the reviewed bridge child.
+                      Override the host env var name via `token_env` in intake-sync.yml.
+  GENOMES_LINEAR_BRIDGE_COMMAND
+                      Command for the reviewed built Linear bridge entrypoint.
   GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace.
 
 FILES:
@@ -1334,6 +1366,11 @@ EXAMPLES:
         sys.exit(1)
     if args.command != "doctor" and not token_notion:
         print("ERROR: GENOMES_NOTION_PAT env var is not set.", file=sys.stderr)
+        sys.exit(1)
+
+    bridge_command_error = _linear_bridge_command_error()
+    if args.command != "doctor" and bridge_command_error:
+        print(f"ERROR: Linear bridge unavailable: {bridge_command_error}.", file=sys.stderr)
         sys.exit(1)
 
     if args.command == "doctor":

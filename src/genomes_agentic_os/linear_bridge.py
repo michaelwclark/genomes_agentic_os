@@ -187,7 +187,15 @@ def client_from_environment(
         raise LinearBridgeError(
             "BRIDGE_UNCONFIGURED", "Linear bridge command is not configured"
         )
-    auth = {token_env: token.strip()} if token and token.strip() else auth_from_environment(values)
+    supplied_token = token.strip() if token and token.strip() else ""
     if token_env not in _AUTH_KEYS:
-        auth = {"LINEAR_TOKEN": token.strip()} if token and token.strip() else auth
+        supplied_token = supplied_token or values.get(token_env, "").strip()
+        if not supplied_token:
+            raise LinearBridgeError(
+                "CONFIGURATION_ERROR",
+                f"Configured Linear token environment variable {token_env} is missing",
+            )
+        auth = {"LINEAR_TOKEN": supplied_token}
+    else:
+        auth = {token_env: supplied_token} if supplied_token else auth_from_environment(values)
     return LinearBridgeClient(command, auth)

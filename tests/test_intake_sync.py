@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def configured_bridge_command(monkeypatch):
+    monkeypatch.setenv("GENOMES_LINEAR_BRIDGE_COMMAND", "node /tmp/linear.js")
+
+
 def load_intake_sync_module():
     script = Path(__file__).resolve().parents[1] / "harness" / "bin" / "agentic-os-intake-sync"
     loader = SourceFileLoader("agentic_os_intake_sync_under_test", str(script))
@@ -208,6 +213,8 @@ def test_linear_description_uses_marker_without_private_notion_url():
 
     assert "Plain summary" in description
     assert "notion:abc-def" in description
+    assert "`notion:abc-def`" not in description
+    assert description.splitlines()[-1] == "notion:abc-def"
     assert "notion.so" not in description
     assert "app.notion.com" not in description
 
@@ -254,6 +261,26 @@ def test_intake_sync_doctor_missing_token_names_configured_env(monkeypatch, tmp_
     finding = next(f for f in result["findings"] if f["code"] == "missing_linear_token")
     assert "LINEAR_CC_TOKEN env var is not set." in finding["message"]
     assert "LINEAR_CC_TOKEN" in finding["remediation"]
+
+
+def test_intake_sync_doctor_blocks_missing_bridge_command(monkeypatch, tmp_path):
+    module = load_intake_sync_module()
+    monkeypatch.delenv("GENOMES_LINEAR_BRIDGE_COMMAND")
+
+    result = module.run_doctor(
+        base_config(),
+        config_path=tmp_path / "intake-sync.yml",
+        token_linear="linear-token",
+        token_notion="",
+        check_notion=False,
+    )
+
+    assert result["ok"] is False
+    finding = next(
+        f for f in result["findings"] if f["code"] == "linear_bridge_unconfigured"
+    )
+    assert "GENOMES_LINEAR_BRIDGE_COMMAND" in finding["message"]
+    assert _check_named(result, "linear_bridge_command")["ok"] is False
 
 
 def test_intake_sync_doctor_team_not_visible_names_configured_env(monkeypatch, tmp_path):

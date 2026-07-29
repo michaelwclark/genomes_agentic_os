@@ -152,3 +152,19 @@ def test_auto_dev_resolver_preserves_linear_api_key_fallback(monkeypatch, tmp_pa
     assert linear_check(results)["ok"] is True
     assert observed["token"] == "api-key-token"
     assert observed["token_env"] == "LINEAR_API_KEY"
+
+
+def test_auto_dev_resolver_fails_cleanly_on_malformed_bridge_lists(monkeypatch, tmp_path):
+    module = load_resolver_module()
+    monkeypatch.setenv("LINEAR_TOKEN", "token")
+    responses = linear_responses()
+    responses["listWorkflowStates"] = None
+    install_bridge(monkeypatch, module, responses)
+
+    results = module._preflight(
+        tmp_path, project_yml(tmp_path), tmp_path / "packet", {"tracker": "CC-182"}
+    )
+
+    check = linear_check(results)
+    assert check["ok"] is False
+    assert "invalid workflow-state or project data" in check["detail"]

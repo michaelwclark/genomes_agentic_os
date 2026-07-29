@@ -402,6 +402,16 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
             )
         return {"name": "linear_tracker", "ok": False, "detail": detail}
 
+    if not isinstance(states, list) or not isinstance(projects, list):
+        return {
+            "name": "linear_tracker",
+            "ok": False,
+            "detail": (
+                "Linear tracker preflight returned invalid workflow-state or project data.\n"
+                "  Remedy: verify the reviewed Linear bridge command and release before auto-dev claim."
+            ),
+        }
+
     if not isinstance(identity, dict) or not isinstance(identity.get("team"), dict):
         return {
             "name": "linear_tracker",
