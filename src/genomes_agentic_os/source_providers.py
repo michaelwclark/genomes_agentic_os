@@ -211,13 +211,13 @@ def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
     The source-watch registry predates the shared GitHub port, so its persisted
     field names are intentionally retained here.  This is a narrow adapter, not
     a second GitHub client: the bridge owns provider calls and normalization.
-    The current port does not expose GitHub's database id or requested reviewer
-    and team collections. Their legacy keys remain present with neutral values
-    so downstream shape checks do not fail silently during the migration.
+    The bridge exposes GitHub's database id and requested reviewer/team names in
+    its JSON-safe vocabulary; map them back to the legacy keys so downstream
+    consumers receive the same shape they received from the direct REST client.
     """
     labels = item.get("labels") if isinstance(item.get("labels"), list) else []
     return {
-        "id": None,
+        "id": item.get("id"),
         "number": item.get("number"),
         "title": item.get("title", ""),
         "state": "closed" if item.get("state") == "merged" else item.get("state", "open"),
@@ -231,8 +231,16 @@ def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
         "base": {"ref": item.get("baseBranch", "")},
         "draft": bool(item.get("draft", False)),
         "labels": [{"name": label} for label in labels if isinstance(label, str)],
-        "requested_reviewers": [],
-        "requested_teams": [],
+        "requested_reviewers": [
+            {"login": reviewer}
+            for reviewer in item.get("requestedReviewers", [])
+            if isinstance(reviewer, str)
+        ],
+        "requested_teams": [
+            {"slug": team}
+            for team in item.get("requestedTeams", [])
+            if isinstance(team, str)
+        ],
     }
 
 

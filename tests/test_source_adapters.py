@@ -147,6 +147,7 @@ def github_port_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GENOMES_GITHUB_BRIDGE_COMMAND", "node bridge.mjs")
     pull_requests = [
         {
+            "id": item["id"],
             "number": item["number"],
             "title": item["title"],
             "state": "merged" if item["merged_at"] else item["state"],
@@ -157,6 +158,12 @@ def github_port_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
             "headSha": item["head"]["sha"],
             "draft": item["draft"],
             "labels": [label["name"] for label in item["labels"]],
+            "requestedReviewers": [
+                reviewer["login"] for reviewer in item["requested_reviewers"]
+            ],
+            "requestedTeams": [
+                team["slug"] for team in item["requested_teams"]
+            ],
             "openedAt": item["created_at"],
             "updatedAt": item["updated_at"],
             "closedAt": item["closed_at"],
@@ -436,8 +443,8 @@ class TestFetchGithubEvents:
         )
 
         assert "id" in items[0]
-        assert items[0]["id"] is None
-        assert items[0]["requested_reviewers"] == []
+        assert items[0]["id"] == 1001
+        assert items[0]["requested_reviewers"] == ["reviewer1"]
         assert items[0]["requested_teams"] == []
 
     def test_issue_only_poll_does_not_require_bridge(self, monkeypatch: pytest.MonkeyPatch) -> None:
