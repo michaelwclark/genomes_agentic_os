@@ -158,7 +158,7 @@ FAKE_SLACK_TOKEN = "xoxb-test-slack-bot-token-0123456789"
 
 @pytest.fixture(autouse=True)
 def github_port_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Use the shared-port vocabulary for every GitHub PR fixture."""
+    """Use shared-port vocabulary for every GitHub fixture."""
     monkeypatch.setenv("GENOMES_GITHUB_BRIDGE_COMMAND", "node bridge.mjs")
     pull_requests = [
         {
@@ -190,6 +190,28 @@ def github_port_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
         source_providers,
         "list_pull_requests",
         lambda _command, **_kwargs: pull_requests,
+    )
+    issues = [
+        {
+            "id": item["id"],
+            "number": item["number"],
+            "title": item["title"],
+            "state": item["state"],
+            "url": item["html_url"],
+            "author": item["user"],
+            "labels": [label["name"] for label in item["labels"]],
+            "assignees": [assignee["login"] for assignee in item["assignees"]],
+            "openedAt": item["created_at"],
+            "updatedAt": item["updated_at"],
+            "closedAt": item["closed_at"],
+            "pullRequest": False,
+        }
+        for item in GITHUB_ISSUE_FIXTURE
+    ]
+    monkeypatch.setattr(
+        source_providers,
+        "list_issues",
+        lambda _command, **_kwargs: issues,
     )
 
 def _make_json_fetcher(payload: Any):
@@ -462,46 +484,105 @@ class TestFetchGithubEvents:
         assert items[0]["requested_reviewers"] == ["reviewer1"]
         assert items[0]["requested_teams"] == []
 
-    def test_issue_only_poll_does_not_require_bridge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_issue_only_poll_requires_bridge(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
-        calls: list[str] = []
 
-        def issue_fetcher(req):
-            calls.append(req.full_url)
-            return _make_json_fetcher(GITHUB_ISSUE_FIXTURE)(req)
+        with pytest.raises(source_providers.GitHubBridgeError) as error:
+            fetch_github_events(
+                "testorg",
+                "testrepo",
+                token="fake_token",
+                event_types=["issues"],
+            )
 
+        assert error.value.code == "BRIDGE_UNCONFIGURED"
+
+    def test_issue_bridge_mapping_matches_legacy_shape(self) -> None:
         items = fetch_github_events(
             "testorg",
             "testrepo",
             token="fake_token",
             event_types=["issues"],
-            fetcher=issue_fetcher,
         )
 
-        assert len(calls) == 1
-        assert "/issues?" in calls[0]
-        assert items[0]["_event_type"] == "issue"
-        assert items[0]["number"] == 77
+        assert items == [{
+            **GITHUB_ISSUE_FIXTURE[0],
+            "_provider": "github",
+            "_event_type": "issue",
+            "_idempotency_key": "github:issue:testorg:testrepo:77",
+        }]
 
     def test_issue_only_poll_preserves_pr_shaped_issue_rows(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+        def issue_port(_command, **_kwargs):
+            issue = GITHUB_ISSUE_FIXTURE[0]
+            pr = GITHUB_PR_AS_ISSUE_FIXTURE
+            return [
+                {
+                    "id": issue["id"], "number": issue["number"],
+                    "title": issue["title"], "state": issue["state"],
+                    "url": issue["html_url"], "author": issue["user"],
+                    "labels": ["migration"], "assignees": ["owner1"],
+                    "openedAt": issue["created_at"], "updatedAt": issue["updated_at"],
+                    "closedAt": issue["closed_at"], "pullRequest": False,
+                },
+                {
+                    "id": pr["id"], "number": pr["number"],
+                    "title": pr["title"], "state": pr["state"],
+                    "url": pr["html_url"], "author": pr["user"],
+                    "labels": ["enhancement"], "assignees": [],
+                    "openedAt": pr["created_at"], "updatedAt": pr["updated_at"],
+                    "closedAt": pr["closed_at"], "pullRequest": True,
+                },
+            ]
+
+        monkeypatch.setattr(source_providers, "list_issues", issue_port)
 
         items = fetch_github_events(
             "testorg",
             "testrepo",
             token="fake_token",
             event_types=["issues"],
-            fetcher=_make_json_fetcher([
-                *GITHUB_ISSUE_FIXTURE,
-                GITHUB_PR_AS_ISSUE_FIXTURE,
-            ]),
         )
 
         assert [item["number"] for item in items] == [77, 42]
         assert items[1]["_event_type"] == "issue"
-        assert "pull_request" in items[1]
+        assert items[1]["pull_request"] == {
+            "url": "https://api.github.com/repos/testorg/testrepo/pulls/42"
+        }
+
+    def test_issue_bridge_rejects_non_boolean_pull_request_marker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        malformed = {
+            "id": 2001,
+            "number": 77,
+            "title": "Malformed marker",
+            "state": "open",
+            "url": "https://github.com/testorg/testrepo/issues/77",
+            "author": {"login": "issue-author", "id": 7777},
+            "labels": [],
+            "assignees": [],
+            "openedAt": "2026-06-04T10:00:00Z",
+            "updatedAt": "2026-06-05T12:00:00Z",
+            "pullRequest": "false",
+        }
+        monkeypatch.setattr(
+            source_providers,
+            "list_issues",
+            lambda _command, **_kwargs: [malformed],
+        )
+
+        with pytest.raises(source_providers.GitHubBridgeError) as error:
+            fetch_github_events(
+                "testorg",
+                "testrepo",
+                token="fake_token",
+                event_types=["issues"],
+            )
+
+        assert error.value.code == "BRIDGE_INVALID_RESPONSE"
 
     def test_pr_fixture_returns_trimmed_items(self) -> None:
         fetcher = _make_pr_then_issues_fetcher()
@@ -578,6 +659,22 @@ class TestFetchGithubEvents:
             "testorg", "testrepo",
             token="fake",
             event_types=["pull_request"],
+            fetcher=counting_fetcher,
+        )
+        assert call_count["n"] == 0
+
+    def test_issues_do_not_use_the_legacy_http_fetcher(self) -> None:
+        call_count = {"n": 0}
+
+        def counting_fetcher(_req):
+            call_count["n"] += 1
+            raise AssertionError("direct GitHub HTTP transport must not be used")
+
+        fetch_github_events(
+            "testorg",
+            "testrepo",
+            token="fake",
+            event_types=["issues"],
             fetcher=counting_fetcher,
         )
         assert call_count["n"] == 0
@@ -691,7 +788,7 @@ class TestPollAdaptersNoCreds:
         assert result["findings"] == [{
             "severity": "blocker",
             "code": "BRIDGE_UNCONFIGURED",
-            "message": "GitHub pull-request polling requires the configured platform GitHub bridge",
+            "message": "GitHub polling requires the configured platform GitHub bridge",
         }]
 
     def test_slack_no_token_returns_dry_run_fallback(self, monkeypatch) -> None:
@@ -781,6 +878,29 @@ class TestPollWatchSourceGithub:
         ]
         ws_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
+        regular_issue = GITHUB_ISSUE_FIXTURE[0]
+        pr_issue = GITHUB_PR_AS_ISSUE_FIXTURE
+        monkeypatch.setattr(source_providers, "list_issues", lambda _command, **_kwargs: [
+            {
+                "id": regular_issue["id"], "number": regular_issue["number"],
+                "title": regular_issue["title"], "state": regular_issue["state"],
+                "url": regular_issue["html_url"], "author": regular_issue["user"],
+                "labels": ["migration"], "assignees": ["owner1"],
+                "openedAt": regular_issue["created_at"],
+                "updatedAt": regular_issue["updated_at"],
+                "closedAt": regular_issue["closed_at"], "pullRequest": False,
+            },
+            {
+                "id": pr_issue["id"], "number": pr_issue["number"],
+                "title": pr_issue["title"], "state": pr_issue["state"],
+                "url": pr_issue["html_url"], "author": pr_issue["user"],
+                "labels": ["enhancement"], "assignees": [],
+                "openedAt": pr_issue["created_at"],
+                "updatedAt": pr_issue["updated_at"],
+                "closedAt": pr_issue["closed_at"], "pullRequest": True,
+            },
+        ])
+
         system = find_by_id(connected_systems(root), "github_test")
         source = find_by_id(data["watch_sources"], "github_pr_watch")
         result = poll_github_source(
@@ -817,12 +937,20 @@ class TestPollWatchSourceGithub:
             "BRIDGE_UNCONFIGURED"
         ]
 
-    def test_mixed_poll_preserves_issue_result_when_bridge_fails(
+    def test_mixed_poll_discards_partial_results_when_bridge_fails(
         self, tmp_path, monkeypatch
     ) -> None:
         root = _make_github_watch_root(tmp_path)
         monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
-        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+        monkeypatch.setattr(
+            source_providers,
+            "list_pull_requests",
+            lambda _command, **_kwargs: (_ for _ in ()).throw(
+                source_providers.GitHubBridgeError(
+                    "UPSTREAM_TIMEOUT", "GitHub pull request lookup timed out"
+                )
+            ),
+        )
         ws_path = root / "harness" / "shared_factory" / "00-control-plane" / "watch-sources.yml"
         data = yaml.safe_load(ws_path.read_text(encoding="utf-8"))
         data["watch_sources"][0]["external_ref"]["event_types"] = [
@@ -839,15 +967,14 @@ class TestPollWatchSourceGithub:
         result = poll_github_source(
             source,
             system,
-            fetcher=_make_json_fetcher(GITHUB_ISSUE_FIXTURE),
         )
 
         assert result["ok"] is False
-        assert result["partial"] is True
-        assert result["provider"] == "platform_github_port+direct_api"
-        assert result["item_count"] == 1
-        assert result["items"][0]["_event_type"] == "issue"
-        assert result["findings"][0]["code"] == "BRIDGE_UNCONFIGURED"
+        assert result.get("partial", False) is False
+        assert result["provider"] == "platform_github_port"
+        assert result["item_count"] == 0
+        assert result["items"] == []
+        assert result["findings"][0]["code"] == "UPSTREAM_TIMEOUT"
 
     def test_run_due_surfaces_bridge_failure(self, tmp_path, monkeypatch) -> None:
         root = _make_github_watch_root(tmp_path)
