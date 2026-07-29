@@ -195,6 +195,8 @@ class JiraBridgeAdapter:
         issue = self._request(
             "getIssue", {"key": tracker_id, "fields": ["assignee", "labels"]}
         )
+        if issue is None:
+            raise TrackerError(f"Jira issue {tracker_id} was not found")
         if not isinstance(issue, Mapping) or issue.get("key") != tracker_id:
             raise TrackerError(
                 "Jira issue readback did not match the requested tracker key"
@@ -213,13 +215,9 @@ class JiraBridgeAdapter:
             transition
             for transition in transitions
             if isinstance(transition, Mapping)
-            and (
-                transition.get("name") == state
-                or (
-                    isinstance(transition.get("destination"), Mapping)
-                    and transition["destination"].get("name") == state
-                )
-            )
+            and transition.get("available") is not False
+            and isinstance(transition.get("destination"), Mapping)
+            and transition["destination"].get("name") == state
         ]
         if len(matches) != 1 or not matches[0].get("id"):
             raise TrackerError("Jira workflow state did not resolve to one transition")

@@ -140,6 +140,22 @@ def test_jira_spec_update_preserves_existing_human_labels() -> None:
     assert labels[2].startswith("agentic-os-spec-")
 
 
+def test_jira_spec_get_reports_provider_not_found() -> None:
+    client = FakeBridgeClient()
+    client.request = lambda _operation, _args: None  # type: ignore[method-assign]
+    transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
+    try:
+        transport.request(
+            "get_spec",
+            {"provider_id": "APP-404", "target": {"project_key": "APP"}},
+        )
+    except JiraBridgeError as exc:
+        assert exc.code == "NOT_FOUND"
+        assert "APP-404 was not found" in str(exc)
+    else:
+        raise AssertionError("missing Jira issue was not classified as NOT_FOUND")
+
+
 def test_jira_spec_transport_environment_is_explicit_and_complete() -> None:
     assert transport_from_environment({}) is None
     incomplete = transport_from_environment(

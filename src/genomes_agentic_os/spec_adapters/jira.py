@@ -185,6 +185,10 @@ class JiraBridgeSpecTransport:
                 current = self.client.request(
                     "getIssue", {"key": provider_id, "fields": ["labels"]}
                 )
+                if current is None:
+                    raise JiraBridgeError(
+                        "NOT_FOUND", f"Jira issue {provider_id} was not found"
+                    )
                 if not isinstance(current, Mapping):
                     raise JiraBridgeError(
                         "BRIDGE_INVALID_RESPONSE",
@@ -235,6 +239,11 @@ class JiraBridgeSpecTransport:
             issue = self.client.request(
                 "getIssue", {"key": str(payload["provider_id"])}
             )
+            if issue is None:
+                raise JiraBridgeError(
+                    "NOT_FOUND",
+                    f"Jira issue {payload['provider_id']} was not found",
+                )
             if not isinstance(issue, Mapping):
                 raise JiraBridgeError(
                     "BRIDGE_INVALID_RESPONSE", "Jira readback returned invalid issue"
