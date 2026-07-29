@@ -23,8 +23,14 @@ class FakeBridgeClient:
                 "workspace": {"id": "workspace"},
                 "viewer": {"id": "viewer"},
             }
+        if operation == "listTeams":
+            return [{"id": "team", "key": "AGE", "name": "Agentic OS"}]
         if operation == "listIssuesByTeam":
-            return self.issues
+            return [
+                issue
+                for issue in self.issues
+                if str(issue.get("teamId") or "team") == str(args["teamId"])
+            ]
         if operation == "listWorkflowStates":
             return [{"id": "todo", "name": "Todo", "type": "unstarted"}]
         if operation == "listLabels":
@@ -119,6 +125,59 @@ def test_blocked_plan_uses_shared_label_capability() -> None:
         args for operation, args in client.calls if operation == "findOrCreateIssueByMarker"
     )
     assert create["input"]["labelIds"] == ["blocked-label"]
+
+
+def test_blocked_label_ignores_foreign_team_ownership() -> None:
+    client = FakeBridgeClient()
+
+    def request(operation, args):
+        if operation == "listLabels":
+            return [
+                {"id": "foreign", "name": "blocked", "teamId": "other"},
+                {"id": "target", "name": "blocked", "teamId": "team"},
+            ]
+        return FakeBridgeClient.request(client, operation, args)
+
+    client.request = request
+    receipt = adapter(client).create(
+        Spec(id="blocked", title="Blocked", status="blocked"), apply=True
+    )
+    assert receipt.ok is True
+    create = next(
+        args for operation, args in client.calls if operation == "findOrCreateIssueByMarker"
+    )
+    assert create["input"]["labelIds"] == ["target"]
+
+
+def test_existing_marker_is_found_across_visible_teams() -> None:
+    client = FakeBridgeClient(
+        issues=[
+            {
+                "id": "issue-moved",
+                "identifier": "AGE-1",
+                "url": "https://linear.app/genomes/issue/AGE-1/example",
+                "description": "spec:::one",
+                "labels": [],
+                "teamId": "other",
+            }
+        ]
+    )
+
+    original_request = client.request
+
+    def request(operation, args):
+        if operation == "listTeams":
+            client.calls.append((operation, args))
+            return [{"id": "team"}, {"id": "other"}]
+        return original_request(operation, args)
+
+    client.request = request
+    receipt = adapter(client).create(
+        Spec(id="one", title="Revised", status="ready"), apply=True
+    )
+    assert receipt.ok is True
+    assert receipt.provider_id == "issue-moved"
+    assert not any(operation == "findOrCreateIssueByMarker" for operation, _ in client.calls)
 
 
 def test_update_fails_closed_when_label_readback_is_missing() -> None:

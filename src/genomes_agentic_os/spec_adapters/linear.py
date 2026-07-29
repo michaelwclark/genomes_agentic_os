@@ -71,6 +71,7 @@ class LinearBridgeSpecTransport:
             label
             for label in labels
             if isinstance(label, Mapping)
+            and label.get("teamId") in (None, team_id)
             and str(label.get("name", "")).lower() == "blocked"
         ]
         if len(matches) > 1:
@@ -104,14 +105,29 @@ class LinearBridgeSpecTransport:
             return {"ok": True, "identity": identity}
         if action == "find_by_idempotency":
             marker = str(payload["idempotency_key"])
-            issues = self.client.request(
-                "listIssuesByTeam", {"teamId": team_id, "includeArchived": True}
+            teams = self.client.request("listTeams", {})
+            team_ids = list(
+                dict.fromkeys(
+                    [team_id]
+                    + [
+                        str(team.get("id"))
+                        for team in teams
+                        if isinstance(team, Mapping) and team.get("id")
+                    ]
+                )
             )
-            matches = [
-                issue for issue in issues
-                if isinstance(issue, Mapping)
-                and _has_exact_marker(issue.get("description"), marker)
-            ]
+            matches = []
+            for visible_team_id in team_ids:
+                issues = self.client.request(
+                    "listIssuesByTeam",
+                    {"teamId": visible_team_id, "includeArchived": True},
+                )
+                matches.extend(
+                    issue
+                    for issue in issues
+                    if isinstance(issue, Mapping)
+                    and _has_exact_marker(issue.get("description"), marker)
+                )
             if len(matches) > 1:
                 raise LinearBridgeError("CONFLICT", "Linear idempotency marker matched multiple issues")
             return self._provider_record(matches[0]) if matches else {}

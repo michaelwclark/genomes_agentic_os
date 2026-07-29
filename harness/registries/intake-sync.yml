@@ -23,7 +23,7 @@ project_map:
   # "Personal" -> no entry -> issues created with no project
 
 # Notion Status -> Linear workflow state NAME
-# State IDs are resolved at runtime via team.states GraphQL query.
+# State IDs are resolved at runtime through the reviewed shared Linear bridge.
 # 50/50 decision: blocked maps to Todo + a "blocked" label (not a separate state).
 # duplicate Linear state type -> Notion "dropped" (see back-sync below).
 status_map:

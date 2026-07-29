@@ -1047,9 +1047,8 @@ def execute_push(
         name = plan["name"]
 
         if plan["action"] == "create":
-            # Belt-and-suspenders: search Linear for existing issue by marker.
-            # Skip in dry-run: nothing has been created yet so no dupes possible,
-            # and 61 searches would exhaust the 30/min rate limit.
+            # Build one workspace-wide marker index lazily and reuse it for the
+            # entire push. Dry-run skips the read because it cannot create dupes.
             try:
                 if not dry_run and marker_index is None:
                     marker_index = linear_marker_index(team_id, token_linear)
