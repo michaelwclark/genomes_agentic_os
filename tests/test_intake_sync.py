@@ -109,7 +109,11 @@ def test_intake_sync_doctor_validates_state_and_project_mapping(monkeypatch, tmp
 
     codes = {finding["code"] for finding in result["findings"]}
     assert result["ok"] is False
-    assert codes == {"missing_linear_state", "missing_linear_project"}
+    assert codes == {
+        "missing_linear_state",
+        "missing_linear_project",
+        "linear_project_team_association_unverified",
+    }
 
 
 def test_intake_sync_doctor_passes_for_valid_mapping(monkeypatch, tmp_path):
@@ -138,10 +142,15 @@ def test_intake_sync_doctor_passes_for_valid_mapping(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert result["blocker_count"] == 0
-    assert result["findings"] == []
+    assert [finding["code"] for finding in result["findings"]] == [
+        "linear_project_team_association_unverified"
+    ]
     token_check = _check_named(result, "linear_token")
     assert token_check["ok"] is True
     assert token_check["configured_team_visible"] is True
+    team_check = _check_named(result, "linear_team")
+    assert team_check["projects_scope"] == "workspace"
+    assert team_check["project_team_association_verified"] is False
 
 
 def test_intake_sync_doctor_flags_configured_team_not_visible(monkeypatch, tmp_path):
@@ -380,6 +389,7 @@ def test_linear_get_labels_filters_foreign_team_labels(monkeypatch):
             return [
                 {"id": "l-ws", "name": "Improvement"},
                 {"id": "l-cc", "name": "aos-intake", "teamId": "team-1"},
+                {"id": "l-other", "name": "foreign", "teamId": "team-2"},
             ]
 
     monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
@@ -435,34 +445,45 @@ def test_linear_marker_scan_is_exhaustive_and_blocks_duplicates(monkeypatch):
     assert error.value.code == "CONFLICT"
 
 
-def test_linear_create_and_update_preserve_legacy_issue_fields(monkeypatch):
+def test_linear_find_create_and_update_preserve_legacy_issue_fields(monkeypatch):
     module = load_intake_sync_module()
     calls = []
 
     class FakeClient:
         def request(self, operation, args):
             calls.append((operation, args))
-            return {
+            issue = {
                 "id": "issue-1",
                 "identifier": "AGE-1",
                 "url": "https://linear.app/genomes/issue/AGE-1/example",
                 "state": {"id": "todo", "name": "Todo", "type": "unstarted"},
                 "priority": 2,
             }
+            return {"issue": issue, "created": True} if operation == "findOrCreateIssueByMarker" else issue
 
     monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
-    issue = module.linear_create_issue(
-        "Title", "Description", "todo", 2, ["label"], "team", "project", "token"
+    issue, created = module.linear_find_or_create_issue(
+        "notion:page-1",
+        title="Title",
+        description="Description\n\nnotion:page-1",
+        state_id="todo",
+        priority=2,
+        label_ids=["label"],
+        team_id="team",
+        project_id="project",
+        token="token",
     )
     module.linear_update_issue("issue-1", "started", 1, "token")
+    assert created is True
     assert issue["identifier"] == "AGE-1"
     assert calls == [
         (
-            "createIssue",
+            "findOrCreateIssueByMarker",
             {
+                "marker": "notion:page-1",
                 "input": {
                     "title": "Title",
-                    "description": "Description",
+                    "description": "Description\n\nnotion:page-1",
                     "stateId": "todo",
                     "priority": 2,
                     "labelIds": ["label"],
@@ -476,6 +497,38 @@ def test_linear_create_and_update_preserve_legacy_issue_fields(monkeypatch):
             {"issue": "issue-1", "input": {"stateId": "started", "priority": 1}},
         ),
     ]
+
+
+def test_linear_marker_index_is_reused_across_candidate_lookups(monkeypatch):
+    module = load_intake_sync_module()
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, operation, args):
+            self.calls.append((operation, args))
+            if operation == "listTeams":
+                return [{"id": "team"}, {"id": "other"}]
+            return [
+                {
+                    "id": args["teamId"],
+                    "description": f"notion:{args['teamId']}-page",
+                }
+            ]
+
+    client = FakeClient()
+    monkeypatch.setattr(module, "_linear_client", lambda token: client)
+    index = module.linear_marker_index("team", "token")
+    first_calls = list(client.calls)
+
+    assert module.linear_search_by_marker(
+        "team-page", "team", "token", marker_index=index
+    )["id"] == "team"
+    assert module.linear_search_by_marker(
+        "other-page", "team", "token", marker_index=index
+    )["id"] == "other"
+    assert client.calls == first_calls
 
 
 def test_linear_find_or_create_uses_atomic_bridge_reconciliation(monkeypatch):

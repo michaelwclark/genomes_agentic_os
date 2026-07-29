@@ -332,9 +332,16 @@ def linear_get_labels(token: str, team_id: str | None = None) -> list:
     """Labels usable by the configured team: workspace-level labels plus the
     team's own. Labels owned by another team cannot be attached to this
     team's issues (Linear rejects with 'labelIds for incorrect team')."""
-    return _linear_client(token).request(
+    labels = _linear_client(token).request(
         "listLabels", {**({"teamId": team_id} if team_id else {})}
     )
+    if team_id is None:
+        return labels
+    return [
+        label
+        for label in labels
+        if isinstance(label, dict) and label.get("teamId") in (None, team_id)
+    ]
 
 
 def linear_create_label(name: str, team_id: str, token: str) -> str:
@@ -386,9 +393,8 @@ def _has_exact_marker(description: object, marker: str) -> bool:
     )
 
 
-def linear_search_by_marker(page_id: str, team_id: str, token: str) -> dict | None:
-    """Search every visible team for the exact one-line intake marker."""
-    marker = f"notion:{page_id}"
+def linear_marker_index(team_id: str, token: str) -> dict[str, list[dict]]:
+    """Build one exhaustive workspace marker index for a bounded sync run."""
     client = _linear_client(token)
     teams = client.request("listTeams", {})
     team_ids = list(
@@ -401,45 +407,41 @@ def linear_search_by_marker(page_id: str, team_id: str, token: str) -> dict | No
             ]
         )
     )
-    matches = []
+    marker_index: dict[str, list[dict]] = {}
     for visible_team_id in team_ids:
         issues = client.request(
             "listIssuesByTeam",
             {"teamId": visible_team_id, "includeArchived": True},
         )
-        matches.extend(
-            issue
-            for issue in issues
-            if _has_exact_marker(issue.get("description"), marker)
-        )
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            issue_markers: set[str] = set()
+            for line in str(issue.get("description") or "").splitlines():
+                marker = line.strip().strip("`")
+                if marker.startswith("notion:"):
+                    issue_markers.add(marker)
+            for marker in issue_markers:
+                marker_index.setdefault(marker, []).append(issue)
+    return marker_index
+
+
+def linear_search_by_marker(
+    page_id: str,
+    team_id: str,
+    token: str,
+    *,
+    marker_index: dict[str, list[dict]] | None = None,
+) -> dict | None:
+    """Find an exact intake marker from one run-scoped exhaustive index."""
+    marker = f"notion:{page_id}"
+    index = marker_index if marker_index is not None else linear_marker_index(team_id, token)
+    matches = index.get(marker, [])
     if len(matches) > 1:
         raise LinearBridgeError(
             "CONFLICT", "Linear idempotency marker matched multiple issues"
         )
     return matches[0] if matches else None
-
-
-def linear_create_issue(
-    title: str,
-    description: str,
-    state_id: str,
-    priority: int,
-    label_ids: list[str],
-    team_id: str,
-    project_id: str | None,
-    token: str,
-) -> dict:
-    issue_input: dict = {
-        "title": title,
-        "description": description,
-        "stateId": state_id,
-        "priority": priority,
-        "labelIds": [lid for lid in label_ids if not lid.startswith("new-label:")],
-        "teamId": team_id,
-    }
-    if project_id:
-        issue_input["projectId"] = project_id
-    return _linear_client(token).request("createIssue", {"input": issue_input})
 
 
 def linear_find_or_create_issue(
@@ -525,6 +527,7 @@ def linear_get_team_sync_profile(team_id: str, token: str) -> dict:
         },
         "states": client.request("listWorkflowStates", {"teamId": team_id}),
         "projects": client.request("listProjects", {}),
+        "projects_scope": "workspace",
     }
 
 
@@ -799,8 +802,19 @@ def run_doctor(
                         {"id": project.get("id"), "name": project.get("name")}
                         for project in projects
                     ],
+                    "projects_scope": profile.get("projects_scope", "workspace"),
+                    "project_team_association_verified": False,
                 }
             )
+
+            if cfg.get("project_map"):
+                _add_finding(
+                    findings,
+                    "warning",
+                    "linear_project_team_association_unverified",
+                    "Linear project ids are workspace-visible; team association is not exposed by the reviewed bridge.",
+                    "Keep project_map pinned to reviewed ids and rely on provider rejection until the shared bridge exposes team-scoped projects.",
+                )
 
             state_names = {str(state.get("name", "")).lower() for state in states}
             for notion_status, mapping in (cfg.get("status_map") or {}).items():
@@ -1004,6 +1018,7 @@ def execute_push(
     candidates = rows_sorted[:limit] if limit is not None else rows_sorted
 
     counts = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
+    marker_index: dict[str, list[dict]] | None = None
     try:
         workspace_url_key = _linear_workspace_url_key(token_linear)
     except Exception as exc:
@@ -1036,7 +1051,18 @@ def execute_push(
             # Skip in dry-run: nothing has been created yet so no dupes possible,
             # and 61 searches would exhaust the 30/min rate limit.
             try:
-                existing = None if dry_run else linear_search_by_marker(page_id, team_id, token_linear)
+                if not dry_run and marker_index is None:
+                    marker_index = linear_marker_index(team_id, token_linear)
+                existing = (
+                    None
+                    if dry_run
+                    else linear_search_by_marker(
+                        page_id,
+                        team_id,
+                        token_linear,
+                        marker_index=marker_index,
+                    )
+                )
             except Exception as e:
                 print(f"  ERROR {name!r}: {_linear_sync_error_message('duplicate search', e)}", file=sys.stderr)
                 counts["errors"] += 1
@@ -1095,6 +1121,7 @@ def execute_push(
                     break
                 continue
             if not created:
+                marker_index.setdefault(f"notion:{page_id}", []).append(issue)
                 notion_set_linear_url(page_id, issue["url"], token_notion)
                 if verbose:
                     print(
@@ -1103,6 +1130,7 @@ def execute_push(
                     )
                 counts["skipped"] += 1
                 continue
+            marker_index.setdefault(f"notion:{page_id}", []).append(issue)
             # Write URL back immediately
             notion_set_linear_url(page_id, issue["url"], token_notion)
             print(f"  CREATED {issue['identifier']} ← {name!r} → {issue['url']}")
