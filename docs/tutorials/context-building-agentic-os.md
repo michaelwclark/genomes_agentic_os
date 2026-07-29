@@ -98,9 +98,9 @@ with `agentic-os domain create lending`:
 
       04-automations/
         engineering/
-        qa-after-merge/
-          AUTOMATION.md
-          RUNBOOK.md
+          qa-after-merge/
+            AUTOMATION.md
+            RUNBOOK.md
 ```
 
 The point is not the exact names. The point is that every layer answers a different question:
