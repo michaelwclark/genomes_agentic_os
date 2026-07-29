@@ -15,10 +15,11 @@ mechanical work, and one agent reads the right files at the right moment.
 > [glossary](start/glossary.md) of every internal term. Ten pages, no prior
 > knowledge assumed.
 
-**Test suite:** `.venv/bin/python -m pytest -q` is the source of truth for
-current pass/fail status — this handbook does not track a frozen count because
-it goes stale the moment a test is added. Re-validate the live CLI surface with
-`bash docs/architecture/tools/validate-cli.sh`.
+**Test suite:** the Python 3.14 branch-coverage gate is the source of truth for
+current pass/fail status. See [43 · Python Coverage Gate](43-python-coverage-gate.md)
+for the exact local command and monotonic floor rule. This handbook does not
+track a frozen test count because it goes stale the moment a test is added.
+Re-validate the live CLI surface with `bash docs/architecture/tools/validate-cli.sh`.
 
 **Canonical doc split:** Use this `docs/` handbook when you are evaluating,
 installing, or extending the source package and need architecture, command
@@ -116,6 +117,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [29 · Versioned Object Library](29-versioned-object-library.md) | Canonical source repository, manifest identities, exact-artifact release lifecycle, disposable installed projection, atomic install/readback, and compatibility boundaries. |
 | [40 · Auto-Dev Everything for Maintainers](40-auto-dev-everything-maintainers.md) | Linear-first delivery, canonical work items, reinstall-safe QA, optional Claude review, gated merge, release, and documentation projection. |
 | [42 · Auto-Dev Program](42-auto-dev-program.md) | One polymorphic SDLC family, five nested root/domain/project/invocation policy planes, artifact rendering/readback, investigation routing, development delivery, receipts, and retirement map. |
+| [43 · Python Coverage Gate](43-python-coverage-gate.md) | Python 3.14 branch-coverage enforcement, durable CI evidence, and the monotonic floor rule. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,

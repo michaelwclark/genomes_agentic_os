@@ -9,6 +9,8 @@ build/
 .playwright-mcp/
 .venv/
 .pytest_cache/
+.coverage
+coverage.json
 __pycache__/
 *.pyc
 *.egg-info/
