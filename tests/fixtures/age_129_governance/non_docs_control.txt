@@ -1,0 +1,4 @@
+AGE-129 non-documentation control.
+
+This disposable fixture proves that an unrelated pull request emits a
+successful Docs link policy check without running the documentation build.
