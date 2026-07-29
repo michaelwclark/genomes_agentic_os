@@ -1812,7 +1812,7 @@ def _team_pr_review_intent_key(identity: Mapping[str, Any]) -> str:
 
 
 def _team_pr_review_summary_path(
-    os_root: Path, identity: Mapping[str, Any]
+    os_root: Path, identity: Mapping[str, Any], domain_id: str
 ) -> Path:
     repository = str(identity["repository"])
     identity_suffix = _team_pr_review_intent_key(identity).split(":", 1)[1]
@@ -1823,7 +1823,9 @@ def _team_pr_review_summary_path(
     )
     return (
         os_root
-        / "runtime/objects/programs/program/domain/los/team_pr_sync/review-runs"
+        / "runtime/objects/programs/program/domain"
+        / domain_id
+        / "team_pr_sync/review-runs"
         / run_id
         / "summary.json"
     )
@@ -2120,7 +2122,8 @@ def _team_pr_ai_review_worker_locked(
         / task_id
         / "review-intent.json"
     )
-    helper_summary_path = _team_pr_review_summary_path(os_root, identity)
+    domain_id = str(route["task_type"]).split(".", 1)[0]
+    helper_summary_path = _team_pr_review_summary_path(os_root, identity, domain_id)
     helper_launch_path = helper_summary_path.with_name("helper-launch.json")
     intent = _read_json_object(intent_path, label="Team PR review intent")
     if intent is not None:
@@ -2649,7 +2652,8 @@ def _team_pr_ai_review_worker(
     route: Mapping[str, Any],
 ) -> dict[str, Any]:
     identity = _team_pr_review_identity(dict(task.get("payload") or {}))
-    lock_path = _team_pr_review_summary_path(os_root, identity).with_name(
+    domain_id = str(route["task_type"]).split(".", 1)[0]
+    lock_path = _team_pr_review_summary_path(os_root, identity, domain_id).with_name(
         "review-intent.lock"
     )
     try:

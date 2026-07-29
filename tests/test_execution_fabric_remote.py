@@ -1198,7 +1198,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     assert captured["calls"] == 1
     assert transitioned["effects"][0]["effectKey"] == expected_effect_key
     effect_key_path = execution_fabric_remote._team_pr_review_summary_path(
-        root, identity
+        root, identity, "los"
     ).with_name("effect-key.json")
     effect_key_record = json.loads(effect_key_path.read_text(encoding="utf-8"))
     effect_key_path.write_text(
@@ -1228,7 +1228,9 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     intent_path.write_text(
         json.dumps(pending_intent, sort_keys=True), encoding="utf-8"
     )
-    summary_path = execution_fabric_remote._team_pr_review_summary_path(root, identity)
+    summary_path = execution_fabric_remote._team_pr_review_summary_path(
+        root, identity, "los"
+    )
     summary_path.unlink()
     launch_path = summary_path.with_name("helper-launch.json")
     terminal_launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))

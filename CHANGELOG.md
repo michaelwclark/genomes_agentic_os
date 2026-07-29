@@ -33,6 +33,8 @@ All notable changes to this project are documented here. The format follows
   pinned queues before worker registration and claim.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails retryably before helper execution.
+- Derive the helper receipt domain from the validated task route so the generic
+  execution-fabric package does not hard-code a private domain path.
 - Ship the Agentic OS route before the paired object-library producer; the new
   producer emits explicit `review_mode`, which an older closed route rejects.
   Quiesce the review queue during this upgrade so an unacknowledged legacy
