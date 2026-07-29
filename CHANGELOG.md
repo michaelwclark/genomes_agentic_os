@@ -13,8 +13,8 @@ All notable changes to this project are documented here. The format follows
   attempts per review identity, and bind the helper to the exact review mode,
   run ID, and summary path. Full-digest receipt paths, fsync-backed
   persistence, and a durable helper-launch marker prevent cross-ticket recovery collisions,
-  torn intent writes, and relaunch while a recorded helper PID remains live
-  inside its bounded age window. Successful helpers terminalize the marker.
+  torn intent writes, and relaunch while the PID still belongs to the exact
+  helper run. Fresh and recovered successes terminalize the marker.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails closed before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new

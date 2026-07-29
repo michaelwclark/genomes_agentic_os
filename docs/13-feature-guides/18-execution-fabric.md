@@ -250,6 +250,9 @@ provider read; a live PID remains fenced beyond the age threshold, while a
 dead PID permits immediate recovery. Spawn exceptions durably mark the launch
 failed before returning a classified retryable error, and a validated helper
 result terminalizes the marker as `succeeded`.
+PID reuse is rejected by verifying the live process command against the exact
+helper script and full-identity run ID; only that verified helper remains
+fenced beyond the age grace.
 Create-once losers revalidate the winning intent before using it. The
 trusted controller revalidates the immutable provider head before and after
 review, and binds every recovered summary's run ID and source key back to the

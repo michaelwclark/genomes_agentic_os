@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import shlex
 import socket
+import subprocess
 import tempfile
 import time
 from typing import Any, Callable, Mapping
@@ -1841,6 +1842,35 @@ def _process_is_alive(pid: int) -> bool:
     return True
 
 
+def _process_is_team_pr_helper(pid: int, run_id: str) -> bool:
+    if not _process_is_alive(pid):
+        return False
+    command = ""
+    proc_command = Path(f"/proc/{pid}/cmdline")
+    try:
+        if proc_command.is_file():
+            command = proc_command.read_bytes().replace(b"\0", b" ").decode(
+                "utf-8", errors="replace"
+            )
+        else:
+            command = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout
+        args = shlex.split(command)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return (
+        any(value.endswith("team_pr_review_fabric.py") for value in args)
+        and "--run-id" in args
+        and args.index("--run-id") + 1 < len(args)
+        and args[args.index("--run-id") + 1] == run_id
+    )
+
+
 def _validate_team_pr_review_intent(
     intent: Mapping[str, Any],
     *,
@@ -2121,8 +2151,12 @@ def _team_pr_ai_review_worker_locked(
                 ) from None
             helper_pid = helper_launch.get("helper_pid")
             helper_alive = isinstance(helper_pid, int) and _process_is_alive(helper_pid)
-            if launch_age < TEAM_PR_HELPER_STALE_SECONDS and (
-                helper_alive or helper_pid is None
+            helper_verified = isinstance(helper_pid, int) and _process_is_team_pr_helper(
+                helper_pid, helper_summary_path.parent.name
+            )
+            if helper_verified or (
+                launch_age < TEAM_PR_HELPER_STALE_SECONDS
+                and (helper_alive or helper_pid is None)
             ):
                 raise TaskExecutionError(
                     "team_pr_review_in_progress",
@@ -2146,10 +2180,24 @@ def _team_pr_ai_review_worker_locked(
                 timeout_seconds=TEAM_PR_HELPER_TIMEOUT_SECONDS,
             )
         except Exception as exc:
+            latest_launch = _read_json_object(
+                helper_launch_path, label="Team PR helper launch marker"
+            )
+            latest_launch = latest_launch or helper_launch
+            latest_pid = latest_launch.get("helper_pid")
+            if isinstance(latest_pid, int) and _process_is_team_pr_helper(
+                latest_pid, helper_summary_path.parent.name
+            ):
+                raise TaskExecutionError(
+                    "team_pr_review_in_progress",
+                    "Team PR helper may still be running after a dispatch failure",
+                    retryable=True,
+                    receipt_path=str(helper_launch_path),
+                ) from None
             _write_receipt(
                 helper_launch_path,
                 {
-                    **helper_launch,
+                    **latest_launch,
                     "status": "failed",
                     "finished_at": _utc_now(),
                     "failure_type": type(exc).__name__,
@@ -2263,15 +2311,19 @@ def _team_pr_ai_review_worker_locked(
             receipt_path=str(receipt_path),
         )
     if helper_result is None:
-        try:
-            helper_result = json.loads(str(execution.get("stdout") or ""))
-        except json.JSONDecodeError:
-            raise TaskExecutionError(
-                "invalid_team_pr_helper_receipt",
-                "Team PR review helper did not return a JSON object",
-                retryable=False,
-                receipt_path=str(receipt_path),
-            ) from None
+        helper_result = _read_json_object(
+            helper_summary_path, label="Team PR helper summary"
+        )
+        if helper_result is None:
+            try:
+                helper_result = json.loads(str(execution.get("stdout") or ""))
+            except json.JSONDecodeError:
+                raise TaskExecutionError(
+                    "invalid_team_pr_helper_receipt",
+                    "Team PR review helper did not return a JSON object",
+                    retryable=True,
+                    receipt_path=str(receipt_path),
+                ) from None
     if not isinstance(helper_result, dict):
         raise TaskExecutionError(
             "invalid_team_pr_helper_receipt",
@@ -2289,17 +2341,31 @@ def _team_pr_ai_review_worker_locked(
             retryable=False,
             receipt_path=str(helper_summary_path),
         )
-    if not recovered:
-        latest_launch = _read_json_object(
-            helper_launch_path, label="Team PR helper launch marker"
-        )
-        if latest_launch is None:
+    latest_launch = _read_json_object(
+        helper_launch_path, label="Team PR helper launch marker"
+    )
+    if latest_launch is None:
+        if not recovered:
             raise TaskExecutionError(
                 "team_pr_durable_receipt_unavailable",
                 "Team PR helper launch marker disappeared after execution",
                 retryable=True,
                 receipt_path=str(helper_launch_path),
             )
+    elif (
+        latest_launch.get("schema_version")
+        != "agentic-os-team-pr-helper-launch/v1"
+        or latest_launch.get("intent_key") != intent_key
+        or latest_launch.get("helper_summary_path") != str(helper_summary_path)
+        or latest_launch.get("status") not in {"running", "failed", "succeeded"}
+    ):
+        raise TaskExecutionError(
+            "team_pr_review_intent_conflict",
+            "Team PR helper launch marker changed before terminalization",
+            retryable=False,
+            receipt_path=str(helper_launch_path),
+        )
+    elif latest_launch.get("status") != "succeeded":
         _write_receipt(
             helper_launch_path,
             {

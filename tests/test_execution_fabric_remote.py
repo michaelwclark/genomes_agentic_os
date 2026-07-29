@@ -1214,6 +1214,23 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         execute_assignment(root, assignment)
     assert orphan_still_bounded.value.code == "team_pr_review_in_progress"
     assert captured["calls"] == 1
+    launch_marker["launched_at"] = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=execution_fabric_remote.TEAM_PR_HELPER_STALE_SECONDS + 1)
+    ).isoformat().replace("+00:00", "Z")
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+    real_helper_match = execution_fabric_remote._process_is_team_pr_helper
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: True,
+    )
+    with pytest.raises(TaskExecutionError) as verified_live_orphan:
+        execute_assignment(root, assignment)
+    assert verified_live_orphan.value.code == "team_pr_review_in_progress"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
     launch_marker.pop("helper_pid")
     launch_marker["launched_at"] = "2026-07-29T10:00:00"
     launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
@@ -1256,6 +1273,31 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     assert failed_launch.value.code == "team_pr_helper_launch_failed"
     assert failed_launch.value.retryable is True
     assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+
+    def poll_error_after_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": os.getpid()}), encoding="utf-8"
+        )
+        raise RuntimeError("fixture governor poll failure")
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", poll_error_after_spawn)
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: True,
+    )
+    with pytest.raises(TaskExecutionError) as live_poll_error:
+        execute_assignment(root, assignment)
+    assert live_poll_error.value.code == "team_pr_review_in_progress"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "running"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["status"] = "failed"
+    launch_marker.pop("helper_pid", None)
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
 
     def stale_execution(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         marker = json.loads(launch_path.read_text(encoding="utf-8"))
@@ -1363,19 +1405,23 @@ def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(
         nonlocal calls
         calls += 1
         helper_command = shlex.split(str(_args[1]))
+        helper_result = {
+            "status": "superseded",
+            "run_id": helper_command[helper_command.index("--run-id") + 1],
+            "source_key": "github-pr-42",
+            "reason": "head_changed",
+            "observed_head_sha": "b" * 40,
+        }
+        helper_summary = Path(
+            helper_command[helper_command.index("--summary-path") + 1]
+        )
+        helper_summary.parent.mkdir(parents=True, exist_ok=True)
+        helper_summary.write_text(json.dumps(helper_result), encoding="utf-8")
         return {
             "supported": True,
             "ok": True,
             "exit_code": 0,
-            "stdout": json.dumps(
-                {
-                    "status": "superseded",
-                    "run_id": helper_command[helper_command.index("--run-id") + 1],
-                    "source_key": "github-pr-42",
-                    "reason": "head_changed",
-                    "observed_head_sha": "b" * 40,
-                }
-            ),
+            "stdout": "truncated governed output before terminal JSON",
             "stderr": "",
             "errors": [],
             "warnings": [],
