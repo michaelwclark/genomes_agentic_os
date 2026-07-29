@@ -44,7 +44,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
     return repo, _git("rev-parse", "HEAD", cwd=repo)
 
 
-def _project(root: Path, repo: Path) -> Path:
+def _project(root: Path, repo: Path, *, worktree_directory: str = "worktrees") -> Path:
     create_project(root, "acme", "app", repo=str(repo))
     project = root / "domains" / "acme" / "02-projects" / "app"
     profile = {
@@ -53,7 +53,7 @@ def _project(root: Path, repo: Path) -> Path:
         "tracker": {"primary": "linear"},
         "repository": {"root": str(repo), "base_branch": "main"},
         "worktrees": {
-            "directory": "worktrees",
+            "directory": worktree_directory,
             "branch_template": "feature/{ticket}-{slug}",
         },
         "work_items": {"active_status": "building"},
@@ -353,13 +353,30 @@ def test_start_reuses_canonical_source_identity_and_existing_packet(
         connection.close()
 
 
-@pytest.mark.parametrize("external", [False, True], ids=["in-place", "external-symlink"])
+@pytest.mark.parametrize(
+    ("worktree_directory", "external"),
+    [
+        ("worktrees", False),
+        ("worktrees", True),
+        ("custom/checkouts", False),
+        ("custom/checkouts", True),
+    ],
+    ids=[
+        "default-in-place",
+        "default-external-symlink",
+        "custom-in-place",
+        "custom-external-symlink",
+    ],
+)
 def test_adopt_existing_packet_preserves_canonical_source_and_avoids_duplicate(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], external: bool
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    worktree_directory: str,
+    external: bool,
 ) -> None:
     repo, _base_sha = _repository(tmp_path)
     root = tmp_path / "os"
-    project = _project(root, repo)
+    project = _project(root, repo, worktree_directory=worktree_directory)
     created = create_project_work_item(
         root,
         "acme",
@@ -382,7 +399,7 @@ def test_adopt_existing_packet_preserves_canonical_source_and_avoids_duplicate(
     worktree = (
         tmp_path / "external-worktrees" / "legacy-adopt"
         if external
-        else project / "worktrees" / "legacy-adopt"
+        else project / worktree_directory / "legacy-adopt"
     )
     worktree.parent.mkdir(parents=True, exist_ok=True)
     _git("worktree", "add", "-b", "feature/cc-adopt", str(worktree), "main", cwd=repo)
@@ -463,7 +480,7 @@ def test_adopt_external_worktree_rejects_mismatched_registry_link(
 ) -> None:
     repo, _base_sha = _repository(tmp_path)
     root = tmp_path / "os"
-    project = _project(root, repo)
+    project = _project(root, repo, worktree_directory="custom/checkouts")
     worktree = tmp_path / "external-worktrees" / "registered"
     worktree.parent.mkdir(parents=True, exist_ok=True)
     _git(
@@ -539,6 +556,60 @@ def test_adopt_external_worktree_rejects_unregistered_target(tmp_path: Path) -> 
                 "branch": "feature/unregistered-external",
             },
         )
+
+
+def test_adopt_worktree_ignores_anonymous_registry_rows(tmp_path: Path) -> None:
+    repo, _base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    worktree = project / "worktrees" / "registered"
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    _git(
+        "worktree",
+        "add",
+        "-b",
+        "feature/registered-external",
+        str(worktree),
+        "main",
+        cwd=repo,
+    )
+    register_project_worktree(
+        root, "acme", "app", "registered", path=worktree
+    )
+    anonymous_target = tmp_path / "unrelated" / "anonymous"
+    anonymous_target.mkdir(parents=True)
+    (project / "config" / "worktrees.yml").write_text(
+        yaml.safe_dump(
+            {
+                "worktrees": [
+                    {
+                        "path": str(anonymous_target),
+                        "status": "active",
+                        "link": "worktrees/anonymous",
+                    }
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    adopted = delivery._adopt_registered_worktree(
+        os_root=root,
+        domain="acme",
+        project="app",
+        profile=yaml.safe_load(
+            (project / "config" / "development.yml").read_text(encoding="utf-8")
+        ),
+        canonical_row={
+            "worktree_path": str(worktree),
+            "branch": "feature/registered-external",
+        },
+    )
+
+    assert adopted is not None
+    assert adopted["name"] == "registered"
+    assert Path(adopted["path"]) == worktree
 
 
 def test_adopt_worktree_mismatch_fails_before_any_state_mutation(

@@ -4858,7 +4858,7 @@ def register_project_worktree(
         raise ValueError(f"worktree path must be an existing directory: {target}")
 
     code_settings = load_project_code_settings(project_root)
-    worktrees_root = (project_root / "worktrees").resolve()
+    worktrees_root = project_worktree_root(project_root, code_settings)
     in_place = target.is_relative_to(worktrees_root)
     # Existing in-place checkouts are renamed only by the transactional
     # migration command because git metadata must move with the directory.
@@ -4870,10 +4870,13 @@ def register_project_worktree(
             scope="worktrees",
         )
     result = onboard_project(os_root, domain, project)
-    link_path = project_root / "worktrees" / name
+    link_path = worktrees_root / name
     if in_place:
         if target != worktrees_root / name:
-            raise ValueError(f"in-place worktree path must be the worktrees/{name} directory itself: {target}")
+            raise ValueError(
+                "in-place worktree path must be the configured "
+                f"worktree directory's {name} entry itself: {target}"
+            )
         result.skipped.append(link_path)
     elif link_path.is_symlink():
         if link_path.resolve() == target:
@@ -4887,8 +4890,14 @@ def register_project_worktree(
     elif link_path.exists():
         raise ValueError(f"worktree link exists and is not a symlink: {link_path}")
     else:
+        link_path.parent.mkdir(parents=True, exist_ok=True)
         link_path.symlink_to(target, target_is_directory=True)
         result.created.append(link_path)
+
+    try:
+        registered_link = str(link_path.relative_to(project_root))
+    except ValueError:
+        registered_link = str(link_path)
 
     index_data = load_project_worktree_index(project_root, project)
     entries = [entry for entry in index_data.get("worktrees", []) if isinstance(entry, dict)]
@@ -4907,7 +4916,7 @@ def register_project_worktree(
     entry = {
         "id": name,
         "path": str(target),
-        "link": f"worktrees/{name}",
+        "link": registered_link,
         "status": "active",
         "link_policy": "in_place_worktree" if in_place else "symlink_to_external_worktree",
         **({"branch": branch} if branch else {}),

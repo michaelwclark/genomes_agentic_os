@@ -9,8 +9,9 @@
   branch and base branch, configured repository, Git common directory, and
   merge base before writing delivery state.
 - Added full CLI adoption coverage for both in-place and external-symlink
-  worktrees plus negative regressions for unregistered targets, changed links,
-  and branch mismatches.
+  worktrees in default and custom configured directories, plus negative
+  regressions for unregistered targets, changed links, branch mismatches, and
+  anonymous registry rows.
 
 ## 2026-07-21 — Object Library self-hosting
 

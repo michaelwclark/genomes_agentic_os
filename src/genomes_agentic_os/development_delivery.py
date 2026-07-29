@@ -2051,22 +2051,26 @@ def _adopt_registered_worktree(
             candidate = project_path / candidate
         return candidate.resolve()
 
+    def registry_identity(row: Mapping[str, Any]) -> str:
+        return str(row.get("id") or row.get("name") or "").strip()
+
     matches = [
         row
         for row in active_entries
-        if str(row.get("path") or "").strip()
+        if registry_identity(row)
+        and str(row.get("path") or "").strip()
         and registered_target(row) == path
     ]
     if not matches:
         raise DevelopmentDeliveryError("adopted worktree is not present in the active project registry")
-    names = {str(row.get("id") or row.get("name") or path.name) for row in matches}
+    names = {registry_identity(row) for row in matches}
     if len(names) != 1:
         raise DevelopmentDeliveryError("adopted worktree has conflicting registry identities")
     name = names.pop()
     identity_rows = [
         row
         for row in active_entries
-        if str(row.get("id") or row.get("name") or path.name) == name
+        if registry_identity(row) == name
     ]
     if any(registered_target(row) != path for row in identity_rows):
         raise DevelopmentDeliveryError("adopted worktree has conflicting registry targets")
@@ -2074,9 +2078,9 @@ def _adopt_registered_worktree(
     external = boundary != path.parent and boundary not in path.parents
     registered_links: set[Path] = set()
     for row in identity_rows:
-        raw_link = str(row.get("link") or f"worktrees/{name}").strip()
-        link = Path(raw_link).expanduser()
-        if not link.is_absolute():
+        raw_link = str(row.get("link") or "").strip()
+        link = Path(raw_link).expanduser() if raw_link else boundary / name
+        if raw_link and not link.is_absolute():
             link = project_path / link
         link_parent = link.parent.resolve()
         if link_parent != boundary and boundary not in link_parent.parents:
