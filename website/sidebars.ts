@@ -99,6 +99,7 @@ const sidebars: SidebarsConfig = {
         'docs/40-auto-dev-everything-maintainers',
         'docs/29-spec-engine',
         'docs/dependency-contract-tests',
+        'docs/release-contract',
       ],
     },
     {
