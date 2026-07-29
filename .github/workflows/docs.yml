@@ -8,11 +8,6 @@ name: Docs
 # `build`, so a broken internal link fails the build and nothing is published.
 on:
   pull_request:
-    paths:
-      - "docs/**"
-      - "operating-manual/**"
-      - "website/**"
-      - ".github/workflows/docs.yml"
   push:
     branches: [main]
     paths:
@@ -33,6 +28,7 @@ concurrency:
 
 jobs:
   build:
+    name: Docs link policy
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -40,16 +36,39 @@ jobs:
         working-directory: website
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: docs-scope
+        name: Detect documentation-impacting pull-request changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed_files="${RUNNER_TEMP}/age-129-changed-files"
+          git diff --name-only --no-renames "${BASE_SHA}" "${HEAD_SHA}" > "${changed_files}"
+          if grep -Eq '^(docs/|operating-manual/|website/|\.github/workflows/docs\.yml$)' "${changed_files}"; then
+            echo "required=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "required=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Record successful non-documentation policy result
+        if: github.event_name == 'pull_request' && steps.docs-scope.outputs.required != 'true'
+        run: echo "No documentation-impacting paths changed; the stable docs policy check passes."
       - uses: actions/setup-node@v6
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: website/package-lock.json
       - name: Install dependencies
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
         run: npm ci
       - name: Typecheck config and components
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
         run: npm run typecheck
       - name: Build site and check every internal link
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
         run: npm run build
       - name: Package the built site for Pages
         if: github.event_name == 'push'
