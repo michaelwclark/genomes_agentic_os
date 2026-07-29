@@ -116,6 +116,70 @@ def test_comments_preserve_legacy_key_newest_first_and_limit() -> None:
     }
 
 
+def test_installed_release_runtime_order_is_numeric() -> None:
+    module = _load_cli()
+    root = Path("/tmp/releases")
+    candidates = [
+        root / "0.1.7-old" / "runtime" / "bin" / "python",
+        root / "0.1.10-new" / "runtime" / "bin" / "python",
+        root / "invalid" / "runtime" / "bin" / "python",
+    ]
+    ordered = sorted(candidates, key=module._release_version_key, reverse=True)
+    assert [candidate.parents[2].name for candidate in ordered] == [
+        "0.1.10-new",
+        "0.1.7-old",
+        "invalid",
+    ]
+
+
+def test_browse_base_participates_in_login_shell_fallback(monkeypatch) -> None:
+    module = _load_cli()
+    observed_names: tuple[str, ...] = ()
+
+    def fake_env(names: tuple[str, ...]) -> dict[str, str]:
+        nonlocal observed_names
+        observed_names = names
+        return {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_OAUTH_TOKEN": "secret",
+            "JIRA_CLOUD_ID": "cloud-1",
+            "JIRA_BROWSE_BASE": "https://jira.invalid",
+        }
+
+    monkeypatch.setattr(module, "env_from_login_shell", fake_env)
+    auth = module.resolve_auth()
+    assert "JIRA_BROWSE_BASE" in observed_names
+    assert auth["browse_base"] == "https://jira.invalid"
+
+
+def test_get_issue_reports_not_found_distinctly() -> None:
+    module = _load_cli()
+    client = _facade(module)
+    client.bridge.request = lambda _operation, _args: None
+    with pytest.raises(module.JiraCliError, match="APP-404 was not found"):
+        client.get_issue("APP-404", ["summary"])
+
+
+def test_main_catches_bridge_configuration_errors_without_traceback(
+    monkeypatch, capsys
+) -> None:
+    module = _load_cli()
+
+    class Parser:
+        @staticmethod
+        def parse_args() -> argparse.Namespace:
+            def fail(_args: argparse.Namespace) -> int:
+                raise module.JiraBridgeError("CONFIGURATION_ERROR", "bad command")
+
+            return argparse.Namespace(func=fail)
+
+    monkeypatch.setattr(module, "build_parser", lambda: Parser())
+    assert module.main() == 1
+    stderr = capsys.readouterr().err
+    assert "CONFIGURATION_ERROR" in stderr
+    assert "Traceback" not in stderr
+
+
 def test_source_checkout_wrapper_bootstraps_under_ambient_python() -> None:
     path = Path(__file__).parents[1] / "harness" / "bin" / "agentic-os-jira"
     completed = subprocess.run(

@@ -42,6 +42,20 @@ def _load_jira_tracker() -> ModuleType:
 class FakeBridge:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.transitions = [
+            {
+                "id": "31",
+                "name": "Start Progress",
+                "available": True,
+                "destination": {"name": "In Progress"},
+            },
+            {
+                "id": "41",
+                "name": "Complete",
+                "available": True,
+                "destination": {"name": "Done"},
+            },
+        ]
         self.issue = {
             "id": "131",
             "key": "APP-131",
@@ -76,14 +90,7 @@ class FakeBridge:
             self.issue["fields"].update(deepcopy(args["input"]["fields"]))
             return deepcopy(self.issue)
         if operation == "listTransitions":
-            return [
-                {
-                    "id": "31",
-                    "name": "Start Progress",
-                    "destination": {"name": "In Progress"},
-                },
-                {"id": "41", "name": "Complete", "destination": {"name": "Done"}},
-            ]
+            return deepcopy(self.transitions)
         if operation == "transitionIssue":
             states = {"31": "In Progress", "41": "Done"}
             self.issue["status"] = {
@@ -132,6 +139,53 @@ def test_live_jira_tracker_claim_and_transition_are_preflighted_and_reread() -> 
     marker = comment["input"]["reconciliationMarker"]
     assert marker.startswith("agentic-os:auto-dev:")
     assert marker in str(comment["input"]["body"])
+
+
+def test_live_jira_tracker_reports_not_found_distinctly() -> None:
+    module = _load_jira_tracker()
+    bridge = FakeBridge()
+    bridge.request = lambda _operation, _args: None  # type: ignore[method-assign]
+    adapter = _adapter(module, bridge)
+    try:
+        adapter.fetch("APP-404")
+    except module.TrackerError as exc:
+        assert "APP-404 was not found" in str(exc)
+    else:
+        raise AssertionError("missing Jira issue was not reported as not found")
+
+
+def test_transition_matches_available_destination_only() -> None:
+    module = _load_jira_tracker()
+    bridge = FakeBridge()
+    bridge.transitions = [
+        {
+            "id": "wrong-name",
+            "name": "Done",
+            "available": True,
+            "destination": {"name": "Resolved"},
+        },
+        {
+            "id": "unavailable",
+            "name": "Complete",
+            "available": False,
+            "destination": {"name": "Done"},
+        },
+        {
+            "id": "41",
+            "name": "Complete",
+            "available": True,
+            "destination": {"name": "Done"},
+        },
+    ]
+    adapter = _adapter(module, bridge)
+
+    completed = adapter.transition("APP-131", "Done")
+
+    assert completed.workflow_state == "Done"
+    transition = next(
+        args for operation, args in bridge.calls if operation == "transitionIssue"
+    )
+    assert transition["transitionId"] == "41"
 
 
 def test_fixture_and_live_adapter_projection_stays_byte_identical() -> None:

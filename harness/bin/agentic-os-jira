@@ -15,11 +15,20 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+
+def _release_version_key(candidate: Path) -> tuple[int, ...]:
+    """Return the numeric release prefix for an installed runtime candidate."""
+    match = re.match(r"^(\d+(?:\.\d+)*)", candidate.parents[2].name)
+    if match is None:
+        return (-1,)
+    return tuple(int(part) for part in match.group(1).split("."))
 
 
 def _ensure_agentic_os_runtime() -> None:
@@ -43,26 +52,33 @@ def _ensure_agentic_os_runtime() -> None:
         Path.home() / "Library" / "Application Support" / "AgenticOS" / "releases"
     )
     candidates.extend(
-        sorted(releases.glob("*/runtime/bin/python"), reverse=True)
+        sorted(
+            releases.glob("*/runtime/bin/python"),
+            key=_release_version_key,
+            reverse=True,
+        )
         if releases.is_dir()
         else []
     )
     for candidate in candidates:
         if not candidate.is_file() or not os.access(candidate, os.X_OK):
             continue
-        probe = subprocess.run(
-            [str(candidate), "-c", "import genomes_agentic_os.jira_bridge"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if probe.returncode == 0:
-            os.execve(
-                str(candidate),
-                [str(candidate), __file__, *sys.argv[1:]],
-                dict(os.environ),
+        try:
+            probe = subprocess.run(
+                [str(candidate), "-c", "import genomes_agentic_os.jira_bridge"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
+            if probe.returncode == 0:
+                os.execve(
+                    str(candidate),
+                    [str(candidate), __file__, *sys.argv[1:]],
+                    dict(os.environ),
+                )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
     raise SystemExit(
         "ERROR: agentic-os-jira requires an Agentic OS runtime containing the shared Jira bridge; "
         "install the reviewed release or set AGENTIC_OS_PYTHON"
@@ -92,6 +108,7 @@ JIRA_OAUTH_CLOUD_ID_NAMES = (
 JIRA_BASIC_TOKEN_NAMES = ("JIRA_API_TOKEN",)
 JIRA_BASIC_EMAIL_NAMES = ("JIRA_EMAIL",)
 JIRA_BASIC_BASE_NAMES = ("JIRA_BASE_URL",)
+JIRA_BROWSE_BASE_NAMES = ("JIRA_BROWSE_BASE",)
 JIRA_BRIDGE_COMMAND_NAMES = ("GENOMES_JIRA_BRIDGE_COMMAND",)
 JIRA_ACCOUNT_ID_NAMES = ("JIRA_ACCOUNT_ID", "ATLASSIAN_ACCOUNT_ID")
 JIRA_ISSUE_TYPE_ID_NAMES = ("JIRA_DEFAULT_ISSUE_TYPE_ID",)
@@ -155,6 +172,7 @@ def resolve_auth() -> dict[str, Any]:
         + JIRA_BASIC_TOKEN_NAMES
         + JIRA_BASIC_EMAIL_NAMES
         + JIRA_BASIC_BASE_NAMES
+        + JIRA_BROWSE_BASE_NAMES
         + JIRA_BRIDGE_COMMAND_NAMES
         + JIRA_ACCOUNT_ID_NAMES
         + JIRA_ISSUE_TYPE_ID_NAMES
@@ -175,7 +193,9 @@ def resolve_auth() -> dict[str, Any]:
         return {
             "mode": "bearer",
             "base": oauth_base,
-            "browse_base": first_env(env, JIRA_BASIC_BASE_NAMES) or DEFAULT_BROWSE_BASE,
+            "browse_base": first_env(env, JIRA_BROWSE_BASE_NAMES)
+            or first_env(env, JIRA_BASIC_BASE_NAMES)
+            or DEFAULT_BROWSE_BASE,
             "bridge_command": command,
             "bridge_auth": {"JIRA_OAUTH_TOKEN": bearer},
             "cloud_id": first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES),
@@ -256,6 +276,8 @@ class JiraBridgeFacade:
 
     def get_issue(self, issue_key: str, fields: list[str]) -> dict[str, Any]:
         data = self.request("getIssue", {"key": issue_key, "fields": fields})
+        if data is None:
+            raise JiraCliError(f"Jira issue {issue_key} was not found")
         if not isinstance(data, dict):
             raise JiraCliError("Jira bridge returned invalid issue data")
         return data
@@ -581,6 +603,9 @@ def main() -> int:
         return int(args.func(args))
     except JiraCliError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    except JiraBridgeError as exc:
+        print(f"ERROR: Jira bridge {exc.code}: {exc}", file=sys.stderr)
         return 1
 
 
