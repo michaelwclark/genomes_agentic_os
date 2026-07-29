@@ -105,6 +105,13 @@ adds a job to the queue. It queues; it does not execute directly.
 **Execution Fabric** — the optional heavier machinery for running many things at
 once across several machines. Off by default.
 
+**Witness commit** — the Execution Fabric's durable authorization boundary for
+a prepared leadership change. After preparation and candidate readback succeed,
+the witness validates the preparation token and fencing state, commits the new
+authority, and returns a receipt. The promotion script records
+`witness_committed` before running the local PostgreSQL promotion command, so a
+machine cannot promote on an uncommitted or stale handoff.
+
 **Degraded mode** — another overloaded term. For the Execution Fabric it means
 running locally with no remote coordinator. For a host it means the last health
 check failed or is more than a day old.
@@ -147,19 +154,13 @@ looking at something.
 tagged with a number that only increases, so an old machine that comes back to
 life cannot resume acting as though it were still in charge.
 
+**`execute_approved` / `execute_guarded`** — the two highest automation maturity
+levels. Both require a complete automation contract with no blocking readiness
+findings before the CLI will promote the automation. `execute_approved` expects
+approval for the execution; `execute_guarded` permits execution inside the
+narrow limits pre-authorized in `permissions.md`. Runtime approval flags and
+unsafe-target checks remain separate gates: a guarded maturity label does not
+bypass an item that the run queue marks `approval-needed` or `blocked`.
+
 **Model Workspace Protocol (MWP)** — the name the handbook gives to the guiding
 idea that folder structure, rather than a database, is the architecture.
-
-## Terms this documentation is not confident about
-
-Named here rather than guessed at:
-
-- **Witness commit** — described in the Execution Fabric material as a way of
-  proving a standby machine has caught up before it is promoted. The precise
-  mechanism is not spelled out.
-- The exact enforcement mechanism separating `execute_approved` from
-  `execute_guarded` beyond the policy described in each automation's own
-  `permissions.md`.
-
-If you know these well, they are good candidates for a documentation
-contribution.

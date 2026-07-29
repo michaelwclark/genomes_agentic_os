@@ -42,7 +42,8 @@ The real workflow shape is:
 Do not make every agent session start with a giant prompt.
 
 Instead, make the filesystem carry the operating context. A default
-`agentic-os init` root ships three domains (`personal/`, `work/`, `archive/`)
+`agentic-os init` root ships two domains (`domains/personal/` and
+`domains/work/`)
 plus a `harness/` directory that holds the root context files and managed OS
 capabilities. This example adds one custom domain for the product work, created
 with `agentic-os domain create lending`:
@@ -59,47 +60,47 @@ with `agentic-os domain create lending`:
     RULES.md
     shared_factory/
 
-  personal/
-  work/
-  archive/
+  domains/
+    personal/
+    work/
 
-  lending/
-    AGENTS.md
-    CLAUDE.md
-    ROUTER.md
-    CONTEXT.md
-    TOOLS.md
-    RULES.md
+    lending/
+      AGENTS.md
+      CLAUDE.md
+      ROUTER.md
+      CONTEXT.md
+      TOOLS.md
+      RULES.md
 
-    02-projects/
-      lending-app-django/
-        AGENTS.md
-        ROUTER.md
-        TOOLS.md
-        RULES.md
-        src/        -> ~/projects/lending-app-django
-        worktrees/
+      02-projects/
+        lending-app-django/
+          AGENTS.md
+          ROUTER.md
+          TOOLS.md
+          RULES.md
+          src/        -> ~/projects/lending-app-django
+          worktrees/
 
-      lending-qa-automation/
-        AGENTS.md
-        ROUTER.md
-        TOOLS.md
-        RULES.md
-        src/        -> ~/projects/lending-qa-automation
-        worktrees/
+        lending-qa-automation/
+          AGENTS.md
+          ROUTER.md
+          TOOLS.md
+          RULES.md
+          src/        -> ~/projects/lending-qa-automation
+          worktrees/
 
-    03-workflows/
-      engineering/
-        django-feature-to-qa-automation/
-          WORKFLOW.md
-          OUTPUTS.md
-          RUNBOOK.md
+      03-workflows/
+        engineering/
+          django-feature-to-qa-automation/
+            WORKFLOW.md
+            OUTPUTS.md
+            RUNBOOK.md
 
-    04-automations/
-      engineering/
-        qa-after-merge/
-          AUTOMATION.md
-          RUNBOOK.md
+      04-automations/
+        engineering/
+          qa-after-merge/
+            AUTOMATION.md
+            RUNBOOK.md
 ```
 
 The point is not the exact names. The point is that every layer answers a different question:

@@ -1,7 +1,7 @@
 # 04 · Information Architecture
 
 > **Purpose:** understand how the installed OS is organized on disk — the root
-> layout, the three default domains, the numbered operating lanes inside each
+> layout, the two default domains, the numbered operating lanes inside each
 > domain, and the context files that make every layer agent-readable. This is the
 > physical shape that routing matches against.
 >
@@ -38,7 +38,7 @@ The hierarchy has three levels:
 | Level | Examples | Created by |
 | --- | --- | --- |
 | **OS root** | `~/agentic_os/` | `agentic-os init` |
-| **Domain** | `domains/personal/`, `domains/work/`, `domains/archive/` | `init` (defaults) or `domain create` |
+| **Domain** | `domains/personal/`, `domains/work/` | `init` (defaults) or `domain create` |
 | **Numbered lane** | `00-programs/`, `00-control-plane/` … `08-archive/` | created inside every domain |
 
 ---
@@ -65,31 +65,29 @@ Running `agentic-os init` (default target: `~/agentic_os`) produces:
   domains/              ← the only canonical parent for operator domains
     personal/
     work/
-    archive/
 ```
 
 The `.agentic_root` marker is how `here route` and `here context build` find the
 OS boundary — they walk up the directory tree until they hit it. The context
 files an agent actually reads (`AGENTS.md`, `ROUTER.md`, `CONTEXT.md`,
 `RULES.md`, `TOOLS.md`) live under `harness/`, not at the bare OS root —
-`harness/` is the managed OS brain, and `domains/personal/`, `domains/work/`, and `domains/archive/`
-are the three default domains a real operator routes work into.
+`harness/` is the managed OS brain, and `domains/personal/` and `domains/work/`
+are the two default domains a real operator routes work into.
 
 ---
 
 ## Domains
 
-The three **default domains** installed by `init`:
+The two **default domains** installed by `init`:
 
 | Domain | What it owns |
 | --- | --- |
 | `personal` | Personal administration, household operations, learning, planning, and life logistics. |
 | `work` | Professional work: product delivery, client engagements, operations, and reusable service workflows. |
-| `archive` | Inactive work, retired projects, historical runs, and preserved decisions. |
 
 `init` also creates `harness/shared_factory/` — shared patterns, templates,
 routers, reusable automations, schemas, and cross-domain tools — but it is not
-a fourth domain you route work into; see [02 · Architecture](02-architecture.md)
+a third domain you route work into; see [02 · Architecture](02-architecture.md)
 for why it lives under `harness/` instead of beside the domains above.
 
 Additional domains are created with `agentic-os domain create <name>`. The name
@@ -98,14 +96,6 @@ structure as the defaults. Operators who need alternate spellings to route to
 one canonical domain (for example, an internal codename routing to a real
 domain slug) can extend the empty `DOMAIN_ALIASES` map in a fork; the generic
 product ships no built-in aliases.
-
----
-
-## Domain anatomy diagram
-
-![Domain anatomy: the OS root holds three default domains; each domain contains harness context files plus numbered operating lanes including 00-programs, 00-control-plane, and 01-inbox through 08-archive; the 03-workflows and 04-automations lanes are each sub-divided into the eight standard lanes](diagrams/infoarch-domain-anatomy.png)
-
-<!-- NOTE: this alt text was corrected to three default domains during the AGE-37/38 docs pass, but the underlying PNG was rendered from an older five-domain Mermaid source and was not regenerated (no .mmd source is checked in; see docs/architecture/tools/render-diagrams.sh). Regenerate the source diagram to match before treating the image itself as authoritative. -->
 
 ---
 
@@ -325,13 +315,14 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 - **`shared_factory` is not a scratch pad.** It holds shared templates, schemas,
   skills, and commands surfaced to all domains. Put reusable assets there, not
   one-off project notes.
-- **`archive` is not a trash can.** Move work there when it should no longer
-  appear in active routing — but keep it for audit and historical reference.
+- **`08-archive/` is not a trash can.** Move domain material there when it
+  should no longer appear in active routing, but keep it for audit and
+  historical reference.
 - **`06-runs-and-logs/` has two sub-directories by design.** `runs/` holds
   timestamped run folders (see [08 · Runs & Run Logs](08-runs-and-run-logs.md));
   `failures/` holds failure records separated for easy triage.
 - **No top-level lanes.** `~/agentic_os/engineering/` is wrong. Engineering work
-  lives at `~/agentic_os/<domain>/03-workflows/engineering/`.
+  lives at `~/agentic_os/domains/<domain>/03-workflows/engineering/`.
 
 ---
 
