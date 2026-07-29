@@ -21,7 +21,7 @@ BRIDGE_VERSION = 1
 # Provider revision reviewed with this first migration slice. Runtime selection
 # remains explicit through GENOMES_GITHUB_BRIDGE_COMMAND; this pin makes the
 # cross-repository contract auditable and forces later revisions through review.
-REVIEWED_PLATFORM_BRIDGE_REVISION = "f6d1ef4f3308e3fbc8a3437faed4526cffd3c25d"
+REVIEWED_PLATFORM_BRIDGE_REVISION = "448cd722d7feb8eb32c86b886627ade0346fdf4a"
 
 
 class GitHubBridgeError(RuntimeError):
@@ -116,3 +116,34 @@ def list_pull_requests(
     if not isinstance(pull_requests, list) or not all(isinstance(item, dict) for item in pull_requests):
         raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned invalid pull requests")
     return [dict(item) for item in pull_requests]
+
+
+def list_issues(
+    command: Sequence[str],
+    *,
+    owner: str,
+    repo: str,
+    token: str,
+    state: str = "all",
+    since: str | None = None,
+    limit: int = 30,
+    runner: BridgeRunner = subprocess.run,
+) -> list[dict[str, Any]]:
+    """Return JSON-safe issue summaries from the shared GitHub port."""
+    issue_filter: dict[str, Any] = {"state": state, "limit": limit}
+    if since is not None:
+        issue_filter["since"] = since
+    result = call_github_bridge(
+        command,
+        {
+            "operation": "listIssues",
+            "repo": {"owner": owner, "repo": repo},
+            "filter": issue_filter,
+        },
+        token=token,
+        runner=runner,
+    )
+    issues = result.get("issues")
+    if not isinstance(issues, list) or not all(isinstance(item, dict) for item in issues):
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned invalid issues")
+    return [dict(item) for item in issues]

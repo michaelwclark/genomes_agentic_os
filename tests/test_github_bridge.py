@@ -13,12 +13,13 @@ from genomes_agentic_os.github_bridge import (
     REVIEWED_PLATFORM_BRIDGE_REVISION,
     call_github_bridge,
     command_from_environment,
+    list_issues,
     list_pull_requests,
 )
 
 
 def test_reviewed_platform_bridge_revision_is_exact() -> None:
-    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "f6d1ef4f3308e3fbc8a3437faed4526cffd3c25d"
+    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "448cd722d7feb8eb32c86b886627ade0346fdf4a"
 
 
 def _runner(*args, **kwargs):
@@ -53,6 +54,70 @@ def test_list_pull_requests_sends_versioned_request_and_keeps_token_out_of_paylo
     }
     assert "secret-token" not in str(captured["input"])
     assert captured["env"]["GITHUB_TOKEN"] == "secret-token"
+
+
+def test_list_issues_sends_incremental_filter_and_keeps_token_out_of_payload() -> None:
+    captured: dict[str, object] = {}
+
+    def runner(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps({
+                "version": BRIDGE_VERSION,
+                "ok": True,
+                "result": {"issues": [{"number": 77, "pullRequest": False}]},
+            }),
+            stderr="",
+        )
+
+    result = list_issues(
+        ["node", "bridge.mjs"],
+        owner="genome",
+        repo="os",
+        token="secret-token",
+        since="2026-07-28T00:00:00Z",
+        runner=runner,
+    )
+
+    assert result == [{"number": 77, "pullRequest": False}]
+    request = json.loads(str(captured["input"]))
+    assert request == {
+        "version": 1,
+        "operation": "listIssues",
+        "repo": {"owner": "genome", "repo": "os"},
+        "filter": {
+            "state": "all",
+            "limit": 30,
+            "since": "2026-07-28T00:00:00Z",
+        },
+    }
+    assert "secret-token" not in str(captured["input"])
+    assert captured["env"]["GITHUB_TOKEN"] == "secret-token"
+
+
+def test_list_issues_omits_absent_since_and_rejects_invalid_result() -> None:
+    captured: dict[str, object] = {}
+
+    def runner(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps({"version": BRIDGE_VERSION, "ok": True, "result": {"issues": {}}}),
+            stderr="",
+        )
+
+    with pytest.raises(GitHubBridgeError, match="invalid issues"):
+        list_issues(
+            ["node", "bridge.mjs"],
+            owner="genome",
+            repo="os",
+            token="secret-token",
+            runner=runner,
+        )
+    assert "since" not in json.loads(str(captured["input"]))["filter"]
 
 
 def test_bridge_failure_does_not_echo_stderr_or_token() -> None:
