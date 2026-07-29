@@ -3,7 +3,13 @@ import { loadObserverConfig } from "./config.js";
 import { createPool, migrate } from "./db.js";
 import { PolicyError, PolicyManager } from "./policy.js";
 import { PostgresReliabilityStore } from "./reliability.js";
-import { boundedIntegerEnvironment, runPeriodicRole } from "./roles.js";
+import {
+  boundedIntegerEnvironment,
+  PostgresRoleHealthStore,
+  recordRoleFailure,
+  runPeriodicRole,
+  validateRoleHealthInterval,
+} from "./roles.js";
 import { ArtifactStore } from "./artifacts.js";
 
 const config = loadObserverConfig();
@@ -23,6 +29,8 @@ const intervalMs = boundedIntegerEnvironment(
   1000,
   300000,
 );
+validateRoleHealthInterval(intervalMs);
+const roleHealth = new PostgresRoleHealthStore(pool, config.hostId, "observer");
 let stopping = false;
 
 async function shutdown(): Promise<void> {
@@ -35,6 +43,7 @@ async function shutdown(): Promise<void> {
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 
+await roleHealth.start(policy.snapshot().appliedFingerprint);
 await runPeriodicRole({
   role: "observer",
   intervalMs,
@@ -68,6 +77,10 @@ await runPeriodicRole({
       observations,
       state.fabricEpoch,
     );
+    await roleHealth.success(
+      state.databasePolicyFingerprint,
+      policy.snapshot().appliedFingerprint,
+    );
     process.stdout.write(
       `${JSON.stringify({
         role: "observer",
@@ -78,7 +91,26 @@ await runPeriodicRole({
       })}\n`,
     );
   },
-  onError: (error) => {
+  onError: async (error) => {
+    let approved: string | null = null;
+    try {
+      approved = (await store.observerState()).databasePolicyFingerprint;
+    } catch {
+      // The tick error remains the durable role error.
+    }
+    await recordRoleFailure({
+      store: roleHealth,
+      error,
+      approvedPolicyFingerprint: approved,
+      appliedPolicyFingerprint: policy.snapshot().appliedFingerprint,
+      onReportingError: (healthError) => {
+        process.stderr.write(`${JSON.stringify({
+          role: "observer",
+          event: "role_health_write_failed",
+          error: healthError instanceof Error ? healthError.message : "unknown role health failure",
+        })}\n`);
+      },
+    });
     process.stderr.write(
       `${JSON.stringify({
         role: "observer",
