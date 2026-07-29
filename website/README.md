@@ -51,6 +51,30 @@ URLs so they resolve both on the site and in the repository.
 `onBrokenAnchors` is left at `warn`; heading anchors across 400-odd links are
 not worth a hard failure.
 
+## Publishing
+
+The site is hosted on **GitHub Pages** at
+<https://michaelwclark.github.io/genomes_agentic_os/>, which is what `url` and
+`baseUrl` in `docusaurus.config.ts` already encode.
+
+`.github/workflows/docs.yml` builds on every pull request that touches the
+docs and, on a push to `main`, deploys that same build. The `deploy` job needs
+`build`, so a broken internal link stops the publish.
+
+**One-time repository setting.** Pages has to be turned on with GitHub Actions
+as the source before the first deployment, or the `deploy` job fails with a 404
+from the Pages API. Either set *Settings → Pages → Source* to *GitHub Actions*,
+or run:
+
+```bash
+gh api -X POST repos/michaelwclark/genomes_agentic_os/pages -f 'build_type=workflow'
+```
+
+This cannot be folded into the workflow. `actions/configure-pages` has an
+`enablement` input, but it rejects `GITHUB_TOKEN` and requires a personal access
+token or GitHub App credential. Adding one would hand the docs workflow a
+standing repository-administration secret to save a single click.
+
 ## Structure
 
 | Path | What it is |

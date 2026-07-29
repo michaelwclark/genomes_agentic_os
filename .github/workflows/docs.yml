@@ -3,6 +3,9 @@ name: Docs
 # Builds the Docusaurus site. The build is also the link check: the site sets
 # `onBrokenLinks: 'throw'`, so any unresolvable internal link across `docs/` or
 # `operating-manual/` fails this job.
+#
+# On main the same built site is published to GitHub Pages. `deploy` needs
+# `build`, so a broken internal link fails the build and nothing is published.
 on:
   pull_request:
     paths:
@@ -23,7 +26,10 @@ permissions:
 
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A superseded pull-request build is worth cancelling. A main run may be
+  # holding a Pages deployment, so it is left to finish and the next push queues
+  # behind it rather than interrupting a half-applied publish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -45,3 +51,36 @@ jobs:
         run: npm run typecheck
       - name: Build site and check every internal link
         run: npm run build
+      - name: Package the built site for Pages
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          # `path` is an action input, not a `run:` step, so
+          # `defaults.run.working-directory` does not apply to it. It resolves
+          # from the repository root and must name `website/build`.
+          path: website/build
+
+  deploy:
+    # Publishing is main-only: pull requests get the build and the link check,
+    # never a deployment.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level permissions replace the workflow default rather than merging
+    # with it. `deploy-pages` works entirely through the API and never checks
+    # the repository out, so this job gets no `contents` access at all.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Requires Pages to be enabled once with "GitHub Actions" as the source —
+      # see "Publishing" in website/README.md. The `enablement` input on
+      # actions/configure-pages cannot do it from here: it rejects GITHUB_TOKEN
+      # and needs a PAT or GitHub App credential, which this workflow
+      # deliberately does not carry.
+      - id: deployment
+        uses: actions/deploy-pages@v5
