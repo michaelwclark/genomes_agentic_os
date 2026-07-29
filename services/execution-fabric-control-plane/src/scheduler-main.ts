@@ -4,6 +4,7 @@ import {
   PostgresRoleHealthStore,
   recordRoleFailure,
   runPeriodicRole,
+  validateRoleHealthInterval,
 } from "./roles.js";
 import { buildFabricRuntime } from "./runtime.js";
 
@@ -16,6 +17,7 @@ const intervalMs = boundedIntegerEnvironment(
   1000,
   300000,
 );
+validateRoleHealthInterval(intervalMs);
 const batchSize = boundedIntegerEnvironment(
   "FABRIC_SCHEDULER_BATCH_SIZE",
   20,

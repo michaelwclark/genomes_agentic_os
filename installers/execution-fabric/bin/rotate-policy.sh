@@ -354,9 +354,15 @@ else
 fi
 
 if [ "$role_convergence_deferred" = false ]; then
-  role_recreate_receipt=$(
+  if ! role_recreate_receipt=$(
     "$script_dir/converge-policy-roles.sh" --recreate "$candidate_digest"
-  )
+  ); then
+    fabric_notify critical \
+      "Execution Fabric policy role recreation failed" \
+      "Rotation $rotation_id did not recreate and fingerprint-verify the complete role cohort. Rerun rotate-policy.sh --resume; mutations remain fenced." \
+      "execution-fabric-policy-rotation-$rotation_id"
+    exit 75
+  fi
 fi
 
 if [ "$mode" = rotate ]; then
@@ -452,9 +458,15 @@ else
 fi
 
 if [ "$role_convergence_deferred" = false ]; then
-  role_verify_receipt=$(
+  if ! role_verify_receipt=$(
     "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
-  )
+  ); then
+    fabric_notify critical \
+      "Execution Fabric policy role verification failed" \
+      "Witness commit succeeded for rotation $rotation_id, but the complete role cohort did not report fresh healthy ticks. Rerun rotate-policy.sh --resume; mutations remain fenced." \
+      "execution-fabric-policy-rotation-$rotation_id"
+    exit 75
+  fi
 fi
 
 jq -n \

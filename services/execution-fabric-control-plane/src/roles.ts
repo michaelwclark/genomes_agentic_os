@@ -59,6 +59,17 @@ export function roleHealthEvaluationOptions(): {
   };
 }
 
+export function validateRoleHealthInterval(
+  intervalMs: number,
+  maxTickAgeSeconds = roleHealthEvaluationOptions().maxTickAgeSeconds,
+): void {
+  if (maxTickAgeSeconds * 1000 <= intervalMs) {
+    throw new Error(
+      "FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS must exceed the configured role interval",
+    );
+  }
+}
+
 function iso(value: Date | string | null): string | null {
   if (value === null) return null;
   return new Date(value).toISOString();

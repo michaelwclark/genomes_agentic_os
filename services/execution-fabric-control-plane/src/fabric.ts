@@ -248,6 +248,9 @@ export class ExecutionFabric {
       };
     });
     const queuedById = new Map(queues.map((row) => [row.queue, row]));
+    const apiPolicyHealthy =
+      config.state === "applied" &&
+      system.databasePolicyFingerprint === config.appliedFingerprint;
     const configuredQueues = this.policy.effective().execution_fabric.queues;
     const observableQueues = configuredQueues.map((queue) => {
       const row = queuedById.get(queue.id) ?? {
@@ -371,21 +374,15 @@ export class ExecutionFabric {
           startedAt: this.apiStartedAt,
           approvedPolicyFingerprint: system.databasePolicyFingerprint,
           appliedPolicyFingerprint: config.appliedFingerprint,
-          lastSuccessfulTickAt: sampledAt,
-          lastTickAt: sampledAt,
-          lastError: config.lastError,
-          consecutiveFailures: config.state === "applied" ? 0 : 1,
+          lastSuccessfulTickAt: apiPolicyHealthy ? sampledAt : null,
+          lastTickAt: apiPolicyHealthy ? sampledAt : null,
+          lastError: apiPolicyHealthy
+            ? null
+            : config.lastError ?? "database-approved policy fingerprint differs from the API role",
+          consecutiveFailures: apiPolicyHealthy ? 0 : 1,
           updatedAt: sampledAt,
-          status:
-            config.state === "applied" &&
-            system.databasePolicyFingerprint === config.appliedFingerprint
-              ? "healthy"
-              : "unhealthy",
-          reason:
-            config.state === "applied" &&
-            system.databasePolicyFingerprint === config.appliedFingerprint
-              ? null
-              : "policy_fingerprint_mismatch",
+          status: apiPolicyHealthy ? "healthy" : "unhealthy",
+          reason: apiPolicyHealthy ? null : "policy_fingerprint_mismatch",
         },
         ...(system.roleHealth ?? [])
           .filter((snapshot) => snapshot.hostId === activeHost)

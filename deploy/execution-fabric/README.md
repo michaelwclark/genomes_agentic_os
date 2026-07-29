@@ -448,6 +448,8 @@ regenerates `images.lock.env` and requires an exact byte match.
   consecutive failure count. Startup grace is bounded to 90 seconds by
   default, and restart attempts preserve failure history, so a never-ticking
   or crash-looping role becomes unhealthy instead of remaining startup-green.
+  Role startup rejects a maximum healthy-tick age that does not exceed that
+  role's configured interval.
   Status evaluates only the active host; replicated historical rows from the
   other host remain durable without producing false local alarms.
 - The backup timer calls `installers/bin/backup-health.sh`. Each run writes a

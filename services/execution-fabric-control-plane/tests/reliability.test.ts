@@ -14,6 +14,7 @@ import {
   ROLE_ENTRYPOINTS,
   RoleHealthInstanceReplacedError,
   runPeriodicRole,
+  validateRoleHealthInterval,
 } from "../src/roles.js";
 
 describe("bounded reliability semantics", () => {
@@ -185,6 +186,13 @@ describe("independently runnable roles", () => {
         { now, maxTickAgeSeconds: 60 },
       ),
     ).toMatchObject({ status: "unhealthy", reason: "successful_tick_stale" });
+  });
+
+  it("requires the healthy tick age to exceed the scheduled interval", () => {
+    expect(() => validateRoleHealthInterval(15_000, 60)).not.toThrow();
+    expect(() => validateRoleHealthInterval(60_000, 60)).toThrow(
+      /must exceed the configured role interval/,
+    );
   });
 
   it("awaits durable error reporting before the next role interval", async () => {

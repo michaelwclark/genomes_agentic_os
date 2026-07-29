@@ -8,6 +8,7 @@ import {
   PostgresRoleHealthStore,
   recordRoleFailure,
   runPeriodicRole,
+  validateRoleHealthInterval,
 } from "./roles.js";
 import { ArtifactStore } from "./artifacts.js";
 
@@ -28,6 +29,7 @@ const intervalMs = boundedIntegerEnvironment(
   1000,
   300000,
 );
+validateRoleHealthInterval(intervalMs);
 const roleHealth = new PostgresRoleHealthStore(pool, config.hostId, "observer");
 let stopping = false;
 
