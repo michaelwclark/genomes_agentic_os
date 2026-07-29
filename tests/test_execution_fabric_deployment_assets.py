@@ -690,8 +690,10 @@ def test_policy_rotation_is_fenced_resumable_and_receipted() -> None:
     assert '.approvedPolicyFingerprint==$digest' in convergence
     assert '.appliedPolicyFingerprint==$digest' in convergence
     assert '.status=="healthy"' in convergence
+    assert "role_convergence_deferred" in script
     promotion = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
     assert '"$script_dir/rotate-policy.sh" --resume' in promotion
+    assert '"$script_dir/converge-policy-roles.sh" --verify' in promotion
 
 
 def test_policy_rotation_runs_prepare_reload_commit_and_readback(

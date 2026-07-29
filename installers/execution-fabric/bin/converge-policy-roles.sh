@@ -21,7 +21,8 @@ script_dir=$(CDPATH="" cd -- "$(dirname -- "$0")" && pwd)
 fabric_load_runtime
 fabric_require_command curl
 fabric_require_command jq
-: "${FABRIC_API_BASE:?local control-plane API is required}"
+api_base=${FABRIC_POLICY_CONVERGENCE_API_BASE:-${FABRIC_API_BASE:-}}
+: "${api_base:?local control-plane API is required}"
 : "${FABRIC_API_TOKEN_FILE:?control-plane read token file is required}"
 : "${FABRIC_HOST_ID:?stable host identity is required}"
 : "${FABRIC_DEPLOYMENT_DIR:?deployment directory is required}"
@@ -32,6 +33,14 @@ case "${FABRIC_DEPLOYMENT_ROLE:-}" in
     compose_profile=primary
     ;;
   promoted)
+    compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
+    compose_profile=promoted
+    ;;
+  standby)
+    [ "$mode" = --verify ] || {
+      echo "standby policy role recreation is deferred until promotion" >&2
+      exit 75
+    }
     compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
     compose_profile=promoted
     ;;
@@ -62,8 +71,8 @@ if [ "$mode" = --recreate ]; then
   fabric_require_command docker
   : >"$before_temp"
   for role in $roles; do
-    fabric_compose "$compose_file" --profile "$compose_profile" ps -q "$role" \
-      >>"$before_temp"
+    container_id=$(fabric_compose "$compose_file" --profile "$compose_profile" ps -q "$role")
+    printf '%s=%s\n' "$role" "$container_id" >>"$before_temp"
   done
   fabric_compose "$compose_file" --profile "$compose_profile" up -d \
     --no-deps --force-recreate $roles
@@ -74,12 +83,13 @@ if [ "$mode" = --recreate ]; then
       echo "policy role $role has no recreated container" >&2
       exit 75
     }
-    printf '%s\n' "$container_id" >>"$after_temp"
+    printf '%s=%s\n' "$role" "$container_id" >>"$after_temp"
+    before_id=$(sed -n "s/^${role}=//p" "$before_temp")
+    [ -z "$before_id" ] || [ "$before_id" != "$container_id" ] || {
+      echo "policy role $role retained its previous container" >&2
+      exit 75
+    }
   done
-  cmp -s "$before_temp" "$after_temp" && {
-    echo "policy role recreation did not replace the role cohort" >&2
-    exit 75
-  }
 fi
 
 verified=false
@@ -87,7 +97,7 @@ attempt=0
 while [ "$attempt" -lt 30 ]; do
   attempt=$((attempt + 1))
   if fabric_api_get_bearer \
-    "$FABRIC_API_BASE" "/api/v1/status?limit=1" \
+    "$api_base" "/api/v1/status?limit=1" \
     "$FABRIC_API_TOKEN_FILE" >"$status_temp" 2>/dev/null
   then
     if [ "$mode" = --recreate ]; then

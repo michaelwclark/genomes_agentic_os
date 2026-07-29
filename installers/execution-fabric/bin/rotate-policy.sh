@@ -72,6 +72,10 @@ abort_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-abort-receipt.XXXXXX")
 final_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-rotation-receipt.XXXXXX")
 role_recreate_receipt=
 role_verify_receipt=
+role_convergence_deferred=false
+if [ "$mode" = resume ] && [ "${FABRIC_DEPLOYMENT_ROLE:-}" = standby ]; then
+  role_convergence_deferred=true
+fi
 cleanup() {
   unlink "$witness_status" 2>/dev/null || true
   unlink "$preparation" 2>/dev/null || true
@@ -338,7 +342,9 @@ else
   fi
 fi
 
-if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ]; then
+if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ] &&
+  [ "$role_convergence_deferred" = false ]
+then
   role_recreate_receipt=$(
     "$script_dir/converge-policy-roles.sh" --recreate "$candidate_digest"
   )
@@ -436,7 +442,9 @@ else
     >"$control_status"
 fi
 
-if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ]; then
+if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ] &&
+  [ "$role_convergence_deferred" = false ]
+then
   role_verify_receipt=$(
     "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
   )
@@ -449,6 +457,7 @@ jq -n \
   --arg mode "$mode" \
   --arg roleRecreateReceipt "$role_recreate_receipt" \
   --arg roleVerifyReceipt "$role_verify_receipt" \
+  --argjson roleConvergenceDeferred "$role_convergence_deferred" \
   --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --slurpfile witness "$witness_receipt" \
   --slurpfile status "$control_status" \
@@ -460,6 +469,7 @@ jq -n \
     recoveryMode:$mode,
     roleRecreateReceipt:($roleRecreateReceipt | if length>0 then . else null end),
     roleVerifyReceipt:($roleVerifyReceipt | if length>0 then . else null end),
+    roleConvergenceDeferred:$roleConvergenceDeferred,
     completedAt:$completedAt,
     witness:$witness[0],
     readback:$status[0]
