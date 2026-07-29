@@ -340,7 +340,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js observer"]
-      start_period: 90s
+      start_period: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s
 
   healer:
     image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
@@ -418,7 +418,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js healer"]
-      start_period: 90s
+      start_period: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s
 
   scheduler:
     extends:
@@ -430,7 +430,7 @@ services:
       FABRIC_SCHEDULER_BATCH_SIZE: ${FABRIC_SCHEDULER_BATCH_SIZE:-20}
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js scheduler"]
-      start_period: 90s
+      start_period: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s
 
   gateway:
     image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}

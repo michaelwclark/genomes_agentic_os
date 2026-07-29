@@ -324,7 +324,9 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
                 )
             assert not any("execution-fabric.yml:" in volume for volume in volumes)
         for role in ("observer", "healer", "scheduler"):
-            assert compose["services"][role]["healthcheck"]["start_period"] == "90s"
+            assert compose["services"][role]["healthcheck"]["start_period"] == (
+                "${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s"
+            )
         assert compose["services"]["gateway"]["healthcheck"]["test"][-1].endswith(
             "127.0.0.1:3181/healthz || exit 1"
         )
@@ -1018,6 +1020,172 @@ esac
     )
     assert missing_schema.returncode == 69
     assert "upgrade the control-plane image" in missing_schema.stderr
+
+
+def test_policy_role_cohort_state_treats_crash_loop_as_partial(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    runtime = tmp_path / "runtime.env"
+    compose_file = tmp_path / "compose.bigmac.yml"
+    runtime.write_text("FABRIC_HOST_ID=bigmac\n", encoding="utf-8")
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+set -eu
+all=false
+running=false
+role=
+for argument in "$@"; do
+  case "$argument" in
+    -a) all=true ;;
+    --status) running=true ;;
+    control-plane|observer|healer|scheduler) role=$argument ;;
+  esac
+done
+case "$COHORT_MODE" in
+  dormant) exit 0 ;;
+  crashing) [ "$all" = true ] && printf 'stopped-%s\\n' "$role" ;;
+  active) printf 'running-%s\\n' "$role" ;;
+  partial)
+    if [ "$all" = true ] || [ "$role" = control-plane ]; then
+      printf 'mixed-%s\\n' "$role"
+    fi
+    ;;
+  *) exit 64 ;;
+esac
+exit 0
+""",
+    )
+    command = """
+. "$1"
+FABRIC_RUNTIME_ENV_FILE=$2
+export FABRIC_RUNTIME_ENV_FILE
+fabric_policy_role_cohort_state "$3" promoted
+"""
+    for mode, expected in (
+        ("dormant", "dormant"),
+        ("crashing", "partial"),
+        ("active", "active"),
+        ("partial", "partial"),
+    ):
+        result = subprocess.run(
+            [
+                "sh",
+                "-c",
+                command,
+                "cohort-state-test",
+                str(INSTALLERS / "bin/_lib.sh"),
+                str(runtime),
+                str(compose_file),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "COHORT_MODE": mode,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected
+
+
+def test_policy_role_recreate_recovers_when_initial_api_is_down(
+    tmp_path: Path,
+) -> None:
+    expected = "b" * 64
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    deployment = tmp_path / "deployment"
+    token = tmp_path / "api-token"
+    state.mkdir()
+    fake_bin.mkdir()
+    deployment.mkdir()
+    token.write_text("test-token\n", encoding="utf-8")
+    (deployment / "compose.genomesbox.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+set -eu
+operation=
+role=
+for argument in "$@"; do
+  case "$argument" in
+    ps|up) operation=$argument ;;
+    control-plane|observer|healer|scheduler) role=$argument ;;
+  esac
+done
+case "$operation" in
+  ps)
+    if [ -f "$FAKE_STATE_DIR/recreated" ]; then prefix=new; else prefix=old; fi
+    printf '%s-%s\\n' "$prefix" "$role"
+    ;;
+  up) : >"$FAKE_STATE_DIR/recreated" ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    role_health = [
+        {
+            "hostId": "genomesbox",
+            "role": role,
+            "instanceId": f"new-{role}",
+            "approvedPolicyFingerprint": expected,
+            "appliedPolicyFingerprint": expected,
+            "status": "healthy",
+            "lastSuccessfulTickAt": "2026-07-25T00:00:06Z",
+        }
+        for role in ("api", "observer", "healer", "scheduler")
+    ]
+    _write_executable(
+        fake_bin / "curl",
+        "#!/bin/sh\nset -eu\n"
+        "[ -f \"$FAKE_STATE_DIR/recreated\" ] || exit 22\n"
+        "printf '%s\\n' " + repr(json.dumps({"roleHealth": role_health})) + "\n",
+    )
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                "FABRIC_API_BASE=http://control",
+                f"FABRIC_API_TOKEN_FILE={token}",
+                "FABRIC_HOST_ID=genomesbox",
+                "FABRIC_DEPLOYMENT_ROLE=primary",
+                f"FABRIC_DEPLOYMENT_DIR={deployment}",
+                "FABRIC_POLICY_CONVERGENCE_ATTEMPTS=1",
+                f"FAKE_STATE_DIR={state}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(INSTALLERS / "bin" / "converge-policy-roles.sh"),
+            "--recreate",
+            expected,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(Path(result.stdout.strip()).read_text(encoding="utf-8"))
+    assert receipt["instancesBefore"] == {}
+    assert receipt["containersAfter"]["control-plane"] == "new-control-plane"
 
 
 def test_policy_rotation_resume_aborts_expired_pre_database_preparation(

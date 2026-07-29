@@ -53,19 +53,27 @@ fabric_policy_role_cohort_state() {
   }
   _fabric_role_compose=$1
   _fabric_role_profile=$2
+  _fabric_role_present=0
   _fabric_role_running=0
   for _fabric_role in control-plane observer healer scheduler; do
+    _fabric_role_any_id=$(fabric_compose "$_fabric_role_compose" \
+      --profile "$_fabric_role_profile" ps -a -q "$_fabric_role")
+    if [ -n "$_fabric_role_any_id" ]; then
+      _fabric_role_present=$((_fabric_role_present + 1))
+    fi
     _fabric_role_id=$(fabric_compose "$_fabric_role_compose" \
       --profile "$_fabric_role_profile" ps --status running -q "$_fabric_role")
     if [ -n "$_fabric_role_id" ]; then
       _fabric_role_running=$((_fabric_role_running + 1))
     fi
   done
-  case "$_fabric_role_running" in
-    0) printf '%s\n' dormant ;;
-    4) printf '%s\n' active ;;
-    *) printf '%s\n' partial ;;
-  esac
+  if [ "$_fabric_role_present" -eq 0 ]; then
+    printf '%s\n' dormant
+  elif [ "$_fabric_role_present" -eq 4 ] && [ "$_fabric_role_running" -eq 4 ]; then
+    printf '%s\n' active
+  else
+    printf '%s\n' partial
+  fi
 }
 
 fabric_replication_slot() {
