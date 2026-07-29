@@ -30,6 +30,8 @@ export type RoleHealthEvaluation = RoleHealthSnapshot & {
   reason: string | null;
 };
 
+export class RoleHealthInstanceReplacedError extends Error {}
+
 export function roleHealthEvaluationOptions(): {
   failureThreshold: number;
   maxTickAgeSeconds: number;
@@ -177,7 +179,9 @@ export class PostgresRoleHealthStore {
         appliedPolicyFingerprint,
       ],
     );
-    if (!result.rows[0]) throw new Error("role health instance was replaced");
+    if (!result.rows[0]) {
+      throw new RoleHealthInstanceReplacedError("role health instance was replaced");
+    }
     return roleHealthSnapshot(result.rows[0] as Record<string, unknown>);
   }
 
@@ -206,8 +210,29 @@ export class PostgresRoleHealthStore {
         message.slice(0, 2048),
       ],
     );
-    if (!result.rows[0]) throw new Error("role health instance was replaced");
+    if (!result.rows[0]) {
+      throw new RoleHealthInstanceReplacedError("role health instance was replaced");
+    }
     return roleHealthSnapshot(result.rows[0] as Record<string, unknown>);
+  }
+}
+
+export async function recordRoleFailure(options: {
+  store: Pick<PostgresRoleHealthStore, "failure">;
+  error: unknown;
+  approvedPolicyFingerprint: string | null;
+  appliedPolicyFingerprint: string | null;
+  onReportingError: (error: unknown) => void;
+}): Promise<void> {
+  try {
+    await options.store.failure(
+      options.error,
+      options.approvedPolicyFingerprint,
+      options.appliedPolicyFingerprint,
+    );
+  } catch (error) {
+    if (error instanceof RoleHealthInstanceReplacedError) throw error;
+    options.onReportingError(error);
   }
 }
 

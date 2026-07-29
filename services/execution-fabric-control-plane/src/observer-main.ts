@@ -6,6 +6,7 @@ import { PostgresReliabilityStore } from "./reliability.js";
 import {
   boundedIntegerEnvironment,
   PostgresRoleHealthStore,
+  recordRoleFailure,
   runPeriodicRole,
 } from "./roles.js";
 import { ArtifactStore } from "./artifacts.js";
@@ -95,11 +96,19 @@ await runPeriodicRole({
     } catch {
       // The tick error remains the durable role error.
     }
-    await roleHealth.failure(
+    await recordRoleFailure({
+      store: roleHealth,
       error,
-      approved,
-      policy.snapshot().appliedFingerprint,
-    );
+      approvedPolicyFingerprint: approved,
+      appliedPolicyFingerprint: policy.snapshot().appliedFingerprint,
+      onReportingError: (healthError) => {
+        process.stderr.write(`${JSON.stringify({
+          role: "observer",
+          event: "role_health_write_failed",
+          error: healthError instanceof Error ? healthError.message : "unknown role health failure",
+        })}\n`);
+      },
+    });
     process.stderr.write(
       `${JSON.stringify({
         role: "observer",

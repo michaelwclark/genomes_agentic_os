@@ -46,6 +46,28 @@ fabric_compose() {
     "$@"
 }
 
+fabric_policy_role_cohort_state() {
+  [ "$#" -eq 2 ] || {
+    echo "fabric_policy_role_cohort_state requires compose file and profile" >&2
+    return 64
+  }
+  _fabric_role_compose=$1
+  _fabric_role_profile=$2
+  _fabric_role_running=0
+  for _fabric_role in control-plane observer healer scheduler; do
+    _fabric_role_id=$(fabric_compose "$_fabric_role_compose" \
+      --profile "$_fabric_role_profile" ps --status running -q "$_fabric_role")
+    if [ -n "$_fabric_role_id" ]; then
+      _fabric_role_running=$((_fabric_role_running + 1))
+    fi
+  done
+  case "$_fabric_role_running" in
+    0) printf '%s\n' dormant ;;
+    4) printf '%s\n' active ;;
+    *) printf '%s\n' partial ;;
+  esac
+}
+
 fabric_replication_slot() {
   [ "$#" -eq 1 ] || {
     echo "fabric_replication_slot requires primary or standby" >&2

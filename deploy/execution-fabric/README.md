@@ -373,6 +373,9 @@ fingerprint before witness commit. A second readback after commit requires a
 fresh successful tick from every role. Any mismatch leaves authority fenced
 and no successful rotation receipt is written. Unapproved edits remain
 fail-closed and observable as config drift.
+For a host statically configured as `standby`, recovery reads the actual
+promoted cohort: zero running policy roles may defer until promotion, all four
+running roles are treated as active, and a partial cohort fails closed.
 
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
 deployable service in
@@ -445,6 +448,8 @@ regenerates `images.lock.env` and requires an exact byte match.
   consecutive failure count. Startup grace is bounded to 90 seconds by
   default, and restart attempts preserve failure history, so a never-ticking
   or crash-looping role becomes unhealthy instead of remaining startup-green.
+  Status evaluates only the active host; replicated historical rows from the
+  other host remain durable without producing false local alarms.
 - The backup timer calls `installers/bin/backup-health.sh`. Each run writes a
   custom-format dump, restores it into a uniquely named disposable database,
   queries restored catalog objects and every restored table, removes that

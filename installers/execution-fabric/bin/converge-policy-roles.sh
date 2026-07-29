@@ -37,12 +37,14 @@ case "${FABRIC_DEPLOYMENT_ROLE:-}" in
     compose_profile=promoted
     ;;
   standby)
-    [ "$mode" = --verify ] || {
-      echo "standby policy role recreation is deferred until promotion" >&2
-      exit 75
-    }
+    fabric_require_command docker
     compose_file="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
     compose_profile=promoted
+    cohort_state=$(fabric_policy_role_cohort_state "$compose_file" "$compose_profile")
+    [ "$cohort_state" = active ] || {
+      echo "standby policy role cohort is $cohort_state; convergence requires a complete active promoted cohort" >&2
+      exit 75
+    }
     ;;
   *)
     echo "policy role convergence requires the active primary or promoted role" >&2

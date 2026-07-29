@@ -387,12 +387,14 @@ export class ExecutionFabric {
               ? null
               : "policy_fingerprint_mismatch",
         },
-        ...(system.roleHealth ?? []).map((snapshot) =>
-          evaluateRoleHealth(snapshot, {
-            ...roleHealthEvaluationOptions(),
-            now: new Date(sampledAt),
-          }),
-        ),
+        ...(system.roleHealth ?? [])
+          .filter((snapshot) => snapshot.hostId === activeHost)
+          .map((snapshot) =>
+            evaluateRoleHealth(snapshot, {
+              ...roleHealthEvaluationOptions(),
+              now: new Date(sampledAt),
+            }),
+          ),
       ],
       healing: {
         status: this.lastReconcileError ? "failed" : "healthy",

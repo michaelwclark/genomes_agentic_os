@@ -10,7 +10,9 @@ import {
 import {
   allowListEnvironment,
   evaluateRoleHealth,
+  recordRoleFailure,
   ROLE_ENTRYPOINTS,
+  RoleHealthInstanceReplacedError,
   runPeriodicRole,
 } from "../src/roles.js";
 
@@ -201,6 +203,30 @@ describe("independently runnable roles", () => {
       },
     });
     expect(recorded).toEqual(["durable"]);
+  });
+
+  it("tolerates transient health-write failure but preserves instance fencing", async () => {
+    const onReportingError = vi.fn();
+    await recordRoleFailure({
+      store: { failure: vi.fn().mockRejectedValue(new Error("postgres unavailable")) },
+      error: new Error("tick failed"),
+      approvedPolicyFingerprint: "a".repeat(64),
+      appliedPolicyFingerprint: "a".repeat(64),
+      onReportingError,
+    });
+    expect(onReportingError).toHaveBeenCalledOnce();
+
+    await expect(recordRoleFailure({
+      store: {
+        failure: vi.fn().mockRejectedValue(
+          new RoleHealthInstanceReplacedError("role health instance was replaced"),
+        ),
+      },
+      error: new Error("tick failed"),
+      approvedPolicyFingerprint: "a".repeat(64),
+      appliedPolicyFingerprint: "a".repeat(64),
+      onReportingError,
+    })).rejects.toBeInstanceOf(RoleHealthInstanceReplacedError);
   });
 
   it("rejects unknown automatic repair actions", () => {

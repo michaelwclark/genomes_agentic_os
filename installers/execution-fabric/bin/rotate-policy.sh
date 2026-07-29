@@ -74,7 +74,18 @@ role_recreate_receipt=
 role_verify_receipt=
 role_convergence_deferred=false
 if [ "$mode" = resume ] && [ "${FABRIC_DEPLOYMENT_ROLE:-}" = standby ]; then
-  role_convergence_deferred=true
+  fabric_require_command docker
+  : "${FABRIC_DEPLOYMENT_DIR:?deployment directory is required}"
+  resume_compose="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
+  resume_cohort_state=$(fabric_policy_role_cohort_state "$resume_compose" promoted)
+  case "$resume_cohort_state" in
+    dormant) role_convergence_deferred=true ;;
+    active) role_convergence_deferred=false ;;
+    *)
+      echo "standby policy role cohort is partial; recovery remains fail-closed" >&2
+      exit 75
+      ;;
+  esac
 fi
 cleanup() {
   unlink "$witness_status" 2>/dev/null || true

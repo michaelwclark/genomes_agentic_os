@@ -702,6 +702,8 @@ def test_policy_rotation_is_fenced_resumable_and_receipted() -> None:
     assert '.appliedPolicyFingerprint==$digest' in convergence
     assert '.status=="healthy"' in convergence
     assert "role_convergence_deferred" in script
+    assert "fabric_policy_role_cohort_state" in script
+    assert "resume_cohort_state" in script
     promotion = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
     assert '"$script_dir/rotate-policy.sh" --resume' in promotion
     assert '"$script_dir/converge-policy-roles.sh" --verify' in promotion
@@ -906,7 +908,7 @@ def test_policy_role_convergence_fails_closed_on_one_mismatched_role(
     fake_bin.mkdir()
     deployment.mkdir()
     token.write_text("test-token\n", encoding="utf-8")
-    (deployment / "compose.genomesbox.yml").write_text(
+    (deployment / "compose.bigmac.yml").write_text(
         "services: {}\n", encoding="utf-8"
     )
     _write_executable(
@@ -957,7 +959,7 @@ esac
                 "FABRIC_API_BASE=http://control",
                 f"FABRIC_API_TOKEN_FILE={token}",
                 "FABRIC_HOST_ID=genomesbox",
-                "FABRIC_DEPLOYMENT_ROLE=primary",
+                "FABRIC_DEPLOYMENT_ROLE=standby",
                 f"FABRIC_DEPLOYMENT_DIR={deployment}",
                 "FABRIC_POLICY_CONVERGENCE_ATTEMPTS=1",
                 f"FAKE_STATE_DIR={state}",
