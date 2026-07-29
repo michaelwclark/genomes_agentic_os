@@ -1961,16 +1961,8 @@ def _team_pr_review_effect(
     task_id: str,
     author_identity: str,
     author_kind: str,
-    effect_key: str | None = None,
+    effect_key: str,
 ) -> dict[str, Any]:
-    if effect_key is None and "review_mode" in payload:
-        effect_key = f"{effect_type}:{intent_key}"
-    elif effect_key is None:
-        # Tasks admitted by the pre-AGE-139 producer omitted review_mode and
-        # may already have staged this legacy key before a lost completion ack.
-        effect_key = (
-            f"{effect_type}:{payload['source_key']}:{payload['expected_head_sha']}"
-        )
     return {
         "effectKey": effect_key,
         "effectType": effect_type,
