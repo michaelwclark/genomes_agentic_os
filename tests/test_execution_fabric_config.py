@@ -185,10 +185,15 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
         if pool["id"] == "pr_reviewers"
     )
     assert pr_review_pool["capacity"]["max_tasks_per_worker"] == 2
-    assert pr_review_pool["retry"] == {"max_attempts": 3, "backoff_seconds": 600}
+    assert pr_review_pool["retry"] == {"max_attempts": 9, "backoff_seconds": 600}
     assert (
         pr_review_pool["lease"]["timeout_seconds"]
         + pr_review_pool["retry"]["backoff_seconds"]
+        > TEAM_PR_HELPER_STALE_SECONDS
+    )
+    assert (
+        (pr_review_pool["retry"]["max_attempts"] - 1)
+        * pr_review_pool["retry"]["backoff_seconds"]
         > TEAM_PR_HELPER_STALE_SECONDS
     )
     team_pr_route = next(

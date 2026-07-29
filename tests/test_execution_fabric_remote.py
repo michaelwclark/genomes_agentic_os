@@ -1163,6 +1163,17 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         execute_assignment(root, assignment)
     assert wrong_host.value.code == "task_host_affinity_violation"
     assert wrong_host.value.retryable is True
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ExecutionFabricConfigError("transient host identity fixture")
+        ),
+    )
+    with pytest.raises(TaskExecutionError) as host_unavailable:
+        execute_assignment(root, assignment)
+    assert host_unavailable.value.code == "task_host_affinity_unavailable"
+    assert host_unavailable.value.retryable is True
     assert captured["calls"] == 1
     monkeypatch.setattr(
         execution_fabric_remote,
@@ -1226,6 +1237,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         datetime.now(timezone.utc)
         - timedelta(seconds=execution_fabric_remote.TEAM_PR_HELPER_STALE_SECONDS + 1)
     ).isoformat().replace("+00:00", "Z")
+    launch_marker["status"] = "failed"
     launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
     real_helper_match = execution_fabric_remote._process_is_team_pr_helper
     monkeypatch.setattr(
@@ -1239,6 +1251,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     monkeypatch.setattr(
         execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
     )
+    launch_marker["status"] = "running"
     launch_marker.pop("helper_pid")
     launch_marker["launched_at"] = "2026-07-29T10:00:00"
     launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
@@ -1487,6 +1500,21 @@ def test_team_pr_durable_receipt_os_error_is_retryable(
 
     assert lock_failure.value.code == "team_pr_durable_receipt_unavailable"
     assert lock_failure.value.retryable is True
+
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_write_receipt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("transient write fixture")
+        ),
+    )
+    with pytest.raises(TaskExecutionError) as write_failure:
+        execution_fabric_remote._write_team_pr_receipt(
+            tmp_path / "summary.json", {"status": "fixture"}, durable=True
+        )
+
+    assert write_failure.value.code == "team_pr_durable_receipt_unavailable"
+    assert write_failure.value.retryable is True
 
 
 def test_durable_receipt_writes_fsync_file_and_directory(

@@ -234,7 +234,7 @@ one terminal-packet resolution in a create-once review-only snapshot; it never
 runs Auto-Dev with `--apply` or writes the shared SQLite work registry.
 The worker first persists review intent keyed by repository, PR, immutable
 head, source ticket, and review mode. It reuses the helper's terminal receipt
-after interruption and derives a stable effect key from that identity. A
+after interruption and derives a stable effect key from that identity.
 Repository, head SHA, and source-key casing are normalized before the worker
 and helper derive that identity, preventing case drift from splitting one
 admitted review across multiple run directories.
@@ -243,12 +243,14 @@ as retryable, even
 when an upgrade leaves two task IDs for the same immutable review. The helper
 must accept the controller-derived review mode, full-identity run ID, and exact
 summary path before it performs provider work. Corrupt receipts fail closed;
-transient filesystem read errors remain retryable. Receipt paths use the full
+transient filesystem read, write, and lock errors remain retryable. Receipt paths use the full
 identity digest, intent writes fsync file and directory state, and a durable
 launch marker prevents a lease retry from starting a second helper while an
 orphaned helper may still be within its nominal timeout plus a ten-minute
-grace. The review pool's ten-minute retry backoff ensures the last configured
-attempt lands after that fence instead of exhausting the immutable task early.
+grace. The review pool's ten-minute retry backoff and bounded attempt budget
+ensure the last configured attempt lands after that fence instead of exhausting
+the immutable task early, including when retries begin after an ambiguous
+dispatch failure.
 The paired helper records its PID in the same identity-bound marker before any
 provider read. Controller and helper compare-and-replace operations share a
 marker lock, so an exceptional dispatch cannot overwrite a concurrently

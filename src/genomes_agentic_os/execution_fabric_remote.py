@@ -1215,6 +1215,32 @@ def _write_receipt_once(path: Path, receipt: Mapping[str, Any]) -> bool:
         temporary.unlink(missing_ok=True)
 
 
+def _write_team_pr_receipt(
+    path: Path, receipt: Mapping[str, Any], *, durable: bool = False
+) -> None:
+    try:
+        _write_receipt(path, receipt, durable=durable)
+    except OSError as exc:
+        raise TaskExecutionError(
+            "team_pr_durable_receipt_unavailable",
+            f"Team PR durable receipt is temporarily unwritable: {type(exc).__name__}",
+            retryable=True,
+            receipt_path=str(path),
+        ) from None
+
+
+def _write_team_pr_receipt_once(path: Path, receipt: Mapping[str, Any]) -> bool:
+    try:
+        return _write_receipt_once(path, receipt)
+    except OSError as exc:
+        raise TaskExecutionError(
+            "team_pr_durable_receipt_unavailable",
+            f"Team PR durable receipt is temporarily unwritable: {type(exc).__name__}",
+            retryable=True,
+            receipt_path=str(path),
+        ) from None
+
+
 def _artifact_spool_root(root: str | Path) -> Path:
     return (
         expand_path(root)
@@ -2063,7 +2089,7 @@ def _team_pr_ai_review_worker_locked(
             "helper_summary_path": str(helper_summary_path),
             "created_at": _utc_now(),
         }
-        if not _write_receipt_once(intent_path, intent):
+        if not _write_team_pr_receipt_once(intent_path, intent):
             intent = _read_json_object(intent_path, label="Team PR review intent")
             if intent is None:
                 raise TaskExecutionError(
@@ -2171,6 +2197,18 @@ def _team_pr_ai_review_worker_locked(
                     retryable=False,
                     receipt_path=str(helper_launch_path),
                 )
+            helper_pid = (
+                helper_launch.get("helper_pid") if helper_launch is not None else None
+            )
+            if isinstance(helper_pid, int) and _process_is_team_pr_helper(
+                helper_pid, helper_summary_path.parent.name
+            ):
+                raise TaskExecutionError(
+                    "team_pr_review_in_progress",
+                    "a prior Team PR helper is still running",
+                    retryable=True,
+                    receipt_path=str(helper_launch_path),
+                )
             if helper_launch is not None and helper_launch.get("status") == "running":
                 try:
                     launched_at = datetime.fromisoformat(
@@ -2188,18 +2226,11 @@ def _team_pr_ai_review_worker_locked(
                         retryable=False,
                         receipt_path=str(helper_launch_path),
                     ) from None
-                helper_pid = helper_launch.get("helper_pid")
                 helper_alive = isinstance(helper_pid, int) and _process_is_alive(
                     helper_pid
                 )
-                helper_verified = isinstance(
-                    helper_pid, int
-                ) and _process_is_team_pr_helper(
-                    helper_pid, helper_summary_path.parent.name
-                )
-                if helper_verified or (
-                    launch_age < TEAM_PR_HELPER_STALE_SECONDS
-                    and (helper_alive or helper_pid is None)
+                if launch_age < TEAM_PR_HELPER_STALE_SECONDS and (
+                    helper_alive or helper_pid is None
                 ):
                     raise TaskExecutionError(
                         "team_pr_review_in_progress",
@@ -2215,7 +2246,9 @@ def _team_pr_ai_review_worker_locked(
                 "status": "running",
                 "launched_at": _utc_now(),
             }
-            _write_receipt(helper_launch_path, helper_launch, durable=True)
+            _write_team_pr_receipt(
+                helper_launch_path, helper_launch, durable=True
+            )
         try:
             execution = runtime_ops._run_local_script(
                 os_root,
@@ -2236,7 +2269,7 @@ def _team_pr_ai_review_worker_locked(
                         retryable=True,
                         receipt_path=str(helper_launch_path),
                     ) from None
-                _write_receipt(
+                _write_team_pr_receipt(
                     helper_launch_path,
                     {
                         **latest_launch,
@@ -2298,7 +2331,7 @@ def _team_pr_ai_review_worker_locked(
                         retryable=True,
                         receipt_path=str(helper_launch_path),
                     )
-                _write_receipt(
+                _write_team_pr_receipt(
                     helper_launch_path,
                     {
                         **latest_launch,
@@ -2342,7 +2375,7 @@ def _team_pr_ai_review_worker_locked(
         / task_id
         / f"{receipt['attempt_id']}.json"
     )
-    _write_receipt(receipt_path, receipt)
+    _write_team_pr_receipt(receipt_path, receipt)
     if not execution.get("ok"):
         summary = "; ".join(str(value) for value in execution.get("errors") or [])
         raise TaskExecutionError(
@@ -2409,7 +2442,7 @@ def _team_pr_ai_review_worker_locked(
                 receipt_path=str(helper_launch_path),
             )
         elif latest_launch.get("status") != "succeeded":
-            _write_receipt(
+            _write_team_pr_receipt(
                 helper_launch_path,
                 {
                     **latest_launch,
@@ -2517,7 +2550,7 @@ def _team_pr_ai_review_worker_locked(
             "helper_result": helper_result,
             "effects": effects,
         }
-        _write_receipt(intent_path, completed_intent, durable=True)
+        _write_team_pr_receipt(intent_path, completed_intent, durable=True)
     effect = {
         "status": "succeeded",
         "startedAt": started_at,
@@ -2637,9 +2670,16 @@ def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[
     )
     allowed_host_ids = {str(value) for value in route.get("allowed_host_ids") or []}
     if allowed_host_ids:
-        current_host_id = resolve_execution_fabric_host_id(
-            os_root, require_registered=False
-        )
+        try:
+            current_host_id = resolve_execution_fabric_host_id(
+                os_root, require_registered=False
+            )
+        except ExecutionFabricConfigError as exc:
+            raise TaskExecutionError(
+                "task_host_affinity_unavailable",
+                f"execution host identity is temporarily unavailable: {exc}",
+                retryable=True,
+            ) from None
         if current_host_id not in allowed_host_ids:
             raise TaskExecutionError(
                 "task_host_affinity_violation",

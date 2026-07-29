@@ -330,9 +330,9 @@ execution_fabric:
         timeout_seconds: 3900
         heartbeat_seconds: 30
       retry:
-        max_attempts: 3
-        # A retry fenced at lease expiry must land after the orphan-helper
-        # grace window without consuming the final attempt too early.
+        # Error-driven retries can begin before lease expiry. Keep the final
+        # bounded attempt beyond the complete orphan-helper grace window.
+        max_attempts: 9
         backoff_seconds: 600
     - id: los_environment_workers
       enabled: true

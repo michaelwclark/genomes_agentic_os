@@ -22,6 +22,9 @@ All notable changes to this project are documented here. The format follows
 - Keep the legacy projection key for already-admitted tasks that omitted
   `review_mode`, while explicit current tasks use the full-intent key; this
   preserves effect dedup across the upgrade boundary.
+- Keep enough bounded review attempts for error-driven retries to outlive the
+  helper fence, and classify transient durable-write, lock, and host-identity
+  failures as retryable.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails retryably before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new
