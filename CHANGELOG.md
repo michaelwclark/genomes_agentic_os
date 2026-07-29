@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format follows
   helper run. A shared marker lock prevents dispatch-failure writes from
   clobbering a concurrently registered helper PID. Fresh and recovered
   successes terminalize the marker.
+- Normalize case-insensitive repository, head, and source-key fields before
+  deriving the cross-repository review identity and helper run ID.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails retryably before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new

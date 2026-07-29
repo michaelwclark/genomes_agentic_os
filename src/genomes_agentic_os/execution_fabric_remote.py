@@ -1765,10 +1765,10 @@ TEAM_PR_HELPER_STALE_SECONDS = TEAM_PR_HELPER_TIMEOUT_SECONDS + 600
 
 def _team_pr_review_identity(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "repository": str(payload["repository"]),
+        "repository": str(payload["repository"]).lower(),
         "pull_request": int(payload["pull_request"]),
-        "expected_head_sha": str(payload["expected_head_sha"]),
-        "source_key": str(payload["source_key"]),
+        "expected_head_sha": str(payload["expected_head_sha"]).lower(),
+        "source_key": str(payload["source_key"]).lower(),
         "review_mode": str(payload.get("review_mode") or TEAM_PR_REVIEW_MODE),
     }
 
@@ -2355,7 +2355,8 @@ def _team_pr_ai_review_worker_locked(
         )
     if (
         helper_result.get("run_id") != helper_summary_path.parent.name
-        or helper_result.get("source_key") != identity["source_key"]
+        or str(helper_result.get("source_key") or "").lower()
+        != identity["source_key"]
     ):
         raise TaskExecutionError(
             "invalid_team_pr_durable_receipt",

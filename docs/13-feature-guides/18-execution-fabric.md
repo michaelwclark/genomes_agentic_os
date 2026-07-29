@@ -235,7 +235,11 @@ runs Auto-Dev with `--apply` or writes the shared SQLite work registry.
 The worker first persists review intent keyed by repository, PR, immutable
 head, source ticket, and review mode. It reuses the helper's terminal receipt
 after interruption and derives a stable effect key from that identity. A
-per-review-identity file lock rejects overlapping attempts as retryable, even
+Repository, head SHA, and source-key casing are normalized before the worker
+and helper derive that identity, preventing case drift from splitting one
+admitted review across multiple run directories.
+The worker uses a per-review-identity file lock to reject overlapping attempts
+as retryable, even
 when an upgrade leaves two task IDs for the same immutable review. The helper
 must accept the controller-derived review mode, full-identity run ID, and exact
 summary path before it performs provider work. Corrupt receipts fail closed;
