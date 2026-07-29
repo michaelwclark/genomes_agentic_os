@@ -82,6 +82,10 @@ if [ "$mode" = resume ] && [ "${FABRIC_DEPLOYMENT_ROLE:-}" = standby ]; then
     dormant) role_convergence_deferred=true ;;
     active) role_convergence_deferred=false ;;
     *)
+      fabric_notify critical \
+        "Execution Fabric policy recovery blocked by partial role cohort" \
+        "The standby role cohort is partial; recovery remains fail-closed until it is fully dormant or fully promoted." \
+        "execution-fabric-policy-rotation-recovery"
       echo "standby policy role cohort is partial; recovery remains fail-closed" >&2
       exit 75
       ;;
