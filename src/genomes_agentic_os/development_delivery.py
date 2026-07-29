@@ -2035,7 +2035,10 @@ def _adopt_registered_worktree(
         raw = Path(os_root).expanduser() / raw
     path = raw.resolve()
     project_path = project_root(os_root, domain, project)
-    boundary = project_worktree_root(project_path, {"worktrees": dict(profile["worktrees"])}).resolve()
+    storage_root = project_worktree_root(
+        project_path, {"worktrees": dict(profile["worktrees"])}
+    ).resolve()
+    link_boundary = (project_path / "worktrees").resolve()
     active_entries = [
         row
         for row in worktree_entries_for_project(project_path)
@@ -2075,17 +2078,21 @@ def _adopt_registered_worktree(
     if any(registered_target(row) != path for row in identity_rows):
         raise DevelopmentDeliveryError("adopted worktree has conflicting registry targets")
 
-    external = boundary != path.parent and boundary not in path.parents
+    in_place = (
+        storage_root == link_boundary
+        and (link_boundary == path.parent or link_boundary in path.parents)
+    )
+    external = not in_place
     registered_links: set[Path] = set()
     for row in identity_rows:
         raw_link = str(row.get("link") or "").strip()
-        link = Path(raw_link).expanduser() if raw_link else boundary / name
+        link = Path(raw_link).expanduser() if raw_link else link_boundary / name
         if raw_link and not link.is_absolute():
             link = project_path / link
         link_parent = link.parent.resolve()
-        if link_parent != boundary and boundary not in link_parent.parents:
+        if link_parent != link_boundary and link_boundary not in link_parent.parents:
             raise DevelopmentDeliveryError(
-                "adopted worktree registry link is outside the configured project boundary"
+                "adopted worktree registry link is outside the visible project worktrees boundary"
             )
         registered_links.add(link)
         if not link.exists() and not link.is_symlink():

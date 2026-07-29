@@ -364,8 +364,8 @@ def test_start_reuses_canonical_source_identity_and_existing_packet(
     ids=[
         "default-in-place",
         "default-external-symlink",
-        "custom-in-place",
-        "custom-external-symlink",
+        "custom-storage-symlink",
+        "custom-storage-arbitrary-external-symlink",
     ],
 )
 def test_adopt_existing_packet_preserves_canonical_source_and_avoids_duplicate(
@@ -411,9 +411,16 @@ def test_adopt_existing_packet_preserves_canonical_source_and_avoids_duplicate(
         for row in worktree_entries_for_project(project)
         if Path(str(row.get("path"))).resolve() == worktree.resolve()
     )
+    visible_link = project / str(registered_entry["link"])
+    uses_external_link = external or worktree_directory != "worktrees"
+    assert visible_link == project / "worktrees" / str(registered_entry["id"])
+    assert visible_link.is_symlink() is uses_external_link
+    assert registered_entry["link_policy"] == (
+        "symlink_to_external_worktree" if uses_external_link else "in_place_worktree"
+    )
     canonical_worktree_path = (
         str((project / str(registered_entry["link"])).relative_to(root))
-        if external
+        if uses_external_link
         else str(worktree)
     )
     canonical_work_id = "legacy:filesystem:cc-adopt"

@@ -117,9 +117,10 @@ Pre-vNext active packets use the explicit `auto-dev adopt` migration command.
 It binds the exact existing packet to its single canonical work row and source
 key, creates `autodev.json`, and reuses only an exact registered worktree after
 Git and branch readback. A registered external worktree is supported only when
-its link under the configured project worktree directory, resolved target,
-branch, base branch, configured repository, and Git common-directory metadata
-all agree. Registry rows without an `id` or `name` do not establish or conflict
+its link on the canonical project `worktrees/` surface, physical target under
+the configured directory or another explicitly registered location, branch,
+base branch, configured repository, and Git common-directory metadata all
+agree. Registry rows without an `id` or `name` do not establish or conflict
 with worktree identity. Adoption cannot create a replacement packet.
 
 An Everything launch may name several tracker tickets. The command creates one
