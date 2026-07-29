@@ -1871,6 +1871,24 @@ def _process_is_team_pr_helper(pid: int, run_id: str) -> bool:
     )
 
 
+class _TeamPRLaunchMarkerLock:
+    """Serialize controller and helper launch-marker compare-and-replace steps."""
+
+    def __init__(self, marker_path: Path) -> None:
+        self.path = marker_path.with_name("helper-launch.lock")
+        self.handle: Any = None
+
+    def __enter__(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.path.open("a+", encoding="utf-8")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+
+    def __exit__(self, *_args: Any) -> None:
+        if self.handle is not None:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            self.handle.close()
+
+
 def _validate_team_pr_review_intent(
     intent: Mapping[str, Any],
     *,
@@ -2109,70 +2127,76 @@ def _team_pr_ai_review_worker_locked(
         )
         recovered = helper_result is not None
     if helper_result is None:
-        helper_launch = _read_json_object(
-            helper_launch_path, label="Team PR helper launch marker"
-        )
-        if helper_launch is not None and (
-            helper_launch.get("schema_version")
-            != "agentic-os-team-pr-helper-launch/v1"
-            or helper_launch.get("intent_key") != intent_key
-            or helper_launch.get("helper_summary_path") != str(helper_summary_path)
-            or helper_launch.get("status") not in {"running", "failed"}
-            or (
-                "helper_pid" in helper_launch
-                and (
-                    not isinstance(helper_launch.get("helper_pid"), int)
-                    or int(helper_launch["helper_pid"]) <= 0
+        with _TeamPRLaunchMarkerLock(helper_launch_path):
+            helper_launch = _read_json_object(
+                helper_launch_path, label="Team PR helper launch marker"
+            )
+            if helper_launch is not None and (
+                helper_launch.get("schema_version")
+                != "agentic-os-team-pr-helper-launch/v1"
+                or helper_launch.get("intent_key") != intent_key
+                or helper_launch.get("helper_summary_path")
+                != str(helper_summary_path)
+                or helper_launch.get("status") not in {"running", "failed"}
+                or (
+                    "helper_pid" in helper_launch
+                    and (
+                        not isinstance(helper_launch.get("helper_pid"), int)
+                        or int(helper_launch["helper_pid"]) <= 0
+                    )
                 )
-            )
-        ):
-            raise TaskExecutionError(
-                "team_pr_review_intent_conflict",
-                "durable Team PR helper launch marker does not match the admitted request",
-                retryable=False,
-                receipt_path=str(helper_launch_path),
-            )
-        if helper_launch is not None and helper_launch.get("status") == "running":
-            try:
-                launched_at = datetime.fromisoformat(
-                    str(helper_launch["launched_at"]).replace("Z", "+00:00")
-                )
-                if launched_at.tzinfo is None:
-                    raise ValueError("launch time has no timezone")
-                launch_age = (
-                    datetime.now(timezone.utc) - launched_at
-                ).total_seconds()
-            except (KeyError, TypeError, ValueError):
-                raise TaskExecutionError(
-                    "invalid_team_pr_durable_receipt",
-                    "Team PR helper launch marker has an invalid launch time",
-                    retryable=False,
-                    receipt_path=str(helper_launch_path),
-                ) from None
-            helper_pid = helper_launch.get("helper_pid")
-            helper_alive = isinstance(helper_pid, int) and _process_is_alive(helper_pid)
-            helper_verified = isinstance(helper_pid, int) and _process_is_team_pr_helper(
-                helper_pid, helper_summary_path.parent.name
-            )
-            if helper_verified or (
-                launch_age < TEAM_PR_HELPER_STALE_SECONDS
-                and (helper_alive or helper_pid is None)
             ):
                 raise TaskExecutionError(
-                    "team_pr_review_in_progress",
-                    "a prior Team PR helper may still be running",
-                    retryable=True,
+                    "team_pr_review_intent_conflict",
+                    "durable Team PR helper launch marker does not match the admitted request",
+                    retryable=False,
                     receipt_path=str(helper_launch_path),
                 )
-        helper_launch = {
-            "schema_version": "agentic-os-team-pr-helper-launch/v1",
-            "intent_key": intent_key,
-            "helper_summary_path": str(helper_summary_path),
-            "attempt_id": str(assignment.get("attemptId") or ""),
-            "status": "running",
-            "launched_at": _utc_now(),
-        }
-        _write_receipt(helper_launch_path, helper_launch, durable=True)
+            if helper_launch is not None and helper_launch.get("status") == "running":
+                try:
+                    launched_at = datetime.fromisoformat(
+                        str(helper_launch["launched_at"]).replace("Z", "+00:00")
+                    )
+                    if launched_at.tzinfo is None:
+                        raise ValueError("launch time has no timezone")
+                    launch_age = (
+                        datetime.now(timezone.utc) - launched_at
+                    ).total_seconds()
+                except (KeyError, TypeError, ValueError):
+                    raise TaskExecutionError(
+                        "invalid_team_pr_durable_receipt",
+                        "Team PR helper launch marker has an invalid launch time",
+                        retryable=False,
+                        receipt_path=str(helper_launch_path),
+                    ) from None
+                helper_pid = helper_launch.get("helper_pid")
+                helper_alive = isinstance(helper_pid, int) and _process_is_alive(
+                    helper_pid
+                )
+                helper_verified = isinstance(
+                    helper_pid, int
+                ) and _process_is_team_pr_helper(
+                    helper_pid, helper_summary_path.parent.name
+                )
+                if helper_verified or (
+                    launch_age < TEAM_PR_HELPER_STALE_SECONDS
+                    and (helper_alive or helper_pid is None)
+                ):
+                    raise TaskExecutionError(
+                        "team_pr_review_in_progress",
+                        "a prior Team PR helper may still be running",
+                        retryable=True,
+                        receipt_path=str(helper_launch_path),
+                    )
+            helper_launch = {
+                "schema_version": "agentic-os-team-pr-helper-launch/v1",
+                "intent_key": intent_key,
+                "helper_summary_path": str(helper_summary_path),
+                "attempt_id": str(assignment.get("attemptId") or ""),
+                "status": "running",
+                "launched_at": _utc_now(),
+            }
+            _write_receipt(helper_launch_path, helper_launch, durable=True)
         try:
             execution = runtime_ops._run_local_script(
                 os_root,
@@ -2180,30 +2204,29 @@ def _team_pr_ai_review_worker_locked(
                 timeout_seconds=TEAM_PR_HELPER_TIMEOUT_SECONDS,
             )
         except Exception as exc:
-            latest_launch = _read_json_object(
-                helper_launch_path, label="Team PR helper launch marker"
-            )
-            latest_launch = latest_launch or helper_launch
-            latest_pid = latest_launch.get("helper_pid")
-            if isinstance(latest_pid, int) and _process_is_team_pr_helper(
-                latest_pid, helper_summary_path.parent.name
-            ):
-                raise TaskExecutionError(
-                    "team_pr_review_in_progress",
-                    "Team PR helper may still be running after a dispatch failure",
-                    retryable=True,
-                    receipt_path=str(helper_launch_path),
-                ) from None
-            _write_receipt(
-                helper_launch_path,
-                {
-                    **latest_launch,
-                    "status": "failed",
-                    "finished_at": _utc_now(),
-                    "failure_type": type(exc).__name__,
-                },
-                durable=True,
-            )
+            with _TeamPRLaunchMarkerLock(helper_launch_path):
+                latest_launch = _read_json_object(
+                    helper_launch_path, label="Team PR helper launch marker"
+                )
+                latest_launch = latest_launch or helper_launch
+                latest_pid = latest_launch.get("helper_pid")
+                if isinstance(latest_pid, int):
+                    raise TaskExecutionError(
+                        "team_pr_review_in_progress",
+                        "Team PR helper may still be running after a dispatch failure",
+                        retryable=True,
+                        receipt_path=str(helper_launch_path),
+                    ) from None
+                _write_receipt(
+                    helper_launch_path,
+                    {
+                        **latest_launch,
+                        "status": "failed",
+                        "finished_at": _utc_now(),
+                        "failure_type": type(exc).__name__,
+                    },
+                    durable=True,
+                )
             if isinstance(exc, OSError):
                 raise TaskExecutionError(
                     "team_pr_helper_launch_failed",
@@ -2213,59 +2236,58 @@ def _team_pr_ai_review_worker_locked(
                 ) from None
             raise
         if not execution.get("ok"):
-            latest_launch = _read_json_object(
-                helper_launch_path, label="Team PR helper launch marker"
-            )
-            if latest_launch is None or (
-                latest_launch.get("schema_version")
-                != "agentic-os-team-pr-helper-launch/v1"
-                or latest_launch.get("intent_key") != intent_key
-                or latest_launch.get("helper_summary_path")
-                != str(helper_summary_path)
-                or latest_launch.get("status") != "running"
-                or (
-                    "helper_pid" in latest_launch
-                    and (
-                        not isinstance(latest_launch.get("helper_pid"), int)
-                        or int(latest_launch["helper_pid"]) <= 0
-                    )
+            with _TeamPRLaunchMarkerLock(helper_launch_path):
+                latest_launch = _read_json_object(
+                    helper_launch_path, label="Team PR helper launch marker"
                 )
-            ):
-                raise TaskExecutionError(
-                    "team_pr_review_intent_conflict",
-                    "Team PR helper launch marker changed during execution",
-                    retryable=False,
-                    receipt_path=str(helper_launch_path),
-                )
-            latest_pid = latest_launch.get("helper_pid")
-            child_may_be_live = (
-                isinstance(latest_pid, int) and _process_is_alive(latest_pid)
-            ) or (
-                bool(execution.get("governed_run"))
-                and (
-                    execution.get("governed_status") == "stale"
+                if latest_launch is None or (
+                    latest_launch.get("schema_version")
+                    != "agentic-os-team-pr-helper-launch/v1"
+                    or latest_launch.get("intent_key") != intent_key
+                    or latest_launch.get("helper_summary_path")
+                    != str(helper_summary_path)
+                    or latest_launch.get("status") != "running"
                     or (
-                        execution.get("returncode") is None
-                        and not execution.get("timed_out")
+                        "helper_pid" in latest_launch
+                        and (
+                            not isinstance(latest_launch.get("helper_pid"), int)
+                            or int(latest_launch["helper_pid"]) <= 0
+                        )
+                    )
+                ):
+                    raise TaskExecutionError(
+                        "team_pr_review_intent_conflict",
+                        "Team PR helper launch marker changed during execution",
+                        retryable=False,
+                        receipt_path=str(helper_launch_path),
+                    )
+                latest_pid = latest_launch.get("helper_pid")
+                child_may_be_live = isinstance(latest_pid, int) or (
+                    bool(execution.get("governed_run"))
+                    and (
+                        execution.get("governed_status") == "stale"
+                        or (
+                            execution.get("returncode") is None
+                            and not execution.get("timed_out")
+                        )
                     )
                 )
-            )
-            if child_may_be_live:
-                raise TaskExecutionError(
-                    "team_pr_review_in_progress",
-                    "Team PR helper execution is non-terminal and may still be running",
-                    retryable=True,
-                    receipt_path=str(helper_launch_path),
+                if child_may_be_live:
+                    raise TaskExecutionError(
+                        "team_pr_review_in_progress",
+                        "Team PR helper execution is non-terminal and may still be running",
+                        retryable=True,
+                        receipt_path=str(helper_launch_path),
+                    )
+                _write_receipt(
+                    helper_launch_path,
+                    {
+                        **latest_launch,
+                        "status": "failed",
+                        "finished_at": _utc_now(),
+                    },
+                    durable=True,
                 )
-            _write_receipt(
-                helper_launch_path,
-                {
-                    **latest_launch,
-                    "status": "failed",
-                    "finished_at": _utc_now(),
-                },
-                durable=True,
-            )
     else:
         execution = {
             "supported": True,
@@ -2341,40 +2363,41 @@ def _team_pr_ai_review_worker_locked(
             retryable=False,
             receipt_path=str(helper_summary_path),
         )
-    latest_launch = _read_json_object(
-        helper_launch_path, label="Team PR helper launch marker"
-    )
-    if latest_launch is None:
-        if not recovered:
+    with _TeamPRLaunchMarkerLock(helper_launch_path):
+        latest_launch = _read_json_object(
+            helper_launch_path, label="Team PR helper launch marker"
+        )
+        if latest_launch is None:
+            if not recovered:
+                raise TaskExecutionError(
+                    "team_pr_durable_receipt_unavailable",
+                    "Team PR helper launch marker disappeared after execution",
+                    retryable=True,
+                    receipt_path=str(helper_launch_path),
+                )
+        elif (
+            latest_launch.get("schema_version")
+            != "agentic-os-team-pr-helper-launch/v1"
+            or latest_launch.get("intent_key") != intent_key
+            or latest_launch.get("helper_summary_path") != str(helper_summary_path)
+            or latest_launch.get("status") not in {"running", "failed", "succeeded"}
+        ):
             raise TaskExecutionError(
-                "team_pr_durable_receipt_unavailable",
-                "Team PR helper launch marker disappeared after execution",
-                retryable=True,
+                "team_pr_review_intent_conflict",
+                "Team PR helper launch marker changed before terminalization",
+                retryable=False,
                 receipt_path=str(helper_launch_path),
             )
-    elif (
-        latest_launch.get("schema_version")
-        != "agentic-os-team-pr-helper-launch/v1"
-        or latest_launch.get("intent_key") != intent_key
-        or latest_launch.get("helper_summary_path") != str(helper_summary_path)
-        or latest_launch.get("status") not in {"running", "failed", "succeeded"}
-    ):
-        raise TaskExecutionError(
-            "team_pr_review_intent_conflict",
-            "Team PR helper launch marker changed before terminalization",
-            retryable=False,
-            receipt_path=str(helper_launch_path),
-        )
-    elif latest_launch.get("status") != "succeeded":
-        _write_receipt(
-            helper_launch_path,
-            {
-                **latest_launch,
-                "status": "succeeded",
-                "finished_at": _utc_now(),
-            },
-            durable=True,
-        )
+        elif latest_launch.get("status") != "succeeded":
+            _write_receipt(
+                helper_launch_path,
+                {
+                    **latest_launch,
+                    "status": "succeeded",
+                    "finished_at": _utc_now(),
+                },
+                durable=True,
+            )
     helper_status = str(helper_result.get("status") or "")
     effects: list[dict[str, Any]] = []
     if helper_status != "superseded":
@@ -2585,7 +2608,7 @@ def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[
             raise TaskExecutionError(
                 "task_host_affinity_violation",
                 f"task type {task.get('taskType')!r} is pinned to a different execution host",
-                retryable=False,
+                retryable=True,
             )
     if route["domain_worker"]:
         worker_name = str(route["domain_worker"])

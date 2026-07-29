@@ -14,11 +14,15 @@ All notable changes to this project are documented here. The format follows
   run ID, and summary path. Full-digest receipt paths, fsync-backed
   persistence, and a durable helper-launch marker prevent cross-ticket recovery collisions,
   torn intent writes, and relaunch while the PID still belongs to the exact
-  helper run. Fresh and recovered successes terminalize the marker.
+  helper run. A shared marker lock prevents dispatch-failure writes from
+  clobbering a concurrently registered helper PID. Fresh and recovered
+  successes terminalize the marker.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
-  other host fails closed before helper execution.
+  other host fails retryably before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new
   producer emits explicit `review_mode`, which an older closed route rejects.
+  Quiesce the review queue during this upgrade so an unacknowledged legacy
+  effect key cannot be replayed once under the full-intent key format.
 
 ## [0.6.0] - 2026-08-01
 

@@ -1155,6 +1155,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     with pytest.raises(TaskExecutionError) as wrong_host:
         execute_assignment(root, assignment)
     assert wrong_host.value.code == "task_host_affinity_violation"
+    assert wrong_host.value.retryable is True
     assert captured["calls"] == 1
     monkeypatch.setattr(
         execution_fabric_remote,

@@ -246,7 +246,9 @@ orphaned helper may still be within its nominal timeout plus a ten-minute
 grace. The review pool's ten-minute retry backoff ensures the last configured
 attempt lands after that fence instead of exhausting the immutable task early.
 The paired helper records its PID in the same identity-bound marker before any
-provider read; a live PID remains fenced beyond the age threshold, while a
+provider read. Controller and helper compare-and-replace operations share a
+marker lock, so an exceptional dispatch cannot overwrite a concurrently
+registered PID. A live PID remains fenced inside the age threshold, while a
 dead PID permits immediate recovery. Spawn exceptions durably mark the launch
 failed before returning a classified retryable error, and a validated helper
 result terminalizes the marker as `succeeded`.
@@ -265,13 +267,16 @@ consumer may project a validated terminal review receipt back to Notion.
 Deployment order is strict: deploy this Agentic OS route before installing the
 paired object-library producer. The producer emits explicit `review_mode`, and
 the prior closed route correctly rejects that previously unknown field.
+Quiesce and drain `pr_reviews` across the upgrade boundary before resuming the
+producer. This prevents a legacy effect whose acknowledgment was lost from
+being projected once more under the new full-review-intent effect key.
 
 The review pool is two-wide on the pinned `bigmac` execution host. Its intent
 files, helper marker, PID fence, and summaries are host-local; do not
 distribute this pool across hosts until those records move into the shared
 control plane. Remote task admission does not imply cross-host retry safety for this route. The
-worker resolves the canonical fabric host ID and fails closed before helper
-execution when it is not `bigmac`.
+worker resolves the canonical fabric host ID and fails retryably before helper
+execution when it is not `bigmac`, allowing a bounded retry on the pinned host.
 
 The watcher state is runtime data at
 `runtime/objects/programs/program/domain/los/team_pr_sync/state/team-pr-review-trigger-state.json`;
