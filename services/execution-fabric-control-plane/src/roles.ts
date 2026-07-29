@@ -142,7 +142,11 @@ export class PostgresRoleHealthStore {
        ) VALUES($1,$2,$3,now(),NULL,$4,NULL,NULL,NULL,0,now())
        ON CONFLICT(host_id,role) DO UPDATE SET
          instance_id=EXCLUDED.instance_id,
-         started_at=EXCLUDED.started_at,
+         started_at=CASE
+           WHEN fabric_role_health.last_successful_tick_at IS NULL
+             THEN LEAST(fabric_role_health.started_at,EXCLUDED.started_at)
+           ELSE EXCLUDED.started_at
+         END,
          approved_policy_fingerprint=NULL,
          applied_policy_fingerprint=EXCLUDED.applied_policy_fingerprint,
          last_successful_tick_at=NULL,
