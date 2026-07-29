@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [Unreleased]
+
+### Fixed
+- Persist full-identity Team PR review intent before helper launch, recover a
+  completed helper receipt after worker interruption, fence overlapping
+  attempts per review identity, and bind the helper to the exact review mode,
+  run ID, and summary path. Full-digest receipt paths, fsync-backed
+  persistence, and a durable helper-launch marker prevent cross-ticket recovery collisions,
+  torn intent writes, and relaunch while a recorded helper PID remains live
+  inside its bounded age window. Successful helpers terminalize the marker.
+- Pin the host-local Team PR durability state to `bigmac`; a worker on any
+  other host fails closed before helper execution.
+- Ship the Agentic OS route before the paired object-library producer; the new
+  producer emits explicit `review_mode`, which an older closed route rejects.
+
 ## [0.6.0] - 2026-08-01
 
 ### Added

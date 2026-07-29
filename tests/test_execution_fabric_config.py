@@ -14,6 +14,7 @@ from genomes_agentic_os.execution_fabric_config import (
     load_execution_fabric_config,
     resolve_execution_fabric_host_id,
 )
+from genomes_agentic_os.execution_fabric_remote import TEAM_PR_HELPER_STALE_SECONDS
 from genomes_agentic_os.runtime_backend import (
     RuntimeBackendError,
     apply_queue_mode,
@@ -184,6 +185,20 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
         if pool["id"] == "pr_reviewers"
     )
     assert pr_review_pool["capacity"]["max_tasks_per_worker"] == 2
+    assert pr_review_pool["retry"] == {"max_attempts": 3, "backoff_seconds": 600}
+    assert (
+        pr_review_pool["lease"]["timeout_seconds"]
+        + pr_review_pool["retry"]["backoff_seconds"]
+        > TEAM_PR_HELPER_STALE_SECONDS
+    )
+    team_pr_route = next(
+        route
+        for route in load_execution_fabric_config(root).value["execution_fabric"][
+            "task_routes"
+        ]
+        if route["task_type"] == "los.team_pr.ai_review.v1"
+    )
+    assert team_pr_route["execution"]["allowed_host_ids"] == ["bigmac"]
 
     _edit(root)
     second = execution_fabric_config_status(root)

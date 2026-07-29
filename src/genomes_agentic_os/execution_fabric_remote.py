@@ -11,6 +11,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import fcntl
 from hashlib import sha256
 import json
 import ipaddress
@@ -27,7 +28,11 @@ import urllib.request
 from urllib.parse import urlsplit
 import yaml
 
-from .execution_fabric_config import ExecutionFabricConfigError, load_execution_fabric_config
+from .execution_fabric_config import (
+    ExecutionFabricConfigError,
+    load_execution_fabric_config,
+    resolve_execution_fabric_host_id,
+)
 from .scaffold import expand_path
 
 
@@ -483,6 +488,7 @@ def validate_task_route(
             "required_capability": execution.get("required_capability"),
             "command_template": execution.get("command_template"),
             "domain_worker": execution.get("domain_worker"),
+            "allowed_host_ids": list(execution.get("allowed_host_ids") or []),
             "mutation_class": route["mutation_class"],
             "approval_class": route["approval_class"],
             "allowed_effect_types": list(route.get("allowed_effect_types") or []),
@@ -538,6 +544,7 @@ def validate_task_route(
         "required_capability": required_capability,
         "command_template": execution.get("command_template"),
         "domain_worker": execution.get("domain_worker"),
+        "allowed_host_ids": list(execution.get("allowed_host_ids") or []),
         "mutation_class": route["mutation_class"],
         "approval_class": route["approval_class"],
         "allowed_effect_types": list(route.get("allowed_effect_types") or []),
@@ -1150,7 +1157,9 @@ def _json_object(raw: bytes) -> dict[str, Any]:
     return parsed
 
 
-def _write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
+def _write_receipt(
+    path: Path, receipt: Mapping[str, Any], *, durable: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         "w",
@@ -1161,8 +1170,48 @@ def _write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
     ) as handle:
         json.dump(receipt, handle, indent=2, sort_keys=True)
         handle.write("\n")
+        if durable:
+            handle.flush()
+            os.fsync(handle.fileno())
         temporary = Path(handle.name)
     os.replace(temporary, path)
+    if durable:
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
+def _write_receipt_once(path: Path, receipt: Mapping[str, Any]) -> bool:
+    """Atomically create a receipt without replacing an existing value."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        delete=False,
+    ) as handle:
+        json.dump(receipt, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        temporary = Path(handle.name)
+    try:
+        try:
+            os.link(temporary, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _artifact_spool_root(root: str | Path) -> Path:
@@ -1707,7 +1756,150 @@ def _claude_task_worker(
     )
 
 
-def _team_pr_ai_review_worker(
+TEAM_PR_REVIEW_MODE = "review_no_merge"
+TEAM_PR_REVIEW_INTENT_SCHEMA = "agentic-os-team-pr-review-intent/v1"
+TEAM_PR_HELPER_TIMEOUT_SECONDS = 3700
+TEAM_PR_HELPER_STALE_SECONDS = TEAM_PR_HELPER_TIMEOUT_SECONDS + 600
+
+
+def _team_pr_review_identity(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "repository": str(payload["repository"]),
+        "pull_request": int(payload["pull_request"]),
+        "expected_head_sha": str(payload["expected_head_sha"]),
+        "source_key": str(payload["source_key"]),
+        "review_mode": str(payload.get("review_mode") or TEAM_PR_REVIEW_MODE),
+    }
+
+
+def _team_pr_review_intent_key(identity: Mapping[str, Any]) -> str:
+    digest = sha256(
+        json.dumps(
+            dict(identity),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"team-pr-review:{digest}"
+
+
+def _team_pr_review_summary_path(
+    os_root: Path, identity: Mapping[str, Any]
+) -> Path:
+    repository = str(identity["repository"])
+    identity_suffix = _team_pr_review_intent_key(identity).split(":", 1)[1]
+    run_id = (
+        f"team-pr-review-{repository.replace('/', '-')}"
+        f"-{identity['pull_request']}-{str(identity['expected_head_sha'])[:12]}"
+        f"-{identity_suffix}"
+    )
+    return (
+        os_root
+        / "runtime/objects/programs/program/domain/los/team_pr_sync/review-runs"
+        / run_id
+        / "summary.json"
+    )
+
+
+def _read_json_object(path: Path, *, label: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise TaskExecutionError(
+            "team_pr_durable_receipt_unavailable",
+            f"{label} is temporarily unreadable: {type(exc).__name__}",
+            retryable=True,
+            receipt_path=str(path),
+        ) from None
+    except json.JSONDecodeError as exc:
+        raise TaskExecutionError(
+            "invalid_team_pr_durable_receipt",
+            f"{label} is unreadable: {type(exc).__name__}",
+            retryable=False,
+            receipt_path=str(path),
+        ) from None
+    if not isinstance(value, dict):
+        raise TaskExecutionError(
+            "invalid_team_pr_durable_receipt",
+            f"{label} is not a JSON object",
+            retryable=False,
+            receipt_path=str(path),
+        )
+    return value
+
+
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _validate_team_pr_review_intent(
+    intent: Mapping[str, Any],
+    *,
+    intent_key: str,
+    identity: Mapping[str, Any],
+    author_identity: str,
+    author_kind: str,
+    helper_summary_path: Path,
+    intent_path: Path,
+) -> None:
+    if (
+        intent.get("schema_version") != TEAM_PR_REVIEW_INTENT_SCHEMA
+        or intent.get("intent_key") != intent_key
+        or intent.get("identity") != identity
+        or intent.get("author_identity") != author_identity
+        or intent.get("author_kind") != author_kind
+        or intent.get("status") not in {"pending", "completed"}
+        or intent.get("helper_summary_path") != str(helper_summary_path)
+    ):
+        raise TaskExecutionError(
+            "team_pr_review_intent_conflict",
+            "durable Team PR review intent does not match the admitted request",
+            retryable=False,
+            receipt_path=str(intent_path),
+        )
+
+
+def _team_pr_review_effect(
+    *,
+    effect_type: str,
+    intent_key: str,
+    payload: Mapping[str, Any],
+    task_id: str,
+    author_identity: str,
+    author_kind: str,
+) -> dict[str, Any]:
+    return {
+        "effectKey": f"{effect_type}:{intent_key}",
+        "effectType": effect_type,
+        "payload": {
+            "page_id": payload["notion_page_id"],
+            "repository": payload["repository"],
+            "pull_request": payload["pull_request"],
+            "expected_head_sha": payload["expected_head_sha"],
+            "base_branch": payload["base_branch"],
+            "source_key": payload["source_key"],
+            "review_mode": TEAM_PR_REVIEW_MODE,
+            "review_intent_key": intent_key,
+            "task_identity": task_id,
+            "operation": "project_completed_review",
+            "author_identity": author_identity,
+            "author_kind": author_kind,
+        },
+        "maxAttempts": 8,
+        "baseBackoffSeconds": 60,
+    }
+
+
+def _team_pr_ai_review_worker_locked(
     os_root: Path,
     assignment: Mapping[str, Any],
     task: Mapping[str, Any],
@@ -1746,7 +1938,13 @@ def _team_pr_ai_review_worker(
             )
             if str(value).strip()
         }
-    except (OSError, TypeError, yaml.YAMLError) as exc:
+    except OSError as exc:
+        raise TaskExecutionError(
+            "authorship_policy_unavailable",
+            f"canonical review authorship policy is temporarily unreadable: {type(exc).__name__}",
+            retryable=True,
+        ) from None
+    except (TypeError, yaml.YAMLError) as exc:
         raise TaskExecutionError(
             "authorship_policy_unavailable",
             f"canonical review authorship policy is unreadable: {type(exc).__name__}",
@@ -1759,6 +1957,63 @@ def _team_pr_ai_review_worker(
             retryable=False,
         )
     author_kind = "ours" if author_identity.lower() in ours else "others"
+    identity = _team_pr_review_identity(payload)
+    if identity["review_mode"] != TEAM_PR_REVIEW_MODE:
+        raise TaskExecutionError(
+            "unsupported_team_pr_review_mode",
+            "Team PR review mode must remain review_no_merge",
+            retryable=False,
+        )
+    intent_key = _team_pr_review_intent_key(identity)
+    intent_path = (
+        os_root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
+        / task_id
+        / "review-intent.json"
+    )
+    helper_summary_path = _team_pr_review_summary_path(os_root, identity)
+    helper_launch_path = helper_summary_path.with_name("helper-launch.json")
+    intent = _read_json_object(intent_path, label="Team PR review intent")
+    if intent is not None:
+        _validate_team_pr_review_intent(
+            intent,
+            intent_key=intent_key,
+            identity=identity,
+            author_identity=author_identity,
+            author_kind=author_kind,
+            helper_summary_path=helper_summary_path,
+            intent_path=intent_path,
+        )
+    if intent is None:
+        intent = {
+            "schema_version": TEAM_PR_REVIEW_INTENT_SCHEMA,
+            "intent_key": intent_key,
+            "identity": identity,
+            "author_identity": author_identity,
+            "author_kind": author_kind,
+            "task_id": task_id,
+            "status": "pending",
+            "helper_summary_path": str(helper_summary_path),
+            "created_at": _utc_now(),
+        }
+        if not _write_receipt_once(intent_path, intent):
+            intent = _read_json_object(intent_path, label="Team PR review intent")
+            if intent is None:
+                raise TaskExecutionError(
+                    "team_pr_durable_receipt_unavailable",
+                    "Team PR review intent disappeared during atomic creation",
+                    retryable=True,
+                    receipt_path=str(intent_path),
+                )
+            _validate_team_pr_review_intent(
+                intent,
+                intent_key=intent_key,
+                identity=identity,
+                author_identity=author_identity,
+                author_kind=author_kind,
+                helper_summary_path=helper_summary_path,
+                intent_path=intent_path,
+            )
     helper_candidates = sorted(
         (os_root / "lib/programs/domains").glob(
             "*/team_pr_sync/scripts/team_pr_review_fabric.py"
@@ -1788,6 +2043,14 @@ def _team_pr_ai_review_worker(
             str(payload["base_branch"]),
             "--source-key",
             str(payload["source_key"]),
+            "--review-mode",
+            TEAM_PR_REVIEW_MODE,
+            "--run-id",
+            helper_summary_path.parent.name,
+            "--summary-path",
+            str(helper_summary_path),
+            "--launch-marker-path",
+            str(helper_launch_path),
             "--title",
             str(payload["title"]),
             "--author-identity",
@@ -1796,11 +2059,175 @@ def _team_pr_ai_review_worker(
         ]
     )
     started_at = _utc_now()
-    execution = runtime_ops._run_local_script(
-        os_root,
-        command,
-        timeout_seconds=3700,
-    )
+    recovered = False
+    helper_result = None
+    if intent.get("status") == "completed":
+        candidate = intent.get("helper_result")
+        if not isinstance(candidate, dict):
+            raise TaskExecutionError(
+                "invalid_team_pr_durable_receipt",
+                "completed Team PR review intent has no helper result",
+                retryable=False,
+                receipt_path=str(intent_path),
+            )
+        helper_result = candidate
+        recovered = True
+    elif intent.get("status") == "pending":
+        persisted_summary_path = Path(str(intent["helper_summary_path"]))
+        helper_result = _read_json_object(
+            persisted_summary_path, label="Team PR helper summary"
+        )
+        recovered = helper_result is not None
+    if helper_result is None:
+        helper_launch = _read_json_object(
+            helper_launch_path, label="Team PR helper launch marker"
+        )
+        if helper_launch is not None and (
+            helper_launch.get("schema_version")
+            != "agentic-os-team-pr-helper-launch/v1"
+            or helper_launch.get("intent_key") != intent_key
+            or helper_launch.get("helper_summary_path") != str(helper_summary_path)
+            or helper_launch.get("status") not in {"running", "failed"}
+            or (
+                "helper_pid" in helper_launch
+                and (
+                    not isinstance(helper_launch.get("helper_pid"), int)
+                    or int(helper_launch["helper_pid"]) <= 0
+                )
+            )
+        ):
+            raise TaskExecutionError(
+                "team_pr_review_intent_conflict",
+                "durable Team PR helper launch marker does not match the admitted request",
+                retryable=False,
+                receipt_path=str(helper_launch_path),
+            )
+        if helper_launch is not None and helper_launch.get("status") == "running":
+            try:
+                launched_at = datetime.fromisoformat(
+                    str(helper_launch["launched_at"]).replace("Z", "+00:00")
+                )
+                if launched_at.tzinfo is None:
+                    raise ValueError("launch time has no timezone")
+                launch_age = (
+                    datetime.now(timezone.utc) - launched_at
+                ).total_seconds()
+            except (KeyError, TypeError, ValueError):
+                raise TaskExecutionError(
+                    "invalid_team_pr_durable_receipt",
+                    "Team PR helper launch marker has an invalid launch time",
+                    retryable=False,
+                    receipt_path=str(helper_launch_path),
+                ) from None
+            helper_pid = helper_launch.get("helper_pid")
+            helper_alive = isinstance(helper_pid, int) and _process_is_alive(helper_pid)
+            if launch_age < TEAM_PR_HELPER_STALE_SECONDS and (
+                helper_alive or helper_pid is None
+            ):
+                raise TaskExecutionError(
+                    "team_pr_review_in_progress",
+                    "a prior Team PR helper may still be running",
+                    retryable=True,
+                    receipt_path=str(helper_launch_path),
+                )
+        helper_launch = {
+            "schema_version": "agentic-os-team-pr-helper-launch/v1",
+            "intent_key": intent_key,
+            "helper_summary_path": str(helper_summary_path),
+            "attempt_id": str(assignment.get("attemptId") or ""),
+            "status": "running",
+            "launched_at": _utc_now(),
+        }
+        _write_receipt(helper_launch_path, helper_launch, durable=True)
+        try:
+            execution = runtime_ops._run_local_script(
+                os_root,
+                command,
+                timeout_seconds=TEAM_PR_HELPER_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            _write_receipt(
+                helper_launch_path,
+                {
+                    **helper_launch,
+                    "status": "failed",
+                    "finished_at": _utc_now(),
+                    "failure_type": type(exc).__name__,
+                },
+                durable=True,
+            )
+            if isinstance(exc, OSError):
+                raise TaskExecutionError(
+                    "team_pr_helper_launch_failed",
+                    f"Team PR helper launch failed: {type(exc).__name__}",
+                    retryable=True,
+                    receipt_path=str(helper_launch_path),
+                ) from None
+            raise
+        if not execution.get("ok"):
+            latest_launch = _read_json_object(
+                helper_launch_path, label="Team PR helper launch marker"
+            )
+            if latest_launch is None or (
+                latest_launch.get("schema_version")
+                != "agentic-os-team-pr-helper-launch/v1"
+                or latest_launch.get("intent_key") != intent_key
+                or latest_launch.get("helper_summary_path")
+                != str(helper_summary_path)
+                or latest_launch.get("status") != "running"
+                or (
+                    "helper_pid" in latest_launch
+                    and (
+                        not isinstance(latest_launch.get("helper_pid"), int)
+                        or int(latest_launch["helper_pid"]) <= 0
+                    )
+                )
+            ):
+                raise TaskExecutionError(
+                    "team_pr_review_intent_conflict",
+                    "Team PR helper launch marker changed during execution",
+                    retryable=False,
+                    receipt_path=str(helper_launch_path),
+                )
+            latest_pid = latest_launch.get("helper_pid")
+            child_may_be_live = (
+                isinstance(latest_pid, int) and _process_is_alive(latest_pid)
+            ) or (
+                bool(execution.get("governed_run"))
+                and (
+                    execution.get("governed_status") == "stale"
+                    or (
+                        execution.get("returncode") is None
+                        and not execution.get("timed_out")
+                    )
+                )
+            )
+            if child_may_be_live:
+                raise TaskExecutionError(
+                    "team_pr_review_in_progress",
+                    "Team PR helper execution is non-terminal and may still be running",
+                    retryable=True,
+                    receipt_path=str(helper_launch_path),
+                )
+            _write_receipt(
+                helper_launch_path,
+                {
+                    **latest_launch,
+                    "status": "failed",
+                    "finished_at": _utc_now(),
+                },
+                durable=True,
+            )
+    else:
+        execution = {
+            "supported": True,
+            "ok": True,
+            "exit_code": 0,
+            "stdout": json.dumps(helper_result, sort_keys=True),
+            "stderr": "",
+            "errors": [],
+            "warnings": ["recovered from durable Team PR review intent"],
+        }
     finished_at = _utc_now()
     failure = runtime_ops._execution_failure_class(execution)
     receipt = {
@@ -1815,6 +2242,8 @@ def _team_pr_ai_review_worker(
         "task_type": str(task["taskType"]),
         "queue_name": str(task["queue"]),
         "domain_worker": "team_pr_ai_review",
+        "review_intent_key": intent_key,
+        "review_intent_recovered": recovered,
         "canonical_project_config": str(profile_path),
         "evidence": execution,
     }
@@ -1833,21 +2262,52 @@ def _team_pr_ai_review_worker(
             retryable=bool(failure.get("retryable")),
             receipt_path=str(receipt_path),
         )
-    try:
-        helper_result = json.loads(str(execution.get("stdout") or ""))
-    except json.JSONDecodeError:
-        raise TaskExecutionError(
-            "invalid_team_pr_helper_receipt",
-            "Team PR review helper did not return a JSON object",
-            retryable=False,
-            receipt_path=str(receipt_path),
-        ) from None
+    if helper_result is None:
+        try:
+            helper_result = json.loads(str(execution.get("stdout") or ""))
+        except json.JSONDecodeError:
+            raise TaskExecutionError(
+                "invalid_team_pr_helper_receipt",
+                "Team PR review helper did not return a JSON object",
+                retryable=False,
+                receipt_path=str(receipt_path),
+            ) from None
     if not isinstance(helper_result, dict):
         raise TaskExecutionError(
             "invalid_team_pr_helper_receipt",
             "Team PR review helper returned a non-object receipt",
             retryable=False,
             receipt_path=str(receipt_path),
+        )
+    if (
+        helper_result.get("run_id") != helper_summary_path.parent.name
+        or helper_result.get("source_key") != identity["source_key"]
+    ):
+        raise TaskExecutionError(
+            "invalid_team_pr_durable_receipt",
+            "Team PR helper summary does not match the admitted review identity",
+            retryable=False,
+            receipt_path=str(helper_summary_path),
+        )
+    if not recovered:
+        latest_launch = _read_json_object(
+            helper_launch_path, label="Team PR helper launch marker"
+        )
+        if latest_launch is None:
+            raise TaskExecutionError(
+                "team_pr_durable_receipt_unavailable",
+                "Team PR helper launch marker disappeared after execution",
+                retryable=True,
+                receipt_path=str(helper_launch_path),
+            )
+        _write_receipt(
+            helper_launch_path,
+            {
+                **latest_launch,
+                "status": "succeeded",
+                "finished_at": _utc_now(),
+            },
+            durable=True,
         )
     helper_status = str(helper_result.get("status") or "")
     effects: list[dict[str, Any]] = []
@@ -1908,28 +2368,47 @@ def _team_pr_ai_review_worker(
             )
         effect_type = next(iter(allowed_effects))
         effects.append(
-            {
-                "effectKey": (
-                    f"{effect_type}:{payload['source_key']}:"
-                    f"{payload['expected_head_sha']}"
-                ),
-                "effectType": effect_type,
-                "payload": {
-                    "page_id": payload["notion_page_id"],
-                    "repository": payload["repository"],
-                    "pull_request": payload["pull_request"],
-                    "expected_head_sha": payload["expected_head_sha"],
-                    "base_branch": payload["base_branch"],
-                    "source_key": payload["source_key"],
-                    "task_identity": task_id,
-                    "operation": "project_completed_review",
-                    "author_identity": author_identity,
-                    "author_kind": author_kind,
-                },
-                "maxAttempts": 8,
-                "baseBackoffSeconds": 60,
-            }
+            _team_pr_review_effect(
+                effect_type=effect_type,
+                intent_key=intent_key,
+                payload=payload,
+                task_id=task_id,
+                author_identity=author_identity,
+                author_kind=author_kind,
+            )
         )
+    if intent.get("status") == "completed":
+        if (
+            intent.get("helper_status") != helper_status
+            or intent.get("helper_result") != helper_result
+            or intent.get("effects") != effects
+        ):
+            raise TaskExecutionError(
+                "team_pr_review_intent_conflict",
+                "completed Team PR review intent changed during recovery",
+                retryable=False,
+                receipt_path=str(intent_path),
+            )
+    else:
+        current_intent = _read_json_object(
+            intent_path, label="Team PR review intent"
+        )
+        if current_intent is None or current_intent != intent:
+            raise TaskExecutionError(
+                "team_pr_review_intent_conflict",
+                "pending Team PR review intent changed before completion",
+                retryable=False,
+                receipt_path=str(intent_path),
+            )
+        completed_intent = {
+            **intent,
+            "status": "completed",
+            "completed_at": finished_at,
+            "helper_status": helper_status,
+            "helper_result": helper_result,
+            "effects": effects,
+        }
+        _write_receipt(intent_path, completed_intent, durable=True)
     effect = {
         "status": "succeeded",
         "startedAt": started_at,
@@ -1952,6 +2431,35 @@ def _team_pr_ai_review_worker(
             }
         ],
     }
+
+
+def _team_pr_ai_review_worker(
+    os_root: Path,
+    assignment: Mapping[str, Any],
+    task: Mapping[str, Any],
+    route: Mapping[str, Any],
+) -> dict[str, Any]:
+    identity = _team_pr_review_identity(dict(task.get("payload") or {}))
+    lock_path = _team_pr_review_summary_path(os_root, identity).with_name(
+        "review-intent.lock"
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise TaskExecutionError(
+                "team_pr_review_in_progress",
+                "another attempt is already executing this Team PR review intent",
+                retryable=True,
+                receipt_path=str(lock_path),
+            ) from None
+        try:
+            return _team_pr_ai_review_worker_locked(
+                os_root, assignment, task, route
+            )
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def _validate_domain_worker_result(
@@ -2002,6 +2510,17 @@ def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[
         payload=payload,
         remote=True,
     )
+    allowed_host_ids = {str(value) for value in route.get("allowed_host_ids") or []}
+    if allowed_host_ids:
+        current_host_id = resolve_execution_fabric_host_id(
+            os_root, require_registered=False
+        )
+        if current_host_id not in allowed_host_ids:
+            raise TaskExecutionError(
+                "task_host_affinity_violation",
+                f"task type {task.get('taskType')!r} is pinned to a different execution host",
+                retryable=False,
+            )
     if route["domain_worker"]:
         worker_name = str(route["domain_worker"])
         handler = _DOMAIN_WORKERS.get(worker_name)
