@@ -211,9 +211,13 @@ def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
     The source-watch registry predates the shared GitHub port, so its persisted
     field names are intentionally retained here.  This is a narrow adapter, not
     a second GitHub client: the bridge owns provider calls and normalization.
+    The current port does not expose GitHub's database id or requested reviewer
+    and team collections. Their legacy keys remain present with neutral values
+    so downstream shape checks do not fail silently during the migration.
     """
     labels = item.get("labels") if isinstance(item.get("labels"), list) else []
     return {
+        "id": None,
         "number": item.get("number"),
         "title": item.get("title", ""),
         "state": "closed" if item.get("state") == "merged" else item.get("state", "open"),
@@ -227,6 +231,8 @@ def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
         "base": {"ref": item.get("baseBranch", "")},
         "draft": bool(item.get("draft", False)),
         "labels": [{"name": label} for label in labels if isinstance(label, str)],
+        "requested_reviewers": [],
+        "requested_teams": [],
     }
 
 
@@ -394,16 +400,45 @@ def poll_github_source(
     since: str | None = source.get("_cursor_since")  # injected by caller when advancing
 
     try:
-        items = fetch_github_events(
-            owner, repo,
-            token=token,
-            event_types=list(event_types),
-            since=since,
-            fetcher=fetcher,
-        )
-        bridge_active = any(event_type == "pull_request" for event_type in event_types)
+        want_prs = any(event_type == "pull_request" for event_type in event_types)
+        want_issues = any(event_type in ("issues", "issue") for event_type in event_types)
+        items: list[dict[str, Any]] = []
+        if want_issues:
+            items.extend(fetch_github_events(
+                owner,
+                repo,
+                token=token,
+                event_types=["issues"],
+                since=since,
+                fetcher=fetcher,
+            ))
+        if want_prs:
+            try:
+                items.extend(fetch_github_events(
+                    owner,
+                    repo,
+                    token=token,
+                    event_types=["pull_request"],
+                    since=since,
+                    fetcher=fetcher,
+                ))
+            except GitHubBridgeError as exc:
+                return {
+                    "ok": False,
+                    "live": bool(items),
+                    "items": items,
+                    "item_count": len(items),
+                    "partial": bool(items),
+                    "provider": "platform_github_port+direct_api" if want_issues else "platform_github_port",
+                    "findings": [{
+                        "severity": "blocker",
+                        "code": exc.code,
+                        "message": str(exc),
+                    }],
+                }
+        bridge_active = want_prs
         provider = "platform_github_port" if bridge_active else "direct_api"
-        if bridge_active and any(event_type in ("issues", "issue") for event_type in event_types):
+        if bridge_active and want_issues:
             provider = "platform_github_port+direct_api"
         return {
             "ok": True,
@@ -413,19 +448,6 @@ def poll_github_source(
             "provider": provider,
             "credential_env": env_name,
             "dry_run_reason": None,
-        }
-    except GitHubBridgeError as exc:
-        return {
-            "ok": False,
-            "live": False,
-            "items": [],
-            "item_count": 0,
-            "provider": "platform_github_port",
-            "findings": [{
-                "severity": "blocker",
-                "code": exc.code,
-                "message": str(exc),
-            }],
         }
     except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
         return {

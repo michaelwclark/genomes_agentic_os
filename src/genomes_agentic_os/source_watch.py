@@ -725,17 +725,22 @@ def poll_watch_source(
         live_kwargs["fetcher"] = fetcher
     live_result = poll_live_source(source, system, **live_kwargs)
 
-    # Secrets-in-config guard fires here — propagate as a hard failure
-    if live_result is not None and not live_result.get("ok") and any(
-        f.get("code") == "SECRETS_IN_CONFIG"
-        for f in (live_result.get("findings") or [])
-    ):
+    # Every live-adapter failure is terminal for this poll. Falling back to a
+    # registry event would turn provider/configuration failures into false
+    # success and can advance cursors or trigger downstream work incorrectly.
+    if live_result is not None and live_result.get("ok") is False:
         return {
             "source_id": source_id,
             "ok": False,
             "dry_run": dry_run,
-            "findings": live_result["findings"],
+            "findings": live_result.get("findings") or [],
             "events": [],
+            "adapter": {
+                "live": live_result.get("live", False),
+                "item_count": live_result.get("item_count", 0),
+                "provider": live_result.get("provider"),
+                "partial": live_result.get("partial", False),
+            },
         }
 
     # Build normalised event envelope

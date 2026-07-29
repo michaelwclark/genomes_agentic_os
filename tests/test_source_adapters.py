@@ -37,6 +37,7 @@ from genomes_agentic_os.source_watch import (
     find_by_id,
     normalized_source_event,
     poll_watch_source,
+    run_due_watch_sources,
     write_yaml,
     CONNECTED_SYSTEMS_FILE,
     WATCH_SOURCES_FILE,
@@ -84,6 +85,22 @@ GITHUB_PR_FIXTURE = [
         "requested_reviewers": [],
         "requested_teams": [],
     },
+]
+
+GITHUB_ISSUE_FIXTURE = [
+    {
+        "id": 2001,
+        "number": 77,
+        "title": "Track bridge migration",
+        "state": "open",
+        "created_at": "2026-06-04T10:00:00Z",
+        "updated_at": "2026-06-05T12:00:00Z",
+        "closed_at": None,
+        "html_url": "https://github.com/testorg/testrepo/issues/77",
+        "user": {"login": "issue-author", "id": 7777},
+        "labels": [{"name": "migration"}],
+        "assignees": [{"login": "owner1"}],
+    }
 ]
 
 SLACK_MESSAGES_FIXTURE = {
@@ -410,6 +427,40 @@ class TestFetchGithubEvents:
         assert items[0]["updated_at"] == "2026-06-02T12:00:00.000Z"
         assert items[0]["_idempotency_key"] == "github:pr:testorg:testrepo:42"
 
+    def test_bridge_mapping_preserves_legacy_pr_shape(self) -> None:
+        items = fetch_github_events(
+            "testorg",
+            "testrepo",
+            token="fake_token",
+            event_types=["pull_request"],
+        )
+
+        assert "id" in items[0]
+        assert items[0]["id"] is None
+        assert items[0]["requested_reviewers"] == []
+        assert items[0]["requested_teams"] == []
+
+    def test_issue_only_poll_does_not_require_bridge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+        calls: list[str] = []
+
+        def issue_fetcher(req):
+            calls.append(req.full_url)
+            return _make_json_fetcher(GITHUB_ISSUE_FIXTURE)(req)
+
+        items = fetch_github_events(
+            "testorg",
+            "testrepo",
+            token="fake_token",
+            event_types=["issues"],
+            fetcher=issue_fetcher,
+        )
+
+        assert len(calls) == 1
+        assert "/issues?" in calls[0]
+        assert items[0]["_event_type"] == "issue"
+        assert items[0]["number"] == 77
+
     def test_pr_fixture_returns_trimmed_items(self) -> None:
         fetcher = _make_pr_then_issues_fetcher()
         items = fetch_github_events(
@@ -677,6 +728,76 @@ class TestSecretsInConfigGuard:
 # ---------------------------------------------------------------------------
 
 class TestPollWatchSourceGithub:
+    def test_bridge_failure_propagates_as_poll_failure(self, tmp_path, monkeypatch) -> None:
+        root = _make_github_watch_root(tmp_path)
+        monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+
+        result = poll_watch_source(root, "github_pr_watch", dry_run=True)
+
+        assert result["ok"] is False
+        assert result["events"] == []
+        assert result["adapter"]["provider"] == "platform_github_port"
+        assert [finding["code"] for finding in result["findings"]] == [
+            "BRIDGE_UNCONFIGURED"
+        ]
+
+    def test_mixed_poll_preserves_issue_result_when_bridge_fails(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        root = _make_github_watch_root(tmp_path)
+        monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+        ws_path = root / "harness" / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+        data = yaml.safe_load(ws_path.read_text(encoding="utf-8"))
+        data["watch_sources"][0]["external_ref"]["event_types"] = [
+            "pull_request",
+            "issues",
+        ]
+        ws_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        system = find_by_id(connected_systems(root), "github_test")
+        source = find_by_id(
+            yaml.safe_load(ws_path.read_text(encoding="utf-8"))["watch_sources"],
+            "github_pr_watch",
+        )
+        result = poll_github_source(
+            source,
+            system,
+            fetcher=_make_json_fetcher(GITHUB_ISSUE_FIXTURE),
+        )
+
+        assert result["ok"] is False
+        assert result["partial"] is True
+        assert result["provider"] == "platform_github_port+direct_api"
+        assert result["item_count"] == 1
+        assert result["items"][0]["_event_type"] == "issue"
+        assert result["findings"][0]["code"] == "BRIDGE_UNCONFIGURED"
+
+    def test_run_due_surfaces_bridge_failure(self, tmp_path, monkeypatch) -> None:
+        root = _make_github_watch_root(tmp_path)
+        monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+        ws_path = root / "harness" / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+        data = yaml.safe_load(ws_path.read_text(encoding="utf-8"))
+        data["watch_sources"][0]["enabled"] = True
+        data["watch_sources"][0]["trigger_rules"] = [{
+            "id": "test_disabled_rule",
+            "enabled": False,
+        }]
+        ws_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        result = run_due_watch_sources(root, dry_run=True)
+        action = next(
+            action for action in result["actions"]
+            if action["source_id"] == "github_pr_watch"
+        )
+
+        assert action["action"] == "poll"
+        assert action["ok"] is False
+        assert action["events"] == []
+        assert action["findings"][0]["code"] == "BRIDGE_UNCONFIGURED"
+
     def test_live_poll_produces_normalised_event(self, tmp_path, monkeypatch) -> None:
         root = _make_github_watch_root(tmp_path)
         monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
