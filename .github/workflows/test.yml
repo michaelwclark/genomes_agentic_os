@@ -59,7 +59,14 @@ jobs:
       - name: Validate release contract
         run: python scripts/release/build-execution-fabric-release.py --validate-only
       - name: Run full Python suite
-        run: python -m pytest tests/ -q
+        run: python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch --cov-report=term --cov-report=json:coverage.json --cov-fail-under=80
+      - name: Upload Python coverage evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: python-coverage
+          path: coverage.json
+          if-no-files-found: error
       - name: Validate published-style wheel and source distribution
         run: |
           python scripts/qa/validate-python-distributions.py
