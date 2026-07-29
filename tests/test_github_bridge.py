@@ -18,7 +18,7 @@ from genomes_agentic_os.github_bridge import (
 
 
 def test_reviewed_platform_bridge_revision_is_exact() -> None:
-    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "bd30f63872658a463ef1e7ccc08283c2a1d39e60"
+    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "f6d1ef4f3308e3fbc8a3437faed4526cffd3c25d"
 
 
 def _runner(*args, **kwargs):
