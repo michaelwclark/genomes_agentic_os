@@ -412,14 +412,21 @@ def poll_github_source(
         want_issues = any(event_type in ("issues", "issue") for event_type in event_types)
         items: list[dict[str, Any]] = []
         if want_issues:
-            items.extend(fetch_github_events(
+            issue_items = fetch_github_events(
                 owner,
                 repo,
                 token=token,
                 event_types=["issues"],
                 since=since,
                 fetcher=fetcher,
-            ))
+            )
+            # GitHub's /issues endpoint includes pull requests. Preserve that
+            # historical issue-only behavior, but in a mixed poll the bridge is
+            # authoritative for PRs; otherwise each PR becomes a phantom issue
+            # followed by the real pull_request item.
+            if want_prs:
+                issue_items = [item for item in issue_items if not item.get("pull_request")]
+            items.extend(issue_items)
         if want_prs:
             try:
                 items.extend(fetch_github_events(

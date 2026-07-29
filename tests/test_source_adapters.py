@@ -103,6 +103,21 @@ GITHUB_ISSUE_FIXTURE = [
     }
 ]
 
+GITHUB_PR_AS_ISSUE_FIXTURE = {
+    "id": 1001,
+    "number": 42,
+    "title": "Add feature X",
+    "state": "open",
+    "created_at": "2026-06-01T10:00:00Z",
+    "updated_at": "2026-06-02T12:00:00Z",
+    "closed_at": None,
+    "html_url": "https://github.com/testorg/testrepo/pull/42",
+    "user": {"login": "testuser", "id": 9999},
+    "labels": [{"name": "enhancement"}],
+    "assignees": [],
+    "pull_request": {"url": "https://api.github.com/repos/testorg/testrepo/pulls/42"},
+}
+
 SLACK_MESSAGES_FIXTURE = {
     "ok": True,
     "messages": [
@@ -468,6 +483,26 @@ class TestFetchGithubEvents:
         assert items[0]["_event_type"] == "issue"
         assert items[0]["number"] == 77
 
+    def test_issue_only_poll_preserves_pr_shaped_issue_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+
+        items = fetch_github_events(
+            "testorg",
+            "testrepo",
+            token="fake_token",
+            event_types=["issues"],
+            fetcher=_make_json_fetcher([
+                *GITHUB_ISSUE_FIXTURE,
+                GITHUB_PR_AS_ISSUE_FIXTURE,
+            ]),
+        )
+
+        assert [item["number"] for item in items] == [77, 42]
+        assert items[1]["_event_type"] == "issue"
+        assert "pull_request" in items[1]
+
     def test_pr_fixture_returns_trimmed_items(self) -> None:
         fetcher = _make_pr_then_issues_fetcher()
         items = fetch_github_events(
@@ -735,6 +770,39 @@ class TestSecretsInConfigGuard:
 # ---------------------------------------------------------------------------
 
 class TestPollWatchSourceGithub:
+    def test_mixed_poll_does_not_duplicate_prs_as_issues(self, tmp_path, monkeypatch) -> None:
+        root = _make_github_watch_root(tmp_path)
+        monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
+        ws_path = root / "harness" / "shared_factory" / "00-control-plane" / "watch-sources.yml"
+        data = yaml.safe_load(ws_path.read_text(encoding="utf-8"))
+        data["watch_sources"][0]["external_ref"]["event_types"] = [
+            "pull_request",
+            "issues",
+        ]
+        ws_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        system = find_by_id(connected_systems(root), "github_test")
+        source = find_by_id(data["watch_sources"], "github_pr_watch")
+        result = poll_github_source(
+            source,
+            system,
+            fetcher=_make_json_fetcher([
+                *GITHUB_ISSUE_FIXTURE,
+                GITHUB_PR_AS_ISSUE_FIXTURE,
+            ]),
+        )
+
+        assert result["ok"] is True
+        assert result["item_count"] == 3
+        assert [
+            item["number"] for item in result["items"]
+            if item["_event_type"] == "issue"
+        ] == [77]
+        assert sorted(
+            item["number"] for item in result["items"]
+            if item["_event_type"] == "pull_request"
+        ) == [42, 43]
+
     def test_bridge_failure_propagates_as_poll_failure(self, tmp_path, monkeypatch) -> None:
         root = _make_github_watch_root(tmp_path)
         monkeypatch.setenv("GITHUB_TOKEN", "fake_token_value_for_env")
