@@ -267,6 +267,11 @@ changed head
 returns `superseded` and creates no effect. Only the route-derived
 `notion.pr_review.update` effect
 consumer may project a validated terminal review receipt back to Notion.
+For upgrade compatibility, a task admitted before explicit `review_mode`
+continues to emit the legacy `{type}:{source_key}:{head}` effect key. Current
+tasks that carry `review_mode` emit the full-intent key. This transition rule
+preserves control-plane dedup when a legacy effect was staged before a lost
+completion acknowledgment.
 
 Deployment order is strict: deploy this Agentic OS route before installing the
 paired object-library producer. The producer emits explicit `review_mode`, and

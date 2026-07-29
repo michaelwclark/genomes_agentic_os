@@ -19,6 +19,9 @@ All notable changes to this project are documented here. The format follows
   successes terminalize the marker.
 - Normalize case-insensitive repository, head, and source-key fields before
   deriving the cross-repository review identity and helper run ID.
+- Keep the legacy projection key for already-admitted tasks that omitted
+  `review_mode`, while explicit current tasks use the full-intent key; this
+  preserves effect dedup across the upgrade boundary.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails retryably before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new

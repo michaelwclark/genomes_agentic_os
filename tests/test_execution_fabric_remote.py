@@ -1028,6 +1028,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
             },
         }
     )
+    if expected_kind == "ours":
+        assignment["task"]["payload"]["review_mode"] = "review_no_merge"
     development = (
         root
         / "domains/los/02-projects/los_app_los_django/config/development.yml"
@@ -1113,9 +1115,14 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         assignment["task"]["payload"]
     )
     intent_key = execution_fabric_remote._team_pr_review_intent_key(identity)
+    expected_effect_key = (
+        f"notion.pr_review.update:{intent_key}"
+        if "review_mode" in assignment["task"]["payload"]
+        else f"notion.pr_review.update:github-pr-42:{'a' * 40}"
+    )
     expected_effects = [
         {
-            "effectKey": f"notion.pr_review.update:{intent_key}",
+            "effectKey": expected_effect_key,
             "effectType": "notion.pr_review.update",
             "payload": {
                 "page_id": "a" * 32,
@@ -1454,6 +1461,7 @@ def test_team_pr_durable_receipt_os_error_is_retryable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "review-intent.json"
+    real_read_text = Path.read_text
 
     def unreadable(_self: Path, **_kwargs: Any) -> str:
         raise PermissionError("transient fixture")
@@ -1464,6 +1472,21 @@ def test_team_pr_durable_receipt_os_error_is_retryable(
 
     assert failure.value.code == "team_pr_durable_receipt_unavailable"
     assert failure.value.retryable is True
+
+    monkeypatch.setattr(Path, "read_text", real_read_text)
+
+    def lock_unavailable(_self: Path, *_args: Any, **_kwargs: Any) -> Any:
+        raise PermissionError("transient lock fixture")
+
+    monkeypatch.setattr(Path, "open", lock_unavailable)
+    with pytest.raises(TaskExecutionError) as lock_failure:
+        with execution_fabric_remote._TeamPRLaunchMarkerLock(
+            tmp_path / "helper-launch.json"
+        ):
+            raise AssertionError("unreachable")
+
+    assert lock_failure.value.code == "team_pr_durable_receipt_unavailable"
+    assert lock_failure.value.retryable is True
 
 
 def test_durable_receipt_writes_fsync_file_and_directory(

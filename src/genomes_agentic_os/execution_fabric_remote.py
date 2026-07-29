@@ -1879,9 +1879,20 @@ class _TeamPRLaunchMarkerLock:
         self.handle: Any = None
 
     def __enter__(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = self.path.open("a+", encoding="utf-8")
-        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.handle = self.path.open("a+", encoding="utf-8")
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        except OSError as exc:
+            if self.handle is not None:
+                self.handle.close()
+                self.handle = None
+            raise TaskExecutionError(
+                "team_pr_durable_receipt_unavailable",
+                f"Team PR helper launch lock is temporarily unavailable: {type(exc).__name__}",
+                retryable=True,
+                receipt_path=str(self.path),
+            ) from None
 
     def __exit__(self, *_args: Any) -> None:
         if self.handle is not None:
@@ -1925,8 +1936,16 @@ def _team_pr_review_effect(
     author_identity: str,
     author_kind: str,
 ) -> dict[str, Any]:
+    if "review_mode" in payload:
+        effect_key = f"{effect_type}:{intent_key}"
+    else:
+        # Tasks admitted by the pre-AGE-139 producer omitted review_mode and
+        # may already have staged this legacy key before a lost completion ack.
+        effect_key = (
+            f"{effect_type}:{payload['source_key']}:{payload['expected_head_sha']}"
+        )
     return {
-        "effectKey": f"{effect_type}:{intent_key}",
+        "effectKey": effect_key,
         "effectType": effect_type,
         "payload": {
             "page_id": payload["notion_page_id"],
@@ -2533,14 +2552,30 @@ def _team_pr_ai_review_worker(
     lock_path = _team_pr_review_summary_path(os_root, identity).with_name(
         "review-intent.lock"
     )
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_handle = lock_path.open("a+", encoding="utf-8")
+    except OSError as exc:
+        raise TaskExecutionError(
+            "team_pr_durable_receipt_unavailable",
+            f"Team PR review identity lock is temporarily unavailable: {type(exc).__name__}",
+            retryable=True,
+            receipt_path=str(lock_path),
+        ) from None
+    with lock_handle:
         try:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise TaskExecutionError(
                 "team_pr_review_in_progress",
                 "another attempt is already executing this Team PR review intent",
+                retryable=True,
+                receipt_path=str(lock_path),
+            ) from None
+        except OSError as exc:
+            raise TaskExecutionError(
+                "team_pr_durable_receipt_unavailable",
+                f"Team PR review identity lock is temporarily unavailable: {type(exc).__name__}",
                 retryable=True,
                 receipt_path=str(lock_path),
             ) from None
