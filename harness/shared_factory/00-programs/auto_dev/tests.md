@@ -14,6 +14,10 @@
   gates, and gitflow topology.
 - Start creates exactly one `<work-item>/autodev.json`, links the canonical
   delivery task, and never creates new legacy `artifacts/auto-dev/state.json`.
+- Adoption accepts both in-place and registered external-symlink worktrees only
+  after link/target, branch/base, configured-repository, and Git metadata
+  readback. Negative tests reject unregistered targets, changed registry links,
+  and branch mismatches before state mutation.
 - Every lifecycle mutation refreshes the projection; typed standalone workflow
   receipts are idempotent and never advance Development Delivery by themselves.
 - Everything and every single-stage verb parse and preserve the same work item,

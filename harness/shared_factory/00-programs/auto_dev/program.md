@@ -116,7 +116,10 @@ No Auto-Dev schedule is enabled by this program.
 Pre-vNext active packets use the explicit `auto-dev adopt` migration command.
 It binds the exact existing packet to its single canonical work row and source
 key, creates `autodev.json`, and reuses only an exact registered worktree after
-Git and branch readback. Adoption cannot create a replacement packet.
+Git and branch readback. A registered external worktree is supported only when
+its project-visible link, resolved target, branch, base branch, configured
+repository, and Git common-directory metadata all agree. Adoption cannot create
+a replacement packet.
 
 An Everything launch may name several tracker tickets. The command creates one
 delivery task, work-item packet, and `autodev.json` per ticket under the shared

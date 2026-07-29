@@ -2030,24 +2030,84 @@ def _adopt_registered_worktree(
     raw_path = str(canonical_row.get("worktree_path") or "").strip()
     if not raw_path:
         return None
-    path = Path(raw_path).expanduser().resolve()
+    raw = Path(raw_path).expanduser()
+    if not raw.is_absolute():
+        raw = Path(os_root).expanduser() / raw
+    path = raw.resolve()
     project_path = project_root(os_root, domain, project)
     boundary = project_worktree_root(project_path, {"worktrees": dict(profile["worktrees"])}).resolve()
-    if boundary != path.parent and boundary not in path.parents:
-        raise DevelopmentDeliveryError("adopted worktree is outside the configured project boundary")
-    matches = [
+    active_entries = [
         row
         for row in worktree_entries_for_project(project_path)
+        if str(row.get("status") or "active") == "active"
+    ]
+
+    def registered_target(row: Mapping[str, Any]) -> Path | None:
+        value = str(row.get("path") or "").strip()
+        if not value:
+            return None
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = project_path / candidate
+        return candidate.resolve()
+
+    matches = [
+        row
+        for row in active_entries
         if str(row.get("path") or "").strip()
-        and Path(str(row["path"])).expanduser().resolve() == path
-        and str(row.get("status") or "active") == "active"
+        and registered_target(row) == path
     ]
     if not matches:
         raise DevelopmentDeliveryError("adopted worktree is not present in the active project registry")
+    names = {str(row.get("id") or row.get("name") or path.name) for row in matches}
+    if len(names) != 1:
+        raise DevelopmentDeliveryError("adopted worktree has conflicting registry identities")
+    name = names.pop()
+    identity_rows = [
+        row
+        for row in active_entries
+        if str(row.get("id") or row.get("name") or path.name) == name
+    ]
+    if any(registered_target(row) != path for row in identity_rows):
+        raise DevelopmentDeliveryError("adopted worktree has conflicting registry targets")
+
+    external = boundary != path.parent and boundary not in path.parents
+    registered_links: set[Path] = set()
+    for row in identity_rows:
+        raw_link = str(row.get("link") or f"worktrees/{name}").strip()
+        link = Path(raw_link).expanduser()
+        if not link.is_absolute():
+            link = project_path / link
+        link_parent = link.parent.resolve()
+        if link_parent != boundary and boundary not in link_parent.parents:
+            raise DevelopmentDeliveryError(
+                "adopted worktree registry link is outside the configured project boundary"
+            )
+        registered_links.add(link)
+        if not link.exists() and not link.is_symlink():
+            raise DevelopmentDeliveryError("adopted worktree registry link is missing")
+        if link.resolve() != path:
+            raise DevelopmentDeliveryError(
+                "adopted worktree registry link does not resolve to its registered target"
+            )
+        policy = str(row.get("link_policy") or "").strip()
+        if external and (policy != "symlink_to_external_worktree" or not link.is_symlink()):
+            raise DevelopmentDeliveryError(
+                "adopted external worktree is not registered through the external symlink policy"
+            )
+        if not external and policy == "symlink_to_external_worktree":
+            raise DevelopmentDeliveryError(
+                "adopted worktree registry policy does not match its target"
+            )
+    if len(registered_links) != 1:
+        raise DevelopmentDeliveryError("adopted worktree has conflicting registry links")
+
     canonical_branch = str(canonical_row.get("branch") or "").strip()
     registered_branches = {
-        str(row.get("branch") or "").strip() for row in matches if row.get("branch")
+        str(row.get("branch") or "").strip() for row in identity_rows if row.get("branch")
     }
+    if len(registered_branches) > 1:
+        raise DevelopmentDeliveryError("adopted worktree has conflicting registered branches")
     actual = runner(["git", "-C", str(path), "branch", "--show-current"])
     actual_branch = actual.stdout.strip() if actual.returncode == 0 else ""
     if not actual_branch or (canonical_branch and actual_branch != canonical_branch) or (
@@ -2056,6 +2116,16 @@ def _adopt_registered_worktree(
         raise DevelopmentDeliveryError("adopted worktree branch does not match canonical registration")
     repository = profile["repository"]
     repo = expand_path(str(repository["root"]))
+    base = str(repository["base_branch"])
+    registered_bases = {
+        str(row.get("base_branch") or "").strip()
+        for row in identity_rows
+        if row.get("base_branch")
+    }
+    if len(registered_bases) > 1 or (registered_bases and registered_bases != {base}):
+        raise DevelopmentDeliveryError(
+            "adopted worktree base branch does not match project registration"
+        )
     registered = runner(["git", "-C", str(repo), "worktree", "list", "--porcelain"])
     registered_paths = {
         Path(line.removeprefix("worktree ")).expanduser().resolve()
@@ -2064,18 +2134,37 @@ def _adopt_registered_worktree(
     }
     if registered.returncode != 0 or path not in registered_paths:
         raise DevelopmentDeliveryError("adopted worktree is not registered in Git worktree metadata")
-    base = str(repository["base_branch"])
+    repo_top = runner(["git", "-C", str(repo), "rev-parse", "--show-toplevel"])
+    worktree_top = runner(["git", "-C", str(path), "rev-parse", "--show-toplevel"])
+    repo_common = runner(["git", "-C", str(repo), "rev-parse", "--git-common-dir"])
+    worktree_common = runner(["git", "-C", str(path), "rev-parse", "--git-common-dir"])
+
+    def resolved_git_path(cwd: Path, value: str) -> Path:
+        candidate = Path(value.strip()).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        return candidate.resolve()
+
+    if (
+        repo_top.returncode != 0
+        or worktree_top.returncode != 0
+        or repo_common.returncode != 0
+        or worktree_common.returncode != 0
+        or Path(worktree_top.stdout.strip()).expanduser().resolve() != path
+        or resolved_git_path(repo, repo_common.stdout)
+        != resolved_git_path(path, worktree_common.stdout)
+    ):
+        raise DevelopmentDeliveryError(
+            "adopted worktree repository does not match project registration"
+        )
     merge_base = runner(["git", "-C", str(path), "merge-base", "HEAD", f"origin/{base}"])
     if merge_base.returncode != 0:
         merge_base = runner(["git", "-C", str(path), "merge-base", "HEAD", base])
     base_sha = merge_base.stdout.strip() if merge_base.returncode == 0 else ""
     if not re.fullmatch(r"[a-fA-F0-9]{7,64}", base_sha):
         raise DevelopmentDeliveryError("adopted worktree base revision could not be proven")
-    names = {str(row.get("id") or row.get("name") or path.name) for row in matches}
-    if len(names) != 1:
-        raise DevelopmentDeliveryError("adopted worktree has conflicting registry identities")
     return {
-        "name": names.pop(),
+        "name": name,
         "path": str(path),
         "branch": actual_branch,
         "base_sha": base_sha,

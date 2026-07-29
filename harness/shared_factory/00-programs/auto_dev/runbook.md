@@ -25,10 +25,14 @@ For one active pre-vNext packet that has no `autodev.json`, run
 `agentic-os auto-dev adopt <domain> <project> <ticket> --state <packet>
 --run-id <stable-id> --apply`. Adoption requires exactly one canonical row for
 that packet and source key. It reuses only an exact active project-registered
-Git worktree with matching branch metadata. If that identity cannot be proven,
-adoption stops before writing the run, packet, task, or canonical work state;
-repair the registration and rerun the same command. It never creates a
-replacement packet or worktree.
+Git worktree with matching branch metadata. External worktrees must use the
+project registry's `symlink_to_external_worktree` policy; the visible link must
+resolve to the registered target, and that target must belong to the configured
+repository's Git worktree metadata. Unregistered targets, changed links,
+conflicting registry copies, and branch/base/repository mismatches stop before
+writing the run, packet, task, or canonical work state. Repair the registration
+and rerun the same command. Adoption never creates a replacement packet or
+worktree.
 
 The shared safe order is Groom, Detective, Create Artifacts, Readiness,
 Develop, Document, PR Create, Review Self, Review Others, QA, Finalize, Merge,
