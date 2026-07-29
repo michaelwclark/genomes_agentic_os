@@ -155,7 +155,8 @@ class JiraBridgeSpecTransport:
                 raise JiraBridgeError("INVALID_REQUEST", "Spec payload is missing")
             marker = str(payload["idempotency_key"])
             label = _marker_label(marker)
-            fields: dict[str, Any] = {"labels": ["agentic-os-spec", label]}
+            required_labels = ["agentic-os-spec", label]
+            fields: dict[str, Any] = {"labels": required_labels}
             if payload.get("resolved_sprint_id"):
                 fields["sprint"] = str(payload["resolved_sprint_id"])
             if action == "create_spec":
@@ -181,6 +182,37 @@ class JiraBridgeSpecTransport:
                     raise JiraBridgeError(
                         "INVALID_REQUEST", "Jira update requires provider_id"
                     )
+                current = self.client.request(
+                    "getIssue", {"key": provider_id, "fields": ["labels"]}
+                )
+                if not isinstance(current, Mapping):
+                    raise JiraBridgeError(
+                        "BRIDGE_INVALID_RESPONSE",
+                        "Jira update pre-read returned invalid issue data",
+                    )
+                current_fields = (
+                    current.get("fields")
+                    if isinstance(current.get("fields"), Mapping)
+                    else {}
+                )
+                current_labels = current_fields.get("labels")
+                if current_labels is not None and not isinstance(current_labels, list):
+                    raise JiraBridgeError(
+                        "BRIDGE_INVALID_RESPONSE",
+                        "Jira update pre-read returned invalid labels",
+                    )
+                fields["labels"] = list(
+                    dict.fromkeys(
+                        [
+                            *(
+                                str(value)
+                                for value in (current_labels or [])
+                                if str(value).strip()
+                            ),
+                            *required_labels,
+                        ]
+                    )
+                )
                 issue = self.client.request(
                     "updateIssue",
                     {

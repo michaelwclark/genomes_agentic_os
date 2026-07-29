@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.machinery
 import importlib.util
+import subprocess
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -33,6 +34,15 @@ class FakeBridge:
             return {"project": {"key": args["projectKey"]}}
         if operation == "addComment":
             return {"id": "100", "body": args["input"]["body"]}
+        if operation == "listComments":
+            return {
+                "values": [
+                    {"id": "1", "body": {"type": "doc"}},
+                    {"id": "2", "body": {"type": "doc"}},
+                ],
+                "total": 2,
+                "complete": True,
+            }
         raise AssertionError(operation)
 
 
@@ -93,3 +103,28 @@ def test_comment_dry_run_never_resolves_auth_or_invokes_bridge(monkeypatch) -> N
     monkeypatch.setattr(module, "resolve_auth", unexpected_auth)
     args = argparse.Namespace(issue_key="APP-131", body="No write", execute=False)
     assert module.cmd_comment(args) == 0
+
+
+def test_comments_preserve_legacy_key_newest_first_and_limit() -> None:
+    module = _load_cli()
+    client = _facade(module)
+    result = client.comments("APP-131", limit=1)
+    assert result == {
+        "comments": [{"id": "2", "body": {"type": "doc"}}],
+        "total": 2,
+        "maxResults": 1,
+    }
+
+
+def test_source_checkout_wrapper_bootstraps_under_ambient_python() -> None:
+    path = Path(__file__).parents[1] / "harness" / "bin" / "agentic-os-jira"
+    completed = subprocess.run(
+        ["/usr/bin/python3", str(path), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={"PATH": "/usr/bin:/bin"},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Jira helper" in completed.stdout

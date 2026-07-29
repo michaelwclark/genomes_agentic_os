@@ -14,8 +14,14 @@ from genomes_agentic_os.spec_engine import Spec
 
 
 class FakeBridgeClient:
-    def __init__(self, *, duplicate_matches: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        duplicate_matches: int = 0,
+        existing_labels: list[str] | None = None,
+    ) -> None:
         self.duplicate_matches = duplicate_matches
+        self.existing_labels = list(existing_labels or [])
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def request(self, operation: str, args: dict[str, Any]) -> Any:
@@ -33,8 +39,14 @@ class FakeBridgeClient:
             return {"values": values, "complete": True}
         if operation == "createIssue":
             return {"key": "APP-131", "url": "https://jira.invalid/APP-131"}
-        if operation == "getIssue":
+        if operation == "updateIssue":
             return {"key": args["key"], "url": f"https://jira.invalid/{args['key']}"}
+        if operation == "getIssue":
+            return {
+                "key": args["key"],
+                "url": f"https://jira.invalid/{args['key']}",
+                "fields": {"labels": self.existing_labels},
+            }
         raise AssertionError(operation)
 
 
@@ -108,6 +120,24 @@ def test_jira_spec_duplicate_marker_and_active_sprint_fail_closed() -> None:
     assert sprint.ok is False
     assert sprint.status == "blocked"
     assert "disabled" in str(sprint.error)
+
+
+def test_jira_spec_update_preserves_existing_human_labels() -> None:
+    client = FakeBridgeClient(
+        duplicate_matches=1,
+        existing_labels=["human-owned"],
+    )
+    receipt = _adapter(client).create(
+        Spec(id="one", title="One", domain="acme", project="app"),
+        apply=True,
+    )
+    assert receipt.ok and receipt.provider_id == "APP-1"
+    update = next(
+        args for operation, args in client.calls if operation == "updateIssue"
+    )
+    labels = update["input"]["fields"]["labels"]
+    assert labels[:2] == ["human-owned", "agentic-os-spec"]
+    assert labels[2].startswith("agentic-os-spec-")
 
 
 def test_jira_spec_transport_environment_is_explicit_and_complete() -> None:

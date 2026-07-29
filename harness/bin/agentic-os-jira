@@ -12,12 +12,64 @@ defaults below are placeholders and must be overridden per install.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
+
+
+def _ensure_agentic_os_runtime() -> None:
+    """Re-exec under a source or installed package runtime when necessary."""
+    repository = Path(__file__).resolve().parents[2]
+    source = repository / "src"
+    if (source / "genomes_agentic_os" / "jira_bridge.py").is_file():
+        sys.path.insert(0, str(source))
+    try:
+        bridge_spec = importlib.util.find_spec("genomes_agentic_os.jira_bridge")
+    except ModuleNotFoundError:
+        bridge_spec = None
+    if bridge_spec is not None:
+        return
+
+    candidates: list[Path] = []
+    configured = os.environ.get("AGENTIC_OS_PYTHON", "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    releases = (
+        Path.home() / "Library" / "Application Support" / "AgenticOS" / "releases"
+    )
+    candidates.extend(
+        sorted(releases.glob("*/runtime/bin/python"), reverse=True)
+        if releases.is_dir()
+        else []
+    )
+    for candidate in candidates:
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        probe = subprocess.run(
+            [str(candidate), "-c", "import genomes_agentic_os.jira_bridge"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if probe.returncode == 0:
+            os.execve(
+                str(candidate),
+                [str(candidate), __file__, *sys.argv[1:]],
+                dict(os.environ),
+            )
+    raise SystemExit(
+        "ERROR: agentic-os-jira requires an Agentic OS runtime containing the shared Jira bridge; "
+        "install the reviewed release or set AGENTIC_OS_PYTHON"
+    )
+
+
+_ensure_agentic_os_runtime()
 
 from genomes_agentic_os.jira_bridge import (
     JiraBridgeClient,
@@ -212,9 +264,12 @@ class JiraBridgeFacade:
         data = self.request("listComments", {"key": issue_key})
         if not isinstance(data, dict) or not isinstance(data.get("values"), list):
             raise JiraCliError("Jira bridge returned invalid comments")
-        result = dict(data)
-        result["values"] = data["values"][-limit:] if limit > 0 else []
-        return result
+        newest = list(reversed(data["values"][-limit:])) if limit > 0 else []
+        return {
+            "comments": newest,
+            "total": data.get("total", len(data["values"])),
+            "maxResults": len(newest),
+        }
 
     def add_comment(self, issue_key: str, body_text: str) -> dict[str, Any]:
         data = self.request(

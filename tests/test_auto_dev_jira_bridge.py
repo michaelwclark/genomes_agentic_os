@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -137,3 +138,21 @@ def test_fixture_and_live_adapter_projection_stays_byte_identical() -> None:
     assert (TRACKER / "jira.py").read_bytes() == (
         PROJECTED_TRACKER / "jira.py"
     ).read_bytes()
+
+
+def test_fixture_adapter_import_remains_package_free_under_ambient_python() -> None:
+    completed = subprocess.run(
+        [
+            "/usr/bin/python3",
+            "-c",
+            "from tracker.jira import JiraFixtureAdapter; print(JiraFixtureAdapter.kind)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=TRACKER.parent,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(TRACKER.parent)},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "jira"
