@@ -6,15 +6,10 @@ import hashlib
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from genomes_agentic_os.jira_bridge import (
-    JiraBridgeClient,
-    JiraBridgeError,
-    adf_paragraph,
-    auth_from_environment,
-    command_from_environment,
-)
+if TYPE_CHECKING:
+    from genomes_agentic_os.jira_bridge import JiraBridgeClient
 
 try:
     from .base import TrackerError, WorkItem, load_fixture, parse_acceptance_criteria
@@ -116,6 +111,17 @@ class JiraBridgeAdapter:
     def from_environment(
         cls, environ: Mapping[str, str] | None = None
     ) -> JiraBridgeAdapter:
+        try:
+            from genomes_agentic_os.jira_bridge import (
+                JiraBridgeClient,
+                JiraBridgeError,
+                auth_from_environment,
+                command_from_environment,
+            )
+        except ImportError as exc:
+            raise TrackerError(
+                "live Jira tracking requires an installed Agentic OS shared bridge"
+            ) from exc
         values = os.environ if environ is None else environ
         command = command_from_environment(values)
         base_url = values.get("JIRA_BASE_URL", "").strip()
@@ -147,8 +153,9 @@ class JiraBridgeAdapter:
     def _request(self, operation: str, args: Mapping[str, Any]) -> Any:
         try:
             return self.client.request(operation, args)
-        except JiraBridgeError as exc:
-            raise TrackerError(f"Jira bridge {exc.code}: {exc}") from exc
+        except RuntimeError as exc:
+            code = str(getattr(exc, "code", "BRIDGE_OPERATION_FAILED"))
+            raise TrackerError(f"Jira bridge {code}: {exc}") from exc
 
     def _preflight(self, tracker_id: str) -> None:
         project = tracker_id.partition("-")[0]
@@ -260,7 +267,16 @@ class JiraBridgeAdapter:
                     :16
                 ]
             )
-            body = adf_paragraph(note)
+            body = {
+                "version": 1,
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": note}],
+                    }
+                ],
+            }
             body["content"].append(
                 {"type": "paragraph", "content": [{"type": "text", "text": marker}]}
             )
