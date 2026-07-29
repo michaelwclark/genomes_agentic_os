@@ -282,9 +282,16 @@ fabric_api_get_bearer \
   "/api/v1/admin/leadership/status" \
   "$FABRIC_LEADERSHIP_TOKEN_FILE" >"$status_temp"
 promoted_policy_digest=$(jq -er '.configDigest' "$status_temp")
-FABRIC_POLICY_CONVERGENCE_API_BASE=$local_api \
+if ! FABRIC_POLICY_CONVERGENCE_API_BASE=$local_api \
   "$script_dir/converge-policy-roles.sh" --verify "$promoted_policy_digest" \
   >"$FABRIC_RUNTIME_STATE_DIR/post-promotion-role-convergence.path"
+then
+  fabric_notify critical \
+    "Execution Fabric promotion role verification failed" \
+    "The promoted cohort did not converge to $promoted_policy_digest; reconciliation is blocked." \
+    "execution-fabric-promotion-role-convergence"
+  exit 75
+fi
 
 fabric_api_post \
   "$local_api" \

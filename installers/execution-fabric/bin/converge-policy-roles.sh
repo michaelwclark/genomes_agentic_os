@@ -60,15 +60,19 @@ status_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-role-status.XXXXXX")
 before_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-role-before.XXXXXX")
 after_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-role-after.XXXXXX")
 receipt_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-role-receipt.XXXXXX")
+instances_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-role-instances.XXXXXX")
 cleanup() {
   unlink "$status_temp" 2>/dev/null || true
   unlink "$before_temp" 2>/dev/null || true
   unlink "$after_temp" 2>/dev/null || true
   unlink "$receipt_temp" 2>/dev/null || true
+  unlink "$instances_temp" 2>/dev/null || true
 }
 trap cleanup EXIT HUP INT TERM
 
 roles="control-plane observer healer scheduler"
+: >"$instances_temp"
+printf '%s\n' '{}' >"$instances_temp"
 if [ "$mode" = --recreate ]; then
   fabric_require_command docker
   : >"$before_temp"
@@ -76,6 +80,19 @@ if [ "$mode" = --recreate ]; then
     container_id=$(fabric_compose "$compose_file" --profile "$compose_profile" ps -q "$role")
     printf '%s=%s\n' "$role" "$container_id" >>"$before_temp"
   done
+  fabric_api_get_bearer \
+    "$api_base" "/api/v1/status?limit=1" \
+    "$FABRIC_API_TOKEN_FILE" >"$status_temp"
+  jq -e '(.roleHealth | type)=="array"' "$status_temp" >/dev/null || {
+    echo "control-plane status has no roleHealth array; upgrade the control-plane image before policy rotation" >&2
+    exit 69
+  }
+  jq --arg host "$FABRIC_HOST_ID" '
+    [.roleHealth[] | select(.hostId==$host and
+      (.role=="api" or .role=="observer" or .role=="healer" or .role=="scheduler")) |
+      select((.instanceId | type)=="string") |
+      {key:.role,value:.instanceId}] | from_entries
+  ' "$status_temp" >"$instances_temp"
   fabric_compose "$compose_file" --profile "$compose_profile" up -d \
     --no-deps --force-recreate $roles
   : >"$after_temp"
@@ -92,6 +109,29 @@ if [ "$mode" = --recreate ]; then
       exit 75
     }
   done
+elif [ -n "${FABRIC_POLICY_CONVERGENCE_RECREATE_RECEIPT:-}" ]; then
+  [ -r "$FABRIC_POLICY_CONVERGENCE_RECREATE_RECEIPT" ] || {
+    echo "policy role recreate receipt is unavailable" >&2
+    exit 69
+  }
+  jq -e --arg digest "$expected" '
+    .schemaVersion=="execution-fabric-policy-role-convergence/v1" and
+    .mode=="recreate" and .fingerprint==$digest and
+    (.roleHealth | type)=="array"
+  ' "$FABRIC_POLICY_CONVERGENCE_RECREATE_RECEIPT" >/dev/null || {
+    echo "policy role recreate receipt does not match the expected fingerprint" >&2
+    exit 75
+  }
+  jq --arg host "$FABRIC_HOST_ID" '
+    [.roleHealth[] | select(.hostId==$host and
+      (.role=="api" or .role=="observer" or .role=="healer" or .role=="scheduler")) |
+      select((.instanceId | type)=="string") |
+      {key:.role,value:.instanceId}] | from_entries
+  ' "$FABRIC_POLICY_CONVERGENCE_RECREATE_RECEIPT" >"$instances_temp"
+  [ "$(jq 'length' "$instances_temp")" -eq 4 ] || {
+    echo "policy role recreate receipt does not bind the complete role cohort" >&2
+    exit 75
+  }
 fi
 
 verified=false
@@ -121,7 +161,9 @@ while [ "$attempt" -lt "$attempt_limit" ]; do
         | length == 4
       ) and all(.roleHealth[] | select(.hostId==$host and
         (.role=="api" or .role=="observer" or .role=="healer" or .role=="scheduler"));
-        .approvedPolicyFingerprint==$digest and .appliedPolicyFingerprint==$digest)'
+        .approvedPolicyFingerprint==$digest and .appliedPolicyFingerprint==$digest and
+        (.role as $role | ($instances[0][$role] == null or
+          .instanceId != $instances[0][$role])))'
     else
       predicate='(
         [.roleHealth[] | select(.hostId==$host and
@@ -130,9 +172,12 @@ while [ "$attempt" -lt "$attempt_limit" ]; do
       ) and all(.roleHealth[] | select(.hostId==$host and
         (.role=="api" or .role=="observer" or .role=="healer" or .role=="scheduler"));
         .approvedPolicyFingerprint==$digest and .appliedPolicyFingerprint==$digest and
-        .status=="healthy" and .lastSuccessfulTickAt!=null)'
+        .status=="healthy" and .lastSuccessfulTickAt!=null and
+        (($instances[0] | length)==0 or
+          (.role as $role | .instanceId==$instances[0][$role])))'
     fi
     if jq -e --arg host "$FABRIC_HOST_ID" --arg digest "$expected" \
+      --slurpfile instances "$instances_temp" \
       "$predicate" "$status_temp" >/dev/null
     then
       verified=true
@@ -155,6 +200,7 @@ jq -n \
   --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --rawfile containersBefore "$before_temp" \
   --rawfile containersAfter "$after_temp" \
+  --slurpfile instancesBefore "$instances_temp" \
   --slurpfile status "$status_temp" \
   'def container_ids($raw):
     $raw | split("\n") | map(select(length>0) |
@@ -167,6 +213,7 @@ jq -n \
     verifiedAt:$verifiedAt,
     containersBefore:container_ids($containersBefore),
     containersAfter:container_ids($containersAfter),
+    instancesBefore:$instancesBefore[0],
     roleHealth:$status[0].roleHealth
   }' >"$receipt_temp"
 fabric_atomic_write "$receipt_path" "$receipt_temp"

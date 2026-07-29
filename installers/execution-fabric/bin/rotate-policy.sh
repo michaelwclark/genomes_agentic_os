@@ -459,7 +459,8 @@ fi
 
 if [ "$role_convergence_deferred" = false ]; then
   if ! role_verify_receipt=$(
-    "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
+    FABRIC_POLICY_CONVERGENCE_RECREATE_RECEIPT="$role_recreate_receipt" \
+      "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
   ); then
     fabric_notify critical \
       "Execution Fabric policy role verification failed" \

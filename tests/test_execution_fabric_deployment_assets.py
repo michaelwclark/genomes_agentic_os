@@ -791,14 +791,19 @@ case "$url" in
     else
       applied={old_digest}
     fi
+    if [ -f "$FAKE_STATE_DIR/roles-recreated" ]; then
+      instance=new
+    else
+      instance=old
+    fi
     printf '%s\\n' '{{"config":{{"appliedFingerprint":"'"$applied"'"}},
       "controlPlane":{{"databasePolicyFingerprint":"'"$applied"'",
       "leadership":{{"state":"active"}}}},
       "roleHealth":[
-        {{"hostId":"genomesbox","role":"api","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
-        {{"hostId":"genomesbox","role":"observer","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
-        {{"hostId":"genomesbox","role":"healer","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
-        {{"hostId":"genomesbox","role":"scheduler","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}}]}}'
+        {{"hostId":"genomesbox","role":"api","instanceId":"'"$instance"'-api","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
+        {{"hostId":"genomesbox","role":"observer","instanceId":"'"$instance"'-observer","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
+        {{"hostId":"genomesbox","role":"healer","instanceId":"'"$instance"'-healer","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
+        {{"hostId":"genomesbox","role":"scheduler","instanceId":"'"$instance"'-scheduler","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}}]}}'
     ;;
   *) exit 22 ;;
 esac
@@ -885,6 +890,10 @@ esac
     )
     assert recreate["containersBefore"]["control-plane"] == "old-control-plane"
     assert recreate["containersAfter"]["control-plane"] == "new-control-plane"
+    assert recreate["instancesBefore"]["api"] == "old-api"
+    assert next(
+        row for row in recreate["roleHealth"] if row["role"] == "api"
+    )["instanceId"] == "new-api"
     assert {row["role"] for row in verify["roleHealth"]} == {
         "api",
         "observer",
@@ -937,6 +946,7 @@ esac
         {
             "hostId": "genomesbox",
             "role": role,
+            "instanceId": f"old-{role}",
             "approvedPolicyFingerprint": wrong if role == "observer" else expected,
             "appliedPolicyFingerprint": expected,
             "status": "unhealthy" if role == "observer" else "healthy",
