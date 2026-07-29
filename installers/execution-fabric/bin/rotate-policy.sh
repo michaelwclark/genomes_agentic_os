@@ -70,6 +70,8 @@ control_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-control-receipt.XXXXX
 witness_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-witness-receipt.XXXXXX")
 abort_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-abort-receipt.XXXXXX")
 final_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-rotation-receipt.XXXXXX")
+role_recreate_receipt=
+role_verify_receipt=
 cleanup() {
   unlink "$witness_status" 2>/dev/null || true
   unlink "$preparation" 2>/dev/null || true
@@ -336,6 +338,12 @@ else
   fi
 fi
 
+if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ]; then
+  role_recreate_receipt=$(
+    "$script_dir/converge-policy-roles.sh" --recreate "$candidate_digest"
+  )
+fi
+
 if [ "$mode" = rotate ]; then
   evidence_applied=false
   attempt=0
@@ -428,11 +436,19 @@ else
     >"$control_status"
 fi
 
+if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ]; then
+  role_verify_receipt=$(
+    "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
+  )
+fi
+
 jq -n \
   --arg rotationId "$rotation_id" \
   --arg expectedCurrentDigest "$expected_current" \
   --arg candidateDigest "$candidate_digest" \
   --arg mode "$mode" \
+  --arg roleRecreateReceipt "$role_recreate_receipt" \
+  --arg roleVerifyReceipt "$role_verify_receipt" \
   --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --slurpfile witness "$witness_receipt" \
   --slurpfile status "$control_status" \
@@ -442,6 +458,8 @@ jq -n \
     expectedCurrentDigest:$expectedCurrentDigest,
     candidateDigest:$candidateDigest,
     recoveryMode:$mode,
+    roleRecreateReceipt:($roleRecreateReceipt | if length>0 then . else null end),
+    roleVerifyReceipt:($roleVerifyReceipt | if length>0 then . else null end),
     completedAt:$completedAt,
     witness:$witness[0],
     readback:$status[0]

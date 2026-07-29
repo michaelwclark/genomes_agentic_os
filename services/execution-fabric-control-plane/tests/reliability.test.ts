@@ -9,6 +9,7 @@ import {
 } from "../src/reliability.js";
 import {
   allowListEnvironment,
+  evaluateRoleHealth,
   ROLE_ENTRYPOINTS,
   runPeriodicRole,
 } from "../src/roles.js";
@@ -121,6 +122,69 @@ describe("independently runnable roles", () => {
       once: true,
     });
     expect(tick).toHaveBeenCalledOnce();
+  });
+
+  it("exposes exact policy convergence and sustained tick health", () => {
+    const now = new Date("2026-07-29T12:00:30.000Z");
+    const snapshot = {
+      hostId: "genomesbox",
+      role: "healer" as const,
+      instanceId: "00000000-0000-4000-8000-000000000001",
+      startedAt: "2026-07-29T12:00:00.000Z",
+      approvedPolicyFingerprint: "a".repeat(64),
+      appliedPolicyFingerprint: "a".repeat(64),
+      lastSuccessfulTickAt: "2026-07-29T12:00:20.000Z",
+      lastTickAt: "2026-07-29T12:00:20.000Z",
+      lastError: null,
+      consecutiveFailures: 0,
+      updatedAt: "2026-07-29T12:00:20.000Z",
+    };
+    expect(evaluateRoleHealth(snapshot, { now })).toMatchObject({
+      status: "healthy",
+      reason: null,
+    });
+    expect(
+      evaluateRoleHealth(
+        { ...snapshot, consecutiveFailures: 1, lastError: "temporary" },
+        { now },
+      ),
+    ).toMatchObject({ status: "degraded", reason: "tick_failure" });
+    expect(
+      evaluateRoleHealth(
+        { ...snapshot, consecutiveFailures: 3, lastError: "persistent" },
+        { now },
+      ),
+    ).toMatchObject({ status: "unhealthy", reason: "sustained_tick_failures" });
+    expect(
+      evaluateRoleHealth(
+        { ...snapshot, appliedPolicyFingerprint: "b".repeat(64) },
+        { now },
+      ),
+    ).toMatchObject({ status: "unhealthy", reason: "policy_fingerprint_mismatch" });
+    expect(
+      evaluateRoleHealth(
+        { ...snapshot, lastSuccessfulTickAt: "2026-07-29T11:58:00.000Z" },
+        { now, maxTickAgeSeconds: 60 },
+      ),
+    ).toMatchObject({ status: "unhealthy", reason: "successful_tick_stale" });
+  });
+
+  it("awaits durable error reporting before the next role interval", async () => {
+    const recorded: string[] = [];
+    await runPeriodicRole({
+      role: "healer",
+      intervalMs: 1000,
+      signal: new AbortController().signal,
+      once: true,
+      tick: async () => {
+        throw new Error("policy mismatch");
+      },
+      onError: async () => {
+        await Promise.resolve();
+        recorded.push("durable");
+      },
+    });
+    expect(recorded).toEqual(["durable"]);
   });
 
   it("rejects unknown automatic repair actions", () => {

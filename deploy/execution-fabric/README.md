@@ -364,10 +364,14 @@ Scheduler, healer, and observer processes compare their disk candidate with
 the durable fingerprint on each tick and adopt only an exact match. Startup
 can initialize an empty fingerprint or accept an identical one; it can never
 replace an existing authority outside this explicit rotation protocol.
-Unapproved edits remain fail-closed and observable as config drift. The final
-receipt proves PostgreSQL, witness, local policy, and renewed active leadership
-all agree, so an approved `allow_scheduler` change does not depend on a
-coincidental process or host-manager restart.
+Compose mounts the policy as one read-only directory bundle, rather than as a
+single-file bind whose inode can remain pinned after replacement. After the
+database reload, rotation force-recreates the API, observer, healer, and
+scheduler cohort and reads back each role's exact approved and applied
+fingerprint before witness commit. A second readback after commit requires a
+fresh successful tick from every role. Any mismatch leaves authority fenced
+and no successful rotation receipt is written. Unapproved edits remain
+fail-closed and observable as config drift.
 
 The versioned `/api/v1/admin/leadership/*` contract is implemented by the
 deployable service in
@@ -433,9 +437,11 @@ regenerates `images.lock.env` and requires an exact byte match.
 
 ## Readiness and drills
 
-- Dependency and API containers have readiness health checks; observer and
-  healer liveness/restart state remains independently visible in Compose and
-  the host service manager.
+- Dependency and API containers have readiness health checks. Observer,
+  healer, and scheduler health checks read their durable role receipt instead
+  of testing only process existence. Status exposes each role's approved and
+  applied fingerprint, instance ID, last successful tick, last error, and
+  consecutive failure count; sustained failures make the role unhealthy.
 - The backup timer calls `installers/bin/backup-health.sh`. Each run writes a
   custom-format dump, restores it into a uniquely named disposable database,
   queries restored catalog objects and every restored table, removes that

@@ -11,6 +11,7 @@ import type {
   EffectAssignment,
   EffectClaim,
 } from "./contracts.js";
+import { evaluateRoleHealth } from "./roles.js";
 import type { DeliveryPort } from "./delivery.js";
 import { ConflictError, type LedgerPort } from "./ledger.js";
 import type { LeadershipGuard } from "./leadership.js";
@@ -224,6 +225,7 @@ export class ExecutionFabric {
   }
 
   async status(activeHost: string, limit = 200): Promise<Record<string, unknown>> {
+    const sampledAt = new Date().toISOString();
     const config = this.policy.check();
     const [queues, workers, rawRuns, system] = await Promise.all([
       this.ledger.queueSnapshot(),
@@ -335,7 +337,7 @@ export class ExecutionFabric {
     }
     return {
       schemaVersion: "agentic-os-execution-fabric-status/v1",
-      sampledAt: new Date().toISOString(),
+      sampledAt,
       config,
       controlPlane: {
         activeHost,
@@ -356,6 +358,32 @@ export class ExecutionFabric {
       workers,
       runs,
       effects: system.effects,
+      roleHealth: [
+        {
+          hostId: activeHost,
+          role: "api",
+          instanceId: `api:${activeHost}`,
+          approvedPolicyFingerprint: system.databasePolicyFingerprint,
+          appliedPolicyFingerprint: config.appliedFingerprint,
+          lastSuccessfulTickAt: sampledAt,
+          lastTickAt: sampledAt,
+          lastError: config.lastError,
+          consecutiveFailures: config.state === "applied" ? 0 : 1,
+          status:
+            config.state === "applied" &&
+            system.databasePolicyFingerprint === config.appliedFingerprint
+              ? "healthy"
+              : "unhealthy",
+          reason:
+            config.state === "applied" &&
+            system.databasePolicyFingerprint === config.appliedFingerprint
+              ? null
+              : "policy_fingerprint_mismatch",
+        },
+        ...(system.roleHealth ?? []).map((snapshot) =>
+          evaluateRoleHealth(snapshot, { now: new Date(sampledAt) }),
+        ),
+      ],
       healing: {
         status: this.lastReconcileError ? "failed" : "healthy",
         lastReconcileAt: this.lastReconcile?.occurredAt ?? null,

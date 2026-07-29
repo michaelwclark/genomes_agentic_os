@@ -297,11 +297,23 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
             "dist/src/main.js",
         ]
         observer = compose["services"]["observer"]
-        assert observer["healthcheck"]["test"] == ["CMD-SHELL", "kill -0 1"]
+        assert observer["healthcheck"]["test"][-1].endswith(
+            "role-healthcheck.js observer"
+        )
         assert compose["services"]["healer"]["healthcheck"]["test"] == [
             "CMD-SHELL",
-            "kill -0 1",
+            "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js healer",
         ]
+        assert compose["services"]["scheduler"]["healthcheck"]["test"][-1].endswith(
+            "role-healthcheck.js scheduler"
+        )
+        for role in ("control-plane", "observer", "healer"):
+            volumes = compose["services"][role]["volumes"]
+            assert any(
+                volume.endswith("/harness:/etc/agentic-os/policy-bundle:ro")
+                for volume in volumes
+            )
+            assert not any("execution-fabric.yml:" in volume for volume in volumes)
         assert compose["services"]["gateway"]["healthcheck"]["test"][-1].endswith(
             "127.0.0.1:3181/healthz || exit 1"
         )
@@ -670,6 +682,14 @@ def test_policy_rotation_is_fenced_resumable_and_receipted() -> None:
     assert '.controlPlane.leadership.state=="active"' in script
     assert "policy-rotation-$rotation_id.receipt.json" in script
     assert "FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE" in script
+    assert "converge-policy-roles.sh" in script
+    convergence = (INSTALLERS / "bin" / "converge-policy-roles.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "--force-recreate" in convergence
+    assert '.approvedPolicyFingerprint==$digest' in convergence
+    assert '.appliedPolicyFingerprint==$digest' in convergence
+    assert '.status=="healthy"' in convergence
     promotion = (INSTALLERS / "bin" / "promote.sh").read_text(encoding="utf-8")
     assert '"$script_dir/rotate-policy.sh" --resume' in promotion
 
@@ -777,6 +797,7 @@ esac
                 "FABRIC_HOST_ID=genomesbox",
                 "FABRIC_PRIMARY_HOST_ID=genomesbox",
                 "FABRIC_STANDBY_HOST_ID=bigmac",
+                "FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED=false",
                 f"FAKE_STATE_DIR={state}",
                 "",
             )
@@ -2091,13 +2112,11 @@ def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_moun
         assert "../../harness/config/execution-fabric.yml" not in text
         assert "../../schemas/execution-fabric.schema.json" not in text
         assert (
-            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/"
-            "execution-fabric.yml"
+            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness:"
+            "/etc/agentic-os/policy-bundle:ro"
         ) in text
-        assert (
-            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/"
-            "execution-fabric.schema.json"
-        ) in text
+        assert "/policy-bundle/config/execution-fabric.yml" in text
+        assert "/policy-bundle/schemas/execution-fabric.schema.json" in text
 
     preflight = (INSTALLERS / "bin/preflight.sh").read_text(encoding="utf-8")
     assert "FABRIC_MINIO_CLIENT_IMAGE" in preflight

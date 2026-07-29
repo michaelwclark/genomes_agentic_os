@@ -803,6 +803,19 @@ def test_remote_snapshot_normalizes_queue_worker_and_run_contract(tmp_path: Path
                     },
                 },
                 "healing": {"status": "healthy", "lastReceipt": None},
+                "roleHealth": [
+                    {
+                        "hostId": "genomesbox",
+                        "role": "healer",
+                        "instanceId": "role-instance-one",
+                        "approvedPolicyFingerprint": "a" * 64,
+                        "appliedPolicyFingerprint": "a" * 64,
+                        "lastSuccessfulTickAt": "2026-07-24T17:59:58Z",
+                        "lastError": None,
+                        "consecutiveFailures": 0,
+                        "status": "healthy",
+                    }
+                ],
                 "alarms": [],
                 "effects": {"pending": 2},
             }
@@ -847,6 +860,8 @@ def test_remote_snapshot_normalizes_queue_worker_and_run_contract(tmp_path: Path
     assert snapshot["config"]["state"] == "applied"
     assert snapshot["effects"] == {"pending": 2}
     assert snapshot["healing"]["status"] == "healthy"
+    assert snapshot["role_health"][0]["role"] == "healer"
+    assert snapshot["role_health"][0]["status"] == "healthy"
     assert snapshot["control_plane"]["epoch"] == 7
     assert snapshot["control_plane"]["role"] == "leader"
     assert snapshot["control_plane"]["leadership_receipt_id"] == "receipt-seven"
