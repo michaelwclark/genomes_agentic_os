@@ -44,8 +44,9 @@ import json
 import os
 import sys
 import textwrap
-import urllib.request
 from pathlib import Path
+
+from genomes_agentic_os.linear_bridge import client_from_environment
 
 try:
     import yaml
@@ -88,15 +89,6 @@ _ORDINAL = {
 _CLOSE_STATES = {"finished", "documented", "archived"}
 _GROOM_STATES = {"captured", "triaged"}
 _SPECIFIED_STATE = "specified"
-LINEAR_API = "https://api.linear.app/graphql"
-
-
-class LinearGraphQLError(RuntimeError):
-    """Linear returned GraphQL errors; preserve structured error payloads."""
-
-    def __init__(self, errors: list[dict]):
-        self.errors = errors
-        super().__init__(f"Linear GraphQL error: {errors}")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -250,40 +242,21 @@ def _tracker_id(packet: Path, spec: dict) -> str | None:
     return None
 
 
-def _linear_graphql(query: str, variables: dict, token: str) -> dict:
-    data = json.dumps({"query": query, "variables": variables}).encode()
-    req = urllib.request.Request(
-        LINEAR_API,
-        data=data,
-        headers={"Authorization": token, "Content-Type": "application/json"},
-        method="POST",
+def _linear_bridge_request(
+    operation: str, args: dict, token: str, token_env: str
+) -> object:
+    return client_from_environment(token=token, token_env=token_env).request(
+        operation, args
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.load(resp)
-    if result.get("errors"):
-        raise LinearGraphQLError(result["errors"])
-    return result["data"]
 
 
 def _linear_error_codes(exc: Exception) -> set[str]:
-    errors = getattr(exc, "errors", None)
-    codes: set[str] = set()
-    if isinstance(errors, list):
-        for error in errors:
-            if not isinstance(error, dict):
-                continue
-            extensions = error.get("extensions")
-            if isinstance(extensions, dict) and extensions.get("code"):
-                codes.add(str(extensions["code"]))
-            if error.get("code"):
-                codes.add(str(error["code"]))
-    if "USAGE_LIMIT_EXCEEDED" in str(exc):
-        codes.add("USAGE_LIMIT_EXCEEDED")
-    return codes
+    code = getattr(exc, "code", None)
+    return {str(code)} if code else set()
 
 
 def _is_linear_usage_limit(exc: Exception) -> bool:
-    return "USAGE_LIMIT_EXCEEDED" in _linear_error_codes(exc)
+    return bool(_linear_error_codes(exc) & {"USAGE_LIMITED", "USAGE_LIMIT_EXCEEDED"})
 
 
 def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict | None:
@@ -312,43 +285,26 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
 
     token_env = str(linear_cfg.get("token_env") or "LINEAR_TOKEN")
     token = os.environ.get(token_env)
-    if token_env == "LINEAR_TOKEN" and not token:
-        token = os.environ.get("LINEAR_API_KEY")
     if not token:
-        fallback = " or LINEAR_API_KEY" if token_env == "LINEAR_TOKEN" else ""
         return {
             "name": "linear_tracker",
             "ok": False,
             "detail": (
-                f"Linear tracker preflight requires {token_env}{fallback}, but no approved token is set.\n"
+                f"Linear tracker preflight requires {token_env}, but no approved token is set.\n"
                 f"  Remedy: export {token_env} for the configured Linear workspace and re-run the resolver before auto-dev claim."
             ),
         }
 
     try:
-        data = _linear_graphql(
-            """query AutoDevLinearPreflight($teamId: String!, $term: String!) {
-              team(id: $teamId) {
-                id
-                name
-                key
-                states { nodes { name type } }
-                projects(first: 100) { nodes { id name } }
-              }
-              searchIssues(term: $term, first: 10) {
-                nodes {
-                  id
-                  identifier
-                  title
-                  url
-                  team { id name key }
-                  project { id name }
-                  state { name type }
-                }
-              }
-            }""",
-            {"teamId": team_id, "term": tracker_id},
-            token,
+        identity = _linear_bridge_request(
+            "preflightIdentity", {"teamId": team_id}, token, token_env
+        )
+        states = _linear_bridge_request(
+            "listWorkflowStates", {"teamId": team_id}, token, token_env
+        )
+        projects = _linear_bridge_request("listProjects", {}, token, token_env)
+        issue = _linear_bridge_request(
+            "getIssue", {"issue": tracker_id}, token, token_env
         )
     except Exception as exc:
         if _is_linear_usage_limit(exc):
@@ -366,8 +322,7 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
             )
         return {"name": "linear_tracker", "ok": False, "detail": detail}
 
-    team = data.get("team")
-    if not team:
+    if not isinstance(identity, dict) or not isinstance(identity.get("team"), dict):
         return {
             "name": "linear_tracker",
             "ok": False,
@@ -377,7 +332,12 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
             ),
         }
 
-    state_names = {str(state.get("name", "")).lower() for state in team.get("states", {}).get("nodes", [])}
+    team = identity["team"]
+    state_names = {
+        str(state.get("name", "")).lower()
+        for state in states
+        if isinstance(state, dict)
+    }
     missing_states = [
         state_name
         for state_name in workflow.values()
@@ -391,16 +351,18 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
             "  Remedy: update workflow state names to match the verified Linear team before auto-dev claim."
         )
 
-    project_ids = {str(project.get("id")) for project in team.get("projects", {}).get("nodes", []) if project.get("id")}
+    project_ids = {
+        str(project.get("id"))
+        for project in projects
+        if isinstance(project, dict) and project.get("id")
+    }
     if project_id not in project_ids:
         failures.append(
             f"Configured Linear project_id {project_id!r} is not visible on team {team.get('key')} / {team.get('name')}.\n"
             "  Remedy: update project.yml to the verified project id for the configured team."
         )
 
-    issues = data.get("searchIssues", {}).get("nodes", [])
-    issue = next((node for node in issues if str(node.get("identifier", "")).lower() == tracker_id.lower()), None)
-    if not issue:
+    if not isinstance(issue, dict) or str(issue.get("identifier", "")).lower() != tracker_id.lower():
         failures.append(
             f"Tracker id {tracker_id!r} was not found in Linear search results visible to the token.\n"
             "  Remedy: verify the tracker id in SPEC.md or sync/create the intake row before auto-dev claim."

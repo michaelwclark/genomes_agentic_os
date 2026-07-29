@@ -48,6 +48,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from genomes_agentic_os.linear_bridge import LinearBridgeError, client_from_environment
+
 try:
     import yaml
 except ImportError:
@@ -65,7 +67,6 @@ RUNS_LOG_DIR = Path(
 NOTION_DB_ID = "c442dd56a24340f0880acfd195f34225"
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
-LINEAR_API = "https://api.linear.app/graphql"
 
 # Priority map: Notion P-value → Linear priority int (1=urgent, 4=low)
 PRIORITY_MAP = {"P0": 1, "P1": 2, "P2": 3, "P3": 4}
@@ -77,14 +78,6 @@ EXTERNAL_WRITE_BLOCK_PATTERNS = [
     ("notion_url", re.compile(r"https?://(?:www\.notion\.so|app\.notion\.com|[^/\s]+\.notion\.site)/[^\s)>\]]+")),
     ("token_value", re.compile(r"(?i)\b(?:lin_api|ntn|sk|secret|pat)_[A-Za-z0-9_-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b")),
 ]
-
-
-class LinearGraphQLError(RuntimeError):
-    """Linear returned GraphQL errors; keep structured errors for callers."""
-
-    def __init__(self, errors: list[dict]):
-        self.errors = errors
-        super().__init__(f"Linear GraphQL error: {errors}")
 
 
 # ---------------------------------------------------------------------------
@@ -142,18 +135,6 @@ def notion_patch(path: str, token: str, body: dict) -> dict:
         },
         body=body,
     )
-
-
-def linear_query(query: str, variables: dict, token: str) -> dict:
-    result = _request(
-        LINEAR_API,
-        method="POST",
-        headers={"Authorization": token, "Content-Type": "application/json"},
-        body={"query": query, "variables": variables},
-    )
-    if result.get("errors"):
-        raise LinearGraphQLError(result["errors"])
-    return result["data"]
 
 
 # ---------------------------------------------------------------------------
@@ -258,16 +239,17 @@ def notion_set_status(page_id: str, status_name: str, token: str) -> None:
 _STATES_CACHE: dict | None = None
 
 
+def _linear_client(token: str):
+    return client_from_environment(token=token)
+
+
 def linear_get_states(team_id: str, token: str) -> list:
     global _STATES_CACHE
     if _STATES_CACHE is not None:
         return _STATES_CACHE
-    data = linear_query(
-        "query States($teamId: String!) { team(id: $teamId) { states { nodes { id name type } } } }",
-        {"teamId": team_id},
-        token,
+    _STATES_CACHE = _linear_client(token).request(
+        "listWorkflowStates", {"teamId": team_id}
     )
-    _STATES_CACHE = data["team"]["states"]["nodes"]
     return _STATES_CACHE
 
 
@@ -283,36 +265,21 @@ def linear_get_labels(token: str, team_id: str | None = None) -> list:
     """Labels usable by the configured team: workspace-level labels plus the
     team's own. Labels owned by another team cannot be attached to this
     team's issues (Linear rejects with 'labelIds for incorrect team')."""
-    data = linear_query(
-        "{ issueLabels(first: 250) { nodes { id name team { id } } } }",
-        {},
-        token,
+    return _linear_client(token).request(
+        "listLabels", {**({"teamId": team_id} if team_id else {})}
     )
-    nodes = data["issueLabels"]["nodes"]
-    if team_id is None:
-        return nodes
-    return [
-        label for label in nodes
-        if not label.get("team") or (label.get("team") or {}).get("id") == team_id
-    ]
 
 
 def linear_create_label(name: str, team_id: str, token: str) -> str:
     """Create a label and return its id. If it already exists, fetch and return the existing id."""
     try:
-        data = linear_query(
-            """mutation CreateLabel($name: String!, $teamId: String!) {
-              issueLabelCreate(input: {name: $name, teamId: $teamId}) {
-                issueLabel { id name }
-                success
-              }
-            }""",
-            {"name": name, "teamId": team_id},
-            token,
+        label = _linear_client(token).request(
+            "createLabel",
+            {"input": {"name": name, "teamId": team_id, "color": "#5E6AD2"}},
         )
-        return data["issueLabelCreate"]["issueLabel"]["id"]
-    except RuntimeError as e:
-        if "duplicate label name" in str(e) or "already exists" in str(e):
+        return label["id"]
+    except LinearBridgeError as e:
+        if e.code == "CONFLICT":
             # Label already exists — fetch team-usable labels and find it
             labels = linear_get_labels(token, team_id)
             for lbl in labels:
@@ -345,36 +312,22 @@ def ensure_labels(names: list[str], existing: list, team_id: str, token: str, dr
     return ids
 
 
-def linear_search_by_marker(page_id: str, token: str) -> dict | None:
+def linear_search_by_marker(page_id: str, team_id: str, token: str) -> dict | None:
     """Search Linear for an issue whose description contains notion:<page_id>."""
     marker = f"notion:{page_id}"
-    data = linear_query(
-        """query Search($term: String!) {
-          searchIssues(term: $term, first: 5) {
-            nodes { id identifier url title state { name type } priority }
-          }
-        }""",
-        {"term": marker},
-        token,
+    issues = _linear_client(token).request(
+        "listIssuesByTeam", {"teamId": team_id, "includeArchived": True}
     )
-    # Belt-and-suspenders: verify the marker is actually in the description
-    candidates = data.get("searchIssues", {}).get("nodes", [])
-    # searchIssues returns partial matches; use filter to confirm
-    if candidates:
-        # Verify with description filter
-        data2 = linear_query(
-            """query CheckDesc($term: String!) {
-              issues(filter: {description: {contains: $term}}, first: 5) {
-                nodes { id identifier url title state { name type } priority }
-              }
-            }""",
-            {"term": marker},
-            token,
+    matches = [
+        issue
+        for issue in issues
+        if marker in str(issue.get("description") or "")
+    ]
+    if len(matches) > 1:
+        raise LinearBridgeError(
+            "CONFLICT", "Linear idempotency marker matched multiple issues"
         )
-        nodes = data2.get("issues", {}).get("nodes", [])
-        if nodes:
-            return nodes[0]
-    return None
+    return matches[0] if matches else None
 
 
 def linear_create_issue(
@@ -387,7 +340,7 @@ def linear_create_issue(
     project_id: str | None,
     token: str,
 ) -> dict:
-    variables: dict = {
+    issue_input: dict = {
         "title": title,
         "description": description,
         "stateId": state_id,
@@ -396,25 +349,8 @@ def linear_create_issue(
         "teamId": team_id,
     }
     if project_id:
-        variables["projectId"] = project_id
-
-    data = linear_query(
-        """mutation CreateIssue(
-          $title: String!, $description: String, $stateId: String,
-          $priority: Int, $labelIds: [String!], $teamId: String!, $projectId: String
-        ) {
-          issueCreate(input: {
-            title: $title, description: $description, stateId: $stateId,
-            priority: $priority, labelIds: $labelIds, teamId: $teamId, projectId: $projectId
-          }) {
-            issue { id identifier url }
-            success
-          }
-        }""",
-        variables,
-        token,
-    )
-    return data["issueCreate"]["issue"]
+        issue_input["projectId"] = project_id
+    return _linear_client(token).request("createIssue", {"input": issue_input})
 
 
 def linear_update_issue(issue_id: str, state_id: str | None, priority: int | None, token: str) -> None:
@@ -425,14 +361,8 @@ def linear_update_issue(issue_id: str, state_id: str | None, priority: int | Non
         updates["priority"] = priority
     if not updates:
         return
-    linear_query(
-        """mutation UpdateIssue($id: String!, $stateId: String, $priority: Int) {
-          issueUpdate(id: $id, input: {stateId: $stateId, priority: $priority}) {
-            success
-          }
-        }""",
-        {"id": issue_id, **updates},
-        token,
+    _linear_client(token).request(
+        "updateIssue", {"issue": issue_id, "input": updates}
     )
 
 
@@ -449,40 +379,15 @@ def linear_get_issue(issue_url: str, token: str) -> dict | None:
             break
     if not identifier:
         return None
-    # searchIssues by the exact identifier string is the reliable path
-    data = linear_query(
-        """query GetIssueByIdentifier($term: String!) {
-          searchIssues(term: $term, first: 5) {
-            nodes { id identifier url state { name type } priority }
-          }
-        }""",
-        {"term": identifier},
-        token,
-    )
-    nodes = data.get("searchIssues", {}).get("nodes", [])
-    # Confirm exact match (search may return partial results)
-    for node in nodes:
-        if node.get("identifier") == identifier:
-            return node
-    return None
+    issue = _linear_client(token).request("getIssue", {"issue": identifier})
+    return issue if isinstance(issue, dict) and issue.get("identifier") == identifier else None
 
 
 def linear_get_team_sync_profile(team_id: str, token: str) -> dict:
     """Fetch read-only Linear metadata needed to validate intake sync config."""
-    data = linear_query(
-        """query IntakeSyncDoctor($teamId: String!) {
-          team(id: $teamId) {
-            id
-            name
-            key
-            states { nodes { id name type } }
-            projects(first: 100) { nodes { id name } }
-          }
-        }""",
-        {"teamId": team_id},
-        token,
-    )
-    team = data.get("team")
+    client = _linear_client(token)
+    identity = client.request("preflightIdentity", {"teamId": team_id})
+    team = identity.get("team") if isinstance(identity, dict) else None
     if not team:
         raise RuntimeError(f"Linear team not found: {team_id}")
     return {
@@ -491,23 +396,21 @@ def linear_get_team_sync_profile(team_id: str, token: str) -> dict:
             "name": team.get("name"),
             "key": team.get("key"),
         },
-        "states": team.get("states", {}).get("nodes", []),
-        "projects": team.get("projects", {}).get("nodes", []),
+        "states": client.request("listWorkflowStates", {"teamId": team_id}),
+        "projects": client.request("listProjects", {}),
     }
 
 
 def linear_get_token_visibility(token: str) -> dict:
     """Fetch read-only viewer identity and visible teams for the configured Linear token."""
-    data = linear_query(
-        """query IntakeSyncTokenVisibility {
-          viewer { id name email }
-          teams(first: 100) { nodes { id key name } }
-        }""",
-        {},
-        token,
+    client = _linear_client(token)
+    teams = client.request("listTeams", {})
+    identity = (
+        client.request("preflightIdentity", {"teamId": teams[0]["id"]})
+        if teams
+        else {}
     )
-    viewer = data.get("viewer") or {}
-    teams = (data.get("teams") or {}).get("nodes") or []
+    viewer = identity.get("viewer") if isinstance(identity, dict) else {}
     return {
         "viewer": {
             "id": viewer.get("id"),
@@ -524,8 +427,12 @@ def linear_get_token_visibility(token: str) -> dict:
 def _linear_workspace_url_key(token: str) -> str | None:
     """Workspace slug (linear.app/<urlKey>/...) this token belongs to; None if unavailable."""
     try:
-        data = linear_query("query IntakeSyncWorkspace { organization { urlKey } }", {}, token)
-        return ((data.get("organization") or {}).get("urlKey")) or None
+        client = _linear_client(token)
+        teams = client.request("listTeams", {"limit": 1})
+        if not teams:
+            return None
+        identity = client.request("preflightIdentity", {"teamId": teams[0]["id"]})
+        return ((identity.get("workspace") or {}).get("urlKey")) or None
     except Exception:
         return None
 
@@ -536,24 +443,12 @@ def _linear_url_workspace(url: str) -> str | None:
 
 
 def _linear_error_codes(exc: Exception) -> set[str]:
-    errors = getattr(exc, "errors", None)
-    codes: set[str] = set()
-    if isinstance(errors, list):
-        for error in errors:
-            if not isinstance(error, dict):
-                continue
-            extensions = error.get("extensions")
-            if isinstance(extensions, dict) and extensions.get("code"):
-                codes.add(str(extensions["code"]))
-            if error.get("code"):
-                codes.add(str(error["code"]))
-    if "USAGE_LIMIT_EXCEEDED" in str(exc):
-        codes.add("USAGE_LIMIT_EXCEEDED")
-    return codes
+    code = getattr(exc, "code", None)
+    return {str(code)} if code else set()
 
 
 def _is_usage_limit_error(exc: Exception) -> bool:
-    return "USAGE_LIMIT_EXCEEDED" in _linear_error_codes(exc)
+    return bool(_linear_error_codes(exc) & {"USAGE_LIMITED", "USAGE_LIMIT_EXCEEDED"})
 
 
 def _linear_sync_error_message(action: str, exc: Exception) -> str:
@@ -958,7 +853,7 @@ def execute_push(
             # Skip in dry-run: nothing has been created yet so no dupes possible,
             # and 61 searches would exhaust the 30/min rate limit.
             try:
-                existing = None if dry_run else linear_search_by_marker(page_id, token_linear)
+                existing = None if dry_run else linear_search_by_marker(page_id, team_id, token_linear)
             except Exception as e:
                 print(f"  ERROR {name!r}: {_linear_sync_error_message('duplicate search', e)}", file=sys.stderr)
                 counts["errors"] += 1

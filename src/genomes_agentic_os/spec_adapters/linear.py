@@ -1,11 +1,201 @@
-"""Linear Spec adapter. Live behavior is supplied through an injected transport."""
+"""Linear Spec adapter composed over the shared Linear subprocess port."""
 
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping
 
+from ..linear_bridge import (
+    LinearBridgeClient,
+    LinearBridgeError,
+    auth_from_environment,
+    command_from_environment,
+)
 from .base import GuardedProviderAdapter, SpecTransport
 from ..spec_engine import AdapterReceipt, Spec
+
+
+def _description(spec: Mapping[str, Any], marker: str) -> str:
+    parts = [str(spec.get("summary") or "").strip()]
+    criteria = spec.get("acceptance_criteria")
+    if isinstance(criteria, list) and criteria:
+        parts.append("Acceptance criteria:\n" + "\n".join(f"- {item}" for item in criteria))
+    parts.append(marker)
+    return "\n\n".join(part for part in parts if part)
+
+
+class LinearBridgeSpecTransport:
+    """Compose the guarded Spec workflow onto the shared Linear port."""
+
+    def __init__(self, client: LinearBridgeClient):
+        self.client = client
+
+    @staticmethod
+    def _target(payload: Mapping[str, Any]) -> dict[str, Any]:
+        target = payload.get("target")
+        return dict(target) if isinstance(target, Mapping) else {}
+
+    @staticmethod
+    def _team(target: Mapping[str, Any]) -> str:
+        team_id = str(target.get("team_id") or target.get("team") or "").strip()
+        if not team_id:
+            raise LinearBridgeError("CONFIGURATION_ERROR", "Linear target team is not configured")
+        return team_id
+
+    @staticmethod
+    def _provider_record(issue: Mapping[str, Any]) -> dict[str, Any]:
+        provider_id = str(issue.get("id") or "").strip()
+        if not provider_id:
+            raise LinearBridgeError("BRIDGE_INVALID_RESPONSE", "Linear issue readback has no id")
+        return {"ok": True, "provider_id": provider_id, "id": provider_id, "url": issue.get("url")}
+
+    def _state_id(self, team_id: str, name: object) -> str | None:
+        if not name:
+            return None
+        states = self.client.request("listWorkflowStates", {"teamId": team_id})
+        matches = [
+            state for state in states
+            if isinstance(state, Mapping) and str(state.get("name", "")).lower() == str(name).lower()
+        ]
+        if len(matches) != 1:
+            raise LinearBridgeError("CONFIGURATION_ERROR", "Linear target state is missing or ambiguous")
+        return str(matches[0]["id"])
+
+    def _blocked_label_id(self, team_id: str) -> str:
+        labels = self.client.request("listLabels", {"teamId": team_id})
+        matches = [
+            label
+            for label in labels
+            if isinstance(label, Mapping)
+            and str(label.get("name", "")).lower() == "blocked"
+        ]
+        if len(matches) > 1:
+            raise LinearBridgeError(
+                "CONFLICT", "Linear blocked label is ambiguous for the target team"
+            )
+        if matches:
+            return str(matches[0]["id"])
+        created = self.client.request(
+            "createLabel",
+            {"input": {"name": "blocked", "teamId": team_id, "color": "#EB5757"}},
+        )
+        if not isinstance(created, Mapping) or not created.get("id"):
+            raise LinearBridgeError(
+                "BRIDGE_INVALID_RESPONSE", "Linear blocked label creation returned no id"
+            )
+        return str(created["id"])
+
+    def request(self, action: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        target = self._target(payload)
+        team_id = self._team(target)
+        if action == "verify_target":
+            identity = self.client.request(
+                "preflightIdentity",
+                {
+                    "teamId": team_id,
+                    **({"workspaceId": str(target["workspace_id"])} if target.get("workspace_id") else {}),
+                    **({"viewerId": str(target["viewer_id"])} if target.get("viewer_id") else {}),
+                },
+            )
+            return {"ok": True, "identity": identity}
+        if action == "find_by_idempotency":
+            marker = str(payload["idempotency_key"])
+            issues = self.client.request(
+                "listIssuesByTeam", {"teamId": team_id, "includeArchived": True}
+            )
+            matches = [
+                issue for issue in issues
+                if isinstance(issue, Mapping) and marker in str(issue.get("description") or "")
+            ]
+            if len(matches) > 1:
+                raise LinearBridgeError("CONFLICT", "Linear idempotency marker matched multiple issues")
+            return self._provider_record(matches[0]) if matches else {}
+        if action in {"create_spec", "update_spec"}:
+            spec = payload.get("spec")
+            if not isinstance(spec, Mapping):
+                raise LinearBridgeError("INVALID_REQUEST", "Spec payload is missing")
+            marker = str(payload["idempotency_key"])
+            state_id = self._state_id(team_id, payload.get("native_status"))
+            provider_id = str(payload.get("provider_id") or "").strip()
+            current = None
+            if action == "update_spec":
+                if not provider_id:
+                    raise LinearBridgeError("INVALID_REQUEST", "Linear update requires provider_id")
+                current = self.client.request("getIssue", {"issue": provider_id})
+                if not isinstance(current, Mapping):
+                    raise LinearBridgeError("NOT_FOUND", "Linear issue was not found")
+            labels = current.get("labels") if isinstance(current, Mapping) else []
+            label_ids = [
+                str(label["id"])
+                for label in labels or []
+                if isinstance(label, Mapping)
+                and label.get("id")
+                and str(label.get("name", "")).lower() != "blocked"
+            ]
+            if payload.get("blocked_label"):
+                label_ids.append(self._blocked_label_id(team_id))
+            issue_input = {
+                "title": str(spec.get("title") or spec.get("id") or "Agentic OS spec"),
+                "description": _description(spec, marker),
+                **({"projectId": str(target["project_id"])} if target.get("project_id") else {}),
+                **({"stateId": state_id} if state_id else {}),
+                **({"labelIds": list(dict.fromkeys(label_ids))} if current is not None or label_ids else {}),
+            }
+            if action == "create_spec":
+                issue = self.client.request(
+                    "createIssue", {"input": {"teamId": team_id, **issue_input}}
+                )
+            else:
+                issue = self.client.request(
+                    "updateIssue", {"issue": provider_id, "input": issue_input}
+                )
+            if not isinstance(issue, Mapping):
+                raise LinearBridgeError("BRIDGE_INVALID_RESPONSE", "Linear write returned invalid issue")
+            return self._provider_record(issue)
+        if action == "get_spec":
+            issue = self.client.request("getIssue", {"issue": str(payload["provider_id"])})
+            if not isinstance(issue, Mapping):
+                raise LinearBridgeError("NOT_FOUND", "Linear issue was not found")
+            return self._provider_record(issue)
+        if action == "get_by_spec_id":
+            return {}
+        if action == "list_specs":
+            return {"items": self.client.request("listIssuesByTeam", {"teamId": team_id})}
+        raise LinearBridgeError("UNSUPPORTED_OPERATION", "Unsupported Linear Spec transport action")
+
+
+def transport_from_environment(
+    environ: Mapping[str, str] | None = None,
+) -> SpecTransport | None:
+    values = os.environ if environ is None else environ
+    configured = any(
+        values.get(name)
+        for name in (
+            "GENOMES_LINEAR_BRIDGE_COMMAND",
+            "LINEAR_TOKEN",
+            "LINEAR_API_KEY",
+            "LINEAR_API_TOKEN",
+        )
+    )
+    if not configured:
+        return None
+    try:
+        command = command_from_environment(values)
+        auth = auth_from_environment(values)
+    except LinearBridgeError as exc:
+        return _LinearBridgeConfigurationTransport(str(exc))
+    if not command:
+        return _LinearBridgeConfigurationTransport("Linear bridge command must be configured")
+    return LinearBridgeSpecTransport(LinearBridgeClient(command, auth))
+
+
+class _LinearBridgeConfigurationTransport:
+    def __init__(self, error: str):
+        self.error = error
+
+    def request(self, action: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        del action, payload
+        raise LinearBridgeError("CONFIGURATION_ERROR", self.error)
 
 
 class LinearSpecAdapter(GuardedProviderAdapter):

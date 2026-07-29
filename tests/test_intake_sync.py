@@ -2,6 +2,8 @@ import importlib.util
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+import pytest
+
 
 def load_intake_sync_module():
     script = Path(__file__).resolve().parents[1] / "harness" / "bin" / "agentic-os-intake-sync"
@@ -43,14 +45,7 @@ def test_intake_sync_doctor_reports_linear_usage_limit(monkeypatch, tmp_path):
     module = load_intake_sync_module()
 
     def raise_usage_limit(team_id, token):
-        raise module.LinearGraphQLError(
-            [
-                {
-                    "message": "Workspace issue limit exceeded",
-                    "extensions": {"code": "USAGE_LIMIT_EXCEEDED"},
-                }
-            ]
-        )
+        raise module.LinearBridgeError("USAGE_LIMITED", "Linear bridge operation failed")
 
     monkeypatch.setattr(module, "linear_get_token_visibility", fake_visibility_with_configured_team)
     monkeypatch.setattr(module, "linear_get_team_sync_profile", raise_usage_limit)
@@ -67,7 +62,7 @@ def test_intake_sync_doctor_reports_linear_usage_limit(monkeypatch, tmp_path):
     assert result["blocker_count"] == 1
     assert result["findings"][0]["code"] == "linear_usage_limit_exceeded"
     assert "USAGE_LIMIT_EXCEEDED" in result["findings"][0]["message"]
-    assert _check_named(result, "linear_team")["error_codes"] == ["USAGE_LIMIT_EXCEEDED"]
+    assert _check_named(result, "linear_team")["error_codes"] == ["USAGE_LIMITED"]
 
 
 def test_intake_sync_doctor_validates_state_and_project_mapping(monkeypatch, tmp_path):
@@ -167,14 +162,7 @@ def test_intake_sync_doctor_flags_invalid_linear_token(monkeypatch, tmp_path):
     module = load_intake_sync_module()
 
     def raise_auth_error(token):
-        raise module.LinearGraphQLError(
-            [
-                {
-                    "message": "Authentication required",
-                    "extensions": {"code": "AUTHENTICATION_ERROR"},
-                }
-            ]
-        )
+        raise module.LinearBridgeError("AUTH_ERROR", "Linear bridge operation failed")
 
     monkeypatch.setattr(module, "linear_get_token_visibility", raise_auth_error)
 
@@ -192,7 +180,7 @@ def test_intake_sync_doctor_flags_invalid_linear_token(monkeypatch, tmp_path):
     assert "connector-backed" in finding["remediation"]
     token_check = _check_named(result, "linear_token")
     assert token_check["ok"] is False
-    assert token_check["error_codes"] == ["AUTHENTICATION_ERROR"]
+    assert token_check["error_codes"] == ["AUTH_ERROR"]
     assert all(check["name"] != "linear_team" for check in result["checks"])
 
 
@@ -289,28 +277,106 @@ def test_linear_url_workspace_parses_slug():
 def test_linear_workspace_url_key_swallows_errors(monkeypatch):
     module = load_intake_sync_module()
 
-    def boom(query, variables, token):
-        raise module.LinearGraphQLError([{"message": "Authentication required"}])
+    class BrokenClient:
+        def request(self, operation, args):
+            raise module.LinearBridgeError("AUTH_ERROR", "Linear bridge operation failed")
 
-    monkeypatch.setattr(module, "linear_query", boom)
+    monkeypatch.setattr(module, "_linear_client", lambda token: BrokenClient())
     assert module._linear_workspace_url_key("token") is None
 
 
 def test_linear_get_labels_filters_foreign_team_labels(monkeypatch):
     module = load_intake_sync_module()
+    observed = []
 
-    def fake_query(query, variables, token):
-        return {
-            "issueLabels": {
-                "nodes": [
-                    {"id": "l-ws", "name": "Improvement", "team": None},
-                    {"id": "l-cc", "name": "aos-intake", "team": {"id": "team-1"}},
-                    {"id": "l-other", "name": "kind:spec", "team": {"id": "team-other"}},
-                ]
-            }
-        }
+    class FakeClient:
+        def request(self, operation, args):
+            observed.append((operation, args))
+            return [
+                {"id": "l-ws", "name": "Improvement"},
+                {"id": "l-cc", "name": "aos-intake", "teamId": "team-1"},
+            ]
 
-    monkeypatch.setattr(module, "linear_query", fake_query)
+    monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
     usable = module.linear_get_labels("token", "team-1")
     assert {l["id"] for l in usable} == {"l-ws", "l-cc"}
-    assert len(module.linear_get_labels("token")) == 3
+    assert observed == [("listLabels", {"teamId": "team-1"})]
+
+
+def test_linear_marker_scan_is_exhaustive_and_blocks_duplicates(monkeypatch):
+    module = load_intake_sync_module()
+
+    class FakeClient:
+        def __init__(self, issues):
+            self.issues = issues
+            self.calls = []
+
+        def request(self, operation, args):
+            self.calls.append((operation, args))
+            return self.issues
+
+    one = FakeClient(
+        [
+            {"id": "other", "description": "notion:other"},
+            {"id": "match", "description": "body\nnotion:page-1"},
+        ]
+    )
+    monkeypatch.setattr(module, "_linear_client", lambda token: one)
+    assert module.linear_search_by_marker("page-1", "team", "token")["id"] == "match"
+    assert one.calls == [
+        ("listIssuesByTeam", {"teamId": "team", "includeArchived": True})
+    ]
+
+    duplicate = FakeClient(
+        [
+            {"id": "one", "description": "notion:page-1"},
+            {"id": "two", "description": "notion:page-1"},
+        ]
+    )
+    monkeypatch.setattr(module, "_linear_client", lambda token: duplicate)
+    with pytest.raises(module.LinearBridgeError) as error:
+        module.linear_search_by_marker("page-1", "team", "token")
+    assert error.value.code == "CONFLICT"
+
+
+def test_linear_create_and_update_preserve_legacy_issue_fields(monkeypatch):
+    module = load_intake_sync_module()
+    calls = []
+
+    class FakeClient:
+        def request(self, operation, args):
+            calls.append((operation, args))
+            return {
+                "id": "issue-1",
+                "identifier": "AGE-1",
+                "url": "https://linear.app/genomes/issue/AGE-1/example",
+                "state": {"id": "todo", "name": "Todo", "type": "unstarted"},
+                "priority": 2,
+            }
+
+    monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
+    issue = module.linear_create_issue(
+        "Title", "Description", "todo", 2, ["label"], "team", "project", "token"
+    )
+    module.linear_update_issue("issue-1", "started", 1, "token")
+    assert issue["identifier"] == "AGE-1"
+    assert calls == [
+        (
+            "createIssue",
+            {
+                "input": {
+                    "title": "Title",
+                    "description": "Description",
+                    "stateId": "todo",
+                    "priority": 2,
+                    "labelIds": ["label"],
+                    "teamId": "team",
+                    "projectId": "project",
+                }
+            },
+        ),
+        (
+            "updateIssue",
+            {"issue": "issue-1", "input": {"stateId": "started", "priority": 1}},
+        ),
+    ]
