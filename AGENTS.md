@@ -11,6 +11,7 @@ and the maintained architecture map so you don't re-derive the system from scrat
 - [`docs/architecture/command-reference.md`](docs/architecture/command-reference.md) — every command and flag, with real examples.
 - [`docs/architecture/harness-modes.md`](docs/architecture/harness-modes.md) — how Claude/Codex surfaces execute the same specs.
 - [`docs/architecture/tools/`](docs/architecture/tools/) — re-runnable validation + diagram-render scripts.
+- [`RELEASING.md`](RELEASING.md) — this repository's adapter values and the canonical release-policy link.
 
 ## Working Principles
 
