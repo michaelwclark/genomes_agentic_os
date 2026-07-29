@@ -307,7 +307,7 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
         assert compose["services"]["scheduler"]["healthcheck"]["test"][-1].endswith(
             "role-healthcheck.js scheduler"
         )
-        for role in ("control-plane", "observer", "healer"):
+        for role in ("candidate-reporter", "control-plane", "observer", "healer"):
             volumes = compose["services"][role]["volumes"]
             assert any(
                 volume.endswith(
@@ -986,6 +986,28 @@ esac
     assert result.returncode == 75
     assert "did not converge" in result.stderr
     assert not list(state.glob("policy-role-convergence-*.json"))
+
+    _write_executable(
+        fake_bin / "curl",
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' '{}'\n",
+    )
+    missing_schema = subprocess.run(
+        [
+            str(INSTALLERS / "bin" / "converge-policy-roles.sh"),
+            "--verify",
+            expected,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        },
+    )
+    assert missing_schema.returncode == 69
+    assert "upgrade the control-plane image" in missing_schema.stderr
 
 
 def test_policy_rotation_resume_aborts_expired_pre_database_preparation(

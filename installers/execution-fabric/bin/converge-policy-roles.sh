@@ -96,7 +96,7 @@ fi
 
 verified=false
 attempt=0
-attempt_limit=${FABRIC_POLICY_CONVERGENCE_ATTEMPTS:-30}
+attempt_limit=${FABRIC_POLICY_CONVERGENCE_ATTEMPTS:-60}
 case "$attempt_limit" in
   ''|*[!0-9]*) echo "FABRIC_POLICY_CONVERGENCE_ATTEMPTS must be a positive integer" >&2; exit 64 ;;
 esac
@@ -110,6 +110,10 @@ while [ "$attempt" -lt "$attempt_limit" ]; do
     "$api_base" "/api/v1/status?limit=1" \
     "$FABRIC_API_TOKEN_FILE" >"$status_temp" 2>/dev/null
   then
+    jq -e '(.roleHealth | type)=="array"' "$status_temp" >/dev/null || {
+      echo "control-plane status has no roleHealth array; upgrade the control-plane image before policy rotation" >&2
+      exit 69
+    }
     if [ "$mode" = --recreate ]; then
       predicate='(
         [.roleHealth[] | select(.hostId==$host and

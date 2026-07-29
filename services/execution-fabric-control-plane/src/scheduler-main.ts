@@ -52,11 +52,27 @@ try {
   } catch {
     // The primary startup error is retained below.
   }
-  await roleHealth.failure(
-    error,
-    approved,
-    runtime.policy.snapshot().appliedFingerprint,
-  );
+  try {
+    await recordRoleFailure({
+      store: roleHealth,
+      error,
+      approvedPolicyFingerprint: approved,
+      appliedPolicyFingerprint: runtime.policy.snapshot().appliedFingerprint,
+      onReportingError: (healthError) => {
+        process.stderr.write(`${JSON.stringify({
+          role: "scheduler",
+          event: "startup_role_health_write_failed",
+          error: healthError instanceof Error ? healthError.message : "unknown role health failure",
+        })}\n`);
+      },
+    });
+  } catch (healthError) {
+    process.stderr.write(`${JSON.stringify({
+      role: "scheduler",
+      event: "startup_role_health_fenced",
+      error: healthError instanceof Error ? healthError.message : "role health instance replaced",
+    })}\n`);
+  }
   throw error;
 }
 await runPeriodicRole({
