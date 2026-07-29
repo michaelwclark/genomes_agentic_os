@@ -4,7 +4,7 @@ title: AGE-129 governance acceptance
 
 # AGE-129 governance acceptance
 
-This disposable page deliberately links to a missing target for the negative
+This disposable page now links to a valid documentation target for the repaired
 branch-protection acceptance phase.
 
-[Broken acceptance link](./age-129-missing-target.md)
+[Documentation overview](./00-overview.md)
