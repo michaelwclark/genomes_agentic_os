@@ -70,16 +70,55 @@ def test_a_broken_internal_link_fails_the_build(build: dict[str, Any]) -> None:
 
 def test_docs_changes_are_checked_before_they_land(
     triggers: dict[str, Any],
+    build: dict[str, Any],
 ) -> None:
     assert "pull_request" in triggers
+    # Pull requests must not be filtered at the event level: the stable policy
+    # check is required on every head, including changes unrelated to docs.
+    assert triggers["pull_request"] is None
     assert triggers["push"]["branches"] == ["main"]
 
-    for event in ("pull_request", "push"):
-        paths = triggers[event]["paths"]
-        assert "docs/**" in paths
-        assert "operating-manual/**" in paths
-        assert "website/**" in paths
-        assert ".github/workflows/docs.yml" in paths
+    # Main only needs a Pages build when documentation-impacting paths changed.
+    assert triggers["push"]["paths"] == [
+        "docs/**",
+        "operating-manual/**",
+        "website/**",
+        ".github/workflows/docs.yml",
+    ]
+
+    assert build["name"] == "Docs link policy"
+    docs_scope = next(step for step in build["steps"] if step.get("id") == "docs-scope")
+    assert docs_scope["if"] == "github.event_name == 'pull_request'"
+    assert 'git diff --name-only --no-renames "${BASE_SHA}" "${HEAD_SHA}"' in docs_scope["run"]
+    assert "docs/|operating-manual/|website/" in docs_scope["run"]
+
+    no_op = next(
+        step
+        for step in build["steps"]
+        if step.get("name") == "Record successful non-documentation policy result"
+    )
+    assert no_op["if"] == (
+        "github.event_name == 'pull_request' "
+        "&& steps.docs-scope.outputs.required != 'true'"
+    )
+
+    heavy_gate = (
+        "github.event_name == 'push' "
+        "|| steps.docs-scope.outputs.required == 'true'"
+    )
+    heavy_steps = [
+        step
+        for step in build["steps"]
+        if str(step.get("uses", "")).startswith("actions/setup-node@")
+        or step.get("name")
+        in {
+            "Install dependencies",
+            "Typecheck config and components",
+            "Build site and check every internal link",
+        }
+    ]
+    assert len(heavy_steps) == 4
+    assert all(step["if"] == heavy_gate for step in heavy_steps)
 
 
 def test_the_deployed_artifact_is_the_build_that_was_link_checked(
