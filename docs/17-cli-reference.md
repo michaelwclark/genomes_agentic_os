@@ -94,6 +94,19 @@ path you type after `agentic-os`; the description is verbatim from `--help`.
 | `project worktree cleanup-closed` | Close registered worktrees whose cached Jira status or PR state is terminal. |
 | `project worktree create` | Create and register a git worktree using `config/development.yml`; the configured repository, directory, and inherited date-prefix policy apply in every domain. |
 
+### Canonical Work State — `cli/work.py`
+
+| Command | What it does |
+| --- | --- |
+| `work` | Read and update canonical local work state without tracker or code-path scans. |
+| `work list` | List canonical work items. |
+| `work show` | Show one canonical work item. |
+| `work upsert` | Create or fully reconcile one work item. |
+| `work set` | Change state, attention, or resume context. |
+| `work active-now` | Refresh and print the compact active-context projection. |
+| `work import-legacy` | Plan or import legacy lane folders without marking them active. |
+| `work migrate-path-prefix` | Plan or atomically migrate path prefixes in canonical work state. |
+
 ### Specs — `cli/spec.py`
 
 | Command | What it does |

@@ -64,12 +64,12 @@ advises, it does not enforce. The gate is you reading the output. Where it does
 bite is in [automations](./automations.md) — you cannot promote an automation
 past a certain point while it has blockers.
 
-:::note A discrepancy to expect
+:::note Fresh scaffold result
 
-The handbook page on workflows shows sample `check` output listing several files
-as missing right after creation. The current code writes all of those files on
-`create`. If you follow the page and see a clean result instead, your install is
-fine — the sample is stale.
+The scaffold writes all 14 required files and both support READMEs. Before you
+fill the contract, `workflow check` reports one intentional `fix-soon` finding:
+the unresolved `Dispatch Decision` placeholders in `alignment-questions.md`.
+See the [captured output](/docs/06-workflows#real-output--freshly-scaffolded-workflow).
 
 :::
 

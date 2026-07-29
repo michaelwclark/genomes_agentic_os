@@ -105,11 +105,11 @@ set aside.
 `active-now.json`, that agents read to find out what is going on right now
 without loading everything.
 
-:::caution Missing from the reference
+:::note Command reference
 
-The `agentic-os work` command group is real and registered in the code, but it
-is not listed in the [CLI reference](/docs/17-cli-reference). Use
-`agentic-os work --help` until that gap is closed.
+The [`agentic-os work` command group](/docs/17-cli-reference#canonical-work-state--cliworkpy)
+is the canonical interface for querying and reconciling work state. Use
+`agentic-os work <command> --help` for every flag.
 
 :::
 

@@ -44,14 +44,15 @@ workflow files. See [37 · Governed Workflow Engine](37-governed-workflow-engine
 
 ## Required files
 
-`agentic-os workflow create` scaffolds all 13 required files in one step.
-Each file must be present for a workflow to be considered ready. Six of them also
+`agentic-os workflow create` scaffolds all 14 required files in one step.
+Each file must be present for a workflow to be considered ready. Seven of them also
 have **required sections** that `workflow check` inspects for content and
 placeholder resolution.
 
 | File | Section(s) checked by `workflow check` | Purpose |
 | --- | --- | --- |
-| `workflow.md` | — (exist only) | Overview and metadata |
+| `context-contract.yml` | — (exist only) | Machine-readable context contract |
+| `workflow.md` | `Invocation Contract` | Overview, metadata, and invocation contract |
 | `outcome-brief.md` | `Definition Of Done`, `Acceptance Criteria` | Success criteria, DoD |
 | `alignment-questions.md` | `Required Questions`, `Dispatch Decision` | Pre-flight alignment gate |
 | `prd.md` | — (exist only) | Product requirements |
@@ -88,26 +89,27 @@ agentic-os workflow create acme engineering launch_blog --root ~/agentic_os
 | `name` | Yes | Workflow slug (`snake_case`) |
 | `--root` | No | Installed OS root. Defaults to `~/agentic_os`. |
 
-This creates `<root>/domains/<domain>/03-workflows/<lane>/<name>/` and writes all 13
+This creates `<root>/domains/<domain>/03-workflows/<lane>/<name>/` and writes all 14
 required files with placeholder content rendered from the templates in
 `templates/workflow/`.
 
 ### Step 2 — fill the sections
 
 Open each file and replace the placeholder content. The sections that
-`workflow check` verifies for real content (not just presence) are the six
+`workflow check` verifies for real content (not just presence) are the seven
 listed in the Required files table above. Placeholder markers — `<…>`,
 `yes | no`, `draft | ready` — are detected automatically and reported as
 `fix-soon` findings.
 
 Start with the files that gate dispatch:
 
-1. `outcome-brief.md` — write the Definition Of Done and Acceptance Criteria
-2. `alignment-questions.md` — answer the Required Questions and fill the Dispatch Decision
-3. `context-pack.md` — list the source files/links the agent must load and state operating constraints
-4. `approval-rules.md` — fill the Approval Matrix (who signs off on what)
-5. `output-contract.md` — define the Required Outputs
-6. `runbook.md` — write Before Running, During The Run, After Running
+1. `workflow.md` — define the Invocation Contract
+2. `outcome-brief.md` — write the Definition Of Done and Acceptance Criteria
+3. `alignment-questions.md` — answer the Required Questions and fill the Dispatch Decision
+4. `context-pack.md` — list the source files/links the agent must load and state operating constraints
+5. `approval-rules.md` — fill the Approval Matrix (who signs off on what)
+6. `output-contract.md` — define the Required Outputs
+7. `runbook.md` — write Before Running, During The Run, After Running
 
 The remaining files (`prd.md`, `implementation-plan.md`, `state-machine.md`,
 etc.) can be filled incrementally; `workflow check` flags missing sections but
@@ -161,31 +163,15 @@ agentic-os workflow check acme engineering launch_blog --root /tmp/aos-validate/
 
 ```yaml
 findings:
-- severity: blocker
-  path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/state-machine.md
-  message: required workflow file is missing
-- severity: blocker
-  path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/output-contract.md
-  message: required workflow file is missing
-- severity: blocker
-  path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/runbook.md
-  message: required workflow file is missing
 - severity: fix-soon
-  path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/alignment-questions.md
+  path: /private/tmp/aos-validate/root/domains/acme/03-workflows/engineering/launch_blog/alignment-questions.md
   message: 'section has unresolved placeholders: Dispatch Decision'
-- severity: cleanup
-  path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/examples/README.md
-  message: supporting workflow README is missing
-- severity: cleanup
-  path: /private/tmp/aos-validate/root/acme/03-workflows/engineering/launch_blog/runs/README.md
-  message: supporting workflow README is missing
 ```
 
-Three `blocker` findings mean the required files were not yet written by the
-scaffold into this particular test root. The `fix-soon` on
-`alignment-questions.md` means the `Dispatch Decision` section still contains
-placeholder markers (`yes | no`, `draft | ready`, or `<…>` tokens) — replace
-them with real decisions.
+A fresh scaffold includes every required file and both support READMEs. Its one
+finding is the intentional `fix-soon` placeholder in the `Dispatch Decision`
+section. Replace the `yes | no`, `draft | ready`, or `<…>` tokens with real
+decisions.
 
 ### All-clear output
 
