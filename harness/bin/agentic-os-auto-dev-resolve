@@ -40,11 +40,76 @@ EXAMPLES
 """
 
 import argparse
+import importlib.util
 import json
 import os
+import re
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+
+def _release_version_key(candidate: Path) -> tuple[int, ...]:
+    match = re.match(r"^(\d+(?:\.\d+)*)", candidate.parents[2].name)
+    if match is None:
+        return (-1,)
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _ensure_agentic_os_runtime() -> None:
+    """Re-exec under a source or installed package runtime when necessary."""
+    repository = Path(__file__).resolve().parents[2]
+    source = repository / "src"
+    if (source / "genomes_agentic_os" / "linear_bridge.py").is_file():
+        sys.path.insert(0, str(source))
+    try:
+        bridge_spec = importlib.util.find_spec("genomes_agentic_os.linear_bridge")
+    except ModuleNotFoundError:
+        bridge_spec = None
+    if bridge_spec is not None:
+        return
+    candidates: list[Path] = []
+    configured = os.environ.get("AGENTIC_OS_PYTHON", "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    releases = Path.home() / "Library" / "Application Support" / "AgenticOS" / "releases"
+    candidates.extend(
+        sorted(
+            releases.glob("*/runtime/bin/python"),
+            key=_release_version_key,
+            reverse=True,
+        )
+        if releases.is_dir()
+        else []
+    )
+    for candidate in candidates:
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        try:
+            probe = subprocess.run(
+                [str(candidate), "-c", "import genomes_agentic_os.linear_bridge"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if probe.returncode == 0:
+                os.execve(
+                    str(candidate),
+                    [str(candidate), __file__, *sys.argv[1:]],
+                    dict(os.environ),
+                )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    raise SystemExit(
+        "ERROR: agentic-os-auto-dev-resolve requires an Agentic OS runtime "
+        "containing the shared Linear bridge; install the reviewed release or "
+        "set AGENTIC_OS_PYTHON"
+    )
+
+
+_ensure_agentic_os_runtime()
 
 from genomes_agentic_os.linear_bridge import client_from_environment
 
@@ -285,26 +350,41 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
 
     token_env = str(linear_cfg.get("token_env") or "LINEAR_TOKEN")
     token = os.environ.get(token_env)
+    fallback_env = None
+    if token_env == "LINEAR_TOKEN" and not token:
+        for candidate in ("LINEAR_API_KEY", "LINEAR_API_TOKEN"):
+            token = os.environ.get(candidate)
+            if token:
+                fallback_env = candidate
+                break
     if not token:
+        required_tokens = (
+            f"{token_env}, LINEAR_API_KEY, or LINEAR_API_TOKEN"
+            if token_env == "LINEAR_TOKEN"
+            else token_env
+        )
         return {
             "name": "linear_tracker",
             "ok": False,
             "detail": (
-                f"Linear tracker preflight requires {token_env}, but no approved token is set.\n"
+                f"Linear tracker preflight requires {required_tokens}, but no approved "
+                "token is set.\n"
                 f"  Remedy: export {token_env} for the configured Linear workspace and re-run the resolver before auto-dev claim."
             ),
         }
 
     try:
         identity = _linear_bridge_request(
-            "preflightIdentity", {"teamId": team_id}, token, token_env
+            "preflightIdentity", {"teamId": team_id}, token, fallback_env or token_env
         )
         states = _linear_bridge_request(
-            "listWorkflowStates", {"teamId": team_id}, token, token_env
+            "listWorkflowStates", {"teamId": team_id}, token, fallback_env or token_env
         )
-        projects = _linear_bridge_request("listProjects", {}, token, token_env)
+        projects = _linear_bridge_request(
+            "listProjects", {}, token, fallback_env or token_env
+        )
         issue = _linear_bridge_request(
-            "getIssue", {"issue": tracker_id}, token, token_env
+            "getIssue", {"issue": tracker_id}, token, fallback_env or token_env
         )
     except Exception as exc:
         if _is_linear_usage_limit(exc):
@@ -358,8 +438,8 @@ def _linear_tracker_preflight(dev_factory: dict, tracker_id: str | None) -> dict
     }
     if project_id not in project_ids:
         failures.append(
-            f"Configured Linear project_id {project_id!r} is not visible on team {team.get('key')} / {team.get('name')}.\n"
-            "  Remedy: update project.yml to the verified project id for the configured team."
+            f"Configured Linear project_id {project_id!r} is not visible in the token's verified workspace.\n"
+            "  Remedy: update project.yml to a verified workspace-visible project id."
         )
 
     if not isinstance(issue, dict) or str(issue.get("identifier", "")).lower() != tracker_id.lower():

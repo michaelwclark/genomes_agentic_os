@@ -260,6 +260,21 @@ HTTP requests. A bearer/session provider must inject the short-lived bearer;
 the reviewed platform bridge owns Jira transport, retries, safe errors, and
 provider readback.
 
+### Linear call sites
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GENOMES_LINEAR_BRIDGE_COMMAND` | — | Reviewed `@genomes/linear` bridge argv; required for resolver, intake-sync, and live Spec Engine operations |
+| `LINEAR_TOKEN` / `LINEAR_API_KEY` / `LINEAR_API_TOKEN` | — | Exactly one Linear credential, injected only into the bridge child environment |
+| project `token_env` | `LINEAR_TOKEN` | Selects a custom host environment variable for a multi-workspace tracker; the wrapper remaps it to child `LINEAR_TOKEN` |
+
+The migrated callers do not own a Linear endpoint, GraphQL document, header,
+retry loop, or provider error parser. Build the reviewed platform revision and
+point `GENOMES_LINEAR_BRIDGE_COMMAND` at
+`packages/linear/dist/bridge.js`; the shared bridge owns pagination, identity
+preflight, mutation readback, bounded retries, safe errors, and exact marker
+reconciliation.
+
 ### agentic-os-automation-run-summary
 
 | Variable | Default | Purpose |

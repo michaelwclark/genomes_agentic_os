@@ -37,9 +37,11 @@ EXAMPLES
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -47,6 +49,68 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _release_version_key(candidate: Path) -> tuple[int, ...]:
+    match = re.match(r"^(\d+(?:\.\d+)*)", candidate.parents[2].name)
+    if match is None:
+        return (-1,)
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _ensure_agentic_os_runtime() -> None:
+    """Re-exec under a source or installed package runtime when necessary."""
+    repository = Path(__file__).resolve().parents[2]
+    source = repository / "src"
+    if (source / "genomes_agentic_os" / "linear_bridge.py").is_file():
+        sys.path.insert(0, str(source))
+    try:
+        bridge_spec = importlib.util.find_spec("genomes_agentic_os.linear_bridge")
+    except ModuleNotFoundError:
+        bridge_spec = None
+    if bridge_spec is not None:
+        return
+    candidates: list[Path] = []
+    configured = os.environ.get("AGENTIC_OS_PYTHON", "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    releases = Path.home() / "Library" / "Application Support" / "AgenticOS" / "releases"
+    candidates.extend(
+        sorted(
+            releases.glob("*/runtime/bin/python"),
+            key=_release_version_key,
+            reverse=True,
+        )
+        if releases.is_dir()
+        else []
+    )
+    for candidate in candidates:
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        try:
+            probe = subprocess.run(
+                [str(candidate), "-c", "import genomes_agentic_os.linear_bridge"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if probe.returncode == 0:
+                os.execve(
+                    str(candidate),
+                    [str(candidate), __file__, *sys.argv[1:]],
+                    dict(os.environ),
+                )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    raise SystemExit(
+        "ERROR: agentic-os-intake-sync requires an Agentic OS runtime containing "
+        "the shared Linear bridge; install the reviewed release or set "
+        "AGENTIC_OS_PYTHON"
+    )
+
+
+_ensure_agentic_os_runtime()
 
 from genomes_agentic_os.linear_bridge import LinearBridgeError, client_from_environment
 
@@ -236,7 +300,7 @@ def notion_set_status(page_id: str, status_name: str, token: str) -> None:
 # Linear helpers
 # ---------------------------------------------------------------------------
 
-_STATES_CACHE: dict | None = None
+_STATES_CACHE: dict[str, list] = {}
 
 
 def _linear_client(token: str):
@@ -244,13 +308,12 @@ def _linear_client(token: str):
 
 
 def linear_get_states(team_id: str, token: str) -> list:
-    global _STATES_CACHE
-    if _STATES_CACHE is not None:
-        return _STATES_CACHE
-    _STATES_CACHE = _linear_client(token).request(
+    if team_id in _STATES_CACHE:
+        return _STATES_CACHE[team_id]
+    _STATES_CACHE[team_id] = _linear_client(token).request(
         "listWorkflowStates", {"teamId": team_id}
     )
-    return _STATES_CACHE
+    return _STATES_CACHE[team_id]
 
 
 def resolve_state_id(name: str, states: list) -> str:
@@ -312,17 +375,39 @@ def ensure_labels(names: list[str], existing: list, team_id: str, token: str, dr
     return ids
 
 
-def linear_search_by_marker(page_id: str, team_id: str, token: str) -> dict | None:
-    """Search Linear for an issue whose description contains notion:<page_id>."""
-    marker = f"notion:{page_id}"
-    issues = _linear_client(token).request(
-        "listIssuesByTeam", {"teamId": team_id, "includeArchived": True}
+def _has_exact_marker(description: object, marker: str) -> bool:
+    return any(
+        line.strip().strip("`") == marker
+        for line in str(description or "").splitlines()
     )
-    matches = [
-        issue
-        for issue in issues
-        if marker in str(issue.get("description") or "")
-    ]
+
+
+def linear_search_by_marker(page_id: str, team_id: str, token: str) -> dict | None:
+    """Search every visible team for the exact one-line intake marker."""
+    marker = f"notion:{page_id}"
+    client = _linear_client(token)
+    teams = client.request("listTeams", {})
+    team_ids = list(
+        dict.fromkeys(
+            [team_id]
+            + [
+                str(team.get("id"))
+                for team in teams
+                if isinstance(team, dict) and team.get("id")
+            ]
+        )
+    )
+    matches = []
+    for visible_team_id in team_ids:
+        issues = client.request(
+            "listIssuesByTeam",
+            {"teamId": visible_team_id, "includeArchived": True},
+        )
+        matches.extend(
+            issue
+            for issue in issues
+            if _has_exact_marker(issue.get("description"), marker)
+        )
     if len(matches) > 1:
         raise LinearBridgeError(
             "CONFLICT", "Linear idempotency marker matched multiple issues"
@@ -353,6 +438,44 @@ def linear_create_issue(
     return _linear_client(token).request("createIssue", {"input": issue_input})
 
 
+def linear_find_or_create_issue(
+    marker: str,
+    *,
+    title: str,
+    description: str,
+    state_id: str,
+    priority: int,
+    label_ids: list[str],
+    team_id: str,
+    project_id: str | None,
+    token: str,
+) -> tuple[dict, bool]:
+    issue_input: dict = {
+        "title": title,
+        "description": description,
+        "stateId": state_id,
+        "priority": priority,
+        "labelIds": [lid for lid in label_ids if not lid.startswith("new-label:")],
+        "teamId": team_id,
+    }
+    if project_id:
+        issue_input["projectId"] = project_id
+    result = _linear_client(token).request(
+        "findOrCreateIssueByMarker", {"marker": marker, "input": issue_input}
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("issue"), dict):
+        raise LinearBridgeError(
+            "BRIDGE_INVALID_RESPONSE",
+            "Linear marker reconciliation returned invalid data",
+        )
+    if not isinstance(result.get("created"), bool):
+        raise LinearBridgeError(
+            "BRIDGE_INVALID_RESPONSE",
+            "Linear marker reconciliation returned no creation status",
+        )
+    return result["issue"], result["created"]
+
+
 def linear_update_issue(issue_id: str, state_id: str | None, priority: int | None, token: str) -> None:
     updates: dict = {}
     if state_id:
@@ -367,7 +490,7 @@ def linear_update_issue(issue_id: str, state_id: str | None, priority: int | Non
 
 
 def linear_get_issue(issue_url: str, token: str) -> dict | None:
-    """Fetch a Linear issue by URL. Extracts the human identifier (e.g. CC-182) via searchIssues."""
+    """Fetch a Linear issue by URL through the shared bridge's exact lookup."""
     # URL shape: https://linear.app/<team-slug>/issue/CC-182/some-slug
     parts = issue_url.rstrip("/").split("/")
     identifier = None
@@ -410,7 +533,8 @@ def linear_get_token_visibility(token: str) -> dict:
         if teams
         else {}
     )
-    viewer = identity.get("viewer") if isinstance(identity, dict) else {}
+    viewer = (identity.get("viewer") if isinstance(identity, dict) else None) or {}
+    workspace = (identity.get("workspace") if isinstance(identity, dict) else None) or {}
     return {
         "viewer": {
             "id": viewer.get("id"),
@@ -421,20 +545,29 @@ def linear_get_token_visibility(token: str) -> dict:
             {"id": team.get("id"), "key": team.get("key"), "name": team.get("name")}
             for team in teams
         ],
+        "workspace": {
+            "id": workspace.get("id"),
+            "name": workspace.get("name"),
+            "urlKey": workspace.get("urlKey"),
+        },
     }
 
 
 def _linear_workspace_url_key(token: str) -> str | None:
-    """Workspace slug (linear.app/<urlKey>/...) this token belongs to; None if unavailable."""
-    try:
-        client = _linear_client(token)
-        teams = client.request("listTeams", {"limit": 1})
-        if not teams:
-            return None
-        identity = client.request("preflightIdentity", {"teamId": teams[0]["id"]})
-        return ((identity.get("workspace") or {}).get("urlKey")) or None
-    except Exception:
-        return None
+    """Return the verified workspace slug or fail closed before sync."""
+    client = _linear_client(token)
+    teams = client.request("listTeams", {})
+    if not teams:
+        raise LinearBridgeError(
+            "IDENTITY_MISMATCH", "Linear token has no visible team for workspace verification"
+        )
+    identity = client.request("preflightIdentity", {"teamId": teams[0]["id"]})
+    url_key = ((identity.get("workspace") or {}).get("urlKey")) if isinstance(identity, dict) else None
+    if not isinstance(url_key, str) or not url_key.strip():
+        raise LinearBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Linear workspace identity has no URL key"
+        )
+    return url_key.strip()
 
 
 def _linear_url_workspace(url: str) -> str | None:
@@ -567,7 +700,9 @@ def run_doctor(
             team_visible = bool(team_id) and any(
                 str(team.get("id")) == str(team_id) for team in visible_teams
             )
-            token_check_ok = team_visible or not team_id
+            workspace = visibility.get("workspace") or {}
+            workspace_identity_ok = bool(workspace.get("urlKey"))
+            token_check_ok = (team_visible or not team_id) and workspace_identity_ok
             checks.append(
                 {
                     "name": "linear_token",
@@ -576,8 +711,18 @@ def run_doctor(
                     "visible_teams": visible_teams,
                     "configured_team_id": team_id,
                     "configured_team_visible": team_visible,
+                    "workspace": workspace,
+                    "workspace_identity_verified": workspace_identity_ok,
                 }
             )
+            if not workspace_identity_ok:
+                _add_finding(
+                    findings,
+                    "blocker",
+                    "linear_workspace_identity_unavailable",
+                    "Linear bridge preflight did not return a verified workspace URL key.",
+                    "Verify the reviewed Linear bridge command and token, then re-run doctor.",
+                )
             if team_id and not team_visible:
                 visible_label = ", ".join(
                     f"{team.get('name')} ({team.get('key')})" for team in visible_teams
@@ -646,8 +791,8 @@ def run_doctor(
                         findings,
                         "blocker",
                         "missing_linear_project",
-                        f"project_map[{notion_project!r}] points at Linear project id {project_id!r}, which is not visible on the configured team.",
-                        "Update intake-sync.yml project_map to the verified Linear project id for this team.",
+                        f"project_map[{notion_project!r}] points at Linear project id {project_id!r}, which is not visible in the verified workspace.",
+                        "Update intake-sync.yml project_map to a verified workspace-visible Linear project id.",
                     )
         except Exception as exc:
             code = "linear_usage_limit_exceeded" if _is_usage_limit_error(exc) else "linear_doctor_failed"
@@ -829,7 +974,15 @@ def execute_push(
     candidates = rows_sorted[:limit] if limit is not None else rows_sorted
 
     counts = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
-    workspace_url_key = _linear_workspace_url_key(token_linear)
+    try:
+        workspace_url_key = _linear_workspace_url_key(token_linear)
+    except Exception as exc:
+        print(
+            f"  ERROR: {_linear_sync_error_message('workspace identity check', exc)}",
+            file=sys.stderr,
+        )
+        counts["errors"] = 1
+        return counts
 
     for row in candidates:
         try:
@@ -894,7 +1047,8 @@ def execute_push(
                 continue
 
             try:
-                issue = linear_create_issue(
+                issue, created = linear_find_or_create_issue(
+                    f"notion:{page_id}",
                     title=name,
                     description=description,
                     state_id=plan["state_id"],
@@ -909,6 +1063,15 @@ def execute_push(
                 counts["errors"] += 1
                 if _is_usage_limit_error(e):
                     break
+                continue
+            if not created:
+                notion_set_linear_url(page_id, issue["url"], token_notion)
+                if verbose:
+                    print(
+                        f"  skip  {name!r}: bridge reconciliation reused "
+                        f"{issue['identifier']}"
+                    )
+                counts["skipped"] += 1
                 continue
             # Write URL back immediately
             notion_set_linear_url(page_id, issue["url"], token_notion)
@@ -983,7 +1146,15 @@ def execute_pull(
 ) -> dict:
     """Back sync: if Linear issue is completed/canceled and Notion isn't done/dropped → update Notion."""
     counts = {"backsynced": 0, "skipped": 0, "errors": 0}
-    workspace_url_key = _linear_workspace_url_key(token_linear)
+    try:
+        workspace_url_key = _linear_workspace_url_key(token_linear)
+    except Exception as exc:
+        print(
+            f"  ERROR: {_linear_sync_error_message('workspace identity check', exc)}",
+            file=sys.stderr,
+        )
+        counts["errors"] = 1
+        return counts
 
     # Only rows that have a Linear URL
     linked = [r for r in rows if get_url(r["properties"].get("Linear", {}))]

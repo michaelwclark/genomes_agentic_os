@@ -24,6 +24,10 @@ def _description(spec: Mapping[str, Any], marker: str) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
+def _has_exact_marker(description: object, marker: str) -> bool:
+    return any(line.strip() == marker for line in str(description or "").splitlines())
+
+
 class LinearBridgeSpecTransport:
     """Compose the guarded Spec workflow onto the shared Linear port."""
 
@@ -105,7 +109,8 @@ class LinearBridgeSpecTransport:
             )
             matches = [
                 issue for issue in issues
-                if isinstance(issue, Mapping) and marker in str(issue.get("description") or "")
+                if isinstance(issue, Mapping)
+                and _has_exact_marker(issue.get("description"), marker)
             ]
             if len(matches) > 1:
                 raise LinearBridgeError("CONFLICT", "Linear idempotency marker matched multiple issues")
@@ -124,6 +129,11 @@ class LinearBridgeSpecTransport:
                 current = self.client.request("getIssue", {"issue": provider_id})
                 if not isinstance(current, Mapping):
                     raise LinearBridgeError("NOT_FOUND", "Linear issue was not found")
+                if "labels" not in current or not isinstance(current.get("labels"), list):
+                    raise LinearBridgeError(
+                        "BRIDGE_INVALID_RESPONSE",
+                        "Linear update pre-read returned invalid labels",
+                    )
             labels = current.get("labels") if isinstance(current, Mapping) else []
             label_ids = [
                 str(label["id"])
@@ -142,9 +152,14 @@ class LinearBridgeSpecTransport:
                 **({"labelIds": list(dict.fromkeys(label_ids))} if current is not None or label_ids else {}),
             }
             if action == "create_spec":
-                issue = self.client.request(
-                    "createIssue", {"input": {"teamId": team_id, **issue_input}}
+                reconciled = self.client.request(
+                    "findOrCreateIssueByMarker",
+                    {
+                        "marker": marker,
+                        "input": {"teamId": team_id, **issue_input},
+                    },
                 )
+                issue = reconciled.get("issue") if isinstance(reconciled, Mapping) else None
             else:
                 issue = self.client.request(
                     "updateIssue", {"issue": provider_id, "input": issue_input}
@@ -160,7 +175,9 @@ class LinearBridgeSpecTransport:
         if action == "get_by_spec_id":
             return {}
         if action == "list_specs":
-            return {"items": self.client.request("listIssuesByTeam", {"teamId": team_id})}
+            # A normalized Spec cannot be reconstructed from LinearIssue alone
+            # without inventing its type, lifecycle status, or authority.
+            return {"items": []}
         raise LinearBridgeError("UNSUPPORTED_OPERATION", "Unsupported Linear Spec transport action")
 
 

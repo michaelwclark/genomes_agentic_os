@@ -29,7 +29,7 @@ class FakeBridgeClient:
             return [{"id": "todo", "name": "Todo", "type": "unstarted"}]
         if operation == "listLabels":
             return [{"id": "blocked-label", "name": "blocked", "color": "#EB5757"}]
-        if operation == "createIssue":
+        if operation == "findOrCreateIssueByMarker":
             issue = {
                 "id": "issue-1",
                 "identifier": "AGE-1",
@@ -37,7 +37,7 @@ class FakeBridgeClient:
                 **args["input"],
             }
             self.issues.append(issue)
-            return issue
+            return {"issue": issue, "created": True}
         if operation == "updateIssue":
             return {
                 "id": args["issue"],
@@ -70,7 +70,9 @@ def test_create_preserves_old_plan_shape_and_adds_marker_readback() -> None:
     assert planned.plan["native_status"] == "Todo"
     assert applied.ok is True
     assert applied.provider_id == "issue-1"
-    create = next(args for operation, args in client.calls if operation == "createIssue")
+    create = next(
+        args for operation, args in client.calls if operation == "findOrCreateIssueByMarker"
+    )
     assert create["input"]["teamId"] == "team"
     assert create["input"]["projectId"] == "project"
     assert create["input"]["stateId"] == "todo"
@@ -85,6 +87,7 @@ def test_existing_exact_marker_updates_instead_of_creating() -> None:
                 "identifier": "AGE-1",
                 "url": "https://linear.app/genomes/issue/AGE-1/example",
                 "description": "spec:::one",
+                "labels": [],
             }
         ]
     )
@@ -92,7 +95,7 @@ def test_existing_exact_marker_updates_instead_of_creating() -> None:
     assert receipt.ok is True
     assert receipt.provider_id == "issue-old"
     assert any(operation == "updateIssue" for operation, _ in client.calls)
-    assert not any(operation == "createIssue" for operation, _ in client.calls)
+    assert not any(operation == "findOrCreateIssueByMarker" for operation, _ in client.calls)
 
 
 def test_cli_transport_configuration_fails_closed_without_command() -> None:
@@ -112,5 +115,27 @@ def test_blocked_plan_uses_shared_label_capability() -> None:
         Spec(id="blocked", title="Blocked", status="blocked"), apply=True
     )
     assert receipt.ok is True
-    create = next(args for operation, args in client.calls if operation == "createIssue")
+    create = next(
+        args for operation, args in client.calls if operation == "findOrCreateIssueByMarker"
+    )
     assert create["input"]["labelIds"] == ["blocked-label"]
+
+
+def test_update_fails_closed_when_label_readback_is_missing() -> None:
+    client = FakeBridgeClient(
+        issues=[
+            {
+                "id": "issue-old",
+                "identifier": "AGE-1",
+                "url": "https://linear.app/genomes/issue/AGE-1/example",
+                "description": "spec:::one",
+            }
+        ]
+    )
+    receipt = adapter(client).create(
+        Spec(id="one", title="Revised", status="ready"), apply=True
+    )
+    assert receipt.ok is False
+    assert receipt.status == "blocked"
+    assert "invalid labels" in receipt.error
+    assert not any(operation == "updateIssue" for operation, _ in client.calls)

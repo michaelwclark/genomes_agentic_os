@@ -1,4 +1,6 @@
 import importlib.util
+import subprocess
+import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -30,9 +32,23 @@ def base_config() -> dict:
     }
 
 
+def test_intake_sync_bootstraps_source_runtime_under_isolated_python() -> None:
+    script = Path(__file__).resolve().parents[1] / "harness" / "bin" / "agentic-os-intake-sync"
+    completed = subprocess.run(
+        [sys.executable, "-I", str(script), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Sync the OS Work Intake" in completed.stdout
+
+
 def fake_visibility_with_configured_team(token):
     return {
         "viewer": {"id": "user-1", "name": "Genome", "email": "genome@example.com"},
+        "workspace": {"id": "workspace-1", "name": "Genome", "urlKey": "genomes"},
         "teams": [{"id": "team-1", "key": "CC", "name": "Clarks Consulting"}],
     }
 
@@ -129,6 +145,7 @@ def test_intake_sync_doctor_flags_configured_team_not_visible(monkeypatch, tmp_p
     def fake_visibility_other_workspace(token):
         return {
             "viewer": {"id": "user-1", "name": "Genome", "email": "genome@example.com"},
+            "workspace": {"id": "workspace-2", "name": "Ledgerline", "urlKey": "ledgerline"},
             "teams": [{"id": "team-other", "key": "LED", "name": "Ledgerline"}],
         }
 
@@ -274,7 +291,7 @@ def test_linear_url_workspace_parses_slug():
     assert module._linear_url_workspace(None) is None
 
 
-def test_linear_workspace_url_key_swallows_errors(monkeypatch):
+def test_linear_workspace_url_key_fails_closed(monkeypatch):
     module = load_intake_sync_module()
 
     class BrokenClient:
@@ -282,7 +299,48 @@ def test_linear_workspace_url_key_swallows_errors(monkeypatch):
             raise module.LinearBridgeError("AUTH_ERROR", "Linear bridge operation failed")
 
     monkeypatch.setattr(module, "_linear_client", lambda token: BrokenClient())
-    assert module._linear_workspace_url_key("token") is None
+    with pytest.raises(module.LinearBridgeError) as error:
+        module._linear_workspace_url_key("token")
+    assert error.value.code == "AUTH_ERROR"
+
+
+def test_linear_workspace_url_key_pins_reviewed_bridge_shape(monkeypatch):
+    module = load_intake_sync_module()
+    calls = []
+
+    class FakeClient:
+        def request(self, operation, args):
+            calls.append((operation, args))
+            if operation == "listTeams":
+                return [{"id": "team-1", "key": "AGE", "name": "Agentic OS"}]
+            return {
+                "team": {"id": "team-1", "key": "AGE", "name": "Agentic OS"},
+                "viewer": {"id": "viewer-1"},
+                "workspace": {"id": "workspace-1", "urlKey": "genomes"},
+            }
+
+    monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
+    assert module._linear_workspace_url_key("token") == "genomes"
+    assert calls == [
+        ("listTeams", {}),
+        ("preflightIdentity", {"teamId": "team-1"}),
+    ]
+
+
+def test_linear_token_visibility_handles_zero_visible_teams(monkeypatch):
+    module = load_intake_sync_module()
+
+    class FakeClient:
+        def request(self, operation, args):
+            assert operation == "listTeams"
+            return []
+
+    monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
+    assert module.linear_get_token_visibility("token") == {
+        "viewer": {"id": None, "name": None, "email": None},
+        "teams": [],
+        "workspace": {"id": None, "name": None, "urlKey": None},
+    }
 
 
 def test_linear_get_labels_filters_foreign_team_labels(monkeypatch):
@@ -307,31 +365,42 @@ def test_linear_marker_scan_is_exhaustive_and_blocks_duplicates(monkeypatch):
     module = load_intake_sync_module()
 
     class FakeClient:
-        def __init__(self, issues):
-            self.issues = issues
+        def __init__(self, issues_by_team):
+            self.issues_by_team = issues_by_team
             self.calls = []
 
         def request(self, operation, args):
             self.calls.append((operation, args))
-            return self.issues
+            if operation == "listTeams":
+                return [
+                    {"id": team_id, "key": team_id.upper(), "name": team_id}
+                    for team_id in self.issues_by_team
+                ]
+            return self.issues_by_team[args["teamId"]]
 
     one = FakeClient(
-        [
-            {"id": "other", "description": "notion:other"},
-            {"id": "match", "description": "body\nnotion:page-1"},
-        ]
+        {
+            "team": [
+                {"id": "other", "description": "notion:page-10"},
+            ],
+            "moved": [
+                {"id": "match", "description": "body\n`notion:page-1`"},
+            ],
+        }
     )
     monkeypatch.setattr(module, "_linear_client", lambda token: one)
     assert module.linear_search_by_marker("page-1", "team", "token")["id"] == "match"
     assert one.calls == [
-        ("listIssuesByTeam", {"teamId": "team", "includeArchived": True})
+        ("listTeams", {}),
+        ("listIssuesByTeam", {"teamId": "team", "includeArchived": True}),
+        ("listIssuesByTeam", {"teamId": "moved", "includeArchived": True}),
     ]
 
     duplicate = FakeClient(
-        [
-            {"id": "one", "description": "notion:page-1"},
-            {"id": "two", "description": "notion:page-1"},
-        ]
+        {
+            "team": [{"id": "one", "description": "notion:page-1"}],
+            "other": [{"id": "two", "description": "notion:page-1"}],
+        }
     )
     monkeypatch.setattr(module, "_linear_client", lambda token: duplicate)
     with pytest.raises(module.LinearBridgeError) as error:
@@ -380,3 +449,33 @@ def test_linear_create_and_update_preserve_legacy_issue_fields(monkeypatch):
             {"issue": "issue-1", "input": {"stateId": "started", "priority": 1}},
         ),
     ]
+
+
+def test_linear_find_or_create_uses_atomic_bridge_reconciliation(monkeypatch):
+    module = load_intake_sync_module()
+    calls = []
+
+    class FakeClient:
+        def request(self, operation, args):
+            calls.append((operation, args))
+            return {
+                "issue": {"id": "issue-1", "identifier": "AGE-1", "url": "url"},
+                "created": False,
+            }
+
+    monkeypatch.setattr(module, "_linear_client", lambda token: FakeClient())
+    issue, created = module.linear_find_or_create_issue(
+        "notion:page-1",
+        title="Title",
+        description="Description",
+        state_id="todo",
+        priority=2,
+        label_ids=["label"],
+        team_id="team",
+        project_id="project",
+        token="token",
+    )
+    assert issue["identifier"] == "AGE-1"
+    assert created is False
+    assert calls[0][0] == "findOrCreateIssueByMarker"
+    assert calls[0][1]["marker"] == "notion:page-1"

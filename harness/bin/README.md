@@ -14,7 +14,7 @@ Executable wrappers owned by the installed Agentic OS harness.
 | Script | Description |
 |---|---|
 | `agentic-os-automation-run-summary` | Replace an automation's Notion last-run summary page after each run. |
-| `agentic-os-intake-sync` | Sync intake data from connected sources. |
+| `agentic-os-intake-sync` | Sync intake data from Genome's Notion through the reviewed `@genomes/linear` subprocess bridge, with exhaustive marker reconciliation and provider readback. |
 | `agentic-os-jira` | Jira helper composed over the reviewed `@genomes/jira` bridge; accepts an injected OAuth bearer or API-token basic auth and keeps mutations dry-run by default. |
 | `agentic-os-memory-analytics` | Read-only memory-analytics viewer; runs the report on the configured analytics host via SSH. |
 | `agentic-os-notify` | Deliver governed macOS notifications; records delivery/suppression history, enforces cooldowns, and prunes history after 48 hours by default. |

@@ -1,4 +1,6 @@
 import importlib.util
+import subprocess
+import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -69,6 +71,19 @@ def linear_check(results: list[dict]) -> dict:
     return next(result for result in results if result["name"] == "linear_tracker")
 
 
+def test_resolver_bootstraps_source_runtime_under_isolated_python() -> None:
+    script = Path(__file__).resolve().parents[1] / "harness" / "bin" / "agentic-os-auto-dev-resolve"
+    completed = subprocess.run(
+        [sys.executable, "-I", str(script), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Resolve a work-item packet" in completed.stdout
+
+
 def test_auto_dev_resolver_blocks_linear_tracker_team_drift(monkeypatch, tmp_path):
     module = load_resolver_module()
     monkeypatch.setenv("LINEAR_TOKEN", "token")
@@ -121,3 +136,19 @@ def test_auto_dev_resolver_uses_configured_linear_token_env(monkeypatch, tmp_pat
     assert linear_check(results)["ok"] is True
     assert observed["token"] == "cc-token"
     assert observed["token_env"] == "LINEAR_CC_TOKEN"
+
+
+def test_auto_dev_resolver_preserves_linear_api_key_fallback(monkeypatch, tmp_path):
+    module = load_resolver_module()
+    monkeypatch.delenv("LINEAR_TOKEN", raising=False)
+    monkeypatch.setenv("LINEAR_API_KEY", "api-key-token")
+    observed = {}
+    install_bridge(monkeypatch, module, linear_responses(), observed)
+
+    results = module._preflight(
+        tmp_path, project_yml(tmp_path), tmp_path / "packet", {"tracker": "CC-182"}
+    )
+
+    assert linear_check(results)["ok"] is True
+    assert observed["token"] == "api-key-token"
+    assert observed["token_env"] == "LINEAR_API_KEY"
