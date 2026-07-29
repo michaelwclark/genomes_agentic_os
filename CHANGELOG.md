@@ -25,6 +25,9 @@ All notable changes to this project are documented here. The format follows
 - Keep enough bounded review attempts for error-driven retries to outlive the
   helper fence, and classify transient durable-write, lock, and host-identity
   failures as retryable.
+- Persist the first effect-key format per immutable review identity so legacy
+  and current task shapes cannot project the same helper result under two keys;
+  classify PID-less governor exceptions as retryable dispatch failures.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails retryably before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new

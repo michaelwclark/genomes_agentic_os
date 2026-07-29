@@ -1961,10 +1961,11 @@ def _team_pr_review_effect(
     task_id: str,
     author_identity: str,
     author_kind: str,
+    effect_key: str | None = None,
 ) -> dict[str, Any]:
-    if "review_mode" in payload:
+    if effect_key is None and "review_mode" in payload:
         effect_key = f"{effect_type}:{intent_key}"
-    else:
+    elif effect_key is None:
         # Tasks admitted by the pre-AGE-139 producer omitted review_mode and
         # may already have staged this legacy key before a lost completion ack.
         effect_key = (
@@ -1990,6 +1991,53 @@ def _team_pr_review_effect(
         "maxAttempts": 8,
         "baseBackoffSeconds": 60,
     }
+
+
+def _team_pr_review_effect_key(
+    *,
+    effect_type: str,
+    intent_key: str,
+    payload: Mapping[str, Any],
+    helper_summary_path: Path,
+) -> str:
+    record_path = helper_summary_path.with_name("effect-key.json")
+    record = _read_json_object(record_path, label="Team PR effect key")
+    if record is None:
+        if "review_mode" in payload:
+            desired_key = f"{effect_type}:{intent_key}"
+            key_format = "full_intent"
+        else:
+            desired_key = (
+                f"{effect_type}:{payload['source_key']}:{payload['expected_head_sha']}"
+            )
+            key_format = "legacy_source_head"
+        candidate = {
+            "schema_version": "agentic-os-team-pr-effect-key/v1",
+            "intent_key": intent_key,
+            "effect_type": effect_type,
+            "effect_key": desired_key,
+            "key_format": key_format,
+            "created_at": _utc_now(),
+        }
+        if _write_team_pr_receipt_once(record_path, candidate):
+            record = candidate
+        else:
+            record = _read_json_object(record_path, label="Team PR effect key")
+    if record is None or (
+        record.get("schema_version") != "agentic-os-team-pr-effect-key/v1"
+        or record.get("intent_key") != intent_key
+        or record.get("effect_type") != effect_type
+        or not isinstance(record.get("effect_key"), str)
+        or not record["effect_key"]
+        or record.get("key_format") not in {"full_intent", "legacy_source_head"}
+    ):
+        raise TaskExecutionError(
+            "team_pr_review_intent_conflict",
+            "durable Team PR effect key does not match the admitted request",
+            retryable=False,
+            receipt_path=str(record_path),
+        )
+    return str(record["effect_key"])
 
 
 def _team_pr_ai_review_worker_locked(
@@ -2279,14 +2327,12 @@ def _team_pr_ai_review_worker_locked(
                     },
                     durable=True,
                 )
-            if isinstance(exc, OSError):
-                raise TaskExecutionError(
-                    "team_pr_helper_launch_failed",
-                    f"Team PR helper launch failed: {type(exc).__name__}",
-                    retryable=True,
-                    receipt_path=str(helper_launch_path),
-                ) from None
-            raise
+            raise TaskExecutionError(
+                "team_pr_helper_launch_failed",
+                f"Team PR helper dispatch failed: {type(exc).__name__}",
+                retryable=True,
+                receipt_path=str(helper_launch_path),
+            ) from None
         if not execution.get("ok"):
             with _TeamPRLaunchMarkerLock(helper_launch_path):
                 latest_launch = _read_json_object(
@@ -2509,6 +2555,12 @@ def _team_pr_ai_review_worker_locked(
                 receipt_path=str(receipt_path),
             )
         effect_type = next(iter(allowed_effects))
+        effect_key = _team_pr_review_effect_key(
+            effect_type=effect_type,
+            intent_key=intent_key,
+            payload=payload,
+            helper_summary_path=helper_summary_path,
+        )
         effects.append(
             _team_pr_review_effect(
                 effect_type=effect_type,
@@ -2517,6 +2569,7 @@ def _team_pr_ai_review_worker_locked(
                 task_id=task_id,
                 author_identity=author_identity,
                 author_kind=author_kind,
+                effect_key=effect_key,
             )
         )
     if intent.get("status") == "completed":

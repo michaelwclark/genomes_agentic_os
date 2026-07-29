@@ -1082,19 +1082,23 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         captured["command"] = command
         captured["calls"] += 1
         helper_command = shlex.split(command)
+        helper_result = {
+            "status": "findings",
+            "run_id": helper_command[helper_command.index("--run-id") + 1],
+            "source_key": "github-pr-42",
+            "canonical_review_receipt": canonical,
+            "receipt_sha256": canonical_hash,
+        }
+        summary_path = Path(
+            helper_command[helper_command.index("--summary-path") + 1]
+        )
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(helper_result), encoding="utf-8")
         return {
             "supported": True,
             "ok": True,
             "exit_code": 0,
-            "stdout": json.dumps(
-                {
-                    "status": "findings",
-                    "run_id": helper_command[helper_command.index("--run-id") + 1],
-                    "source_key": "github-pr-42",
-                    "canonical_review_receipt": canonical,
-                    "receipt_sha256": canonical_hash,
-                }
-            ),
+            "stdout": json.dumps(helper_result),
             "stderr": "",
             "errors": [],
             "warnings": [],
@@ -1188,6 +1192,17 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     assert retried["result"]["helperStatus"] == "findings"
     assert json.loads(intent_path.read_text(encoding="utf-8")) == intent
 
+    transition_assignment = json.loads(json.dumps(assignment))
+    transition_assignment["task"]["id"] = "transition-task-same-review-identity"
+    transition_assignment["attemptId"] = "00000000-0000-4000-8000-777777777777"
+    if "review_mode" in transition_assignment["task"]["payload"]:
+        transition_assignment["task"]["payload"].pop("review_mode")
+    else:
+        transition_assignment["task"]["payload"]["review_mode"] = "review_no_merge"
+    transitioned = execute_assignment(root, transition_assignment)
+    assert captured["calls"] == 1
+    assert transitioned["effects"][0]["effectKey"] == expected_effect_key
+
     helper_result = {
         "status": "findings",
         "run_id": command[command.index("--run-id") + 1],
@@ -1205,6 +1220,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         json.dumps(pending_intent, sort_keys=True), encoding="utf-8"
     )
     summary_path = execution_fabric_remote._team_pr_review_summary_path(root, identity)
+    summary_path.unlink()
     launch_path = summary_path.with_name("helper-launch.json")
     terminal_launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
     assert terminal_launch_marker["status"] == "succeeded"
@@ -1293,6 +1309,16 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         execute_assignment(root, assignment)
     assert failed_launch.value.code == "team_pr_helper_launch_failed"
     assert failed_launch.value.retryable is True
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+
+    def poll_error_before_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("fixture governor poll failed before PID registration")
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", poll_error_before_spawn)
+    with pytest.raises(TaskExecutionError) as failed_poll:
+        execute_assignment(root, assignment)
+    assert failed_poll.value.code == "team_pr_helper_launch_failed"
+    assert failed_poll.value.retryable is True
     assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
 
     def poll_error_after_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:

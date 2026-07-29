@@ -273,7 +273,9 @@ For upgrade compatibility, a task admitted before explicit `review_mode`
 continues to emit the legacy `{type}:{source_key}:{head}` effect key. Current
 tasks that carry `review_mode` emit the full-intent key. This transition rule
 preserves control-plane dedup when a legacy effect was staged before a lost
-completion acknowledgment.
+completion acknowledgment. The first key chosen for an immutable review is
+published create-once beside its helper summary; any later task shape reuses
+that durable key instead of projecting the same result under another format.
 
 Deployment order is strict: deploy this Agentic OS route before installing the
 paired object-library producer. The producer emits explicit `review_mode`, and
