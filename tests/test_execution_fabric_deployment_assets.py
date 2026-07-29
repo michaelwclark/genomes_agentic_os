@@ -1022,6 +1022,65 @@ esac
     assert "upgrade the control-plane image" in missing_schema.stderr
 
 
+def test_policy_role_convergence_rejects_invalid_attempts_before_recreate(
+    tmp_path: Path,
+) -> None:
+    expected = "b" * 64
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    deployment = tmp_path / "deployment"
+    token = tmp_path / "api-token"
+    state.mkdir()
+    fake_bin.mkdir()
+    deployment.mkdir()
+    token.write_text("test-token\n", encoding="utf-8")
+    (deployment / "compose.genomesbox.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
+    _write_executable(
+        fake_bin / "docker",
+        "#!/bin/sh\nset -eu\n: >\"$FAKE_STATE_DIR/docker-called\"\nexit 99\n",
+    )
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                "FABRIC_API_BASE=http://control",
+                f"FABRIC_API_TOKEN_FILE={token}",
+                "FABRIC_HOST_ID=genomesbox",
+                "FABRIC_DEPLOYMENT_ROLE=primary",
+                f"FABRIC_DEPLOYMENT_DIR={deployment}",
+                "FABRIC_POLICY_CONVERGENCE_ATTEMPTS=invalid",
+                f"FAKE_STATE_DIR={state}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            str(INSTALLERS / "bin" / "converge-policy-roles.sh"),
+            "--recreate",
+            expected,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        },
+    )
+
+    assert result.returncode == 64
+    assert "must be a positive integer" in result.stderr
+    assert not (state / "docker-called").exists()
+
+
 def test_policy_role_cohort_state_treats_crash_loop_as_partial(
     tmp_path: Path,
 ) -> None:
