@@ -442,7 +442,9 @@ regenerates `images.lock.env` and requires an exact byte match.
   healer, and scheduler health checks read their durable role receipt instead
   of testing only process existence. Status exposes each role's approved and
   applied fingerprint, instance ID, last successful tick, last error, and
-  consecutive failure count; sustained failures make the role unhealthy.
+  consecutive failure count. Startup grace is bounded to 90 seconds by
+  default, and restart attempts preserve failure history, so a never-ticking
+  or crash-looping role becomes unhealthy instead of remaining startup-green.
 - The backup timer calls `installers/bin/backup-health.sh`. Each run writes a
   custom-format dump, restores it into a uniquely named disposable database,
   queries restored catalog objects and every restored table, removes that

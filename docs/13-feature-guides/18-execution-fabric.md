@@ -286,7 +286,9 @@ adds `roleHealth`. Each API, observer, healer, and scheduler row reports the
 database-approved and locally applied policy fingerprints, role instance,
 last successful tick, last error, consecutive failures, and evaluated health.
 Sustained scheduled-tick failure is therefore degraded or unhealthy even when
-the process itself still exists.
+the process itself still exists. A first tick has a bounded startup grace, and
+failure history survives instance replacement until a successful tick clears
+it.
 PostgreSQL also exposes a bounded reliability snapshot to authenticated
 operators; Command Center does not infer healer health from the API process.
 

@@ -33,6 +33,7 @@ export type RoleHealthEvaluation = RoleHealthSnapshot & {
 export function roleHealthEvaluationOptions(): {
   failureThreshold: number;
   maxTickAgeSeconds: number;
+  startupGraceSeconds: number;
 } {
   return {
     failureThreshold: boundedIntegerEnvironment(
@@ -44,6 +45,12 @@ export function roleHealthEvaluationOptions(): {
     maxTickAgeSeconds: boundedIntegerEnvironment(
       "FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS",
       60,
+      1,
+      86400,
+    ),
+    startupGraceSeconds: boundedIntegerEnvironment(
+      "FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS",
+      90,
       1,
       86400,
     ),
@@ -61,18 +68,30 @@ export function evaluateRoleHealth(
     now?: Date;
     failureThreshold?: number;
     maxTickAgeSeconds?: number;
+    startupGraceSeconds?: number;
   } = {},
 ): RoleHealthEvaluation {
   const failureThreshold = options.failureThreshold ?? 3;
   const maxTickAgeSeconds = options.maxTickAgeSeconds ?? 60;
+  const startupGraceSeconds = options.startupGraceSeconds ?? 90;
   const now = options.now ?? new Date();
-  if (
-    snapshot.lastTickAt === null &&
-    snapshot.lastSuccessfulTickAt === null &&
-    snapshot.approvedPolicyFingerprint === null &&
-    snapshot.appliedPolicyFingerprint !== null
-  ) {
-    return { ...snapshot, status: "degraded", reason: "awaiting_first_tick" };
+  const startupAgeSeconds = Math.max(
+    0,
+    (now.getTime() - new Date(snapshot.startedAt).getTime()) / 1000,
+  );
+  if (snapshot.lastSuccessfulTickAt === null) {
+    if (snapshot.consecutiveFailures >= failureThreshold) {
+      return { ...snapshot, status: "unhealthy", reason: "sustained_tick_failures" };
+    }
+    if (!Number.isFinite(startupAgeSeconds) || startupAgeSeconds > startupGraceSeconds) {
+      return { ...snapshot, status: "unhealthy", reason: "first_tick_overdue" };
+    }
+    if (
+      snapshot.approvedPolicyFingerprint === null &&
+      snapshot.appliedPolicyFingerprint !== null
+    ) {
+      return { ...snapshot, status: "degraded", reason: "awaiting_first_tick" };
+    }
   }
   if (
     snapshot.approvedPolicyFingerprint === null ||
@@ -125,9 +144,9 @@ export class PostgresRoleHealthStore {
          approved_policy_fingerprint=NULL,
          applied_policy_fingerprint=EXCLUDED.applied_policy_fingerprint,
          last_successful_tick_at=NULL,
-         last_tick_at=NULL,
-         last_error=NULL,
-         consecutive_failures=0,
+         last_tick_at=fabric_role_health.last_tick_at,
+         last_error=fabric_role_health.last_error,
+         consecutive_failures=fabric_role_health.consecutive_failures,
          updated_at=now()
        RETURNING *`,
       [this.hostId, this.role, this.instanceId, appliedPolicyFingerprint],
