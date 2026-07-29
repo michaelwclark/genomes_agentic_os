@@ -10,10 +10,15 @@ import pytest
 from genomes_agentic_os.github_bridge import (
     BRIDGE_VERSION,
     GitHubBridgeError,
+    REVIEWED_PLATFORM_BRIDGE_REVISION,
     call_github_bridge,
     command_from_environment,
     list_pull_requests,
 )
+
+
+def test_reviewed_platform_bridge_revision_is_exact() -> None:
+    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "80dd63ce0d28aa9dc25702c6c5452b81283267b8"
 
 
 def _runner(*args, **kwargs):
