@@ -5,8 +5,8 @@ Architecture
 Each adapter (GitHub, Slack) exposes a single ``fetch_*`` function that:
   - resolves the credential from the env var named in the connected-system config
   - calls its selected provider transport via an injectable boundary so tests
-    never touch the network; GitHub pull requests may use the shared platform
-    bridge when ``GENOMES_GITHUB_BRIDGE_COMMAND`` is explicitly configured
+    never touch the network; GitHub pull requests require the shared platform
+    bridge configured by ``GENOMES_GITHUB_BRIDGE_COMMAND``
   - returns a list of normalised item dicts (provider-id-keyed)
   - falls back to an empty list with a ``dry_run_reason`` marker when the env var
     is absent — identical observable output to the existing registry dry-run path
@@ -48,7 +48,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable
 
-from .github_bridge import command_from_environment, list_pull_requests
+from .github_bridge import GitHubBridgeError, command_from_environment, list_pull_requests
 
 # ---------------------------------------------------------------------------
 # Token-shaped value guard
@@ -256,7 +256,8 @@ def fetch_github_events(
         ISO-8601 timestamp; only items updated at or after this time are returned.
         GitHub ``issues`` endpoint supports ``?since=``.
     fetcher:
-        Injectable HTTP transport.  Defaults to ``urllib.request.urlopen``.
+        Injectable HTTP transport for issue polling. Pull requests always use
+        the configured platform GitHub bridge.
 
     Returns
     -------
@@ -281,21 +282,22 @@ def fetch_github_events(
 
     if want_prs:
         bridge_command = command_from_environment()
-        if bridge_command:
-            data: Any = [
-                _bridge_pull_request_to_source_item(item)
-                for item in list_pull_requests(
-                    bridge_command,
-                    owner=owner,
-                    repo=repo,
-                    token=token,
-                    state="all",
-                    limit=30,
-                )
-            ]
-        else:
-            url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
-            data = _get_json(url, headers, fetcher)
+        if not bridge_command:
+            raise GitHubBridgeError(
+                "BRIDGE_UNCONFIGURED",
+                "GitHub pull-request polling requires the configured platform GitHub bridge",
+            )
+        data: Any = [
+            _bridge_pull_request_to_source_item(item)
+            for item in list_pull_requests(
+                bridge_command,
+                owner=owner,
+                repo=repo,
+                token=token,
+                state="all",
+                limit=30,
+            )
+        ]
         for item in data if isinstance(data, list) else []:
             if since and item.get("updated_at", "") < since:
                 continue
@@ -399,9 +401,7 @@ def poll_github_source(
             since=since,
             fetcher=fetcher,
         )
-        bridge_active = bool(command_from_environment()) and any(
-            event_type == "pull_request" for event_type in event_types
-        )
+        bridge_active = any(event_type == "pull_request" for event_type in event_types)
         provider = "platform_github_port" if bridge_active else "direct_api"
         if bridge_active and any(event_type in ("issues", "issue") for event_type in event_types):
             provider = "platform_github_port+direct_api"
@@ -413,6 +413,19 @@ def poll_github_source(
             "provider": provider,
             "credential_env": env_name,
             "dry_run_reason": None,
+        }
+    except GitHubBridgeError as exc:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_github_port",
+            "findings": [{
+                "severity": "blocker",
+                "code": exc.code,
+                "message": str(exc),
+            }],
         }
     except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
         return {

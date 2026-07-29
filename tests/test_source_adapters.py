@@ -124,6 +124,35 @@ FAKE_SLACK_TOKEN = "xoxb-test-slack-bot-token-0123456789"
 # Injectable fetcher helpers
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def github_port_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the shared-port vocabulary for every GitHub PR fixture."""
+    monkeypatch.setenv("GENOMES_GITHUB_BRIDGE_COMMAND", "node bridge.mjs")
+    pull_requests = [
+        {
+            "number": item["number"],
+            "title": item["title"],
+            "state": "merged" if item["merged_at"] else item["state"],
+            "url": item["html_url"],
+            "author": item["user"]["login"],
+            "headBranch": item["head"]["ref"],
+            "baseBranch": item["base"]["ref"],
+            "headSha": item["head"]["sha"],
+            "draft": item["draft"],
+            "labels": [label["name"] for label in item["labels"]],
+            "openedAt": item["created_at"],
+            "updatedAt": item["updated_at"],
+            "closedAt": item["closed_at"],
+            "mergedAt": item["merged_at"],
+        }
+        for item in GITHUB_PR_FIXTURE
+    ]
+    monkeypatch.setattr(
+        source_providers,
+        "list_pull_requests",
+        lambda _command, **_kwargs: pull_requests,
+    )
+
 def _make_json_fetcher(payload: Any):
     """Return a fetcher callable that returns *payload* as JSON."""
     def fetcher(req):
@@ -337,6 +366,19 @@ class TestCheckConfigForSecrets:
 # ---------------------------------------------------------------------------
 
 class TestFetchGithubEvents:
+    def test_prs_require_the_platform_bridge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+
+        with pytest.raises(source_providers.GitHubBridgeError) as error:
+            fetch_github_events(
+                "testorg",
+                "testrepo",
+                token="fake_token",
+                event_types=["pull_request"],
+            )
+
+        assert error.value.code == "BRIDGE_UNCONFIGURED"
+
     def test_prs_use_shared_port_bridge_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GENOMES_GITHUB_BRIDGE_COMMAND", "node bridge.mjs")
         observed: dict[str, object] = {}
@@ -429,8 +471,7 @@ class TestFetchGithubEvents:
             assert "token" not in item
             assert "Authorization" not in item
 
-    def test_no_network_call_made(self) -> None:
-        """Verify fetcher is called, not stdlib urlopen directly."""
+    def test_prs_do_not_use_the_legacy_http_fetcher(self) -> None:
         call_count = {"n": 0}
 
         def counting_fetcher(req):
@@ -446,8 +487,7 @@ class TestFetchGithubEvents:
             event_types=["pull_request"],
             fetcher=counting_fetcher,
         )
-        # The fake fetcher was used (not urllib) — proves seam works
-        assert call_count["n"] >= 1
+        assert call_count["n"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +572,34 @@ class TestPollAdaptersNoCreds:
         assert result["items"] == []
         assert "dry_run_reason" in result
         assert result["dry_run_reason"] is not None
+
+    def test_github_pr_with_token_but_no_bridge_is_an_explicit_blocker(self, monkeypatch) -> None:
+        monkeypatch.setenv("GITHUB_TOKEN", "fake_token")
+        monkeypatch.delenv("GENOMES_GITHUB_BRIDGE_COMMAND", raising=False)
+        source = {
+            "id": "test_src",
+            "source_type": "github_repo",
+            "external_ref": {
+                "owner": "org",
+                "repo": "repo",
+                "event_types": ["pull_request"],
+            },
+        }
+        system = {
+            "system": "github",
+            "credential_refs": {"env_vars": ["GITHUB_TOKEN"]},
+        }
+
+        result = poll_github_source(source, system)
+
+        assert result["ok"] is False
+        assert result["live"] is False
+        assert result["provider"] == "platform_github_port"
+        assert result["findings"] == [{
+            "severity": "blocker",
+            "code": "BRIDGE_UNCONFIGURED",
+            "message": "GitHub pull-request polling requires the configured platform GitHub bridge",
+        }]
 
     def test_slack_no_token_returns_dry_run_fallback(self, monkeypatch) -> None:
         monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
