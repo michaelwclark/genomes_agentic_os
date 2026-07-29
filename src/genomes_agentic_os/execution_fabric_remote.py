@@ -2029,7 +2029,23 @@ def _team_pr_review_effect_key(
             retryable=False,
             receipt_path=str(record_path),
         )
-    return str(record["effect_key"])
+    recorded_key = str(record["effect_key"])
+    if record["key_format"] == "full_intent":
+        key_matches_format = recorded_key == f"{effect_type}:{intent_key}"
+    else:
+        expected_legacy_key = (
+            f"{effect_type}:{str(payload['source_key']).lower()}:"
+            f"{str(payload['expected_head_sha']).lower()}"
+        )
+        key_matches_format = recorded_key.lower() == expected_legacy_key
+    if not key_matches_format:
+        raise TaskExecutionError(
+            "team_pr_review_intent_conflict",
+            "durable Team PR effect key is inconsistent with its recorded format",
+            retryable=False,
+            receipt_path=str(record_path),
+        )
+    return recorded_key
 
 
 def _team_pr_ai_review_worker_locked(
@@ -2422,6 +2438,7 @@ def _team_pr_ai_review_worker_locked(
             retryable=bool(failure.get("retryable")),
             receipt_path=str(receipt_path),
         )
+    materialize_helper_summary = False
     if helper_result is None:
         helper_result = _read_json_object(
             helper_summary_path, label="Team PR helper summary"
@@ -2429,6 +2446,7 @@ def _team_pr_ai_review_worker_locked(
         if helper_result is None:
             try:
                 helper_result = json.loads(str(execution.get("stdout") or ""))
+                materialize_helper_summary = True
             except json.JSONDecodeError:
                 raise TaskExecutionError(
                     "invalid_team_pr_helper_receipt",
@@ -2453,6 +2471,10 @@ def _team_pr_ai_review_worker_locked(
             "Team PR helper summary does not match the admitted review identity",
             retryable=False,
             receipt_path=str(helper_summary_path),
+        )
+    if materialize_helper_summary:
+        _write_team_pr_receipt(
+            helper_summary_path, helper_result, durable=True
         )
     with _TeamPRLaunchMarkerLock(helper_launch_path):
         latest_launch = _read_json_object(
@@ -2778,6 +2800,34 @@ def execute_assignment(root: str | Path, assignment: Mapping[str, Any]) -> dict[
     return _run_prepared_worker_item(os_root, assignment, item, effects=[])
 
 
+def _eligible_worker_queues(
+    root: Path, host_id: str, queues: list[str]
+) -> list[str]:
+    config_path = root / "harness/config/execution-fabric.yml"
+    if not config_path.is_file():
+        return list(dict.fromkeys(queues))
+    config = load_execution_fabric_config(root).value["execution_fabric"]
+    routes = list(config.get("task_routes") or [])
+    eligible: list[str] = []
+    for queue in dict.fromkeys(queues):
+        queue_routes = [route for route in routes if route.get("queue") == queue]
+        pinned_routes = [
+            route
+            for route in queue_routes
+            if ((route.get("execution") or {}).get("allowed_host_ids") or [])
+        ]
+        if queue_routes and len(pinned_routes) == len(queue_routes):
+            allowed = {
+                str(value)
+                for route in pinned_routes
+                for value in ((route.get("execution") or {}).get("allowed_host_ids") or [])
+            }
+            if host_id not in allowed:
+                continue
+        eligible.append(queue)
+    return eligible
+
+
 class RemoteFabricWorker:
     """Concurrent, heartbeat-driven worker loop for one installed OS host."""
 
@@ -2805,7 +2855,9 @@ class RemoteFabricWorker:
         self.worker_id = worker_id
         self.bootstrap_id = bootstrap_id
         self.host_id = host_id
-        self.queues = list(dict.fromkeys(queues))
+        self.queues = _eligible_worker_queues(self.root, host_id, queues)
+        if not self.queues:
+            raise ValueError("worker host is not eligible for any requested queue")
         self.capabilities = list(dict.fromkeys(capabilities or []))
         self.max_concurrency = max_concurrency
         self.heartbeat_seconds = max(1, heartbeat_seconds)

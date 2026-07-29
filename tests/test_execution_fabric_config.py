@@ -8,6 +8,7 @@ import shutil
 import pytest
 import yaml
 
+from genomes_agentic_os import execution_fabric_remote
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.execution_fabric_config import (
     ExecutionFabricConfigError,
@@ -204,6 +205,12 @@ def test_effective_config_reports_source_fingerprint_and_canonical_dependencies(
         if route["task_type"] == "los.team_pr.ai_review.v1"
     )
     assert team_pr_route["execution"]["allowed_host_ids"] == ["bigmac"]
+    assert execution_fabric_remote._eligible_worker_queues(
+        root, "bigmac", ["pr_reviews"]
+    ) == ["pr_reviews"]
+    assert execution_fabric_remote._eligible_worker_queues(
+        root, "genomesbox", ["pr_reviews"]
+    ) == []
 
     _edit(root)
     second = execution_fabric_config_status(root)

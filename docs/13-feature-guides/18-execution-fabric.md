@@ -276,6 +276,7 @@ preserves control-plane dedup when a legacy effect was staged before a lost
 completion acknowledgment. The first key chosen for an immutable review is
 published create-once beside its helper summary; any later task shape reuses
 that durable key instead of projecting the same result under another format.
+The record is rederived and validated against its declared format before use.
 
 Deployment order is strict: deploy this Agentic OS route before installing the
 paired object-library producer. The producer emits explicit `review_mode`, and
@@ -290,6 +291,9 @@ distribute this pool across hosts until those records move into the shared
 control plane. Remote task admission does not imply cross-host retry safety for this route. The
 worker resolves the canonical fabric host ID and fails retryably before helper
 execution when it is not `bigmac`, allowing a bounded retry on the pinned host.
+Normal remote workers mechanically remove queues whose routes are all pinned
+to other hosts before registration, so a non-`bigmac` worker does not claim
+`pr_reviews` and spend the task's attempt budget.
 
 The watcher state is runtime data at
 `runtime/objects/programs/program/domain/los/team_pr_sync/state/team-pr-review-trigger-state.json`;

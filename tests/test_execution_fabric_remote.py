@@ -1089,11 +1089,6 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
             "canonical_review_receipt": canonical,
             "receipt_sha256": canonical_hash,
         }
-        summary_path = Path(
-            helper_command[helper_command.index("--summary-path") + 1]
-        )
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(json.dumps(helper_result), encoding="utf-8")
         return {
             "supported": True,
             "ok": True,
@@ -1202,6 +1197,20 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     transitioned = execute_assignment(root, transition_assignment)
     assert captured["calls"] == 1
     assert transitioned["effects"][0]["effectKey"] == expected_effect_key
+    effect_key_path = execution_fabric_remote._team_pr_review_summary_path(
+        root, identity
+    ).with_name("effect-key.json")
+    effect_key_record = json.loads(effect_key_path.read_text(encoding="utf-8"))
+    effect_key_path.write_text(
+        json.dumps({**effect_key_record, "effect_key": "tampered-key"}),
+        encoding="utf-8",
+    )
+    conflicting_assignment = json.loads(json.dumps(transition_assignment))
+    conflicting_assignment["task"]["id"] = "conflicting-effect-key-task"
+    with pytest.raises(TaskExecutionError) as conflicting_effect_key:
+        execute_assignment(root, conflicting_assignment)
+    assert conflicting_effect_key.value.code == "team_pr_review_intent_conflict"
+    effect_key_path.write_text(json.dumps(effect_key_record), encoding="utf-8")
 
     helper_result = {
         "status": "findings",

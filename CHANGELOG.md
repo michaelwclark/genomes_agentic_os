@@ -28,6 +28,9 @@ All notable changes to this project are documented here. The format follows
 - Persist the first effect-key format per immutable review identity so legacy
   and current task shapes cannot project the same helper result under two keys;
   classify PID-less governor exceptions as retryable dispatch failures.
+- Validate each recorded effect key against its declared format, durably
+  materialize a valid stdout fallback summary, and remove host-ineligible
+  pinned queues before worker registration and claim.
 - Pin the host-local Team PR durability state to `bigmac`; a worker on any
   other host fails retryably before helper execution.
 - Ship the Agentic OS route before the paired object-library producer; the new
