@@ -106,7 +106,7 @@ def _library_remote(root: Path) -> tuple[Path, str]:
 
     remote = root / "library.git"
     subprocess.run(
-        ["git", "init", "--bare", str(remote)],
+        ["git", "init", "--bare", "--initial-branch=main", str(remote)],
         check=True,
         capture_output=True,
         text=True,
@@ -183,11 +183,28 @@ def _receipt(root: Path, receipt_id: str) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def _file_snapshot(root: Path) -> dict[Path, bytes]:
+    """Capture every materialized file below a run-artifact root."""
+    return {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def test_clean_instance_installs_routes_and_queues_a_governed_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     root = tmp_path / "agentic_os"
+
+    # Real Git exercises must be deterministic and independent of host signing,
+    # aliases, hooks, and default-branch configuration.
+    empty_git_config = tmp_path / "empty-gitconfig"
+    empty_git_config.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_git_config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
     # A clean install needs both the filesystem scaffold and runtime state.
     assert main(["init", "--target", str(root)]) == 0
@@ -262,9 +279,14 @@ def test_clean_instance_installs_routes_and_queues_a_governed_run(
     assert registry in packet.sources_to_load
     registry_payload = json.loads(registry.read_text(encoding="utf-8"))
     assert SKILL_ID in json.dumps(registry_payload, sort_keys=True)
+    capsys.readouterr()
     with monkeypatch.context() as cwd_context:
         cwd_context.chdir(workflow_dir)
         assert main(["here", "route", request, "--root", str(root)]) == 0
+    cli_packet = yaml.safe_load(capsys.readouterr().out)
+    assert cli_packet["object_type"] == "workflow"
+    assert cli_packet["target_path"] == str(workflow_dir)
+    assert (cli_packet["domain"], cli_packet["lane"]) == (DOMAIN, LANE)
 
     publish_plan = publish_workflow(root, WORKFLOW_ID, domain=DOMAIN, lane=LANE)
     published = publish_workflow(
@@ -295,11 +317,9 @@ def test_clean_instance_installs_routes_and_queues_a_governed_run(
 
     # The spawn guard is installed only after the real Git-backed install.
     workflow_runs_dir = workflow_dir / "runs"
-    workflow_run_artifacts_before = {
-        path.relative_to(workflow_runs_dir): path.read_bytes()
-        for path in workflow_runs_dir.rglob("*")
-        if path.is_file()
-    }
+    canonical_runs_dir = root / f"domains/{DOMAIN}/06-runs-and-logs/runs"
+    workflow_run_artifacts_before = _file_snapshot(workflow_runs_dir)
+    canonical_run_artifacts_before = _file_snapshot(canonical_runs_dir)
 
     def forbidden_spawn(*_args, **_kwargs):
         raise AssertionError("workflow run-now must not launch a process")
@@ -383,11 +403,8 @@ def test_clean_instance_installs_routes_and_queues_a_governed_run(
     assert queue_item["dispatch_performed"] is False
     assert "command" not in queue_item
     assert "lease_owner" not in queue_item
-    assert {
-        path.relative_to(workflow_runs_dir): path.read_bytes()
-        for path in workflow_runs_dir.rglob("*")
-        if path.is_file()
-    } == workflow_run_artifacts_before
+    assert _file_snapshot(workflow_runs_dir) == workflow_run_artifacts_before
+    assert _file_snapshot(canonical_runs_dir) == canonical_run_artifacts_before
 
     # Import the queue into SQLite, then inspect both the decoded API and the
     # actual payload_json column to prove the execution contract survived.
