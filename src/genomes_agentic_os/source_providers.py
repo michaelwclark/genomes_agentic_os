@@ -4,8 +4,9 @@ Architecture
 ------------
 Each adapter (GitHub, Slack) exposes a single ``fetch_*`` function that:
   - resolves the credential from the env var named in the connected-system config
-  - calls the provider API via an injectable ``fetcher`` callable (defaults to
-    ``urllib.request.urlopen``) so tests never touch the network
+  - calls its selected provider transport via an injectable boundary so tests
+    never touch the network; GitHub pull requests require the shared platform
+    bridge configured by ``GENOMES_GITHUB_BRIDGE_COMMAND``
   - returns a list of normalised item dicts (provider-id-keyed)
   - falls back to an empty list with a ``dry_run_reason`` marker when the env var
     is absent — identical observable output to the existing registry dry-run path
@@ -46,6 +47,8 @@ import re
 import urllib.error
 import urllib.request
 from typing import Any, Callable
+
+from .github_bridge import GitHubBridgeError, command_from_environment, list_pull_requests
 
 # ---------------------------------------------------------------------------
 # Token-shaped value guard
@@ -202,6 +205,45 @@ def _trim_github_item(item: dict[str, Any], keep: frozenset[str]) -> dict[str, A
     return trimmed
 
 
+def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the shared port's PR vocabulary to the source-watch event shape.
+
+    The source-watch registry predates the shared GitHub port, so its persisted
+    field names are intentionally retained here.  This is a narrow adapter, not
+    a second GitHub client: the bridge owns provider calls and normalization.
+    The bridge exposes GitHub's database id and requested reviewer/team names in
+    its JSON-safe vocabulary; map them back to the legacy keys so downstream
+    consumers receive the same shape they received from the direct REST client.
+    """
+    labels = item.get("labels") if isinstance(item.get("labels"), list) else []
+    return {
+        "id": item.get("id"),
+        "number": item.get("number"),
+        "title": item.get("title", ""),
+        "state": "closed" if item.get("state") == "merged" else item.get("state", "open"),
+        "created_at": item.get("openedAt", ""),
+        "updated_at": item.get("updatedAt", ""),
+        "merged_at": item.get("mergedAt"),
+        "closed_at": item.get("closedAt"),
+        "html_url": item.get("url", ""),
+        "user": {"login": item.get("author", "")},
+        "head": {"ref": item.get("headBranch", ""), "sha": item.get("headSha", "")},
+        "base": {"ref": item.get("baseBranch", "")},
+        "draft": bool(item.get("draft", False)),
+        "labels": [{"name": label} for label in labels if isinstance(label, str)],
+        "requested_reviewers": [
+            {"login": reviewer}
+            for reviewer in item.get("requestedReviewers", [])
+            if isinstance(reviewer, str)
+        ],
+        "requested_teams": [
+            {"slug": team}
+            for team in item.get("requestedTeams", [])
+            if isinstance(team, str)
+        ],
+    }
+
+
 def fetch_github_events(
     owner: str,
     repo: str,
@@ -228,7 +270,8 @@ def fetch_github_events(
         ISO-8601 timestamp; only items updated at or after this time are returned.
         GitHub ``issues`` endpoint supports ``?since=``.
     fetcher:
-        Injectable HTTP transport.  Defaults to ``urllib.request.urlopen``.
+        Injectable HTTP transport for issue polling. Pull requests always use
+        the configured platform GitHub bridge.
 
     Returns
     -------
@@ -252,11 +295,23 @@ def fetch_github_events(
     want_issues = any(t in event_types for t in ("issues", "issue"))
 
     if want_prs:
-        url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
-        if since:
-            # PRs endpoint doesn't support ?since — we post-filter
-            pass
-        data = _get_json(url, headers, fetcher)
+        bridge_command = command_from_environment()
+        if not bridge_command:
+            raise GitHubBridgeError(
+                "BRIDGE_UNCONFIGURED",
+                "GitHub pull-request polling requires the configured platform GitHub bridge",
+            )
+        data: Any = [
+            _bridge_pull_request_to_source_item(item)
+            for item in list_pull_requests(
+                bridge_command,
+                owner=owner,
+                repo=repo,
+                token=token,
+                state="all",
+                limit=30,
+            )
+        ]
         for item in data if isinstance(data, list) else []:
             if since and item.get("updated_at", "") < since:
                 continue
@@ -353,19 +408,59 @@ def poll_github_source(
     since: str | None = source.get("_cursor_since")  # injected by caller when advancing
 
     try:
-        items = fetch_github_events(
-            owner, repo,
-            token=token,
-            event_types=list(event_types),
-            since=since,
-            fetcher=fetcher,
-        )
+        want_prs = any(event_type == "pull_request" for event_type in event_types)
+        want_issues = any(event_type in ("issues", "issue") for event_type in event_types)
+        items: list[dict[str, Any]] = []
+        if want_issues:
+            issue_items = fetch_github_events(
+                owner,
+                repo,
+                token=token,
+                event_types=["issues"],
+                since=since,
+                fetcher=fetcher,
+            )
+            # GitHub's /issues endpoint includes pull requests. Preserve that
+            # historical issue-only behavior, but in a mixed poll the bridge is
+            # authoritative for PRs; otherwise each PR becomes a phantom issue
+            # followed by the real pull_request item.
+            if want_prs:
+                issue_items = [item for item in issue_items if not item.get("pull_request")]
+            items.extend(issue_items)
+        if want_prs:
+            try:
+                items.extend(fetch_github_events(
+                    owner,
+                    repo,
+                    token=token,
+                    event_types=["pull_request"],
+                    since=since,
+                    fetcher=fetcher,
+                ))
+            except GitHubBridgeError as exc:
+                return {
+                    "ok": False,
+                    "live": bool(items),
+                    "items": items,
+                    "item_count": len(items),
+                    "partial": bool(items),
+                    "provider": "platform_github_port+direct_api" if want_issues else "platform_github_port",
+                    "findings": [{
+                        "severity": "blocker",
+                        "code": exc.code,
+                        "message": str(exc),
+                    }],
+                }
+        bridge_active = want_prs
+        provider = "platform_github_port" if bridge_active else "direct_api"
+        if bridge_active and want_issues:
+            provider = "platform_github_port+direct_api"
         return {
             "ok": True,
             "live": True,
             "items": items,
             "item_count": len(items),
-            "provider": "direct_api",
+            "provider": provider,
             "credential_env": env_name,
             "dry_run_reason": None,
         }
