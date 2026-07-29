@@ -144,6 +144,14 @@ describe("independently runnable roles", () => {
       reason: null,
     });
     expect(
+      evaluateRoleHealth({
+        ...snapshot,
+        approvedPolicyFingerprint: null,
+        lastSuccessfulTickAt: null,
+        lastTickAt: null,
+      }, { now }),
+    ).toMatchObject({ status: "degraded", reason: "awaiting_first_tick" });
+    expect(
       evaluateRoleHealth(
         { ...snapshot, consecutiveFailures: 1, lastError: "temporary" },
         { now },

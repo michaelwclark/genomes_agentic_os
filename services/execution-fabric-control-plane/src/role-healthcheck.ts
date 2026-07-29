@@ -3,6 +3,7 @@ import { createPool } from "./db.js";
 import { loadObserverConfig } from "./config.js";
 import {
   evaluateRoleHealth,
+  roleHealthEvaluationOptions,
   roleHealthSnapshot,
   type PeriodicServiceRole,
 } from "./roles.js";
@@ -26,10 +27,7 @@ try {
   } else {
     const evaluation = evaluateRoleHealth(
       roleHealthSnapshot(result.rows[0] as Record<string, unknown>),
-      {
-        failureThreshold: Number(process.env.FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD ?? 3),
-        maxTickAgeSeconds: Number(process.env.FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS ?? 60),
-      },
+      roleHealthEvaluationOptions(),
     );
     process.stdout.write(`${JSON.stringify(evaluation)}\n`);
     process.exitCode = evaluation.status === "unhealthy" ? 1 : 0;

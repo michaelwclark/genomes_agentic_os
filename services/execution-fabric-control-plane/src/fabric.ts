@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   Assignment,
   AttemptCompletion,
@@ -11,7 +11,10 @@ import type {
   EffectAssignment,
   EffectClaim,
 } from "./contracts.js";
-import { evaluateRoleHealth } from "./roles.js";
+import {
+  evaluateRoleHealth,
+  roleHealthEvaluationOptions,
+} from "./roles.js";
 import type { DeliveryPort } from "./delivery.js";
 import { ConflictError, type LedgerPort } from "./ledger.js";
 import type { LeadershipGuard } from "./leadership.js";
@@ -20,6 +23,8 @@ import { PolicyManager } from "./policy.js";
 export class ExecutionFabric {
   private lastReconcile: ReconcileReceipt | null = null;
   private lastReconcileError: string | null = null;
+  private readonly apiInstanceId = randomUUID();
+  private readonly apiStartedAt = new Date().toISOString();
 
   constructor(
     readonly ledger: LedgerPort,
@@ -362,13 +367,15 @@ export class ExecutionFabric {
         {
           hostId: activeHost,
           role: "api",
-          instanceId: `api:${activeHost}`,
+          instanceId: this.apiInstanceId,
+          startedAt: this.apiStartedAt,
           approvedPolicyFingerprint: system.databasePolicyFingerprint,
           appliedPolicyFingerprint: config.appliedFingerprint,
           lastSuccessfulTickAt: sampledAt,
           lastTickAt: sampledAt,
           lastError: config.lastError,
           consecutiveFailures: config.state === "applied" ? 0 : 1,
+          updatedAt: sampledAt,
           status:
             config.state === "applied" &&
             system.databasePolicyFingerprint === config.appliedFingerprint
@@ -381,7 +388,10 @@ export class ExecutionFabric {
               : "policy_fingerprint_mismatch",
         },
         ...(system.roleHealth ?? []).map((snapshot) =>
-          evaluateRoleHealth(snapshot, { now: new Date(sampledAt) }),
+          evaluateRoleHealth(snapshot, {
+            ...roleHealthEvaluationOptions(),
+            now: new Date(sampledAt),
+          }),
         ),
       ],
       healing: {

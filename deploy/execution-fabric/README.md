@@ -364,7 +364,8 @@ Scheduler, healer, and observer processes compare their disk candidate with
 the durable fingerprint on each tick and adopt only an exact match. Startup
 can initialize an empty fingerprint or accept an identical one; it can never
 replace an existing authority outside this explicit rotation protocol.
-Compose mounts the policy as one read-only directory bundle, rather than as a
+Compose mounts only the policy `config/` and `schemas/` directories as a
+least-privilege read-only bundle, rather than mounting the whole harness or a
 single-file bind whose inode can remain pinned after replacement. After the
 database reload, rotation force-recreates the API, observer, healer, and
 scheduler cohort and reads back each role's exact approved and applied

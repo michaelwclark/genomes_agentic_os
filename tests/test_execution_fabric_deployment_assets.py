@@ -310,10 +310,21 @@ def test_observer_has_only_read_health_dependencies_and_scoped_artifact_credenti
         for role in ("control-plane", "observer", "healer"):
             volumes = compose["services"][role]["volumes"]
             assert any(
-                volume.endswith("/harness:/etc/agentic-os/policy-bundle:ro")
+                volume.endswith(
+                    "/harness/config:/etc/agentic-os/policy-bundle/config:ro"
+                )
                 for volume in volumes
             )
+            if role != "candidate-reporter":
+                assert any(
+                    volume.endswith(
+                        "/harness/schemas:/etc/agentic-os/policy-bundle/schemas:ro"
+                    )
+                    for volume in volumes
+                )
             assert not any("execution-fabric.yml:" in volume for volume in volumes)
+        for role in ("observer", "healer", "scheduler"):
+            assert compose["services"][role]["healthcheck"]["start_period"] == "90s"
         assert compose["services"]["gateway"]["healthcheck"]["test"][-1].endswith(
             "127.0.0.1:3181/healthz || exit 1"
         )
@@ -705,9 +716,14 @@ def test_policy_rotation_runs_prepare_reload_commit_and_readback(
     state = tmp_path / "state"
     fake_bin = tmp_path / "bin"
     tokens = tmp_path / "tokens"
+    deployment = tmp_path / "deployment"
     state.mkdir()
     fake_bin.mkdir()
     tokens.mkdir()
+    deployment.mkdir()
+    (deployment / "compose.genomesbox.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
     for name in ("api", "admin", "witness-admin"):
         (tokens / name).write_text(f"{name}-token\n", encoding="utf-8")
     fake_curl = fake_bin / "curl"
@@ -757,6 +773,7 @@ case "$url" in
       "appliedFingerprint":"{new_digest}"}}}}'
     ;;
   http://witness/api/v1/admin/leadership/config-digest-rotations/commit)
+    [ -f "$FAKE_STATE_DIR/roles-recreated" ] || exit 22
     : >"$FAKE_STATE_DIR/committed"
     printf '%s\\n' '{{"apiVersion":"execution-fabric-leadership/v1",
       "decision":"config_digest_rotated","rotationId":"{rotation_id}",
@@ -774,7 +791,12 @@ case "$url" in
     fi
     printf '%s\\n' '{{"config":{{"appliedFingerprint":"'"$applied"'"}},
       "controlPlane":{{"databasePolicyFingerprint":"'"$applied"'",
-      "leadership":{{"state":"active"}}}}}}'
+      "leadership":{{"state":"active"}}}},
+      "roleHealth":[
+        {{"hostId":"genomesbox","role":"api","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
+        {{"hostId":"genomesbox","role":"observer","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
+        {{"hostId":"genomesbox","role":"healer","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}},
+        {{"hostId":"genomesbox","role":"scheduler","approvedPolicyFingerprint":"'"$applied"'","appliedPolicyFingerprint":"'"$applied"'","status":"healthy","lastSuccessfulTickAt":"2026-07-25T00:00:06Z"}}]}}'
     ;;
   *) exit 22 ;;
 esac
@@ -785,6 +807,30 @@ esac
     fake_logger = fake_bin / "logger"
     fake_logger.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_logger.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/bin/sh
+set -eu
+operation=
+role=
+for argument in "$@"; do
+  case "$argument" in
+    ps|up) operation=$argument ;;
+    control-plane|observer|healer|scheduler) role=$argument ;;
+  esac
+done
+case "$operation" in
+  ps)
+    if [ -f "$FAKE_STATE_DIR/roles-recreated" ]; then prefix=new; else prefix=old; fi
+    printf '%s-%s\n' "$prefix" "$role"
+    ;;
+  up) : >"$FAKE_STATE_DIR/roles-recreated" ;;
+  *) exit 64 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
     runtime = tmp_path / "runtime.env"
     runtime.write_text(
         "\n".join(
@@ -799,7 +845,8 @@ esac
                 "FABRIC_HOST_ID=genomesbox",
                 "FABRIC_PRIMARY_HOST_ID=genomesbox",
                 "FABRIC_STANDBY_HOST_ID=bigmac",
-                "FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED=false",
+                "FABRIC_DEPLOYMENT_ROLE=primary",
+                f"FABRIC_DEPLOYMENT_DIR={deployment}",
                 f"FAKE_STATE_DIR={state}",
                 "",
             )
@@ -828,8 +875,115 @@ esac
     payload = json.loads(receipt.read_text(encoding="utf-8"))
     assert payload["rotationId"] == rotation_id
     assert payload["witness"]["decision"] == "config_digest_rotated"
+    recreate = json.loads(
+        Path(payload["roleRecreateReceipt"]).read_text(encoding="utf-8")
+    )
+    verify = json.loads(
+        Path(payload["roleVerifyReceipt"]).read_text(encoding="utf-8")
+    )
+    assert recreate["containersBefore"]["control-plane"] == "old-control-plane"
+    assert recreate["containersAfter"]["control-plane"] == "new-control-plane"
+    assert {row["role"] for row in verify["roleHealth"]} == {
+        "api",
+        "observer",
+        "healer",
+        "scheduler",
+    }
     assert (state / "committed").is_file()
     assert not (state / "policy-rotation.pending.json").exists()
+
+
+def test_policy_role_convergence_fails_closed_on_one_mismatched_role(
+    tmp_path: Path,
+) -> None:
+    expected = "b" * 64
+    wrong = "c" * 64
+    state = tmp_path / "state"
+    fake_bin = tmp_path / "bin"
+    deployment = tmp_path / "deployment"
+    token = tmp_path / "api-token"
+    state.mkdir()
+    fake_bin.mkdir()
+    deployment.mkdir()
+    token.write_text("test-token\n", encoding="utf-8")
+    (deployment / "compose.genomesbox.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/bin/sh
+set -eu
+operation=
+role=
+for argument in "$@"; do
+  case "$argument" in
+    ps|up) operation=$argument ;;
+    control-plane|observer|healer|scheduler) role=$argument ;;
+  esac
+done
+case "$operation" in
+  ps)
+    if [ -f "$FAKE_STATE_DIR/recreated" ]; then prefix=new; else prefix=old; fi
+    printf '%s-%s\n' "$prefix" "$role"
+    ;;
+  up) : >"$FAKE_STATE_DIR/recreated" ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    role_health = [
+        {
+            "hostId": "genomesbox",
+            "role": role,
+            "approvedPolicyFingerprint": wrong if role == "observer" else expected,
+            "appliedPolicyFingerprint": expected,
+            "status": "unhealthy" if role == "observer" else "healthy",
+            "lastSuccessfulTickAt": "2026-07-25T00:00:06Z",
+        }
+        for role in ("api", "observer", "healer", "scheduler")
+    ]
+    _write_executable(
+        fake_bin / "curl",
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' "
+        + repr(json.dumps({"roleHealth": role_health}))
+        + "\n",
+    )
+    runtime = tmp_path / "runtime.env"
+    runtime.write_text(
+        "\n".join(
+            (
+                f"FABRIC_OS_ROOT={tmp_path}",
+                f"FABRIC_RUNTIME_STATE_DIR={state}",
+                "FABRIC_API_BASE=http://control",
+                f"FABRIC_API_TOKEN_FILE={token}",
+                "FABRIC_HOST_ID=genomesbox",
+                "FABRIC_DEPLOYMENT_ROLE=primary",
+                f"FABRIC_DEPLOYMENT_DIR={deployment}",
+                "FABRIC_POLICY_CONVERGENCE_ATTEMPTS=1",
+                f"FAKE_STATE_DIR={state}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(INSTALLERS / "bin" / "converge-policy-roles.sh"),
+            "--recreate",
+            expected,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+        },
+    )
+    assert result.returncode == 75
+    assert "did not converge" in result.stderr
+    assert not list(state.glob("policy-role-convergence-*.json"))
 
 
 def test_policy_rotation_resume_aborts_expired_pre_database_preparation(
@@ -2113,10 +2267,9 @@ def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_moun
         text = (DEPLOY / name).read_text(encoding="utf-8")
         assert "../../harness/config/execution-fabric.yml" not in text
         assert "../../schemas/execution-fabric.schema.json" not in text
-        assert (
-            "${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness:"
-            "/etc/agentic-os/policy-bundle:ro"
-        ) in text
+        assert "/harness/config:/etc/agentic-os/policy-bundle/config:ro" in text
+        assert "/harness/schemas:/etc/agentic-os/policy-bundle/schemas:ro" in text
+        assert "/harness:/etc/agentic-os/policy-bundle:ro" not in text
         assert "/policy-bundle/config/execution-fabric.yml" in text
         assert "/policy-bundle/schemas/execution-fabric.schema.json" in text
 

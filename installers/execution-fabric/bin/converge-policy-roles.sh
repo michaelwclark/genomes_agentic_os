@@ -94,7 +94,15 @@ fi
 
 verified=false
 attempt=0
-while [ "$attempt" -lt 30 ]; do
+attempt_limit=${FABRIC_POLICY_CONVERGENCE_ATTEMPTS:-30}
+case "$attempt_limit" in
+  ''|*[!0-9]*) echo "FABRIC_POLICY_CONVERGENCE_ATTEMPTS must be a positive integer" >&2; exit 64 ;;
+esac
+[ "$attempt_limit" -ge 1 ] && [ "$attempt_limit" -le 300 ] || {
+  echo "FABRIC_POLICY_CONVERGENCE_ATTEMPTS must be between 1 and 300" >&2
+  exit 64
+}
+while [ "$attempt" -lt "$attempt_limit" ]; do
   attempt=$((attempt + 1))
   if fabric_api_get_bearer \
     "$api_base" "/api/v1/status?limit=1" \
@@ -125,7 +133,9 @@ while [ "$attempt" -lt 30 ]; do
       break
     fi
   fi
-  sleep 2
+  if [ "$attempt" -lt "$attempt_limit" ]; then
+    sleep 2
+  fi
 done
 [ "$verified" = true ] || {
   echo "policy roles did not converge to $expected during $mode" >&2
@@ -137,12 +147,20 @@ jq -n \
   --arg mode "${mode#--}" \
   --arg fingerprint "$expected" \
   --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --rawfile containersBefore "$before_temp" \
+  --rawfile containersAfter "$after_temp" \
   --slurpfile status "$status_temp" \
-  '{
+  'def container_ids($raw):
+    $raw | split("\n") | map(select(length>0) |
+      capture("^(?<role>[^=]+)=(?<id>.*)$") |
+      {key:.role,value:.id}) | from_entries;
+  {
     schemaVersion:"execution-fabric-policy-role-convergence/v1",
     mode:$mode,
     fingerprint:$fingerprint,
     verifiedAt:$verifiedAt,
+    containersBefore:container_ids($containersBefore),
+    containersAfter:container_ids($containersAfter),
     roleHealth:$status[0].roleHealth
   }' >"$receipt_temp"
 fabric_atomic_write "$receipt_path" "$receipt_temp"

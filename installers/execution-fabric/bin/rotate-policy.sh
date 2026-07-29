@@ -342,9 +342,7 @@ else
   fi
 fi
 
-if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ] &&
-  [ "$role_convergence_deferred" = false ]
-then
+if [ "$role_convergence_deferred" = false ]; then
   role_recreate_receipt=$(
     "$script_dir/converge-policy-roles.sh" --recreate "$candidate_digest"
   )
@@ -442,9 +440,7 @@ else
     >"$control_status"
 fi
 
-if [ "${FABRIC_POLICY_ROLE_CONVERGENCE_REQUIRED:-true}" = true ] &&
-  [ "$role_convergence_deferred" = false ]
-then
+if [ "$role_convergence_deferred" = false ]; then
   role_verify_receipt=$(
     "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
   )

@@ -30,6 +30,26 @@ export type RoleHealthEvaluation = RoleHealthSnapshot & {
   reason: string | null;
 };
 
+export function roleHealthEvaluationOptions(): {
+  failureThreshold: number;
+  maxTickAgeSeconds: number;
+} {
+  return {
+    failureThreshold: boundedIntegerEnvironment(
+      "FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD",
+      3,
+      1,
+      100,
+    ),
+    maxTickAgeSeconds: boundedIntegerEnvironment(
+      "FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS",
+      60,
+      1,
+      86400,
+    ),
+  };
+}
+
 function iso(value: Date | string | null): string | null {
   if (value === null) return null;
   return new Date(value).toISOString();
@@ -46,6 +66,14 @@ export function evaluateRoleHealth(
   const failureThreshold = options.failureThreshold ?? 3;
   const maxTickAgeSeconds = options.maxTickAgeSeconds ?? 60;
   const now = options.now ?? new Date();
+  if (
+    snapshot.lastTickAt === null &&
+    snapshot.lastSuccessfulTickAt === null &&
+    snapshot.approvedPolicyFingerprint === null &&
+    snapshot.appliedPolicyFingerprint !== null
+  ) {
+    return { ...snapshot, status: "degraded", reason: "awaiting_first_tick" };
+  }
   if (
     snapshot.approvedPolicyFingerprint === null ||
     snapshot.appliedPolicyFingerprint === null ||
