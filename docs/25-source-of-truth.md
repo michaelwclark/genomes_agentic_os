@@ -29,8 +29,13 @@ tracker/PR state. Do not infer success from stale memory or old reports.
 Each non-trivial unit of work should have a local packet:
 
 ```text
-<domain>/02-projects/<project>/work-items/<lane>/<NNN_slug>/
+<root>/domains/<domain>/02-projects/<project>/work-items/<MMDDYY-NNN_slug>/
 ```
+
+The packet path stays stable while lifecycle state and attention change in
+`harness/shared_factory/00-control-plane/state.db`. Older numbered work-item
+lanes such as `01-intake/` and `02-active/` are compatibility inputs only;
+terminal retention may later move a packet to `work-items/99-archived/`.
 
 The packet owns:
 
