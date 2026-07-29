@@ -85,13 +85,17 @@ def test_release_checksum_staging_file_is_outside_the_asset_directory() -> None:
     assert "SHA256SUMS.tmp" not in workflow
 
 
-def test_release_workflow_requires_main_ancestry_and_immutable_release() -> None:
+def test_release_workflow_requires_main_ancestry_and_additive_contract() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert 'git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"' in workflow
     assert 'git merge-base --is-ancestor "${GITHUB_SHA}" origin/main' in workflow
-    assert 'gh release view "${TAG}"' in workflow
+    assert "uses: ./.github/workflows/release-contract.yml" in workflow
+    assert "tag_mode: verify" in workflow
+    assert "artifact_name: execution-fabric-release-assets" in workflow
+    assert "execution-fabric-release-manifest.json" in workflow
+    assert "SHA256SUMS" in workflow
     assert "--clobber" not in workflow
-    assert 'gh release create "${TAG}"' in workflow
+    assert "exit 73" not in workflow
 
 
 def test_release_workflow_resolves_dependency_multiarch_index_digests() -> None:
