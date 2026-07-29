@@ -19,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
-  "commitizen>=4.16",
+  "commitizen==4.16.5",
   "pre-commit>=4.6",
 ]
 
@@ -28,7 +28,7 @@ dev = [
 [dependency-groups]
 dev = [
   "pytest>=8.0",
-  "commitizen>=4.16",
+  "commitizen==4.16.5",
   "pre-commit>=4.6",
 ]
 
