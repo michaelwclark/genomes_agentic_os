@@ -2,8 +2,8 @@
 """Agentic OS Jira helper for an Atlassian Jira site.
 
 This wrapper gives agents a deterministic Jira path when MCP/Composio routes are
-unhealthy. It prefers the Atlassian OAuth client-credentials route and falls
-back to Jira basic auth only when a Jira API token is configured.
+unhealthy. Provider behavior is owned by the versioned ``@genomes/jira``
+subprocess bridge; this script retains only CLI policy and presentation.
 
 Site, project, and account identity all come from environment variables; the
 defaults below are placeholders and must be overridden per install.
@@ -12,35 +12,37 @@ defaults below are placeholders and must be overridden per install.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import shutil
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any
 
+from genomes_agentic_os.jira_bridge import (
+    JiraBridgeClient,
+    JiraBridgeError,
+    adf_paragraph,
+    command_from_environment,
+)
 
-DEFAULT_BROWSE_BASE = os.environ.get("JIRA_BROWSE_BASE", "https://example.atlassian.net")
+DEFAULT_BROWSE_BASE = os.environ.get(
+    "JIRA_BROWSE_BASE", "https://example.atlassian.net"
+)
 DEFAULT_JIRA_PROJECT = os.environ.get("JIRA_DEFAULT_PROJECT", "PROJ")
-DEFAULT_JIRA_EMAIL = os.environ.get("JIRA_EMAIL", "")
-
-JIRA_OAUTH_CLIENT_ID_NAMES = ("ATLASSIAN_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID")
-JIRA_OAUTH_CLIENT_SECRET_NAMES = ("ATLASSIAN_CLIENT_SECRET", "JIRA_OAUTH_CLIENT_SECRET")
+JIRA_BEARER_TOKEN_NAMES = ("JIRA_OAUTH_TOKEN", "ATLASSIAN_ACCESS_TOKEN")
 JIRA_OAUTH_BASE_NAMES = ("ATLASSIAN_BASE_URL", "JIRA_OAUTH_BASE_URL")
 JIRA_OAUTH_CLOUD_ID_NAMES = (
     "ATLASSIAN_JIRA_CLOUDID",
     "JIRA_CLOUD_ID",
     "ATLASSIAN_CLOUD_ID",
 )
-JIRA_OAUTH_AUDIENCE_NAMES = ("ATLASSIAN_OAUTH_AUDIENCE",)
 JIRA_BASIC_TOKEN_NAMES = ("JIRA_API_TOKEN",)
 JIRA_BASIC_EMAIL_NAMES = ("JIRA_EMAIL",)
 JIRA_BASIC_BASE_NAMES = ("JIRA_BASE_URL",)
+JIRA_BRIDGE_COMMAND_NAMES = ("GENOMES_JIRA_BRIDGE_COMMAND",)
+JIRA_ACCOUNT_ID_NAMES = ("JIRA_ACCOUNT_ID", "ATLASSIAN_ACCOUNT_ID")
+JIRA_ISSUE_TYPE_ID_NAMES = ("JIRA_DEFAULT_ISSUE_TYPE_ID",)
 
 
 class JiraCliError(RuntimeError):
@@ -93,157 +95,143 @@ def jira_gateway_base_url(env: dict[str, str]) -> str:
     return ""
 
 
-def resolve_auth() -> dict[str, str]:
+def resolve_auth() -> dict[str, Any]:
     names = (
-        JIRA_OAUTH_CLIENT_ID_NAMES
-        + JIRA_OAUTH_CLIENT_SECRET_NAMES
+        JIRA_BEARER_TOKEN_NAMES
         + JIRA_OAUTH_BASE_NAMES
         + JIRA_OAUTH_CLOUD_ID_NAMES
-        + JIRA_OAUTH_AUDIENCE_NAMES
         + JIRA_BASIC_TOKEN_NAMES
         + JIRA_BASIC_EMAIL_NAMES
         + JIRA_BASIC_BASE_NAMES
+        + JIRA_BRIDGE_COMMAND_NAMES
+        + JIRA_ACCOUNT_ID_NAMES
+        + JIRA_ISSUE_TYPE_ID_NAMES
     )
     env = env_from_login_shell(names)
-    oauth_client_id = first_env(env, JIRA_OAUTH_CLIENT_ID_NAMES)
-    oauth_client_secret = first_env(env, JIRA_OAUTH_CLIENT_SECRET_NAMES)
+    command = command_from_environment(env)
+    if not command:
+        raise JiraCliError(
+            "GENOMES_JIRA_BRIDGE_COMMAND must name the reviewed Jira bridge argv"
+        )
+    bearer = first_env(env, JIRA_BEARER_TOKEN_NAMES)
     oauth_base = jira_gateway_base_url(env)
-    if oauth_client_id and oauth_client_secret and oauth_base:
+    basic_token = first_env(env, JIRA_BASIC_TOKEN_NAMES)
+    basic_email = first_env(env, JIRA_BASIC_EMAIL_NAMES)
+    if bearer and (basic_token or basic_email):
+        raise JiraCliError("Jira authentication mode is ambiguous")
+    if bearer and oauth_base:
         return {
-            "mode": "oauth",
+            "mode": "bearer",
             "base": oauth_base,
-            "browse_base": DEFAULT_BROWSE_BASE,
-            "client_id": oauth_client_id,
-            "client_secret": oauth_client_secret,
-            "audience": first_env(env, JIRA_OAUTH_AUDIENCE_NAMES) or "api.atlassian.com",
+            "browse_base": first_env(env, JIRA_BASIC_BASE_NAMES) or DEFAULT_BROWSE_BASE,
+            "bridge_command": command,
+            "bridge_auth": {"JIRA_OAUTH_TOKEN": bearer},
+            "cloud_id": first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES),
+            "account_id": first_env(env, JIRA_ACCOUNT_ID_NAMES),
+            "issue_type_id": first_env(env, JIRA_ISSUE_TYPE_ID_NAMES),
         }
-
-    token = first_env(env, JIRA_BASIC_TOKEN_NAMES)
-    if token:
-        base = (first_env(env, JIRA_BASIC_BASE_NAMES) or DEFAULT_BROWSE_BASE).rstrip("/")
+    if basic_token and basic_email:
+        base = (first_env(env, JIRA_BASIC_BASE_NAMES) or DEFAULT_BROWSE_BASE).rstrip(
+            "/"
+        )
         return {
             "mode": "basic",
             "base": base,
             "browse_base": base,
-            "email": first_env(env, JIRA_BASIC_EMAIL_NAMES) or DEFAULT_JIRA_EMAIL,
-            "token": token,
+            "bridge_command": command,
+            "bridge_auth": {"JIRA_EMAIL": basic_email, "JIRA_API_TOKEN": basic_token},
+            "cloud_id": first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES),
+            "account_id": first_env(env, JIRA_ACCOUNT_ID_NAMES),
+            "issue_type_id": first_env(env, JIRA_ISSUE_TYPE_ID_NAMES),
         }
-
     raise JiraCliError(
-        "No Jira auth found. Set ATLASSIAN_CLIENT_ID + ATLASSIAN_CLIENT_SECRET "
-        "+ ATLASSIAN_JIRA_CLOUDID (or JIRA_CLOUD_ID), or set JIRA_API_TOKEN."
+        "No complete Jira auth found. Set JIRA_OAUTH_TOKEN plus the Jira base/cloud ID, "
+        "or set JIRA_EMAIL + JIRA_API_TOKEN + JIRA_BASE_URL."
     )
 
 
-class JiraClient:
-    def __init__(self, auth: dict[str, str]) -> None:
+class JiraBridgeFacade:
+    def __init__(self, auth: dict[str, Any]) -> None:
         self.auth = auth
         self.base_url = auth["base"].rstrip("/")
         self.browse_base = auth["browse_base"].rstrip("/")
         self.mode = auth["mode"]
-        self.email = auth.get("email", "oauth-client")
-        self._oauth_token: dict[str, Any] | None = None
-        self._basic_auth = ""
-        if self.mode == "basic":
-            creds = base64.b64encode(f"{self.email}:{auth['token']}".encode()).decode()
-            self._basic_auth = f"Basic {creds}"
-
-    def _oauth_bearer(self) -> str:
-        cached = self._oauth_token
-        if cached and time.time() < float(cached["expires_at"]):
-            return str(cached["value"])
-        payload = {
-            "grant_type": "client_credentials",
-            "client_id": self.auth["client_id"],
-            "client_secret": self.auth["client_secret"],
-            "audience": self.auth.get("audience", "api.atlassian.com"),
-        }
-        request = urllib.request.Request(
-            "https://auth.atlassian.com/oauth/token",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            method="POST",
+        self.bridge = JiraBridgeClient(
+            auth["bridge_command"],
+            self.base_url,
+            auth["bridge_auth"],
         )
+
+    def request(self, operation: str, args: dict[str, Any]) -> Any:
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            text = exc.read().decode("utf-8", errors="replace")
-            raise JiraCliError(f"Atlassian OAuth mint failed ({exc.code}): {truncate(text, 600)}") from exc
-        except urllib.error.URLError as exc:
-            raise JiraCliError(f"Atlassian OAuth mint failed: {exc}") from exc
-        token = body.get("access_token")
-        if not token:
-            raise JiraCliError(f"Atlassian OAuth mint returned no access_token: {truncate(body, 600)}")
-        expires_in = int(body.get("expires_in") or 3600)
-        self._oauth_token = {"value": token, "expires_at": time.time() + max(60, expires_in - 300)}
-        return str(token)
+            return self.bridge.request(operation, args)
+        except JiraBridgeError as exc:
+            raise JiraCliError(f"Jira bridge {exc.code}: {exc}") from exc
 
-    def _headers(self, *, json_body: bool = False) -> dict[str, str]:
-        auth_header = f"Bearer {self._oauth_bearer()}" if self.mode == "oauth" else self._basic_auth
-        headers = {"Authorization": auth_header, "Accept": "application/json"}
-        if json_body:
-            headers["Content-Type"] = "application/json"
-        return headers
+    def preflight_issue(self, issue_key: str) -> dict[str, Any]:
+        project = issue_key.partition("-")[0].strip()
+        issue_type_id = str(self.auth.get("issue_type_id") or "").strip()
+        if not project or not issue_type_id:
+            raise JiraCliError(
+                "JIRA_DEFAULT_ISSUE_TYPE_ID is required to verify Jira identity before mutation"
+            )
+        args = {
+            "siteUrl": self.browse_base,
+            "projectKey": project,
+            "issueTypeId": issue_type_id,
+        }
+        if self.auth.get("cloud_id"):
+            args["cloudId"] = self.auth["cloud_id"]
+        if self.auth.get("account_id"):
+            args["accountId"] = self.auth["account_id"]
+        result = self.request("preflightIdentity", args)
+        if not isinstance(result, dict):
+            raise JiraCliError("Jira bridge returned invalid identity preflight")
+        return result
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        url = f"{self.base_url}{path}"
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = urllib.request.Request(url, data=data, headers=self._headers(json_body=body is not None), method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=45) as response:
-                payload = response.read().decode("utf-8")
-                return json.loads(payload) if payload else {}
-        except urllib.error.HTTPError as exc:
-            payload = exc.read().decode("utf-8", errors="replace")
-            raise JiraCliError(f"Jira {method} {path} failed ({exc.code}): {truncate(payload, 600)}") from exc
-        except urllib.error.URLError as exc:
-            raise JiraCliError(f"Jira {method} {path} failed: {exc}") from exc
-
-    def search(self, jql: str, fields: list[str], *, limit: int) -> list[dict[str, Any]]:
-        issues: list[dict[str, Any]] = []
-        token: str | None = None
-        while len(issues) < limit:
-            body: dict[str, Any] = {
-                "jql": jql,
-                "fields": fields,
-                "maxResults": min(100, limit - len(issues)),
-            }
-            if token:
-                body["nextPageToken"] = token
-            data = self.request("POST", "/rest/api/3/search/jql", body)
-            issues.extend(data.get("issues", []))
-            token = data.get("nextPageToken")
-            if data.get("isLast", True) or not token:
-                break
-        return issues
+    def search(
+        self, jql: str, fields: list[str], *, limit: int
+    ) -> list[dict[str, Any]]:
+        data = self.request(
+            "searchIssues", {"jql": jql, "fields": fields, "limit": limit}
+        )
+        values = data.get("values") if isinstance(data, dict) else None
+        if not isinstance(values, list) or not all(
+            isinstance(item, dict) for item in values
+        ):
+            raise JiraCliError("Jira bridge returned invalid search results")
+        return values
 
     def get_issue(self, issue_key: str, fields: list[str]) -> dict[str, Any]:
-        query = urllib.parse.urlencode({"fields": ",".join(fields)})
-        return self.request("GET", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}?{query}")
+        data = self.request("getIssue", {"key": issue_key, "fields": fields})
+        if not isinstance(data, dict):
+            raise JiraCliError("Jira bridge returned invalid issue data")
+        return data
 
     def comments(self, issue_key: str, *, limit: int) -> dict[str, Any]:
-        query = urllib.parse.urlencode({"maxResults": limit, "orderBy": "-created"})
-        return self.request("GET", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}/comment?{query}")
+        data = self.request("listComments", {"key": issue_key})
+        if not isinstance(data, dict) or not isinstance(data.get("values"), list):
+            raise JiraCliError("Jira bridge returned invalid comments")
+        result = dict(data)
+        result["values"] = data["values"][-limit:] if limit > 0 else []
+        return result
 
     def add_comment(self, issue_key: str, body_text: str) -> dict[str, Any]:
-        body = {
-            "body": {
-                "type": "doc",
-                "version": 1,
-                "content": [
-                    {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": body_text}],
-                    }
-                ],
-            }
-        }
-        return self.request("POST", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}/comment", body)
+        data = self.request(
+            "addComment",
+            {"key": issue_key, "input": {"body": adf_paragraph(body_text)}},
+        )
+        if not isinstance(data, dict):
+            raise JiraCliError("Jira bridge returned invalid comment data")
+        return data
 
     def transition(self, issue_key: str, transition_id: str) -> dict[str, Any]:
-        body = {"transition": {"id": transition_id}}
-        return self.request("POST", f"/rest/api/3/issue/{urllib.parse.quote(issue_key)}/transitions", body)
+        data = self.request(
+            "transitionIssue", {"key": issue_key, "transitionId": transition_id}
+        )
+        if not isinstance(data, dict):
+            raise JiraCliError("Jira bridge returned invalid transition readback")
+        return data
 
 
 def as_json(data: Any) -> None:
@@ -253,15 +241,15 @@ def as_json(data: Any) -> None:
 
 def field_summary(issue: dict[str, Any]) -> dict[str, str]:
     fields = issue.get("fields") or {}
-    status = fields.get("status") or {}
+    status = issue.get("status") or fields.get("status") or {}
     assignee = fields.get("assignee") or {}
-    issue_type = fields.get("issuetype") or {}
+    issue_type = issue.get("issueType") or fields.get("issuetype") or {}
     return {
         "key": str(issue.get("key") or ""),
         "type": str(issue_type.get("name") or ""),
         "status": str(status.get("name") or ""),
         "assignee": str(assignee.get("displayName") or "Unassigned"),
-        "summary": str(fields.get("summary") or ""),
+        "summary": str(issue.get("summary") or fields.get("summary") or ""),
     }
 
 
@@ -277,7 +265,9 @@ def check_acli() -> dict[str, str]:
         return {"present": "no"}
     result = {"present": "yes", "path": path}
     try:
-        version = subprocess.check_output(["acli", "--version"], text=True, stderr=subprocess.STDOUT, timeout=10).strip()
+        version = subprocess.check_output(
+            ["acli", "--version"], text=True, stderr=subprocess.STDOUT, timeout=10
+        ).strip()
         result["version"] = version
     except Exception as exc:
         result["version_error"] = truncate(exc, 200)
@@ -300,8 +290,10 @@ def check_acli() -> dict[str, str]:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     auth = resolve_auth()
-    client = JiraClient(auth)
-    issues = client.search(f"project = {args.project} ORDER BY updated DESC", ["summary"], limit=1)
+    client = JiraBridgeFacade(auth)
+    issues = client.search(
+        f"project = {args.project} ORDER BY updated DESC", ["summary"], limit=1
+    )
     report = {
         "ok": bool(issues),
         "route": "agentic-os-jira",
@@ -317,7 +309,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    client = JiraClient(resolve_auth())
+    client = JiraBridgeFacade(resolve_auth())
     fields = [item.strip() for item in args.fields.split(",") if item.strip()]
     issues = client.search(args.jql, fields, limit=args.limit)
     if args.json:
@@ -328,7 +320,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_get(args: argparse.Namespace) -> int:
-    client = JiraClient(resolve_auth())
+    client = JiraBridgeFacade(resolve_auth())
     fields = [item.strip() for item in args.fields.split(",") if item.strip()]
     issue = client.get_issue(args.issue_key, fields)
     if args.json:
@@ -339,7 +331,7 @@ def cmd_get(args: argparse.Namespace) -> int:
 
 
 def cmd_comments(args: argparse.Namespace) -> int:
-    client = JiraClient(resolve_auth())
+    client = JiraBridgeFacade(resolve_auth())
     data = client.comments(args.issue_key, limit=args.limit)
     as_json(data)
     return 0
@@ -347,18 +339,26 @@ def cmd_comments(args: argparse.Namespace) -> int:
 
 def cmd_comment(args: argparse.Namespace) -> int:
     if not args.execute:
-        print(f"dry-run: would add comment to {args.issue_key}; pass --execute after approval")
+        print(
+            f"dry-run: would add comment to {args.issue_key}; pass --execute after approval"
+        )
         return 0
-    data = JiraClient(resolve_auth()).add_comment(args.issue_key, args.body)
+    client = JiraBridgeFacade(resolve_auth())
+    client.preflight_issue(args.issue_key)
+    data = client.add_comment(args.issue_key, args.body)
     as_json({"ok": True, "id": data.get("id"), "self": data.get("self")})
     return 0
 
 
 def cmd_transition(args: argparse.Namespace) -> int:
     if not args.execute:
-        print(f"dry-run: would transition {args.issue_key} via transition id {args.transition_id}; pass --execute after approval")
+        print(
+            f"dry-run: would transition {args.issue_key} via transition id {args.transition_id}; pass --execute after approval"
+        )
         return 0
-    JiraClient(resolve_auth()).transition(args.issue_key, args.transition_id)
+    client = JiraBridgeFacade(resolve_auth())
+    client.preflight_issue(args.issue_key)
+    client.transition(args.issue_key, args.transition_id)
     as_json({"ok": True, "issue": args.issue_key, "transition_id": args.transition_id})
     return 0
 
@@ -367,20 +367,24 @@ _JIRA_EPILOG = """\
 AUTHENTICATION
   Auth is resolved from environment variables in priority order.
 
-  OAuth2 client-credentials (preferred):
-    ATLASSIAN_CLIENT_ID / JIRA_OAUTH_CLIENT_ID       OAuth client id.
-    ATLASSIAN_CLIENT_SECRET / JIRA_OAUTH_CLIENT_SECRET   OAuth client secret.
+  OAuth bearer (preferred):
+    JIRA_OAUTH_TOKEN / ATLASSIAN_ACCESS_TOKEN         OAuth bearer token.
     ATLASSIAN_JIRA_CLOUDID / JIRA_CLOUD_ID /
       ATLASSIAN_CLOUD_ID                              Atlassian cloud id.
     ATLASSIAN_BASE_URL / JIRA_OAUTH_BASE_URL          API gateway base URL
                                                        (derived from cloud id when absent).
-    ATLASSIAN_OAUTH_AUDIENCE                          Atlassian OAuth audience
-                                                       (default: api.atlassian.com).
-
   Basic auth (fallback):
     JIRA_API_TOKEN                                    Atlassian API token.
     JIRA_EMAIL                                        Account email for basic auth.
     JIRA_BASE_URL                                     Base URL override for basic auth.
+
+  Bridge command:
+    GENOMES_JIRA_BRIDGE_COMMAND                       Reviewed bridge argv.
+
+  Mutation identity preflight:
+    JIRA_DEFAULT_ISSUE_TYPE_ID                       Expected Jira issue-type id.
+    JIRA_ACCOUNT_ID / ATLASSIAN_ACCOUNT_ID           Expected account id (optional).
+    JIRA_BROWSE_BASE                                 Expected tenant site URL.
 
   All variables are sourced from ~/.zshenv when missing from the environment.
 
@@ -409,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Jira helper for an Atlassian Jira site. "
-            "Prefers Atlassian OAuth client-credentials; falls back to Jira API token basic auth. "
+            "Uses the shared Jira bridge with OAuth bearer or API-token basic auth. "
             "All mutating commands (comment, transition) are dry-run by default; pass --execute to write."
         ),
         epilog=_JIRA_EPILOG,
@@ -440,8 +444,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="summary,status,assignee,issuetype,priority",
         help="Comma-separated field list to return (default: summary,status,assignee,issuetype,priority).",
     )
-    search.add_argument("--limit", type=int, default=10, help="Max issues to return (default: 10).")
-    search.add_argument("--json", action="store_true", help="Emit results as JSON instead of a table.")
+    search.add_argument(
+        "--limit", type=int, default=10, help="Max issues to return (default: 10)."
+    )
+    search.add_argument(
+        "--json", action="store_true", help="Emit results as JSON instead of a table."
+    )
     search.set_defaults(func=cmd_search)
 
     get = sub.add_parser(
@@ -455,7 +463,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="summary,status,assignee,issuetype,priority,fixVersions,labels",
         help="Comma-separated field list to return.",
     )
-    get.add_argument("--json", action="store_true", help="Emit result as JSON instead of a table.")
+    get.add_argument(
+        "--json", action="store_true", help="Emit result as JSON instead of a table."
+    )
     get.set_defaults(func=cmd_get)
 
     comments = sub.add_parser(
@@ -464,7 +474,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Fetch the most recent comments for an issue and emit as JSON.",
     )
     comments.add_argument("issue_key", help="Jira issue key (e.g. PROJ-1234).")
-    comments.add_argument("--limit", type=int, default=10, help="Max comments to return (default: 10).")
+    comments.add_argument(
+        "--limit", type=int, default=10, help="Max comments to return (default: 10)."
+    )
     comments.set_defaults(func=cmd_comments)
 
     comment = sub.add_parser(

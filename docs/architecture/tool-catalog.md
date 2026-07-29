@@ -163,7 +163,7 @@ specific registry.
 | `agentic-os-intake-row` | Create a row in the OS Work Intake Notion database, routing `Project` via `intake-routing.yml`. |
 | `agentic-os-intake-sync` | Sync the OS Work Intake Notion DB to Linear (Clarks Consulting team), with back-sync of completed/canceled state. |
 | `agentic-os-interim-executor` | Compatibility entry point that delegates all automation work to the runtime supervisor (kept for older LaunchAgents). |
-| `agentic-os-jira` | Deterministic Jira wrapper (OAuth client-credentials first, basic-auth token fallback) for when MCP/Composio Jira routes are unhealthy. |
+| `agentic-os-jira` | Deterministic policy/presentation wrapper over the reviewed `@genomes/jira` subprocess bridge for when MCP/Composio Jira routes are unhealthy. |
 | `agentic-os-memory-analytics` | Run the read-only memory retrieval-analytics report on the configured analytics host; `export` copies artifacts to the active work item. |
 | `agentic-os-monitor` | Real-time in-shell health monitor: queue depth, running agents per host, recent runs, token usage, host vitals, alert feed. |
 | `agentic-os-notify` | Deliver governed alerts through macOS Notification Center; the single delivery seam for automations and watchers, records deliveries + suppressions. |
