@@ -38,6 +38,9 @@ All notable changes to this project are documented here. The format follows
 - Classify a failed helper with a dead registered PID instead of consuming the
   retry budget as perpetually in progress, while keeping a live but
   unverifiable PID fail-closed behind the orphan fence.
+- Preserve invalid-receipt classification and receipt paths for byte-corrupt
+  JSON, and classify a dispatch exception with a dead registered helper PID
+  immediately instead of spending an extra retry as in progress.
 - Ship the Agentic OS route before the paired object-library producer; the new
   producer emits explicit `review_mode`, which an older closed route rejects.
   Quiesce the review queue during this upgrade so an unacknowledged legacy

@@ -1353,6 +1353,31 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     monkeypatch.setattr(
         execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
     )
+
+    def poll_error_after_dead_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": 999999}), encoding="utf-8"
+        )
+        raise RuntimeError("fixture governor failure after child exit")
+
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["status"] = "failed"
+    launch_marker.pop("helper_pid", None)
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+    monkeypatch.setattr(runtime_ops, "_run_local_script", poll_error_after_dead_spawn)
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: False,
+    )
+    with pytest.raises(TaskExecutionError) as dead_poll_error:
+        execute_assignment(root, assignment)
+    assert dead_poll_error.value.code == "team_pr_helper_launch_failed"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
     launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
     launch_marker["status"] = "failed"
     launch_marker.pop("helper_pid", None)
@@ -1445,6 +1470,11 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         execute_assignment(root, assignment)
     assert corrupt.value.code == "invalid_team_pr_durable_receipt"
     assert corrupt.value.retryable is False
+    intent_path.write_bytes(b"\xff")
+    with pytest.raises(TaskExecutionError) as byte_corrupt:
+        execute_assignment(root, assignment)
+    assert byte_corrupt.value.code == "invalid_team_pr_durable_receipt"
+    assert byte_corrupt.value.receipt_path == str(intent_path)
 
 
 def test_team_pr_live_pid_with_unknown_command_stays_fenced(

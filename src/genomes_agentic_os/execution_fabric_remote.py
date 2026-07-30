@@ -1843,7 +1843,7 @@ def _read_json_object(path: Path, *, label: str) -> dict[str, Any] | None:
             retryable=True,
             receipt_path=str(path),
         ) from None
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TaskExecutionError(
             "invalid_team_pr_durable_receipt",
             f"{label} is unreadable: {type(exc).__name__}",
@@ -2321,7 +2321,9 @@ def _team_pr_ai_review_worker_locked(
                 )
                 latest_launch = latest_launch or helper_launch
                 latest_pid = latest_launch.get("helper_pid")
-                if isinstance(latest_pid, int):
+                if isinstance(latest_pid, int) and _process_is_team_pr_helper(
+                    latest_pid, helper_summary_path.parent.name
+                ):
                     raise TaskExecutionError(
                         "team_pr_review_in_progress",
                         "Team PR helper may still be running after a dispatch failure",
