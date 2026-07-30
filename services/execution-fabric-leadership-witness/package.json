@@ -1,6 +1,6 @@
 {
   "name": "@genomes-agentic-os/execution-fabric-leadership-witness",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "description": "Provider-neutral independent leadership witness for the Agentic OS execution fabric",
   "type": "module",
