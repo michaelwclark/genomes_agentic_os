@@ -1890,7 +1890,7 @@ def _process_is_team_pr_helper(pid: int, run_id: str) -> bool:
             ).stdout
         args = shlex.split(command)
     except (OSError, ValueError, subprocess.SubprocessError):
-        return False
+        return True
     return (
         any(value.endswith("team_pr_review_fabric.py") for value in args)
         and "--run-id" in args
@@ -2371,7 +2371,12 @@ def _team_pr_ai_review_worker_locked(
                         receipt_path=str(helper_launch_path),
                     )
                 latest_pid = latest_launch.get("helper_pid")
-                child_may_be_live = isinstance(latest_pid, int) or (
+                child_may_be_live = (
+                    isinstance(latest_pid, int)
+                    and _process_is_team_pr_helper(
+                        latest_pid, helper_summary_path.parent.name
+                    )
+                ) or (
                     bool(execution.get("governed_run"))
                     and (
                         execution.get("governed_status") == "stale"

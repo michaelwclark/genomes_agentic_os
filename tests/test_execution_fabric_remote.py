@@ -7,6 +7,7 @@ import os
 from hashlib import sha256
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 from typing import Any
 from urllib.error import HTTPError
@@ -1377,6 +1378,43 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         execute_assignment(root, assignment)
     assert stale_child.value.code == "team_pr_review_in_progress"
     assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "running"
+
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["status"] = "failed"
+    launch_marker.pop("helper_pid", None)
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+
+    def terminal_helper_failure(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": 999999}), encoding="utf-8"
+        )
+        return {
+            "supported": True,
+            "ok": False,
+            "returncode": 1,
+            "governed_run": str(tmp_path / "failed-run"),
+            "governed_status": "failure",
+            "timed_out": False,
+            "errors": ["fixture helper failed deterministically"],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", terminal_helper_failure)
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: False,
+    )
+    with pytest.raises(TaskExecutionError) as terminal_child:
+        execute_assignment(root, assignment)
+    assert terminal_child.value.code != "team_pr_review_in_progress"
+    assert terminal_child.value.receipt_path is not None
+    assert Path(terminal_child.value.receipt_path).is_file()
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
     monkeypatch.setattr(runtime_ops, "_run_local_script", run)
     summary_path.write_text(json.dumps(helper_result), encoding="utf-8")
     recovered = execute_assignment(root, assignment)
@@ -1407,6 +1445,23 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
         execute_assignment(root, assignment)
     assert corrupt.value.code == "invalid_team_pr_durable_receipt"
     assert corrupt.value.retryable is False
+
+
+def test_team_pr_live_pid_with_unknown_command_stays_fenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_alive", lambda _pid: True
+    )
+    monkeypatch.setattr(
+        execution_fabric_remote.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired("ps", 5)
+        ),
+    )
+
+    assert execution_fabric_remote._process_is_team_pr_helper(4242, "run-id") is True
 
 
 def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(

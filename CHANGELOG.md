@@ -35,6 +35,9 @@ All notable changes to this project are documented here. The format follows
   other host fails retryably before helper execution.
 - Derive the helper receipt domain from the validated task route so the generic
   execution-fabric package does not hard-code a private domain path.
+- Classify a failed helper with a dead registered PID instead of consuming the
+  retry budget as perpetually in progress, while keeping a live but
+  unverifiable PID fail-closed behind the orphan fence.
 - Ship the Agentic OS route before the paired object-library producer; the new
   producer emits explicit `review_mode`, which an older closed route rejects.
   Quiesce the review queue during this upgrade so an unacknowledged legacy
