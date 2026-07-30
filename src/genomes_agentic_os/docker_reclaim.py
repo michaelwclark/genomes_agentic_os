@@ -3,8 +3,8 @@
 Every per-worktree dev stack creates its own compose project: a network, a set
 of named volumes, and images. When a worktree is deleted after its PR merges,
 those resources stay behind. They accumulate until Docker runs out of address
-pools and no new stack can start at all -- observed on bigmac with 32 networks,
-28 of them empty.
+pools and no new stack can start at all -- observed on one dev host with 32
+networks, 28 of them empty.
 
 Deciding what is safe to delete is the whole problem. Two predicates are
 tempting and both are wrong:
@@ -13,8 +13,8 @@ tempting and both are wrong:
   its postgres volume. Docker reports that volume as dangling, and pruning it
   destroys a live dev database.
 * "worktree registry says complete" -- the registry is advisory and drifts. On
-  bigmac all 94 registered LOS worktrees claim ``status: active`` while only 57
-  directories exist and 4 stacks run.
+  one dev host all 94 registered worktrees claim ``status: active`` while only
+  57 directories exist and 4 stacks run.
 
 This module uses the conjunction of two independent facts instead, and deletes
 only when both agree the owner is gone:
@@ -196,8 +196,8 @@ def _match_owner(token: str, live_tokens: dict[str, str]) -> str | None:
     name, which is why plain prefixing is not enough:
 
     * truncation -- compose shortens long project names for container names
-      (``072926-git-...-sso-managed-us`` becomes ``los-072926-git-...-los-a``);
-    * prefixing -- LOS stacks name their compose project ``los-<dir>``, so the
+      (``072926-git-...-sso-managed-us`` becomes ``acme-072926-git-...-acme-a``);
+    * prefixing -- some stacks name their compose project ``acme-<dir>``, so the
       directory token appears in the *middle* of a network name while volumes
       keep the bare directory name.
 
