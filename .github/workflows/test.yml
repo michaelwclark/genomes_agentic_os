@@ -178,7 +178,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e '.[dev]'
       - uses: azure/setup-helm@v4
         with:
-          version: v3.17.3
+          version: v3.21.3
       - name: Validate deployment and installer assets
         run: python -m pytest -q tests/test_execution_fabric_deployment_assets.py tests/test_execution_fabric_release.py
       - name: Lint Helm worker chart
