@@ -44,6 +44,35 @@ Canonical program: `harness/shared_factory/00-programs/host_agentic_os_health/`.
    - `manual-only`: user/operator handles directly
 5. Use narrower cleanup commands only after their own dry-run report is reviewed.
 
+## Docker / OrbStack reclamation
+
+Per-worktree dev stacks leave a compose network and named volumes behind when
+their worktree is deleted. Left alone they accumulate until Docker exhausts its
+address pools and no new stack can start.
+
+```sh
+harness/bin/agentic-os-docker-reclaim --root <os-root>            # report (default)
+harness/bin/agentic-os-docker-reclaim --root <os-root> --apply    # reclaim
+```
+
+Deletion requires **both**: no directory for the owning compose project under
+any worktree root, and no attached container. Either predicate alone destroys
+real state — "no running container" deletes the postgres volume of a merely
+stopped worktree, and the worktree registry drifts too far to be trusted (every
+registered LOS worktree reports `status: active`). Ambiguity keeps the resource.
+
+Images and build cache are opt-in, not default. `docker volume prune` without
+`-a` only removes anonymous volumes, so it never reclaims these named
+per-worktree volumes.
+
+A daily report-only schedule (`host_health_docker_reclaim`) writes receipts to
+`harness/shared_factory/06-runs-and-logs/docker-reclaim/`. Review those before
+arming `--apply`.
+
+Do **not** move this into `$auto-dev-health`. That skill forbids host-wide
+container/volume/network cleanup so per-item cleanup cannot touch resources it
+does not own; the post-merge path is a chained host-scoped run after Health.
+
 ## Safety Rules
 
 - Never delete files from this skill without explicit approval.

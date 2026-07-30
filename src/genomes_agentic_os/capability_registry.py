@@ -1081,7 +1081,7 @@ def skill_entries() -> list[dict[str, str]]:
         {
             "id": "os-health",
             "name": "OS Health",
-            "description": "Inspect host speed risks and Agentic OS generated-artifact hygiene with observe-only reports and approval-gated cleanup classes.",
+            "description": "Inspect host speed risks and Agentic OS generated-artifact hygiene with observe-only reports and approval-gated cleanup classes, including guarded Docker/OrbStack reclamation of networks and volumes orphaned by removed worktrees.",
             "source": "harness/skills/os-health/SKILL.md",
         },
     ]

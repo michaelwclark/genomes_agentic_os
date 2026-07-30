@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Reclaim orphaned Docker/OrbStack resources for the host health program.
+
+Report-only by default. `--apply` deletes, and only ever deletes a resource
+whose owning worktree directory is gone AND which has no attached container.
+
+    agentic-os-docker-reclaim --root ~/agentic_os                  # report
+    agentic-os-docker-reclaim --root ~/agentic_os --apply          # reclaim
+    agentic-os-docker-reclaim --root ~/agentic_os --scope networks # narrower
+
+Owned by the host_agentic_os_health OSProgram.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).resolve().parents[2] / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+try:
+    from genomes_agentic_os.docker_reclaim import (  # noqa: E402
+        ALL_SCOPES,
+        DEFAULT_SCOPES,
+        DockerClient,
+        apply_plan,
+        build_plan,
+        default_worktree_roots,
+        discover_worktree_dirs,
+        utc_now,
+        write_receipt,
+    )
+except ModuleNotFoundError:  # pragma: no cover - install drift
+    sys.stderr.write(
+        "agentic-os-docker-reclaim: cannot import genomes_agentic_os.docker_reclaim.\n"
+        "Run from the source checkout or reinstall the package.\n"
+    )
+    raise SystemExit(2)
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="agentic-os-docker-reclaim",
+        description="Reclaim Docker/OrbStack resources orphaned by removed worktrees.",
+    )
+    parser.add_argument("--root", default=str(Path.home() / "agentic_os"), help="Agentic OS root")
+    parser.add_argument(
+        "--projects-root",
+        default=str(Path.home() / "projects"),
+        help="Directory holding plain source checkouts that also run compose stacks",
+    )
+    parser.add_argument(
+        "--scope",
+        action="append",
+        choices=ALL_SCOPES,
+        help=f"Resource classes to consider (default: {', '.join(DEFAULT_SCOPES)}). Repeatable.",
+    )
+    parser.add_argument(
+        "--protect",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Exact resource name that must never be removed. Repeatable.",
+    )
+    parser.add_argument("--apply", action="store_true", help="Delete; default is report-only")
+    parser.add_argument("--json", action="store_true", help="Emit the receipt to stdout")
+    parser.add_argument(
+        "--no-receipt", action="store_true", help="Skip writing the receipt file"
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).expanduser()
+    scopes = tuple(args.scope) if args.scope else DEFAULT_SCOPES
+
+    if "images" in scopes or "cache" in scopes:
+        # Kept explicit: these were deliberately left out of the default set.
+        sys.stderr.write(
+            "note: image/cache reclamation is not implemented; those scopes are ignored.\n"
+        )
+        scopes = tuple(s for s in scopes if s in ("networks", "volumes")) or DEFAULT_SCOPES
+
+    client = DockerClient()
+    if not client.available():
+        # A stopped OrbStack is normal on a laptop, not a failure worth alerting on.
+        print("docker/orbstack unavailable; nothing to reclaim.")
+        return 0
+
+    roots = default_worktree_roots(root, Path(args.projects_root).expanduser())
+    live = discover_worktree_dirs(roots)
+
+    plan = build_plan(client, live, scopes=scopes, protected_names=args.protect)
+    if args.apply:
+        plan = apply_plan(client, plan)
+
+    receipt = plan.as_receipt(utc_now())
+
+    if not args.no_receipt:
+        receipt["receipt_path"] = str(write_receipt(root, receipt))
+
+    if args.json:
+        print(json.dumps(receipt, indent=2))
+    else:
+        summary = receipt["summary"]
+        verb = "reclaimed" if args.apply else "reclaimable"
+        print(
+            f"[docker-reclaim] {verb}={summary['reclaimable']} kept={summary['kept']} "
+            f"protected_worktrees={receipt['protected_worktrees']} "
+            f"scopes={','.join(receipt['scopes'])}"
+        )
+        for kind, count in sorted(summary["reclaimable_by_kind"].items()):
+            print(f"    {kind}: {count}")
+        if receipt.get("receipt_path"):
+            print(f"    receipt: {receipt['receipt_path']}")
+        for err in receipt["errors"]:
+            print(f"    error: {err}")
+
+    return 1 if receipt["errors"] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
