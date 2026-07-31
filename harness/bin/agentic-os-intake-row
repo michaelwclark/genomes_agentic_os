@@ -6,7 +6,9 @@ Pass --route-text (or omit --project) to resolve Project via the routing registr
 Prints the created row URL on success and exits non-zero on failure.
 
 ENVIRONMENT
-  GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace. Required.
+  GENOMES_NOTION_BRIDGE_COMMAND  Reviewed built Notion bridge argv. Required.
+  GENOMES_NOTION_PAT             Notion token passed only to the bridge child.
+  GENOMES_NOTION_PARENT_PAGE_ID  Exact Genome's Notion parent identity. Required.
 
 CONFIG FILES (read at runtime)
   harness/registries/intake-routing.yml
@@ -28,13 +30,16 @@ EXAMPLES
 """
 
 import argparse
-import json
 import os
 import sys
 import textwrap
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+_SOURCE = Path(__file__).resolve().parents[2] / "src"
+if (_SOURCE / "genomes_agentic_os" / "notion_bridge.py").is_file():
+    sys.path.insert(0, str(_SOURCE))
+
+from genomes_agentic_os.notion_bridge import client_from_environment
 
 try:
     import yaml
@@ -50,11 +55,6 @@ except ImportError:
 # 50/50 decision: mirror agentic-os-intake-sync's pattern of hardcoding this constant
 # rather than requiring it in a config file that does not currently carry it.
 NOTION_DB_ID = "c442dd56a24340f0880acfd195f34225"
-
-NOTION_API = "https://api.notion.com/v1"
-
-# Notion API version header value — pinned per intake-sync sibling.
-NOTION_VERSION = "2022-06-28"
 
 # Routing registry path — resolved relative to THIS script's parent's parent.
 # Assumes: harness/bin/<this-script>  →  harness/registries/intake-routing.yml
@@ -104,51 +104,54 @@ def resolve_project(route_text: str, registry: dict) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Notion HTTP helpers
+# Notion bridge helpers
 # ---------------------------------------------------------------------------
 
 
-def _notion_request(method: str, path: str, token: str, body: dict | None = None) -> dict:
-    """Make a Notion API request. Raises RuntimeError on non-2xx response."""
-    url = f"{NOTION_API}{path}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Notion-Version": NOTION_VERSION,
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        body_bytes = exc.read()
-        try:
-            err = json.loads(body_bytes)
-            msg = err.get("message", body_bytes.decode(errors="replace"))
-        except Exception:
-            msg = body_bytes.decode(errors="replace")
-        raise RuntimeError(f"Notion API {method} {path} → HTTP {exc.code}: {msg}") from exc
+def _notion_client(token: str):
+    return client_from_environment(token=token)
 
 
-def notion_create_page(token: str, properties: dict) -> dict:
+def _title_marker(properties: dict) -> str:
+    title = properties.get("Name", {}).get("title", [])
+    marker = "".join(
+        str(item.get("text", {}).get("content") or "")
+        for item in title
+        if isinstance(item, dict)
+    ).strip()
+    if not marker:
+        raise RuntimeError("Notion intake row requires a non-empty title marker")
+    return marker
+
+
+def create_intake_page(
+    token: str, properties: dict, *, children: list[dict] | None = None
+) -> dict:
     """Create a Notion page in the intake DB. Returns the full page object."""
-    body = {
-        "parent": {"database_id": NOTION_DB_ID},
-        "properties": properties,
-    }
-    return _notion_request("POST", "/pages", token, body)
-
-
-def notion_patch_page(token: str, page_id: str, properties: dict) -> dict:
-    """Update properties on an existing Notion page."""
-    return _notion_request("PATCH", f"/pages/{page_id}", token, {"properties": properties})
-
-
+    client = _notion_client(token)
+    identity = client.identity
+    if identity is None:
+        raise RuntimeError(
+            "GENOMES_NOTION_PARENT_PAGE_ID is required for Notion intake writes"
+        )
+    result = client.request(
+        "createPage",
+        {
+            "input": {
+                "parent": {"type": "database_id", "id": NOTION_DB_ID},
+                "properties": properties,
+                **({"children": children} if children else {}),
+                "reconciliation": {
+                    "parentPageId": identity["parentPageId"],
+                    "marker": _title_marker(properties),
+                },
+            }
+        },
+        mutation=True,
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError("Notion bridge returned an invalid created page")
+    return result
 # ---------------------------------------------------------------------------
 # Property builders
 # ---------------------------------------------------------------------------
@@ -222,8 +225,9 @@ def build_children_from_file(body_file: Path) -> list[dict]:
 
 _EPILOG = textwrap.dedent("""\
     ENVIRONMENT
-      GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace.
-                          Required (never printed).
+      GENOMES_NOTION_BRIDGE_COMMAND  Reviewed built Notion bridge argv.
+      GENOMES_NOTION_PAT             Notion token passed only to the bridge child.
+      GENOMES_NOTION_PARENT_PAGE_ID  Exact Genome's Notion parent identity.
 
     CONFIG FILES (read at runtime)
       harness/registries/intake-routing.yml
@@ -415,14 +419,7 @@ def main() -> None:
     # Create the page
     print(f"  {route_note}")
     try:
-        body: dict = {
-            "parent": {"database_id": NOTION_DB_ID},
-            "properties": properties,
-        }
-        if children:
-            body["children"] = children
-
-        page = _notion_request("POST", "/pages", token, body)
+        page = create_intake_page(token, properties, children=children)
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
