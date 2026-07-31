@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -22,6 +23,13 @@ def _marker_label(idempotency_key: str) -> str:
     return (
         f"agentic-os-spec-{hashlib.sha256(idempotency_key.encode()).hexdigest()[:16]}"
     )
+
+
+def _project_jql(project: str) -> str:
+    """Return one validated, quoted Jira project operand."""
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", project):
+        raise JiraBridgeError("INVALID_REQUEST", "Jira project key is invalid")
+    return f'project = "{project}"'
 
 
 def _spec_adf(spec: Mapping[str, Any], marker: str) -> dict[str, Any]:
@@ -167,7 +175,7 @@ class JiraBridgeSpecTransport:
             label = _marker_label(str(payload["idempotency_key"]))
             page = self.client.request(
                 "searchIssues",
-                {"jql": f'project = {project} AND labels = "{label}"', "limit": 2},
+                {"jql": f'{_project_jql(project)} AND labels = "{label}"', "limit": 2},
             )
             values = page.get("values") if isinstance(page, Mapping) else None
             if not isinstance(values, list):
@@ -216,7 +224,7 @@ class JiraBridgeSpecTransport:
                         ),
                         "description": _spec_adf(spec, marker),
                         "fields": fields,
-                        "reconciliationJql": f'project = {project} AND labels = "{label}"',
+                        "reconciliationJql": f'{_project_jql(project)} AND labels = "{label}"',
                     },
                 )
             else:
@@ -243,7 +251,7 @@ class JiraBridgeSpecTransport:
                     else {}
                 )
                 current_labels = current_fields.get("labels")
-                if current_labels is not None and not isinstance(current_labels, list):
+                if not isinstance(current_labels, list):
                     raise JiraBridgeError(
                         "BRIDGE_INVALID_RESPONSE",
                         "Jira update pre-read returned invalid labels",
@@ -311,18 +319,15 @@ class JiraBridgeSpecTransport:
                 )
             return self._provider_record(issue)
         if action == "get_by_spec_id":
-            return {}
-        if action == "list_specs":
-            page = self.client.request(
-                "searchIssues",
-                {"jql": f'project = {project} AND labels = "agentic-os-spec"'},
+            raise JiraBridgeError(
+                "UNSUPPORTED_OPERATION",
+                "Jira Spec lookup by local spec id is not exposed by the shared port",
             )
-            values = page.get("values") if isinstance(page, Mapping) else None
-            if not isinstance(values, list) or page.get("complete") is not True:
-                raise JiraBridgeError(
-                    "BRIDGE_INVALID_RESPONSE", "Jira list returned incomplete results"
-                )
-            return {"items": values}
+        if action == "list_specs":
+            raise JiraBridgeError(
+                "UNSUPPORTED_OPERATION",
+                "Jira Spec listing is not exposed by the shared port",
+            )
         raise JiraBridgeError(
             "UNSUPPORTED_OPERATION", "Unsupported Jira Spec transport action"
         )
@@ -420,6 +425,12 @@ class JiraSpecAdapter(GuardedProviderAdapter):
         ):
             raise ValueError(
                 "active sprint placement is disabled by Jira project policy"
+            )
+        if requested == "active_sprint" and isinstance(
+            self.transport, JiraBridgeSpecTransport
+        ):
+            raise ValueError(
+                "active sprint placement is unsupported by the shared Jira port"
             )
         plan.update(
             {

@@ -99,7 +99,10 @@ class FakeBridge:
             }
             return deepcopy(self.issue)
         if operation == "addComment":
-            return {"id": "comment-1", "body": args["input"]["body"]}
+            self.comment = {"id": "comment-1", "body": args["input"]["body"]}
+            return deepcopy(self.comment)
+        if operation == "listComments":
+            return {"values": [deepcopy(self.comment)], "complete": True}
         raise AssertionError(operation)
 
 
@@ -133,6 +136,7 @@ def test_live_jira_tracker_claim_and_transition_are_preflighted_and_reread() -> 
     assert operations.count("preflightIdentity") == 2
     assert "updateIssue" in operations
     assert operations.count("transitionIssue") == 2
+    assert operations.count("listComments") == 1
     comment = next(
         args for operation, args in bridge.calls if operation == "addComment"
     )
@@ -171,6 +175,25 @@ def test_live_jira_tracker_bearer_mode_uses_atlassian_gateway() -> None:
     assert list(adapter.client.command) == ["node", "bridge.js"]
     assert adapter.client.base_url == "https://api.atlassian.com/ex/jira/cloud-131"
     assert adapter.client.auth == {"JIRA_OAUTH_TOKEN": "secret"}
+
+
+def test_live_jira_tracker_preflight_keeps_canonical_atlassian_identity() -> None:
+    module = _load_jira_tracker()
+    adapter = module.JiraBridgeAdapter.from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "ATLASSIAN_BASE_URL": "https://api.atlassian.com/ex/jira/cloud-131",
+            "ATLASSIAN_ACCESS_TOKEN": "secret",
+            "ATLASSIAN_JIRA_CLOUDID": "cloud-131",
+            "ATLASSIAN_ACCOUNT_ID": "account-131",
+            "JIRA_SITE_URL": "https://tenant.invalid",
+            "JIRA_PROJECT_KEY": "APP",
+            "JIRA_ISSUE_TYPE_ID": "10001",
+        }
+    )
+
+    assert adapter.identity["cloudId"] == "cloud-131"
+    assert adapter.identity["accountId"] == "account-131"
 
 
 def test_live_jira_tracker_bearer_mode_requires_gateway_identity() -> None:

@@ -7,13 +7,17 @@ from typing import Any
 import pytest
 
 import genomes_agentic_os.source_providers as source_providers
+import genomes_agentic_os.source_watch as source_watch
 from genomes_agentic_os.jira_bridge import JiraBridgeError
 from genomes_agentic_os.source_providers import fetch_jira_issues, poll_jira_source
 from genomes_agentic_os.source_watch import (
     connected_systems,
+    create_watch_source,
     default_connected_systems,
     default_source_providers,
     ensure_registries,
+    poll_watch_source,
+    record_cursor,
     select_provider,
 )
 
@@ -91,6 +95,56 @@ def test_jira_unbounded_search_rejects_but_bounded_search_accepts_incomplete_res
     )
     assert result["ok"] is True
     assert result["partial"] is True
+
+
+def test_partial_jira_poll_writes_event_without_advancing_cursor(
+    tmp_path, monkeypatch
+) -> None:
+    os_root = ensure_registries(tmp_path)
+    create_watch_source(
+        tmp_path,
+        "jira_partial_watch",
+        connected_system="jira_genome",
+        source_type="jira_issue",
+        external_ref={"project_key": "APP"},
+        enabled=True,
+    )
+    record_cursor(
+        tmp_path,
+        "jira_partial_watch",
+        {
+            "id": "old-event",
+            "observed_at": "2026-07-29T18:02:03Z",
+            "dedupe": {"idempotency_key": "old-key"},
+        },
+    )
+    cursor_path = os_root / source_watch.WATCH_CURSORS_FILE
+    before = source_watch.load_yaml(cursor_path)
+    monkeypatch.setattr(
+        source_watch,
+        "poll_live_source",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "live": True,
+            "items": [
+                {
+                    "key": "APP-131",
+                    "updated_at": "2026-07-29T18:03:00Z",
+                    "_idempotency_key": "jira:issue:APP-131:updated",
+                }
+            ],
+            "item_count": 1,
+            "provider": "platform_jira_port",
+            "partial": True,
+        },
+    )
+
+    result = poll_watch_source(tmp_path, "jira_partial_watch", dry_run=False)
+
+    assert result["ok"] is True
+    assert result["adapter"]["partial"] is True
+    assert result["events"][0]["payload_ref"]["partial"] is True
+    assert source_watch.load_yaml(cursor_path) == before
 
 
 def test_jira_watch_rejects_non_numeric_limit_as_provider_finding() -> None:

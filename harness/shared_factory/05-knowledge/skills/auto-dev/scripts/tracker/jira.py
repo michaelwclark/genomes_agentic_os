@@ -132,8 +132,17 @@ class JiraBridgeAdapter:
                 or values.get("JIRA_DEFAULT_ISSUE_TYPE_ID")
                 or ""
             ).strip(),
-            "cloudId": values.get("JIRA_CLOUD_ID", "").strip(),
-            "accountId": values.get("JIRA_ACCOUNT_ID", "").strip(),
+            "cloudId": (
+                values.get("ATLASSIAN_JIRA_CLOUDID")
+                or values.get("JIRA_CLOUD_ID")
+                or values.get("ATLASSIAN_CLOUD_ID")
+                or ""
+            ).strip(),
+            "accountId": (
+                values.get("JIRA_ACCOUNT_ID")
+                or values.get("ATLASSIAN_ACCOUNT_ID")
+                or ""
+            ).strip(),
         }
         if not all(
             identity.get(key) for key in ("siteUrl", "projectKey", "issueTypeId")
@@ -279,13 +288,25 @@ class JiraBridgeAdapter:
             body["content"].append(
                 {"type": "paragraph", "content": [{"type": "text", "text": marker}]}
             )
-            self._request(
+            comment = self._request(
                 "addComment",
                 {
                     "key": tracker_id,
                     "input": {"body": body, "reconciliationMarker": marker},
                 },
             )
+            if not isinstance(comment, Mapping) or not str(
+                comment.get("id") or ""
+            ).strip():
+                raise TrackerError("Jira comment write returned invalid data")
+            comments = self._request("listComments", {"key": tracker_id})
+            values = comments.get("values") if isinstance(comments, Mapping) else None
+            if (
+                not isinstance(values, list)
+                or comments.get("complete") is not True
+                or sum(marker in str(value) for value in values) != 1
+            ):
+                raise TrackerError("Jira comment re-read did not confirm marker")
         reread = self.fetch(tracker_id)
         if reread.workflow_state != state:
             raise TrackerError("transition re-read did not confirm workflow state")

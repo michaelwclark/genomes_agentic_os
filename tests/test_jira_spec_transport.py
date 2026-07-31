@@ -132,7 +132,7 @@ def test_jira_spec_apply_uses_preflight_marker_native_adf_and_readback() -> None
     create = client.calls[2][1]
     assert create["issueType"] == "10001"
     assert create["reconciliationJql"].startswith(
-        'project = APP AND labels = "agentic-os-spec-'
+        'project = "APP" AND labels = "agentic-os-spec-'
     )
     assert create["fields"]["labels"][0] == "agentic-os-spec"
     assert create["description"]["type"] == "doc"
@@ -165,15 +165,56 @@ def test_jira_spec_duplicate_marker_and_active_sprint_fail_closed() -> None:
     assert "disabled" in str(sprint.error)
 
 
-def test_jira_spec_rejects_incomplete_marker_and_list_searches() -> None:
+def test_shared_jira_port_rejects_active_sprint_during_planning() -> None:
+    client = FakeBridgeClient()
+    adapter = JiraSpecAdapter(
+        {
+            "enabled": True,
+            "target": {
+                "site_url": "https://jira.invalid",
+                "project_key": "APP",
+                "issue_type_id": "10001",
+            },
+            "placement": {
+                "default": "active_sprint",
+                "allow_active_sprint_override": True,
+            },
+        },
+        JiraBridgeSpecTransport(client),  # type: ignore[arg-type]
+    )
+
+    receipt = adapter.create(Spec(id="one", title="One"))
+
+    assert receipt.status == "blocked"
+    assert "unsupported by the shared Jira port" in str(receipt.error)
+    assert client.calls == []
+
+
+def test_jira_spec_rejects_unsafe_project_key_before_search() -> None:
+    client = FakeBridgeClient()
+    transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
+    with pytest.raises(JiraBridgeError, match="project key is invalid"):
+        transport.request(
+            "find_by_idempotency",
+            {
+                "target": {"project_key": 'APP" OR project IS NOT EMPTY'},
+                "idempotency_key": "spec:acme:app:one",
+            },
+        )
+    assert client.calls == []
+
+
+def test_jira_spec_rejects_incomplete_marker_and_unsupported_list() -> None:
     client = FakeBridgeClient(search_complete=False)
     receipt = _adapter(client).create(Spec(id="one", title="One"), apply=True)
     assert receipt.ok is False
     assert "incomplete results" in str(receipt.error)
 
     transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
-    with pytest.raises(JiraBridgeError, match="incomplete results"):
+    with pytest.raises(JiraBridgeError, match="listing is not exposed"):
         transport.request("list_specs", {"target": {"project_key": "APP"}})
+
+    assert _adapter(client).list() == []
 
 
 def test_jira_spec_update_preserves_existing_human_labels() -> None:
@@ -192,6 +233,24 @@ def test_jira_spec_update_preserves_existing_human_labels() -> None:
     labels = update["input"]["fields"]["labels"]
     assert labels[:2] == ["human-owned", "agentic-os-spec"]
     assert labels[2].startswith("agentic-os-spec-")
+
+
+def test_jira_spec_update_rejects_missing_labels_projection() -> None:
+    client = FakeBridgeClient(duplicate_matches=1)
+    original = client.request
+
+    def missing_labels(operation: str, args: dict[str, Any]) -> Any:
+        if operation == "getIssue" and args.get("fields") == ["labels"]:
+            client.calls.append((operation, args))
+            return {"key": args["key"], "fields": {}}
+        return original(operation, args)
+
+    client.request = missing_labels  # type: ignore[method-assign]
+    receipt = _adapter(client).create(
+        Spec(id="one", title="One", domain="acme", project="app"), apply=True
+    )
+    assert receipt.ok is False
+    assert "invalid labels" in str(receipt.error)
 
 
 def test_jira_spec_transition_resolves_exact_available_destination_and_rereads() -> None:
