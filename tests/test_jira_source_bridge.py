@@ -72,18 +72,25 @@ def test_jira_watch_uses_bounded_shared_search_and_trimmed_events() -> None:
     assert "description" not in item
 
 
-def test_jira_unbounded_search_still_rejects_incomplete_results() -> None:
+def test_jira_unbounded_search_rejects_but_bounded_search_accepts_incomplete_results() -> None:
     with pytest.raises(JiraBridgeError, match="incomplete unbounded search"):
         fetch_jira_issues(
             "project = APP",
             client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
         )
-    with pytest.raises(JiraBridgeError, match="incomplete bounded watch search"):
-        fetch_jira_issues(
-            "project = APP",
-            client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
-            limit=250,
-        )
+    assert fetch_jira_issues(
+        "project = APP",
+        client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
+        limit=250,
+    )[0]["key"] == "APP-131"
+
+    result = poll_jira_source(
+        {"external_ref": {"project_key": "APP"}},
+        {"system": "jira"},
+        client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
+    )
+    assert result["ok"] is True
+    assert result["partial"] is True
 
 
 def test_jira_watch_rejects_non_numeric_limit_as_provider_finding() -> None:
@@ -123,11 +130,12 @@ def test_jira_watch_adds_persisted_cursor_before_ordering() -> None:
         client=bridge,  # type: ignore[arg-type]
     )
     assert result["ok"]
-    assert bridge.calls[0][1] == {
-        "jql": '(project = "APP") AND updated >= "2026-07-29 18:00" ORDER BY updated DESC',
-        "fields": ["updated", "labels"],
-        "limit": 50,
-    }
+    args = bridge.calls[0][1]
+    assert args["jql"].startswith('(project = "APP") AND updated >= -')
+    assert args["jql"].endswith("m ORDER BY updated DESC")
+    assert '"2026-07-29 18:00"' not in args["jql"]
+    assert args["fields"] == ["updated", "labels"]
+    assert args["limit"] == 50
 
 
 def test_default_jira_registry_routes_polling_to_shared_bridge() -> None:

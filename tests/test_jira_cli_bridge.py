@@ -124,15 +124,16 @@ def test_exported_real_browse_base_does_not_trigger_placeholder_guard(
     assert client.preflight_issue("APP-131") == {"project": {"key": "APP"}}
 
 
-def test_cli_search_rejects_incomplete_bounded_collection() -> None:
+def test_cli_search_accepts_incomplete_bounded_collection() -> None:
     module = _load_cli()
     client = _facade(module)
     client.bridge.request = lambda _operation, _args: {
         "values": [{"key": "APP-1"}],
         "complete": False,
     }
-    with pytest.raises(module.JiraCliError, match="incomplete search collection"):
-        client.search("project = APP", ["summary"], limit=1)
+    assert client.search("project = APP", ["summary"], limit=1) == [
+        {"key": "APP-1"}
+    ]
 
 
 def test_comment_dry_run_never_resolves_auth_or_invokes_bridge(monkeypatch) -> None:

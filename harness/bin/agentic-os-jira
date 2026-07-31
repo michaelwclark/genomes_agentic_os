@@ -267,8 +267,8 @@ class JiraBridgeFacade:
             isinstance(item, dict) for item in values
         ):
             raise JiraCliError("Jira bridge returned invalid search results")
-        if data.get("complete") is not True:
-            raise JiraCliError("Jira bridge returned an incomplete search collection")
+        if not isinstance(data.get("complete"), bool):
+            raise JiraCliError("Jira bridge omitted search completeness metadata")
         return values
 
     def get_issue(self, issue_key: str, fields: list[str]) -> dict[str, Any]:

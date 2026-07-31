@@ -46,7 +46,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .github_bridge import (
@@ -539,7 +539,27 @@ def fetch_jira_issues(
     client: JiraBridgeClient,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return one explicitly bounded Jira watch batch or exhaust an unbounded query."""
+    """Return one bounded Jira batch or exhaust an unbounded query.
+
+    The shared Jira port reports ``complete=False`` when an explicit ``limit``
+    truncates an otherwise valid result.  That is expected pagination metadata,
+    not a provider failure.  Unbounded calls still require a complete result.
+    """
+    items, complete = _fetch_jira_issue_page(jql, client=client, limit=limit)
+    if not complete and limit is None:
+        raise JiraBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge returned an incomplete unbounded search"
+        )
+    return items
+
+
+def _fetch_jira_issue_page(
+    jql: str,
+    *,
+    client: JiraBridgeClient,
+    limit: int | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return a validated bounded page and the bridge completeness flag."""
     args: dict[str, Any] = {"jql": jql, "fields": ["updated", "labels"]}
     if limit is not None:
         args["limit"] = limit
@@ -552,23 +572,21 @@ def fetch_jira_issues(
         raise JiraBridgeError(
             "BRIDGE_INVALID_RESPONSE", "Jira bridge returned invalid search results"
         )
-    if page.get("complete") is not True:
-        scope = "unbounded search" if limit is None else "bounded watch search"
+    complete = page.get("complete")
+    if not isinstance(complete, bool):
         raise JiraBridgeError(
-            "BRIDGE_INVALID_RESPONSE", f"Jira bridge returned an incomplete {scope}"
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge omitted search completeness metadata"
         )
-    return [_jira_issue_to_source_item(item) for item in values]
+    return [_jira_issue_to_source_item(item) for item in values], complete
 
 
 def _jira_jql_with_cursor(jql: str, cursor: str | None) -> str:
-    """Add a validated cursor with a two-minute race-safe overlap."""
+    """Add a timezone-neutral relative cursor with a race-safe overlap."""
     if not cursor:
         return jql
     try:
         parsed = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
-        literal = (
-            parsed.astimezone(timezone.utc) - timedelta(minutes=2)
-        ).strftime("%Y-%m-%d %H:%M")
+        parsed = parsed.astimezone(timezone.utc)
     except (TypeError, ValueError) as exc:
         raise JiraBridgeError(
             "INVALID_REQUEST", "Jira watch cursor is not a valid timestamp"
@@ -576,7 +594,12 @@ def _jira_jql_with_cursor(jql: str, cursor: str | None) -> str:
     match = re.search(r"\s+ORDER\s+BY\s+", jql, flags=re.IGNORECASE)
     body = jql[: match.start()].strip() if match else jql.strip()
     order = jql[match.start() :].strip() if match else "ORDER BY updated DESC"
-    return f'({body}) AND updated >= "{literal}" {order}'
+    age = datetime.now(timezone.utc) - parsed
+    # Jira interprets absolute JQL date literals in the caller's profile
+    # timezone.  A relative-minute operand has the same meaning for every
+    # profile and the overlap protects edits racing the previous poll.
+    minutes = max(2, int(max(age.total_seconds(), 0) // 60) + 3)
+    return f"({body}) AND updated >= -{minutes}m {order}"
 
 
 def poll_jira_source(
@@ -672,13 +695,14 @@ def poll_jira_source(
         jql = _jira_jql_with_cursor(
             jql, str(source.get("_cursor_since") or "").strip() or None
         )
-        items = fetch_jira_issues(jql, client=client, limit=limit)
+        items, complete = _fetch_jira_issue_page(jql, client=client, limit=limit)
         return {
             "ok": True,
             "live": True,
             "items": items,
             "item_count": len(items),
             "provider": "platform_jira_port",
+            "partial": not complete,
             "dry_run_reason": None,
         }
     except JiraBridgeError as exc:

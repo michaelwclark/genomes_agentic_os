@@ -494,6 +494,7 @@ def normalized_source_event(
             "item_count": item_count,
             "provider": (live_result or {}).get("provider", "direct_api"),
             "credential_env": (live_result or {}).get("credential_env"),
+            "partial": bool((live_result or {}).get("partial", False)),
         }
         adapter_mode = "live_apply" if not dry_run else "live_dry_run"
     else:
@@ -772,6 +773,7 @@ def poll_watch_source(
             "live": live_result.get("live", False),
             "item_count": live_result.get("item_count", 0),
             "dry_run_reason": live_result.get("dry_run_reason"),
+            "partial": live_result.get("partial", False),
         }
 
     event_path = None
@@ -779,7 +781,12 @@ def poll_watch_source(
         event_path = write_source_event(root, event)
         event["path"] = str(event_path)
         result["written"] = [str(event_path)]
-        record_cursor(root, source_id, event)
+        # A bounded bridge result can be intentionally partial.  Persist the
+        # event so its visible items are handled, but do not advance beyond an
+        # unseen tail the bridge could not expose through its current command
+        # contract.
+        if not (live_result or {}).get("partial", False):
+            record_cursor(root, source_id, event)
     trigger_actions = apply_trigger_rules(root, source, event, dry_run=dry_run, event_path=event_path)
     if trigger_actions:
         result["trigger_actions"] = trigger_actions
