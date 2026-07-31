@@ -116,6 +116,7 @@ class JiraBridgeAdapter:
                 JiraBridgeClient,
                 JiraBridgeError,
                 auth_from_environment,
+                base_url_from_environment,
                 command_from_environment,
             )
         except ImportError as exc:
@@ -123,8 +124,6 @@ class JiraBridgeAdapter:
                 "live Jira tracking requires an installed Agentic OS shared bridge"
             ) from exc
         values = os.environ if environ is None else environ
-        command = command_from_environment(values)
-        base_url = values.get("JIRA_BASE_URL", "").strip()
         identity = {
             "siteUrl": values.get("JIRA_SITE_URL", "").strip(),
             "projectKey": values.get("JIRA_PROJECT_KEY", "").strip(),
@@ -136,8 +135,6 @@ class JiraBridgeAdapter:
             "cloudId": values.get("JIRA_CLOUD_ID", "").strip(),
             "accountId": values.get("JIRA_ACCOUNT_ID", "").strip(),
         }
-        if not command or not base_url:
-            raise TrackerError("live Jira bridge command and base URL are required")
         if not all(
             identity.get(key) for key in ("siteUrl", "projectKey", "issueTypeId")
         ):
@@ -145,9 +142,13 @@ class JiraBridgeAdapter:
                 "live Jira site, project, and issue-type identity are required"
             )
         try:
+            command = command_from_environment(values)
             auth = auth_from_environment(values)
+            base_url = base_url_from_environment(values)
         except JiraBridgeError as exc:
             raise TrackerError(str(exc)) from exc
+        if not command:
+            raise TrackerError("live Jira bridge command is required")
         return cls(JiraBridgeClient(command, base_url, auth), identity)
 
     def _request(self, operation: str, args: Mapping[str, Any]) -> Any:
