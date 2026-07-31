@@ -153,22 +153,23 @@ class FakeNotion:
     def __init__(self) -> None:
         self.created = False
 
-    def request(self, method: str, path: str, body=None):
-        if path == "/users/me":
-            return {"bot": {"workspace_name": "Genome's Notion"}}
-        if path == "/databases/db":
-            return {"parent": {"type": "page_id", "page_id": "parent"}}
-        if path == "/pages/parent":
+    def request(self, operation: str, args: dict, **kwargs):
+        if operation == "preflightIdentity":
+            return {"workspaceName": "Genome's Notion"}
+        if operation == "getDatabase":
+            return {"parent": {"type": "page_id", "id": "parent"}}
+        if operation == "getPage" and args["pageId"] == "parent":
             return {"properties": {"Name": {"type": "title", "title": [{"plain_text": "Adaptive Model and Orchestration Router"}]}}}
-        if path == "/databases/db/query":
-            return {"results": []}
-        if path == "/pages" and method == "POST":
+        if operation == "queryDatabase":
+            return {"values": [], "complete": True}
+        if operation == "createPage":
             self.created = True
-            assert body["parent"] == {"database_id": "db"}
+            assert args["input"]["parent"] == {"type": "database_id", "id": "db"}
+            assert kwargs == {"mutation": True}
             return {"id": "page", "url": "https://notion.test/page"}
-        if path == "/pages/page":
+        if operation == "getPage" and args["pageId"] == "page":
             return {"id": "page"}
-        raise AssertionError((method, path, body))
+        raise AssertionError((operation, args, kwargs))
 
 
 def test_projection_is_guarded_append_only_and_aggregate_only(tmp_path: Path) -> None:
@@ -216,10 +217,10 @@ def test_projection_requires_positive_workspace_identity(tmp_path: Path) -> None
     client = FakeNotion()
     original = client.request
 
-    def missing_workspace(method: str, path: str, body=None):
-        if path == "/users/me":
-            return {"bot": {}}
-        return original(method, path, body)
+    def missing_workspace(operation: str, args: dict, **kwargs):
+        if operation == "preflightIdentity":
+            return {"workspaceName": ""}
+        return original(operation, args, **kwargs)
 
     client.request = missing_workspace  # type: ignore[method-assign]
     with pytest.raises(ObservationProjectionError, match="workspace verification"):

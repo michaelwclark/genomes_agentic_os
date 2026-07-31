@@ -8,13 +8,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 from typing import Any, Mapping
-import urllib.error
-import urllib.request
 
+from .notion_bridge import NotionBridgeClient, client_from_environment
 
-NOTION_VERSION = "2022-06-28"
 TOKEN_ENV_NAMES = ("GENOMES_NOTION_PAT", "GENOMES_NOTION_CONNECTOR")
 
 
@@ -54,42 +51,18 @@ def _token() -> str:
     raise ObservationProjectionError("Genome's Notion credential is unavailable")
 
 
-class NotionClient:
-    def __init__(self, token: str, *, retries: int = 3, timeout: float = 30.0) -> None:
-        self.token = token
-        self.retries = retries
-        self.timeout = timeout
-
-    def request(self, method: str, path: str, body: Mapping[str, object] | None = None) -> dict[str, Any]:
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = urllib.request.Request(
-            f"https://api.notion.com/v1{path}",
-            data=data,
-            method=method,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Notion-Version": NOTION_VERSION,
-                "Content-Type": "application/json",
-            },
-        )
-        last_error = ""
-        attempts = 1 if method == "POST" and path == "/pages" else self.retries
-        for attempt in range(1, attempts + 1):
-            try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                    raw = response.read().decode("utf-8")
-                    return json.loads(raw) if raw else {}
-            except urllib.error.HTTPError as exc:
-                raw = exc.read().decode("utf-8", errors="replace")
-                if exc.code != 429 and not 500 <= exc.code < 600:
-                    raise ObservationProjectionError(
-                        f"Notion request failed with HTTP {exc.code}"
-                    ) from exc
-                last_error = f"HTTP {exc.code}"
-            except urllib.error.URLError as exc:
-                last_error = type(exc.reason).__name__
-            time.sleep(min(2**attempt, 8))
-        raise ObservationProjectionError(f"Notion request exhausted retries: {last_error}")
+def _bridge_client(token: str, notion: Mapping[str, object]) -> NotionBridgeClient:
+    base = client_from_environment(token=token)
+    return NotionBridgeClient(
+        base.command,
+        base.auth,
+        identity={
+            "workspaceName": str(notion.get("workspace_expected") or ""),
+            "parentPageId": _compact(notion.get("parent_page_id")),
+        },
+        runner=base.runner,
+        timeout=base.timeout,
+    )
 
 
 def _title(page: Mapping[str, object]) -> str:
@@ -109,17 +82,7 @@ def _title(page: Mapping[str, object]) -> str:
     return ""
 
 
-def _workspace_name(me: Mapping[str, object]) -> str:
-    bot = me.get("bot")
-    if isinstance(bot, Mapping):
-        for key in ("workspace_name", "workspace"):
-            value = bot.get(key)
-            if isinstance(value, str):
-                return value
-    return ""
-
-
-def verify_destination(client: NotionClient, notion: Mapping[str, object]) -> dict[str, str]:
+def verify_destination(client: NotionBridgeClient, notion: Mapping[str, object]) -> dict[str, str]:
     expected = str(notion.get("workspace_expected") or "")
     if expected != "Genome's Notion":
         raise ObservationProjectionError("configured workspace must be Genome's Notion")
@@ -127,17 +90,24 @@ def verify_destination(client: NotionClient, notion: Mapping[str, object]) -> di
     database_id = _compact(notion.get("database_id"))
     if not parent_id or not database_id:
         raise ObservationProjectionError("Notion parent and database IDs are required")
-    me = client.request("GET", "/users/me")
-    actual = _workspace_name(me)
+    identity = client.request(
+        "preflightIdentity",
+        {"workspaceName": expected, "parentPageId": parent_id},
+    )
+    actual = str(identity.get("workspaceName") or "")
     if actual != expected:
         raise ObservationProjectionError("Notion workspace verification failed")
-    database = client.request("GET", f"/databases/{database_id}")
+    database = client.request("getDatabase", {"databaseId": database_id})
+    if not isinstance(database, Mapping):
+        raise ObservationProjectionError("report database was not found")
     parent = database.get("parent")
     if not isinstance(parent, Mapping) or parent.get("type") != "page_id":
         raise ObservationProjectionError("report database has an unexpected parent type")
-    if _compact(parent.get("page_id")) != parent_id:
+    if _compact(parent.get("id")) != parent_id:
         raise ObservationProjectionError("report database is not under the configured router page")
-    parent_page = client.request("GET", f"/pages/{parent_id}")
+    parent_page = client.request("getPage", {"pageId": parent_id})
+    if not isinstance(parent_page, Mapping):
+        raise ObservationProjectionError("configured parent was not found")
     if "Adaptive Model" not in _title(parent_page):
         raise ObservationProjectionError("configured parent is not the adaptive router page")
     return {"workspace": actual or expected, "database_id": database_id, "parent_id": parent_id}
@@ -180,20 +150,22 @@ def _append_report_entry_unlocked(
     window_start: str,
     window_end: str,
     receipt_path: str | Path | None = None,
-    client: NotionClient | None = None,
+    client: NotionBridgeClient | None = None,
 ) -> dict[str, object]:
     """Idempotently append one aggregate report page and verify readback."""
     if notion.get("append_only") is not True:
         raise ObservationProjectionError("Notion projection must be append-only")
-    client = client or NotionClient(_token())
+    client = client or _bridge_client(_token(), notion)
     verified = verify_destination(client, notion)
     database_id = verified["database_id"]
     existing = client.request(
-        "POST",
-        f"/databases/{database_id}/query",
-        {"filter": {"property": "Run ID", "rich_text": {"equals": run_id}}, "page_size": 2},
+        "queryDatabase",
+        {
+            "databaseId": database_id,
+            "filter": {"property": "Run ID", "rich_text": {"equals": run_id}},
+        },
     )
-    results = existing.get("results")
+    results = existing.get("values")
     if isinstance(results, list) and results:
         page_id = str(results[0].get("id") or "")
         result: dict[str, object] = {
@@ -269,14 +241,24 @@ def _append_report_entry_unlocked(
             *[_paragraph(str(item)) for item in assumptions[:20]],
         ]
         created = client.request(
-            "POST",
-            "/pages",
-            {"parent": {"database_id": database_id}, "properties": properties, "children": children},
+            "createPage",
+            {
+                "input": {
+                    "parent": {"type": "database_id", "id": database_id},
+                    "properties": properties,
+                    "children": children,
+                    "reconciliation": {
+                        "parentPageId": verified["parent_id"],
+                        "marker": run_id,
+                    },
+                }
+            },
+            mutation=True,
         )
         page_id = str(created.get("id") or "")
         if not page_id:
             raise ObservationProjectionError("Notion create returned no page ID")
-        readback = client.request("GET", f"/pages/{_compact(page_id)}")
+        readback = client.request("getPage", {"pageId": _compact(page_id)})
         if _compact(readback.get("id")) != _compact(page_id):
             raise ObservationProjectionError("Notion report readback failed")
         result = {
@@ -301,7 +283,7 @@ def append_report_entry(
     window_start: str,
     window_end: str,
     receipt_path: str | Path | None = None,
-    client: NotionClient | None = None,
+    client: NotionBridgeClient | None = None,
 ) -> dict[str, object]:
     """Serialize local query/create operations so one host cannot race itself."""
     receipt = Path(receipt_path) if receipt_path is not None else Path.home() / ".local/state/agentic-os/adaptive-routing/notion-projection.json"
