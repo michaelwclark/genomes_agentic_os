@@ -58,6 +58,7 @@ from .jira_bridge import (
     JiraBridgeClient,
     JiraBridgeError,
     auth_from_environment as jira_auth_from_environment,
+    base_url_from_environment as jira_base_url_from_environment,
     command_from_environment as jira_command_from_environment,
 )
 
@@ -584,18 +585,18 @@ def poll_jira_source(
         }
     if client is None:
         command = jira_command_from_environment()
-        base_url = os.environ.get("JIRA_BASE_URL", "").strip()
-        if not command or not base_url:
+        if not command:
             return {
                 "ok": True,
                 "live": False,
                 "items": [],
                 "item_count": 0,
                 "provider": "platform_jira_port",
-                "dry_run_reason": "Jira bridge command or base URL is not configured",
+                "dry_run_reason": "Jira bridge command is not configured",
             }
         try:
             auth = jira_auth_from_environment()
+            base_url = jira_base_url_from_environment()
         except JiraBridgeError as exc:
             return {
                 "ok": False,
