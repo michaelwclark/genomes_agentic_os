@@ -35,7 +35,7 @@ def _success(result: object):
 def test_reviewed_platform_bridge_revision_is_exact() -> None:
     assert (
         REVIEWED_PLATFORM_BRIDGE_REVISION
-        == "d6ab26c5fb5281467bf7ef695b6f33d385a86d69"
+        == "348e72313cadac57c0763fc4d9b53ae02a6365a0"
     )
 
 
