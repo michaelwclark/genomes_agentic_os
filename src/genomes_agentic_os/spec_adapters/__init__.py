@@ -2,13 +2,15 @@
 
 from .base import SpecAdapter, SpecTransport
 from .filesystem import FilesystemSpecAdapter
-from .jira import JiraSpecAdapter
+from .jira import JiraBridgeSpecTransport, JiraSpecAdapter, transport_from_environment
 from .linear import LinearSpecAdapter
 
 __all__ = [
+    "FilesystemSpecAdapter",
+    "JiraBridgeSpecTransport",
+    "JiraSpecAdapter",
+    "LinearSpecAdapter",
     "SpecAdapter",
     "SpecTransport",
-    "FilesystemSpecAdapter",
-    "LinearSpecAdapter",
-    "JiraSpecAdapter",
+    "transport_from_environment",
 ]

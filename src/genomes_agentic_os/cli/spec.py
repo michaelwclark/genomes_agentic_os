@@ -3,47 +3,80 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..cli_help import AosHelpFormatter, env_epilog
 from ..lifecycle import indexed_work_id
 from ..scaffold import domain_path, expand_path, normalize_domain, validate_name
-from ..spec_adapters import FilesystemSpecAdapter, JiraSpecAdapter, LinearSpecAdapter
-from ..spec_engine import SPEC_STATUSES, SPEC_TYPES, Spec, SpecEngine, normalize_status, normalize_type
+from ..spec_adapters import (
+    FilesystemSpecAdapter,
+    JiraSpecAdapter,
+    LinearSpecAdapter,
+    transport_from_environment,
+)
+from ..spec_engine import (
+    SPEC_STATUSES,
+    SPEC_TYPES,
+    Spec,
+    SpecEngine,
+    normalize_status,
+    normalize_type,
+)
 from ..spec_policy import load_spec_policy
 from ._shared import DEFAULT_ROOT, yaml_dump
 
 
 def _adapter_config(policy: Mapping[str, Any], name: str) -> dict[str, Any]:
-    adapters = policy.get("adapters") if isinstance(policy.get("adapters"), Mapping) else {}
+    adapters = (
+        policy.get("adapters") if isinstance(policy.get("adapters"), Mapping) else {}
+    )
     value = adapters.get(name) if isinstance(adapters, Mapping) else {}
     return dict(value) if isinstance(value, Mapping) else {}
 
 
-def _build_engine(root: str, domain: str, project: str, *, invocation: Mapping[str, Any] | None = None) -> tuple[SpecEngine, FilesystemSpecAdapter, dict[str, Any]]:
-    policy = load_spec_policy(root, domain=domain, project=project, invocation=invocation)
-    filesystem = FilesystemSpecAdapter(root, domain, project, _adapter_config(policy, "filesystem"))
+def _build_engine(
+    root: str, domain: str, project: str, *, invocation: Mapping[str, Any] | None = None
+) -> tuple[SpecEngine, FilesystemSpecAdapter, dict[str, Any]]:
+    policy = load_spec_policy(
+        root, domain=domain, project=project, invocation=invocation
+    )
+    filesystem = FilesystemSpecAdapter(
+        root, domain, project, _adapter_config(policy, "filesystem")
+    )
     adapters = {
         "filesystem": filesystem,
         "linear": LinearSpecAdapter(_adapter_config(policy, "linear")),
-        "jira": JiraSpecAdapter(_adapter_config(policy, "jira")),
+        "jira": JiraSpecAdapter(
+            _adapter_config(policy, "jira"), transport_from_environment()
+        ),
     }
     return SpecEngine(policy, adapters), filesystem, policy
 
 
 def _project_root(root: str, domain: str, project: str) -> Path:
-    return domain_path(expand_path(root), normalize_domain(domain)) / "02-projects" / validate_name(project, "project")
+    return (
+        domain_path(expand_path(root), normalize_domain(domain))
+        / "02-projects"
+        / validate_name(project, "project")
+    )
 
 
 def handle_spec_add(args: argparse.Namespace) -> int:
     invocation: dict[str, Any] = {}
     if args.placement:
         invocation = {"adapters": {"jira": {"placement": {"default": args.placement}}}}
-    engine, _, policy = _build_engine(args.root, args.domain, args.project, invocation=invocation)
-    defaults = policy.get("defaults") if isinstance(policy.get("defaults"), Mapping) else {}
+    engine, _, policy = _build_engine(
+        args.root, args.domain, args.project, invocation=invocation
+    )
+    defaults = (
+        policy.get("defaults") if isinstance(policy.get("defaults"), Mapping) else {}
+    )
     spec_type, legacy_type = normalize_type(args.type or defaults.get("type"))
-    status, legacy_status, inferred_disposition = normalize_status(args.status or defaults.get("status"))
+    status, legacy_status, inferred_disposition = normalize_status(
+        args.status or defaults.get("status")
+    )
     project_root = _project_root(args.root, args.domain, args.project)
     spec_id = args.spec_id or indexed_work_id(project_root, args.title)
     legacy = {}
@@ -57,20 +90,27 @@ def handle_spec_add(args: argparse.Namespace) -> int:
         summary=args.summary,
         type=spec_type,
         status=status,
-        disposition=inferred_disposition or str(defaults.get("disposition") or "active"),
+        disposition=inferred_disposition
+        or str(defaults.get("disposition") or "active"),
         domain=normalize_domain(args.domain),
         project=validate_name(args.project, "project"),
         authority=dict(policy.get("authority") or {}),
         legacy=legacy,
         provenance={"capture": "agentic-os spec add"},
     )
-    result = engine.add(spec, adapter=args.adapter, apply_external=args.apply, dry_run=args.dry_run)
+    result = engine.add(
+        spec, adapter=args.adapter, apply_external=args.apply, dry_run=args.dry_run
+    )
     print(yaml_dump(result))
     return 0 if result["ok"] else 1
 
 
 def handle_spec_show(args: argparse.Namespace) -> int:
     engine, filesystem, _ = _build_engine(args.root, args.domain, args.project)
+    if args.adapter == "jira":
+        raise ValueError(
+            "spec show is unsupported for the Jira adapter; use the provider issue key"
+        )
     adapter = engine.adapters[args.adapter] if args.adapter else filesystem
     item = adapter.get(args.spec_id)
     if item is None:
@@ -109,7 +149,9 @@ def handle_spec_list(args: argparse.Namespace) -> int:
     items: list[dict[str, Any]] = []
     for domain, project in _project_scopes(args.root, args.domain, args.project):
         _, filesystem, _ = _build_engine(args.root, domain, project)
-        items.extend(item.to_mapping() for item in filesystem.list(status=status, type=spec_type))
+        items.extend(
+            item.to_mapping() for item in filesystem.list(status=status, type=spec_type)
+        )
     print(yaml_dump({"count": len(items), "items": items}))
     return 0
 
@@ -119,7 +161,13 @@ def handle_spec_transition(args: argparse.Namespace) -> int:
     item = filesystem.get(args.spec_id)
     if item is None:
         raise ValueError(f"spec not found: {args.spec_id}")
-    result = engine.transition(item, args.status, adapter=args.adapter, apply_external=args.apply, dry_run=args.dry_run)
+    result = engine.transition(
+        item,
+        args.status,
+        adapter=args.adapter,
+        apply_external=args.apply,
+        dry_run=args.dry_run,
+    )
     print(yaml_dump(result))
     return 0 if result["ok"] else 1
 
@@ -147,7 +195,16 @@ def handle_spec_doctor(args: argparse.Namespace) -> int:
         adapters = policy.get("adapters") or {}
         primary = adapters.get("primary")
         ok = primary in {"filesystem", "linear", "jira"}
-        print(yaml_dump({"ok": ok, "scope": "root", "loaded_from": policy.get("loaded_from"), "primary_adapter": primary}))
+        print(
+            yaml_dump(
+                {
+                    "ok": ok,
+                    "scope": "root",
+                    "loaded_from": policy.get("loaded_from"),
+                    "primary_adapter": primary,
+                }
+            )
+        )
         return 0 if ok else 1
     engine, _, policy = _build_engine(args.root, args.domain, args.project)
     result = engine.doctor(args.adapter)
@@ -164,13 +221,28 @@ def register(subparsers) -> None:
         epilog=env_epilog(
             config_files=[
                 ("templates/runtime/spec-engine.yml", "Shipped Spec Engine defaults."),
-                ("<domain>/00-control-plane/spec-engine.yml", "Optional domain policy."),
-                ("<project>/config/spec-engine.yml", "Optional project adapter and lifecycle policy."),
+                (
+                    "<domain>/00-control-plane/spec-engine.yml",
+                    "Optional domain policy.",
+                ),
+                (
+                    "<project>/config/spec-engine.yml",
+                    "Optional project adapter and lifecycle policy.",
+                ),
             ],
             examples=[
-                ("agentic-os spec add acme app --title 'Fix login' --summary 'Repair login' --type bug", "Capture a filesystem Spec."),
-                ("agentic-os spec transition acme app 001_fix_login grooming", "Move a Spec into grooming."),
-                ("agentic-os spec doctor --domain acme --project app", "Validate effective policy and adapter targets."),
+                (
+                    "agentic-os spec add acme app --title 'Fix login' --summary 'Repair login' --type bug",
+                    "Capture a filesystem Spec.",
+                ),
+                (
+                    "agentic-os spec transition acme app 001_fix_login grooming",
+                    "Move a Spec into grooming.",
+                ),
+                (
+                    "agentic-os spec doctor --domain acme --project app",
+                    "Validate effective policy and adapter targets.",
+                ),
             ],
         ),
         formatter_class=AosHelpFormatter,
@@ -186,10 +258,18 @@ def register(subparsers) -> None:
     add.add_argument("--status", choices=SPEC_STATUSES)
     add.add_argument("--id", dest="spec_id")
     add.add_argument("--adapter", choices=("filesystem", "linear", "jira"))
-    add.add_argument("--placement", choices=("backlog", "active_sprint"), help="Jira placement override; active sprint is explicit only.")
+    add.add_argument(
+        "--placement",
+        choices=("backlog", "active_sprint"),
+        help="Jira placement override; active sprint is explicit only.",
+    )
     mode = add.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
-    mode.add_argument("--apply", action="store_true", help="Apply external provider writes after verification; filesystem writes by default.")
+    mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply external provider writes after verification; filesystem writes by default.",
+    )
     add.add_argument("--root", default=DEFAULT_ROOT)
     add.set_defaults(handler=handle_spec_add)
 
@@ -230,7 +310,9 @@ def register(subparsers) -> None:
     sync.add_argument("--root", default=DEFAULT_ROOT)
     sync.set_defaults(handler=handle_spec_sync)
 
-    doctor = sub.add_parser("doctor", help="Validate effective Spec Engine policy and targets.")
+    doctor = sub.add_parser(
+        "doctor", help="Validate effective Spec Engine policy and targets."
+    )
     doctor.add_argument("--domain")
     doctor.add_argument("--project")
     doctor.add_argument("--adapter", choices=("filesystem", "linear", "jira"))
