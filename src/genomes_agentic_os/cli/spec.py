@@ -14,7 +14,8 @@ from ..spec_adapters import (
     FilesystemSpecAdapter,
     JiraSpecAdapter,
     LinearSpecAdapter,
-    transport_from_environment,
+    jira_transport_from_environment,
+    linear_transport_from_environment,
 )
 from ..spec_engine import (
     SPEC_STATUSES,
@@ -47,9 +48,11 @@ def _build_engine(
     )
     adapters = {
         "filesystem": filesystem,
-        "linear": LinearSpecAdapter(_adapter_config(policy, "linear")),
+        "linear": LinearSpecAdapter(
+            _adapter_config(policy, "linear"), linear_transport_from_environment()
+        ),
         "jira": JiraSpecAdapter(
-            _adapter_config(policy, "jira"), transport_from_environment()
+            _adapter_config(policy, "jira"), jira_transport_from_environment()
         ),
     }
     return SpecEngine(policy, adapters), filesystem, policy

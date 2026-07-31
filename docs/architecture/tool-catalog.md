@@ -161,7 +161,7 @@ specific registry.
 | `agentic-os-automation-run-summary` | Replace one automation's Notion last-run-summary page. |
 | `agentic-os-claude-desktop-bridge` | Build/audit the Claude Desktop custom-skill + instructions package (Desktop doesn't read `CLAUDE.md` or hook settings). |
 | `agentic-os-intake-row` | Create a row in the OS Work Intake Notion database, routing `Project` via `intake-routing.yml`. |
-| `agentic-os-intake-sync` | Sync the OS Work Intake Notion DB to Linear (Clarks Consulting team), with back-sync of completed/canceled state. |
+| `agentic-os-intake-sync` | Sync the OS Work Intake Notion DB through the reviewed shared Linear bridge, with exact-marker reconciliation and completed/canceled back-sync. |
 | `agentic-os-interim-executor` | Compatibility entry point that delegates all automation work to the runtime supervisor (kept for older LaunchAgents). |
 | `agentic-os-jira` | Deterministic policy/presentation wrapper over the reviewed `@genomes/jira` subprocess bridge for when MCP/Composio Jira routes are unhealthy. |
 | `agentic-os-memory-analytics` | Run the read-only memory retrieval-analytics report on the configured analytics host; `export` copies artifacts to the active work item. |
