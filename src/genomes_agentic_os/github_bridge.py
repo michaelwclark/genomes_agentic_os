@@ -21,7 +21,7 @@ BRIDGE_VERSION = 1
 # Provider revision reviewed with this first migration slice. Runtime selection
 # remains explicit through GENOMES_GITHUB_BRIDGE_COMMAND; this pin makes the
 # cross-repository contract auditable and forces later revisions through review.
-REVIEWED_PLATFORM_BRIDGE_REVISION = "ef9fc7ef5f6c8ee0b88ef0d897f4c2be20823b20"
+REVIEWED_PLATFORM_BRIDGE_REVISION = "9fd83043c275a0959323735ab35d8be014898173"
 
 
 class GitHubBridgeError(RuntimeError):
