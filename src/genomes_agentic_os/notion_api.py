@@ -158,7 +158,18 @@ def _legacy_block(block: dict[str, Any]) -> dict[str, Any]:
 
 def _reconciliation_marker(value: Any) -> str:
     if isinstance(value, str) and value.strip():
-        return value.strip()
+        runs: list[str] = []
+        current: list[str] = []
+        for character in value.strip():
+            if character.isalnum() or character in " ._:/-":
+                current.append(character)
+            elif current:
+                runs.append("".join(current).strip())
+                current = []
+        if current:
+            runs.append("".join(current).strip())
+        stable = [run for run in runs if len(run) >= 3]
+        return max(stable, key=len, default="")
     if isinstance(value, dict):
         for key in ("content", "plain_text", "name"):
             marker = _reconciliation_marker(value.get(key))
@@ -559,6 +570,9 @@ def create_page(
         identity = _mutation_identity(client, approved_parent_page_id)
         if not _same_notion_id(parent_page_id, identity["parentPageId"]):
             raise RuntimeError("Notion page parent differs from the approved mutation root")
+        marker = _reconciliation_marker(title)
+        if not marker:
+            raise RuntimeError("Notion page title requires a JSON-stable reconciliation marker")
         result = client.request(
             "createPage",
             {
@@ -573,7 +587,7 @@ def create_page(
                     },
                     "reconciliation": {
                         "parentPageId": identity["parentPageId"],
-                        "marker": title,
+                        "marker": marker,
                     },
                 }
             },
@@ -620,6 +634,11 @@ def create_database(
                 "Notion database parent differs from the approved mutation root"
             )
         title_payload = [{"type": "text", "text": {"content": title}}]
+        marker = _reconciliation_marker(title)
+        if not marker:
+            raise RuntimeError(
+                "Notion database title requires a JSON-stable reconciliation marker"
+            )
         result = client.request(
             "createDatabase",
             {
@@ -630,7 +649,7 @@ def create_database(
                     "isInline": True,
                     "reconciliation": {
                         "parentPageId": identity["parentPageId"],
-                        "marker": title,
+                        "marker": marker,
                     },
                 }
             },

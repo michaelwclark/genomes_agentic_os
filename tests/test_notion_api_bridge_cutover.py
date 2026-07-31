@@ -224,6 +224,33 @@ def test_create_refuses_parent_outside_separately_approved_root(monkeypatch) -> 
     assert bridge.calls == []
 
 
+def test_create_page_uses_json_stable_reconciliation_marker(monkeypatch) -> None:
+    bridge = _Bridge({"createPage": [{"id": "new-page"}]})
+    _install(monkeypatch, bridge)
+
+    page_id = notion_api.create_page(
+        "parent",
+        'Quarterly "Review"\nAGE-132',
+        approved_parent_page_id="parent",
+    )
+
+    assert page_id == "newpage"
+    assert bridge.calls[-1]["args"]["input"]["reconciliation"]["marker"] == "Quarterly"
+
+
+def test_create_page_rejects_title_without_stable_marker_before_mutation(monkeypatch) -> None:
+    bridge = _Bridge({"createPage": [{"id": "unexpected"}]})
+    _install(monkeypatch, bridge)
+
+    try:
+        notion_api.create_page('parent', '"\\\n', approved_parent_page_id="parent")
+    except RuntimeError as exc:
+        assert "JSON-stable reconciliation marker" in str(exc)
+    else:  # pragma: no cover - fail-closed assertion
+        raise AssertionError("create accepted an unreconcilable title")
+    assert bridge.calls == []
+
+
 def test_direct_default_transport_is_disabled() -> None:
     try:
         notion_api._default_fetcher(object())  # type: ignore[arg-type]

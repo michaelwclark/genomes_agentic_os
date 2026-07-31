@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 BRIDGE_VERSION = 1
-# Provider-read squash revision for platform PR #15.
+# Provider-read squash revision for platform PR #16 (AGE-132 append readback).
 REVIEWED_PLATFORM_BRIDGE_REVISION = "348e72313cadac57c0763fc4d9b53ae02a6365a0"
 DEFAULT_WORKSPACE = "Genome's Notion"
 _AUTH_KEY = "GENOMES_NOTION_PAT"

@@ -289,9 +289,9 @@ Build the pinned platform revision and point
 `GENOMES_NOTION_BRIDGE_COMMAND` at `packages/notion/dist/bridge.js`. The shared
 bridge uses Notion API `2026-03-11` and owns pagination, deadlines, bounded read
 retries, safe errors, mutation ancestry checks, and provider readback. The
-current automation-control database and data-source reads use this bridge;
-remaining Notion families keep their existing transports until their bounded
-cutover commits land.
+live Notion read and mutation families use this bridge. The only retained
+urllib seam is credential-free, fixture-only, and targets the synthetic
+`notion-fixture.invalid` host.
 
 ### agentic-os-automation-run-summary
 
