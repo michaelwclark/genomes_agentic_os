@@ -110,6 +110,18 @@ def _doctor_class_on() -> dict[str, Any]:
     return {"enabled": True, "classes": {"doctor-check-draft": True}, "max_per_night": 2}
 
 
+def _stub_successful_intake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        si,
+        "_project_nightly_row_to_intake",
+        lambda proposal, *args, **kwargs: {
+            "projected": True,
+            "page_id": f"page-{proposal['proposal_id']}",
+            "url": f"https://www.notion.so/page-{proposal['proposal_id']}",
+        },
+    )
+
+
 @pytest.fixture(autouse=True)
 def _no_notion_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(si.NOTION_TOKEN_ENV, raising=False)
@@ -149,7 +161,10 @@ def test_auto_implement_enabled_false_with_true_class_is_noop(tmp_path: Path) ->
     assert result["implement_candidates"] == []
 
 
-def test_enabled_class_true_queues_worker_ledger_and_toggle(tmp_path: Path) -> None:
+def test_enabled_class_true_queues_worker_ledger_and_toggle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_successful_intake(monkeypatch)
     root = _seed_root(tmp_path, enable_nightly=True, auto_implement=_doctor_class_on())
     doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
     _persist(root, [doctor])
@@ -214,7 +229,10 @@ def test_class_toggle_false_or_absent_not_implemented(tmp_path: Path) -> None:
     assert result_absent["implemented"] == []
 
 
-def test_max_per_night_caps_the_implement_lane(tmp_path: Path) -> None:
+def test_max_per_night_caps_the_implement_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_successful_intake(monkeypatch)
     root = _seed_root(tmp_path, enable_nightly=True, auto_implement=_doctor_class_on())
     proposals = [
         _make_proposal(root, finding_type="recurring_failure", total_score=20, slug=f"d{i}") for i in range(3)
@@ -229,7 +247,10 @@ def test_max_per_night_caps_the_implement_lane(tmp_path: Path) -> None:
     assert len(skipped) == 1
 
 
-def test_intake_ledger_dedupes_auto_dev_queue(tmp_path: Path) -> None:
+def test_intake_ledger_dedupes_auto_dev_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_successful_intake(monkeypatch)
     root = _seed_root(tmp_path, enable_nightly=True, auto_implement=_doctor_class_on())
     doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
     _persist(root, [doctor])
