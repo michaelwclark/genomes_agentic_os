@@ -967,7 +967,7 @@ def project_host_report(
 ) -> dict[str, Any]:
     if not verified_workspace:
         raise ValueError("verified_workspace is required for a Notion projection")
-    actual = notion_api.get_bot_workspace(token_env, parent_page_id=page_id)
+    actual = notion_api.get_bot_workspace(token_env)
     if actual != verified_workspace:
         raise RuntimeError(f"Notion workspace mismatch: expected {verified_workspace!r}, got {actual!r}")
     notion_api.replace_block_children(page_id, notion_blocks(report), token_env)

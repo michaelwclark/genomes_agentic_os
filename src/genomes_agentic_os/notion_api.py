@@ -105,6 +105,26 @@ def _bridge_identity(parent_page_id: str) -> dict[str, str]:
     }
 
 
+def _mutation_identity(
+    client: NotionBridgeClient, approved_parent_page_id: str | None
+) -> dict[str, str]:
+    """Resolve a separately approved mutation root; never infer it from a target."""
+    if approved_parent_page_id:
+        identity = dict(client.identity or {})
+        identity.update(_bridge_identity(approved_parent_page_id))
+        return identity
+    if client.identity is not None:
+        return dict(client.identity)
+    raise RuntimeError(
+        "GENOMES_NOTION_PARENT_PAGE_ID or approved_parent_page_id is required "
+        "for Notion mutations"
+    )
+
+
+def _same_notion_id(left: Any, right: Any) -> bool:
+    return str(left or "").replace("-", "") == str(right or "").replace("-", "")
+
+
 def _bridge_collection(
     result: Any, *, require_complete: bool = True
 ) -> list[dict[str, Any]]:
@@ -334,15 +354,17 @@ def append_block_children(
     children: list[dict[str, Any]],
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Append children blocks to a page/block in chunks of 100."""
     if fetcher is _default_fetcher:
-        _bridge_client(token_env).request(
+        client = _bridge_client(token_env)
+        client.request(
             "appendBlockChildren",
             {"blockId": block_id, "children": children},
             mutation=True,
-            identity=_bridge_identity(block_id),
+            identity=_mutation_identity(client, approved_parent_page_id),
         )
         return
     token = resolve_token(token_env)
@@ -401,12 +423,17 @@ def archive_block(
     block_id: str,
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Archive one block without exposing token or payload data."""
     if fetcher is _default_fetcher:
-        _bridge_client(token_env).request(
-            "trashBlock", {"blockId": block_id}, mutation=True
+        client = _bridge_client(token_env)
+        client.request(
+            "trashBlock",
+            {"blockId": block_id},
+            mutation=True,
+            identity=_mutation_identity(client, approved_parent_page_id),
         )
         return
     token = resolve_token(token_env)
@@ -426,12 +453,13 @@ def replace_block_children(
     children: list[dict[str, Any]],
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Replace a page's first-level content while preserving child pages/databases."""
     if fetcher is _default_fetcher:
         client = _bridge_client(token_env)
-        identity = _bridge_identity(block_id)
+        identity = _mutation_identity(client, approved_parent_page_id)
         existing = [
             _legacy_block(block)
             for block in _bridge_collection(
@@ -458,8 +486,19 @@ def replace_block_children(
     for child in existing:
         if child.get("type") in {"child_page", "child_database"}:
             continue
-        archive_block(str(child["id"]), token_env, fetcher=fetcher)
-    append_block_children(block_id, children, token_env, fetcher=fetcher)
+        archive_block(
+            str(child["id"]),
+            token_env,
+            approved_parent_page_id=approved_parent_page_id,
+            fetcher=fetcher,
+        )
+    append_block_children(
+        block_id,
+        children,
+        token_env,
+        approved_parent_page_id=approved_parent_page_id,
+        fetcher=fetcher,
+    )
 
 
 def search_child_databases(
@@ -508,6 +547,7 @@ def create_page(
     title: str,
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> str:
     """Create a child page under *parent_page_id* with *title*.
@@ -515,7 +555,11 @@ def create_page(
     Returns the new page id (no dashes).
     """
     if fetcher is _default_fetcher:
-        result = _bridge_client(token_env).request(
+        client = _bridge_client(token_env)
+        identity = _mutation_identity(client, approved_parent_page_id)
+        if not _same_notion_id(parent_page_id, identity["parentPageId"]):
+            raise RuntimeError("Notion page parent differs from the approved mutation root")
+        result = client.request(
             "createPage",
             {
                 "input": {
@@ -528,13 +572,13 @@ def create_page(
                         }
                     },
                     "reconciliation": {
-                        "parentPageId": parent_page_id,
+                        "parentPageId": identity["parentPageId"],
                         "marker": title,
                     },
                 }
             },
             mutation=True,
-            identity=_bridge_identity(parent_page_id),
+            identity=identity,
         )
         if not isinstance(result, dict) or not result.get("id"):
             raise RuntimeError("Notion bridge did not return a created page ID")
@@ -560,6 +604,7 @@ def create_database(
     properties: dict[str, Any],
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> str:
     """Create a database as a child of *parent_page_id*.
@@ -568,8 +613,14 @@ def create_database(
     Returns the new database id (no dashes).
     """
     if fetcher is _default_fetcher:
+        client = _bridge_client(token_env)
+        identity = _mutation_identity(client, approved_parent_page_id)
+        if not _same_notion_id(parent_page_id, identity["parentPageId"]):
+            raise RuntimeError(
+                "Notion database parent differs from the approved mutation root"
+            )
         title_payload = [{"type": "text", "text": {"content": title}}]
-        result = _bridge_client(token_env).request(
+        result = client.request(
             "createDatabase",
             {
                 "input": {
@@ -578,13 +629,13 @@ def create_database(
                     "initialDataSource": {"properties": properties},
                     "isInline": True,
                     "reconciliation": {
-                        "parentPageId": parent_page_id,
+                        "parentPageId": identity["parentPageId"],
                         "marker": title,
                     },
                 }
             },
             mutation=True,
-            identity=_bridge_identity(parent_page_id),
+            identity=identity,
         )
         if not isinstance(result, dict) or not result.get("id"):
             raise RuntimeError("Notion bridge did not return a created database ID")
@@ -726,6 +777,7 @@ def create_database_page(
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
     children: list[dict[str, Any]] | None = None,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> str:
     """Create a new page in *database_id* with *properties*.
@@ -734,13 +786,17 @@ def create_database_page(
     """
     if fetcher is _default_fetcher:
         client = _bridge_client(token_env)
+        identity = _mutation_identity(client, approved_parent_page_id)
         database = client.request("getDatabase", {"databaseId": database_id})
         if not isinstance(database, dict):
             raise RuntimeError("Notion database was not found")
         parent = database.get("parent") or {}
         if parent.get("type") != "page_id" or not parent.get("id"):
             raise RuntimeError("Notion database is not under a page parent")
-        parent_page_id = str(parent["id"])
+        if not _same_notion_id(parent["id"], identity["parentPageId"]):
+            raise RuntimeError(
+                "Notion database is outside the approved mutation root"
+            )
         marker = _reconciliation_marker(properties)
         if not marker:
             raise RuntimeError("Notion database page requires a reconciliation marker")
@@ -752,13 +808,13 @@ def create_database_page(
                     "properties": properties,
                     **({"children": children} if children else {}),
                     "reconciliation": {
-                        "parentPageId": parent_page_id,
+                        "parentPageId": identity["parentPageId"],
                         "marker": marker,
                     },
                 }
             },
             mutation=True,
-            identity=_bridge_identity(parent_page_id),
+            identity=identity,
         )
         if not isinstance(result, dict) or not result.get("id"):
             raise RuntimeError("Notion bridge did not return a created database page ID")
@@ -805,15 +861,17 @@ def update_database_page(
     properties: dict[str, Any],
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Update properties on an existing database page *page_id*."""
     if fetcher is _default_fetcher:
-        _bridge_client(token_env).request(
+        client = _bridge_client(token_env)
+        client.request(
             "updatePage",
             {"pageId": page_id, "input": {"properties": properties}},
             mutation=True,
-            identity=_bridge_identity(page_id),
+            identity=_mutation_identity(client, approved_parent_page_id),
         )
         return
     token = resolve_token(token_env)
@@ -828,11 +886,13 @@ def update_database_schema(
     properties: dict[str, Any],
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    approved_parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Add or update database property schemas on *database_id*."""
     if fetcher is _default_fetcher:
         client = _bridge_client(token_env)
+        identity = _mutation_identity(client, approved_parent_page_id)
         database = client.request("getDatabase", {"databaseId": database_id})
         if not isinstance(database, dict):
             raise RuntimeError("Notion database was not found")
@@ -851,7 +911,7 @@ def update_database_schema(
                 "input": {"properties": properties},
             },
             mutation=True,
-            identity=_bridge_identity(str(parent["id"])),
+            identity=identity,
         )
         return
     token = resolve_token(token_env)

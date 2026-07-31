@@ -1470,6 +1470,36 @@ def _notion_manifest(root: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _verified_runtime_notion_anchor(
+    manifest: dict[str, Any], transport: Any
+) -> tuple[str | None, str | None]:
+    """Return the configured root and verified cockpit mutation anchor."""
+    if transport is not notion_api._default_fetcher:
+        return None, None
+    root_parent_id = str(
+        manifest.get("parent_page_id")
+        or os.environ.get("GENOMES_NOTION_PARENT_PAGE_ID")
+        or ""
+    ).strip()
+    cockpit_page_id = str(manifest.get("cockpit_page_id") or "").strip()
+    if not root_parent_id or not cockpit_page_id:
+        raise RuntimeError(
+            "live Notion manifest requires parent_page_id and cockpit_page_id"
+        )
+    children = notion_api.search_child_pages(
+        root_parent_id, NOTION_TOKEN_ENV, fetcher=transport
+    )
+    if not any(
+        str(page.get("id") or "").replace("-", "")
+        == cockpit_page_id.replace("-", "")
+        for page in children
+    ):
+        raise RuntimeError(
+            "manifest cockpit page is not a child of the approved Notion parent"
+        )
+    return root_parent_id, cockpit_page_id
+
+
 SELF_IMPROVEMENT_DB_SCHEMA: dict[str, dict[str, Any]] = {
     "Summary": {"rich_text": {}},
     "Proposed Spec": {"rich_text": {}},
@@ -1496,6 +1526,7 @@ def _ensure_self_improvement_schema(
     available: dict[str, str],
     *,
     fetcher: Any,
+    approved_parent_page_id: str | None = None,
 ) -> dict[str, str]:
     missing = {
         name: schema
@@ -1504,7 +1535,13 @@ def _ensure_self_improvement_schema(
     }
     if not missing:
         return available
-    notion_api.update_database_schema(database_id, missing, NOTION_TOKEN_ENV, fetcher=fetcher)
+    notion_api.update_database_schema(
+        database_id,
+        missing,
+        NOTION_TOKEN_ENV,
+        approved_parent_page_id=approved_parent_page_id,
+        fetcher=fetcher,
+    )
     return notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=fetcher)
 
 
@@ -1913,12 +1950,8 @@ def _project_run_to_notion(
         return _degrade(f"notion token env var {NOTION_TOKEN_ENV!r} is not set")
 
     try:
-        verification_parent = (
-            notion_api.get_database_parent_page_id(
-                database_id, NOTION_TOKEN_ENV, fetcher=transport
-            )
-            if transport is notion_api._default_fetcher
-            else None
+        verification_parent, approved_anchor = _verified_runtime_notion_anchor(
+            manifest, transport
         )
         bot_workspace = notion_api.get_bot_workspace(
             NOTION_TOKEN_ENV,
@@ -1930,7 +1963,12 @@ def _project_run_to_notion(
                 f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}"
             )
         available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
-        available = _ensure_self_improvement_schema(database_id, available, fetcher=transport)
+        available = _ensure_self_improvement_schema(
+            database_id,
+            available,
+            fetcher=transport,
+            approved_parent_page_id=approved_anchor,
+        )
         properties = _notion_projection_properties(
             available,
             title=title,
@@ -1946,6 +1984,7 @@ def _project_run_to_notion(
             properties,
             NOTION_TOKEN_ENV,
             children=_summary_blocks(root, result, report_paths),
+            approved_parent_page_id=approved_anchor,
             fetcher=transport,
         )
         suggestion_pages = []
@@ -1980,6 +2019,7 @@ def _project_run_to_notion(
                 proposal_properties,
                 NOTION_TOKEN_ENV,
                 children=_proposal_blocks(proposal, run_id=run_id),
+                approved_parent_page_id=approved_anchor,
                 fetcher=transport,
             )
             suggestion_pages.append({"proposal_id": proposal_id, "page_id": proposal_page_id})
@@ -2169,12 +2209,8 @@ def process_self_improvement_actions(
         return result
 
     try:
-        verification_parent = (
-            notion_api.get_database_parent_page_id(
-                database_id, NOTION_TOKEN_ENV, fetcher=transport
-            )
-            if transport is notion_api._default_fetcher
-            else None
+        verification_parent, approved_anchor = _verified_runtime_notion_anchor(
+            manifest, transport
         )
         bot_workspace = notion_api.get_bot_workspace(
             NOTION_TOKEN_ENV,
@@ -2190,7 +2226,12 @@ def process_self_improvement_actions(
             )
             return result
         available = notion_api.get_database_property_types(database_id, NOTION_TOKEN_ENV, fetcher=transport)
-        _ensure_self_improvement_schema(database_id, available, fetcher=transport)
+        _ensure_self_improvement_schema(
+            database_id,
+            available,
+            fetcher=transport,
+            approved_parent_page_id=approved_anchor,
+        )
         pages = notion_api.query_database(database_id, _proposal_action_filter(), NOTION_TOKEN_ENV, fetcher=transport)
     except (RuntimeError, OSError, KeyError, ValueError) as exc:
         result.update({"ok": False, "status": "failed", "reason": str(exc)})
@@ -2218,6 +2259,7 @@ def process_self_improvement_actions(
                         "Action Log": notion_api._rich_text_prop("Both action boxes were checked; clear one and the next watcher tick will queue it."),
                     },
                     NOTION_TOKEN_ENV,
+                    approved_parent_page_id=approved_anchor,
                     fetcher=transport,
                 )
             continue
@@ -2254,7 +2296,13 @@ def process_self_improvement_actions(
                     update_props["Run Grooming"] = notion_api._checkbox_prop(False)
                 else:
                     update_props["Auto-dev Implementation"] = notion_api._checkbox_prop(False)
-                notion_api.update_database_page(page_id, update_props, NOTION_TOKEN_ENV, fetcher=transport)
+                notion_api.update_database_page(
+                    page_id,
+                    update_props,
+                    NOTION_TOKEN_ENV,
+                    approved_parent_page_id=approved_anchor,
+                    fetcher=transport,
+                )
             continue
         try:
             proposal = _load_proposal(os_root, config, proposal_id)
@@ -2268,6 +2316,7 @@ def process_self_improvement_actions(
                         "Action Log": notion_api._rich_text_prop(str(exc)),
                     },
                     NOTION_TOKEN_ENV,
+                    approved_parent_page_id=approved_anchor,
                     fetcher=transport,
                 )
             continue
@@ -2295,7 +2344,13 @@ def process_self_improvement_actions(
             update_props["Run Grooming"] = notion_api._checkbox_prop(False)
         else:
             update_props["Auto-dev Implementation"] = notion_api._checkbox_prop(False)
-        notion_api.update_database_page(page_id, update_props, NOTION_TOKEN_ENV, fetcher=transport)
+        notion_api.update_database_page(
+            page_id,
+            update_props,
+            NOTION_TOKEN_ENV,
+            approved_parent_page_id=approved_anchor,
+            fetcher=transport,
+        )
 
     result["status"] = "dry-run" if dry_run else "processed"
     return result
@@ -2622,22 +2677,19 @@ def _project_morning_report_to_notion(
 
     if not notion_api.resolve_token(NOTION_TOKEN_ENV):
         return _degrade(f"notion token env var {NOTION_TOKEN_ENV!r} is not set")
-    discovered_parent_id: str | None = None
-    if transport is notion_api._default_fetcher and not configured_parent_id:
-        try:
-            parent_pages = notion_api.search_pages(
-                parent_title, NOTION_TOKEN_ENV, fetcher=transport
-            )
-        except (RuntimeError, OSError, ValueError) as exc:
-            return _degrade(f"parent-page discovery failed: {exc}")
-        parent = _find_exact_page_by_title(parent_pages, parent_title)
-        if not parent:
-            return _degrade(f"could not find parent page {parent_title!r}")
-        discovered_parent_id = str(parent["id"])
+    approved_root = configured_parent_id or (
+        os.environ.get("GENOMES_NOTION_PARENT_PAGE_ID", "").strip()
+        if transport is notion_api._default_fetcher
+        else ""
+    )
+    if transport is notion_api._default_fetcher and not approved_root:
+        return _degrade(
+            "GENOMES_NOTION_PARENT_PAGE_ID or notion_report.parent_page_id is required"
+        )
     try:
         workspace = notion_api.get_bot_workspace(
             NOTION_TOKEN_ENV,
-            parent_page_id=configured_parent_id or discovered_parent_id,
+            parent_page_id=approved_root or None,
             fetcher=transport,
         )
     except (RuntimeError, OSError, ValueError) as exc:
@@ -2648,8 +2700,8 @@ def _project_morning_report_to_notion(
     try:
         if configured_parent_id:
             parent_id = configured_parent_id.replace("-", "")
-        elif discovered_parent_id:
-            parent_id = discovered_parent_id
+        elif approved_root:
+            parent_id = approved_root.replace("-", "")
         else:
             parent_pages = notion_api.search_pages(parent_title, NOTION_TOKEN_ENV, fetcher=transport)
             parent = _find_exact_page_by_title(parent_pages, parent_title)
@@ -2661,7 +2713,13 @@ def _project_morning_report_to_notion(
         if reports_page:
             reports_page_id = str(reports_page["id"])
         else:
-            reports_page_id = notion_api.create_page(parent_id, reports_title, NOTION_TOKEN_ENV, fetcher=transport)
+            reports_page_id = notion_api.create_page(
+                parent_id,
+                reports_title,
+                NOTION_TOKEN_ENV,
+                approved_parent_page_id=parent_id,
+                fetcher=transport,
+            )
             notion_api.append_block_children(
                 reports_page_id,
                 [
@@ -2672,17 +2730,42 @@ def _project_morning_report_to_notion(
                     ),
                 ],
                 NOTION_TOKEN_ENV,
+                approved_parent_page_id=parent_id,
                 fetcher=transport,
             )
 
         daily_pages = notion_api.search_child_pages(reports_page_id, NOTION_TOKEN_ENV, fetcher=transport)
         daily_page = _find_exact_page_by_title(daily_pages, title)
-        daily_page_id = str(daily_page["id"]) if daily_page else notion_api.create_page(reports_page_id, title, NOTION_TOKEN_ENV, fetcher=transport)
-        logs_page_id = notion_api.create_page(daily_page_id, logs_title, NOTION_TOKEN_ENV, fetcher=transport)
+        daily_page_id = str(daily_page["id"]) if daily_page else notion_api.create_page(
+            reports_page_id,
+            title,
+            NOTION_TOKEN_ENV,
+            approved_parent_page_id=reports_page_id,
+            fetcher=transport,
+        )
+        logs_page_id = notion_api.create_page(
+            daily_page_id,
+            logs_title,
+            NOTION_TOKEN_ENV,
+            approved_parent_page_id=daily_page_id,
+            fetcher=transport,
+        )
         report_blocks = _morning_report_notion_blocks(result)
         log_blocks = _morning_logs_notion_blocks(result)
-        notion_api.append_block_children(daily_page_id, report_blocks, NOTION_TOKEN_ENV, fetcher=transport)
-        notion_api.append_block_children(logs_page_id, log_blocks, NOTION_TOKEN_ENV, fetcher=transport)
+        notion_api.append_block_children(
+            daily_page_id,
+            report_blocks,
+            NOTION_TOKEN_ENV,
+            approved_parent_page_id=reports_page_id,
+            fetcher=transport,
+        )
+        notion_api.append_block_children(
+            logs_page_id,
+            log_blocks,
+            NOTION_TOKEN_ENV,
+            approved_parent_page_id=daily_page_id,
+            fetcher=transport,
+        )
     except (RuntimeError, OSError, KeyError, ValueError) as exc:
         return _degrade(f"notion page projection failed: {exc}")
     return {

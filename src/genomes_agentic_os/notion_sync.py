@@ -375,7 +375,6 @@ def apply_active_work_sync(
     from .notion_api import (
         _default_fetcher,
         create_database_page,
-        get_database_parent_page_id,
         get_bot_workspace,
         get_database_property_types,
         query_database_by_rich_text_property,
@@ -383,16 +382,8 @@ def apply_active_work_sync(
     )
 
     active_fetcher = fetcher or _default_fetcher
-    verification_parent = (
-        get_database_parent_page_id(
-            database_id, token_env, fetcher=active_fetcher
-        )
-        if active_fetcher is _default_fetcher
-        else None
-    )
     bot_workspace = get_bot_workspace(
         token_env,
-        parent_page_id=verification_parent,
         fetcher=active_fetcher,
     )
     if bot_workspace != workspace:

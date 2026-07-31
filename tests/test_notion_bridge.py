@@ -217,7 +217,7 @@ def test_timeout_and_invalid_response_fail_closed() -> None:
     def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(args[0], 1, stderr="secret")
 
-    with pytest.raises(NotionBridgeError, match="could not be executed"):
+    with pytest.raises(NotionBridgeError, match="could not be executed") as exc:
         call_notion_bridge(
             ["node", "bridge.js"],
             "getPage",
@@ -225,6 +225,23 @@ def test_timeout_and_invalid_response_fail_closed() -> None:
             auth={"GENOMES_NOTION_PAT": "secret"},
             runner=timeout,
         )
+    assert exc.value.__cause__ is None
+    assert "secret" not in repr(exc.value)
+    with pytest.raises(NotionBridgeError, match="invalid JSON") as exc:
+        call_notion_bridge(
+            ["node", "bridge.js"],
+            "getPage",
+            {"pageId": "page"},
+            auth={"GENOMES_NOTION_PAT": "secret"},
+            runner=lambda *args, **kwargs: subprocess.CompletedProcess(
+                args=args[0],
+                returncode=0,
+                stdout='{"secret":"raw-provider-body"',
+                stderr="",
+            ),
+        )
+    assert exc.value.__cause__ is None
+    assert "raw-provider-body" not in repr(exc.value)
     with pytest.raises(NotionBridgeError, match="unsupported response"):
         call_notion_bridge(
             ["node", "bridge.js"],

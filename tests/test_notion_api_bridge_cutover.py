@@ -99,7 +99,9 @@ def test_default_replace_preserves_child_collections_and_guards_mutations(monkey
     _install(monkeypatch, bridge)
     children = [{"object": "block", "type": "paragraph", "paragraph": {}}]
 
-    notion_api.replace_block_children("parent", children)
+    notion_api.replace_block_children(
+        "target", children, approved_parent_page_id="parent"
+    )
 
     mutation_calls = [call for call in bridge.calls if call["mutation"]]
     assert [call["operation"] for call in mutation_calls] == [
@@ -111,7 +113,7 @@ def test_default_replace_preserves_child_collections_and_guards_mutations(monkey
         == {"workspaceName": "Genome's Notion", "parentPageId": "parent"}
         for call in mutation_calls
     )
-    assert bridge.calls[-1]["args"] == {"blockId": "parent", "children": children}
+    assert bridge.calls[-1]["args"] == {"blockId": "target", "children": children}
 
 
 def test_default_database_page_create_reconciles_against_database_parent(monkeypatch) -> None:
@@ -130,7 +132,9 @@ def test_default_database_page_create_reconciles_against_database_parent(monkeyp
         }
     }
 
-    page_id = notion_api.create_database_page("database", properties)
+    page_id = notion_api.create_database_page(
+        "database", properties, approved_parent_page_id="parent"
+    )
 
     assert page_id == "newpage"
     create = bridge.calls[-1]
@@ -164,6 +168,60 @@ def test_default_workspace_preflight_uses_explicit_parent(monkeypatch) -> None:
         "workspaceName": "Genome's Notion",
         "parentPageId": "parent",
     }
+
+
+def test_update_page_uses_separate_approved_root(monkeypatch) -> None:
+    bridge = _Bridge({"updatePage": [{"id": "target"}]})
+    _install(monkeypatch, bridge)
+
+    notion_api.update_database_page(
+        "target",
+        {"Status": {"select": {"name": "ready"}}},
+        approved_parent_page_id="approved-root",
+    )
+
+    assert bridge.calls == [
+        {
+            "operation": "updatePage",
+            "args": {
+                "pageId": "target",
+                "input": {"properties": {"Status": {"select": {"name": "ready"}}}},
+            },
+            "mutation": True,
+            "identity": {
+                "workspaceName": "Genome's Notion",
+                "parentPageId": "approved-root",
+            },
+        }
+    ]
+
+
+def test_mutation_without_separate_root_fails_before_bridge_call(monkeypatch) -> None:
+    bridge = _Bridge({"updatePage": [{"id": "target"}]})
+    _install(monkeypatch, bridge)
+
+    try:
+        notion_api.update_database_page("target", {})
+    except RuntimeError as exc:
+        assert "approved_parent_page_id" in str(exc)
+    else:  # pragma: no cover - fail-closed assertion
+        raise AssertionError("mutation self-authorized its target page")
+    assert bridge.calls == []
+
+
+def test_create_refuses_parent_outside_separately_approved_root(monkeypatch) -> None:
+    bridge = _Bridge({"createPage": [{"id": "unexpected"}]})
+    _install(monkeypatch, bridge)
+
+    try:
+        notion_api.create_page(
+            "stale-target", "Unsafe", approved_parent_page_id="approved-root"
+        )
+    except RuntimeError as exc:
+        assert "differs from the approved mutation root" in str(exc)
+    else:  # pragma: no cover - fail-closed assertion
+        raise AssertionError("create self-authorized a stale target")
+    assert bridge.calls == []
 
 
 def test_direct_default_transport_is_disabled() -> None:

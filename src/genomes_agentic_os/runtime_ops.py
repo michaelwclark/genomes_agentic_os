@@ -4045,6 +4045,7 @@ def _apply_runtime_tracking_live(
     from .notion_api import (
         DATABASE_PROPERTY_SCHEMAS,
         _base_db_properties,
+        _default_fetcher,
         build_record_properties,
         create_database,
         create_database_page,
@@ -4073,17 +4074,31 @@ def _apply_runtime_tracking_live(
     cockpit_id: str | None = None
     cockpit_created = False
 
-    if existing_cockpit_id:
+    if existing_cockpit_id and fetcher is not _default_fetcher:
         cockpit_id = existing_cockpit_id
     else:
         child_pages = search_child_pages(parent_page_id, token_env, fetcher=fetcher)
         for page in child_pages:
-            if page["title"] == cockpit_title:
+            if page["title"] == cockpit_title and (
+                not existing_cockpit_id
+                or str(page["id"]).replace("-", "")
+                == str(existing_cockpit_id).replace("-", "")
+            ):
                 cockpit_id = page["id"]
                 break
+        if existing_cockpit_id and cockpit_id is None:
+            raise ValueError(
+                "manifest cockpit page is not the expected child of the approved parent"
+            )
 
     if cockpit_id is None:
-        cockpit_id = create_page(parent_page_id, cockpit_title, token_env, fetcher=fetcher)
+        cockpit_id = create_page(
+            parent_page_id,
+            cockpit_title,
+            token_env,
+            approved_parent_page_id=parent_page_id,
+            fetcher=fetcher,
+        )
         cockpit_created = True
 
     # --- 7 databases ---
@@ -4099,6 +4114,12 @@ def _apply_runtime_tracking_live(
     for db_name in plan["databases"]:
         db_id: str | None = existing_db_ids.get(db_name)
         if db_id:
+            if fetcher is _default_fetcher and str(
+                live_db_by_title.get(db_name) or ""
+            ).replace("-", "") != str(db_id).replace("-", ""):
+                raise ValueError(
+                    f"manifest database {db_name!r} is outside the approved cockpit"
+                )
             database_ids[db_name] = db_id
             databases_reused += 1
         elif db_name in live_db_by_title:
@@ -4106,7 +4127,14 @@ def _apply_runtime_tracking_live(
             databases_reused += 1
         else:
             schema = DATABASE_PROPERTY_SCHEMAS.get(db_name) or _base_db_properties()
-            new_id = create_database(cockpit_id, db_name, schema, token_env, fetcher=fetcher)
+            new_id = create_database(
+                cockpit_id,
+                db_name,
+                schema,
+                token_env,
+                approved_parent_page_id=cockpit_id,
+                fetcher=fetcher,
+            )
             database_ids[db_name] = new_id
             databases_created += 1
 
@@ -4139,17 +4167,30 @@ def _apply_runtime_tracking_live(
         props = build_record_properties(record_with_key, now)
         existing_page_id = query_database_by_key(db_id, record_key, token_env, fetcher=fetcher)
         if existing_page_id:
-            update_database_page(existing_page_id, props, token_env, fetcher=fetcher)
+            update_database_page(
+                existing_page_id,
+                props,
+                token_env,
+                approved_parent_page_id=cockpit_id,
+                fetcher=fetcher,
+            )
             notion_id = existing_page_id
             records_updated += 1
         else:
-            notion_id = create_database_page(db_id, props, token_env, fetcher=fetcher)
+            notion_id = create_database_page(
+                db_id,
+                props,
+                token_env,
+                approved_parent_page_id=cockpit_id,
+                fetcher=fetcher,
+            )
             records_created += 1
         records.append({**record_with_key, "notion_id": notion_id})
 
     manifest = {
         "live": True,
         "workspace": workspace,
+        "parent_page_id": parent_page_id,
         "cockpit_page_id": cockpit_id,
         "updated_at": now,
         "databases": plan["databases"],

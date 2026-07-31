@@ -155,18 +155,18 @@ def call_notion_bridge(
             env=child_env,
             timeout=timeout,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired):
         raise NotionBridgeError(
             "BRIDGE_UNAVAILABLE", "Notion bridge could not be executed"
-        ) from exc
+        ) from None
     if completed.returncode != 0:
         raise NotionBridgeError("BRIDGE_FAILED", "Notion bridge exited unsuccessfully")
     try:
         response = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
+    except json.JSONDecodeError:
         raise NotionBridgeError(
             "BRIDGE_INVALID_RESPONSE", "Notion bridge returned invalid JSON"
-        ) from exc
+        ) from None
     if not isinstance(response, dict) or response.get("version") != BRIDGE_VERSION:
         raise NotionBridgeError(
             "BRIDGE_INVALID_RESPONSE", "Notion bridge returned an unsupported response"
