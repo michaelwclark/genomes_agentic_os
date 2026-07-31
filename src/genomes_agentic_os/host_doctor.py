@@ -96,6 +96,10 @@ def host_projection(policies: Iterable[dict[str, Any]]) -> dict[str, str]:
                 projection["workspace"] = str(policy["notion_workspace"])
             if policy.get("notion_token_env"):
                 projection["token_env"] = str(policy["notion_token_env"])
+            if policy.get("notion_parent_page_id"):
+                projection["parent_page_id"] = str(
+                    policy["notion_parent_page_id"]
+                ).replace("-", "")
             return projection
     return {}
 
@@ -963,15 +967,30 @@ def project_host_report(
     page_id: str,
     *,
     verified_workspace: str,
+    approved_parent_page_id: str,
     token_env: str = "NOTION_TOKEN",
 ) -> dict[str, Any]:
     if not verified_workspace:
         raise ValueError("verified_workspace is required for a Notion projection")
-    actual = notion_api.get_bot_workspace(token_env)
+    if not approved_parent_page_id:
+        raise ValueError("approved_parent_page_id is required for a Notion projection")
+    actual = notion_api.get_bot_workspace(
+        token_env, parent_page_id=approved_parent_page_id
+    )
     if actual != verified_workspace:
         raise RuntimeError(f"Notion workspace mismatch: expected {verified_workspace!r}, got {actual!r}")
-    notion_api.replace_block_children(page_id, notion_blocks(report), token_env)
-    return {"applied": True, "workspace": actual, "page_id": page_id}
+    notion_api.replace_block_children(
+        page_id,
+        notion_blocks(report),
+        token_env,
+        approved_parent_page_id=approved_parent_page_id,
+    )
+    return {
+        "applied": True,
+        "workspace": actual,
+        "page_id": page_id,
+        "approved_parent_page_id": approved_parent_page_id,
+    }
 
 
 def project_http_report(

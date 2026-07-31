@@ -95,10 +95,17 @@ def handle_host_health_report(args: argparse.Namespace) -> int:
         page_id = args.notion_page_id or projection.get("page_id")
         if not page_id:
             raise ValueError("no Notion page id configured; set notion_page_id in the host identity policy or pass --notion-page-id")
+        parent_page_id = args.notion_parent_page_id or projection.get("parent_page_id")
+        if not parent_page_id:
+            raise ValueError(
+                "no approved Notion parent page id configured; set "
+                "notion_parent_page_id in policy or pass --notion-parent-page-id"
+            )
         notion = project_host_report(
             report,
             page_id,
             verified_workspace=projection.get("workspace") or args.verified_workspace,
+            approved_parent_page_id=parent_page_id,
             token_env=projection.get("token_env") or args.token_env,
         )
     http_report = {"applied": False}
@@ -164,6 +171,7 @@ def register(subparsers) -> None:
     host_health.add_argument("--apply-safe-repairs", action="store_true", help="Apply allowlisted reconstructable repairs and recheck.")
     host_health.add_argument("--apply-notion", action="store_true", help="Replace the verified host page with the latest report.")
     host_health.add_argument("--notion-page-id", help="Override the Notion host page id from policy.")
+    host_health.add_argument("--notion-parent-page-id", help="Explicitly approved Notion parent page for the host projection.")
     host_health.add_argument("--verified-workspace", help="Expected Notion workspace name; required unless configured in policy.")
     host_health.add_argument("--token-env", default="NOTION_TOKEN", help="Notion token environment variable name.")
     host_health.add_argument("--apply-http-report", action="store_true", help="Ingest the report into the configured HTTP endpoint.")

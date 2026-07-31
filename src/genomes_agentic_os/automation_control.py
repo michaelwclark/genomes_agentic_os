@@ -10,7 +10,8 @@ import urllib.request
 
 import yaml
 
-from .notion_api import query_data_source_pages, query_database_pages
+from . import notion_api as _legacy_notion_api
+from .notion_bridge_adapter import query_data_source_pages, query_database_pages
 from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
 from .source_watch import find_by_id, load_yaml, watch_sources
@@ -93,14 +94,20 @@ def _query_notion_rows(
     )
     token_env = str(probe.get("token_env") or source.get("token_env") or "GENOMES_NOTION_PAT")
     kwargs: dict[str, Any] = {"token_env": token_env}
+    query_data_source = query_data_source_pages
+    query_database = query_database_pages
+    provider = "notion_bridge"
     if fetcher is not None:
         kwargs["fetcher"] = fetcher
+        query_data_source = _legacy_notion_api.query_data_source_pages
+        query_database = _legacy_notion_api.query_database_pages
+        provider = "notion_fixture_transport"
 
     errors: list[str] = []
     if data_source_id:
         try:
-            return query_data_source_pages(str(data_source_id), **kwargs), {
-                "provider": "notion_api",
+            return query_data_source(str(data_source_id), **kwargs), {
+                "provider": provider,
                 "live": True,
                 "ref": "data_source_id",
                 "credential_env": token_env,
@@ -109,8 +116,8 @@ def _query_notion_rows(
             errors.append(str(exc))
     if database_id:
         try:
-            return query_database_pages(str(database_id), **kwargs), {
-                "provider": "notion_api",
+            return query_database(str(database_id), **kwargs), {
+                "provider": provider,
                 "live": True,
                 "ref": "database_id",
                 "credential_env": token_env,

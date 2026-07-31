@@ -96,7 +96,12 @@ def handle_self_improvement_toggle(args: argparse.Namespace) -> int:
 def handle_self_improvement_nightly_apply(args: argparse.Namespace) -> int:
     print(
         format_self_improvement_result(
-            nightly_apply_self_improvement(args.root, dry_run=not args.apply, limit=args.limit)
+            nightly_apply_self_improvement(
+                args.root,
+                dry_run=not args.apply,
+                limit=args.limit,
+                approved_parent_page_id=args.notion_parent_page_id,
+            )
         )
     )
     return 0
@@ -210,6 +215,7 @@ def register(subparsers) -> None:
     )
     self_improvement_nightly.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     self_improvement_nightly.add_argument("--limit", type=int, default=None, help="Cap approvals below the configured max_per_night.")
+    self_improvement_nightly.add_argument("--notion-parent-page-id", help="Explicitly approved parent page containing OS Work Intake.")
     self_improvement_nightly_mode = self_improvement_nightly.add_mutually_exclusive_group()
     self_improvement_nightly_mode.add_argument("--dry-run", action="store_true", help="Preview selection without approving, promoting, or queuing (default behaviour).")
     self_improvement_nightly_mode.add_argument("--apply", action="store_true", help="Approve, promote, and queue eligible proposals.")

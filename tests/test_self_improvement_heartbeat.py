@@ -23,12 +23,101 @@ import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
+from genomes_agentic_os import notion_api
 from genomes_agentic_os import self_improvement as si
 from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.runtime_ops import runtime_doctor
 
 
 SENTINEL_TOKEN = "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+
+def test_live_runtime_notion_anchor_accepts_only_verified_cockpit_child(monkeypatch) -> None:
+    manifest = {"parent_page_id": "parent", "cockpit_page_id": "cockpit"}
+    monkeypatch.setattr(
+        notion_api,
+        "search_child_pages",
+        lambda *args, **kwargs: [{"id": "cock-pit", "title": "Runtime Control Plane"}],
+    )
+
+    assert si._verified_runtime_notion_anchor(manifest, notion_api._default_fetcher) == (
+        "parent",
+        "cockpit",
+    )
+
+    monkeypatch.setattr(notion_api, "search_child_pages", lambda *args, **kwargs: [])
+    with pytest.raises(RuntimeError, match="not a child"):
+        si._verified_runtime_notion_anchor(manifest, notion_api._default_fetcher)
+
+
+def test_live_morning_report_requires_separately_approved_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "agentic_os"
+    root.mkdir()
+    monkeypatch.setattr(notion_api, "resolve_token", lambda *args, **kwargs: "present")
+    monkeypatch.delenv("GENOMES_NOTION_PARENT_PAGE_ID", raising=False)
+
+    result = si._project_morning_report_to_notion(
+        root, {"date": "2026-07-31"}, fetcher=notion_api._default_fetcher
+    )
+
+    assert result["projected"] is False
+    assert "parent_page_id is required" in result["reason"]
+
+
+def test_live_nightly_intake_requires_matching_approved_database_parent(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(notion_api, "resolve_token", lambda *args, **kwargs: "present")
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_parent_page_id",
+        lambda *args, **kwargs: "different-parent",
+    )
+
+    result = si._project_nightly_row_to_intake(
+        {"proposal_id": "proposal-1"},
+        [],
+        approved_parent_page_id="approved-parent",
+        fetcher=notion_api._default_fetcher,
+    )
+
+    assert result == {
+        "projected": False,
+        "reason": "intake_database_outside_approved_parent",
+    }
+
+
+def test_live_nightly_intake_passes_explicit_anchor_to_create(monkeypatch) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(notion_api, "resolve_token", lambda *args, **kwargs: "present")
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_parent_page_id",
+        lambda *args, **kwargs: "approved-parent",
+    )
+    monkeypatch.setattr(si, "_query_existing_intake_row", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_property_types",
+        lambda *args, **kwargs: {"Name": "title"},
+    )
+
+    def create(*args, **kwargs):
+        seen.update(kwargs)
+        return "created-page"
+
+    monkeypatch.setattr(notion_api, "create_database_page", create)
+    result = si._project_nightly_row_to_intake(
+        {"proposal_id": "proposal-1", "slug": "guarded-intake"},
+        [],
+        approved_parent_page_id="approved-parent",
+        fetcher=notion_api._default_fetcher,
+    )
+
+    assert result["projected"] is True
+    assert seen["approved_parent_page_id"] == "approved-parent"
 
 
 def _shared_factory(root: Path) -> Path:
@@ -394,6 +483,51 @@ def test_runtime_dispatch_supports_nightly_apply_command(tmp_path: Path) -> None
         )
         is None
     )
+
+
+def test_runtime_dispatch_passes_configured_parent_to_nightly_apply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from genomes_agentic_os.scaffold import shared_factory_path
+
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    config_path = shared_factory_path(
+        root, "00-control-plane", "notion-tracking.yml"
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "parent_page_id": "approved-parent",
+                "workspace": "Genome's Notion",
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: dict[str, Any] = {}
+
+    def nightly(root_arg, **kwargs):
+        seen.update(kwargs)
+        return {
+            "ok": True,
+            "enabled": True,
+            "approved": [],
+            "queued": [],
+            "implemented": [],
+            "errors": [],
+            "notion_failures": [],
+            "receipt": None,
+        }
+
+    monkeypatch.setattr(runtime_ops, "nightly_apply_self_improvement", nightly)
+    execution = runtime_ops._run_local_script(
+        root,
+        f"agentic-os self-improvement nightly-apply --root {root} --apply",
+    )
+
+    assert execution["ok"] is True
+    assert seen["approved_parent_page_id"] == "approved-parent"
 
 
 def test_repair_validation_drift_creates_work_item_placeholders_and_json_backup(tmp_path: Path) -> None:

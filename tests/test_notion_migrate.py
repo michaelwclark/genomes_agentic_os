@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -121,3 +122,63 @@ def test_render_report_lists_sections() -> None:
     report = module.render_report(drift, NOW)
     assert "Unexpected roots" in report
     assert "Stray" in report
+
+
+def test_crawl_workspace_uses_complete_normalized_bridge_search(monkeypatch) -> None:
+    module = _load_module()
+    requests = []
+
+    class FakeClient:
+        def request(self, operation, args, **kwargs):
+            requests.append((operation, args, kwargs))
+            return {
+                "values": [
+                    {
+                        "object": "database",
+                        "id": "aaa-bbb",
+                        "title": [{"plainText": "People"}],
+                        "parent": {"type": "workspace"},
+                        "updatedAt": "2026-07-31T12:00:00.000Z",
+                        "url": "https://www.notion.so/database",
+                    }
+                ],
+                "complete": True,
+            }
+
+    monkeypatch.setattr(module, "notion_client", lambda: FakeClient())
+
+    assert module.crawl_workspace() == {
+        "aaabbb": {
+            "object": "database",
+            "title": "People",
+            "parent": "workspace",
+            "parent_type": "workspace",
+            "edited": "2026-07-31T12:00:00.000Z",
+            "url": "https://www.notion.so/database",
+        }
+    }
+    assert requests == [("search", {}, {})]
+
+
+def test_trash_backs_up_then_uses_guarded_bridge_mutation(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    requests = []
+
+    class FakeClient:
+        def request(self, operation, args, **kwargs):
+            requests.append((operation, args, kwargs))
+            if operation == "getPage":
+                return {"object": "page", "id": args["pageId"]}
+            if operation == "listBlockChildren":
+                return {"values": [], "complete": True}
+            return {"object": "page", "id": args["pageId"], "inTrash": True}
+
+    monkeypatch.setattr(module, "notion_client", lambda: FakeClient())
+    backup_dir = tmp_path / "backup"
+    args = Namespace(
+        root=str(tmp_path), ids="aaa", backup_dir=str(backup_dir), live=True
+    )
+
+    assert module.cmd_trash(args) == 0
+    assert (backup_dir / "aaa.json").is_file()
+    assert requests[-1] == ("trashPage", {"pageId": "aaa"}, {"mutation": True})

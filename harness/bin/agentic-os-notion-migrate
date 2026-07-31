@@ -11,8 +11,10 @@ are reported for the operator (or an MCP session) to apply. Trash mode can
 remove approved junk (backup first, Notion trash, recoverable ~30 days).
 
 ENVIRONMENT
+  GENOMES_NOTION_BRIDGE_COMMAND  Reviewed built Notion bridge argv.
   GENOMES_NOTION_PAT        Notion integration token (checked first).
   GENOMES_NOTION_CONNECTOR  Alternative Notion token (checked second).
+  GENOMES_NOTION_PARENT_PAGE_ID  Exact Genome's Notion parent for trash authorization.
   AGENTIC_OS_ROOT           Installed OS root (fallback for --root). Default: ~/agentic_os.
 
 CONFIG FILES (read at runtime)
@@ -40,11 +42,17 @@ import json
 import os
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+_SOURCE = Path(__file__).resolve().parents[2] / "src"
+if (_SOURCE / "genomes_agentic_os" / "notion_bridge.py").is_file():
+    sys.path.insert(0, str(_SOURCE))
+
+from genomes_agentic_os.notion_bridge import (
+    NotionBridgeError,
+    client_from_environment,
+)
 
 try:
     import yaml
@@ -52,8 +60,6 @@ except ImportError:
     print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
     sys.exit(1)
 
-NOTION_API = "https://api.notion.com/v1"
-NOTION_VERSION = "2022-06-28"
 ORG_CONFIG_REL = "harness/shared_factory/00-control-plane/notion-organization.yml"
 SURFACES_REL = "harness/registries/notion-surfaces.yml"
 REPORT_DIR_REL = "harness/shared_factory/06-runs-and-logs/notion-org"
@@ -67,30 +73,11 @@ def notion_token() -> str | None:
     return os.environ.get("GENOMES_NOTION_PAT") or os.environ.get("GENOMES_NOTION_CONNECTOR")
 
 
-def api(path: str, payload: dict | None = None, method: str | None = None, token: str | None = None):
-    method = method or ("POST" if payload is not None else "GET")
-    req = urllib.request.Request(
-        f"{NOTION_API}{path}",
-        data=json.dumps(payload).encode() if payload is not None else None,
-        headers={
-            "Authorization": f"Bearer {token or notion_token()}",
-            "Notion-Version": NOTION_VERSION,
-            "Content-Type": "application/json",
-        },
-        method=method,
-    )
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return json.loads(resp.read()), None
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429 or exc.code >= 500:
-                time.sleep(2 ** attempt)
-                continue
-            return None, f"{exc.code}: {exc.read().decode()[:300]}"
-        except urllib.error.URLError as exc:
-            return None, str(exc)
-    return None, "retries exhausted"
+def notion_client():
+    token = notion_token()
+    if not token:
+        raise NotionBridgeError("CONFIGURATION_ERROR", "Notion token is not configured")
+    return client_from_environment(token=token)
 
 
 def norm_id(value: str | None) -> str:
@@ -100,20 +87,16 @@ def norm_id(value: str | None) -> str:
 def crawl_workspace() -> dict[str, dict]:
     """Return {id: item} for every page/database the token can see."""
     items: dict[str, dict] = {}
-    cursor = None
-    while True:
-        payload: dict = {"page_size": 100}
-        if cursor:
-            payload["start_cursor"] = cursor
-        batch, err = api("/search", payload)
-        if err:
-            raise RuntimeError(f"workspace crawl failed: {err}")
-        for result in batch.get("results", []):
+    batch = notion_client().request("search", {})
+    if not isinstance(batch, dict) or batch.get("complete") is not True:
+        raise RuntimeError("workspace crawl failed: bridge returned incomplete search")
+    for result in batch.get("values", []):
+        if isinstance(result, dict):
             parent = result.get("parent", {})
             ptype = parent.get("type")
             title = ""
             if result["object"] == "database":
-                title = "".join(t.get("plain_text", "") for t in result.get("title", []))
+                title = "".join(t.get("plainText", "") for t in result.get("title", []))
             else:
                 for prop in result.get("properties", {}).values():
                     if prop.get("type") == "title":
@@ -121,14 +104,12 @@ def crawl_workspace() -> dict[str, dict]:
             items[norm_id(result["id"])] = {
                 "object": result["object"],
                 "title": title or "(untitled)",
-                "parent": norm_id(parent.get(ptype)) if ptype and ptype != "workspace" else "workspace",
+                "parent": norm_id(parent.get("id")) if ptype and ptype != "workspace" else "workspace",
                 "parent_type": ptype,
-                "edited": result.get("last_edited_time"),
+                "edited": result.get("updatedAt"),
                 "url": result.get("url"),
             }
-        if not batch.get("has_more"):
-            return items
-        cursor = batch.get("next_cursor")
+    return items
 
 
 def compute_drift(org: dict, surfaces: dict, items: dict[str, dict], now: datetime) -> dict:
@@ -293,19 +274,31 @@ def cmd_trash(args: argparse.Namespace) -> int:
     backup_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
     failures = 0
+    client = notion_client()
     for pid in ids:
-        page, page_err = api(f"/pages/{pid}")
-        blocks, blocks_err = api(f"/blocks/{pid}/children?page_size=100")
+        page = None
+        blocks = None
+        page_err = None
+        blocks_err = None
+        try:
+            page = client.request("getPage", {"pageId": pid})
+        except NotionBridgeError as exc:
+            page_err = f"{exc.code}: {exc}"
+        try:
+            blocks = client.request("listBlockChildren", {"blockId": pid})
+        except NotionBridgeError as exc:
+            blocks_err = f"{exc.code}: {exc}"
         (backup_dir / f"{pid}.json").write_text(json.dumps(
             {"backed_up_at": now, "page": page, "page_error": page_err,
              "blocks": blocks, "blocks_error": blocks_err}, indent=1))
         if not args.live:
             print(f"DRY-RUN would trash {pid}")
             continue
-        _, err = api(f"/pages/{pid}", {"archived": True}, method="PATCH")
-        if err:
+        try:
+            client.request("trashPage", {"pageId": pid}, mutation=True)
+        except NotionBridgeError as exc:
             failures += 1
-            print(f"FAILED {pid}: {err}", file=sys.stderr)
+            print(f"FAILED {pid}: {exc.code}: {exc}", file=sys.stderr)
         else:
             print(f"TRASHED {pid} (backup: {backup_dir / (pid + '.json')})")
     return 2 if failures else 0

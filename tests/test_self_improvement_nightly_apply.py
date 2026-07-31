@@ -170,8 +170,15 @@ def test_apply_approves_promotes_and_is_idempotent(tmp_path: Path) -> None:
     doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
     _persist(root, [doctor])
 
+    transport = _FakeTransport(
+        [
+            {"results": []},
+            {"properties": {"Name": {"type": "title"}}},
+            {"id": "intake-page-idempotent"},
+        ]
+    )
     result = si.nightly_apply_self_improvement(
-        root, dry_run=False, notifier=_RecordingNotifier()
+        root, dry_run=False, fetcher=transport, notifier=_RecordingNotifier()
     )
 
     assert result["mode"] == "apply"
@@ -261,7 +268,7 @@ def test_apply_lands_intake_row_via_fake_transport(tmp_path: Path, monkeypatch: 
     assert SENTINEL_TOKEN not in create["data"].decode("utf-8")
 
 
-def test_projection_degrades_when_token_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_projection_blocks_queue_when_token_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _seed_root(tmp_path, enable_nightly=True)
     doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
     _persist(root, [doctor])
@@ -269,13 +276,15 @@ def test_projection_degrades_when_token_absent(tmp_path: Path, monkeypatch: pyte
 
     result = si.nightly_apply_self_improvement(root, dry_run=False, notifier=_RecordingNotifier())
 
-    # The proposal is still approved + promoted; only the projection degrades.
+    # The proposal is approved + promoted, but it is not counted as queued.
     assert _status_of(root, doctor["proposal_id"]) == "drafted"
-    assert result["queued"][0]["notion"]["projected"] is False
-    assert result["queued"][0]["notion"]["reason"] == "notion_token_missing"
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["queued"] == []
+    assert result["notion_failures"][0]["reason"] == "notion_token_missing"
 
 
-def test_notion_error_does_not_fail_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_notion_error_blocks_queue_and_fails_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _seed_root(tmp_path, enable_nightly=True)
     doctor = _make_proposal(root, finding_type="recurring_failure", total_score=20, slug="doctor")
     _persist(root, [doctor])
@@ -285,9 +294,10 @@ def test_notion_error_does_not_fail_the_run(tmp_path: Path, monkeypatch: pytest.
         root, dry_run=False, fetcher=_RaisingTransport(), notifier=_RecordingNotifier()
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
     assert _status_of(root, doctor["proposal_id"]) == "drafted"
-    assert result["queued"][0]["notion"]["projected"] is False
+    assert result["queued"] == []
     assert result["notion_failures"] and "notion_error" in result["notion_failures"][0]["reason"]
 
 

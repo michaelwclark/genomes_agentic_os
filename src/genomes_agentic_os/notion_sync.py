@@ -362,6 +362,7 @@ def apply_active_work_sync(
     *,
     database_id: str | None,
     verified_workspace: str | None,
+    approved_parent_page_id: str | None = None,
     token_env: str = "GENOMES_NOTION_PAT",
     fetcher: Any | None = None,
 ) -> dict[str, Any]:
@@ -374,19 +375,38 @@ def apply_active_work_sync(
 
     from .notion_api import (
         _default_fetcher,
+        _same_notion_id,
         create_database_page,
         get_bot_workspace,
+        get_database_parent_page_id,
         get_database_property_types,
         query_database_by_rich_text_property,
         update_database_page,
     )
 
     active_fetcher = fetcher or _default_fetcher
-    bot_workspace = get_bot_workspace(token_env, fetcher=active_fetcher)
+    if active_fetcher is _default_fetcher and not approved_parent_page_id:
+        raise ValueError(
+            "approved_parent_page_id is required for live active-work Notion sync"
+        )
+    bot_workspace = get_bot_workspace(
+        token_env,
+        parent_page_id=approved_parent_page_id,
+        fetcher=active_fetcher,
+    )
     if bot_workspace != workspace:
         raise ValueError(
             f"live API workspace mismatch: bot reports {bot_workspace!r} "
             f"but verified_workspace expects {workspace!r}; refusing Notion write"
+        )
+    database_parent = get_database_parent_page_id(
+        database_id, token_env, fetcher=active_fetcher
+    )
+    if approved_parent_page_id and not _same_notion_id(
+        database_parent, approved_parent_page_id
+    ):
+        raise ValueError(
+            "OS Active Work database is outside the approved Notion parent"
         )
     missing = _missing_active_work_properties(get_database_property_types(database_id, token_env, fetcher=active_fetcher))
     if missing:
@@ -413,12 +433,24 @@ def apply_active_work_sync(
                 counts["unchanged"] += 1
                 notion_id = str(page.get("id") or "").replace("-", "")
             else:
-                update_database_page(str(page["id"]), props, token_env, fetcher=active_fetcher)
+                update_database_page(
+                    str(page["id"]),
+                    props,
+                    token_env,
+                    approved_parent_page_id=approved_parent_page_id,
+                    fetcher=active_fetcher,
+                )
                 action = "updated"
                 counts["updated"] += 1
                 notion_id = str(page.get("id") or "").replace("-", "")
         else:
-            notion_id = create_database_page(database_id, props, token_env, fetcher=active_fetcher)
+            notion_id = create_database_page(
+                database_id,
+                props,
+                token_env,
+                approved_parent_page_id=approved_parent_page_id,
+                fetcher=active_fetcher,
+            )
             action = "created"
             counts["created"] += 1
         rows.append({**row, "action": action, "notion_id": notion_id})
