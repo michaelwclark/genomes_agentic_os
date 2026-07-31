@@ -3352,6 +3352,7 @@ def _project_nightly_row_to_intake(
     draft_paths: list[str],
     *,
     root: Path | None = None,
+    approved_parent_page_id: str | None = None,
     fetcher: Any | None = None,
 ) -> dict[str, Any]:
     """Best-effort projection of one queued item into the OS Work Intake DB.
@@ -3390,8 +3391,32 @@ def _project_nightly_row_to_intake(
                 "url": str(entry.get("url") or _notion_url(page_id)),
                 "deduped": "ledger",
             }
-    if not notion_api.resolve_token(NOTION_TOKEN_ENV):
+    if transport is notion_api._default_fetcher and not notion_api.resolve_token(
+        NOTION_TOKEN_ENV
+    ):
         return {"projected": False, "reason": "notion_token_missing"}
+    if transport is notion_api._default_fetcher:
+        if not approved_parent_page_id:
+            return {
+                "projected": False,
+                "reason": "approved_parent_page_id_missing",
+            }
+        try:
+            database_parent = notion_api.get_database_parent_page_id(
+                WORK_INTAKE_DB_ID, NOTION_TOKEN_ENV, fetcher=transport
+            )
+        except Exception as exc:  # noqa: BLE001 - projection remains best-effort
+            return {
+                "projected": False,
+                "reason": f"notion_parent_error: {type(exc).__name__}: {exc}"[:300],
+            }
+        if not notion_api._same_notion_id(
+            database_parent, approved_parent_page_id
+        ):
+            return {
+                "projected": False,
+                "reason": "intake_database_outside_approved_parent",
+            }
     # --- Notion-side dedup guard (secondary; heals a lost ledger) -----------
     if proposal_id:
         existing_id = _query_existing_intake_row(proposal_id, transport, NOTION_TOKEN_ENV)
@@ -3424,6 +3449,7 @@ def _project_nightly_row_to_intake(
             properties,
             NOTION_TOKEN_ENV,
             children=_nightly_intake_body(proposal, draft_paths),
+            approved_parent_page_id=approved_parent_page_id,
             fetcher=transport,
         )
     except Exception as exc:  # noqa: BLE001 - projection must never fail the run
@@ -3492,6 +3518,7 @@ def nightly_apply_self_improvement(
     *,
     dry_run: bool = True,
     limit: int | None = None,
+    approved_parent_page_id: str | None = None,
     fetcher: Any | None = None,
     notifier: Any | None = None,
     now: datetime | None = None,
@@ -3653,7 +3680,13 @@ def nightly_apply_self_improvement(
         result["approved"].append({"proposal_id": proposal_id, "approval_id": approval.get("approval_id")})
         draft_paths = [str(path) for path in promotion.get("draft_paths") or []]
         refreshed = _load_proposal(os_root, config, proposal_id)
-        projection = _project_nightly_row_to_intake(refreshed, draft_paths, root=os_root, fetcher=fetcher)
+        projection = _project_nightly_row_to_intake(
+            refreshed,
+            draft_paths,
+            root=os_root,
+            approved_parent_page_id=approved_parent_page_id,
+            fetcher=fetcher,
+        )
         queued_row = {
             "proposal_id": proposal_id,
             "target": target,

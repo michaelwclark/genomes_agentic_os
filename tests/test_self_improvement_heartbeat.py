@@ -66,6 +66,60 @@ def test_live_morning_report_requires_separately_approved_root(
     assert "parent_page_id is required" in result["reason"]
 
 
+def test_live_nightly_intake_requires_matching_approved_database_parent(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(notion_api, "resolve_token", lambda *args, **kwargs: "present")
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_parent_page_id",
+        lambda *args, **kwargs: "different-parent",
+    )
+
+    result = si._project_nightly_row_to_intake(
+        {"proposal_id": "proposal-1"},
+        [],
+        approved_parent_page_id="approved-parent",
+        fetcher=notion_api._default_fetcher,
+    )
+
+    assert result == {
+        "projected": False,
+        "reason": "intake_database_outside_approved_parent",
+    }
+
+
+def test_live_nightly_intake_passes_explicit_anchor_to_create(monkeypatch) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(notion_api, "resolve_token", lambda *args, **kwargs: "present")
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_parent_page_id",
+        lambda *args, **kwargs: "approved-parent",
+    )
+    monkeypatch.setattr(si, "_query_existing_intake_row", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_property_types",
+        lambda *args, **kwargs: {"Name": "title"},
+    )
+
+    def create(*args, **kwargs):
+        seen.update(kwargs)
+        return "created-page"
+
+    monkeypatch.setattr(notion_api, "create_database_page", create)
+    result = si._project_nightly_row_to_intake(
+        {"proposal_id": "proposal-1", "slug": "guarded-intake"},
+        [],
+        approved_parent_page_id="approved-parent",
+        fetcher=notion_api._default_fetcher,
+    )
+
+    assert result["projected"] is True
+    assert seen["approved_parent_page_id"] == "approved-parent"
+
+
 def _shared_factory(root: Path) -> Path:
     return root / "harness" / "shared_factory"
 

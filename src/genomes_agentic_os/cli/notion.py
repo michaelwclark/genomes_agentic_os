@@ -67,6 +67,7 @@ def handle_notion_active_work_sync(args: argparse.Namespace) -> int:
                     args.root,
                     database_id=args.database_id,
                     verified_workspace=args.verified_workspace,
+                    approved_parent_page_id=args.parent_page_id,
                     token_env=args.token_env,
                 )
             )
@@ -122,6 +123,7 @@ def register(subparsers) -> None:
     notion_active_work_mode.add_argument("--apply", action="store_true")
     notion_active_work.add_argument("--database-id", help="Existing OS Active Work Notion database id.")
     notion_active_work.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
+    notion_active_work.add_argument("--parent-page-id", help="Explicitly approved parent page containing the OS Active Work database.")
     notion_active_work.add_argument("--token-env", default="GENOMES_NOTION_PAT", help="Environment variable containing the Notion token.")
     notion_active_work.set_defaults(handler=handle_notion_active_work_sync)
 
