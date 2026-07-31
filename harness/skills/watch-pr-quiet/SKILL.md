@@ -9,6 +9,11 @@ Use this skill whenever you need to watch GitHub PR checks, CI, or branch protec
 
 Do not repeatedly run `gh pr checks`, `gh run watch`, or long polling loops in the main conversation. Start the quiet watcher and inspect its files later.
 
+The watcher reads pull-request metadata and workflow runs through the versioned
+`@genomes/github` port bridge. Configure `GENOMES_GITHUB_BRIDGE_COMMAND` with
+the reviewed bridge executable and provide `GITHUB_TOKEN` or `GH_TOKEN` in the
+watcher environment. The watcher never shells out to `gh` for provider reads.
+
 ## Canonical Command
 
 ```bash
@@ -43,8 +48,8 @@ The script prints nothing. It writes:
 
 ## Status Meanings
 
-- `success`: all observed checks/status contexts passed
-- `failure`: at least one observed check/status context failed, timed out, was cancelled, or requires action
+- `success`: all current-head workflow runs passed
+- `failure`: at least one current-head workflow run failed, timed out, was cancelled, or requires action
 - `pending`: checks are queued, in progress, expected, or not yet observed
 - `timeout`: timeframe expired before a terminal pass/fail state
 - `error`: the watcher could not query GitHub or write artifacts
@@ -82,7 +87,7 @@ agentic-os long-run start \
   --no-progress-minutes 125 \
   --max-log-mb 1 \
   --log-rotations 1 \
-  --preflight-check "gh pr view <PR_NUMBER> --repo <owner/name> --json headRefOid >/dev/null" \
+  --preflight-check 'test -n "$GENOMES_GITHUB_BRIDGE_COMMAND" && test -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}"' \
   -- \
   python3 "${AGENTIC_OS_ROOT:-$HOME/agentic_os}/harness/skills/watch-pr-quiet/scripts/watch_pr_quiet.py" \
   --pr <PR_NUMBER> \
