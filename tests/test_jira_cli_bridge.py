@@ -116,6 +116,19 @@ def test_comments_preserve_legacy_key_newest_first_and_limit() -> None:
     }
 
 
+def test_comments_reject_incomplete_unbounded_collection() -> None:
+    module = _load_cli()
+    client = _facade(module)
+    client.bridge.request = lambda _operation, _args: {
+        "values": [{"id": "1", "body": {"type": "doc"}}],
+        "total": 2,
+        "complete": False,
+    }
+
+    with pytest.raises(module.JiraCliError, match="incomplete comment collection"):
+        client.comments("APP-131", limit=1)
+
+
 def test_installed_release_runtime_order_is_numeric() -> None:
     module = _load_cli()
     root = Path("/tmp/releases")

@@ -286,6 +286,8 @@ class JiraBridgeFacade:
         data = self.request("listComments", {"key": issue_key})
         if not isinstance(data, dict) or not isinstance(data.get("values"), list):
             raise JiraCliError("Jira bridge returned invalid comments")
+        if data.get("complete") is not True:
+            raise JiraCliError("Jira bridge returned an incomplete comment collection")
         newest = list(reversed(data["values"][-limit:])) if limit > 0 else []
         return {
             "comments": newest,
