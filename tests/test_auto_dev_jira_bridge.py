@@ -154,6 +154,44 @@ def test_live_jira_tracker_reports_not_found_distinctly() -> None:
         raise AssertionError("missing Jira issue was not reported as not found")
 
 
+def test_live_jira_tracker_bearer_mode_uses_atlassian_gateway() -> None:
+    module = _load_jira_tracker()
+    adapter = module.JiraBridgeAdapter.from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://tenant.invalid",
+            "JIRA_OAUTH_TOKEN": "secret",
+            "JIRA_CLOUD_ID": "cloud-131",
+            "JIRA_SITE_URL": "https://tenant.invalid",
+            "JIRA_PROJECT_KEY": "APP",
+            "JIRA_ISSUE_TYPE_ID": "10001",
+        }
+    )
+
+    assert list(adapter.client.command) == ["node", "bridge.js"]
+    assert adapter.client.base_url == "https://api.atlassian.com/ex/jira/cloud-131"
+    assert adapter.client.auth == {"JIRA_OAUTH_TOKEN": "secret"}
+
+
+def test_live_jira_tracker_bearer_mode_requires_gateway_identity() -> None:
+    module = _load_jira_tracker()
+    try:
+        module.JiraBridgeAdapter.from_environment(
+            {
+                "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+                "JIRA_BASE_URL": "https://tenant.invalid",
+                "JIRA_OAUTH_TOKEN": "secret",
+                "JIRA_SITE_URL": "https://tenant.invalid",
+                "JIRA_PROJECT_KEY": "APP",
+                "JIRA_ISSUE_TYPE_ID": "10001",
+            }
+        )
+    except module.TrackerError as exc:
+        assert "gateway base URL or cloud ID" in str(exc)
+    else:
+        raise AssertionError("bearer authentication accepted a tenant base URL")
+
+
 def test_transition_matches_available_destination_only() -> None:
     module = _load_jira_tracker()
     bridge = FakeBridge()
