@@ -655,7 +655,12 @@ def poll_jira_source(
         }
     try:
         try:
-            limit = int(external_ref.get("max_results") or 250)
+            raw_limit = (
+                external_ref["max_results"]
+                if "max_results" in external_ref
+                else 250
+            )
+            limit = int(raw_limit)
         except (TypeError, ValueError) as exc:
             raise JiraBridgeError(
                 "INVALID_REQUEST", "Jira watch max_results must be an integer"

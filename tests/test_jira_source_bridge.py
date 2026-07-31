@@ -101,6 +101,16 @@ def test_jira_watch_rejects_non_numeric_limit_as_provider_finding() -> None:
         }
     ]
 
+    zero = poll_jira_source(
+        {"external_ref": {"project_key": "APP", "max_results": 0}},
+        {"system": "jira"},
+        client=FakeJiraBridge(),  # type: ignore[arg-type]
+    )
+    assert zero["ok"] is False
+    assert zero["findings"][0]["message"] == (
+        "Jira watch max_results must be between 1 and 500"
+    )
+
 
 def test_jira_watch_adds_persisted_cursor_before_ordering() -> None:
     bridge = FakeJiraBridge()

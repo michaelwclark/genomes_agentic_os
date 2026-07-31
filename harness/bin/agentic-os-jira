@@ -96,9 +96,8 @@ from genomes_agentic_os.jira_bridge import (
     command_from_environment,
 )
 
-DEFAULT_BROWSE_BASE = os.environ.get(
-    "JIRA_BROWSE_BASE", "https://example.atlassian.net"
-)
+PLACEHOLDER_BROWSE_BASE = "https://example.atlassian.net"
+DEFAULT_BROWSE_BASE = os.environ.get("JIRA_BROWSE_BASE", PLACEHOLDER_BROWSE_BASE)
 DEFAULT_JIRA_PROJECT = os.environ.get("JIRA_DEFAULT_PROJECT", "PROJ")
 JIRA_BEARER_TOKEN_NAMES = ("JIRA_OAUTH_TOKEN", "ATLASSIAN_ACCESS_TOKEN")
 JIRA_OAUTH_BASE_NAMES = ("ATLASSIAN_BASE_URL", "JIRA_OAUTH_BASE_URL")
@@ -234,7 +233,7 @@ class JiraBridgeFacade:
         issue_type_id = str(self.auth.get("issue_type_id") or "").strip()
         if (
             self.mode == "bearer"
-            and self.browse_base == DEFAULT_BROWSE_BASE.rstrip("/")
+            and self.browse_base == PLACEHOLDER_BROWSE_BASE
         ):
             raise JiraCliError(
                 "JIRA_BROWSE_BASE or JIRA_BASE_URL is required to verify Jira identity before mutation"
@@ -268,6 +267,8 @@ class JiraBridgeFacade:
             isinstance(item, dict) for item in values
         ):
             raise JiraCliError("Jira bridge returned invalid search results")
+        if data.get("complete") is not True:
+            raise JiraCliError("Jira bridge returned an incomplete search collection")
         return values
 
     def get_issue(self, issue_key: str, fields: list[str]) -> dict[str, Any]:
