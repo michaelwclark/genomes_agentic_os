@@ -11,8 +11,16 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+from genomes_agentic_os.github_bridge import (
+    BridgeRunner,
+    command_from_environment,
+    get_pull_request as bridge_get_pull_request,
+    list_workflow_runs as bridge_list_workflow_runs,
+)
 
 
 SUCCESS_CONCLUSIONS = {"success", "neutral", "skipped"}
@@ -25,8 +33,6 @@ FAILURE_CONCLUSIONS = {
     "stale",
     "timed_out",
 }
-SUCCESS_STATUS_STATES = {"success"}
-FAILURE_STATUS_STATES = {"error", "failure"}
 
 
 def utc_now() -> str:
@@ -34,27 +40,10 @@ def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def run_gh(args: list[str], cwd: str | None = None) -> Any:
-    """Run gh and parse JSON output without printing subprocess output."""
-    result = subprocess.run(
-        ["gh", *args],
-        cwd=cwd,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"gh exited with {result.returncode}")
-    if not result.stdout.strip():
-        return None
-    return json.loads(result.stdout)
-
-
 def infer_repo(cwd: str | None) -> str:
-    """Infer owner/name from the current GitHub repository."""
+    """Infer owner/name from the local checkout's GitHub origin."""
     result = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        ["git", "config", "--get", "remote.origin.url"],
         cwd=cwd,
         check=False,
         text=True,
@@ -63,7 +52,34 @@ def infer_repo(cwd: str | None) -> str:
     )
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError(result.stderr.strip() or "could not infer repo; pass --repo owner/name")
-    return result.stdout.strip()
+    remote = result.stdout.strip()
+    if "github.com:" in remote:
+        repo = remote.split("github.com:", 1)[1]
+    elif "github.com/" in remote:
+        repo = remote.split("github.com/", 1)[1]
+    else:
+        raise RuntimeError("origin is not a GitHub repository; pass --repo owner/name")
+    repo = repo.removesuffix(".git").strip("/")
+    if len(repo.split("/")) != 2 or not all(repo.split("/")):
+        raise RuntimeError("could not infer repo; pass --repo owner/name")
+    return repo
+
+
+def github_token_from_environment(environ: Mapping[str, str] | None = None) -> str:
+    """Resolve the token passed to the shared bridge without invoking another client."""
+    values = environ or os.environ
+    token = values.get("GITHUB_TOKEN", "").strip() or values.get("GH_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN or GH_TOKEN must be set for the GitHub port bridge")
+    return token
+
+
+def split_repo(repo: str) -> tuple[str, str]:
+    """Validate and split an owner/name repository reference."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise RuntimeError("repo must use owner/name format")
+    return parts[0], parts[1]
 
 
 def atomic_write(path: Path, content: str) -> None:
@@ -82,73 +98,72 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
-def get_pr(repo: str, pr_number: int, cwd: str | None) -> dict[str, Any]:
-    """Fetch the PR metadata needed for check polling."""
-    return run_gh(
-        [
-            "api",
-            "-H",
-            "Accept: application/vnd.github+json",
-            f"/repos/{repo}/pulls/{pr_number}",
-        ],
-        cwd=cwd,
+def get_pr(
+    command: Sequence[str],
+    repo: str,
+    pr_number: int,
+    token: str,
+    *,
+    runner: BridgeRunner = subprocess.run,
+) -> dict[str, Any]:
+    """Fetch normalized PR metadata through the shared GitHub port."""
+    owner, name = split_repo(repo)
+    pull_request = bridge_get_pull_request(
+        command,
+        owner=owner,
+        repo=name,
+        number=pr_number,
+        token=token,
+        runner=runner,
     )
+    if pull_request is None:
+        raise RuntimeError(f"pull request {pr_number} was not found")
+    if not isinstance(pull_request.get("headSha"), str) or not pull_request["headSha"]:
+        raise RuntimeError("GitHub port returned a pull request without a head SHA")
+    if not isinstance(pull_request.get("headBranch"), str) or not pull_request["headBranch"]:
+        raise RuntimeError("GitHub port returned a pull request without a head branch")
+    return pull_request
 
 
-def get_check_runs(repo: str, sha: str, cwd: str | None) -> list[dict[str, Any]]:
-    """Fetch latest GitHub check runs for a commit."""
-    data = run_gh(
-        [
-            "api",
-            "--method",
-            "GET",
-            "-H",
-            "Accept: application/vnd.github+json",
-            f"/repos/{repo}/commits/{sha}/check-runs",
-            "-f",
-            "per_page=100",
-            "-f",
-            "filter=latest",
-        ],
-        cwd=cwd,
+def get_workflow_runs(
+    command: Sequence[str],
+    repo: str,
+    branch: str,
+    token: str,
+    *,
+    runner: BridgeRunner = subprocess.run,
+) -> list[dict[str, Any]]:
+    """Fetch normalized workflow runs through the shared GitHub port."""
+    owner, name = split_repo(repo)
+    return bridge_list_workflow_runs(
+        command,
+        owner=owner,
+        repo=name,
+        branch=branch,
+        token=token,
+        limit=100,
+        runner=runner,
     )
-    return data.get("check_runs", [])
-
-
-def get_status_contexts(repo: str, sha: str, cwd: str | None) -> list[dict[str, Any]]:
-    """Fetch legacy commit status contexts for a commit."""
-    data = run_gh(
-        [
-            "api",
-            "-H",
-            "Accept: application/vnd.github+json",
-            f"/repos/{repo}/commits/{sha}/status",
-        ],
-        cwd=cwd,
-    )
-    return data.get("statuses", [])
 
 
 def summarize_checks(
     pr: dict[str, Any],
-    check_runs: list[dict[str, Any]],
-    statuses: list[dict[str, Any]],
+    workflow_runs: list[dict[str, Any]],
     min_checks: int,
     expected_head_sha: str = "",
     required_checks: list[str] | None = None,
     expected_head_seen: bool = False,
 ) -> dict[str, Any]:
     """Classify the current PR check state."""
-    sha = pr["head"]["sha"]
+    sha = pr["headSha"]
     required_checks = required_checks or []
-    observed_count = len(check_runs) + len(statuses)
     checks: list[dict[str, str | None]] = []
     failures: list[str] = []
     pending: list[str] = []
     observed_names: set[str] = set()
     required_check_names = set(required_checks)
 
-    if pr.get("state") == "closed" and not pr.get("merged"):
+    if pr.get("state") == "closed":
         failures.append("PR is closed without merge")
     if expected_head_sha and sha != expected_head_sha:
         if expected_head_seen:
@@ -157,16 +172,21 @@ def summarize_checks(
             pending.append("waiting for expected PR head SHA")
 
     classify_observed_checks = not expected_head_sha or sha == expected_head_sha
-    relevant_check_runs = check_runs if classify_observed_checks else []
-    relevant_statuses = statuses if classify_observed_checks else []
-    observed_count = len(relevant_check_runs) + len(relevant_statuses)
+    relevant_workflow_runs = (
+        [run for run in workflow_runs if run.get("headSha") == sha]
+        if classify_observed_checks
+        else []
+    )
+    observed_count = len(relevant_workflow_runs)
 
-    for run in relevant_check_runs:
-        name = run.get("name") or run.get("app", {}).get("name") or "unnamed check"
+    for run in relevant_workflow_runs:
+        name = run.get("name") or "unnamed check"
         observed_names.add(name)
         status = run.get("status")
         conclusion = run.get("conclusion")
-        checks.append({"type": "check_run", "name": name, "status": status, "conclusion": conclusion})
+        checks.append(
+            {"type": "workflow_run", "name": name, "status": status, "conclusion": conclusion}
+        )
         if status != "completed":
             pending.append(name)
         elif name in required_check_names and conclusion not in REQUIRED_SUCCESS_CONCLUSIONS:
@@ -174,21 +194,6 @@ def summarize_checks(
         elif conclusion in FAILURE_CONCLUSIONS:
             failures.append(name)
         elif conclusion not in SUCCESS_CONCLUSIONS:
-            pending.append(name)
-
-    for context in relevant_statuses:
-        name = context.get("context") or "unnamed status"
-        observed_names.add(name)
-        state = context.get("state")
-        checks.append({"type": "status", "name": name, "status": state, "conclusion": state})
-        if name in required_check_names and state not in SUCCESS_STATUS_STATES:
-            if state in FAILURE_STATUS_STATES:
-                failures.append(f"required check did not pass: {name} ({state or 'unknown'})")
-            else:
-                pending.append(name)
-        elif state in FAILURE_STATUS_STATES:
-            failures.append(name)
-        elif state not in SUCCESS_STATUS_STATES:
             pending.append(name)
 
     missing_required_checks = sorted(set(required_checks) - observed_names)
@@ -210,7 +215,7 @@ def summarize_checks(
         "expected_head_sha": expected_head_sha,
         "head_matches_expected": not expected_head_sha or sha == expected_head_sha,
         "pr_state": pr.get("state"),
-        "merged": bool(pr.get("merged")),
+        "merged": pr.get("state") == "merged",
         "observed_count": observed_count,
         "failures": sorted(set(failures)),
         "pending": sorted(set(pending)),
@@ -278,7 +283,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--timeout-minutes", type=float, required=True, help="Maximum watch timeframe")
     parser.add_argument("--interval-minutes", type=float, default=5.0, help="Minutes between polls")
     parser.add_argument("--repo", default="", help="GitHub repo as owner/name; inferred from cwd when omitted")
-    parser.add_argument("--cwd", default="", help="Repository working directory for gh auth/context")
+    parser.add_argument("--cwd", default="", help="Repository working directory for repo inference")
     parser.add_argument("--min-checks", type=int, default=1, help="Minimum observed checks before success is allowed")
     parser.add_argument(
         "--expected-head-sha",
@@ -320,16 +325,18 @@ def main(argv: list[str]) -> int:
         }
 
         try:
-            pr = get_pr(repo, args.pr, cwd)
-            sha = pr["head"]["sha"]
-            check_runs = get_check_runs(repo, sha, cwd)
-            statuses = get_status_contexts(repo, sha, cwd)
+            command = command_from_environment()
+            if not command:
+                raise RuntimeError("GENOMES_GITHUB_BRIDGE_COMMAND must be configured")
+            token = github_token_from_environment()
+            pr = get_pr(command, repo, args.pr, token)
+            sha = pr["headSha"]
+            workflow_runs = get_workflow_runs(command, repo, pr["headBranch"], token)
             state = {
                 **base_state,
                 **summarize_checks(
                     pr,
-                    check_runs,
-                    statuses,
+                    workflow_runs,
                     args.min_checks,
                     expected_head_sha=args.expected_head_sha,
                     required_checks=args.required_check,
