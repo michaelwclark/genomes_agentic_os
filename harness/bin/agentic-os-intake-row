@@ -39,6 +39,7 @@ _SOURCE = Path(__file__).resolve().parents[2] / "src"
 if (_SOURCE / "genomes_agentic_os" / "notion_bridge.py").is_file():
     sys.path.insert(0, str(_SOURCE))
 
+from genomes_agentic_os.notion_api import _reconciliation_marker
 from genomes_agentic_os.notion_bridge import client_from_environment
 
 try:
@@ -114,13 +115,14 @@ def _notion_client(token: str):
 
 def _title_marker(properties: dict) -> str:
     title = properties.get("Name", {}).get("title", [])
-    marker = "".join(
+    raw_title = "".join(
         str(item.get("text", {}).get("content") or "")
         for item in title
         if isinstance(item, dict)
     ).strip()
+    marker = _reconciliation_marker(raw_title)
     if not marker:
-        raise RuntimeError("Notion intake row requires a non-empty title marker")
+        raise RuntimeError("Notion intake row requires a JSON-stable title marker")
     return marker
 
 

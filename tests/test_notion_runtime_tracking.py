@@ -249,6 +249,90 @@ def test_runtime_tracking_plan_bounds_run_queue_projection(tmp_path: Path) -> No
     assert plan["record_scope"]["run_queue_omitted_items"] == len(items) - RUNTIME_TRACKING_RUN_QUEUE_LIMIT
 
 
+def test_default_bridge_runtime_tracking_accepts_verified_manifest_bindings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from genomes_agentic_os import notion_api
+    from genomes_agentic_os.runtime_ops import _apply_runtime_tracking_live
+
+    monkeypatch.setattr(notion_api, "get_bot_workspace", lambda *args, **kwargs: "Genome's Notion")
+    monkeypatch.setattr(
+        notion_api,
+        "search_child_pages",
+        lambda *args, **kwargs: [{"id": "cockpit", "title": "Runtime Control Plane"}],
+    )
+    monkeypatch.setattr(
+        notion_api,
+        "search_child_databases",
+        lambda *args, **kwargs: [{"id": "database", "title": "Integrations"}],
+    )
+    manifest_path = tmp_path / "manifest.yml"
+
+    result = _apply_runtime_tracking_live(
+        os_root=tmp_path,
+        workspace="Genome's Notion",
+        plan={"databases": ["Integrations"], "records": []},
+        manifest_path=manifest_path,
+        existing_manifest={
+            "cockpit_page_id": "cockpit",
+            "database_ids": {"Integrations": "database"},
+        },
+        parent_page_id="parent",
+        token_env="GENOMES_NOTION_PAT",
+        cockpit_title="Runtime Control Plane",
+        fetcher=notion_api._default_fetcher,
+    )
+
+    assert result["database_ids"] == {"Integrations": "database"}
+    assert yaml.safe_load(manifest_path.read_text())["cockpit_page_id"] == "cockpit"
+
+
+def test_default_bridge_runtime_tracking_rejects_unbound_manifest_ids(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from genomes_agentic_os import notion_api
+    from genomes_agentic_os.runtime_ops import _apply_runtime_tracking_live
+
+    monkeypatch.setattr(notion_api, "get_bot_workspace", lambda *args, **kwargs: "Genome's Notion")
+    monkeypatch.setattr(notion_api, "search_child_pages", lambda *args, **kwargs: [])
+    monkeypatch.setattr(notion_api, "search_child_databases", lambda *args, **kwargs: [])
+    common = {
+        "os_root": tmp_path,
+        "workspace": "Genome's Notion",
+        "plan": {"databases": ["Integrations"], "records": []},
+        "manifest_path": tmp_path / "manifest.yml",
+        "parent_page_id": "parent",
+        "token_env": "GENOMES_NOTION_PAT",
+        "cockpit_title": "Runtime Control Plane",
+        "fetcher": notion_api._default_fetcher,
+    }
+
+    with pytest.raises(ValueError, match="not the expected child"):
+        _apply_runtime_tracking_live(
+            **common,
+            existing_manifest={"cockpit_page_id": "cockpit", "database_ids": {}},
+        )
+
+    monkeypatch.setattr(
+        notion_api,
+        "search_child_pages",
+        lambda *args, **kwargs: [{"id": "cockpit", "title": "Runtime Control Plane"}],
+    )
+    monkeypatch.setattr(
+        notion_api,
+        "search_child_databases",
+        lambda *args, **kwargs: [{"id": "live-database", "title": "Integrations"}],
+    )
+    with pytest.raises(ValueError, match="outside the approved cockpit"):
+        _apply_runtime_tracking_live(
+            **common,
+            existing_manifest={
+                "cockpit_page_id": "cockpit",
+                "database_ids": {"Integrations": "manifest-database"},
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # Test: live path creates cockpit + 7 databases + real ids
 # ---------------------------------------------------------------------------

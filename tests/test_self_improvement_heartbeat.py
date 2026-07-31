@@ -23,12 +23,47 @@ import pytest
 import yaml
 
 from genomes_agentic_os.cli import main
+from genomes_agentic_os import notion_api
 from genomes_agentic_os import self_improvement as si
 from genomes_agentic_os import runtime_ops
 from genomes_agentic_os.runtime_ops import runtime_doctor
 
 
 SENTINEL_TOKEN = "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+
+def test_live_runtime_notion_anchor_accepts_only_verified_cockpit_child(monkeypatch) -> None:
+    manifest = {"parent_page_id": "parent", "cockpit_page_id": "cockpit"}
+    monkeypatch.setattr(
+        notion_api,
+        "search_child_pages",
+        lambda *args, **kwargs: [{"id": "cock-pit", "title": "Runtime Control Plane"}],
+    )
+
+    assert si._verified_runtime_notion_anchor(manifest, notion_api._default_fetcher) == (
+        "parent",
+        "cockpit",
+    )
+
+    monkeypatch.setattr(notion_api, "search_child_pages", lambda *args, **kwargs: [])
+    with pytest.raises(RuntimeError, match="not a child"):
+        si._verified_runtime_notion_anchor(manifest, notion_api._default_fetcher)
+
+
+def test_live_morning_report_requires_separately_approved_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "agentic_os"
+    root.mkdir()
+    monkeypatch.setattr(notion_api, "resolve_token", lambda *args, **kwargs: "present")
+    monkeypatch.delenv("GENOMES_NOTION_PARENT_PAGE_ID", raising=False)
+
+    result = si._project_morning_report_to_notion(
+        root, {"date": "2026-07-31"}, fetcher=notion_api._default_fetcher
+    )
+
+    assert result["projected"] is False
+    assert "parent_page_id is required" in result["reason"]
 
 
 def _shared_factory(root: Path) -> Path:

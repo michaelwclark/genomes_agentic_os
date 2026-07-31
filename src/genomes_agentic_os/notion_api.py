@@ -161,14 +161,14 @@ def _reconciliation_marker(value: Any) -> str:
         runs: list[str] = []
         current: list[str] = []
         for character in value.strip():
-            if character.isalnum() or character in " ._:/-":
+            if character not in {'"', "\\"} and ord(character) >= 0x20:
                 current.append(character)
             elif current:
                 runs.append("".join(current).strip())
                 current = []
         if current:
             runs.append("".join(current).strip())
-        stable = [run for run in runs if len(run) >= 3]
+        stable = [run for run in runs if run]
         return max(stable, key=len, default="")
     if isinstance(value, dict):
         for key in ("content", "plain_text", "name"):

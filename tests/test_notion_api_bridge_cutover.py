@@ -251,6 +251,11 @@ def test_create_page_rejects_title_without_stable_marker_before_mutation(monkeyp
     assert bridge.calls == []
 
 
+def test_reconciliation_marker_preserves_short_and_symbol_titles() -> None:
+    assert notion_api._reconciliation_marker("Q1") == "Q1"
+    assert notion_api._reconciliation_marker("🧬") == "🧬"
+
+
 def test_direct_default_transport_is_disabled() -> None:
     try:
         notion_api._default_fetcher(object())  # type: ignore[arg-type]

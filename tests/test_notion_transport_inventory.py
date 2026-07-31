@@ -6,7 +6,7 @@ from pathlib import Path
 def test_notion_provider_transport_exists_only_behind_shared_bridge() -> None:
     root = Path(__file__).resolve().parents[1]
     candidates = [
-        *sorted((root / "src" / "genomes_agentic_os").glob("*.py")),
+        *sorted((root / "src" / "genomes_agentic_os").rglob("*.py")),
         *sorted((root / "harness" / "bin").glob("*")),
     ]
     forbidden = ("api.notion.com", "Notion-Version")

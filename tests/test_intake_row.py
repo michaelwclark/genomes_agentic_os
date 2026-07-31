@@ -50,3 +50,32 @@ def test_intake_row_create_uses_guarded_bridge_with_stable_title_marker(monkeypa
         "parentPageId": "3a8683b4-8dab-8111-bdc1-c2069129f031",
         "marker": "Stable intake title",
     }
+
+
+def test_intake_row_sanitizes_escaped_title_marker(monkeypatch):
+    module = load_intake_row_module()
+    requests = []
+
+    class FakeClient:
+        identity = {
+            "workspaceName": "Genome's Notion",
+            "parentPageId": "3a8683b4-8dab-8111-bdc1-c2069129f031",
+        }
+
+        def request(self, operation, args, **kwargs):
+            requests.append((operation, args, kwargs))
+            return {"id": "page-2", "url": "https://www.notion.so/page-2"}
+
+    monkeypatch.setattr(module, "_notion_client", lambda token: FakeClient())
+    properties = module.build_properties(
+        'Fix "quoted"\\path crash',
+        "bug",
+        "Agentic OS",
+        "inbox",
+        "P1",
+        "manual",
+    )
+
+    module.create_intake_page("secret", properties)
+
+    assert requests[0][1]["input"]["reconciliation"]["marker"] == "path crash"
