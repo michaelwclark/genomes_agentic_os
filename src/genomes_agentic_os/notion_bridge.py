@@ -16,9 +16,8 @@ from dataclasses import dataclass
 from typing import Any
 
 BRIDGE_VERSION = 1
-# Local provider-ready platform revision. Replace with the provider-read merge
-# SHA before publication of the OS cutover.
-REVIEWED_PLATFORM_BRIDGE_REVISION = "ddbf14a08e62a049bf641ce86dfc8ef7d29580ff"
+# Provider-read squash revision for platform PR #15.
+REVIEWED_PLATFORM_BRIDGE_REVISION = "d6ab26c5fb5281467bf7ef695b6f33d385a86d69"
 DEFAULT_WORKSPACE = "Genome's Notion"
 _AUTH_KEY = "GENOMES_NOTION_PAT"
 _INHERITED_ENV_KEYS = (
