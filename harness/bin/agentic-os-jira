@@ -232,6 +232,13 @@ class JiraBridgeFacade:
     def preflight_issue(self, issue_key: str) -> dict[str, Any]:
         project = issue_key.partition("-")[0].strip()
         issue_type_id = str(self.auth.get("issue_type_id") or "").strip()
+        if (
+            self.mode == "bearer"
+            and self.browse_base == DEFAULT_BROWSE_BASE.rstrip("/")
+        ):
+            raise JiraCliError(
+                "JIRA_BROWSE_BASE or JIRA_BASE_URL is required to verify Jira identity before mutation"
+            )
         if not project or not issue_type_id:
             raise JiraCliError(
                 "JIRA_DEFAULT_ISSUE_TYPE_ID is required to verify Jira identity before mutation"

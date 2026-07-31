@@ -78,6 +78,28 @@ def test_jira_unbounded_search_still_rejects_incomplete_results() -> None:
             "project = APP",
             client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
         )
+    with pytest.raises(JiraBridgeError, match="incomplete bounded watch search"):
+        fetch_jira_issues(
+            "project = APP",
+            client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
+            limit=250,
+        )
+
+
+def test_jira_watch_rejects_non_numeric_limit_as_provider_finding() -> None:
+    result = poll_jira_source(
+        {"external_ref": {"project_key": "APP", "max_results": "many"}},
+        {"system": "jira"},
+        client=FakeJiraBridge(),  # type: ignore[arg-type]
+    )
+    assert result["ok"] is False
+    assert result["findings"] == [
+        {
+            "severity": "blocker",
+            "code": "INVALID_REQUEST",
+            "message": "Jira watch max_results must be an integer",
+        }
+    ]
 
 
 def test_jira_watch_adds_persisted_cursor_before_ordering() -> None:

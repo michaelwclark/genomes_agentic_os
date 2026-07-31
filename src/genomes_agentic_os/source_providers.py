@@ -552,9 +552,10 @@ def fetch_jira_issues(
         raise JiraBridgeError(
             "BRIDGE_INVALID_RESPONSE", "Jira bridge returned invalid search results"
         )
-    if limit is None and page.get("complete") is not True:
+    if page.get("complete") is not True:
+        scope = "unbounded search" if limit is None else "bounded watch search"
         raise JiraBridgeError(
-            "BRIDGE_INVALID_RESPONSE", "Jira bridge returned an incomplete unbounded search"
+            "BRIDGE_INVALID_RESPONSE", f"Jira bridge returned an incomplete {scope}"
         )
     return [_jira_issue_to_source_item(item) for item in values]
 
@@ -653,7 +654,12 @@ def poll_jira_source(
             ],
         }
     try:
-        limit = int(external_ref.get("max_results") or 250)
+        try:
+            limit = int(external_ref.get("max_results") or 250)
+        except (TypeError, ValueError) as exc:
+            raise JiraBridgeError(
+                "INVALID_REQUEST", "Jira watch max_results must be an integer"
+            ) from exc
         if not 1 <= limit <= 500:
             raise JiraBridgeError(
                 "INVALID_REQUEST", "Jira watch max_results must be between 1 and 500"

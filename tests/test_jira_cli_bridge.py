@@ -94,6 +94,26 @@ def test_mutation_preflight_blocks_when_issue_type_identity_is_missing() -> None
     assert client.bridge.calls == []
 
 
+def test_bearer_mutation_preflight_rejects_placeholder_site() -> None:
+    module = _load_cli()
+    client = module.JiraBridgeFacade(
+        {
+            "mode": "bearer",
+            "base": "https://api.atlassian.invalid/ex/jira/cloud-1",
+            "browse_base": "https://example.atlassian.net",
+            "bridge_command": ["node", "bridge.js"],
+            "bridge_auth": {"JIRA_OAUTH_TOKEN": "secret"},
+            "cloud_id": "cloud-1",
+            "account_id": "",
+            "issue_type_id": "10001",
+        }
+    )
+    client.bridge = FakeBridge()
+    with pytest.raises(module.JiraCliError, match="required to verify Jira identity"):
+        client.preflight_issue("APP-131")
+    assert client.bridge.calls == []
+
+
 def test_comment_dry_run_never_resolves_auth_or_invokes_bridge(monkeypatch) -> None:
     module = _load_cli()
 
