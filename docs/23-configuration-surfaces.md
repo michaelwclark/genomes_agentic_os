@@ -275,6 +275,24 @@ point `GENOMES_LINEAR_BRIDGE_COMMAND` at
 preflight, mutation readback, bounded retries, safe errors, and exact marker
 reconciliation.
 
+### Notion bridge call sites
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GENOMES_NOTION_BRIDGE_COMMAND` | — | Reviewed `@genomes/notion` bridge argv; required for migrated live operations |
+| `GENOMES_NOTION_PAT` | — | Notion credential injected only into the bridge child environment |
+| `GENOMES_NOTION_WORKSPACE` | `Genome's Notion` | Exact workspace identity required for mutations |
+| `GENOMES_NOTION_PARENT_PAGE_ID` | — | Exact approved parent identity required for mutations |
+| `GENOMES_NOTION_BOT_ID` | — | Optional exact bot identity required by stricter mutation routes |
+
+Build the pinned platform revision and point
+`GENOMES_NOTION_BRIDGE_COMMAND` at `packages/notion/dist/bridge.js`. The shared
+bridge uses Notion API `2026-03-11` and owns pagination, deadlines, bounded read
+retries, safe errors, mutation ancestry checks, and provider readback. The
+current automation-control database and data-source reads use this bridge;
+remaining Notion families keep their existing transports until their bounded
+cutover commits land.
+
 ### agentic-os-automation-run-summary
 
 | Variable | Default | Purpose |
