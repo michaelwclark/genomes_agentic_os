@@ -108,6 +108,35 @@ def auth_from_environment(environ: Mapping[str, str] | None = None) -> dict[str,
     )
 
 
+def base_url_from_environment(environ: Mapping[str, str] | None = None) -> str:
+    """Resolve the provider base URL appropriate for the configured auth mode."""
+    values = os.environ if environ is None else environ
+    if values.get("JIRA_OAUTH_TOKEN", "").strip():
+        explicit = (
+            values.get("ATLASSIAN_BASE_URL", "").strip()
+            or values.get("JIRA_OAUTH_BASE_URL", "").strip()
+        )
+        if explicit:
+            return explicit.rstrip("/")
+        cloud_id = (
+            values.get("ATLASSIAN_JIRA_CLOUDID", "").strip()
+            or values.get("JIRA_CLOUD_ID", "").strip()
+            or values.get("ATLASSIAN_CLOUD_ID", "").strip()
+        )
+        if cloud_id:
+            return f"https://api.atlassian.com/ex/jira/{cloud_id}"
+        raise JiraBridgeError(
+            "CONFIGURATION_ERROR",
+            "Jira bearer authentication requires an Atlassian gateway base URL or cloud ID",
+        )
+    base_url = values.get("JIRA_BASE_URL", "").strip()
+    if not base_url:
+        raise JiraBridgeError(
+            "CONFIGURATION_ERROR", "Jira base URL is not configured"
+        )
+    return base_url.rstrip("/")
+
+
 def call_jira_bridge(
     command: Sequence[str],
     operation: str,

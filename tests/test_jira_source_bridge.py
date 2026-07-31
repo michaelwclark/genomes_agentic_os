@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import genomes_agentic_os.source_providers as source_providers
 from genomes_agentic_os.source_providers import poll_jira_source
 from genomes_agentic_os.source_watch import (
     default_connected_systems,
@@ -86,3 +87,33 @@ def test_default_jira_registry_routes_polling_to_shared_bridge() -> None:
     bridge = next(item for item in providers if item["id"] == "jira_bridge")
     assert bridge["status"] == "available"
     assert "poll" in bridge["supports"]
+
+
+def test_jira_watch_bearer_mode_uses_atlassian_gateway(monkeypatch: Any) -> None:
+    bridge = FakeJiraBridge()
+    captured: dict[str, Any] = {}
+
+    def make_client(command: Any, base_url: str, auth: Any) -> FakeJiraBridge:
+        captured.update(command=list(command), base_url=base_url, auth=dict(auth))
+        return bridge
+
+    monkeypatch.setattr(source_providers, "JiraBridgeClient", make_client)
+    monkeypatch.setenv("GENOMES_JIRA_BRIDGE_COMMAND", "node bridge.js")
+    monkeypatch.setenv("JIRA_BASE_URL", "https://tenant.invalid")
+    monkeypatch.setenv("JIRA_OAUTH_TOKEN", "secret")
+    monkeypatch.setenv("ATLASSIAN_JIRA_CLOUDID", "cloud-131")
+    monkeypatch.delenv("JIRA_EMAIL", raising=False)
+    monkeypatch.delenv("JIRA_API_TOKEN", raising=False)
+    monkeypatch.delenv("ATLASSIAN_BASE_URL", raising=False)
+    monkeypatch.delenv("JIRA_OAUTH_BASE_URL", raising=False)
+    monkeypatch.delenv("JIRA_CLOUD_ID", raising=False)
+    monkeypatch.delenv("ATLASSIAN_CLOUD_ID", raising=False)
+
+    result = poll_jira_source(
+        {"external_ref": {"project_key": "APP"}}, {"system": "jira"}
+    )
+
+    assert result["ok"] and result["live"]
+    assert captured["command"] == ["node", "bridge.js"]
+    assert captured["base_url"] == "https://api.atlassian.com/ex/jira/cloud-131"
+    assert captured["auth"] == {"JIRA_OAUTH_TOKEN": "secret"}

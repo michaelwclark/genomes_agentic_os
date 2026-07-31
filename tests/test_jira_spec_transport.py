@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from genomes_agentic_os.jira_bridge import JiraBridgeError
@@ -23,6 +24,24 @@ class FakeBridgeClient:
         self.duplicate_matches = duplicate_matches
         self.existing_labels = list(existing_labels or [])
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.status = "To Do"
+        self.transitions = [
+            {
+                "id": "wrong-destination",
+                "available": True,
+                "destination": {"name": "Resolved"},
+            },
+            {
+                "id": "unavailable",
+                "available": False,
+                "destination": {"name": "Done"},
+            },
+            {
+                "id": "41",
+                "available": True,
+                "destination": {"name": "Done"},
+            },
+        ]
 
     def request(self, operation: str, args: dict[str, Any]) -> Any:
         self.calls.append((operation, args))
@@ -40,13 +59,24 @@ class FakeBridgeClient:
         if operation == "createIssue":
             return {"key": "APP-131", "url": "https://jira.invalid/APP-131"}
         if operation == "updateIssue":
-            return {"key": args["key"], "url": f"https://jira.invalid/{args['key']}"}
+            return {
+                "key": args["key"],
+                "url": f"https://jira.invalid/{args['key']}",
+                "status": {"name": self.status},
+            }
         if operation == "getIssue":
             return {
                 "key": args["key"],
                 "url": f"https://jira.invalid/{args['key']}",
+                "status": {"name": self.status},
                 "fields": {"labels": self.existing_labels},
             }
+        if operation == "listTransitions":
+            return deepcopy(self.transitions)
+        if operation == "transitionIssue":
+            assert args["transitionId"] == "41"
+            self.status = "Done"
+            return {"key": args["key"], "status": {"name": self.status}}
         raise AssertionError(operation)
 
 
@@ -60,6 +90,7 @@ def _adapter(client: FakeBridgeClient) -> JiraSpecAdapter:
                 "issue_type_id": "10001",
             },
             "placement": {"default": "backlog"},
+            "status_map": {"built": "Done"},
         },
         JiraBridgeSpecTransport(client),  # type: ignore[arg-type]
     )
@@ -140,6 +171,37 @@ def test_jira_spec_update_preserves_existing_human_labels() -> None:
     assert labels[2].startswith("agentic-os-spec-")
 
 
+def test_jira_spec_transition_resolves_exact_available_destination_and_rereads() -> None:
+    client = FakeBridgeClient(duplicate_matches=1)
+    receipt = _adapter(client).transition(
+        Spec(
+            id="one",
+            title="One",
+            status="built",
+            domain="acme",
+            project="app",
+        ),
+        previous_status="in_progress",
+        apply=True,
+    )
+
+    assert receipt.ok and receipt.readback_verified
+    assert client.status == "Done"
+    assert [operation for operation, _ in client.calls] == [
+        "preflightIdentity",
+        "searchIssues",
+        "getIssue",
+        "updateIssue",
+        "getIssue",
+        "listTransitions",
+        "transitionIssue",
+        "getIssue",
+        "getIssue",
+    ]
+    transition = client.calls[6][1]
+    assert transition == {"key": "APP-1", "transitionId": "41"}
+
+
 def test_jira_spec_get_reports_provider_not_found() -> None:
     client = FakeBridgeClient()
     client.request = lambda _operation, _args: None  # type: ignore[method-assign]
@@ -173,10 +235,39 @@ def test_jira_spec_transport_environment_is_explicit_and_complete() -> None:
             "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
             "JIRA_BASE_URL": "https://jira.invalid",
             "JIRA_OAUTH_TOKEN": "secret",
+            "JIRA_CLOUD_ID": "cloud-1",
         }
     )
     assert isinstance(transport, JiraBridgeSpecTransport)
     assert list(transport.client.command) == ["node", "bridge.js"]
+    assert transport.client.base_url == "https://api.atlassian.com/ex/jira/cloud-1"
+
+    explicit_gateway = transport_from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://jira.invalid",
+            "ATLASSIAN_BASE_URL": "https://gateway.invalid/ex/jira/cloud-2/",
+            "JIRA_OAUTH_TOKEN": "secret",
+        }
+    )
+    assert isinstance(explicit_gateway, JiraBridgeSpecTransport)
+    assert explicit_gateway.client.base_url == "https://gateway.invalid/ex/jira/cloud-2"
+
+    missing_gateway = transport_from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://jira.invalid",
+            "JIRA_OAUTH_TOKEN": "secret",
+        }
+    )
+    assert missing_gateway is not None
+    try:
+        missing_gateway.request("verify_target", {"target": {}})
+    except JiraBridgeError as exc:
+        assert exc.code == "CONFIGURATION_ERROR"
+        assert "gateway base URL or cloud ID" in str(exc)
+    else:
+        raise AssertionError("bearer authentication accepted a tenant base URL")
 
     partial = transport_from_environment(
         {

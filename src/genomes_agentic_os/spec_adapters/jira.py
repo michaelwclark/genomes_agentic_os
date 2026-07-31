@@ -11,6 +11,7 @@ from ..jira_bridge import (
     JiraBridgeClient,
     JiraBridgeError,
     auth_from_environment,
+    base_url_from_environment,
     command_from_environment,
 )
 from ..spec_engine import AdapterReceipt, Spec
@@ -89,6 +90,40 @@ class JiraBridgeSpecTransport:
             )
         return {"ok": True, "provider_id": key, "id": key, "url": issue.get("url")}
 
+    def _transition_issue(self, provider_id: str, destination: str) -> Mapping[str, Any]:
+        transitions = self.client.request("listTransitions", {"key": provider_id})
+        if not isinstance(transitions, list):
+            raise JiraBridgeError(
+                "BRIDGE_INVALID_RESPONSE", "Jira transitions read returned invalid data"
+            )
+        matches = [
+            transition
+            for transition in transitions
+            if isinstance(transition, Mapping)
+            and transition.get("available") is not False
+            and isinstance(transition.get("destination"), Mapping)
+            and transition["destination"].get("name") == destination
+        ]
+        if len(matches) != 1 or not matches[0].get("id"):
+            raise JiraBridgeError(
+                "CONFLICT", "Jira workflow state did not resolve to one transition"
+            )
+        self.client.request(
+            "transitionIssue",
+            {"key": provider_id, "transitionId": str(matches[0]["id"])},
+        )
+        issue = self.client.request("getIssue", {"key": provider_id})
+        if not isinstance(issue, Mapping):
+            raise JiraBridgeError(
+                "BRIDGE_INVALID_RESPONSE", "Jira transition readback was invalid"
+            )
+        status = issue.get("status")
+        if not isinstance(status, Mapping) or status.get("name") != destination:
+            raise JiraBridgeError(
+                "PROVIDER_ERROR", "Jira transition readback did not match the requested state"
+            )
+        return issue
+
     def request(self, action: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         target = self._target(payload)
         project = self._project(target)
@@ -153,6 +188,14 @@ class JiraBridgeSpecTransport:
             spec = payload.get("spec")
             if not isinstance(spec, Mapping):
                 raise JiraBridgeError("INVALID_REQUEST", "Spec payload is missing")
+            destination = ""
+            if payload.get("operation") == "transition":
+                destination = str(payload.get("native_status") or "").strip()
+                if not destination:
+                    raise JiraBridgeError(
+                        "CONFIGURATION_ERROR",
+                        "Jira transition requires a mapped native status",
+                    )
             marker = str(payload["idempotency_key"])
             label = _marker_label(marker)
             required_labels = ["agentic-os-spec", label]
@@ -234,6 +277,24 @@ class JiraBridgeSpecTransport:
                 raise JiraBridgeError(
                     "BRIDGE_INVALID_RESPONSE", "Jira write returned invalid issue"
                 )
+            if payload.get("operation") == "transition":
+                provider_id = str(issue.get("key") or "").strip()
+                if not provider_id:
+                    raise JiraBridgeError(
+                        "BRIDGE_INVALID_RESPONSE", "Jira write returned no issue key"
+                    )
+                issue = self.client.request("getIssue", {"key": provider_id})
+                if not isinstance(issue, Mapping):
+                    raise JiraBridgeError(
+                        "BRIDGE_INVALID_RESPONSE",
+                        "Jira transition pre-read was invalid",
+                    )
+                current_status = issue.get("status")
+                if not (
+                    isinstance(current_status, Mapping)
+                    and current_status.get("name") == destination
+                ):
+                    issue = self._transition_issue(provider_id, destination)
             return self._provider_record(issue)
         if action == "get_spec":
             issue = self.client.request(
@@ -287,13 +348,13 @@ def transport_from_environment(
         command = command_from_environment(values)
     except JiraBridgeError as exc:
         return _JiraBridgeConfigurationTransport(str(exc))
-    base_url = values.get("JIRA_BASE_URL", "").strip()
-    if not command or not base_url:
+    if not command:
         return _JiraBridgeConfigurationTransport(
-            "Jira bridge command and base URL must both be configured"
+            "Jira bridge command must be configured"
         )
     try:
         auth = auth_from_environment(values)
+        base_url = base_url_from_environment(values)
     except JiraBridgeError as exc:
         return _JiraBridgeConfigurationTransport(str(exc))
     return JiraBridgeSpecTransport(JiraBridgeClient(command, base_url, auth))
