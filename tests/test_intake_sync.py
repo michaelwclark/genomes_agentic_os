@@ -10,6 +10,11 @@ import pytest
 @pytest.fixture(autouse=True)
 def configured_bridge_command(monkeypatch):
     monkeypatch.setenv("GENOMES_LINEAR_BRIDGE_COMMAND", "node /tmp/linear.js")
+    monkeypatch.setenv("GENOMES_NOTION_BRIDGE_COMMAND", "node /tmp/notion.js")
+    monkeypatch.setenv(
+        "GENOMES_NOTION_PARENT_PAGE_ID",
+        "3a8683b4-8dab-8111-bdc1-c2069129f031",
+    )
 
 
 def load_intake_sync_module():
@@ -290,6 +295,81 @@ def test_intake_sync_doctor_blocks_missing_bridge_command(monkeypatch, tmp_path)
     )
     assert "GENOMES_LINEAR_BRIDGE_COMMAND" in finding["message"]
     assert _check_named(result, "linear_bridge_command")["ok"] is False
+
+
+def test_intake_sync_doctor_blocks_missing_notion_bridge_command(
+    monkeypatch, tmp_path
+):
+    module = load_intake_sync_module()
+    monkeypatch.delenv("GENOMES_NOTION_BRIDGE_COMMAND")
+    monkeypatch.setattr(
+        module, "linear_get_token_visibility", fake_visibility_with_configured_team
+    )
+    monkeypatch.setattr(
+        module,
+        "linear_get_team_sync_profile",
+        lambda team_id, token: {
+            "team": {"id": team_id, "name": "Clarks Consulting", "key": "CC"},
+            "states": [
+                {"id": "state-1", "name": "Backlog", "type": "backlog"},
+                {"id": "state-2", "name": "Todo", "type": "unstarted"},
+            ],
+            "projects": [{"id": "project-1", "name": "Agentic OS"}],
+        },
+    )
+
+    result = module.run_doctor(
+        base_config(),
+        config_path=tmp_path / "intake-sync.yml",
+        token_linear="linear-token",
+        token_notion="notion-token",
+    )
+
+    finding = next(
+        f for f in result["findings"] if f["code"] == "notion_bridge_unconfigured"
+    )
+    assert "GENOMES_NOTION_BRIDGE_COMMAND" in finding["message"]
+    assert _check_named(result, "notion_bridge_command")["ok"] is False
+
+
+def test_intake_sync_notion_reads_and_updates_use_bridge(monkeypatch):
+    module = load_intake_sync_module()
+    requests = []
+
+    class FakeNotionClient:
+        def request(self, operation, args, **kwargs):
+            requests.append((operation, args, kwargs))
+            if operation == "queryDatabase":
+                return {"values": [{"id": "page-1", "properties": {}}], "complete": True}
+            if operation == "listBlockChildren":
+                return {
+                    "values": [
+                        {
+                            "type": "paragraph",
+                            "value": {"rich_text": [{"plain_text": "hello"}]},
+                        }
+                    ],
+                    "complete": True,
+                }
+            return {"id": "page-1"}
+
+    monkeypatch.setattr(module, "_notion_client", lambda token: FakeNotionClient())
+
+    assert module.notion_query_all("database", "token") == [
+        {"id": "page-1", "properties": {}}
+    ]
+    assert module.get_page_body_excerpt("page-1", "token") == "hello"
+    module.notion_set_linear_url("page-1", "https://linear.app/issue", "token")
+    module.notion_set_status("page-1", "done", "token")
+
+    assert [operation for operation, _, _ in requests] == [
+        "queryDatabase",
+        "listBlockChildren",
+        "updatePage",
+        "updatePage",
+    ]
+    assert requests[-2][2] == {"mutation": True}
+    assert requests[-1][2] == {"mutation": True}
 
 
 def test_intake_sync_doctor_team_not_visible_names_configured_env(monkeypatch, tmp_path):

@@ -43,10 +43,7 @@ import os
 import re
 import subprocess
 import sys
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,13 +59,18 @@ def _ensure_agentic_os_runtime() -> None:
     """Re-exec under a source or installed package runtime when necessary."""
     repository = Path(__file__).resolve().parents[2]
     source = repository / "src"
-    if (source / "genomes_agentic_os" / "linear_bridge.py").is_file():
+    if (
+        (source / "genomes_agentic_os" / "linear_bridge.py").is_file()
+        and (source / "genomes_agentic_os" / "notion_bridge.py").is_file()
+    ):
         sys.path.insert(0, str(source))
     try:
-        bridge_spec = importlib.util.find_spec("genomes_agentic_os.linear_bridge")
+        linear_bridge_spec = importlib.util.find_spec("genomes_agentic_os.linear_bridge")
+        notion_bridge_spec = importlib.util.find_spec("genomes_agentic_os.notion_bridge")
     except ModuleNotFoundError:
-        bridge_spec = None
-    if bridge_spec is not None:
+        linear_bridge_spec = None
+        notion_bridge_spec = None
+    if linear_bridge_spec is not None and notion_bridge_spec is not None:
         return
     candidates: list[Path] = []
     configured = os.environ.get("AGENTIC_OS_PYTHON", "").strip()
@@ -89,7 +91,11 @@ def _ensure_agentic_os_runtime() -> None:
             continue
         try:
             probe = subprocess.run(
-                [str(candidate), "-c", "import genomes_agentic_os.linear_bridge"],
+                [
+                    str(candidate),
+                    "-c",
+                    "import genomes_agentic_os.linear_bridge, genomes_agentic_os.notion_bridge",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -105,7 +111,7 @@ def _ensure_agentic_os_runtime() -> None:
             continue
     raise SystemExit(
         "ERROR: agentic-os-intake-sync requires an Agentic OS runtime containing "
-        "the shared Linear bridge; install the reviewed release or set "
+        "the shared Linear and Notion bridges; install the reviewed release or set "
         "AGENTIC_OS_PYTHON"
     )
 
@@ -116,6 +122,12 @@ from genomes_agentic_os.linear_bridge import (
     LinearBridgeError,
     client_from_environment,
     command_from_environment,
+)
+from genomes_agentic_os.notion_bridge import (
+    NotionBridgeError,
+    client_from_environment as notion_client_from_environment,
+    command_from_environment as notion_command_from_environment,
+    identity_from_environment as notion_identity_from_environment,
 )
 
 try:
@@ -133,8 +145,6 @@ RUNS_LOG_DIR = Path(
     "/Users/genome/agentic_os/harness/shared_factory/06-runs-and-logs/intake-sync"
 )
 NOTION_DB_ID = "c442dd56a24340f0880acfd195f34225"
-NOTION_API = "https://api.notion.com/v1"
-NOTION_VERSION = "2022-06-28"
 
 # Priority map: Notion P-value → Linear priority int (1=urgent, 4=low)
 PRIORITY_MAP = {"P0": 1, "P1": 2, "P2": 3, "P3": 4}
@@ -149,80 +159,27 @@ EXTERNAL_WRITE_BLOCK_PATTERNS = [
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers
-# ---------------------------------------------------------------------------
-
-
-def _request(url: str, method: str = "GET", headers: dict = None, body=None, retries: int = 3) -> dict:
-    data = json.dumps(body).encode() if body is not None else None
-    for attempt in range(retries):
-        req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.load(resp)
-        except urllib.error.HTTPError as e:
-            raw = e.read().decode(errors="replace")
-            if e.code == 429 and attempt < retries - 1:
-                # Back off the remaining Notion-only HTTP request path.
-                wait = 65
-                print(f"  [rate-limit] 429 on {url}, waiting {wait}s before retry {attempt + 2}/{retries}...")
-                time.sleep(wait)
-                continue
-            raise RuntimeError(f"HTTP {e.code} {url}: {raw[:500]}") from e
-    raise RuntimeError(f"All {retries} retries failed for {url}")
-
-
-def notion_get(path: str, token: str) -> dict:
-    return _request(
-        f"{NOTION_API}{path}",
-        headers={"Authorization": f"Bearer {token}", "Notion-Version": NOTION_VERSION},
-    )
-
-
-def notion_post(path: str, token: str, body: dict) -> dict:
-    return _request(
-        f"{NOTION_API}{path}",
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Notion-Version": NOTION_VERSION,
-            "Content-Type": "application/json",
-        },
-        body=body,
-    )
-
-
-def notion_patch(path: str, token: str, body: dict) -> dict:
-    return _request(
-        f"{NOTION_API}{path}",
-        method="PATCH",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Notion-Version": NOTION_VERSION,
-            "Content-Type": "application/json",
-        },
-        body=body,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Notion helpers
 # ---------------------------------------------------------------------------
 
 
+def _notion_client(token: str):
+    return notion_client_from_environment(token=token)
+
+
 def notion_query_all(db_id: str, token: str, verbose: bool = False) -> list:
-    """Fetch all rows from a Notion database (handles pagination)."""
-    rows = []
-    cursor = None
-    while True:
-        body: dict = {"page_size": 100}
-        if cursor:
-            body["start_cursor"] = cursor
-        resp = notion_post(f"/databases/{db_id}/query", token, body)
-        rows.extend(resp.get("results", []))
-        if not resp.get("has_more"):
-            break
-        cursor = resp.get("next_cursor")
+    """Fetch every current data-source row through the shared bridge."""
+    result = _notion_client(token).request("queryDatabase", {"databaseId": db_id})
+    if not isinstance(result, dict) or result.get("complete") is not True:
+        raise NotionBridgeError(
+            "BRIDGE_INVALID_RESPONSE",
+            "Notion bridge returned an incomplete database collection",
+        )
+    rows = result.get("values")
+    if not isinstance(rows, list):
+        raise NotionBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Notion bridge returned invalid database rows"
+        )
     if verbose:
         print(f"  [notion] fetched {len(rows)} rows from DB {db_id}")
     return rows
@@ -246,13 +203,15 @@ def get_url(prop: dict) -> str | None:
 def get_page_body_excerpt(page_id: str, token: str, max_chars: int = 800) -> str:
     """Fetch top-level blocks and return a plain-text excerpt."""
     try:
-        resp = notion_get(f"/blocks/{page_id}/children?page_size=20", token)
+        resp = _notion_client(token).request(
+            "listBlockChildren", {"blockId": page_id}
+        )
     except Exception:
         return ""
     parts = []
-    for block in resp.get("results", []):
+    for block in resp.get("values", []):
         btype = block.get("type", "")
-        content = block.get(btype, {})
+        content = block.get("value", {})
         rich = content.get("rich_text", [])
         text = "".join(r.get("plain_text", "") for r in rich).strip()
         if text:
@@ -289,14 +248,23 @@ def build_linear_description(page_id: str, body_excerpt: str) -> str:
 
 
 def notion_set_linear_url(page_id: str, url: str, token: str) -> None:
-    notion_patch(f"/pages/{page_id}", token, {"properties": {"Linear": {"url": url}}})
+    _notion_client(token).request(
+        "updatePage",
+        {"pageId": page_id, "input": {"properties": {"Linear": {"url": url}}}},
+        mutation=True,
+    )
 
 
 def notion_set_status(page_id: str, status_name: str, token: str) -> None:
-    notion_patch(
-        f"/pages/{page_id}",
-        token,
-        {"properties": {"Status": {"select": {"name": status_name}}}},
+    _notion_client(token).request(
+        "updatePage",
+        {
+            "pageId": page_id,
+            "input": {
+                "properties": {"Status": {"select": {"name": status_name}}}
+            },
+        },
+        mutation=True,
     )
 
 
@@ -637,6 +605,16 @@ def _linear_bridge_command_error() -> str | None:
     return None
 
 
+def _notion_bridge_command_error() -> str | None:
+    try:
+        command = notion_command_from_environment()
+    except NotionBridgeError as exc:
+        return str(exc)
+    if not command:
+        return "GENOMES_NOTION_BRIDGE_COMMAND is not configured"
+    return None
+
+
 def _linear_token_remediation(team_label: str, token_env: str) -> str:
     return (
         f"Create a personal API key in the Linear workspace that owns team {team_label} "
@@ -721,6 +699,27 @@ def run_doctor(
             "missing_notion_token",
             "GENOMES_NOTION_PAT env var is not set.",
             "Set GENOMES_NOTION_PAT for Genome's Notion and re-run doctor.",
+        )
+    notion_bridge_command_error = _notion_bridge_command_error() if check_notion else None
+    if check_notion:
+        checks.append(
+            {
+                "name": "notion_bridge_command",
+                "ok": notion_bridge_command_error is None,
+                **(
+                    {"error": notion_bridge_command_error}
+                    if notion_bridge_command_error
+                    else {}
+                ),
+            }
+        )
+    if notion_bridge_command_error:
+        _add_finding(
+            findings,
+            "blocker",
+            "notion_bridge_unconfigured",
+            notion_bridge_command_error,
+            "Set GENOMES_NOTION_BRIDGE_COMMAND to the reviewed built Notion bridge and re-run doctor.",
         )
 
     team_id = cfg.get("team_id")
@@ -855,11 +854,23 @@ def run_doctor(
                 }
             )
 
-    if check_notion and token_notion:
+    if check_notion and token_notion and not notion_bridge_command_error:
         try:
-            db = notion_get(f"/databases/{NOTION_DB_ID}", token_notion)
+            client = _notion_client(token_notion)
+            identity = notion_identity_from_environment()
+            if identity is None:
+                raise NotionBridgeError(
+                    "IDENTITY_MISMATCH",
+                    "GENOMES_NOTION_PARENT_PAGE_ID is required for mutation preflight",
+                )
+            verified = client.request("preflightIdentity", identity)
+            db = client.request("getDatabase", {"databaseId": NOTION_DB_ID})
+            if not isinstance(db, dict):
+                raise NotionBridgeError(
+                    "NOT_FOUND", "OS Work Intake Notion database was not found"
+                )
             title = "".join(
-                part.get("plain_text", "")
+                part.get("plainText", "")
                 for part in db.get("title", [])
                 if isinstance(part, dict)
             )
@@ -869,6 +880,8 @@ def run_doctor(
                     "ok": True,
                     "database_id": NOTION_DB_ID,
                     "title": title,
+                    "workspace": verified.get("workspaceName"),
+                    "parent_page_id": identity["parentPageId"],
                 }
             )
         except Exception as exc:
@@ -1288,7 +1301,11 @@ ENVIRONMENT:
                       Override the host env var name via `token_env` in intake-sync.yml.
   GENOMES_LINEAR_BRIDGE_COMMAND
                       Command for the reviewed built Linear bridge entrypoint.
-  GENOMES_NOTION_PAT  Notion integration token for Genome's Notion workspace.
+  GENOMES_NOTION_BRIDGE_COMMAND
+                      Command for the reviewed built Notion bridge entrypoint.
+  GENOMES_NOTION_PAT  Notion token, passed only to the reviewed bridge child.
+  GENOMES_NOTION_PARENT_PAGE_ID
+                      Exact Genome's Notion parent required for mutation preflight.
 
 FILES:
   /Users/genome/agentic_os/harness/registries/intake-sync.yml
@@ -1398,6 +1415,13 @@ EXAMPLES:
     bridge_command_error = _linear_bridge_command_error()
     if args.command != "doctor" and bridge_command_error:
         print(f"ERROR: Linear bridge unavailable: {bridge_command_error}.", file=sys.stderr)
+        sys.exit(1)
+    notion_bridge_command_error = _notion_bridge_command_error()
+    if args.command != "doctor" and notion_bridge_command_error:
+        print(
+            f"ERROR: Notion bridge unavailable: {notion_bridge_command_error}.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if args.command == "doctor":
