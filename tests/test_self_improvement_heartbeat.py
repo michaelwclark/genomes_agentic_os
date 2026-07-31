@@ -485,6 +485,51 @@ def test_runtime_dispatch_supports_nightly_apply_command(tmp_path: Path) -> None
     )
 
 
+def test_runtime_dispatch_passes_configured_parent_to_nightly_apply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from genomes_agentic_os.scaffold import shared_factory_path
+
+    root = tmp_path / "agentic_os"
+    assert main(["init", "--target", str(root)]) == 0
+    config_path = shared_factory_path(
+        root, "00-control-plane", "notion-tracking.yml"
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "parent_page_id": "approved-parent",
+                "workspace": "Genome's Notion",
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: dict[str, Any] = {}
+
+    def nightly(root_arg, **kwargs):
+        seen.update(kwargs)
+        return {
+            "ok": True,
+            "enabled": True,
+            "approved": [],
+            "queued": [],
+            "implemented": [],
+            "errors": [],
+            "notion_failures": [],
+            "receipt": None,
+        }
+
+    monkeypatch.setattr(runtime_ops, "nightly_apply_self_improvement", nightly)
+    execution = runtime_ops._run_local_script(
+        root,
+        f"agentic-os self-improvement nightly-apply --root {root} --apply",
+    )
+
+    assert execution["ok"] is True
+    assert seen["approved_parent_page_id"] == "approved-parent"
+
+
 def test_repair_validation_drift_creates_work_item_placeholders_and_json_backup(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     root.mkdir()

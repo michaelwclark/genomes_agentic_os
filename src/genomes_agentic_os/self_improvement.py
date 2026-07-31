@@ -3687,6 +3687,9 @@ def nightly_apply_self_improvement(
             approved_parent_page_id=approved_parent_page_id,
             fetcher=fetcher,
         )
+        if not projection.get("projected"):
+            result["notion_failures"].append({"proposal_id": proposal_id, "reason": projection.get("reason")})
+            continue
         queued_row = {
             "proposal_id": proposal_id,
             "target": target,
@@ -3694,8 +3697,6 @@ def nightly_apply_self_improvement(
             "notion": projection,
         }
         result["queued"].append(queued_row)
-        if not projection.get("projected"):
-            result["notion_failures"].append({"proposal_id": proposal_id, "reason": projection.get("reason")})
         promoted_rows.append(
             {"proposal_id": proposal_id, "target": target, "proposal": refreshed, "projection": projection}
         )
@@ -3767,6 +3768,11 @@ def nightly_apply_self_improvement(
                 }
             )
 
+    if result["notion_failures"]:
+        result["ok"] = False
+        result["status"] = "blocked"
+    else:
+        result["status"] = "processed"
     result["notification"] = _send_nightly_notification(
         os_root,
         source=notify_source,

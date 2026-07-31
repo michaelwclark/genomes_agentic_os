@@ -2166,7 +2166,15 @@ def _run_local_script(
     if normalized in _si_nightly_persist_forms | _si_nightly_dry_forms:
         _dry = normalized not in _si_nightly_persist_forms
         try:
-            result = nightly_apply_self_improvement(root, dry_run=_dry)
+            tracking_config = _load_notion_tracking_config(expand_path(root))
+            approved_parent_page_id, _token_env, _cockpit_title, _workspace = (
+                _live_notion_config(tracking_config)
+            )
+            result = nightly_apply_self_improvement(
+                root,
+                dry_run=_dry,
+                approved_parent_page_id=approved_parent_page_id,
+            )
         except ValueError as exc:
             return {
                 "supported": True,
@@ -2179,7 +2187,8 @@ def _run_local_script(
             "supported": True,
             "ok": bool(result.get("ok")),
             "command": normalized,
-            "errors": [str(item) for item in result.get("errors") or []],
+            "errors": [str(item) for item in result.get("errors") or []]
+            + [str(item) for item in result.get("notion_failures") or []],
             "warnings": [],
             "enabled": bool(result.get("enabled")),
             "approved": len(result.get("approved") or []),
@@ -4066,6 +4075,15 @@ def _apply_runtime_tracking_live(
             f"live API workspace mismatch: bot reports {bot_workspace!r} "
             f"but verified_workspace expects {workspace!r}; refusing Notion write"
         )
+
+    manifest_is_reusable = (
+        existing_manifest.get("live") is True
+        and existing_manifest.get("workspace") == workspace
+        and str(existing_manifest.get("parent_page_id") or "").replace("-", "")
+        == str(parent_page_id).replace("-", "")
+    )
+    if not manifest_is_reusable:
+        existing_manifest = {}
 
     now = _now()
 
