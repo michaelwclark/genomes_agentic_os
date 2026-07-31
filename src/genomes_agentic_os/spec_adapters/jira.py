@@ -381,6 +381,18 @@ class JiraSpecAdapter(GuardedProviderAdapter):
     ):
         super().__init__(policy, transport)
 
+    def get(self, spec_id: str) -> Spec | None:
+        try:
+            return super().get(spec_id)
+        except JiraBridgeError:
+            return None
+
+    def list(self, **filters: Any) -> list[Spec]:
+        try:
+            return super().list(**filters)
+        except JiraBridgeError:
+            return []
+
     def _plan(
         self, spec: Spec, operation: str, *, extra: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:

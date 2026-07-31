@@ -14,6 +14,7 @@ from genomes_agentic_os.jira_bridge import (
     JiraBridgeError,
     adf_paragraph,
     auth_from_environment,
+    base_url_from_environment,
     call_jira_bridge,
     command_from_environment,
 )
@@ -52,6 +53,9 @@ def test_command_and_auth_modes_are_explicit() -> None:
     assert auth_from_environment({"JIRA_OAUTH_TOKEN": "bearer"}) == {
         "JIRA_OAUTH_TOKEN": "bearer"
     }
+    assert auth_from_environment({"ATLASSIAN_ACCESS_TOKEN": "alias"}) == {
+        "JIRA_OAUTH_TOKEN": "alias"
+    }
     assert auth_from_environment(
         {"JIRA_EMAIL": "a@example.com", "JIRA_API_TOKEN": "token"}
     ) == {
@@ -68,6 +72,28 @@ def test_command_and_auth_modes_are_explicit() -> None:
         )
     with pytest.raises(JiraBridgeError, match="Exactly one complete"):
         auth_from_environment({"JIRA_EMAIL": "a@example.com"})
+
+
+def test_base_url_resolution_matches_auth_mode_and_fails_closed() -> None:
+    assert base_url_from_environment(
+        {
+            "ATLASSIAN_ACCESS_TOKEN": "bearer",
+            "ATLASSIAN_JIRA_CLOUDID": "cloud-131",
+        }
+    ) == "https://api.atlassian.com/ex/jira/cloud-131"
+    assert base_url_from_environment(
+        {
+            "JIRA_EMAIL": "a@example.com",
+            "JIRA_API_TOKEN": "token",
+            "JIRA_BASE_URL": "https://tenant.invalid/",
+        }
+    ) == "https://tenant.invalid"
+    with pytest.raises(JiraBridgeError, match="gateway base URL or cloud ID"):
+        base_url_from_environment({"JIRA_OAUTH_TOKEN": "bearer"})
+    with pytest.raises(JiraBridgeError, match="base URL is not configured"):
+        base_url_from_environment(
+            {"JIRA_EMAIL": "a@example.com", "JIRA_API_TOKEN": "token"}
+        )
 
 
 def test_request_is_versioned_and_credentials_stay_out_of_payload() -> None:

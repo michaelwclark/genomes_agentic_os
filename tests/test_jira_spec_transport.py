@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+import pytest
+
 from genomes_agentic_os.jira_bridge import JiraBridgeError
 from genomes_agentic_os.spec_adapters.jira import (
     JiraBridgeSpecTransport,
@@ -20,9 +22,11 @@ class FakeBridgeClient:
         *,
         duplicate_matches: int = 0,
         existing_labels: list[str] | None = None,
+        search_complete: bool = True,
     ) -> None:
         self.duplicate_matches = duplicate_matches
         self.existing_labels = list(existing_labels or [])
+        self.search_complete = search_complete
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.status = "To Do"
         self.transitions = [
@@ -55,7 +59,7 @@ class FakeBridgeClient:
                 }
                 for index in range(self.duplicate_matches)
             ]
-            return {"values": values, "complete": True}
+            return {"values": values, "complete": self.search_complete}
         if operation == "createIssue":
             return {"key": "APP-131", "url": "https://jira.invalid/APP-131"}
         if operation == "updateIssue":
@@ -65,12 +69,20 @@ class FakeBridgeClient:
                 "status": {"name": self.status},
             }
         if operation == "getIssue":
-            return {
+            issue = {
                 "key": args["key"],
                 "url": f"https://jira.invalid/{args['key']}",
                 "status": {"name": self.status},
                 "fields": {"labels": self.existing_labels},
             }
+            requested = args.get("fields")
+            if isinstance(requested, list):
+                issue["fields"] = {
+                    key: value
+                    for key, value in issue["fields"].items()
+                    if key in requested
+                }
+            return issue
         if operation == "listTransitions":
             return deepcopy(self.transitions)
         if operation == "transitionIssue":
@@ -151,6 +163,17 @@ def test_jira_spec_duplicate_marker_and_active_sprint_fail_closed() -> None:
     assert sprint.ok is False
     assert sprint.status == "blocked"
     assert "disabled" in str(sprint.error)
+
+
+def test_jira_spec_rejects_incomplete_marker_and_list_searches() -> None:
+    client = FakeBridgeClient(search_complete=False)
+    receipt = _adapter(client).create(Spec(id="one", title="One"), apply=True)
+    assert receipt.ok is False
+    assert "incomplete results" in str(receipt.error)
+
+    transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
+    with pytest.raises(JiraBridgeError, match="incomplete results"):
+        transport.request("list_specs", {"target": {"project_key": "APP"}})
 
 
 def test_jira_spec_update_preserves_existing_human_labels() -> None:
@@ -283,3 +306,21 @@ def test_jira_spec_transport_environment_is_explicit_and_complete() -> None:
         assert exc.code == "CONFIGURATION_ERROR"
     else:
         raise AssertionError("partial Jira authentication did not block")
+
+
+def test_jira_spec_reads_degrade_without_traceback_under_partial_config() -> None:
+    transport = transport_from_environment({"JIRA_BASE_URL": "https://jira.invalid"})
+    assert transport is not None
+    adapter = JiraSpecAdapter(
+        {
+            "enabled": True,
+            "target": {
+                "site_url": "https://jira.invalid",
+                "project_key": "APP",
+                "issue_type_id": "10001",
+            },
+        },
+        transport,
+    )
+    assert adapter.get("missing") is None
+    assert adapter.list() == []

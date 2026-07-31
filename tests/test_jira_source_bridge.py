@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 import genomes_agentic_os.source_providers as source_providers
-from genomes_agentic_os.source_providers import poll_jira_source
+from genomes_agentic_os.jira_bridge import JiraBridgeError
+from genomes_agentic_os.source_providers import fetch_jira_issues, poll_jira_source
 from genomes_agentic_os.source_watch import (
+    connected_systems,
     default_connected_systems,
     default_source_providers,
+    ensure_registries,
+    select_provider,
 )
 
 
@@ -40,7 +46,7 @@ class FakeJiraBridge:
         }
 
 
-def test_jira_watch_uses_unbounded_shared_search_and_trimmed_events() -> None:
+def test_jira_watch_uses_bounded_shared_search_and_trimmed_events() -> None:
     bridge = FakeJiraBridge()
     result = poll_jira_source(
         {"external_ref": {"project_key": "APP"}},
@@ -55,6 +61,7 @@ def test_jira_watch_uses_unbounded_shared_search_and_trimmed_events() -> None:
             {
                 "jql": 'project = "APP" ORDER BY updated DESC',
                 "fields": ["updated", "labels"],
+                "limit": 250,
             },
         )
     ]
@@ -65,14 +72,30 @@ def test_jira_watch_uses_unbounded_shared_search_and_trimmed_events() -> None:
     assert "description" not in item
 
 
-def test_jira_watch_rejects_incomplete_unbounded_search() -> None:
+def test_jira_unbounded_search_still_rejects_incomplete_results() -> None:
+    with pytest.raises(JiraBridgeError, match="incomplete unbounded search"):
+        fetch_jira_issues(
+            "project = APP",
+            client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
+        )
+
+
+def test_jira_watch_adds_persisted_cursor_before_ordering() -> None:
+    bridge = FakeJiraBridge()
     result = poll_jira_source(
-        {"external_ref": {"jql": "project = APP"}},
+        {
+            "external_ref": {"project_key": "APP", "max_results": 50},
+            "_cursor_since": "2026-07-29T18:02:03Z",
+        },
         {"system": "jira"},
-        client=FakeJiraBridge(complete=False),  # type: ignore[arg-type]
+        client=bridge,  # type: ignore[arg-type]
     )
-    assert result["ok"] is False
-    assert result["findings"][0]["code"] == "BRIDGE_INVALID_RESPONSE"
+    assert result["ok"]
+    assert bridge.calls[0][1] == {
+        "jql": '(project = "APP") AND updated >= "2026-07-29 18:00" ORDER BY updated DESC',
+        "fields": ["updated", "labels"],
+        "limit": 50,
+    }
 
 
 def test_default_jira_registry_routes_polling_to_shared_bridge() -> None:
@@ -89,11 +112,22 @@ def test_default_jira_registry_routes_polling_to_shared_bridge() -> None:
     assert "poll" in bridge["supports"]
 
 
+def test_legacy_jira_priority_reports_the_executing_bridge(tmp_path: Any) -> None:
+    ensure_registries(tmp_path)
+    jira = next(
+        item for item in connected_systems(tmp_path) if item["id"] == "jira_genome"
+    )
+    jira["provider_priority"] = ["composio", "jira_bridge"]
+    assert select_provider(tmp_path, jira) == "jira_bridge"
+
+
 def test_jira_watch_bearer_mode_uses_atlassian_gateway(monkeypatch: Any) -> None:
     bridge = FakeJiraBridge()
     captured: dict[str, Any] = {}
 
-    def make_client(command: Any, base_url: str, auth: Any) -> FakeJiraBridge:
+    def make_client(
+        command: Any, base_url: str, auth: Any, **_kwargs: Any
+    ) -> FakeJiraBridge:
         captured.update(command=list(command), base_url=base_url, auth=dict(auth))
         return bridge
 

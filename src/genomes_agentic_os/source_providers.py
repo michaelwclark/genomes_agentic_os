@@ -46,6 +46,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .github_bridge import (
@@ -536,22 +537,45 @@ def fetch_jira_issues(
     jql: str,
     *,
     client: JiraBridgeClient,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Exhaust the shared Jira search port and return trimmed issue summaries."""
+    """Return one explicitly bounded Jira watch batch or exhaust an unbounded query."""
+    args: dict[str, Any] = {"jql": jql, "fields": ["updated", "labels"]}
+    if limit is not None:
+        args["limit"] = limit
     page = client.request(
         "searchIssues",
-        {"jql": jql, "fields": ["updated", "labels"]},
+        args,
     )
     values = page.get("values") if isinstance(page, dict) else None
     if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
         raise JiraBridgeError(
             "BRIDGE_INVALID_RESPONSE", "Jira bridge returned invalid search results"
         )
-    if page.get("complete") is not True:
+    if limit is None and page.get("complete") is not True:
         raise JiraBridgeError(
             "BRIDGE_INVALID_RESPONSE", "Jira bridge returned an incomplete unbounded search"
         )
     return [_jira_issue_to_source_item(item) for item in values]
+
+
+def _jira_jql_with_cursor(jql: str, cursor: str | None) -> str:
+    """Add a validated cursor with a two-minute race-safe overlap."""
+    if not cursor:
+        return jql
+    try:
+        parsed = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+        literal = (
+            parsed.astimezone(timezone.utc) - timedelta(minutes=2)
+        ).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError) as exc:
+        raise JiraBridgeError(
+            "INVALID_REQUEST", "Jira watch cursor is not a valid timestamp"
+        ) from exc
+    match = re.search(r"\s+ORDER\s+BY\s+", jql, flags=re.IGNORECASE)
+    body = jql[: match.start()].strip() if match else jql.strip()
+    order = jql[match.start() :].strip() if match else "ORDER BY updated DESC"
+    return f'({body}) AND updated >= "{literal}" {order}'
 
 
 def poll_jira_source(
@@ -608,7 +632,7 @@ def poll_jira_source(
                     {"severity": "blocker", "code": exc.code, "message": str(exc)}
                 ],
             }
-        client = JiraBridgeClient(command, base_url, auth)
+        client = JiraBridgeClient(command, base_url, auth, timeout=120)
     project = str(external_ref.get("project_key") or "").strip()
     jql = str(external_ref.get("jql") or "").strip()
     if not jql and project:
@@ -629,7 +653,15 @@ def poll_jira_source(
             ],
         }
     try:
-        items = fetch_jira_issues(jql, client=client)
+        limit = int(external_ref.get("max_results") or 250)
+        if not 1 <= limit <= 500:
+            raise JiraBridgeError(
+                "INVALID_REQUEST", "Jira watch max_results must be between 1 and 500"
+            )
+        jql = _jira_jql_with_cursor(
+            jql, str(source.get("_cursor_since") or "").strip() or None
+        )
+        items = fetch_jira_issues(jql, client=client, limit=limit)
         return {
             "ok": True,
             "live": True,

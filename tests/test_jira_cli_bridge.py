@@ -165,6 +165,21 @@ def test_browse_base_participates_in_login_shell_fallback(monkeypatch) -> None:
     assert auth["browse_base"] == "https://jira.invalid"
 
 
+def test_basic_auth_without_tenant_base_fails_closed(monkeypatch) -> None:
+    module = _load_cli()
+    monkeypatch.setattr(
+        module,
+        "env_from_login_shell",
+        lambda _names: {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_EMAIL": "a@example.com",
+            "JIRA_API_TOKEN": "secret",
+        },
+    )
+    with pytest.raises(module.JiraCliError, match="base URL is not configured"):
+        module.resolve_auth()
+
+
 def test_get_issue_reports_not_found_distinctly() -> None:
     module = _load_cli()
     client = _facade(module)

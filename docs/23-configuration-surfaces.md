@@ -252,7 +252,7 @@ Each tool reads env vars from the process environment, with automatic fallback t
 | `JIRA_BASE_URL` | — | Basic-auth tenant URL; Spec Engine and source-watch bridge base |
 | `JIRA_BROWSE_BASE` | — | Wrapper tenant site URL for identity preflight |
 | `JIRA_SITE_URL` | — | Auto-Dev live tracker tenant site URL for identity preflight |
-| `JIRA_DEFAULT_ISSUE_TYPE_ID` / `JIRA_ISSUE_TYPE_ID` | — | Expected issue-type ID for mutation preflight |
+| `JIRA_DEFAULT_ISSUE_TYPE_ID` | — | Expected issue-type ID for mutation preflight |
 | `JIRA_ACCOUNT_ID` / `ATLASSIAN_ACCOUNT_ID` | — | Optional expected account ID for mutation preflight |
 
 The wrapper no longer mints OAuth client-credential tokens or constructs Jira

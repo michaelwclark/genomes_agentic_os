@@ -91,7 +91,10 @@ def command_from_environment(
 def auth_from_environment(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return exactly one complete bridge auth mode without exposing values."""
     values = os.environ if environ is None else environ
-    bearer = values.get("JIRA_OAUTH_TOKEN", "").strip()
+    bearer = (
+        values.get("JIRA_OAUTH_TOKEN", "").strip()
+        or values.get("ATLASSIAN_ACCESS_TOKEN", "").strip()
+    )
     email = values.get("JIRA_EMAIL", "").strip()
     api_token = values.get("JIRA_API_TOKEN", "").strip()
     if bearer and (email or api_token):
@@ -111,7 +114,10 @@ def auth_from_environment(environ: Mapping[str, str] | None = None) -> dict[str,
 def base_url_from_environment(environ: Mapping[str, str] | None = None) -> str:
     """Resolve the provider base URL appropriate for the configured auth mode."""
     values = os.environ if environ is None else environ
-    if values.get("JIRA_OAUTH_TOKEN", "").strip():
+    if (
+        values.get("JIRA_OAUTH_TOKEN", "").strip()
+        or values.get("ATLASSIAN_ACCESS_TOKEN", "").strip()
+    ):
         explicit = (
             values.get("ATLASSIAN_BASE_URL", "").strip()
             or values.get("JIRA_OAUTH_BASE_URL", "").strip()

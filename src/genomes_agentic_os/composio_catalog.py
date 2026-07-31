@@ -77,7 +77,7 @@ COMPOSIO_TOOL_ROUTES: tuple[ComposioToolRoute, ...] = (
         name="Genome Jira",
         route_when="Jira issue/project reads and approved issue creation or updates.",
         layer_scope=LAYER_SCOPE,
-        provider_priority=("acli", "jira_bridge", "jira_mcp", "jira_connector", "composio"),
+        provider_priority=("jira_bridge", "jira_mcp", "jira_connector", "composio"),
         boundary="Use the configured Genome Jira workspace; writes require ticket-scope approval.",
         source_system="connected-system:jira_genome",
     ),

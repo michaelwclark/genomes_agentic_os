@@ -255,6 +255,8 @@ def select_provider(root: str | Path, system: dict[str, Any]) -> str | None:
         for provider in source_providers(root)
         if provider.get("id") and provider.get("status") != "unavailable"
     }
+    if system.get("system") == "jira" and "jira_bridge" in available:
+        return "jira_bridge"
     for provider_id in system.get("provider_priority") or []:
         if str(provider_id) in available:
             return str(provider_id)
@@ -712,7 +714,8 @@ def poll_watch_source(
         Defaults to ``urllib.request.urlopen``.  Pass a fake in tests so no
         network calls are made.
     """
-    source = find_by_id(watch_sources(root), source_id)
+    os_root = ensure_registries(root)
+    source = find_by_id(watch_sources(os_root), source_id)
     if not source:
         raise ValueError(f"watch source not found: {source_id}")
     doctor = doctor_watch_source(root, source_id)
@@ -724,7 +727,12 @@ def poll_watch_source(
     live_kwargs: dict[str, Any] = {}
     if fetcher is not None:
         live_kwargs["fetcher"] = fetcher
-    live_result = poll_live_source(source, system, **live_kwargs)
+    poll_source = dict(source)
+    cursor_data = load_yaml(os_root / WATCH_CURSORS_FILE)
+    cursor = find_by_id(cursor_data.get("watch_cursors") or [], source_id)
+    if system.get("system") == "jira" and cursor and cursor.get("updated_at"):
+        poll_source["_cursor_since"] = str(cursor["updated_at"])
+    live_result = poll_live_source(poll_source, system, **live_kwargs)
 
     # Every live-adapter failure is terminal for this poll. Falling back to a
     # registry event would turn provider/configuration failures into false

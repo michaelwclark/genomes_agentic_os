@@ -91,6 +91,8 @@ from genomes_agentic_os.jira_bridge import (
     JiraBridgeClient,
     JiraBridgeError,
     adf_paragraph,
+    auth_from_environment,
+    base_url_from_environment,
     command_from_environment,
 )
 
@@ -154,16 +156,6 @@ def first_env(env: dict[str, str], names: tuple[str, ...]) -> str:
     return next((env[name] for name in names if env.get(name)), "")
 
 
-def jira_gateway_base_url(env: dict[str, str]) -> str:
-    base = first_env(env, JIRA_OAUTH_BASE_NAMES)
-    if base:
-        return base.rstrip("/")
-    cloud_id = first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES)
-    if cloud_id:
-        return f"https://api.atlassian.com/ex/jira/{cloud_id}".rstrip("/")
-    return ""
-
-
 def resolve_auth() -> dict[str, Any]:
     names = (
         JIRA_BEARER_TOKEN_NAMES
@@ -183,35 +175,32 @@ def resolve_auth() -> dict[str, Any]:
         raise JiraCliError(
             "GENOMES_JIRA_BRIDGE_COMMAND must name the reviewed Jira bridge argv"
         )
-    bearer = first_env(env, JIRA_BEARER_TOKEN_NAMES)
-    oauth_base = jira_gateway_base_url(env)
-    basic_token = first_env(env, JIRA_BASIC_TOKEN_NAMES)
-    basic_email = first_env(env, JIRA_BASIC_EMAIL_NAMES)
-    if bearer and (basic_token or basic_email):
-        raise JiraCliError("Jira authentication mode is ambiguous")
-    if bearer and oauth_base:
+    try:
+        bridge_auth = auth_from_environment(env)
+        base = base_url_from_environment(env)
+    except JiraBridgeError as exc:
+        raise JiraCliError(str(exc)) from exc
+    bearer = bridge_auth.get("JIRA_OAUTH_TOKEN", "")
+    if bearer:
         return {
             "mode": "bearer",
-            "base": oauth_base,
+            "base": base,
             "browse_base": first_env(env, JIRA_BROWSE_BASE_NAMES)
             or first_env(env, JIRA_BASIC_BASE_NAMES)
             or DEFAULT_BROWSE_BASE,
             "bridge_command": command,
-            "bridge_auth": {"JIRA_OAUTH_TOKEN": bearer},
+            "bridge_auth": bridge_auth,
             "cloud_id": first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES),
             "account_id": first_env(env, JIRA_ACCOUNT_ID_NAMES),
             "issue_type_id": first_env(env, JIRA_ISSUE_TYPE_ID_NAMES),
         }
-    if basic_token and basic_email:
-        base = (first_env(env, JIRA_BASIC_BASE_NAMES) or DEFAULT_BROWSE_BASE).rstrip(
-            "/"
-        )
+    if "JIRA_API_TOKEN" in bridge_auth:
         return {
             "mode": "basic",
             "base": base,
             "browse_base": base,
             "bridge_command": command,
-            "bridge_auth": {"JIRA_EMAIL": basic_email, "JIRA_API_TOKEN": basic_token},
+            "bridge_auth": bridge_auth,
             "cloud_id": first_env(env, JIRA_OAUTH_CLOUD_ID_NAMES),
             "account_id": first_env(env, JIRA_ACCOUNT_ID_NAMES),
             "issue_type_id": first_env(env, JIRA_ISSUE_TYPE_ID_NAMES),
