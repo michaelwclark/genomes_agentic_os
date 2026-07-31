@@ -1913,7 +1913,18 @@ def _project_run_to_notion(
         return _degrade(f"notion token env var {NOTION_TOKEN_ENV!r} is not set")
 
     try:
-        bot_workspace = notion_api.get_bot_workspace(NOTION_TOKEN_ENV, fetcher=transport)
+        verification_parent = (
+            notion_api.get_database_parent_page_id(
+                database_id, NOTION_TOKEN_ENV, fetcher=transport
+            )
+            if transport is notion_api._default_fetcher
+            else None
+        )
+        bot_workspace = notion_api.get_bot_workspace(
+            NOTION_TOKEN_ENV,
+            parent_page_id=verification_parent,
+            fetcher=transport,
+        )
         if expected_workspace and bot_workspace != expected_workspace:
             return _degrade(
                 f"live workspace {bot_workspace!r} does not match manifest workspace {expected_workspace!r}"
@@ -2158,7 +2169,18 @@ def process_self_improvement_actions(
         return result
 
     try:
-        bot_workspace = notion_api.get_bot_workspace(NOTION_TOKEN_ENV, fetcher=transport)
+        verification_parent = (
+            notion_api.get_database_parent_page_id(
+                database_id, NOTION_TOKEN_ENV, fetcher=transport
+            )
+            if transport is notion_api._default_fetcher
+            else None
+        )
+        bot_workspace = notion_api.get_bot_workspace(
+            NOTION_TOKEN_ENV,
+            parent_page_id=verification_parent,
+            fetcher=transport,
+        )
         if expected_workspace and bot_workspace != expected_workspace:
             result.update(
                 {
@@ -2600,8 +2622,24 @@ def _project_morning_report_to_notion(
 
     if not notion_api.resolve_token(NOTION_TOKEN_ENV):
         return _degrade(f"notion token env var {NOTION_TOKEN_ENV!r} is not set")
+    discovered_parent_id: str | None = None
+    if transport is notion_api._default_fetcher and not configured_parent_id:
+        try:
+            parent_pages = notion_api.search_pages(
+                parent_title, NOTION_TOKEN_ENV, fetcher=transport
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            return _degrade(f"parent-page discovery failed: {exc}")
+        parent = _find_exact_page_by_title(parent_pages, parent_title)
+        if not parent:
+            return _degrade(f"could not find parent page {parent_title!r}")
+        discovered_parent_id = str(parent["id"])
     try:
-        workspace = notion_api.get_bot_workspace(NOTION_TOKEN_ENV, fetcher=transport)
+        workspace = notion_api.get_bot_workspace(
+            NOTION_TOKEN_ENV,
+            parent_page_id=configured_parent_id or discovered_parent_id,
+            fetcher=transport,
+        )
     except (RuntimeError, OSError, ValueError) as exc:
         return _degrade(f"workspace verification failed: {exc}")
     if workspace != "Genome's Notion":
@@ -2610,6 +2648,8 @@ def _project_morning_report_to_notion(
     try:
         if configured_parent_id:
             parent_id = configured_parent_id.replace("-", "")
+        elif discovered_parent_id:
+            parent_id = discovered_parent_id
         else:
             parent_pages = notion_api.search_pages(parent_title, NOTION_TOKEN_ENV, fetcher=transport)
             parent = _find_exact_page_by_title(parent_pages, parent_title)

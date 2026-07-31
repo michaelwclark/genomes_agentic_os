@@ -1,7 +1,8 @@
-"""Minimal Notion API client using stdlib urllib only.
+"""Compatibility facade for the shared, guarded Notion bridge.
 
-Injectable transport seam (``fetcher`` kwarg) mirrors the pattern in
-``source_providers.py`` so tests can pass a fake without network access.
+Default/live calls cross the versioned TypeScript bridge.  The injectable
+``fetcher`` seam remains only for deterministic legacy fixtures: it targets a
+synthetic host, carries no credential headers, and cannot perform live I/O.
 
 Token safety rules:
 - The token is resolved from an environment variable at call time.
@@ -19,7 +20,14 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable
 
-_NOTION_API_BASE = "https://api.notion.com/v1"
+from .notion_bridge import (
+    DEFAULT_WORKSPACE,
+    NotionBridgeClient,
+    NotionBridgeError,
+    client_from_environment,
+)
+
+_FIXTURE_API_BASE = "https://notion-fixture.invalid/v1"
 _NOTION_API_VERSION = "2022-06-28"
 _DEFAULT_TOKEN_ENV = "GENOMES_NOTION_PAT"
 
@@ -28,8 +36,9 @@ _DEFAULT_TOKEN_ENV = "GENOMES_NOTION_PAT"
 # ---------------------------------------------------------------------------
 
 def _default_fetcher(req: urllib.request.Request) -> Any:
-    """Default HTTP transport — wraps urllib.request.urlopen."""
-    return urllib.request.urlopen(req, timeout=20)  # noqa: S310
+    """Live direct transport is disabled; default calls must use the bridge."""
+    del req
+    raise RuntimeError("direct Notion transport is disabled; use the shared bridge")
 
 
 def _json_request(
@@ -63,13 +72,9 @@ def _json_request(
 
 
 def _auth_headers(token: str, notion_version: str = _NOTION_API_VERSION) -> dict[str, str]:
-    """Build request headers. The token value is embedded here and must not
-    leave this scope as a plain string in any return value."""
-    return {
-        "Authorization": f"Bearer {token}",
-        "Notion-Version": notion_version,
-        "Content-Type": "application/json",
-    }
+    """Return credential-free headers for the injected fixture seam."""
+    del token, notion_version
+    return {"Content-Type": "application/json"}
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +90,74 @@ def resolve_token(token_env: str = _DEFAULT_TOKEN_ENV) -> str | None:
     return os.environ.get(token_env) or None
 
 
+def _bridge_client(token_env: str) -> NotionBridgeClient:
+    token = resolve_token(token_env)
+    if not token:
+        raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+    return client_from_environment(token=token)
+
+
+def _bridge_identity(parent_page_id: str) -> dict[str, str]:
+    return {
+        "workspaceName": os.environ.get("GENOMES_NOTION_WORKSPACE", "").strip()
+        or DEFAULT_WORKSPACE,
+        "parentPageId": parent_page_id,
+    }
+
+
+def _bridge_collection(
+    result: Any, *, require_complete: bool = True
+) -> list[dict[str, Any]]:
+    if not isinstance(result, dict) or (
+        require_complete and result.get("complete") is not True
+    ):
+        raise NotionBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Notion bridge returned an incomplete collection"
+        )
+    values = result.get("values")
+    if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
+        raise NotionBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Notion bridge returned invalid collection values"
+        )
+    return values
+
+
+def _legacy_block(block: dict[str, Any]) -> dict[str, Any]:
+    block_type = str(block.get("type") or "")
+    return {
+        "object": "block",
+        "id": block.get("id"),
+        "type": block_type,
+        block_type: block.get("value") or {},
+        "has_children": block.get("hasChildren") is True,
+        "in_trash": block.get("inTrash") is True,
+        "parent": block.get("parent") or {},
+        "last_edited_time": block.get("updatedAt"),
+    }
+
+
+def _reconciliation_marker(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("content", "plain_text", "name"):
+            marker = _reconciliation_marker(value.get(key))
+            if marker:
+                return marker
+        for key, child in value.items():
+            if key in {"type", "object", "href"}:
+                continue
+            marker = _reconciliation_marker(child)
+            if marker:
+                return marker
+    if isinstance(value, list):
+        for child in value:
+            marker = _reconciliation_marker(child)
+            if marker:
+                return marker
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Public API surface
 # ---------------------------------------------------------------------------
@@ -92,6 +165,7 @@ def resolve_token(token_env: str = _DEFAULT_TOKEN_ENV) -> str | None:
 def get_bot_workspace(
     token_env: str = _DEFAULT_TOKEN_ENV,
     *,
+    parent_page_id: str | None = None,
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> str:
     """Return the ``workspace_name`` for the bot associated with the token.
@@ -99,14 +173,54 @@ def get_bot_workspace(
     Used for live workspace verification. Raises ``RuntimeError`` on failure.
     Token value never appears in the return value.
     """
+    if fetcher is _default_fetcher:
+        client = _bridge_client(token_env)
+        identity = _bridge_identity(parent_page_id) if parent_page_id else client.identity
+        if identity is None:
+            raise RuntimeError("GENOMES_NOTION_PARENT_PAGE_ID is required for workspace verification")
+        result = client.request("preflightIdentity", identity)
+        if not isinstance(result, dict) or not result.get("workspaceName"):
+            raise RuntimeError("Notion bridge did not return a workspace name")
+        return str(result["workspaceName"])
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
-    data = _json_request("GET", f"{_NOTION_API_BASE}/users/me", _auth_headers(token), None, fetcher)
+    data = _json_request("GET", f"{_FIXTURE_API_BASE}/users/me", _auth_headers(token), None, fetcher)
     workspace_name = (data.get("bot") or {}).get("workspace_name") or data.get("workspace_name")
     if not workspace_name:
         raise RuntimeError("Notion /users/me did not return a workspace_name")
     return str(workspace_name)
+
+
+def get_database_parent_page_id(
+    database_id: str,
+    token_env: str = _DEFAULT_TOKEN_ENV,
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+) -> str:
+    """Return the page parent used to anchor guarded database operations."""
+    if fetcher is _default_fetcher:
+        database = _bridge_client(token_env).request(
+            "getDatabase", {"databaseId": database_id}
+        )
+    else:
+        token = resolve_token(token_env)
+        if not token:
+            raise RuntimeError(f"Notion token env var {token_env!r} is not set")
+        database = _json_request(
+            "GET",
+            f"{_FIXTURE_API_BASE}/databases/{database_id}",
+            _auth_headers(token),
+            None,
+            fetcher,
+        )
+    if not isinstance(database, dict):
+        raise RuntimeError("Notion database was not found")
+    parent = database.get("parent") or {}
+    parent_page_id = parent.get("id") or parent.get("page_id")
+    if parent.get("type") != "page_id" or not parent_page_id:
+        raise RuntimeError("Notion database is not under a page parent")
+    return str(parent_page_id)
 
 
 def search_child_pages(
@@ -120,10 +234,25 @@ def search_child_pages(
     Returns a list of dicts with ``id`` (no dashes), ``id_dashed``, and
     ``title`` keys — no raw API payloads.
     """
+    if fetcher is _default_fetcher:
+        blocks = _bridge_collection(
+            _bridge_client(token_env).request(
+                "listBlockChildren", {"blockId": parent_page_id}
+            )
+        )
+        return [
+            {
+                "id": str(block["id"]).replace("-", ""),
+                "id_dashed": block["id"],
+                "title": str((block.get("value") or {}).get("title") or ""),
+            }
+            for block in blocks
+            if block.get("type") == "child_page"
+        ]
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
-    url = f"{_NOTION_API_BASE}/blocks/{parent_page_id}/children?page_size=100"
+    url = f"{_FIXTURE_API_BASE}/blocks/{parent_page_id}/children?page_size=100"
     data = _json_request("GET", url, _auth_headers(token), None, fetcher)
     results = data.get("results") or []
     pages = []
@@ -153,6 +282,28 @@ def search_pages(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> list[dict[str, Any]]:
     """Search accessible pages by title/query and return safe summaries."""
+    if fetcher is _default_fetcher:
+        result = _bridge_collection(
+            _bridge_client(token_env).request(
+                "search",
+                {
+                    "query": query,
+                    "filter": {"value": "page", "property": "object"},
+                    "limit": max(1, min(page_size, 100)),
+                },
+            ),
+            require_complete=False,
+        )
+        return [
+            {
+                "id": str(page.get("id") or "").replace("-", ""),
+                "id_dashed": page.get("id"),
+                "title": _page_title(page),
+                "url": page.get("url"),
+            }
+            for page in result
+            if page.get("object") == "page"
+        ]
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -161,7 +312,7 @@ def search_pages(
         "filter": {"value": "page", "property": "object"},
         "page_size": max(1, min(page_size, 100)),
     }
-    data = _json_request("POST", f"{_NOTION_API_BASE}/search", _auth_headers(token), body, fetcher)
+    data = _json_request("POST", f"{_FIXTURE_API_BASE}/search", _auth_headers(token), body, fetcher)
     pages = []
     for page in data.get("results") or []:
         if not isinstance(page, dict) or page.get("object") != "page":
@@ -186,6 +337,14 @@ def append_block_children(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Append children blocks to a page/block in chunks of 100."""
+    if fetcher is _default_fetcher:
+        _bridge_client(token_env).request(
+            "appendBlockChildren",
+            {"blockId": block_id, "children": children},
+            mutation=True,
+            identity=_bridge_identity(block_id),
+        )
+        return
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -194,7 +353,7 @@ def append_block_children(
         body = {"children": chunk}
         _json_request(
             "PATCH",
-            f"{_NOTION_API_BASE}/blocks/{block_id}/children",
+            f"{_FIXTURE_API_BASE}/blocks/{block_id}/children",
             _auth_headers(token),
             body,
             fetcher,
@@ -208,6 +367,15 @@ def list_block_children(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> list[dict[str, Any]]:
     """Return all first-level children for *block_id* with pagination."""
+    if fetcher is _default_fetcher:
+        return [
+            _legacy_block(block)
+            for block in _bridge_collection(
+                _bridge_client(token_env).request(
+                    "listBlockChildren", {"blockId": block_id}
+                )
+            )
+        ]
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -218,7 +386,7 @@ def list_block_children(
         suffix = f"&start_cursor={cursor}" if cursor else ""
         data = _json_request(
             "GET",
-            f"{_NOTION_API_BASE}/blocks/{block_id}/children?page_size=100{suffix}",
+            f"{_FIXTURE_API_BASE}/blocks/{block_id}/children?page_size=100{suffix}",
             headers,
             None,
             fetcher,
@@ -236,12 +404,17 @@ def archive_block(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Archive one block without exposing token or payload data."""
+    if fetcher is _default_fetcher:
+        _bridge_client(token_env).request(
+            "trashBlock", {"blockId": block_id}, mutation=True
+        )
+        return
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
     _json_request(
         "DELETE",
-        f"{_NOTION_API_BASE}/blocks/{block_id}",
+        f"{_FIXTURE_API_BASE}/blocks/{block_id}",
         _auth_headers(token),
         None,
         fetcher,
@@ -256,6 +429,31 @@ def replace_block_children(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Replace a page's first-level content while preserving child pages/databases."""
+    if fetcher is _default_fetcher:
+        client = _bridge_client(token_env)
+        identity = _bridge_identity(block_id)
+        existing = [
+            _legacy_block(block)
+            for block in _bridge_collection(
+                client.request("listBlockChildren", {"blockId": block_id})
+            )
+        ]
+        for child in existing:
+            if child.get("type") in {"child_page", "child_database"}:
+                continue
+            client.request(
+                "trashBlock",
+                {"blockId": str(child["id"])},
+                mutation=True,
+                identity=identity,
+            )
+        client.request(
+            "appendBlockChildren",
+            {"blockId": block_id, "children": children},
+            mutation=True,
+            identity=identity,
+        )
+        return
     existing = list_block_children(block_id, token_env, fetcher=fetcher)
     for child in existing:
         if child.get("type") in {"child_page", "child_database"}:
@@ -275,10 +473,25 @@ def search_child_databases(
     Returns a list of dicts with ``id`` (no dashes), ``id_dashed``, and
     ``title`` keys.
     """
+    if fetcher is _default_fetcher:
+        blocks = _bridge_collection(
+            _bridge_client(token_env).request(
+                "listBlockChildren", {"blockId": parent_page_id}
+            )
+        )
+        return [
+            {
+                "id": str(block["id"]).replace("-", ""),
+                "id_dashed": block["id"],
+                "title": str((block.get("value") or {}).get("title") or ""),
+            }
+            for block in blocks
+            if block.get("type") == "child_database"
+        ]
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
-    url = f"{_NOTION_API_BASE}/blocks/{parent_page_id}/children?page_size=100"
+    url = f"{_FIXTURE_API_BASE}/blocks/{parent_page_id}/children?page_size=100"
     data = _json_request("GET", url, _auth_headers(token), None, fetcher)
     results = data.get("results") or []
     databases = []
@@ -301,6 +514,31 @@ def create_page(
 
     Returns the new page id (no dashes).
     """
+    if fetcher is _default_fetcher:
+        result = _bridge_client(token_env).request(
+            "createPage",
+            {
+                "input": {
+                    "parent": {"type": "page_id", "id": parent_page_id},
+                    "properties": {
+                        "title": {
+                            "title": [
+                                {"type": "text", "text": {"content": title}}
+                            ]
+                        }
+                    },
+                    "reconciliation": {
+                        "parentPageId": parent_page_id,
+                        "marker": title,
+                    },
+                }
+            },
+            mutation=True,
+            identity=_bridge_identity(parent_page_id),
+        )
+        if not isinstance(result, dict) or not result.get("id"):
+            raise RuntimeError("Notion bridge did not return a created page ID")
+        return str(result["id"]).replace("-", "")
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -312,7 +550,7 @@ def create_page(
             }
         },
     }
-    data = _json_request("POST", f"{_NOTION_API_BASE}/pages", _auth_headers(token), body, fetcher)
+    data = _json_request("POST", f"{_FIXTURE_API_BASE}/pages", _auth_headers(token), body, fetcher)
     return data["id"].replace("-", "")
 
 
@@ -329,6 +567,28 @@ def create_database(
     *properties* is the Notion properties schema dict (name → type spec).
     Returns the new database id (no dashes).
     """
+    if fetcher is _default_fetcher:
+        title_payload = [{"type": "text", "text": {"content": title}}]
+        result = _bridge_client(token_env).request(
+            "createDatabase",
+            {
+                "input": {
+                    "parentPageId": parent_page_id,
+                    "title": title_payload,
+                    "initialDataSource": {"properties": properties},
+                    "isInline": True,
+                    "reconciliation": {
+                        "parentPageId": parent_page_id,
+                        "marker": title,
+                    },
+                }
+            },
+            mutation=True,
+            identity=_bridge_identity(parent_page_id),
+        )
+        if not isinstance(result, dict) or not result.get("id"):
+            raise RuntimeError("Notion bridge did not return a created database ID")
+        return str(result["id"]).replace("-", "")
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -338,7 +598,7 @@ def create_database(
         "properties": properties,
         "is_inline": True,
     }
-    data = _json_request("POST", f"{_NOTION_API_BASE}/databases", _auth_headers(token), body, fetcher)
+    data = _json_request("POST", f"{_FIXTURE_API_BASE}/databases", _auth_headers(token), body, fetcher)
     return data["id"].replace("-", "")
 
 
@@ -353,6 +613,20 @@ def query_database_by_key(
 
     Returns the page id (no dashes) if found, else None.
     """
+    if fetcher is _default_fetcher:
+        rows = _bridge_collection(
+            _bridge_client(token_env).request(
+                "queryDatabase",
+                {
+                    "databaseId": database_id,
+                    "filter": {
+                        "property": "Key",
+                        "rich_text": {"equals": key_value},
+                    },
+                },
+            )
+        )
+        return str(rows[0]["id"]).replace("-", "") if rows else None
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -362,7 +636,7 @@ def query_database_by_key(
             "rich_text": {"equals": key_value},
         }
     }
-    url = f"{_NOTION_API_BASE}/databases/{database_id}/query"
+    url = f"{_FIXTURE_API_BASE}/databases/{database_id}/query"
     data = _json_request("POST", url, _auth_headers(token), body, fetcher)
     results = data.get("results") or []
     if results:
@@ -383,6 +657,19 @@ def query_database_by_rich_text_property(
     Returns the sanitized Notion page payloads from the response. Callers use
     this for databases whose idempotency key is not named ``Key``.
     """
+    if fetcher is _default_fetcher:
+        return _bridge_collection(
+            _bridge_client(token_env).request(
+                "queryDatabase",
+                {
+                    "databaseId": database_id,
+                    "filter": {
+                        "property": property_name,
+                        "rich_text": {"equals": value},
+                    },
+                },
+            )
+        )
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -392,7 +679,7 @@ def query_database_by_rich_text_property(
             "rich_text": {"equals": value},
         }
     }
-    url = f"{_NOTION_API_BASE}/databases/{database_id}/query"
+    url = f"{_FIXTURE_API_BASE}/databases/{database_id}/query"
     data = _json_request("POST", url, _auth_headers(token), body, fetcher)
     return list(data.get("results") or [])
 
@@ -408,10 +695,26 @@ def get_database_property_types(
     Lets callers send only properties that actually exist on a database that
     may have been provisioned out-of-band. Raises ``RuntimeError`` on failure.
     """
+    if fetcher is _default_fetcher:
+        client = _bridge_client(token_env)
+        database = client.request("getDatabase", {"databaseId": database_id})
+        if not isinstance(database, dict):
+            raise RuntimeError("Notion database was not found")
+        properties: dict[str, str] = {}
+        for data_source_id in database.get("dataSourceIds") or []:
+            source = client.request(
+                "getDataSource", {"dataSourceId": str(data_source_id)}
+            )
+            if not isinstance(source, dict):
+                continue
+            for name, spec in (source.get("properties") or {}).items():
+                if isinstance(spec, dict):
+                    properties[str(name)] = str(spec.get("type") or "")
+        return properties
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
-    url = f"{_NOTION_API_BASE}/databases/{database_id}"
+    url = f"{_FIXTURE_API_BASE}/databases/{database_id}"
     data = _json_request("GET", url, _auth_headers(token), None, fetcher)
     properties = data.get("properties") or {}
     return {name: str((spec or {}).get("type") or "") for name, spec in properties.items()}
@@ -429,6 +732,37 @@ def create_database_page(
 
     Returns the new page id (no dashes).
     """
+    if fetcher is _default_fetcher:
+        client = _bridge_client(token_env)
+        database = client.request("getDatabase", {"databaseId": database_id})
+        if not isinstance(database, dict):
+            raise RuntimeError("Notion database was not found")
+        parent = database.get("parent") or {}
+        if parent.get("type") != "page_id" or not parent.get("id"):
+            raise RuntimeError("Notion database is not under a page parent")
+        parent_page_id = str(parent["id"])
+        marker = _reconciliation_marker(properties)
+        if not marker:
+            raise RuntimeError("Notion database page requires a reconciliation marker")
+        result = client.request(
+            "createPage",
+            {
+                "input": {
+                    "parent": {"type": "database_id", "id": database_id},
+                    "properties": properties,
+                    **({"children": children} if children else {}),
+                    "reconciliation": {
+                        "parentPageId": parent_page_id,
+                        "marker": marker,
+                    },
+                }
+            },
+            mutation=True,
+            identity=_bridge_identity(parent_page_id),
+        )
+        if not isinstance(result, dict) or not result.get("id"):
+            raise RuntimeError("Notion bridge did not return a created database page ID")
+        return str(result["id"]).replace("-", "")
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
@@ -438,7 +772,7 @@ def create_database_page(
     }
     if children:
         body["children"] = children
-    data = _json_request("POST", f"{_NOTION_API_BASE}/pages", _auth_headers(token), body, fetcher)
+    data = _json_request("POST", f"{_FIXTURE_API_BASE}/pages", _auth_headers(token), body, fetcher)
     return data["id"].replace("-", "")
 
 
@@ -450,11 +784,18 @@ def query_database(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> list[dict[str, Any]]:
     """Query *database_id* with a caller-supplied Notion filter body."""
+    if fetcher is _default_fetcher:
+        return _bridge_collection(
+            _bridge_client(token_env).request(
+                "queryDatabase",
+                {"databaseId": database_id, "filter": filter_body},
+            )
+        )
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
     body: dict[str, Any] = {"filter": filter_body}
-    url = f"{_NOTION_API_BASE}/databases/{database_id}/query"
+    url = f"{_FIXTURE_API_BASE}/databases/{database_id}/query"
     data = _json_request("POST", url, _auth_headers(token), body, fetcher)
     return list(data.get("results") or [])
 
@@ -467,11 +808,19 @@ def update_database_page(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Update properties on an existing database page *page_id*."""
+    if fetcher is _default_fetcher:
+        _bridge_client(token_env).request(
+            "updatePage",
+            {"pageId": page_id, "input": {"properties": properties}},
+            mutation=True,
+            identity=_bridge_identity(page_id),
+        )
+        return
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
     body: dict[str, Any] = {"properties": properties}
-    _json_request("PATCH", f"{_NOTION_API_BASE}/pages/{page_id}", _auth_headers(token), body, fetcher)
+    _json_request("PATCH", f"{_FIXTURE_API_BASE}/pages/{page_id}", _auth_headers(token), body, fetcher)
 
 
 def update_database_schema(
@@ -482,11 +831,34 @@ def update_database_schema(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> None:
     """Add or update database property schemas on *database_id*."""
+    if fetcher is _default_fetcher:
+        client = _bridge_client(token_env)
+        database = client.request("getDatabase", {"databaseId": database_id})
+        if not isinstance(database, dict):
+            raise RuntimeError("Notion database was not found")
+        source_ids = database.get("dataSourceIds") or []
+        if len(source_ids) != 1:
+            raise RuntimeError(
+                "Notion database schema update requires exactly one data source"
+            )
+        parent = database.get("parent") or {}
+        if parent.get("type") != "page_id" or not parent.get("id"):
+            raise RuntimeError("Notion database is not under a page parent")
+        client.request(
+            "updateDataSource",
+            {
+                "dataSourceId": str(source_ids[0]),
+                "input": {"properties": properties},
+            },
+            mutation=True,
+            identity=_bridge_identity(str(parent["id"])),
+        )
+        return
     token = resolve_token(token_env)
     if not token:
         raise RuntimeError(f"Notion token env var {token_env!r} is not set")
     body: dict[str, Any] = {"properties": properties}
-    _json_request("PATCH", f"{_NOTION_API_BASE}/databases/{database_id}", _auth_headers(token), body, fetcher)
+    _json_request("PATCH", f"{_FIXTURE_API_BASE}/databases/{database_id}", _auth_headers(token), body, fetcher)
 
 
 def _query_collection(
@@ -511,9 +883,16 @@ def query_database_pages(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> list[dict[str, Any]]:
     """Query a legacy Notion database and return safe page summaries."""
+    if fetcher is _default_fetcher:
+        rows = _bridge_collection(
+            _bridge_client(token_env).request(
+                "queryDatabase", {"databaseId": database_id}
+            )
+        )
+        return [notion_page_summary(row) for row in rows]
     body = {"page_size": max(1, min(page_size, 100))}
     rows = _query_collection(
-        f"{_NOTION_API_BASE}/databases/{database_id}/query",
+        f"{_FIXTURE_API_BASE}/databases/{database_id}/query",
         body,
         token_env,
         _NOTION_API_VERSION,
@@ -530,9 +909,16 @@ def query_data_source_pages(
     fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
 ) -> list[dict[str, Any]]:
     """Query a Notion data source and return safe page summaries."""
+    if fetcher is _default_fetcher:
+        rows = _bridge_collection(
+            _bridge_client(token_env).request(
+                "queryDataSource", {"dataSourceId": data_source_id}
+            )
+        )
+        return [notion_page_summary(row) for row in rows]
     body = {"page_size": max(1, min(page_size, 100))}
     rows = _query_collection(
-        f"{_NOTION_API_BASE}/data_sources/{data_source_id}/query",
+        f"{_FIXTURE_API_BASE}/data_sources/{data_source_id}/query",
         body,
         token_env,
         "2025-09-03",
@@ -572,7 +958,7 @@ def notion_page_summary(page: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(page.get("id") or "").replace("-", ""),
         "id_dashed": page.get("id"),
-        "last_edited_time": page.get("last_edited_time"),
+        "last_edited_time": page.get("last_edited_time") or page.get("updatedAt"),
         "url": page.get("url"),
         "properties": {
             name: plain_property_value(value)

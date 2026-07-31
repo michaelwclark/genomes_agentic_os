@@ -68,7 +68,7 @@ def test_notion_projection_requires_and_verifies_workspace(monkeypatch) -> None:
         project_host_report(report, "page-id", verified_workspace="")
     monkeypatch.setattr(
         "genomes_agentic_os.host_doctor.notion_api.get_bot_workspace",
-        lambda token_env: "Different Workspace",
+        lambda token_env, **_: "Different Workspace",
     )
     with pytest.raises(RuntimeError, match="workspace mismatch"):
         project_host_report(report, "page-id", verified_workspace="Expected Workspace")

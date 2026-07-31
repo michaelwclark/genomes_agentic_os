@@ -4057,7 +4057,9 @@ def _apply_runtime_tracking_live(
     )
 
     # --- live workspace verification ---
-    bot_workspace = get_bot_workspace(token_env, fetcher=fetcher)
+    bot_workspace = get_bot_workspace(
+        token_env, parent_page_id=parent_page_id, fetcher=fetcher
+    )
     if bot_workspace != workspace:
         raise ValueError(
             f"live API workspace mismatch: bot reports {bot_workspace!r} "
