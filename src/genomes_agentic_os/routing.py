@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .context_contracts import resolve_context_contract
+from .context_contracts import load_context_manifest, resolve_context_contract
 from .lifecycle import WorkItemRecord, record_matches_request, select_project_work_item
 from .scaffold import (
     SHARED_FACTORY_DOMAIN,
@@ -343,6 +343,19 @@ def find_workflow(root: Path, domain: str, workflow: str, lane: str | None = Non
     raise ValueError(f"workflow not found: {domain}/{workflow}")
 
 
+def _nearest_contract_target(target: Path, root: Path) -> Path:
+    """Find the contract governing a final packet target without skipping its parents."""
+
+    current = target.resolve()
+    root = root.resolve()
+    while True:
+        if load_context_manifest(current) is not None:
+            return current
+        if current == root:
+            return target
+        current = current.parent
+
+
 def build_context(
     root: str | Path,
     *,
@@ -355,6 +368,7 @@ def build_context(
     work_item: str | None = None,
     request: str | None = None,
     cwd: str | Path | None = None,
+    role: str | None = None,
 ) -> ContextPacket:
     os_root = expand_path(root)
     domain = normalize_domain(domain)
@@ -431,7 +445,7 @@ def build_context(
                 project_root / "worktrees" / "index.yml",
             ]
         )
-        project_context = resolve_context_contract(project_root, root=os_root)
+        project_context = resolve_context_contract(project_root, root=os_root, role=role)
         if not project_context.legacy_fallback:
             sources.extend(source.path for source in project_context.read_first)
             known_gaps.extend(
@@ -463,9 +477,15 @@ def build_context(
             workflow_root,
             root=os_root,
             legacy_sources=legacy_workflow_sources,
+            role=role,
         )
         sources.extend(source.path for source in resolved.read_first)
         known_gaps.extend(item.message for item in resolved.diagnostics if item.severity in {"warning", "error"})
+
+    # This is the universal packet-load chokepoint: manifests apply to every
+    # source in the final packet, including legacy and shared defaults.
+    effective_contract = resolve_context_contract(_nearest_contract_target(target, os_root), root=os_root, role=role)
+    sources = [source for source in sources if effective_contract.permits(source)]
 
     # Keep source ordering deterministic while avoiding the same file being
     # loaded twice through legacy and inherited paths.
@@ -509,7 +529,13 @@ def build_context(
     )
 
 
-def route_request(root: str | Path, request: str, *, cwd: str | Path | None = None) -> ContextPacket:
+def route_request(
+    root: str | Path,
+    request: str,
+    *,
+    cwd: str | Path | None = None,
+    role: str | None = None,
+) -> ContextPacket:
     os_root = expand_path(root)
     cwd_path = Path(cwd).expanduser().resolve() if cwd else Path.cwd()
     inbox_request = is_idea_capture_request(request)
@@ -556,6 +582,7 @@ def route_request(root: str | Path, request: str, *, cwd: str | Path | None = No
         cwd=cwd_path,
         inbox=inbox,
         risks=approval_risks(request),
+        role=role,
     )
     if suggestion_reason:
         packet.known_gaps.insert(
@@ -565,7 +592,12 @@ def route_request(root: str | Path, request: str, *, cwd: str | Path | None = No
     return packet
 
 
-def context_from_here(root: str | Path, *, cwd: str | Path | None = None) -> ContextPacket:
+def context_from_here(
+    root: str | Path,
+    *,
+    cwd: str | Path | None = None,
+    role: str | None = None,
+) -> ContextPacket:
     os_root = expand_path(root)
     cwd_path = Path(cwd).expanduser().resolve() if cwd else Path.cwd()
     context = detect_from_cwd(os_root, cwd_path)
@@ -578,4 +610,5 @@ def context_from_here(root: str | Path, *, cwd: str | Path | None = None) -> Con
         workflow=context.get("workflow"),
         lane=context.get("lane"),
         cwd=cwd_path,
+        role=role,
     )
