@@ -28,7 +28,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
+
+from genomes_agentic_os.hosts import load_hosts
 
 # ---------------------------------------------------------------------------
 # Load agentic-harness-run as a module (filename has hyphens, so no regular import).
@@ -119,6 +122,23 @@ HOSTS: dict = {
         "ssh_options": ["-o", "ClearAllForwardings=yes"],
     },
 }
+
+
+def test_host_home_contract_is_schema_valid_and_loadable(tmp_path: Path):
+    """The schema accepts the ``home`` field already supported by the registry."""
+    registry = {"hosts": {"genomesbox": HOSTS["genomesbox"]}}
+    schema_path = Path(__file__).parents[1] / "schemas" / "hosts.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    jsonschema.validate(registry, schema)
+    hosts_path = tmp_path / "config" / "hosts.yml"
+    hosts_path.parent.mkdir(parents=True)
+    hosts_path.write_text(
+        "hosts:\n  genomesbox:\n    home: /home/genome\n",
+        encoding="utf-8",
+    )
+
+    assert load_hosts(tmp_path) == {"genomesbox": {"home": "/home/genome"}}
 
 
 # ---------------------------------------------------------------------------
