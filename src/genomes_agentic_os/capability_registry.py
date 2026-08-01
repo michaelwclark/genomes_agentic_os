@@ -126,6 +126,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/auto-dev-review-self.md",
         },
         {
+            "id": "auto-dev-review-self-opposing-model",
+            "command": "/auto-dev-review-self-opposing-model",
+            "description": "Run the canonical independent-model review checkpoint for one Auto-Dev work item with receipt-backed readiness evidence.",
+            "source": "harness/commands/auto-dev-review-self-opposing-model.md",
+        },
+        {
             "id": "auto-dev-review-others",
             "command": "/auto-dev-review-others",
             "description": "Review another author's live PR through the canonical PR Review owner.",
@@ -981,6 +987,12 @@ def skill_entries() -> list[dict[str, str]]:
             "name": "Auto-Dev Review Self",
             "description": "Review and repair our own change through the canonical independent path.",
             "source": "harness/skills/auto-dev-review-self/SKILL.md",
+        },
+        {
+            "id": "auto-dev-review-self-opposing-model",
+            "name": "Auto-Dev Review Self Opposing Model",
+            "description": "Run the canonical independent-model review checkpoint for one Auto-Dev work item with receipt-backed readiness evidence.",
+            "source": "harness/skills/auto-dev-review-self-opposing-model/SKILL.md",
         },
         {
             "id": "auto-dev-review-others",
