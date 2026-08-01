@@ -93,16 +93,16 @@ if [ "$mode" = --recreate ]; then
     "$api_base" "/api/v1/status?limit=1" \
     "$FABRIC_API_TOKEN_FILE" >"$status_temp" 2>/dev/null
   then
-    jq -e '(.roleHealth | type)=="array"' "$status_temp" >/dev/null || {
-      echo "control-plane status has no roleHealth array; upgrade the control-plane image before policy rotation" >&2
-      exit 69
-    }
-    jq --arg host "$FABRIC_HOST_ID" '
-      [.roleHealth[] | select(.hostId==$host and
-        (.role=="api" or .role=="observer" or .role=="healer" or .role=="scheduler")) |
-        select((.instanceId | type)=="string") |
-        {key:.role,value:.instanceId}] | from_entries
-    ' "$status_temp" >"$instances_temp"
+    if jq -e '(.roleHealth | type)=="array"' "$status_temp" >/dev/null; then
+      jq --arg host "$FABRIC_HOST_ID" '
+        [.roleHealth[] | select(.hostId==$host and
+          (.role=="api" or .role=="observer" or .role=="healer" or .role=="scheduler")) |
+          select((.instanceId | type)=="string") |
+          {key:.role,value:.instanceId}] | from_entries
+      ' "$status_temp" >"$instances_temp"
+    else
+      echo "control-plane status has no roleHealth array before recreate; relying on container replacement until post-recreate verification" >&2
+    fi
   fi
   fabric_compose "$compose_file" --profile "$compose_profile" up -d \
     --no-deps --force-recreate $roles
