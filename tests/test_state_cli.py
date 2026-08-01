@@ -95,6 +95,22 @@ def test_reconcile_traces_returns_nonzero_for_phantom_claims(tmp_path: Path, cap
     assert payload["claims"][0]["claim_id"] == "run:queue_phantom"
 
 
+def test_reconcile_traces_missing_database_returns_unavailable_without_creating_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db_path = tmp_path / "does-not-exist" / "state.db"
+
+    rc, _ = _run(["state", "reconcile-traces", "--db", str(db_path), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "state_database_missing"
+    assert payload["db_path"] == str(db_path)
+    assert not db_path.exists()
+    assert not db_path.parent.exists()
+
+
 def test_backup_is_dry_run_by_default_and_apply_writes_valid_snapshot(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

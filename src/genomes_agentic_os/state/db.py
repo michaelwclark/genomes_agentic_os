@@ -114,6 +114,35 @@ def connect(db_path: str | Path = MEMORY_DB_PATH, *, busy_timeout_ms: int = 5000
     return conn
 
 
+def connect_readonly(db_path: str | Path, *, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
+    """Open an existing state database without creating files or applying schema.
+
+    Doctor commands use this path when the act of inspecting evidence must not
+    bootstrap a missing state plane.  SQLite's URI ``mode=ro`` fails before a
+    file or parent directory can be created; ``query_only`` protects the
+    already-open connection from accidental writes.
+    """
+    raw_path = str(db_path)
+    if raw_path in (MEMORY_DB_PATH, ""):
+        raise StateDbError("a read-only state inspection requires an existing database path")
+    resolved = expand_path(db_path)
+    if not resolved.is_file():
+        raise StateDbError(f"state database is missing: {resolved}")
+    try:
+        conn = sqlite3.connect(
+            f"{resolved.resolve().as_uri()}?mode=ro",
+            uri=True,
+            isolation_level=None,
+            timeout=busy_timeout_ms / 1000,
+        )
+    except sqlite3.Error as exc:
+        raise StateDbError(f"state database is unavailable: {resolved}: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
 def state_backup_dir(root: str | Path | None = None, *, domain: str = SHARED_FACTORY_DOMAIN) -> Path:
     return harness_path(resolve_os_root(root), domain, *STATE_BACKUP_RELATIVE.parts)
 
