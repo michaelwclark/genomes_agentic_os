@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -45,6 +48,14 @@ def test_metadata_read_uses_the_shared_bridge_shape(monkeypatch: pytest.MonkeyPa
     }
 
 
+def test_metadata_read_rejects_an_absent_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    crossreview = _load_crossreview()
+    monkeypatch.setattr(crossreview, "_bridge_pull_request", lambda _repo, _pr: {"headSha": ""})
+
+    with pytest.raises(SystemExit):
+        crossreview.get_pr_meta("acme/widgets", 42)
+
+
 def test_commit_read_is_bounded_and_keeps_the_legacy_message_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -69,6 +80,7 @@ def test_commit_read_is_bounded_and_keeps_the_legacy_message_shape(
         "repo": "widgets",
         "number": 42,
         "token": "test-token",
+        "limit": crossreview.MAX_COMMIT_SCAN,
     }
 
 
@@ -83,3 +95,46 @@ def test_diff_read_keeps_the_legacy_unavailable_fallback(monkeypatch: pytest.Mon
     monkeypatch.setattr(crossreview, "bridge_get_pull_request_diff", unavailable)
 
     assert crossreview.get_pr_diff("acme/widgets", 42) == "(diff unavailable)"
+
+
+def test_consistent_input_read_guards_author_evidence_and_diff(monkeypatch: pytest.MonkeyPatch) -> None:
+    crossreview = _load_crossreview()
+    calls: list[str] = []
+    metas = iter([
+        {"head_sha": "first", "head_branch": "feature/read"},
+        {"head_sha": "second", "head_branch": "feature/read"},
+    ])
+    monkeypatch.setattr(crossreview, "get_pr_meta", lambda _repo, _pr: (calls.append("meta"), next(metas))[1])
+    monkeypatch.setattr(crossreview, "get_pr_commits", lambda _repo, _pr: calls.append("commits") or [])
+    monkeypatch.setattr(crossreview, "get_pr_diff", lambda _repo, _pr: calls.append("diff") or "diff")
+
+    assert crossreview.read_consistent_pr_inputs("acme/widgets", 42, include_commits=True) is None
+    assert calls == ["meta", "commits", "diff", "meta"]
+
+
+def test_commit_scan_fails_closed_at_the_explicit_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    crossreview = _load_crossreview()
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(crossreview, "github_command_from_environment", lambda: ["node", "bridge.mjs"])
+    monkeypatch.setattr(
+        crossreview,
+        "bridge_list_pull_request_commits",
+        lambda *_args, **_kwargs: [{"sha": str(i), "message": "message"} for i in range(crossreview.MAX_COMMIT_SCAN)],
+    )
+
+    with pytest.raises(SystemExit):
+        crossreview.get_pr_commits("acme/widgets", 42)
+
+
+def test_direct_script_help_bootstraps_the_source_package(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "harness/bin/agentic-os-pr-crossreview"
+    base_python = Path(sys.base_prefix) / "bin" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    assert base_python.exists()
+    (tmp_path / "yaml.py").write_text("def safe_load(_value):\n    return {}\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    result = subprocess.run(
+        [str(base_python), str(script), "--help"], capture_output=True, text=True, check=False, env=env
+    )
+
+    assert result.returncode == 0
+    assert "Run a senior-engineer PR review" in result.stdout

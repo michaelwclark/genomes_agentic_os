@@ -30,6 +30,15 @@ import time
 import uuid
 from pathlib import Path
 
+# This executable is invoked directly by scheduled jobs as well as from an
+# editable install. Make the source package available before importing the
+# shared bridge so ``python3 harness/bin/agentic-os-pr-crossreview`` remains a
+# supported entrypoint outside a virtualenv.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SRC_DIR = _REPO_ROOT / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -55,6 +64,10 @@ HARNESS_RUN_BIN = _BIN_DIR / "agentic-harness-run"
 
 # Maximum diff size to pass directly in the prompt (chars).
 MAX_DIFF_CHARS = 40_000
+# The bridge pages commit reads up to this explicit cap. Hitting the cap is
+# ambiguous (the PR might have more commits), so author detection fails closed
+# instead of silently selecting the wrong reviewer.
+MAX_COMMIT_SCAN = 1_000
 
 # Patterns that will fail the scrub gate (regex, applied to review text).
 # This list protects team-visible PR comments from leaking internal details.
@@ -104,11 +117,18 @@ def parse_pr_ref(pr_ref: str, repo: str | None) -> tuple[str, int]:
 
     hash_match = re.match(r"([^#]+)#(\d+)$", pr_ref)
     if hash_match:
-        return hash_match.group(1), int(hash_match.group(2))
+        parsed_repo = hash_match.group(1)
+        if "/" not in parsed_repo:
+            print("error: repository must be in owner/name format.", file=sys.stderr)
+            sys.exit(1)
+        return parsed_repo, int(hash_match.group(2))
 
     if pr_ref.isdigit():
         if not repo:
             print("error: --repo owner/name is required when --pr is a bare number.", file=sys.stderr)
+            sys.exit(1)
+        if "/" not in repo:
+            print("error: --repo must be in owner/name format.", file=sys.stderr)
             sys.exit(1)
         return repo, int(pr_ref)
 
@@ -135,25 +155,35 @@ def gh(*args: str, check: bool = True) -> str:
 def get_pr_meta(repo: str, pr: int) -> dict:
     """Fetch PR metadata through the versioned shared GitHub read port."""
     data = _bridge_pull_request(repo, pr)
+    head_sha = data.get("headSha")
+    if not isinstance(head_sha, str) or not head_sha:
+        print("error: GitHub bridge PR read returned no head SHA.", file=sys.stderr)
+        sys.exit(1)
     return {
         "title": data.get("title", ""),
         "body": data.get("body", "") or "",
         "head_branch": data.get("headBranch", ""),
-        "head_sha": data.get("headSha", ""),
+        "head_sha": head_sha,
         "author_login": data.get("author", ""),
     }
 
 
 def get_pr_commits(repo: str, pr: int) -> list[dict]:
-    """Return the legacy commit-message shape through the paginated shared port."""
+    """Return a bounded commit scan, failing closed if it might be truncated."""
     command, token = _bridge_credentials()
     owner, repo_name = repo.split("/", 1)
     try:
         commits = bridge_list_pull_request_commits(
-            command, owner=owner, repo=repo_name, number=pr, token=token
+            command, owner=owner, repo=repo_name, number=pr, token=token, limit=MAX_COMMIT_SCAN
         )
     except GitHubBridgeError as exc:
         print(f"error: GitHub bridge commit read failed ({exc.code})", file=sys.stderr)
+        sys.exit(1)
+    if len(commits) >= MAX_COMMIT_SCAN:
+        print(
+            "error: PR commit scan reached its safe bound; cannot select an independent reviewer reliably.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return [{"sha": commit["sha"], "commit": {"message": commit["message"]}} for commit in commits]
 
@@ -200,7 +230,7 @@ def _bridge_pull_request(repo: str, pr: int) -> dict:
     return pull_request
 
 
-def detect_author_harness(repo: str, pr: int, routing: dict) -> str:
+def detect_author_harness(meta: dict, commits: list[dict], routing: dict) -> str:
     """Detect which harness authored the PR.
 
     Returns 'claude' or 'gpt'.
@@ -217,13 +247,10 @@ def detect_author_harness(repo: str, pr: int, routing: dict) -> str:
         "gpt": ["codex/", "gpt/", "feature/codex-"],
     }
 
-    # Get PR metadata once.
-    meta = get_pr_meta(repo, pr)
     head_branch = meta["head_branch"]
 
     for step in detection_order:
         if step == "commit_trailer" or (isinstance(step, dict) and "commit_trailer" in step):
-            commits = get_pr_commits(repo, pr)
             for commit in commits:
                 message = commit.get("commit", {}).get("message", "")
                 # Match "Co-Authored-By:.*Claude" case-insensitively.
@@ -248,6 +275,23 @@ def detect_author_harness(repo: str, pr: int, routing: dict) -> str:
             return pr_config.get("default_author", "gpt")
 
     return "gpt"
+
+
+def read_consistent_pr_inputs(
+    repo: str, pr: int, *, include_commits: bool
+) -> tuple[dict, list[dict], str] | None:
+    """Read review inputs and prove they all describe one non-empty PR head."""
+    initial_meta = get_pr_meta(repo, pr)
+    commits = get_pr_commits(repo, pr) if include_commits else []
+    diff = get_pr_diff(repo, pr)
+    verified_meta = get_pr_meta(repo, pr)
+    if initial_meta["head_sha"] != verified_meta["head_sha"]:
+        print(
+            "error: pull request head changed while cross-review inputs were being read; retry on the new head.",
+            file=sys.stderr,
+        )
+        return None
+    return verified_meta, commits, diff
 
 
 def opposite_harness(harness: str) -> str:
@@ -484,37 +528,33 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[crossreview] Fetching PR #{pr_number} from {repo} ...", file=sys.stderr)
 
+    # Read all review inputs first. When author detection is automatic, commit
+    # and branch evidence is inside the same exact-head window as the diff.
+    forced = os.environ.get("AGENTIC_HARNESS_FORCE", "").strip().lower()
+    needs_author_detection = not args.reviewer and forced not in ("claude", "gpt")
+    inputs = read_consistent_pr_inputs(repo, pr_number, include_commits=needs_author_detection)
+    if inputs is None:
+        return 1
+    meta, commits, diff = inputs
+
     # Detect author harness.
     if args.reviewer:
         reviewer_harness = args.reviewer
         author_harness = opposite_harness(reviewer_harness)
         author_detected_by = "forced-reviewer-flag"
     else:
-        forced = os.environ.get("AGENTIC_HARNESS_FORCE", "").strip().lower()
         if forced in ("claude", "gpt"):
             reviewer_harness = forced
             author_harness = opposite_harness(reviewer_harness)
             author_detected_by = "AGENTIC_HARNESS_FORCE"
         else:
             print("[crossreview] Detecting author harness from PR commits and branch ...", file=sys.stderr)
-            author_harness = detect_author_harness(repo, pr_number, routing)
+            author_harness = detect_author_harness(meta, commits, routing)
             reviewer_harness = opposite_harness(author_harness)
             author_detected_by = "auto"
 
     print(f"[crossreview] Author harness: {author_harness} (detected by: {author_detected_by})", file=sys.stderr)
     print(f"[crossreview] Reviewer harness: {reviewer_harness}", file=sys.stderr)
-
-    # Fetch PR diff and metadata.
-    meta = get_pr_meta(repo, pr_number)
-    diff = get_pr_diff(repo, pr_number)
-    verified_meta = get_pr_meta(repo, pr_number)
-    if meta["head_sha"] != verified_meta["head_sha"]:
-        print(
-            "error: pull request head changed while cross-review inputs were being read; retry on the new head.",
-            file=sys.stderr,
-        )
-        return 1
-    meta = verified_meta
 
     print(f"[crossreview] Diff size: {len(diff):,} chars", file=sys.stderr)
     if len(diff) > MAX_DIFF_CHARS:
