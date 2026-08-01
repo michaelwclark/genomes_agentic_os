@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 import yaml
 
 
@@ -1153,8 +1154,9 @@ fabric_policy_role_cohort_state "$3" promoted
         assert result.stdout.strip() == expected
 
 
-def test_policy_role_recreate_recovers_when_initial_api_is_down(
-    tmp_path: Path,
+@pytest.mark.parametrize("initial_api_state", ("down", "legacy"))
+def test_policy_role_recreate_recovers_when_initial_api_is_unavailable_or_legacy(
+    tmp_path: Path, initial_api_state: str
 ) -> None:
     expected = "b" * 64
     state = tmp_path / "state"
@@ -1205,7 +1207,13 @@ esac
     _write_executable(
         fake_bin / "curl",
         "#!/bin/sh\nset -eu\n"
-        "[ -f \"$FAKE_STATE_DIR/recreated\" ] || exit 22\n"
+        "if [ ! -f \"$FAKE_STATE_DIR/recreated\" ]; then\n"
+        "  case \"${INITIAL_API_STATE:-down}\" in\n"
+        "    down) exit 22 ;;\n"
+        "    legacy) printf '%s\\n' '{\"config\":{\"appliedFingerprint\":\"legacy\"}}'; exit 0 ;;\n"
+        "    *) exit 64 ;;\n"
+        "  esac\n"
+        "fi\n"
         "printf '%s\\n' " + repr(json.dumps({"roleHealth": role_health})) + "\n",
     )
     runtime = tmp_path / "runtime.env"
@@ -1239,6 +1247,7 @@ esac
             **os.environ,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FABRIC_RUNTIME_ENV_FILE": str(runtime),
+            "INITIAL_API_STATE": initial_api_state,
         },
     )
     assert result.returncode == 0, result.stderr
