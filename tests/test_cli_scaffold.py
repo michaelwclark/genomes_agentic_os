@@ -4225,6 +4225,17 @@ def test_event_graph_append_chain_process_and_idempotency(tmp_path: Path, capsys
     test_result = yaml.safe_load(capsys.readouterr().out)
     assert test_result["matched"] is True
     assert test_result["queue_item"]["work_type"] == "documentation_update"
+    assert test_result["queue_item"]["documentation_site_delivery"] == {
+        "required": True,
+        "published_source_roots": ["docs/", "operating-manual/"],
+        "validation": "npm --prefix website run build",
+        "on_unavailable": {
+            "provider": "linear",
+            "action": "find_or_create_issue",
+            "team": "Agentic OS",
+            "project": "Rubicon: Documentation",
+        },
+    }
 
     assert main(["event", "process-due", "--root", str(root), "--dry-run"]) == 0
     dry_run = yaml.safe_load(capsys.readouterr().out)
