@@ -8,6 +8,7 @@ evaluation should prevent their own dispatch request.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -105,10 +106,16 @@ def evaluate_preconditions(
         return {"name": name, "ok": False, "kind": kind or "invalid", "reason": "unsupported precondition type"}
 
     checks = [evaluate(name) for name in requested]
+    registry_ref = None
+    if registry_path is not None:
+        registry_ref = {
+            "path": PRECONDITION_CONFIG,
+            "sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest(),
+        }
     return {
         "schema_version": "precondition-evaluation/v1",
         "mode": "evaluate_only",
         "ok": all(check["ok"] for check in checks),
-        "registry": str(registry_path) if registry_path else None,
+        "registry": registry_ref,
         "checks": checks,
     }

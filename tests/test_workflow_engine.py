@@ -329,11 +329,16 @@ def test_run_now_is_idempotent_queue_only_and_never_claims_execution(tmp_path: P
     assert first["queue_created"] is True
     assert second["queue_created"] is False
     assert first["readback"]["queue_item"]["dispatch_performed"] is False
+    assert first["readback"]["queue_item"]["preconditions"]["mode"] == "evaluate_only"
     assert "command" not in first["readback"]["queue_item"]
     run_id = first["run"]["id"]
     run = get_workflow_resource(root, "run", run_id)["resource"]
     assert run["status"] == "queued"
     assert run["execution_contract"] == "harness_worker_required"
+    assert run["preconditions"] == first["preconditions"]
+    receipt = yaml.safe_load(Path(first["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["readback"]["run"]["preconditions"] == first["preconditions"]
+    assert receipt["readback"]["queue_item"]["preconditions"] == first["preconditions"]
 
 
 def test_run_now_uses_only_governed_harness_routes(tmp_path: Path) -> None:
@@ -387,6 +392,15 @@ def test_run_now_blocks_failed_preconditions_without_changing_approval_or_queue(
     assert blocked["queue_item"] is None
     assert blocked["dispatch_performed"] is False
     assert not (root / "harness/shared_factory/06-runs-and-logs/workflow-engine/run-requests").exists()
+    assert blocked["preconditions"]["registry"]["path"] == PRECONDITION_CONFIG
+    assert len(blocked["preconditions"]["registry"]["sha256"]) == 64
+    blocked_dispatch = yaml.safe_load(Path(blocked["blocked_dispatch"]).read_text(encoding="utf-8"))
+    assert blocked_dispatch["queue_created"] is False
+    assert blocked_dispatch["dispatch_performed"] is False
+    assert blocked_dispatch["preconditions"] == blocked["preconditions"]
+    receipt = yaml.safe_load(Path(blocked["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["action"] == "workflow.precondition-block"
+    assert receipt["readback"]["blocked_dispatch"] == blocked_dispatch
 
 
 def test_rollback_restores_exact_definition_and_rejects_newer_state(tmp_path: Path) -> None:
