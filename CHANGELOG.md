@@ -59,7 +59,6 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - Support legacy execution-fabric role-health bootstrap during protected
   rollout reconciliation.
-
 ## [0.5.7] - 2026-07-29
 
 ### Added
