@@ -62,6 +62,17 @@ def _optional(value: Any) -> str | None:
     return text or None
 
 
+def _compact_reference(value: Any, *, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, (str, int, float, bool)):
+        raise WorkItemError(f"{label} must be a compact scalar reference")
+    text = str(value).strip()
+    if not COMPACT_REFERENCE.fullmatch(text):
+        raise WorkItemError(f"{label} must be a compact scalar reference")
+    return text
+
+
 def _json_mapping(value: Mapping[str, Any] | None) -> str:
     return json.dumps(dict(value or {}), sort_keys=True, separators=(",", ":"))
 
@@ -94,10 +105,8 @@ def _link_mappings(
         for key, item in entry.items():
             if item is None:
                 continue
-            if not isinstance(item, (str, int, float, bool)):
-                raise WorkItemError(f"{label} values must be compact scalar references")
-            text = str(item).strip()
-            if not COMPACT_REFERENCE.fullmatch(text):
+            text = _compact_reference(item, label=f"{label} values")
+            if text is None:
                 raise WorkItemError(f"{label} values must be compact scalar references")
             result[str(key)] = text
         if not result:
@@ -175,8 +184,9 @@ def _normalize(
     if attention == "active" and not context_summary:
         raise WorkItemError("active work items require a context summary")
     blocked_reason = _optional(blocked_reason)
-    source_system = _optional(source_system)
-    source_key = _optional(source_key)
+    source_system = _compact_reference(source_system, label="source_system")
+    source_key = _compact_reference(source_key, label="source_key")
+    source_url = _compact_reference(source_url, label="source_url")
     if bool(source_system) != bool(source_key):
         raise WorkItemError("source_system and source_key must be supplied together")
     normalized_sources = _link_mappings(
@@ -190,7 +200,7 @@ def _normalize(
             {
                 "system": source_system,
                 "key": source_key,
-                **({"url": _optional(source_url)} if _optional(source_url) else {}),
+                **({"url": source_url} if source_url else {}),
             }
         ]
     normalized_blockers = _link_mappings(

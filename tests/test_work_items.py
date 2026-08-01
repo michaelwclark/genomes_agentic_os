@@ -106,19 +106,27 @@ def test_work_item_contract_rejects_nested_or_prose_reference_payloads() -> None
                 title="One",
                 source_links=[{"system": "linear", "key": "AGE-86", "transcript": "do the work"}],
             )
-        with pytest.raises(work_items.WorkItemError, match="compact scalar references"):
+        with pytest.raises(work_items.WorkItemError, match="compact scalar reference"):
             work_items.upsert(
                 conn,
                 item_id="one",
                 title="One",
                 source_links=[{"system": "linear", "key": {"id": "AGE-86"}}],
             )
-        with pytest.raises(work_items.WorkItemError, match="compact scalar references"):
+        with pytest.raises(work_items.WorkItemError, match="compact scalar reference"):
             work_items.upsert(
                 conn,
                 item_id="one",
                 title="One",
                 blockers=[{"kind": "dependency", "id": "await the release approval"}],
+            )
+        with pytest.raises(work_items.WorkItemError, match="source_key must be a compact scalar reference"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                source_system="legacy-filesystem",
+                source_key={"transcript": "do not retain this"},
             )
     finally:
         conn.close()
