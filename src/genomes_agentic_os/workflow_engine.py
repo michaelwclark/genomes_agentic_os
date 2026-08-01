@@ -23,6 +23,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 import yaml
 
 from .runtime_ops import append_run_queue_item
+from .preconditions import evaluate_preconditions
 from .scaffold import (
     create_workflow,
     domain_path,
@@ -627,6 +628,7 @@ def _normalize_definition(definition: Mapping[str, Any], *, now: datetime | None
     normalized.setdefault("inputs", {})
     normalized.setdefault("outputs", {})
     normalized.setdefault("approvals", [])
+    normalized.setdefault("preconditions", [])
     normalized.setdefault("retry", {"max_attempts": 1, "backoff_seconds": 0})
     normalized.setdefault("failure_policy", "stop")
     normalized.setdefault("prompts", [])
@@ -1015,6 +1017,26 @@ def workflow_run_now(
     instance = _load_yaml(Path(targets["instance"]), default={})
     before_hash = _state_hash(os_root, targets)
     _confirm(expected_drift_hash, before_hash, dry_run=dry_run)
+    preconditions = evaluate_preconditions(
+        os_root,
+        definition.get("preconditions"),
+        context={"workflow": {"id": targets["id"], "domain": targets["domain"], "lane": targets["lane"]}},
+    )
+    if not preconditions["ok"]:
+        result = _base("workflow.run-now", os_root, targets, dry_run=dry_run, before_hash=before_hash)
+        result.update(
+            {
+                "status": "precondition-failed",
+                "preconditions": preconditions,
+                "run": None,
+                "queue_item": None,
+                "queue_created": False,
+                "dispatch_performed": False,
+                "external_effects": "none; preconditions are evaluate-only and no queue request was created",
+                "readback": {"ok": True, "run": None, "queue_item": None},
+            }
+        )
+        return result
     if idempotency_key is None:
         idempotency_key = f"workflow:{targets['domain']}:{targets['lane']}:{targets['id']}:{_stamp()}"
     if not IDEMPOTENCY_PATTERN.fullmatch(idempotency_key):
@@ -1071,7 +1093,7 @@ def workflow_run_now(
         "created_at": _iso(occurred_at),
     }
     result = _base("workflow.run-now", os_root, targets, dry_run=dry_run, before_hash=before_hash)
-    result.update({"status": "planned" if dry_run else status, "run": run, "queue_item": queue_item, "dispatch_performed": False, "external_effects": "local queue request only; no dispatch performed", "readback": {"ok": True, "run": None, "queue_item": None} if dry_run else None})
+    result.update({"status": "planned" if dry_run else status, "preconditions": preconditions, "run": run, "queue_item": queue_item, "dispatch_performed": False, "external_effects": "local queue request only; no dispatch performed", "readback": {"ok": True, "run": None, "queue_item": None} if dry_run else None})
     if dry_run:
         return result
     queued = append_run_queue_item(os_root, queue_item)

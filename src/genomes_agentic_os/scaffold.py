@@ -1327,6 +1327,7 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     ensure_runtime_control_config(root, "doc-config.yml", "doc-config.yml", result)
     ensure_runtime_control_config(root, "notion-organization.yml", "notion-organization.yml", result)
     ensure_runtime_control_config(root, "automation-control.yml", "automation-control.yml", result)
+    ensure_runtime_control_config(root, "preconditions.yml", "preconditions.yml", result)
     ensure_runtime_control_config(
         root,
         "adaptive-routing-observation-report.yml",

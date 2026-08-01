@@ -13,6 +13,7 @@ import yaml
 from . import notion_api as _legacy_notion_api
 from .notion_bridge_adapter import query_data_source_pages, query_database_pages
 from .runtime_ops import append_run_queue_item
+from .preconditions import evaluate_preconditions
 from .scaffold import expand_path, validate_name
 from .source_watch import find_by_id, load_yaml, watch_sources
 
@@ -245,6 +246,7 @@ def _queue_item(root: Path, automation: dict[str, Any], probe: dict[str, Any]) -
         "dry_run": False,
         "idempotency_key": idempotency_key,
         "execution_target": target.get("execution_target") or "script",
+        "dispatch_performed": False,
         "command": command,
         "source_probe": {
             "source_id": probe.get("source_id"),
@@ -318,7 +320,25 @@ def run_automation_control(
         probe = _probe_automation(os_root, automation, fetcher=fetcher)
         action: dict[str, Any] = {"id": item_id, **probe}
         if probe.get("decision") == "ready":
+            preconditions = evaluate_preconditions(
+                os_root,
+                automation.get("preconditions"),
+                context={"automation": {"id": item_id}, "probe": probe},
+            )
+            action["preconditions"] = preconditions
+            if not preconditions["ok"]:
+                action.update(
+                    {
+                        "decision": "precondition_failed",
+                        "action": "none",
+                        "dispatch_performed": False,
+                        "reason": "declarative preconditions did not pass; no queue request was created",
+                    }
+                )
+                actions.append(action)
+                continue
             item = _queue_item(os_root, automation, probe)
+            action["dispatch_performed"] = False
             if dry_run:
                 action["action"] = "would_enqueue"
                 action["queue_item"] = item
@@ -329,6 +349,7 @@ def run_automation_control(
                 action["run_queue"] = queued["run_queue"]
         else:
             action["action"] = "none"
+            action["dispatch_performed"] = False
         actions.append(action)
     status = "dry-run" if dry_run else "applied"
     result = {"root": str(os_root), "status": status, "dry_run": dry_run, "actions": actions, "created_at": _now()}
