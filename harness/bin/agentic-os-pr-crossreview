@@ -36,6 +36,14 @@ except ImportError:  # pragma: no cover
     print("error: PyYAML is required (pip install pyyaml)", file=sys.stderr)
     sys.exit(2)
 
+from genomes_agentic_os.github_bridge import (
+    GitHubBridgeError,
+    command_from_environment as github_command_from_environment,
+    get_pull_request as bridge_get_pull_request,
+    get_pull_request_diff as bridge_get_pull_request_diff,
+    list_pull_request_commits as bridge_list_pull_request_commits,
+)
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 INSTANCE_ROOT = Path("/Users/genome/agentic_os")
@@ -109,7 +117,7 @@ def parse_pr_ref(pr_ref: str, repo: str | None) -> tuple[str, int]:
 
 
 def gh(*args: str, check: bool = True) -> str:
-    """Run a gh CLI command and return stdout."""
+    """Run the legacy gh CLI write path and return stdout."""
     result = subprocess.run(
         ["gh", *args],
         capture_output=True,
@@ -125,29 +133,71 @@ def gh(*args: str, check: bool = True) -> str:
 
 
 def get_pr_meta(repo: str, pr: int) -> dict:
-    """Fetch PR title, body, and head branch via gh API."""
-    raw = gh("api", f"repos/{repo}/pulls/{pr}")
-    data = json.loads(raw)
+    """Fetch PR metadata through the versioned shared GitHub read port."""
+    data = _bridge_pull_request(repo, pr)
     return {
         "title": data.get("title", ""),
         "body": data.get("body", "") or "",
-        "head_branch": data.get("head", {}).get("ref", ""),
-        "author_login": data.get("user", {}).get("login", ""),
+        "head_branch": data.get("headBranch", ""),
+        "head_sha": data.get("headSha", ""),
+        "author_login": data.get("author", ""),
     }
 
 
 def get_pr_commits(repo: str, pr: int) -> list[dict]:
-    """Return list of commit objects for the PR (up to 250)."""
-    raw = gh("api", f"repos/{repo}/pulls/{pr}/commits", "--paginate")
-    return json.loads(raw)
+    """Return the legacy commit-message shape through the paginated shared port."""
+    command, token = _bridge_credentials()
+    owner, repo_name = repo.split("/", 1)
+    try:
+        commits = bridge_list_pull_request_commits(
+            command, owner=owner, repo=repo_name, number=pr, token=token
+        )
+    except GitHubBridgeError as exc:
+        print(f"error: GitHub bridge commit read failed ({exc.code})", file=sys.stderr)
+        sys.exit(1)
+    return [{"sha": commit["sha"], "commit": {"message": commit["message"]}} for commit in commits]
 
 
 def get_pr_diff(repo: str, pr: int) -> str:
-    """Return the PR diff text (may be large)."""
+    """Return the PR diff text (may be large) through the shared read port."""
     try:
-        return gh("pr", "diff", str(pr), "--repo", repo)
-    except SystemExit:
+        command, token = _bridge_credentials()
+        owner, repo_name = repo.split("/", 1)
+        return bridge_get_pull_request_diff(
+            command, owner=owner, repo=repo_name, number=pr, token=token
+        )
+    except GitHubBridgeError as exc:
+        print(f"warning: GitHub bridge diff unavailable ({exc.code})", file=sys.stderr)
         return "(diff unavailable)"
+
+
+def _bridge_credentials() -> tuple[list[str], str]:
+    """Resolve the explicit shared-read transport without accepting a shell command."""
+    command = github_command_from_environment()
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if command is None:
+        print("error: GENOMES_GITHUB_BRIDGE_COMMAND must be configured for cross-review reads.", file=sys.stderr)
+        sys.exit(1)
+    if not token:
+        print("error: GITHUB_TOKEN must be configured for cross-review reads.", file=sys.stderr)
+        sys.exit(1)
+    return command, token
+
+
+def _bridge_pull_request(repo: str, pr: int) -> dict:
+    command, token = _bridge_credentials()
+    owner, repo_name = repo.split("/", 1)
+    try:
+        pull_request = bridge_get_pull_request(
+            command, owner=owner, repo=repo_name, number=pr, token=token
+        )
+    except GitHubBridgeError as exc:
+        print(f"error: GitHub bridge PR read failed ({exc.code})", file=sys.stderr)
+        sys.exit(1)
+    if pull_request is None:
+        print(f"error: pull request #{pr} was not found in {repo}.", file=sys.stderr)
+        sys.exit(1)
+    return pull_request
 
 
 def detect_author_harness(repo: str, pr: int, routing: dict) -> str:
@@ -457,6 +507,14 @@ def main(argv: list[str] | None = None) -> int:
     # Fetch PR diff and metadata.
     meta = get_pr_meta(repo, pr_number)
     diff = get_pr_diff(repo, pr_number)
+    verified_meta = get_pr_meta(repo, pr_number)
+    if meta["head_sha"] != verified_meta["head_sha"]:
+        print(
+            "error: pull request head changed while cross-review inputs were being read; retry on the new head.",
+            file=sys.stderr,
+        )
+        return 1
+    meta = verified_meta
 
     print(f"[crossreview] Diff size: {len(diff):,} chars", file=sys.stderr)
     if len(diff) > MAX_DIFF_CHARS:
@@ -499,6 +557,7 @@ def main(argv: list[str] | None = None) -> int:
         "repo": repo,
         "pr": pr_number,
         "pr_title": meta["title"],
+        "head_sha": meta["head_sha"],
         "author_harness": author_harness,
         "author_detected_by": author_detected_by,
         "reviewer_harness": reviewer_harness,
