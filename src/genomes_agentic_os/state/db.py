@@ -511,6 +511,20 @@ CREATE INDEX IF NOT EXISTS idx_artifact_references_classification_retention
     ON artifact_references(classification, retention_days);
 """,
     ),
+    (
+        5,
+        "compact work-item contract links and lifecycle",
+        """
+ALTER TABLE work_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'task';
+ALTER TABLE work_items ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'captured';
+ALTER TABLE work_items ADD COLUMN source_links_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE work_items ADD COLUMN parent_id TEXT;
+ALTER TABLE work_items ADD COLUMN related_ids_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE work_items ADD COLUMN blockers_json TEXT NOT NULL DEFAULT '[]';
+UPDATE work_items SET lifecycle = state;
+CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_id);
+""",
+    ),
 )
 
 

@@ -152,6 +152,53 @@ def test_current_schema_check_does_not_acquire_a_write_transaction() -> None:
         conn.close()
 
 
+def test_v4_migration_backfills_existing_work_item_lifecycle(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    legacy = sqlite3.connect(db_path)
+    try:
+        legacy.execute(db._SCHEMA_VERSION_TABLE_SQL)
+        for version, description, sql in db._MIGRATIONS[:3]:
+            for statement in sql.split(";"):
+                if statement.strip():
+                    legacy.execute(statement)
+            legacy.execute(
+                "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
+                (version, description, "2026-08-01T00:00:00Z"),
+            )
+        legacy.execute(
+            """
+            INSERT INTO work_items (
+                id, title, state, attention, context_summary, metadata_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-item",
+                "Legacy item",
+                "building",
+                "queued",
+                "Existing canonical row.",
+                "{}",
+                "2026-08-01T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+            ),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    conn = db.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT kind, lifecycle, source_links_json, related_ids_json, blockers_json FROM work_items WHERE id = ?",
+            ("legacy-item",),
+        ).fetchone()
+        assert db.schema_version(conn) == 4
+        assert tuple(row) == ("task", "building", "[]", "[]", "[]")
+    finally:
+        conn.close()
+
+
 def test_resolve_os_root_with_explicit_root(tmp_path: Path) -> None:
     root = tmp_path / "some_os"
     assert db.resolve_os_root(str(root)) == root.resolve()

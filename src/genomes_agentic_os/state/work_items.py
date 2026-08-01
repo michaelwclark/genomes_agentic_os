@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 import yaml
@@ -63,17 +63,68 @@ def _json_mapping(value: Mapping[str, Any] | None) -> str:
     return json.dumps(dict(value or {}), sort_keys=True, separators=(",", ":"))
 
 
+def _json_list(value: Sequence[Mapping[str, Any]] | None) -> str:
+    return json.dumps(list(value or []), sort_keys=True, separators=(",", ":"))
+
+
+def _link_mappings(
+    value: Sequence[Mapping[str, Any]] | None,
+    *,
+    label: str,
+    required: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """Validate small, serializable relationship records without prose payloads."""
+
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise WorkItemError(f"{label} must be a list of mappings")
+    normalized: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, Mapping):
+            raise WorkItemError(f"{label} entries must be mappings")
+        result = {str(key): item for key, item in entry.items() if item is not None}
+        if not result:
+            raise WorkItemError(f"{label} entries must not be empty")
+        missing = [field for field in required if not _optional(result.get(field))]
+        if missing:
+            raise WorkItemError(f"{label} entries require {', '.join(missing)}")
+        normalized.append(result)
+    return normalized
+
+
+def _related_ids(value: Sequence[str] | None, *, item_id: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise WorkItemError("related_ids must be a list of work-item ids")
+    result: list[str] = []
+    for related in value:
+        related_id = _identifier(related, "related work-item id")
+        if related_id == item_id:
+            raise WorkItemError("a work item cannot be related to itself")
+        if related_id not in result:
+            result.append(related_id)
+    return result
+
+
 def _normalize(
     *,
     item_id: str,
     title: str,
     state: str,
+    kind: str,
+    lifecycle: str | None,
     attention: str,
     domain: str | None,
     project: str | None,
     source_system: str | None,
     source_key: str | None,
     source_url: str | None,
+    source_links: Sequence[Mapping[str, Any]] | None,
+    parent_id: str | None,
+    related_ids: Sequence[str] | None,
+    blockers: Sequence[Mapping[str, Any]] | None,
     owner: str | None,
     priority: int,
     packet_path: str | None,
@@ -84,7 +135,14 @@ def _normalize(
     metadata: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     item_id = _identifier(item_id, "work-item id")
-    state = _identifier(state, "work-item state")
+    requested_state = _identifier(state, "work-item state")
+    if lifecycle is not None:
+        requested_lifecycle = _identifier(lifecycle, "work-item lifecycle")
+        if requested_state != "captured" and requested_state != requested_lifecycle:
+            raise WorkItemError("state and lifecycle must agree when both are supplied")
+        state = requested_lifecycle
+    else:
+        state = requested_state
     attention = _identifier(attention, "attention state")
     if state not in CANONICAL_STATES:
         raise WorkItemError(f"unsupported work-item state: {state}")
@@ -101,22 +159,47 @@ def _normalize(
     if attention == "active" and not context_summary:
         raise WorkItemError("active work items require a context summary")
     blocked_reason = _optional(blocked_reason)
-    if state == "blocked" and not blocked_reason:
-        raise WorkItemError("blocked work items require a blocker receipt or reason")
     source_system = _optional(source_system)
     source_key = _optional(source_key)
     if bool(source_system) != bool(source_key):
         raise WorkItemError("source_system and source_key must be supplied together")
+    normalized_sources = _link_mappings(
+        source_links,
+        label="source_links",
+        required=("system", "key"),
+    )
+    if not normalized_sources and source_system and source_key:
+        normalized_sources = [
+            {
+                "system": source_system,
+                "key": source_key,
+                **({"url": _optional(source_url)} if _optional(source_url) else {}),
+            }
+        ]
+    normalized_blockers = _link_mappings(blockers, label="blockers")
+    if state == "blocked" and not (blocked_reason or normalized_blockers):
+        raise WorkItemError("blocked work items require a blocker receipt or reason")
+    parent_id = _identifier(parent_id, "parent work-item id") if parent_id else None
+    if parent_id == item_id:
+        raise WorkItemError("a work item cannot be its own parent")
     return {
         "id": item_id,
         "title": title,
+        "kind": _identifier(kind, "work-item kind"),
         "state": state,
+        "lifecycle": state,
         "attention": attention,
         "domain": _identifier(domain, "domain") if domain else None,
         "project": _identifier(project, "project") if project else None,
         "source_system": source_system,
         "source_key": source_key,
         "source_url": _optional(source_url),
+        "source_links_json": _json_list(normalized_sources),
+        "parent_id": parent_id,
+        "related_ids_json": _json_list(
+            [{"id": related_id} for related_id in _related_ids(related_ids, item_id=item_id)]
+        ),
+        "blockers_json": _json_list(normalized_blockers),
         "owner": _optional(owner),
         "priority": int(priority),
         "packet_path": _optional(packet_path),
@@ -133,6 +216,23 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return None
     result = dict(row)
     result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
+    source_links = json.loads(result.pop("source_links_json") or "[]")
+    if not source_links and result.get("source_system") and result.get("source_key"):
+        source_links = [
+            {
+                "system": result["source_system"],
+                "key": result["source_key"],
+                **({"url": result["source_url"]} if result.get("source_url") else {}),
+            }
+        ]
+    result["source_links"] = source_links
+    result["related_ids"] = [
+        str(entry["id"])
+        for entry in json.loads(result.pop("related_ids_json") or "[]")
+        if isinstance(entry, Mapping) and entry.get("id")
+    ]
+    result["blockers"] = json.loads(result.pop("blockers_json") or "[]")
+    result["lifecycle"] = result.get("lifecycle") or result["state"]
     return result
 
 
@@ -146,12 +246,18 @@ def upsert(
     item_id: str,
     title: str,
     state: str = "captured",
+    kind: str = "task",
+    lifecycle: str | None = None,
     attention: str = "queued",
     domain: str | None = None,
     project: str | None = None,
     source_system: str | None = None,
     source_key: str | None = None,
     source_url: str | None = None,
+    source_links: Sequence[Mapping[str, Any]] | None = None,
+    parent_id: str | None = None,
+    related_ids: Sequence[str] | None = None,
+    blockers: Sequence[Mapping[str, Any]] | None = None,
     owner: str | None = None,
     priority: int = 0,
     packet_path: str | None = None,
@@ -170,12 +276,18 @@ def upsert(
         item_id=item_id,
         title=title,
         state=state,
+        kind=kind,
+        lifecycle=lifecycle,
         attention=attention,
         domain=domain,
         project=project,
         source_system=source_system,
         source_key=source_key,
         source_url=source_url,
+        source_links=source_links,
+        parent_id=parent_id,
+        related_ids=related_ids,
+        blockers=blockers,
         owner=owner,
         priority=priority,
         packet_path=packet_path,
@@ -205,27 +317,35 @@ def upsert(
         conn.execute(
             """
             INSERT INTO work_items (
-                id, title, state, attention, domain, project, source_system,
-                source_key, source_url, owner, priority, packet_path,
+                id, title, kind, state, lifecycle, attention, domain, project, source_system,
+                source_key, source_url, source_links_json, parent_id, related_ids_json,
+                blockers_json, owner, priority, packet_path,
                 worktree_path, branch, context_summary, blocked_reason,
                 previous_state, metadata_json, created_at, updated_at,
                 last_verified_at, closed_at
             ) VALUES (
-                :id, :title, :state, :attention, :domain, :project,
-                :source_system, :source_key, :source_url, :owner, :priority,
+                :id, :title, :kind, :state, :lifecycle, :attention, :domain, :project,
+                :source_system, :source_key, :source_url, :source_links_json, :parent_id,
+                :related_ids_json, :blockers_json, :owner, :priority,
                 :packet_path, :worktree_path, :branch, :context_summary,
                 :blocked_reason, :previous_state, :metadata_json, :created_at,
                 :updated_at, :last_verified_at, :closed_at
             )
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
+                kind = excluded.kind,
                 state = excluded.state,
+                lifecycle = excluded.lifecycle,
                 attention = excluded.attention,
                 domain = excluded.domain,
                 project = excluded.project,
                 source_system = excluded.source_system,
                 source_key = excluded.source_key,
                 source_url = excluded.source_url,
+                source_links_json = excluded.source_links_json,
+                parent_id = excluded.parent_id,
+                related_ids_json = excluded.related_ids_json,
+                blockers_json = excluded.blockers_json,
                 owner = excluded.owner,
                 priority = excluded.priority,
                 packet_path = excluded.packet_path,
@@ -283,12 +403,18 @@ def update(
     item_id: str,
     *,
     state: str | None = None,
+    kind: str | None = None,
+    lifecycle: str | None = None,
     attention: str | None = None,
     context_summary: str | None = None,
     blocked_reason: str | None = None,
     packet_path: str | None = None,
     worktree_path: str | None = None,
     branch: str | None = None,
+    source_links: Sequence[Mapping[str, Any]] | None = None,
+    parent_id: str | None = None,
+    related_ids: Sequence[str] | None = None,
+    blockers: Sequence[Mapping[str, Any]] | None = None,
     clear_worktree: bool = False,
     actor: str = "agentic-os",
     receipt_ref: str | None = None,
@@ -299,26 +425,34 @@ def update(
     current = get(conn, _identifier(item_id, "work-item id"))
     if current is None:
         raise WorkItemError(f"work item not found: {item_id}")
-    next_state = state or current["state"]
+    if state and lifecycle and state != lifecycle:
+        raise WorkItemError("state and lifecycle must agree when both are supplied")
+    next_state = lifecycle or state or current["state"]
     next_attention = attention or current["attention"]
-    if state and next_state not in TERMINAL_STATES and next_attention == "closed":
+    if (state or lifecycle) and next_state not in TERMINAL_STATES and next_attention == "closed":
         next_attention = "parked"
     next_blocked_reason = (
         blocked_reason if blocked_reason is not None else current["blocked_reason"]
     )
-    if state and next_state != "blocked" and blocked_reason is None:
+    if (state or lifecycle) and next_state != "blocked" and blocked_reason is None:
         next_blocked_reason = None
     return upsert(
         conn,
         item_id=current["id"],
         title=current["title"],
         state=next_state,
+        kind=kind or current["kind"],
+        lifecycle=next_state,
         attention=next_attention,
         domain=current["domain"],
         project=current["project"],
         source_system=current["source_system"],
         source_key=current["source_key"],
         source_url=current["source_url"],
+        source_links=source_links if source_links is not None else current["source_links"],
+        parent_id=parent_id if parent_id is not None else current["parent_id"],
+        related_ids=related_ids if related_ids is not None else current["related_ids"],
+        blockers=blockers if blockers is not None else current["blockers"],
         owner=current["owner"],
         priority=current["priority"],
         packet_path=packet_path if packet_path is not None else current["packet_path"],

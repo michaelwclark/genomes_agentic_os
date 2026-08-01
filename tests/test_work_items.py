@@ -26,6 +26,76 @@ def test_active_attention_requires_resume_context() -> None:
         conn.close()
 
 
+def test_work_item_contract_preserves_compact_links_and_verification() -> None:
+    conn = db.connect(":memory:")
+    try:
+        item = work_items.upsert(
+            conn,
+            item_id="agentic-os:rubicon:age-86",
+            title="Define the WorkItem contract",
+            kind="feature",
+            lifecycle="building",
+            attention="active",
+            context_summary="Implementing the canonical WorkItem contract.",
+            owner="agentic-os",
+            source_links=[
+                {
+                    "system": "linear",
+                    "key": "AGE-86",
+                    "url": "https://linear.app/example/issue/AGE-86",
+                }
+            ],
+            parent_id="agentic-os:rubicon",
+            related_ids=["agentic-os:rubicon:age-85", "agentic-os:rubicon:age-87"],
+            blockers=[{"kind": "dependency", "id": "AGE-85"}],
+            verified=True,
+            now="2026-08-01T12:00:00Z",
+        )
+
+        assert item["kind"] == "feature"
+        assert item["state"] == item["lifecycle"] == "building"
+        assert item["attention"] == "active"
+        assert item["source_links"] == [
+            {
+                "system": "linear",
+                "key": "AGE-86",
+                "url": "https://linear.app/example/issue/AGE-86",
+            }
+        ]
+        assert item["parent_id"] == "agentic-os:rubicon"
+        assert item["related_ids"] == ["agentic-os:rubicon:age-85", "agentic-os:rubicon:age-87"]
+        assert item["blockers"] == [{"kind": "dependency", "id": "AGE-85"}]
+        assert item["last_verified_at"] == "2026-08-01T12:00:00Z"
+
+        updated = work_items.update(
+            conn,
+            item["id"],
+            lifecycle="validating",
+            verified=True,
+            now="2026-08-01T12:05:00Z",
+        )
+        assert updated["kind"] == "feature"
+        assert updated["lifecycle"] == "validating"
+        assert updated["source_links"] == item["source_links"]
+        assert updated["related_ids"] == item["related_ids"]
+        assert updated["last_verified_at"] == "2026-08-01T12:05:00Z"
+    finally:
+        conn.close()
+
+
+def test_work_item_contract_rejects_self_links_and_unexplained_blocking() -> None:
+    conn = db.connect(":memory:")
+    try:
+        with pytest.raises(work_items.WorkItemError, match="own parent"):
+            work_items.upsert(conn, item_id="one", title="One", parent_id="one")
+        with pytest.raises(work_items.WorkItemError, match="related to itself"):
+            work_items.upsert(conn, item_id="one", title="One", related_ids=["one"])
+        with pytest.raises(work_items.WorkItemError, match="blocker receipt or reason"):
+            work_items.upsert(conn, item_id="one", title="One", state="blocked")
+    finally:
+        conn.close()
+
+
 def test_upsert_transition_history_and_active_projection(tmp_path: Path) -> None:
     root = tmp_path / "os"
     root.mkdir()
