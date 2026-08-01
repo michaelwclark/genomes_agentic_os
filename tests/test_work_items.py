@@ -96,6 +96,34 @@ def test_work_item_contract_rejects_self_links_and_unexplained_blocking() -> Non
         conn.close()
 
 
+def test_work_item_contract_rejects_nested_or_prose_reference_payloads() -> None:
+    conn = db.connect(":memory:")
+    try:
+        with pytest.raises(work_items.WorkItemError, match="unsupported fields"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                source_links=[{"system": "linear", "key": "AGE-86", "transcript": "do the work"}],
+            )
+        with pytest.raises(work_items.WorkItemError, match="compact scalar references"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                source_links=[{"system": "linear", "key": {"id": "AGE-86"}}],
+            )
+        with pytest.raises(work_items.WorkItemError, match="compact scalar references"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                blockers=[{"kind": "dependency", "id": "await the release approval"}],
+            )
+    finally:
+        conn.close()
+
+
 def test_upsert_transition_history_and_active_projection(tmp_path: Path) -> None:
     root = tmp_path / "os"
     root.mkdir()

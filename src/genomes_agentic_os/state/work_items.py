@@ -36,6 +36,9 @@ ATTENTION_STATES = ("active", "queued", "parked", "closed")
 TERMINAL_STATES = {"finished", "documented", "archived"}
 ACTIVE_NOW_RELATIVE = Path("harness/shared_factory/00-control-plane/active-now.json")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]*$")
+COMPACT_REFERENCE = re.compile(r"^\S{1,512}$")
+SOURCE_LINK_FIELDS = frozenset({"system", "key", "url"})
+BLOCKER_FIELDS = frozenset({"kind", "id", "source", "url", "receipt_ref"})
 LEGACY_LANE_STATE = {
     "01-intake": ("captured", "queued"),
     "02-active": ("ready", "queued"),
@@ -71,9 +74,10 @@ def _link_mappings(
     value: Sequence[Mapping[str, Any]] | None,
     *,
     label: str,
+    allowed_fields: frozenset[str],
     required: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
-    """Validate small, serializable relationship records without prose payloads."""
+    """Validate compact provider references; never accept embedded work artifacts."""
 
     if value is None:
         return []
@@ -83,7 +87,19 @@ def _link_mappings(
     for entry in value:
         if not isinstance(entry, Mapping):
             raise WorkItemError(f"{label} entries must be mappings")
-        result = {str(key): item for key, item in entry.items() if item is not None}
+        unknown = sorted(str(key) for key in entry if str(key) not in allowed_fields)
+        if unknown:
+            raise WorkItemError(f"{label} entries contain unsupported fields: {', '.join(unknown)}")
+        result: dict[str, str] = {}
+        for key, item in entry.items():
+            if item is None:
+                continue
+            if not isinstance(item, (str, int, float, bool)):
+                raise WorkItemError(f"{label} values must be compact scalar references")
+            text = str(item).strip()
+            if not COMPACT_REFERENCE.fullmatch(text):
+                raise WorkItemError(f"{label} values must be compact scalar references")
+            result[str(key)] = text
         if not result:
             raise WorkItemError(f"{label} entries must not be empty")
         missing = [field for field in required if not _optional(result.get(field))]
@@ -166,6 +182,7 @@ def _normalize(
     normalized_sources = _link_mappings(
         source_links,
         label="source_links",
+        allowed_fields=SOURCE_LINK_FIELDS,
         required=("system", "key"),
     )
     if not normalized_sources and source_system and source_key:
@@ -176,7 +193,14 @@ def _normalize(
                 **({"url": _optional(source_url)} if _optional(source_url) else {}),
             }
         ]
-    normalized_blockers = _link_mappings(blockers, label="blockers")
+    normalized_blockers = _link_mappings(
+        blockers,
+        label="blockers",
+        allowed_fields=BLOCKER_FIELDS,
+    )
+    for blocker in normalized_blockers:
+        if not any(blocker.get(field) for field in ("id", "url", "receipt_ref")):
+            raise WorkItemError("blockers require an id, url, or receipt_ref")
     if state == "blocked" and not (blocked_reason or normalized_blockers):
         raise WorkItemError("blocked work items require a blocker receipt or reason")
     parent_id = _identifier(parent_id, "parent work-item id") if parent_id else None
