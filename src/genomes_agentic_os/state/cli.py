@@ -24,6 +24,7 @@ import yaml
 from . import cursors as cursors_module
 from . import events as events_module
 from . import queue as queue_module
+from . import work_items as work_items_module
 from .db import backup_state_database, connect, default_db_path, resolve_os_root, schema_version, table_counts
 from .importers import import_all, scan_all, verify_import
 
@@ -156,6 +157,18 @@ def handle_state_verify_import(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def handle_state_reconcile_traces(args: argparse.Namespace) -> int:
+    """Report unsupported successful run/agent claims without mutating state."""
+    db_path = _resolve_db_path(args)
+    conn = connect(db_path)
+    try:
+        result = work_items_module.reconcile_completion_claims(conn, limit=args.limit)
+    finally:
+        conn.close()
+    print(_format_result(result, as_json=args.json))
+    return 0 if result["status"] == "clean" else 1
+
+
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     parser.add_argument("--db", default=None, help="Override state.db path (default: derived from --root).")
@@ -231,3 +244,11 @@ def register_state_cli(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_common_arguments(verify_parser)
     verify_parser.set_defaults(handler=handle_state_verify_import)
+
+    reconcile_traces_parser = state_subparsers.add_parser(
+        "reconcile-traces",
+        help="Read-only doctor: flag successful run/agent claims without exact completion evidence.",
+    )
+    _add_common_arguments(reconcile_traces_parser)
+    reconcile_traces_parser.add_argument("--limit", type=int, default=100, help="Maximum completion claims to inspect.")
+    reconcile_traces_parser.set_defaults(handler=handle_state_reconcile_traces)

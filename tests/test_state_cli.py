@@ -38,7 +38,7 @@ def test_register_state_cli_adds_state_group_with_all_subcommands() -> None:
 
 @pytest.mark.parametrize(
     "state_command",
-    ["init", "status", "backup", "import", "query", "prune", "verify-import"],
+    ["init", "status", "backup", "import", "query", "prune", "verify-import", "reconcile-traces"],
 )
 def test_all_documented_subcommands_are_registered(state_command: str) -> None:
     parser = _build_parser()
@@ -77,6 +77,22 @@ def test_status_reports_counts_after_writes(tmp_path: Path, capsys: pytest.Captu
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["table_counts"]["events"] == 1
+
+
+def test_reconcile_traces_returns_nonzero_for_phantom_claims(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db_path = tmp_path / "state.db"
+    conn = db_module.connect(db_path)
+    from genomes_agentic_os.state import queue as queue_module
+
+    item = queue_module.enqueue(conn, kind="run", id="queue_phantom")
+    queue_module.complete(conn, item["id"], now="2026-08-01T00:00:00Z")
+    conn.close()
+
+    rc, _ = _run(["state", "reconcile-traces", "--db", str(db_path), "--json"])
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "phantom_completions"
+    assert payload["claims"][0]["claim_id"] == "run:queue_phantom"
 
 
 def test_backup_is_dry_run_by_default_and_apply_writes_valid_snapshot(
