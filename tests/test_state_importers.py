@@ -191,7 +191,7 @@ def test_import_run_queue_skips_distinct_ids_with_duplicate_idempotency_key(
             "kind": "schedule",
             "status": "queued",
             "created_at": "2026-01-03T00:00:00Z",
-            "idempotency_key": "idem-synthetic-0001",
+            "idempotency_key": source["items"][0]["idempotency_key"],
         }
     )
     _write_yaml(paths.run_queue, source)
