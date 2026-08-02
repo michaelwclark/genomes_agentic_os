@@ -14,14 +14,16 @@ from genomes_agentic_os.github_bridge import (
     call_github_bridge,
     command_from_environment,
     get_pull_request,
+    get_pull_request_diff,
     list_issues,
+    list_pull_request_commits,
     list_pull_requests,
     list_workflow_runs,
 )
 
 
 def test_reviewed_platform_bridge_revision_is_exact() -> None:
-    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "9fd83043c275a0959323735ab35d8be014898173"
+    assert REVIEWED_PLATFORM_BRIDGE_REVISION == "6eca8ae5c3cd234bba737d39a8ffa3b01d70a5ac"
 
 
 def _runner(*args, **kwargs):
@@ -163,6 +165,74 @@ def test_get_pull_request_sends_versioned_read_request() -> None:
     assert json.loads(str(captured["input"])) == {
         "version": 1,
         "operation": "getPullRequest",
+        "repo": {"owner": "genome", "repo": "os"},
+        "number": 42,
+    }
+
+
+def test_list_pull_request_commits_sends_bounded_versioned_read_request() -> None:
+    captured: dict[str, object] = {}
+
+    def runner(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "version": BRIDGE_VERSION,
+                    "ok": True,
+                    "result": {"commits": [{"sha": "exact-commit", "message": "Subject\\n\\nTrailer"}]},
+                }
+            ),
+            stderr="",
+        )
+
+    result = list_pull_request_commits(
+        ["node", "bridge.mjs"],
+        owner="genome",
+        repo="os",
+        number=42,
+        token="secret-token",
+        runner=runner,
+    )
+
+    assert result == [{"sha": "exact-commit", "message": "Subject\\n\\nTrailer"}]
+    assert json.loads(str(captured["input"])) == {
+        "version": 1,
+        "operation": "listPullRequestCommits",
+        "repo": {"owner": "genome", "repo": "os"},
+        "number": 42,
+        "limit": 250,
+    }
+    assert "secret-token" not in str(captured["input"])
+
+
+def test_get_pull_request_diff_sends_versioned_read_request() -> None:
+    captured: dict[str, object] = {}
+
+    def runner(*args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {"version": BRIDGE_VERSION, "ok": True, "result": {"diff": "diff --git a/a b/a"}}
+            ),
+            stderr="",
+        )
+
+    assert get_pull_request_diff(
+        ["node", "bridge.mjs"],
+        owner="genome",
+        repo="os",
+        number=42,
+        token="secret-token",
+        runner=runner,
+    ) == "diff --git a/a b/a"
+    assert json.loads(str(captured["input"])) == {
+        "version": 1,
+        "operation": "getPullRequestDiff",
         "repo": {"owner": "genome", "repo": "os"},
         "number": 42,
     }
