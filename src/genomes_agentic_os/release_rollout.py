@@ -17,7 +17,10 @@ from .update_ops import read_structured
 
 
 API_VERSION = "agentic-os-release-rollout/v1"
-HOST_ORDER = ("bigmac", "genomesbox")
+# The installer ships a generic two-host rollout contract.  Site-specific host
+# identifiers belong only in locally collected receipt files, never in package
+# defaults or public output.
+HOST_ORDER = ("first_host", "second_host")
 _SEMVER = re.compile(r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 
@@ -87,35 +90,35 @@ def rollout_gate(
     if release.get("published") is not True or release.get("draft") is True:
         raise ValueError("release must be published and non-draft")
     host_evidence = evidence or {}
-    bigmac = _host_phase("bigmac", release, host_evidence)
-    genomesbox = _host_phase("genomesbox", release, host_evidence)
-    phases = {"bigmac": bigmac, "genomesbox": genomesbox}
+    first_host = _host_phase("first_host", release, host_evidence)
+    second_host = _host_phase("second_host", release, host_evidence)
+    phases = {"first_host": first_host, "second_host": second_host}
 
-    if bigmac != "healthy" and "genomesbox" in host_evidence:
+    if first_host != "healthy" and "second_host" in host_evidence:
         return _result(
             release,
             phases,
             "blocked",
             None,
-            "genomesbox evidence arrived before bigmac health gate",
+            "second-host evidence arrived before first-host health gate",
         )
-    if bigmac == "pending_reinstall":
-        return _result(release, phases, "ready", "bigmac", "reinstall bigmac locally")
-    if bigmac == "reinstall_failed":
-        return _result(release, phases, "blocked", None, "bigmac reinstall receipt is missing, failed, or for a different release")
-    if bigmac == "awaiting_health":
-        return _result(release, phases, "awaiting_health", "bigmac", "collect a current healthy bigmac receipt before genomesbox")
-    if bigmac == "health_failed":
-        return _result(release, phases, "blocked", None, "bigmac health gate failed; genomesbox is not permitted")
+    if first_host == "pending_reinstall":
+        return _result(release, phases, "ready", "first_host", "reinstall the first host locally")
+    if first_host == "reinstall_failed":
+        return _result(release, phases, "blocked", None, "first-host reinstall receipt is missing, failed, or for a different release")
+    if first_host == "awaiting_health":
+        return _result(release, phases, "awaiting_health", "first_host", "collect a current healthy first-host receipt before the second host")
+    if first_host == "health_failed":
+        return _result(release, phases, "blocked", None, "first-host health gate failed; the second host is not permitted")
 
-    if genomesbox == "pending_reinstall":
-        return _result(release, phases, "ready", "genomesbox", "bigmac is healthy; reinstall genomesbox locally")
-    if genomesbox == "reinstall_failed":
-        return _result(release, phases, "blocked", None, "genomesbox reinstall receipt is missing, failed, or for a different release")
-    if genomesbox == "awaiting_health":
-        return _result(release, phases, "awaiting_health", "genomesbox", "collect a current healthy genomesbox receipt")
-    if genomesbox == "health_failed":
-        return _result(release, phases, "failed", None, "genomesbox health receipt failed")
+    if second_host == "pending_reinstall":
+        return _result(release, phases, "ready", "second_host", "first host is healthy; reinstall the second host locally")
+    if second_host == "reinstall_failed":
+        return _result(release, phases, "blocked", None, "second-host reinstall receipt is missing, failed, or for a different release")
+    if second_host == "awaiting_health":
+        return _result(release, phases, "awaiting_health", "second_host", "collect a current healthy second-host receipt")
+    if second_host == "health_failed":
+        return _result(release, phases, "failed", None, "second-host health receipt failed")
     return _result(release, phases, "completed", None, "both hosts passed reinstall and health verification")
 
 

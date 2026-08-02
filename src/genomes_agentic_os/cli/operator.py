@@ -149,7 +149,7 @@ def register(subparsers) -> None:
     update_phone_home_parser.set_defaults(handler=handle_update_phone_home)
     update_rollout_parser = update_subparsers.add_parser(
         "rollout-gate",
-        help="Read local release and host receipts to gate bigmac before genomesbox; never runs remote actions.",
+        help="Read local release and host receipts to gate the first host before the second; never runs remote actions.",
     )
     update_rollout_parser.add_argument(
         "--release-receipt",
