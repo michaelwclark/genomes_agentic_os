@@ -93,6 +93,32 @@ describe("ExecutionFabric", () => {
     expect(ledger.markPublished).toHaveBeenCalledWith(task.id);
   });
 
+  it("does not republish a duplicate admission", async () => {
+    const { fabric, delivery, ledger } = fixture();
+    vi.mocked(ledger.admitTask)
+      .mockResolvedValueOnce({ task, admitted: true })
+      .mockResolvedValueOnce({ task, admitted: false });
+    const input = {
+      namespace: "test",
+      queue: "code",
+      taskType: "example.run",
+      idempotencyKey: "deduplicated",
+      payload: {},
+      requiredCapabilities: ["test.run"],
+      priority: 0,
+      maxAttempts: 3,
+    };
+
+    const first = await fabric.admit(input);
+    const duplicate = await fabric.admit(input);
+
+    expect(first.admitted).toBe(true);
+    expect(duplicate.admitted).toBe(false);
+    expect(duplicate.task.id).toBe(first.task.id);
+    expect(delivery.publish).toHaveBeenCalledTimes(1);
+    expect(ledger.markPublished).toHaveBeenCalledTimes(1);
+  });
+
   it("long-polls once and returns no work without inventing an assignment", async () => {
     const { fabric, delivery, ledger } = fixture();
     const result = await fabric.claim({
