@@ -8,8 +8,6 @@ Prepare approval-gated integrations for runtime use.
 agentic-os integration list --root ~/agentic_os
 agentic-os integration setup granola --root ~/agentic_os --dry-run
 agentic-os integration doctor granola --root ~/agentic_os
-agentic-os notion track-runtime --root ~/agentic_os --dry-run
-agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace "Genome's Notion"
 ```
 
 ## Supported Runtime Integrations

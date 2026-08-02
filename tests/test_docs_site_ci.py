@@ -18,8 +18,9 @@ import yaml
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/docs.yml"
 DOCUSAURUS_CONFIG = ROOT / "website/docusaurus.config.ts"
+PNPM_WORKSPACE = ROOT / "website/pnpm-workspace.yaml"
 
-# The directory `npm run build` writes, relative to the repository root rather
+# The directory `pnpm build` writes, relative to the repository root rather
 # than to `website/`. Action inputs do not inherit `defaults.run
 # .working-directory`, so this is the one path in the workflow that has to
 # carry the `website/` prefix itself.
@@ -65,7 +66,7 @@ def test_a_broken_internal_link_fails_the_build(build: dict[str, Any]) -> None:
     assert "onBrokenMarkdownLinks: 'throw'" in config
 
     commands = [str(step.get("run", "")) for step in build["steps"]]
-    assert "npm run build" in commands
+    assert "pnpm build" in commands
 
 
 def test_docs_changes_are_checked_before_they_land(
@@ -109,7 +110,7 @@ def test_docs_changes_are_checked_before_they_land(
     heavy_steps = [
         step
         for step in build["steps"]
-        if str(step.get("uses", "")).startswith("actions/setup-node@")
+        if str(step.get("uses", "")).startswith(("actions/setup-node@", "pnpm/action-setup@"))
         or step.get("name")
         in {
             "Install dependencies",
@@ -117,8 +118,26 @@ def test_docs_changes_are_checked_before_they_land(
             "Build site and check every internal link",
         }
     ]
-    assert len(heavy_steps) == 4
+    assert len(heavy_steps) == 5
     assert all(step["if"] == heavy_gate for step in heavy_steps)
+
+
+def test_docs_ci_uses_the_committed_pnpm_build_approval_policy(
+    build: dict[str, Any],
+) -> None:
+    setup_node = _step_using(build, "actions/setup-node")
+    assert setup_node["with"]["cache"] == "pnpm"
+    assert setup_node["with"]["cache-dependency-path"] == "website/pnpm-lock.yaml"
+
+    pnpm_setup = _step_using(build, "pnpm/action-setup")
+    assert pnpm_setup["with"]["version"] == "11.1.2"
+    assert build["steps"].index(pnpm_setup) < build["steps"].index(setup_node)
+
+    commands = [str(step.get("run", "")) for step in build["steps"]]
+    assert "pnpm install --frozen-lockfile" in commands
+
+    policy = yaml.safe_load(PNPM_WORKSPACE.read_text(encoding="utf-8"))
+    assert policy["allowBuilds"] == {"@swc/core": True, "core-js": True}
 
 
 def test_the_deployed_artifact_is_the_build_that_was_link_checked(

@@ -62,7 +62,6 @@ Related runtime commands:
 ```bash
 agentic-os customer init --help
 agentic-os automation check --help
-agentic-os notion track-runtime --root ~/agentic_os --dry-run
 ```
 
 ## Client Automation Brief

@@ -14,7 +14,6 @@ Use this skill when a runtime integration must be discovered, prepared, dry-run,
 3. Run `agentic-os integration list --root <root>` and identify the integration id.
 4. Run `agentic-os integration setup <integration_id> --root <root> --dry-run`.
 5. Run `agentic-os integration doctor <integration_id> --root <root>`.
-6. For Notion tracking, run `agentic-os notion track-runtime --root <root> --dry-run`; apply only with `--verified-workspace "Genome's Notion"`.
 
 ## Required Integration Contract
 

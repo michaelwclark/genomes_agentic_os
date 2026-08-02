@@ -13,7 +13,6 @@ state and customer-specific values belong in the installed OS.
 | [`health-monitor.yml`](health-monitor.yml) | Queue, runtime, disk, and process health thresholds. | `agentic-os-monitor` |
 | [`hosts-routing.yml`](hosts-routing.yml) | Example cross-host roles, paths, harnesses, and concurrency. | `agentic-harness-run` |
 | [`intake-routing.yml`](intake-routing.yml) | Natural-language project routing for unified intake. | `agentic-os-intake-row` |
-| [`intake-sync.yml`](intake-sync.yml) | Notion-to-Linear intake synchronization mapping. | `agentic-os-intake-sync` |
 | [`skills.yml`](skills.yml) | Canonical skill identity, description, and source path. | capability registry and harness skill registration |
 | `reports.yml` (installed) | Governed report prompt/catalog entries in draft or archived lifecycle. | registry resource authoring and Command Center discovery |
 | `report-definitions.yml` (installed) | Runnable, versioned report sources, sections, schedule, destinations, permissions, and health. | `agentic-os report` engine and Command Center typed query |
