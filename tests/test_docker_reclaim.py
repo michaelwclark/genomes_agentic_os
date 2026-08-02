@@ -184,6 +184,21 @@ class TestPlanAndApply:
         assert {d.resource.kind for d in build_plan(client, {}, scopes=("networks",)).decisions} == {"network"}
         assert {d.resource.kind for d in build_plan(client, {}, scopes=("volumes",)).decisions} == {"volume"}
 
+    def test_selected_names_limit_a_plan_to_the_exact_operator_target(self):
+        client = FakeDocker(
+            networks=[net("dead_default")],
+            volumes=[vol("dead_data"), vol("other_dead_data")],
+        )
+
+        plan = build_plan(
+            client,
+            {},
+            selected_names=("dead_data", "dead_default"),
+        )
+
+        assert {d.resource.name for d in plan.decisions} == {"dead_data", "dead_default"}
+        assert plan.selected_names == ("dead_data", "dead_default")
+
     def test_images_and_cache_are_not_default_scopes(self):
         assert DEFAULT_SCOPES == ("networks", "volumes")
 
@@ -227,6 +242,7 @@ class TestReceipt:
             "reclaimable_by_kind": {"network": 1},
         }
         assert receipt["protected_worktrees"] == 1
+        assert receipt["selected_names"] == []
 
     def test_receipt_records_owner_for_kept_resources(self):
         plan = ReclaimPlan()
