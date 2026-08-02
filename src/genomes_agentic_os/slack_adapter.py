@@ -1,8 +1,8 @@
 """Generic, injectable Slack channel-history client.
 
 The source-watch workflow imports this port, but does not own its HTTP or
-normalization rules.  That keeps Slack reusable without pulling losmon's
-workflow-specific Bolt behavior into Agentic OS.
+normalization rules.  That keeps Slack reusable without pulling a
+workflow-specific Bolt implementation into Agentic OS.
 """
 
 from __future__ import annotations
