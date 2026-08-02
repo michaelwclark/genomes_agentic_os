@@ -20,7 +20,8 @@ Create and never creates or retargets a pull request.
    edge cases, security, data/migrations, compatibility, failure handling,
    observability, tests, docs, and accidental changes.
 2. Run the configured local tests and quality gates and record exact outcomes.
-3. Obtain the required independent or opposing-model review. A reviewer that is
+3. Obtain the required independent or opposing-model review only through
+   `/auto-dev-review-self-opposing-model <TICKET>`. A reviewer that is
    unavailable is recorded according to project policy; actual findings remain
    blocking.
 4. Verify every pull request from the canonical PR Create family receipt. A

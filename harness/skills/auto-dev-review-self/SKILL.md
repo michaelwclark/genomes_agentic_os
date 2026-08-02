@@ -7,8 +7,9 @@ description: Independently review and repair the exact pull-request family creat
 
 Require the completed `$auto-dev-pr-create` family receipt, then delegate review
 and repair to `$auto-dev-review-repair`. Require an opposing model/family where
-policy calls for independence, then use live PR checks and review threads. This
-stage must not create or retarget a PR; a missing or wrong target returns to PR
-Create.
+policy calls for independence through
+`$auto-dev-review-self-opposing-model <TICKET>`; never hand-craft a separate
+model prompt or receipt. Then use live PR checks and review threads. This stage
+must not create or retarget a PR; a missing or wrong target returns to PR Create.
 Record `review_self` only after the exact head is `ready_for_merge`. This alias
 does not grant merge authority.

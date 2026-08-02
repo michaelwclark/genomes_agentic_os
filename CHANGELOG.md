@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.6.0] - 2026-08-01
+
+### Added
+- Consolidate GitHub, Jira, Linear, and Notion access through provider bridges
+  with bounded reads and explicit mutation boundaries.
+- Add a canonical, receipt-backed opposing-model Auto-Dev review command shared
+  by Claude and Codex harnesses.
+- Add guarded Docker and OrbStack reclaim reporting for orphaned worktree
+  resources without expanding Auto-Dev cleanup authority.
+
+### Fixed
+- Support legacy execution-fabric role-health bootstrap during protected
+  rollout reconciliation.
+
 ## [0.5.7] - 2026-07-29
 
 ### Added
