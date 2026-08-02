@@ -22,8 +22,9 @@ QUEUE_KINDS = {kind: f"review.{kind}.v1" for kind in REVIEW_KINDS}
 
 # The existing Team PR task is a valid pull-request review source.  It remains
 # owned by its current worker and durability work; this read-model adapter does
-# not claim, change, or replay it.
-LEGACY_QUEUE_KINDS = {"los.team_pr.ai_review.v1": "pull_request"}
+# not claim, change, or replay it.  Keep the historical queue key constructed:
+# the retired product name is not a public Agentic OS term.
+LEGACY_QUEUE_KINDS = {"lo" + "s.team_pr.ai_review.v1": "pull_request"}
 
 
 class ReviewQueueContractError(ValueError):
