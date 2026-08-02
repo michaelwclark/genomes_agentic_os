@@ -599,6 +599,15 @@ skills:
     builtin: true
     bootstrap: false
     purpose: Review and repair our own change through the canonical independent merge-readiness path.
+  - id: auto-dev-review-self-opposing-model
+    title: Auto-Dev Review Self Opposing Model
+    source_path: harness/skills/auto-dev-review-self-opposing-model
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-review-self-opposing-model
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Run the canonical independent-model review checkpoint for one Auto-Dev work item and emit receipt-backed readiness evidence.
   - id: auto-dev-review-others
     title: Auto-Dev Review Others
     source_path: harness/skills/auto-dev-review-others
