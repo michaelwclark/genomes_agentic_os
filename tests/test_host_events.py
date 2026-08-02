@@ -107,7 +107,7 @@ def test_cleanup_proposal_requires_one_exact_worktree_and_never_allows_apply(tmp
     assert proposal["reclaim"] == {
         "command": "agentic-os-docker-reclaim",
         "only": ["aos-stack-cleaner_default", "aos-stack-cleaner_postgres_data"],
-        "protected": ["los_gold", "los-django-local:shared"],
+        "protected": ["managed_gold", "managed-local:shared"],
         "host_wide_apply": False,
     }
     assert proposal_path.is_file()
@@ -132,7 +132,7 @@ def test_proposal_is_not_approval_eligible_when_any_required_evidence_is_missing
 def test_retention_policy_protects_shared_images_and_forbids_automation_prune():
     policy = default_retention_policy()
 
-    assert policy["shared_images"] == {"mode": "retain", "protected_names": ["los-django-local:shared"]}
+    assert policy["shared_images"] == {"mode": "retain", "protected_names": ["managed-local:shared"]}
     assert policy["dangling_images"]["mode"] == "review_only"
     assert policy["build_cache"]["mode"] == "review_only"
     assert policy["merged_pr_automation"]["image_or_cache_prune"] == "prohibited"

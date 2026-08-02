@@ -269,7 +269,7 @@ def default_retention_policy() -> dict[str, Any]:
         "api_version": "host-cleanup-retention-policy/v1",
         "container_removal": {"mode": "exact_reviewed_resources_only"},
         "named_volume_deletion": {"mode": "exact_reviewed_resources_only"},
-        "shared_images": {"mode": "retain", "protected_names": ["los-django-local:shared"]},
+        "shared_images": {"mode": "retain", "protected_names": ["managed-local:shared"]},
         "dangling_images": {"mode": "review_only", "requires": ["ownership", "age", "size", "receipt"]},
         "build_cache": {"mode": "review_only", "requires": ["ownership", "age", "size", "receipt"]},
         "merged_pr_automation": {"image_or_cache_prune": "prohibited"},
@@ -327,7 +327,7 @@ def build_cleanup_proposal(event: Mapping[str, Any], worktrees: Iterable[Mapping
         "reclaim": {
             "command": "agentic-os-docker-reclaim",
             "only": exact_resources,
-            "protected": ["los_gold", "los-django-local:shared"],
+            "protected": ["managed_gold", "managed-local:shared"],
             "host_wide_apply": False,
         },
         "retention_policy": default_retention_policy(),
