@@ -243,14 +243,55 @@ Each tool reads env vars from the process environment, with automatic fallback t
 
 | Variable | Default | Auth route |
 |---|---|---|
-| `ATLASSIAN_CLIENT_ID` / `JIRA_OAUTH_CLIENT_ID` | — | OAuth (preferred) |
-| `ATLASSIAN_CLIENT_SECRET` / `JIRA_OAUTH_CLIENT_SECRET` | — | OAuth |
-| `ATLASSIAN_VENTURESGO_CLOUDID` / `ATLASSIAN_JIRA_CLOUDID` / `JIRA_CLOUD_ID` / `ATLASSIAN_CLOUD_ID` | — | OAuth cloud ID |
+| `GENOMES_JIRA_BRIDGE_COMMAND` | — | Reviewed `@genomes/jira` bridge argv; required for live operations |
+| `JIRA_OAUTH_TOKEN` / `ATLASSIAN_ACCESS_TOKEN` | — | Injected OAuth bearer (preferred) |
+| `ATLASSIAN_JIRA_CLOUDID` / `JIRA_CLOUD_ID` / `ATLASSIAN_CLOUD_ID` | — | OAuth cloud ID |
 | `ATLASSIAN_BASE_URL` / `JIRA_OAUTH_BASE_URL` | Derived from cloud ID | OAuth gateway URL |
-| `ATLASSIAN_OAUTH_AUDIENCE` | `api.atlassian.com` | OAuth audience |
-| `JIRA_VENTURESGO_API_TOKEN` / `JIRA_API_TOKEN` | — | Basic auth (fallback) |
-| `JIRA_VENTURESGO_EMAIL` / `JIRA_EMAIL` | `svc_jiraapi@thesummitgrp.com` | Basic auth email |
-| `JIRA_VENTURESGO_BASE_URL` | `https://venturesgo.atlassian.net` | Basic auth base URL |
+| `JIRA_API_TOKEN` | — | Basic auth (fallback) |
+| `JIRA_EMAIL` | — | Basic auth email |
+| `JIRA_BASE_URL` | — | Basic-auth tenant URL; Spec Engine and source-watch bridge base |
+| `JIRA_BROWSE_BASE` | — | Wrapper tenant site URL for identity preflight |
+| `JIRA_SITE_URL` | — | Auto-Dev live tracker tenant site URL for identity preflight |
+| `JIRA_DEFAULT_ISSUE_TYPE_ID` | — | Expected issue-type ID for mutation preflight |
+| `JIRA_ACCOUNT_ID` / `ATLASSIAN_ACCOUNT_ID` | — | Optional expected account ID for mutation preflight |
+
+The wrapper no longer mints OAuth client-credential tokens or constructs Jira
+HTTP requests. A bearer/session provider must inject the short-lived bearer;
+the reviewed platform bridge owns Jira transport, retries, safe errors, and
+provider readback.
+
+### Linear call sites
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GENOMES_LINEAR_BRIDGE_COMMAND` | — | Reviewed `@genomes/linear` bridge argv; required for resolver, intake-sync, and live Spec Engine operations |
+| `LINEAR_TOKEN` / `LINEAR_API_KEY` / `LINEAR_API_TOKEN` | — | Exactly one Linear credential, injected only into the bridge child environment |
+| project `token_env` | `LINEAR_TOKEN` | Selects a custom host environment variable for a multi-workspace tracker; the wrapper remaps it to child `LINEAR_TOKEN` |
+
+The migrated callers do not own a Linear endpoint, GraphQL document, header,
+retry loop, or provider error parser. Build the reviewed platform revision and
+point `GENOMES_LINEAR_BRIDGE_COMMAND` at
+`packages/linear/dist/bridge.js`; the shared bridge owns pagination, identity
+preflight, mutation readback, bounded retries, safe errors, and exact marker
+reconciliation.
+
+### Notion bridge call sites
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GENOMES_NOTION_BRIDGE_COMMAND` | — | Reviewed `@genomes/notion` bridge argv; required for migrated live operations |
+| `GENOMES_NOTION_PAT` | — | Notion credential injected only into the bridge child environment |
+| `GENOMES_NOTION_WORKSPACE` | `Genome's Notion` | Exact workspace identity required for mutations |
+| `GENOMES_NOTION_PARENT_PAGE_ID` | — | Exact approved parent identity required for mutations |
+| `GENOMES_NOTION_BOT_ID` | — | Optional exact bot identity required by stricter mutation routes |
+
+Build the pinned platform revision and point
+`GENOMES_NOTION_BRIDGE_COMMAND` at `packages/notion/dist/bridge.js`. The shared
+bridge uses Notion API `2026-03-11` and owns pagination, deadlines, bounded read
+retries, safe errors, mutation ancestry checks, and provider readback. The
+live Notion read and mutation families use this bridge. The only retained
+urllib seam is credential-free, fixture-only, and targets the synthetic
+`notion-fixture.invalid` host.
 
 ### agentic-os-automation-run-summary
 

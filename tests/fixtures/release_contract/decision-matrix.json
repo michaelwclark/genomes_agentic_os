@@ -1,0 +1,65 @@
+[
+  {
+    "name": "create fresh tag and release",
+    "tag_sha": null,
+    "tag_mode": "create",
+    "release_exists": false,
+    "existing_assets": [],
+    "expected_assets": ["bundle.tgz", "SHA256SUMS"],
+    "expected": {"create_tag": true, "create_release": true, "missing_assets": ["bundle.tgz", "SHA256SUMS"]}
+  },
+  {
+    "name": "verify mode rejects missing tag",
+    "tag_sha": null,
+    "tag_mode": "verify",
+    "release_exists": false,
+    "existing_assets": [],
+    "expected_assets": [],
+    "violation": "requires an existing provider tag"
+  },
+  {
+    "name": "existing tag creates missing release",
+    "tag_sha": "TARGET",
+    "tag_mode": "verify",
+    "release_exists": false,
+    "existing_assets": [],
+    "expected_assets": [],
+    "expected": {"create_tag": false, "create_release": true, "missing_assets": []}
+  },
+  {
+    "name": "complete release is a no-op",
+    "tag_sha": "TARGET",
+    "tag_mode": "verify",
+    "release_exists": true,
+    "existing_assets": ["bundle.tgz", "SHA256SUMS"],
+    "expected_assets": ["bundle.tgz", "SHA256SUMS"],
+    "expected": {"create_tag": false, "create_release": false, "missing_assets": []}
+  },
+  {
+    "name": "partial release repairs only missing assets",
+    "tag_sha": "TARGET",
+    "tag_mode": "verify",
+    "release_exists": true,
+    "existing_assets": ["bundle.tgz"],
+    "expected_assets": ["bundle.tgz", "SHA256SUMS"],
+    "expected": {"create_tag": false, "create_release": false, "missing_assets": ["SHA256SUMS"]}
+  },
+  {
+    "name": "unexpected release assets fail closed",
+    "tag_sha": "TARGET",
+    "tag_mode": "verify",
+    "release_exists": true,
+    "existing_assets": ["bundle.tgz", "unreviewed.bin"],
+    "expected_assets": ["bundle.tgz"],
+    "violation": "unexpected assets"
+  },
+  {
+    "name": "wrong tag target fails closed",
+    "tag_sha": "OTHER",
+    "tag_mode": "verify",
+    "release_exists": true,
+    "existing_assets": [],
+    "expected_assets": [],
+    "violation": "does not resolve to target_sha"
+  }
+]

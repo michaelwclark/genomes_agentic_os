@@ -16,6 +16,7 @@ import type {
   WorkerRegistration,
   WorkerRegistrationReceipt,
 } from "./contracts.js";
+import { roleHealthSnapshot, type RoleHealthSnapshot } from "./roles.js";
 import type {
   NormalizedTaskAdmission,
   PolicySnapshot,
@@ -150,6 +151,7 @@ export type SystemSnapshot = {
   databasePolicyFingerprint: string | null;
   effects: Record<string, number>;
   eventSequence: number;
+  roleHealth?: RoleHealthSnapshot[];
 };
 
 export type LeadershipActivation = {
@@ -1352,7 +1354,7 @@ export class PostgresLedger implements LedgerPort {
   }
 
   async systemSnapshot(): Promise<SystemSnapshot> {
-    const [state, effects, events] = await Promise.all([
+    const [state, effects, events, roleHealth] = await Promise.all([
       this.pool.query(
         `SELECT current_epoch,leader_host_id,leader_lease_expires_at,
            leadership_cluster_id,leadership_receipt_id,
@@ -1367,6 +1369,7 @@ export class PostgresLedger implements LedgerPort {
       this.pool.query<{ sequence: string }>(
         "SELECT COALESCE(max(sequence),0)::text AS sequence FROM fabric_events",
       ),
+      this.pool.query("SELECT * FROM fabric_role_health ORDER BY host_id,role"),
     ]);
     const row = (state.rows[0] ?? {}) as Record<string, unknown>;
     return {
@@ -1394,6 +1397,9 @@ export class PostgresLedger implements LedgerPort {
         effects.rows.map((effect) => [effect.status, Number(effect.count)]),
       ),
       eventSequence: Number(events.rows[0]?.sequence ?? 0),
+      roleHealth: roleHealth.rows.map((row) =>
+        roleHealthSnapshot(row as Record<string, unknown>),
+      ),
     };
   }
 

@@ -70,6 +70,27 @@ control_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-control-receipt.XXXXX
 witness_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-witness-receipt.XXXXXX")
 abort_receipt=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-abort-receipt.XXXXXX")
 final_temp=$(mktemp "$FABRIC_RUNTIME_STATE_DIR/policy-rotation-receipt.XXXXXX")
+role_recreate_receipt=
+role_verify_receipt=
+role_convergence_deferred=false
+if [ "$mode" = resume ] && [ "${FABRIC_DEPLOYMENT_ROLE:-}" = standby ]; then
+  fabric_require_command docker
+  : "${FABRIC_DEPLOYMENT_DIR:?deployment directory is required}"
+  resume_compose="$FABRIC_DEPLOYMENT_DIR/compose.bigmac.yml"
+  resume_cohort_state=$(fabric_policy_role_cohort_state "$resume_compose" promoted)
+  case "$resume_cohort_state" in
+    dormant) role_convergence_deferred=true ;;
+    active) role_convergence_deferred=false ;;
+    *)
+      fabric_notify critical \
+        "Execution Fabric policy recovery blocked by partial role cohort" \
+        "The standby role cohort is partial; recovery remains fail-closed until it is fully dormant or fully promoted." \
+        "execution-fabric-policy-rotation-recovery"
+      echo "standby policy role cohort is partial; recovery remains fail-closed" >&2
+      exit 75
+      ;;
+  esac
+fi
 cleanup() {
   unlink "$witness_status" 2>/dev/null || true
   unlink "$preparation" 2>/dev/null || true
@@ -336,6 +357,18 @@ else
   fi
 fi
 
+if [ "$role_convergence_deferred" = false ]; then
+  if ! role_recreate_receipt=$(
+    "$script_dir/converge-policy-roles.sh" --recreate "$candidate_digest"
+  ); then
+    fabric_notify critical \
+      "Execution Fabric policy role recreation failed" \
+      "Rotation $rotation_id did not recreate and fingerprint-verify the complete role cohort. Rerun rotate-policy.sh --resume; mutations remain fenced." \
+      "execution-fabric-policy-rotation-$rotation_id"
+    exit 75
+  fi
+fi
+
 if [ "$mode" = rotate ]; then
   evidence_applied=false
   attempt=0
@@ -428,11 +461,27 @@ else
     >"$control_status"
 fi
 
+if [ "$role_convergence_deferred" = false ]; then
+  if ! role_verify_receipt=$(
+    FABRIC_POLICY_CONVERGENCE_RECREATE_RECEIPT="$role_recreate_receipt" \
+      "$script_dir/converge-policy-roles.sh" --verify "$candidate_digest"
+  ); then
+    fabric_notify critical \
+      "Execution Fabric policy role verification failed" \
+      "Witness commit succeeded for rotation $rotation_id, but the complete role cohort did not report fresh healthy ticks. Rerun rotate-policy.sh --resume; mutations remain fenced." \
+      "execution-fabric-policy-rotation-$rotation_id"
+    exit 75
+  fi
+fi
+
 jq -n \
   --arg rotationId "$rotation_id" \
   --arg expectedCurrentDigest "$expected_current" \
   --arg candidateDigest "$candidate_digest" \
   --arg mode "$mode" \
+  --arg roleRecreateReceipt "$role_recreate_receipt" \
+  --arg roleVerifyReceipt "$role_verify_receipt" \
+  --argjson roleConvergenceDeferred "$role_convergence_deferred" \
   --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --slurpfile witness "$witness_receipt" \
   --slurpfile status "$control_status" \
@@ -442,6 +491,9 @@ jq -n \
     expectedCurrentDigest:$expectedCurrentDigest,
     candidateDigest:$candidateDigest,
     recoveryMode:$mode,
+    roleRecreateReceipt:($roleRecreateReceipt | if length>0 then . else null end),
+    roleVerifyReceipt:($roleVerifyReceipt | if length>0 then . else null end),
+    roleConvergenceDeferred:$roleConvergenceDeferred,
     completedAt:$completedAt,
     witness:$witness[0],
     readback:$status[0]

@@ -4,20 +4,29 @@ provider: any
 artifact_type: pull-request
 mode: compose
 required_sections:
-  - Description of the Feature or Problem
-  - Description of the Change
-  - Associated Work
-  - Test Evidence
-  - Risk
+  - Linked Work
+  - Summary
+  - Change Scope
+  - Safety, Compatibility, and Rollout
+  - Validation
+  - Reviewer Focus
+validation:
+  - linked_work_has_tracker_hyperlink
 format:
   renderer: markdown
 approval:
   write: explicit
 ---
 
-# Good Pull Request Contract
+# Universal Pull Request Contract
 
-Explain why the behavior was wrong or missing, what invariant the change now
-enforces, why this code seam owns it, how it was tested, and the operational or
-compatibility risk. Link the source work item and keep generated/internal
-receipts out of team-visible text.
+Start every PR with a `## Linked Work` section containing at least one visible
+Markdown hyperlink to its source tracker work item. Resolve the tracker from
+the supplied work item: Jira keys use their Jira browse URL, Linear issue
+identifiers use their Linear issue URL, and GitHub-backed work uses its issue
+URL. A bare ticket key, a plain URL, a placeholder, or an unrelated GitHub PR
+link is not sufficient.
+
+Explain the outcome, the bounded implementation scope, safety and compatibility
+implications, exact validation evidence, and the decisions reviewers should
+inspect. Keep generated/internal receipts out of team-visible text.

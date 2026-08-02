@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 import yaml
 
+from genomes_agentic_os import notion_api
 from genomes_agentic_os.cli import main
 
 
@@ -85,6 +87,7 @@ def _users_me(workspace: str = "Genome's Notion") -> dict[str, Any]:
 def _database_schema() -> dict[str, Any]:
     return {
         "object": "database",
+        "parent": {"type": "page_id", "page_id": "approved-parent"},
         "properties": {
             "Name": {"type": "title"},
             "Type": {"type": "select"},
@@ -157,6 +160,7 @@ def test_active_work_sync_apply_creates_updates_and_skips_unchanged(tmp_path: Pa
         [
             _users_me(),
             _database_schema(),
+            _database_schema(),
             _query_empty(),
             _page("page-automation"),
             {"object": "list", "results": [_existing_page("page-work-item", name="genomes_agentic_os / 010_notion_os_operations_reorg", row_type="Work Item", status="building", domain="clarks_consulting", project="genomes_agentic_os", link="/active/work-items/reorg", path="/work-items/010_notion_os_operations_reorg", synced=today)]},
@@ -188,3 +192,71 @@ def test_active_work_sync_apply_requires_verified_workspace_and_database(tmp_pat
 
     assert main(["notion", "active-work-sync", "--root", str(root), "--apply", "--database-id", DATABASE_ID]) == 2
     assert main(["notion", "active-work-sync", "--root", str(root), "--apply", "--verified-workspace", "Genome's Notion"]) == 2
+
+
+def test_live_active_work_sync_requires_explicit_approved_parent(
+    tmp_path: Path,
+) -> None:
+    from genomes_agentic_os.notion_sync import apply_active_work_sync
+
+    root = tmp_path / "agentic_os"
+    _write_active_index(root)
+    with pytest.raises(ValueError, match="approved_parent_page_id is required"):
+        apply_active_work_sync(
+            root,
+            database_id=DATABASE_ID,
+            verified_workspace="Genome's Notion",
+        )
+
+
+def test_live_active_work_sync_binds_database_and_writes_to_approved_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from genomes_agentic_os.notion_sync import apply_active_work_sync
+
+    root = tmp_path / "agentic_os"
+    _write_active_index(root)
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        notion_api, "get_bot_workspace", lambda *args, **kwargs: "Genome's Notion"
+    )
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_parent_page_id",
+        lambda *args, **kwargs: "approved-parent",
+    )
+    monkeypatch.setattr(
+        notion_api,
+        "get_database_property_types",
+        lambda *args, **kwargs: {
+            "Name": "title",
+            "Type": "select",
+            "Status": "select",
+            "Domain": "rich_text",
+            "Project": "rich_text",
+            "Active Link": "rich_text",
+            "Source Path": "rich_text",
+            "Last Synced": "date",
+        },
+    )
+    monkeypatch.setattr(
+        notion_api, "query_database_by_rich_text_property", lambda *args, **kwargs: []
+    )
+
+    def create(*args, **kwargs):
+        seen.append(kwargs)
+        return f"page-{len(seen)}"
+
+    monkeypatch.setattr(notion_api, "create_database_page", create)
+    result = apply_active_work_sync(
+        root,
+        database_id=DATABASE_ID,
+        verified_workspace="Genome's Notion",
+        approved_parent_page_id="approved-parent",
+    )
+
+    assert result["created"] == 3
+    assert len(seen) == 3
+    assert all(
+        row["approved_parent_page_id"] == "approved-parent" for row in seen
+    )

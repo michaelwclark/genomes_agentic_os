@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   Assignment,
   AttemptCompletion,
@@ -11,6 +11,10 @@ import type {
   EffectAssignment,
   EffectClaim,
 } from "./contracts.js";
+import {
+  evaluateRoleHealth,
+  roleHealthEvaluationOptions,
+} from "./roles.js";
 import type { DeliveryPort } from "./delivery.js";
 import { ConflictError, type LedgerPort } from "./ledger.js";
 import type { LeadershipGuard } from "./leadership.js";
@@ -19,6 +23,8 @@ import { PolicyManager } from "./policy.js";
 export class ExecutionFabric {
   private lastReconcile: ReconcileReceipt | null = null;
   private lastReconcileError: string | null = null;
+  private readonly apiInstanceId = randomUUID();
+  private readonly apiStartedAt = new Date().toISOString();
 
   constructor(
     readonly ledger: LedgerPort,
@@ -224,6 +230,7 @@ export class ExecutionFabric {
   }
 
   async status(activeHost: string, limit = 200): Promise<Record<string, unknown>> {
+    const sampledAt = new Date().toISOString();
     const config = this.policy.check();
     const [queues, workers, rawRuns, system] = await Promise.all([
       this.ledger.queueSnapshot(),
@@ -241,6 +248,9 @@ export class ExecutionFabric {
       };
     });
     const queuedById = new Map(queues.map((row) => [row.queue, row]));
+    const apiPolicyHealthy =
+      config.state === "applied" &&
+      system.databasePolicyFingerprint === config.appliedFingerprint;
     const configuredQueues = this.policy.effective().execution_fabric.queues;
     const observableQueues = configuredQueues.map((queue) => {
       const row = queuedById.get(queue.id) ?? {
@@ -335,7 +345,7 @@ export class ExecutionFabric {
     }
     return {
       schemaVersion: "agentic-os-execution-fabric-status/v1",
-      sampledAt: new Date().toISOString(),
+      sampledAt,
       config,
       controlPlane: {
         activeHost,
@@ -356,6 +366,33 @@ export class ExecutionFabric {
       workers,
       runs,
       effects: system.effects,
+      roleHealth: [
+        {
+          hostId: activeHost,
+          role: "api",
+          instanceId: this.apiInstanceId,
+          startedAt: this.apiStartedAt,
+          approvedPolicyFingerprint: system.databasePolicyFingerprint,
+          appliedPolicyFingerprint: config.appliedFingerprint,
+          lastSuccessfulTickAt: apiPolicyHealthy ? sampledAt : null,
+          lastTickAt: apiPolicyHealthy ? sampledAt : null,
+          lastError: apiPolicyHealthy
+            ? null
+            : config.lastError ?? "database-approved policy fingerprint differs from the API role",
+          consecutiveFailures: apiPolicyHealthy ? 0 : 1,
+          updatedAt: sampledAt,
+          status: apiPolicyHealthy ? "healthy" : "unhealthy",
+          reason: apiPolicyHealthy ? null : "policy_fingerprint_mismatch",
+        },
+        ...(system.roleHealth ?? [])
+          .filter((snapshot) => snapshot.hostId === activeHost)
+          .map((snapshot) =>
+            evaluateRoleHealth(snapshot, {
+              ...roleHealthEvaluationOptions(),
+              now: new Date(sampledAt),
+            }),
+          ),
+      ],
       healing: {
         status: this.lastReconcileError ? "failed" : "healthy",
         lastReconcileAt: this.lastReconcile?.occurredAt ?? null,

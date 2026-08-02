@@ -1,5 +1,18 @@
 # Auto-Dev Worklog
 
+## 2026-07-29 — Registered external worktree adoption
+
+- Removed the contradictory project-boundary rejection for valid external
+  worktrees registered through the supported project-visible symlink policy.
+- Adoption now resolves relative canonical paths from the installed OS root and
+  verifies every active registry copy, the visible link and resolved target,
+  branch and base branch, configured repository, Git common directory, and
+  merge base before writing delivery state.
+- Added full CLI adoption coverage for both in-place and external-symlink
+  worktrees in default and custom configured directories, plus negative
+  regressions for unregistered targets, changed links, branch mismatches, and
+  anonymous registry rows.
+
 ## 2026-07-21 — Object Library self-hosting
 
 - Defined one plain-English source/install topology: reusable definitions are

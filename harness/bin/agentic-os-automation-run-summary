@@ -9,19 +9,25 @@ import json
 import os
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+_SOURCE = Path(__file__).resolve().parents[2] / "src"
+if (_SOURCE / "genomes_agentic_os" / "notion_bridge.py").is_file():
+    sys.path.insert(0, str(_SOURCE))
+
+from genomes_agentic_os.notion_bridge import (
+    NotionBridgeClient,
+    NotionBridgeError,
+    client_from_environment,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = ROOT / "harness/shared_factory/00-control-plane/automation-run-tracking.yml"
 DEFAULT_RECEIPT_DIR = ROOT / "harness/shared_factory/06-runs-and-logs/automation-run-tracking"
-NOTION_VERSION = "2022-06-28"
 SAFE_DELETE_BLOCK_TYPES = {
     "paragraph",
     "heading_1",
@@ -109,49 +115,20 @@ def get_notion_token(names: list[str]) -> str:
     raise TrackingError("No Genome Notion token found in expected environment variables.")
 
 
-class NotionClient:
-    def __init__(self, token: str, *, retries: int = 3, timeout: float = 30.0) -> None:
-        self.token = token
-        self.retries = retries
-        self.timeout = timeout
-
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        url = f"https://api.notion.com/v1{path}"
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Notion-Version": NOTION_VERSION,
-            "Content-Type": "application/json",
-        }
-        last_error = ""
-        for attempt in range(1, self.retries + 1):
-            req = urllib.request.Request(url, data=data, headers=headers, method=method)
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                    raw = response.read().decode("utf-8")
-                    return json.loads(raw) if raw else {}
-            except urllib.error.HTTPError as exc:
-                raw = exc.read().decode("utf-8", errors="replace")
-                last_error = raw
-                if exc.code == 429 or 500 <= exc.code < 600:
-                    time.sleep(min(2**attempt, 8))
-                    continue
-                raise TrackingError(f"Notion {method} {path} failed ({exc.code}): {raw}") from exc
-            except urllib.error.URLError as exc:
-                last_error = str(exc)
-                time.sleep(min(2**attempt, 8))
-        raise TrackingError(f"Notion {method} {path} exhausted retries: {last_error}")
-
-    def list_children(self, block_id: str) -> list[dict[str, Any]]:
-        children: list[dict[str, Any]] = []
-        cursor: str | None = None
-        while True:
-            suffix = f"&start_cursor={cursor}" if cursor else ""
-            data = self.request("GET", f"/blocks/{block_id}/children?page_size=100{suffix}")
-            children.extend(data.get("results") or [])
-            if not data.get("has_more"):
-                return children
-            cursor = data.get("next_cursor")
+def tracking_client(token: str, manifest: dict[str, Any]) -> NotionBridgeClient:
+    base = client_from_environment(token=token)
+    notion = manifest.get("notion") or {}
+    parent_page_id = compact_id(str(notion.get("parent_page_id") or ""))
+    workspace_name = str(notion.get("workspace_expected") or "Genome's Notion")
+    if not parent_page_id:
+        raise TrackingError("Notion tracking manifest has no parent_page_id")
+    return NotionBridgeClient(
+        base.command,
+        base.auth,
+        identity={"workspaceName": workspace_name, "parentPageId": parent_page_id},
+        runner=base.runner,
+        timeout=base.timeout,
+    )
 
 
 def rich(text: str, *, bold: bool = False) -> list[dict[str, Any]]:
@@ -205,16 +182,7 @@ def title_from_page(page: dict[str, Any]) -> str:
     return ""
 
 
-def workspace_name(me: dict[str, Any]) -> str:
-    bot = me.get("bot") or {}
-    for key in ("workspace_name", "workspace"):
-        value = bot.get(key)
-        if isinstance(value, str):
-            return value
-    return ""
-
-
-def verify_target(client: NotionClient, manifest: dict[str, Any], automation: dict[str, Any]) -> dict[str, str]:
+def verify_target(client: NotionBridgeClient, manifest: dict[str, Any], automation: dict[str, Any]) -> dict[str, str]:
     notion = manifest.get("notion") or {}
     expected_workspace = str(notion.get("workspace_expected") or "")
     parent_id = compact_id(str(notion.get("parent_page_id") or ""))
@@ -222,19 +190,28 @@ def verify_target(client: NotionClient, manifest: dict[str, Any], automation: di
     expected_parent_title = normalize_title(str(notion.get("parent_title") or "Automations"))
     expected_ancestor_title = normalize_title(str(notion.get("parent_ancestor_title") or "Genome's Agentic OS"))
 
-    me = client.request("GET", "/users/me")
-    actual_workspace = workspace_name(me)
+    identity = client.request(
+        "preflightIdentity",
+        {"workspaceName": expected_workspace, "parentPageId": parent_id},
+    )
+    if not isinstance(identity, dict):
+        raise TrackingError("Refusing Notion write: identity preflight was invalid.")
+    actual_workspace = str(identity.get("workspaceName") or "")
     if actual_workspace and expected_workspace and actual_workspace != expected_workspace:
         raise TrackingError(
             f"Refusing Notion write: expected workspace {expected_workspace}, got {actual_workspace}"
         )
 
-    target = client.request("GET", f"/pages/{page_id}")
+    target = client.request("getPage", {"pageId": page_id})
+    if not isinstance(target, dict):
+        raise TrackingError("Refusing Notion write: target page was not found.")
     target_parent = target.get("parent") or {}
-    if target_parent.get("type") != "page_id" or compact_id(str(target_parent.get("page_id") or "")) != parent_id:
+    if target_parent.get("type") != "page_id" or compact_id(str(target_parent.get("id") or "")) != parent_id:
         raise TrackingError("Refusing Notion write: target page is not a child of the configured Automations page.")
 
-    parent = client.request("GET", f"/pages/{parent_id}")
+    parent = client.request("getPage", {"pageId": parent_id})
+    if not isinstance(parent, dict):
+        raise TrackingError("Refusing Notion write: configured parent page was not found.")
     parent_title = normalize_title(title_from_page(parent))
     if parent_title != expected_parent_title:
         raise TrackingError(f"Refusing Notion write: expected parent title {expected_parent_title}, got {parent_title}")
@@ -242,7 +219,11 @@ def verify_target(client: NotionClient, manifest: dict[str, Any], automation: di
     ancestor_title = ""
     ancestor_parent = parent.get("parent") or {}
     if ancestor_parent.get("type") == "page_id":
-        ancestor = client.request("GET", f"/pages/{compact_id(str(ancestor_parent.get('page_id')))}")
+        ancestor = client.request(
+            "getPage", {"pageId": compact_id(str(ancestor_parent.get("id")))}
+        )
+        if not isinstance(ancestor, dict):
+            raise TrackingError("Refusing Notion write: configured ancestor page was not found.")
         ancestor_title = normalize_title(title_from_page(ancestor))
         if ancestor_title != expected_ancestor_title:
             raise TrackingError(
@@ -354,23 +335,40 @@ def build_blocks(
     return blocks
 
 
-def update_page_icon(client: NotionClient, page_id: str, automation: dict[str, Any]) -> None:
+def update_page_icon(client: NotionBridgeClient, page_id: str, automation: dict[str, Any]) -> None:
     icon = automation.get("icon")
     if not icon:
         return
-    client.request("PATCH", f"/pages/{page_id}", {"icon": {"type": "emoji", "emoji": str(icon)}})
+    client.request(
+        "updatePage",
+        {
+            "pageId": page_id,
+            "input": {"icon": {"type": "emoji", "emoji": str(icon)}},
+        },
+        mutation=True,
+    )
 
 
-def replace_page(client: NotionClient, page_id: str, blocks: list[dict[str, Any]]) -> None:
-    existing = client.list_children(page_id)
+def replace_page(client: NotionBridgeClient, page_id: str, blocks: list[dict[str, Any]]) -> None:
+    result = client.request("listBlockChildren", {"blockId": page_id})
+    if not isinstance(result, dict) or result.get("complete") is not True:
+        raise TrackingError("Notion bridge returned incomplete existing page content")
+    existing = result.get("values") or []
     unsafe = [block for block in existing if block.get("type") not in SAFE_DELETE_BLOCK_TYPES]
     if unsafe:
         labels = ", ".join(f"{block.get('type')}:{block.get('id')}" for block in unsafe[:10])
         raise TrackingError(f"Refusing to replace page with unsafe child blocks: {labels}")
     for block in existing:
-        client.request("PATCH", f"/blocks/{compact_id(str(block.get('id')))}", {"archived": True})
-    for offset in range(0, len(blocks), 100):
-        client.request("PATCH", f"/blocks/{page_id}/children", {"children": blocks[offset : offset + 100]})
+        client.request(
+            "trashBlock",
+            {"blockId": compact_id(str(block.get("id")))},
+            mutation=True,
+        )
+    client.request(
+        "appendBlockChildren",
+        {"blockId": page_id, "children": blocks},
+        mutation=True,
+    )
 
 
 def write_receipt(receipt_dir: Path, automation_id: str, receipt: dict[str, Any]) -> None:
@@ -383,7 +381,8 @@ def write_receipt(receipt_dir: Path, automation_id: str, receipt: dict[str, Any]
 
 _SUMMARY_EPILOG = f"""\
 ENVIRONMENT
-  GENOMES_NOTION_PAT        Notion API token (primary). Required unless --dry-run.
+  GENOMES_NOTION_BRIDGE_COMMAND  Reviewed built Notion bridge argv.
+  GENOMES_NOTION_PAT        Notion token passed only to the bridge child.
   GENOMES_NOTION_CONNECTOR  Alternative Notion token (checked second when PAT is absent).
   AGENTIC_OS_ACTIVE_WORK_ITEM  Informational only; not used by this tool directly.
 
@@ -516,7 +515,7 @@ def main() -> int:
             return 0
 
         token_names = [str(name) for name in (manifest.get("notion") or {}).get("token_env", [])]
-        client = NotionClient(get_notion_token(token_names))
+        client = tracking_client(get_notion_token(token_names), manifest)
         receipt["verification"] = verify_target(client, manifest, automation)
         update_page_icon(client, page_id, automation)
         replace_page(client, page_id, blocks)
@@ -524,7 +523,7 @@ def main() -> int:
         write_receipt(args.receipt_dir, automation_id, receipt)
         print(json.dumps(receipt, indent=2, sort_keys=True))
         return 0
-    except TrackingError as exc:
+    except (TrackingError, NotionBridgeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

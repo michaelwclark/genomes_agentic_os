@@ -1,0 +1,105 @@
+name: Docs
+
+# Builds the Docusaurus site. The build is also the link check: the site sets
+# `onBrokenLinks: 'throw'`, so any unresolvable internal link across `docs/` or
+# `operating-manual/` fails this job.
+#
+# On main the same built site is published to GitHub Pages. `deploy` needs
+# `build`, so a broken internal link fails the build and nothing is published.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "operating-manual/**"
+      - "website/**"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # A superseded pull-request build is worth cancelling. A main run may be
+  # holding a Pages deployment, so it is left to finish and the next push queues
+  # behind it rather than interrupting a half-applied publish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Docs link policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: docs-scope
+        name: Detect documentation-impacting pull-request changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed_files="${RUNNER_TEMP}/age-129-changed-files"
+          git diff --name-only --no-renames "${BASE_SHA}" "${HEAD_SHA}" > "${changed_files}"
+          if grep -Eq '^(docs/|operating-manual/|website/|\.github/workflows/docs\.yml$)' "${changed_files}"; then
+            echo "required=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "required=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Record successful non-documentation policy result
+        if: github.event_name == 'pull_request' && steps.docs-scope.outputs.required != 'true'
+        run: echo "No documentation-impacting paths changed; the stable docs policy check passes."
+      - uses: actions/setup-node@v6
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install dependencies
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
+        run: npm ci
+      - name: Typecheck config and components
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
+        run: npm run typecheck
+      - name: Build site and check every internal link
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
+        run: npm run build
+      - name: Package the built site for Pages
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          # `path` is an action input, not a `run:` step, so
+          # `defaults.run.working-directory` does not apply to it. It resolves
+          # from the repository root and must name `website/build`.
+          path: website/build
+
+  deploy:
+    # Publishing is main-only: pull requests get the build and the link check,
+    # never a deployment.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level permissions replace the workflow default rather than merging
+    # with it. `deploy-pages` works entirely through the API and never checks
+    # the repository out, so this job gets no `contents` access at all.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Requires Pages to be enabled once with "GitHub Actions" as the source —
+      # see "Publishing" in website/README.md. The `enablement` input on
+      # actions/configure-pages cannot do it from here: it rejects GITHUB_TOKEN
+      # and needs a PAT or GitHub App credential, which this workflow
+      # deliberately does not carry.
+      - id: deployment
+        uses: actions/deploy-pages@v5

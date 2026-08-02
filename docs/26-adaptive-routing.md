@@ -48,7 +48,7 @@ Keep the three configuration surfaces distinct.
 | Adaptive policy YAML | Mode, policy/versioned catalog, tier routes, capability/customer-safety constraints, and host → project → workflow → customer policy layers. | Secrets, provider credentials, customer content, or executable workflow instructions. |
 | Skills and workflows | Owner identity, task procedure, required tools, validations, approvals, and the actual human/executor runbook. | A second model catalog or a weaker replacement for policy safety floors. |
 
-Start from [`templates/runtime/adaptive-router.yml`](../templates/runtime/adaptive-router.yml).
+Start from [`templates/runtime/adaptive-router.yml`](https://github.com/michaelwclark/genomes_agentic_os/blob/main/templates/runtime/adaptive-router.yml).
 Its policy precedence is `host < project < workflow < customer < request`.
 The request layer is per-run intent only: it can strengthen a route only if the
 effective policy allows the requested model, and it can never lower a derived

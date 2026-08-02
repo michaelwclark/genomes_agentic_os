@@ -14,7 +14,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Server-side half of Conventional Commits enforcement. The commit-msg hook
+  # can be skipped with `git commit --no-verify`; this cannot.
+  #
+  # Pull requests only, and scoped to the commits the pull request actually
+  # adds. Running over pushed history would fail on legacy commits predating
+  # the convention. Merge commits are exempt via commitizen's default
+  # allowed_prefixes.
+  commit-messages:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A rev-range needs both endpoints present; the default depth-1
+          # checkout has neither.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - name: Sync locked repository development toolchain
+        run: uv sync --locked --extra dev
+      - name: Check every commit added by this pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: uv run --no-sync cz check --rev-range "${BASE_SHA}..${HEAD_SHA}"
+
   python:
+    name: Python suite and packaging
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -28,7 +59,14 @@ jobs:
       - name: Validate release contract
         run: python scripts/release/build-execution-fabric-release.py --validate-only
       - name: Run full Python suite
-        run: python -m pytest tests/ -q
+        run: python -m pytest tests/ -q --cov=genomes_agentic_os --cov-branch --cov-report=term --cov-report=json:coverage.json --cov-fail-under=80
+      - name: Upload Python coverage evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: python-coverage
+          path: coverage.json
+          if-no-files-found: error
       - name: Validate published-style wheel and source distribution
         run: |
           python scripts/qa/validate-python-distributions.py
@@ -140,7 +178,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e '.[dev]'
       - uses: azure/setup-helm@v4
         with:
-          version: v3.17.3
+          version: v3.21.3
       - name: Validate deployment and installer assets
         run: python -m pytest -q tests/test_execution_fabric_deployment_assets.py tests/test_execution_fabric_release.py
       - name: Lint Helm worker chart

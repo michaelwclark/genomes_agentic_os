@@ -301,7 +301,10 @@ def register(subparsers) -> None:
     reconcile.add_argument(
         "--evidence",
         required=True,
-        help="auto-dev-historical-delivery-reconciliation/v1 JSON with the complete missing delivery ledger.",
+        help=(
+            "Path to a file holding auto-dev-historical-delivery-reconciliation/v1 "
+            "JSON with the complete missing delivery ledger. Inline JSON is not accepted."
+        ),
     )
     reconcile.add_argument("--idempotency-key", required=True)
     reconcile.add_argument("--apply", action="store_true")
@@ -364,8 +367,9 @@ def register(subparsers) -> None:
         "--evidence",
         required=True,
         help=(
-            "auto-dev-stage-evidence/v1 JSON for a standalone stage, or "
-            "auto-dev-health-evidence/v1 JSON for Health."
+            "Path to a file holding auto-dev-stage-evidence/v1 JSON for a "
+            "standalone stage, or auto-dev-health-evidence/v1 JSON for Health. "
+            "Inline JSON is not accepted."
         ),
     )
     record.add_argument("--idempotency-key", required=True)

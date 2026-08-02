@@ -132,19 +132,19 @@ created: .../agentic_os/harness/RULES.md
 created: .../agentic_os/harness/TOOLS.md
 created: .../agentic_os/harness/registries/capabilities.yml
 created: .../agentic_os/harness/shared_factory
-created: .../agentic_os/personal
-created: .../agentic_os/personal/00-control-plane
-created: .../agentic_os/personal/01-inbox
+created: .../agentic_os/domains
+created: .../agentic_os/domains/personal
+created: .../agentic_os/domains/personal/00-control-plane
+created: .../agentic_os/domains/personal/01-inbox
 ...
-created: .../agentic_os/work
-created: .../agentic_os/archive
+created: .../agentic_os/domains/work
 ```
 
 The root-level `AGENTS.md`, `ROUTER.md`, `CONTEXT.md`, `RULES.md`, and `TOOLS.md`
 that agents actually read live under `harness/` — that directory is the OS
 brain. `shared_factory` is not a sibling domain; it is a fixed subdirectory of
 `harness/` that holds shared patterns, templates, and cross-domain knowledge.
-`personal`, `work`, and `archive` are the three default domains; add more with
+`personal` and `work` are the two default domains; add more with
 `agentic-os domain create <name>`.
 
 V1's full capability surface:

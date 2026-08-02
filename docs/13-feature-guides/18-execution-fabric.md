@@ -281,7 +281,14 @@ their durable projection through the supported CLI:
 agentic-os runtime status --root ~/agentic_os --json
 ```
 
-The status retains the existing `effects`, `healing`, and `alarms` fields.
+The status retains the existing `effects`, `healing`, and `alarms` fields and
+adds `roleHealth`. Each API, observer, healer, and scheduler row reports the
+database-approved and locally applied policy fingerprints, role instance,
+last successful tick, last error, consecutive failures, and evaluated health.
+Sustained scheduled-tick failure is therefore degraded or unhealthy even when
+the process itself still exists. A first tick has a bounded startup grace, and
+failure history survives instance replacement until a successful tick clears
+it.
 PostgreSQL also exposes a bounded reliability snapshot to authenticated
 operators; Command Center does not infer healer health from the API process.
 
@@ -380,7 +387,11 @@ do not use that raw apply as the complete operation. Install the reviewed file
 on both hosts, wait for both candidate reporters to publish its digest, and run
 `installers/execution-fabric/bin/rotate-policy.sh OLD_SHA NEW_SHA` on the
 witnessed leader. It coordinates the PostgreSQL authority and independent
-witness at the exact leader and epoch. The API rejects every reload without
+witness at the exact leader and epoch. Policy files are mounted as one
+read-only directory bundle so replacement cannot strand a role on a prior
+single-file inode. Governed rotation force-recreates all long-lived policy
+roles, requires exact candidate-fingerprint readback before witness commit,
+and requires a fresh healthy tick from every role afterward. The API rejects every reload without
 the signed, expiring witness preparation; signed leadership proofs bind the
 policy digest and fence the handoff immediately. The preparation is
 discoverable across hosts, so standby promotion can finish a

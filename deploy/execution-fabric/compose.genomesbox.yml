@@ -92,7 +92,7 @@ services:
       FABRIC_POSTGRES_USER: ${FABRIC_POSTGRES_USER:-fabric}
       FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
       FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
-      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/policy-bundle/config/execution-fabric.yml
       FABRIC_WITNESS_MODE: ${FABRIC_WITNESS_MODE:-independent}
       FABRIC_LEADERSHIP_API_BASE: ${FABRIC_LEADERSHIP_CONTAINER_API_BASE:-${FABRIC_LEADERSHIP_API_BASE:?set witness API}}
       FABRIC_LEADERSHIP_CANDIDATE_TOKEN_FILE: /run/secrets/fabric-leadership-candidate-token
@@ -102,7 +102,7 @@ services:
       - postgres-password
       - fabric-leadership-candidate-token
     volumes:
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config:/etc/agentic-os/policy-bundle/config:ro
       - ./scripts/candidate-reporter.mjs:/app/dist/candidate-reporter.mjs:ro
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
     networks: [fabric-private, fabric-egress]
@@ -234,8 +234,11 @@ services:
       FABRIC_VALKEY_USER: fabric
       FABRIC_VALKEY_PASSWORD_FILE: /run/secrets/valkey-app-password
       FABRIC_QUEUE_PREFIX: ${FABRIC_QUEUE_PREFIX:-agentic-os:fabric}
-      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
-      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
+      FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD: ${FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD:-3}
+      FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS: ${FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS:-60}
+      FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/policy-bundle/config/execution-fabric.yml
+      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/policy-bundle/schemas/execution-fabric.schema.json
       FABRIC_API_TOKEN_FILE: /run/secrets/fabric-api-token
       FABRIC_SUBMIT_TOKEN_FILE: /run/secrets/fabric-submit-token
       FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /run/secrets/fabric-worker-bootstrap-credentials
@@ -278,8 +281,8 @@ services:
       - fabric-leadership-public-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config:/etc/agentic-os/policy-bundle/config:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas:/etc/agentic-os/policy-bundle/schemas:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
     ports:
       - "${FABRIC_TAILSCALE_IP:?set the genomesbox Tailscale IP}:3180:3180"
@@ -309,8 +312,8 @@ services:
       FABRIC_POSTGRES_USER: ${FABRIC_POSTGRES_USER:-fabric}
       FABRIC_POSTGRES_DB: ${FABRIC_POSTGRES_DB:-execution_fabric}
       FABRIC_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
-      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
-      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/policy-bundle/config/execution-fabric.yml
+      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/policy-bundle/schemas/execution-fabric.schema.json
       FABRIC_ARTIFACT_ENDPOINT: http://minio:9000
       FABRIC_ARTIFACT_REGION: ${FABRIC_ARTIFACT_REGION:-us-east-1}
       FABRIC_ARTIFACT_BUCKET: ${FABRIC_ARTIFACT_BUCKET:-execution-fabric-artifacts}
@@ -318,6 +321,9 @@ services:
       FABRIC_ARTIFACT_SECRET_KEY_FILE: /run/secrets/artifact-observer-secret-key
       FABRIC_CLUSTER_ID: ${FABRIC_CLUSTER_ID:?set fabric cluster id}
       FABRIC_OBSERVER_INTERVAL_MS: ${FABRIC_OBSERVER_INTERVAL_MS:-15000}
+      FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD: ${FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD:-3}
+      FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS: ${FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS:-60}
+      FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}
       FABRIC_LOG_LEVEL: info
     secrets:
       - postgres-password
@@ -325,15 +331,16 @@ services:
       - artifact-observer-secret-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config:/etc/agentic-os/policy-bundle/config:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas:/etc/agentic-os/policy-bundle/schemas:ro
     networks: [fabric-private]
     read_only: true
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD-SHELL", "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js observer"]
+      start_period: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s
 
   healer:
     image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}
@@ -356,8 +363,8 @@ services:
       FABRIC_VALKEY_USER: fabric
       FABRIC_VALKEY_PASSWORD_FILE: /run/secrets/valkey-app-password
       FABRIC_QUEUE_PREFIX: ${FABRIC_QUEUE_PREFIX:-agentic-os:fabric}
-      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/execution-fabric.yml
-      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/schemas/execution-fabric.schema.json
+      FABRIC_POLICY_CONFIG_FILE: /etc/agentic-os/policy-bundle/config/execution-fabric.yml
+      FABRIC_POLICY_SCHEMA_FILE: /etc/agentic-os/policy-bundle/schemas/execution-fabric.schema.json
       FABRIC_API_TOKEN_FILE: /run/secrets/fabric-api-token
       FABRIC_SUBMIT_TOKEN_FILE: /run/secrets/fabric-submit-token
       FABRIC_WORKER_BOOTSTRAP_CREDENTIALS_FILE: /run/secrets/fabric-worker-bootstrap-credentials
@@ -380,6 +387,9 @@ services:
       FABRIC_HEALER_COOLDOWN_SECONDS: ${FABRIC_HEALER_COOLDOWN_SECONDS:-60}
       FABRIC_HEALER_MAX_REPAIRS_PER_HOUR: ${FABRIC_HEALER_MAX_REPAIRS_PER_HOUR:-30}
       FABRIC_HEALER_ALLOW_ACTIONS: ${FABRIC_HEALER_ALLOW_ACTIONS:-reconcile_expired_attempts,reconstruct_delivery,recover_effect_claim}
+      FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD: ${FABRIC_ROLE_HEALTH_FAILURE_THRESHOLD:-3}
+      FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS: ${FABRIC_ROLE_HEALTH_MAX_AGE_SECONDS:-60}
+      FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}
       FABRIC_LOG_LEVEL: info
     secrets:
       - postgres-password
@@ -398,8 +408,8 @@ services:
       - fabric-leadership-public-key
     volumes:
       - ./scripts/datastore-env-entrypoint.sh:/usr/local/bin/fabric-datastore-env:ro
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config/execution-fabric.yml:/etc/agentic-os/execution-fabric.yml:ro
-      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas/execution-fabric.schema.json:/etc/agentic-os/schemas/execution-fabric.schema.json:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/config:/etc/agentic-os/policy-bundle/config:ro
+      - ${FABRIC_OS_ROOT:?set canonical Agentic OS root}/harness/schemas:/etc/agentic-os/policy-bundle/schemas:ro
       - ${FABRIC_RUNTIME_STATE_DIR:?set runtime state directory}:/var/lib/execution-fabric-ha
     networks: [fabric-private, fabric-egress]
     read_only: true
@@ -407,7 +417,8 @@ services:
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD-SHELL", "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js healer"]
+      start_period: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s
 
   scheduler:
     extends:
@@ -417,6 +428,9 @@ services:
     environment:
       FABRIC_SCHEDULER_INTERVAL_MS: ${FABRIC_SCHEDULER_INTERVAL_MS:-15000}
       FABRIC_SCHEDULER_BATCH_SIZE: ${FABRIC_SCHEDULER_BATCH_SIZE:-20}
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/local/bin/fabric-datastore-env node dist/src/role-healthcheck.js scheduler"]
+      start_period: ${FABRIC_ROLE_HEALTH_STARTUP_GRACE_SECONDS:-90}s
 
   gateway:
     image: ${FABRIC_CONTROL_PLANE_IMAGE:?set an immutable control-plane image digest}

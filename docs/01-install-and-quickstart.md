@@ -154,21 +154,20 @@ created: .../agentic_os/harness/TOOLS.md
 created: .../agentic_os/harness/config.toml
 created: .../agentic_os/harness/shared_factory
 ...
-created: .../agentic_os/personal
-created: .../agentic_os/personal/README.md
-created: .../agentic_os/personal/AGENTS.md
-created: .../agentic_os/personal/config.toml
+created: .../agentic_os/domains
+created: .../agentic_os/domains/personal
+created: .../agentic_os/domains/personal/README.md
+created: .../agentic_os/domains/personal/AGENTS.md
+created: .../agentic_os/domains/personal/config.toml
 ...
-created: .../agentic_os/work
-...
-created: .../agentic_os/archive
+created: .../agentic_os/domains/work
 ...
 ```
 
 The context files an agent actually reads (`AGENTS.md`, `ROUTER.md`,
 `CONTEXT.md`, `RULES.md`, `TOOLS.md`) live under `harness/`, not at the bare
-OS root — `harness/` is the OS brain. `personal`, `work`, and `archive` are
-the three default domains.
+OS root — `harness/` is the OS brain. `personal` and `work` are the two default
+domains under `domains/`.
 
 `init` is **idempotent** — re-running it on an existing root is safe; it only
 adds what is missing.

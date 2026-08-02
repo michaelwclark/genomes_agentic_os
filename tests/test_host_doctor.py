@@ -65,13 +65,66 @@ def test_report_drop_uses_fixed_scp_command(tmp_path: Path) -> None:
 def test_notion_projection_requires_and_verifies_workspace(monkeypatch) -> None:
     report = {"api_version": "auto-doctor-report/v1", "host": "testbox"}
     with pytest.raises(ValueError, match="verified_workspace is required"):
-        project_host_report(report, "page-id", verified_workspace="")
+        project_host_report(
+            report,
+            "page-id",
+            verified_workspace="",
+            approved_parent_page_id="approved-root",
+        )
+    with pytest.raises(ValueError, match="approved_parent_page_id is required"):
+        project_host_report(
+            report,
+            "page-id",
+            verified_workspace="Expected Workspace",
+            approved_parent_page_id="",
+        )
     monkeypatch.setattr(
         "genomes_agentic_os.host_doctor.notion_api.get_bot_workspace",
-        lambda token_env: "Different Workspace",
+        lambda token_env, **_: "Different Workspace",
     )
     with pytest.raises(RuntimeError, match="workspace mismatch"):
-        project_host_report(report, "page-id", verified_workspace="Expected Workspace")
+        project_host_report(
+            report,
+            "page-id",
+            verified_workspace="Expected Workspace",
+            approved_parent_page_id="approved-root",
+        )
+
+
+def test_notion_projection_binds_workspace_and_mutation_to_approved_parent(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def workspace(token_env, **kwargs):
+        seen["workspace"] = (token_env, kwargs)
+        return "Genome's Notion"
+
+    def replace(page_id, blocks, token_env, **kwargs):
+        seen["replace"] = (page_id, token_env, kwargs, len(blocks))
+
+    monkeypatch.setattr(
+        "genomes_agentic_os.host_doctor.notion_api.get_bot_workspace", workspace
+    )
+    monkeypatch.setattr(
+        "genomes_agentic_os.host_doctor.notion_api.replace_block_children", replace
+    )
+    monkeypatch.setattr(
+        "genomes_agentic_os.host_doctor.notion_blocks", lambda report: [{"type": "paragraph"}]
+    )
+    result = project_host_report(
+        {"api_version": "auto-doctor-report/v1", "host": "testbox"},
+        "host-page",
+        verified_workspace="Genome's Notion",
+        approved_parent_page_id="approved-root",
+    )
+
+    assert seen["workspace"] == (
+        "NOTION_TOKEN",
+        {"parent_page_id": "approved-root"},
+    )
+    assert seen["replace"][2] == {"approved_parent_page_id": "approved-root"}
+    assert result["approved_parent_page_id"] == "approved-root"
 
 
 def _policy(path: Path, body: str) -> None:
@@ -131,6 +184,7 @@ schedule:
   local_times: ['06:00', '14:00', '22:00']
 notion_workspace: Genome's Notion
 notion_page_id: abc-123
+notion_parent_page_id: parent-456
 notion_token_env: TEST_NOTION_TOKEN
 ---
 # Testbox
@@ -139,6 +193,7 @@ notion_token_env: TEST_NOTION_TOKEN
     assert host_projection(load_host_policies(config, "testbox")) == {
         "workspace": "Genome's Notion",
         "page_id": "abc123",
+        "parent_page_id": "parent456",
         "token_env": "TEST_NOTION_TOKEN",
     }
     monkeypatch.setattr("genomes_agentic_os.host_doctor.collect_metrics", lambda runner: ({

@@ -52,8 +52,10 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
 
-`'.[dev]'` adds pytest for local test development; drop it for a plain
-runtime install. The installed command is `agentic-os` (short alias: `aos`).
+`'.[dev]'` adds pytest and the branch-coverage toolchain for local test
+development; drop it for a plain runtime install. The installed command is
+`agentic-os` (short alias: `aos`). The exact coverage gate and floor policy are
+documented in [`docs/43-python-coverage-gate.md`](docs/43-python-coverage-gate.md).
 
 Smoke-test against a temporary directory before touching a real OS root. This
 exact sequence — init, then validate, then install a Codex config layer, then

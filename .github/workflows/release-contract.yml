@@ -1,0 +1,160 @@
+name: Reusable release contract
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Semantic version without the v prefix.
+        required: true
+        type: string
+      tag:
+        description: Optional explicit v{version} assertion; empty derives it.
+        required: false
+        default: ""
+        type: string
+      release_ref:
+        description: Provider branch from which target_sha must be reachable.
+        required: false
+        default: main
+        type: string
+      target_sha:
+        description: Exact commit SHA; empty resolves to the caller workflow SHA.
+        required: false
+        default: ""
+        type: string
+      tag_mode:
+        description: Verify an existing tag or create a missing tag.
+        required: true
+        type: string
+      artifact_name:
+        description: Workflow artifact containing release assets; empty means no assets.
+        required: false
+        default: ""
+        type: string
+      artifact_run_id:
+        description: Source run for a cross-run artifact; empty resolves to the current run.
+        required: false
+        default: ""
+        type: string
+      asset_manifest:
+        description: Newline-separated expected release asset filenames.
+        required: false
+        default: ""
+        type: string
+      notes_file:
+        description: Optional release-notes path inside the downloaded artifact.
+        required: false
+        default: ""
+        type: string
+      generate_notes:
+        description: Generate provider notes when notes_file is empty.
+        required: false
+        default: true
+        type: boolean
+      prerelease:
+        description: Mark a newly created release as a prerelease.
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: Execute every read and guard without creating provider state.
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      tag:
+        description: Validated release tag.
+        value: ${{ jobs.contract.outputs.tag }}
+      version:
+        description: Validated semantic version.
+        value: ${{ jobs.contract.outputs.version }}
+      target_sha:
+        description: Provider-validated target commit SHA.
+        value: ${{ jobs.contract.outputs.target_sha }}
+      release_id:
+        description: Existing or newly created GitHub release ID.
+        value: ${{ jobs.contract.outputs.release_id }}
+      release_url:
+        description: Existing or newly created GitHub release URL.
+        value: ${{ jobs.contract.outputs.release_url }}
+      created:
+        description: Whether this run created the GitHub release.
+        value: ${{ jobs.contract.outputs.created }}
+      repaired:
+        description: Whether this run repaired an existing release with missing assets.
+        value: ${{ jobs.contract.outputs.repaired }}
+      assets_uploaded:
+        description: Number of assets uploaded by this run.
+        value: ${{ jobs.contract.outputs.assets_uploaded }}
+      assets_receipt:
+        description: JSON readback of every asset name, byte size, and SHA-256 digest.
+        value: ${{ jobs.contract.outputs.assets_receipt }}
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  contract:
+    name: Gate, tag, release, and read back
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: release-${{ github.repository }}-${{ inputs.tag || format('v{0}', inputs.version) }}
+      cancel-in-progress: false
+    outputs:
+      tag: ${{ steps.contract.outputs.tag }}
+      version: ${{ steps.contract.outputs.version }}
+      target_sha: ${{ steps.contract.outputs.target_sha }}
+      release_id: ${{ steps.contract.outputs.release_id }}
+      release_url: ${{ steps.contract.outputs.release_url }}
+      created: ${{ steps.contract.outputs.created }}
+      repaired: ${{ steps.contract.outputs.repaired }}
+      assets_uploaded: ${{ steps.contract.outputs.assets_uploaded }}
+      assets_receipt: ${{ steps.contract.outputs.assets_receipt }}
+    steps:
+      - name: Check out the exact reusable-workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # JSON round-trip preserves these reusable-workflow fields while
+          # remaining compatible with actionlint versions predating them.
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          path: .release-contract-host
+          persist-credentials: false
+
+      - name: Download a current-run release artifact
+        if: inputs.artifact_name != '' && (inputs.artifact_run_id == '' || inputs.artifact_run_id == format('{0}', github.run_id))
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-contract-assets
+
+      - name: Download a cross-run release artifact
+        if: inputs.artifact_name != '' && inputs.artifact_run_id != '' && inputs.artifact_run_id != format('{0}', github.run_id)
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-contract-assets
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifact_run_id }}
+
+      - id: contract
+        name: Enforce the release contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CONTRACT_REPOSITORY: ${{ github.repository }}
+          RELEASE_CONTRACT_VERSION: ${{ inputs.version }}
+          RELEASE_CONTRACT_TAG: ${{ inputs.tag }}
+          RELEASE_CONTRACT_RELEASE_REF: ${{ inputs.release_ref }}
+          RELEASE_CONTRACT_TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+          RELEASE_CONTRACT_TAG_MODE: ${{ inputs.tag_mode }}
+          RELEASE_CONTRACT_ARTIFACT_DIR: ${{ github.workspace }}/release-contract-assets
+          RELEASE_CONTRACT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+          RELEASE_CONTRACT_ASSET_MANIFEST: ${{ inputs.asset_manifest }}
+          RELEASE_CONTRACT_NOTES_FILE: ${{ inputs.notes_file }}
+          RELEASE_CONTRACT_GENERATE_NOTES: ${{ inputs.generate_notes }}
+          RELEASE_CONTRACT_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_CONTRACT_DRY_RUN: ${{ inputs.dry_run }}
+        run: python .release-contract-host/scripts/release/release-contract.py

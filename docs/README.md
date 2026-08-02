@@ -9,10 +9,17 @@ mechanical work, and one agent reads the right files at the right moment.
 
 > **The promise:** stop rebuilding operating context from scratch in every chat.
 
-**Test suite:** `.venv/bin/python -m pytest -q` is the source of truth for
-current pass/fail status — this handbook does not track a frozen count because
-it goes stale the moment a test is added. Re-validate the live CLI surface with
-`bash docs/architecture/tools/validate-cli.sh`.
+> **New to this?** This handbook assumes you already know the vocabulary. If you
+> do not, start with [**Start here**](start/index.md) — a plain-English
+> introduction covering what the system is for, the seven core ideas, and a
+> [glossary](start/glossary.md) of every internal term. Ten pages, no prior
+> knowledge assumed.
+
+**Test suite:** the Python 3.14 branch-coverage gate is the source of truth for
+current pass/fail status. See [43 · Python Coverage Gate](43-python-coverage-gate.md)
+for the exact local command and monotonic floor rule. This handbook does not
+track a frozen test count because it goes stale the moment a test is added.
+Re-validate the live CLI surface with `bash docs/architecture/tools/validate-cli.sh`.
 
 **Canonical doc split:** Use this `docs/` handbook when you are evaluating,
 installing, or extending the source package and need architecture, command
@@ -110,6 +117,8 @@ vs Codex"** callout for its task; the full mechanics live on
 | [29 · Versioned Object Library](29-versioned-object-library.md) | Canonical source repository, manifest identities, exact-artifact release lifecycle, disposable installed projection, atomic install/readback, and compatibility boundaries. |
 | [40 · Auto-Dev Everything for Maintainers](40-auto-dev-everything-maintainers.md) | Linear-first delivery, canonical work items, reinstall-safe QA, optional Claude review, gated merge, release, and documentation projection. |
 | [42 · Auto-Dev Program](42-auto-dev-program.md) | One polymorphic SDLC family, five nested root/domain/project/invocation policy planes, artifact rendering/readback, investigation routing, development delivery, receipts, and retirement map. |
+| [43 · Python Coverage Gate](43-python-coverage-gate.md) | Python 3.14 branch-coverage enforcement, durable CI evidence, and the monotonic floor rule. |
+| [Release contract](release-contract.md) | Canonical branch roles, commit grammar, version derivation, release artifacts, publish targets, idempotency, repair, and rollback policy for the repository family. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration
 changes, tickets, or backlog items. `/add-bug`, `/new-feature`, `/add-feature`,
@@ -120,16 +129,16 @@ compatibility adapters to the same Spec Engine.
 
 ## Supplementary & deep references
 
-- **[Feature guides](13-feature-guides/)** — deeper, feature-by-feature implementation guides and gap maps.
-- **[Tutorials](tutorials/)** — worked, scenario-based walkthroughs.
-- **[Examples](examples/)** — small example domain OS trees used for exploration
+- **[Feature guides](13-feature-guides/README.md)** — deeper, feature-by-feature implementation guides and gap maps.
+- **[Tutorials](tutorials/README.md)** — worked, scenario-based walkthroughs.
+- **[Examples](examples/README.md)** — small example domain OS trees used for exploration
   and documentation, not runtime templates.
 - **[Architecture](architecture/system-architecture.md)** — the agent-facing architecture map, command reference, harness-modes, the system-wide [tool catalog](architecture/tool-catalog.md), and the re-runnable validation + diagram tools under `architecture/tools/`.
-- **[Command Center app docs](../apps/agentic-os-gui/docs/ARCHITECTURE.md)** — the desktop app's own architecture, feature playbook, design system, data/events, ADRs, and roadmap (see also page [29 · AgenticOSGui](29-agentic-os-gui.md)).
-- **[Design notes](design-notes/)** — in-progress design records for surfaces still taking shape (config.toml, lifecycle, port assessments).
+- **[Command Center app docs](https://github.com/michaelwclark/genomes_agentic_os/blob/main/apps/agentic-os-gui/docs/ARCHITECTURE.md)** — the desktop app's own architecture, feature playbook, design system, data/events, ADRs, and roadmap (see also page [29 · AgenticOSGui](29-agentic-os-gui.md)).
+- **[Design notes](design-notes/README.md)** — in-progress design records for surfaces still taking shape (config.toml, lifecycle, port assessments).
 
 ## About the diagrams
 
 Diagrams are authored as Mermaid `.mmd` sources (gitignored, per repo policy) and
-committed as rendered **PNG** under [`diagrams/`](diagrams/). Regenerate after any
+committed as rendered **PNG** under [`diagrams/`](diagrams/README.md). Regenerate after any
 edit with `bash docs/architecture/tools/render-diagrams.sh`.

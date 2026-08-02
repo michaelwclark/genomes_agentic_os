@@ -23,6 +23,20 @@ _CONTRACT_DIR = Path(__file__).resolve().parent
 EXCLUDED: dict[str, str] = {
     "setuptools": "build backend tooling (build-system.requires); never imported at runtime",
     "wheel": "build tooling (build-system.requires); never imported at runtime",
+    "commitizen": (
+        "commit tooling invoked as the `cz` executable by the commit-msg hook and CI; "
+        "never imported. Its configuration contract is covered by "
+        "tests/test_commit_enforcement.py"
+    ),
+    "pre_commit": (
+        "hook runner invoked as the `pre-commit` executable; never imported. Its "
+        "configuration contract is covered by tests/test_commit_enforcement.py"
+    ),
+    "pytest_cov": (
+        "test-only pytest plugin invoked through command-line coverage options; never "
+        "imported by the product. Its dependency and CI wiring are covered by "
+        "tests/test_coverage_gate.py"
+    ),
 }
 
 

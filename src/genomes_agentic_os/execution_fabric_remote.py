@@ -2637,5 +2637,6 @@ def build_remote_runtime_snapshot(
         "alarms": normalized_alarms,
         "config": status_result.get("config") or {},
         "effects": status_result.get("effects") or {},
+        "role_health": list(status_result.get("roleHealth") or []),
         "recent_run_reports": recent_run_reports,
     }

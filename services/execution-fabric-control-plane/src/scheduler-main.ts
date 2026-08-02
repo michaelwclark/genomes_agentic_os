@@ -1,5 +1,11 @@
 import "dotenv/config";
-import { boundedIntegerEnvironment, runPeriodicRole } from "./roles.js";
+import {
+  boundedIntegerEnvironment,
+  PostgresRoleHealthStore,
+  recordRoleFailure,
+  runPeriodicRole,
+  validateRoleHealthInterval,
+} from "./roles.js";
 import { buildFabricRuntime } from "./runtime.js";
 
 const runtime = await buildFabricRuntime();
@@ -11,11 +17,17 @@ const intervalMs = boundedIntegerEnvironment(
   1000,
   300000,
 );
+validateRoleHealthInterval(intervalMs);
 const batchSize = boundedIntegerEnvironment(
   "FABRIC_SCHEDULER_BATCH_SIZE",
   20,
   1,
   500,
+);
+const roleHealth = new PostgresRoleHealthStore(
+  runtime.pool,
+  runtime.config.hostId,
+  "scheduler",
 );
 let stopping = false;
 
@@ -31,8 +43,40 @@ async function shutdown(): Promise<void> {
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 
-await runtime.leadership.start();
-await runtime.fabric.initialize();
+await roleHealth.start(runtime.policy.snapshot().appliedFingerprint);
+try {
+  await runtime.leadership.start();
+  await runtime.fabric.initialize();
+} catch (error) {
+  let approved: string | null = null;
+  try {
+    approved = (await runtime.ledger.systemSnapshot()).databasePolicyFingerprint;
+  } catch {
+    // The primary startup error is retained below.
+  }
+  try {
+    await recordRoleFailure({
+      store: roleHealth,
+      error,
+      approvedPolicyFingerprint: approved,
+      appliedPolicyFingerprint: runtime.policy.snapshot().appliedFingerprint,
+      onReportingError: (healthError) => {
+        process.stderr.write(`${JSON.stringify({
+          role: "scheduler",
+          event: "startup_role_health_write_failed",
+          error: healthError instanceof Error ? healthError.message : "unknown role health failure",
+        })}\n`);
+      },
+    });
+  } catch (healthError) {
+    process.stderr.write(`${JSON.stringify({
+      role: "scheduler",
+      event: "startup_role_health_fenced",
+      error: healthError instanceof Error ? healthError.message : "role health instance replaced",
+    })}\n`);
+  }
+  throw error;
+}
 await runPeriodicRole({
   role: "scheduler",
   intervalMs,
@@ -40,7 +84,12 @@ await runPeriodicRole({
   once: process.env.FABRIC_RUN_ONCE === "1",
   tick: async () => {
     await runtime.fabric.synchronizePolicy();
+    const state = await runtime.ledger.systemSnapshot();
     const receipt = await scheduler.runOnce(batchSize);
+    await roleHealth.success(
+      state.databasePolicyFingerprint,
+      runtime.policy.snapshot().appliedFingerprint,
+    );
     process.stdout.write(
       `${JSON.stringify({
         role: "scheduler",
@@ -49,7 +98,26 @@ await runPeriodicRole({
       })}\n`,
     );
   },
-  onError: (error) => {
+  onError: async (error) => {
+    let approved: string | null = null;
+    try {
+      approved = (await runtime.ledger.systemSnapshot()).databasePolicyFingerprint;
+    } catch {
+      // The tick error remains the durable role error.
+    }
+    await recordRoleFailure({
+      store: roleHealth,
+      error,
+      approvedPolicyFingerprint: approved,
+      appliedPolicyFingerprint: runtime.policy.snapshot().appliedFingerprint,
+      onReportingError: (healthError) => {
+        process.stderr.write(`${JSON.stringify({
+          role: "scheduler",
+          event: "role_health_write_failed",
+          error: healthError instanceof Error ? healthError.message : "unknown role health failure",
+        })}\n`);
+      },
+    });
     process.stderr.write(
       `${JSON.stringify({
         role: "scheduler",

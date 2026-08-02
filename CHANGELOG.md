@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [0.5.7] - 2026-07-29
+
+### Added
+- Install one reusable, additive-only release contract with immutable tag/SHA
+  verification and complete release-asset identity readback.
+- Publish one canonical release policy for Agentic OS and the adopting Harness,
+  Library, and Brain repository roles.
+
+### Fixed
+- Require execution-fabric repair roles to prove active promoted-role health and
+  preserve convergence, recovery, and failure visibility before reporting a
+  healthy state.
+- Reject prerelease and build-metadata versions in the current Agentic OS
+  adapter before artifact builds, avoiding late Python filename-normalization
+  mismatches.
+
 ## [0.5.6] - 2026-07-26
 
 ### Changed

@@ -205,13 +205,16 @@ witness. Candidate reports keep the currently applied PostgreSQL digest
 separate from the staged disk-policy digest, so staging never makes ordinary
 promotion eligibility lie. The control plane accepts no reload without that
 signed preparation. It then transactionally rotates PostgreSQL while holding
-the current leadership lease. Before the witness can commit, a fresh,
+the current leadership lease. `converge-policy-roles.sh --recreate` then
+force-recreates the complete API/observer/healer/scheduler cohort and requires
+exact per-role candidate-fingerprint readback. Before the witness can commit, a fresh,
 non-leader candidate report must prove that a healthy streaming standby has
 replayed the PostgreSQL change and observes the candidate digest on the
 prepared timeline and upstream system. Only then can the witness consume the
 preparation at the exact leader and epoch. Signed leadership proofs carry the
 policy digest, so every mutation is immediately fenced during the short
-handoff. The command waits for active-authority readback and writes
+handoff. After witness commit, `converge-policy-roles.sh --verify` requires
+healthy fresh ticks from all four roles. The command then writes
 `policy-rotation-<uuid>.receipt.json`.
 
 If the process or network fails after the database commit, rerun the identical

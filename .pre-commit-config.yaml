@@ -1,0 +1,17 @@
+# Local Conventional Commits enforcement.
+#
+# Only the commit-msg stage is wired. This repository is worked through many
+# git worktrees that share one hooks directory, so every hook installed here
+# fires for every worktree at once; keeping the surface to message validation
+# means the shared hook can never mutate or reject a colleague's file contents.
+#
+# Install once per clone:
+#   pre-commit install --hook-type commit-msg
+default_install_hook_types: [commit-msg]
+
+repos:
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.16.5
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]

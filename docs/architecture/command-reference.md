@@ -145,9 +145,9 @@ agentic-os domain create acme --root /tmp/aos-ref
 
 Real output (excerpt):
 ```text
-created: /tmp/aos-ref/acme
-created: /tmp/aos-ref/acme/README.md
-created: /tmp/aos-ref/acme/domain.yml
+created: /tmp/aos-ref/domains/acme
+created: /tmp/aos-ref/domains/acme/README.md
+created: /tmp/aos-ref/domains/acme/domain.yml
 ...
 ```
 
@@ -484,6 +484,34 @@ Status: not individually validated in RESULTS.md.
 
 ---
 
+## 3A. Canonical work state: `work`
+
+The `work` group reads and updates the SQLite work-item registry without
+scanning trackers or repository paths. Every subcommand accepts `--root` and an
+optional `--db` override.
+
+| Command | Required inputs | Important optional inputs | Behavior |
+|---|---|---|---|
+| `work list` | — | `--attention`, `--state`, `--domain`, `--project`, `--limit` | List canonical work items using registry filters. |
+| `work show` | `item_id` | — | Show one canonical work item; exits 1 when it is absent. |
+| `work upsert` | `item_id`, `--title` | State, attention, source, ownership, packet/worktree/branch, summary, blocker, actor, receipt, verification | Create or fully reconcile one item and refresh `active-now.json`. |
+| `work set` | `item_id` | State, attention, summary, blocker, packet/worktree/branch, `--clear-worktree`, actor, receipt, verification | Change lifecycle or resume context and refresh `active-now.json`. |
+| `work active-now` | — | `--stale-hours` | Refresh and print the compact active-context projection; exits 2 when stale active entries remain. |
+| `work import-legacy` | — | `--apply` | Preview legacy numbered-lane imports by default; apply them only when requested. |
+| `work migrate-path-prefix` | `--from-prefix`, `--to-prefix` | `--domain`, `--actor`, `--receipt`, `--apply` | Preview or atomically migrate stored packet path prefixes. |
+
+```bash
+agentic-os work list --attention active --root /tmp/aos-ref
+agentic-os work show AGE-113 --root /tmp/aos-ref
+agentic-os work active-now --root /tmp/aos-ref
+```
+
+Writes: `work upsert`, `work set`, applied imports, and applied path migrations
+update `harness/shared_factory/00-control-plane/state.db`; registry mutations
+also refresh `harness/shared_factory/00-control-plane/active-now.json`.
+
+---
+
 ## 4. Workflows, automations & run logs: `workflow` / `automation` / `run-log`
 
 ### `workflow create`
@@ -527,9 +555,6 @@ agentic-os workflow check acme engineering launch_blog --root /tmp/aos-ref
 Real output (excerpt):
 ```text
 findings:
-- severity: blocker
-  path: .../launch_blog/state-machine.md
-  message: required workflow file is missing
 - severity: fix-soon
   path: .../launch_blog/alignment-questions.md
   message: 'section has unresolved placeholders: Dispatch Decision'

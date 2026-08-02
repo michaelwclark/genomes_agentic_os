@@ -2,10 +2,11 @@
 
 Architecture
 ------------
-Each adapter (GitHub, Slack) exposes a single ``fetch_*`` function that:
+Each adapter (GitHub, Jira, Slack) exposes a single ``fetch_*`` function that:
   - resolves the credential from the env var named in the connected-system config
-  - calls the provider API via an injectable ``fetcher`` callable (defaults to
-    ``urllib.request.urlopen``) so tests never touch the network
+  - calls its selected provider transport via an injectable boundary so tests
+    never touch the network; GitHub issues and pull requests require the shared
+    platform bridge configured by ``GENOMES_GITHUB_BRIDGE_COMMAND``
   - returns a list of normalised item dicts (provider-id-keyed)
   - falls back to an empty list with a ``dry_run_reason`` marker when the env var
     is absent — identical observable output to the existing registry dry-run path
@@ -21,14 +22,14 @@ Secrets contract
   - Fetched payloads are trimmed to summary fields before being returned — raw
     bodies (including any echoed auth material) are discarded.
 
-Injectable transport
---------------------
-Pass ``fetcher=<callable>`` to override the HTTP transport in tests::
+Injectable Slack transport
+--------------------------
+Pass ``fetcher=<callable>`` to override the Slack HTTP transport in tests::
 
     def fake_fetcher(req):
         return FakeResponse(json.dumps(FIXTURE).encode())
 
-    result = fetch_github_events("myorg/myrepo", token="tok_fake", fetcher=fake_fetcher)
+    result = fetch_slack_messages("C0123", token="tok_fake", fetcher=fake_fetcher)
 
 Token-shaped value heuristic
 -----------------------------
@@ -45,7 +46,22 @@ import os
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Callable
+
+from .github_bridge import (
+    GitHubBridgeError,
+    command_from_environment as github_command_from_environment,
+    list_issues,
+    list_pull_requests,
+)
+from .jira_bridge import (
+    JiraBridgeClient,
+    JiraBridgeError,
+    auth_from_environment as jira_auth_from_environment,
+    base_url_from_environment as jira_base_url_from_environment,
+    command_from_environment as jira_command_from_environment,
+)
 
 # ---------------------------------------------------------------------------
 # Token-shaped value guard
@@ -165,17 +181,10 @@ def _resolve_token(
 # GitHub adapter
 # ---------------------------------------------------------------------------
 
-_GITHUB_API_BASE = "https://api.github.com"
-
 # Fields we keep from each PR / issue item — never store full raw payloads
 _GITHUB_PR_KEEP = {"id", "number", "title", "state", "created_at", "updated_at",
                    "merged_at", "closed_at", "html_url", "user", "head", "base",
                    "draft", "labels", "requested_reviewers", "requested_teams"}
-
-_GITHUB_ISSUE_KEEP = {"id", "number", "title", "state", "created_at", "updated_at",
-                      "closed_at", "html_url", "user", "labels", "assignees",
-                      "pull_request"}  # pull_request key exists → it's a PR
-
 
 def _trim_github_item(item: dict[str, Any], keep: frozenset[str]) -> dict[str, Any]:
     """Return a trimmed copy of *item* with only the allowed keys."""
@@ -202,6 +211,99 @@ def _trim_github_item(item: dict[str, Any], keep: frozenset[str]) -> dict[str, A
     return trimmed
 
 
+def _bridge_pull_request_to_source_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the shared port's PR vocabulary to the source-watch event shape.
+
+    The source-watch registry predates the shared GitHub port, so its persisted
+    field names are intentionally retained here.  This is a narrow adapter, not
+    a second GitHub client: the bridge owns provider calls and normalization.
+    The bridge exposes GitHub's database id and requested reviewer/team names in
+    its JSON-safe vocabulary; map them back to the legacy keys so downstream
+    consumers receive the same shape they received from the direct REST client.
+    """
+    labels = item.get("labels") if isinstance(item.get("labels"), list) else []
+    return {
+        "id": item.get("id"),
+        "number": item.get("number"),
+        "title": item.get("title", ""),
+        "state": "closed" if item.get("state") == "merged" else item.get("state", "open"),
+        "created_at": item.get("openedAt", ""),
+        "updated_at": item.get("updatedAt", ""),
+        "merged_at": item.get("mergedAt"),
+        "closed_at": item.get("closedAt"),
+        "html_url": item.get("url", ""),
+        "user": {"login": item.get("author", "")},
+        "head": {"ref": item.get("headBranch", ""), "sha": item.get("headSha", "")},
+        "base": {"ref": item.get("baseBranch", "")},
+        "draft": bool(item.get("draft", False)),
+        "labels": [{"name": label} for label in labels if isinstance(label, str)],
+        "requested_reviewers": [
+            {"login": reviewer}
+            for reviewer in item.get("requestedReviewers", [])
+            if isinstance(reviewer, str)
+        ],
+        "requested_teams": [
+            {"slug": team}
+            for team in item.get("requestedTeams", [])
+            if isinstance(team, str)
+        ],
+    }
+
+
+def _bridge_issue_to_source_item(
+    item: dict[str, Any],
+    *,
+    owner: str,
+    repo: str,
+) -> dict[str, Any]:
+    """Translate shared-port issue vocabulary to the established watch shape."""
+    author = item.get("author")
+    labels = item.get("labels")
+    assignees = item.get("assignees")
+    pull_request = item.get("pullRequest")
+    if (
+        not isinstance(labels, list)
+        or not isinstance(assignees, list)
+        or not isinstance(pull_request, bool)
+    ):
+        raise GitHubBridgeError(
+            "BRIDGE_INVALID_RESPONSE",
+            "GitHub bridge returned an invalid issue item",
+        )
+    mapped: dict[str, Any] = {
+        "id": item.get("id"),
+        "number": item.get("number"),
+        "title": item.get("title"),
+        "state": item.get("state"),
+        "created_at": item.get("openedAt"),
+        "updated_at": item.get("updatedAt"),
+        "closed_at": item.get("closedAt"),
+        "html_url": item.get("url"),
+        "user": (
+            {"login": author.get("login"), "id": author.get("id")}
+            if isinstance(author, dict)
+            else None
+        ),
+        "labels": [
+            {"name": label}
+            for label in labels
+            if isinstance(label, str)
+        ],
+        "assignees": [
+            {"login": assignee}
+            for assignee in assignees
+            if isinstance(assignee, str)
+        ],
+    }
+    if pull_request:
+        # Preserve the legacy marker's inner ``url`` field as well as its
+        # truthiness for consumers that read more than key presence.
+        mapped["pull_request"] = {
+            "url": f"https://api.github.com/repos/{owner}/{repo}/pulls/{item.get('number')}"
+        }
+    return mapped
+
+
 def fetch_github_events(
     owner: str,
     repo: str,
@@ -226,9 +328,10 @@ def fetch_github_events(
         ``["pull_request", "issues"]``.
     since:
         ISO-8601 timestamp; only items updated at or after this time are returned.
-        GitHub ``issues`` endpoint supports ``?since=``.
+        Passed to the platform issue-listing port for incremental filtering.
     fetcher:
-        Injectable HTTP transport.  Defaults to ``urllib.request.urlopen``.
+        Retained for caller compatibility; GitHub polling does not use direct
+        HTTP transport. Both issue and pull-request reads use the platform port.
 
     Returns
     -------
@@ -239,24 +342,51 @@ def fetch_github_events(
     if event_types is None:
         event_types = ["pull_request", "issues"]
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "genomes-agentic-os/source-watcher",
-    }
-
     items: list[dict[str, Any]] = []
 
     want_prs = any(t in event_types for t in ("pull_request",))
     want_issues = any(t in event_types for t in ("issues", "issue"))
 
+    bridge_command = github_command_from_environment()
+    if (want_prs or want_issues) and not bridge_command:
+        raise GitHubBridgeError(
+            "BRIDGE_UNCONFIGURED",
+            "GitHub polling requires the configured platform GitHub bridge",
+        )
+
+    if want_issues:
+        issue_data = [
+            _bridge_issue_to_source_item(item, owner=owner, repo=repo)
+            for item in list_issues(
+                bridge_command or [],
+                owner=owner,
+                repo=repo,
+                token=token,
+                state="all",
+                since=since,
+                limit=30,
+            )
+        ]
+        for item in issue_data:
+            if want_prs and item.get("pull_request") is not None:
+                continue
+            item["_provider"] = "github"
+            item["_event_type"] = "issue"
+            item["_idempotency_key"] = f"github:issue:{owner}:{repo}:{item.get('number')}"
+            items.append(item)
+
     if want_prs:
-        url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=30"
-        if since:
-            # PRs endpoint doesn't support ?since — we post-filter
-            pass
-        data = _get_json(url, headers, fetcher)
+        data: Any = [
+            _bridge_pull_request_to_source_item(item)
+            for item in list_pull_requests(
+                bridge_command or [],
+                owner=owner,
+                repo=repo,
+                token=token,
+                state="all",
+                limit=30,
+            )
+        ]
         for item in data if isinstance(data, list) else []:
             if since and item.get("updated_at", "") < since:
                 continue
@@ -264,22 +394,6 @@ def fetch_github_events(
             trimmed["_provider"] = "github"
             trimmed["_event_type"] = "pull_request"
             trimmed["_idempotency_key"] = f"github:pr:{owner}:{repo}:{item.get('number')}"
-            items.append(trimmed)
-
-    if want_issues:
-        url = f"{_GITHUB_API_BASE}/repos/{owner}/{repo}/issues?state=all&sort=updated&direction=desc&per_page=30"
-        if since:
-            url += f"&since={since}"
-        data = _get_json(url, headers, fetcher)
-        for item in data if isinstance(data, list) else []:
-            if item.get("pull_request"):
-                # GitHub returns PRs as issues too; skip if already in PR list
-                if want_prs:
-                    continue
-            trimmed = _trim_github_item(item, frozenset(_GITHUB_ISSUE_KEEP))
-            trimmed["_provider"] = "github"
-            trimmed["_event_type"] = "issue"
-            trimmed["_idempotency_key"] = f"github:issue:{owner}:{repo}:{item.get('number')}"
             items.append(trimmed)
 
     return items
@@ -300,7 +414,7 @@ def poll_github_source(
             "live": True,
             "items": [...],             # trimmed event summaries
             "item_count": N,
-            "provider": "direct_api",
+            "provider": "platform_github_port",
             "dry_run_reason": None,     # or string when no creds
         }
 
@@ -320,7 +434,7 @@ def poll_github_source(
             "live": False,
             "items": [],
             "item_count": 0,
-            "provider": "direct_api",
+            "provider": "platform_github_port",
             "findings": [{
                 "severity": "blocker",
                 "code": "SECRETS_IN_CONFIG",
@@ -336,7 +450,7 @@ def poll_github_source(
             "live": False,
             "items": [],
             "item_count": 0,
-            "provider": "direct_api",
+            "provider": "platform_github_port",
             "dry_run_reason": (
                 "no GitHub token available — set the env var named in "
                 "credential_refs.env_vars (e.g. GITHUB_TOKEN) to enable live polling"
@@ -353,10 +467,18 @@ def poll_github_source(
     since: str | None = source.get("_cursor_since")  # injected by caller when advancing
 
     try:
+        want_prs = any(event_type == "pull_request" for event_type in event_types)
+        want_issues = any(event_type in ("issues", "issue") for event_type in event_types)
+        requested_event_types: list[str] = []
+        if want_issues:
+            requested_event_types.append("issues")
+        if want_prs:
+            requested_event_types.append("pull_request")
         items = fetch_github_events(
-            owner, repo,
+            owner,
+            repo,
             token=token,
-            event_types=list(event_types),
+            event_types=requested_event_types,
             since=since,
             fetcher=fetcher,
         )
@@ -365,22 +487,234 @@ def poll_github_source(
             "live": True,
             "items": items,
             "item_count": len(items),
-            "provider": "direct_api",
+            "provider": "platform_github_port",
             "credential_env": env_name,
             "dry_run_reason": None,
         }
-    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
+    except GitHubBridgeError as exc:
         return {
             "ok": False,
             "live": False,
             "items": [],
             "item_count": 0,
-            "provider": "direct_api",
+            "provider": "platform_github_port",
             "findings": [{
                 "severity": "blocker",
-                "code": "FETCH_ERROR",
-                "message": f"GitHub fetch failed: {exc}",
+                "code": exc.code,
+                "message": str(exc),
             }],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Jira adapter
+# ---------------------------------------------------------------------------
+
+
+def _jira_issue_to_source_item(issue: dict[str, Any]) -> dict[str, Any]:
+    """Trim one shared-port Jira issue to the established watch event shape."""
+    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    project = issue.get("project") if isinstance(issue.get("project"), dict) else {}
+    status = issue.get("status") if isinstance(issue.get("status"), dict) else {}
+    issue_type = issue.get("issueType") if isinstance(issue.get("issueType"), dict) else {}
+    return {
+        "id": issue.get("id"),
+        "key": issue.get("key"),
+        "url": issue.get("url"),
+        "summary": issue.get("summary"),
+        "project_key": project.get("key"),
+        "status": status.get("name"),
+        "issue_type": issue_type.get("name"),
+        "updated_at": fields.get("updated"),
+        "labels": fields.get("labels") if isinstance(fields.get("labels"), list) else [],
+        "_provider": "jira",
+        "_event_type": "issue",
+        "_idempotency_key": f"jira:issue:{issue.get('key')}:{fields.get('updated') or ''}",
+    }
+
+
+def fetch_jira_issues(
+    jql: str,
+    *,
+    client: JiraBridgeClient,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Return one bounded Jira batch or exhaust an unbounded query.
+
+    The shared Jira port reports ``complete=False`` when an explicit ``limit``
+    truncates an otherwise valid result.  That is expected pagination metadata,
+    not a provider failure.  Unbounded calls still require a complete result.
+    """
+    items, complete = _fetch_jira_issue_page(jql, client=client, limit=limit)
+    if not complete and limit is None:
+        raise JiraBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge returned an incomplete unbounded search"
+        )
+    return items
+
+
+def _fetch_jira_issue_page(
+    jql: str,
+    *,
+    client: JiraBridgeClient,
+    limit: int | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return a validated bounded page and the bridge completeness flag."""
+    args: dict[str, Any] = {"jql": jql, "fields": ["updated", "labels"]}
+    if limit is not None:
+        args["limit"] = limit
+    page = client.request(
+        "searchIssues",
+        args,
+    )
+    values = page.get("values") if isinstance(page, dict) else None
+    if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
+        raise JiraBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge returned invalid search results"
+        )
+    complete = page.get("complete")
+    if not isinstance(complete, bool):
+        raise JiraBridgeError(
+            "BRIDGE_INVALID_RESPONSE", "Jira bridge omitted search completeness metadata"
+        )
+    return [_jira_issue_to_source_item(item) for item in values], complete
+
+
+def _jira_jql_with_cursor(jql: str, cursor: str | None) -> str:
+    """Add a timezone-neutral relative cursor with a race-safe overlap."""
+    if not cursor:
+        return jql
+    try:
+        parsed = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+        parsed = parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError) as exc:
+        raise JiraBridgeError(
+            "INVALID_REQUEST", "Jira watch cursor is not a valid timestamp"
+        ) from exc
+    match = re.search(r"\s+ORDER\s+BY\s+", jql, flags=re.IGNORECASE)
+    body = jql[: match.start()].strip() if match else jql.strip()
+    order = jql[match.start() :].strip() if match else "ORDER BY updated DESC"
+    age = datetime.now(timezone.utc) - parsed
+    # Jira interprets absolute JQL date literals in the caller's profile
+    # timezone.  A relative-minute operand has the same meaning for every
+    # profile and the overlap protects edits racing the previous poll.
+    minutes = max(2, int(max(age.total_seconds(), 0) // 60) + 3)
+    return f"({body}) AND updated >= -{minutes}m {order}"
+
+
+def poll_jira_source(
+    source: dict[str, Any],
+    system: dict[str, Any],
+    *,
+    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
+    client: JiraBridgeClient | None = None,
+) -> dict[str, Any]:
+    """Poll a Jira JQL watch through the shared bridge, never direct HTTP."""
+    del fetcher
+    external_ref = source.get("external_ref") or {}
+    violations = check_config_for_secrets(external_ref)
+    violations += check_config_for_secrets(
+        {key: value for key, value in source.items() if isinstance(value, str)}
+    )
+    if violations:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_jira_port",
+            "findings": [
+                {
+                    "severity": "blocker",
+                    "code": "SECRETS_IN_CONFIG",
+                    "message": "token-shaped Jira config values are not allowed",
+                }
+            ],
+        }
+    if client is None:
+        command = jira_command_from_environment()
+        if not command:
+            return {
+                "ok": True,
+                "live": False,
+                "items": [],
+                "item_count": 0,
+                "provider": "platform_jira_port",
+                "dry_run_reason": "Jira bridge command is not configured",
+            }
+        try:
+            auth = jira_auth_from_environment()
+            base_url = jira_base_url_from_environment()
+        except JiraBridgeError as exc:
+            return {
+                "ok": False,
+                "live": False,
+                "items": [],
+                "item_count": 0,
+                "provider": "platform_jira_port",
+                "findings": [
+                    {"severity": "blocker", "code": exc.code, "message": str(exc)}
+                ],
+            }
+        client = JiraBridgeClient(command, base_url, auth, timeout=120)
+    project = str(external_ref.get("project_key") or "").strip()
+    jql = str(external_ref.get("jql") or "").strip()
+    if not jql and project:
+        jql = f'project = "{project}" ORDER BY updated DESC'
+    if not jql:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_jira_port",
+            "findings": [
+                {
+                    "severity": "blocker",
+                    "code": "INVALID_REQUEST",
+                    "message": "Jira watch requires jql or project_key",
+                }
+            ],
+        }
+    try:
+        try:
+            raw_limit = (
+                external_ref["max_results"]
+                if "max_results" in external_ref
+                else 250
+            )
+            limit = int(raw_limit)
+        except (TypeError, ValueError) as exc:
+            raise JiraBridgeError(
+                "INVALID_REQUEST", "Jira watch max_results must be an integer"
+            ) from exc
+        if not 1 <= limit <= 500:
+            raise JiraBridgeError(
+                "INVALID_REQUEST", "Jira watch max_results must be between 1 and 500"
+            )
+        jql = _jira_jql_with_cursor(
+            jql, str(source.get("_cursor_since") or "").strip() or None
+        )
+        items, complete = _fetch_jira_issue_page(jql, client=client, limit=limit)
+        return {
+            "ok": True,
+            "live": True,
+            "items": items,
+            "item_count": len(items),
+            "provider": "platform_jira_port",
+            "partial": not complete,
+            "dry_run_reason": None,
+        }
+    except JiraBridgeError as exc:
+        return {
+            "ok": False,
+            "live": False,
+            "items": [],
+            "item_count": 0,
+            "provider": "platform_jira_port",
+            "findings": [
+                {"severity": "blocker", "code": exc.code, "message": str(exc)}
+            ],
         }
 
 
@@ -566,6 +900,7 @@ def poll_slack_source(
 
 _ADAPTERS: dict[str, Any] = {
     "github": poll_github_source,
+    "jira": poll_jira_source,
     "slack": poll_slack_source,
 }
 

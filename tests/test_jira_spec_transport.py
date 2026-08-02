@@ -1,0 +1,385 @@
+"""Offline acceptance tests for Spec Engine composition over the Jira bridge."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+import pytest
+
+from genomes_agentic_os.jira_bridge import JiraBridgeError
+from genomes_agentic_os.spec_adapters.jira import (
+    JiraBridgeSpecTransport,
+    JiraSpecAdapter,
+    transport_from_environment,
+)
+from genomes_agentic_os.spec_engine import Spec
+
+
+class FakeBridgeClient:
+    def __init__(
+        self,
+        *,
+        duplicate_matches: int = 0,
+        existing_labels: list[str] | None = None,
+        search_complete: bool = True,
+    ) -> None:
+        self.duplicate_matches = duplicate_matches
+        self.existing_labels = list(existing_labels or [])
+        self.search_complete = search_complete
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.status = "To Do"
+        self.transitions = [
+            {
+                "id": "wrong-destination",
+                "available": True,
+                "destination": {"name": "Resolved"},
+            },
+            {
+                "id": "unavailable",
+                "available": False,
+                "destination": {"name": "Done"},
+            },
+            {
+                "id": "41",
+                "available": True,
+                "destination": {"name": "Done"},
+            },
+        ]
+
+    def request(self, operation: str, args: dict[str, Any]) -> Any:
+        self.calls.append((operation, args))
+        if operation == "preflightIdentity":
+            return {"siteUrl": args["siteUrl"], "projectKey": args["projectKey"]}
+        if operation == "searchIssues":
+            values = [
+                {
+                    "key": f"APP-{index + 1}",
+                    "url": f"https://jira.invalid/APP-{index + 1}",
+                }
+                for index in range(self.duplicate_matches)
+            ]
+            return {"values": values, "complete": self.search_complete}
+        if operation == "createIssue":
+            return {"key": "APP-131", "url": "https://jira.invalid/APP-131"}
+        if operation == "updateIssue":
+            return {
+                "key": args["key"],
+                "url": f"https://jira.invalid/{args['key']}",
+                "status": {"name": self.status},
+            }
+        if operation == "getIssue":
+            issue = {
+                "key": args["key"],
+                "url": f"https://jira.invalid/{args['key']}",
+                "status": {"name": self.status},
+                "fields": {"labels": self.existing_labels},
+            }
+            requested = args.get("fields")
+            if isinstance(requested, list):
+                issue["fields"] = {
+                    key: value
+                    for key, value in issue["fields"].items()
+                    if key in requested
+                }
+            return issue
+        if operation == "listTransitions":
+            return deepcopy(self.transitions)
+        if operation == "transitionIssue":
+            assert args["transitionId"] == "41"
+            self.status = "Done"
+            return {"key": args["key"], "status": {"name": self.status}}
+        raise AssertionError(operation)
+
+
+def _adapter(client: FakeBridgeClient) -> JiraSpecAdapter:
+    return JiraSpecAdapter(
+        {
+            "enabled": True,
+            "target": {
+                "site_url": "https://jira.invalid",
+                "project_key": "APP",
+                "issue_type_id": "10001",
+            },
+            "placement": {"default": "backlog"},
+            "status_map": {"built": "Done"},
+        },
+        JiraBridgeSpecTransport(client),  # type: ignore[arg-type]
+    )
+
+
+def test_jira_spec_apply_uses_preflight_marker_native_adf_and_readback() -> None:
+    client = FakeBridgeClient()
+    spec = Spec(
+        id="age_131",
+        title="Bridge Jira",
+        summary="Use the shared port",
+        acceptance_criteria=["Native ADF", "Independent readback"],
+        domain="acme",
+        project="app",
+    )
+
+    receipt = _adapter(client).create(spec, apply=True)
+
+    assert receipt.ok and receipt.readback_verified
+    assert receipt.provider_id == "APP-131"
+    assert [operation for operation, _ in client.calls] == [
+        "preflightIdentity",
+        "searchIssues",
+        "createIssue",
+        "getIssue",
+    ]
+    create = client.calls[2][1]
+    assert create["issueType"] == "10001"
+    assert create["reconciliationJql"].startswith(
+        'project = "APP" AND labels = "agentic-os-spec-'
+    )
+    assert create["fields"]["labels"][0] == "agentic-os-spec"
+    assert create["description"]["type"] == "doc"
+    assert any(
+        node["type"] == "bulletList" for node in create["description"]["content"]
+    )
+    rendered = str(create["description"])
+    assert "spec:acme:app:age_131" in rendered
+    assert "Native ADF" in rendered
+
+
+def test_jira_spec_duplicate_marker_and_active_sprint_fail_closed() -> None:
+    client = FakeBridgeClient(duplicate_matches=2)
+    receipt = _adapter(client).create(Spec(id="one", title="One"), apply=True)
+    assert receipt.ok is False
+    assert receipt.status == "blocked"
+    assert "multiple issues" in str(receipt.error)
+    assert [operation for operation, _ in client.calls] == [
+        "preflightIdentity",
+        "searchIssues",
+    ]
+
+    sprint = _adapter(FakeBridgeClient()).create(
+        Spec(id="two", title="Two"),
+        apply=True,
+        placement="active_sprint",
+    )
+    assert sprint.ok is False
+    assert sprint.status == "blocked"
+    assert "disabled" in str(sprint.error)
+
+
+def test_shared_jira_port_rejects_active_sprint_during_planning() -> None:
+    client = FakeBridgeClient()
+    adapter = JiraSpecAdapter(
+        {
+            "enabled": True,
+            "target": {
+                "site_url": "https://jira.invalid",
+                "project_key": "APP",
+                "issue_type_id": "10001",
+            },
+            "placement": {
+                "default": "active_sprint",
+                "allow_active_sprint_override": True,
+            },
+        },
+        JiraBridgeSpecTransport(client),  # type: ignore[arg-type]
+    )
+
+    receipt = adapter.create(Spec(id="one", title="One"))
+
+    assert receipt.status == "blocked"
+    assert "unsupported by the shared Jira port" in str(receipt.error)
+    assert client.calls == []
+
+
+def test_jira_spec_rejects_unsafe_project_key_before_search() -> None:
+    client = FakeBridgeClient()
+    transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
+    with pytest.raises(JiraBridgeError, match="project key is invalid"):
+        transport.request(
+            "find_by_idempotency",
+            {
+                "target": {"project_key": 'APP" OR project IS NOT EMPTY'},
+                "idempotency_key": "spec:acme:app:one",
+            },
+        )
+    assert client.calls == []
+
+
+def test_jira_spec_rejects_incomplete_marker_and_unsupported_list() -> None:
+    client = FakeBridgeClient(search_complete=False)
+    receipt = _adapter(client).create(Spec(id="one", title="One"), apply=True)
+    assert receipt.ok is False
+    assert "incomplete results" in str(receipt.error)
+
+    transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
+    with pytest.raises(JiraBridgeError, match="listing is not exposed"):
+        transport.request("list_specs", {"target": {"project_key": "APP"}})
+
+    assert _adapter(client).list() == []
+
+
+def test_jira_spec_update_preserves_existing_human_labels() -> None:
+    client = FakeBridgeClient(
+        duplicate_matches=1,
+        existing_labels=["human-owned"],
+    )
+    receipt = _adapter(client).create(
+        Spec(id="one", title="One", domain="acme", project="app"),
+        apply=True,
+    )
+    assert receipt.ok and receipt.provider_id == "APP-1"
+    update = next(
+        args for operation, args in client.calls if operation == "updateIssue"
+    )
+    labels = update["input"]["fields"]["labels"]
+    assert labels[:2] == ["human-owned", "agentic-os-spec"]
+    assert labels[2].startswith("agentic-os-spec-")
+
+
+def test_jira_spec_update_rejects_missing_labels_projection() -> None:
+    client = FakeBridgeClient(duplicate_matches=1)
+    original = client.request
+
+    def missing_labels(operation: str, args: dict[str, Any]) -> Any:
+        if operation == "getIssue" and args.get("fields") == ["labels"]:
+            client.calls.append((operation, args))
+            return {"key": args["key"], "fields": {}}
+        return original(operation, args)
+
+    client.request = missing_labels  # type: ignore[method-assign]
+    receipt = _adapter(client).create(
+        Spec(id="one", title="One", domain="acme", project="app"), apply=True
+    )
+    assert receipt.ok is False
+    assert "invalid labels" in str(receipt.error)
+
+
+def test_jira_spec_transition_resolves_exact_available_destination_and_rereads() -> None:
+    client = FakeBridgeClient(duplicate_matches=1)
+    receipt = _adapter(client).transition(
+        Spec(
+            id="one",
+            title="One",
+            status="built",
+            domain="acme",
+            project="app",
+        ),
+        previous_status="in_progress",
+        apply=True,
+    )
+
+    assert receipt.ok and receipt.readback_verified
+    assert client.status == "Done"
+    assert [operation for operation, _ in client.calls] == [
+        "preflightIdentity",
+        "searchIssues",
+        "getIssue",
+        "updateIssue",
+        "getIssue",
+        "listTransitions",
+        "transitionIssue",
+        "getIssue",
+        "getIssue",
+    ]
+    transition = client.calls[6][1]
+    assert transition == {"key": "APP-1", "transitionId": "41"}
+
+
+def test_jira_spec_get_reports_provider_not_found() -> None:
+    client = FakeBridgeClient()
+    client.request = lambda _operation, _args: None  # type: ignore[method-assign]
+    transport = JiraBridgeSpecTransport(client)  # type: ignore[arg-type]
+    try:
+        transport.request(
+            "get_spec",
+            {"provider_id": "APP-404", "target": {"project_key": "APP"}},
+        )
+    except JiraBridgeError as exc:
+        assert exc.code == "NOT_FOUND"
+        assert "APP-404 was not found" in str(exc)
+    else:
+        raise AssertionError("missing Jira issue was not classified as NOT_FOUND")
+
+
+def test_jira_spec_transport_environment_is_explicit_and_complete() -> None:
+    assert transport_from_environment({}) is None
+    incomplete = transport_from_environment(
+        {"GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js"}
+    )
+    assert incomplete is not None
+    try:
+        incomplete.request("verify_target", {"target": {}})
+    except JiraBridgeError as exc:
+        assert exc.code == "CONFIGURATION_ERROR"
+    else:
+        raise AssertionError("incomplete Jira bridge configuration did not block")
+    transport = transport_from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://jira.invalid",
+            "JIRA_OAUTH_TOKEN": "secret",
+            "JIRA_CLOUD_ID": "cloud-1",
+        }
+    )
+    assert isinstance(transport, JiraBridgeSpecTransport)
+    assert list(transport.client.command) == ["node", "bridge.js"]
+    assert transport.client.base_url == "https://api.atlassian.com/ex/jira/cloud-1"
+
+    explicit_gateway = transport_from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://jira.invalid",
+            "ATLASSIAN_BASE_URL": "https://gateway.invalid/ex/jira/cloud-2/",
+            "JIRA_OAUTH_TOKEN": "secret",
+        }
+    )
+    assert isinstance(explicit_gateway, JiraBridgeSpecTransport)
+    assert explicit_gateway.client.base_url == "https://gateway.invalid/ex/jira/cloud-2"
+
+    missing_gateway = transport_from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://jira.invalid",
+            "JIRA_OAUTH_TOKEN": "secret",
+        }
+    )
+    assert missing_gateway is not None
+    try:
+        missing_gateway.request("verify_target", {"target": {}})
+    except JiraBridgeError as exc:
+        assert exc.code == "CONFIGURATION_ERROR"
+        assert "gateway base URL or cloud ID" in str(exc)
+    else:
+        raise AssertionError("bearer authentication accepted a tenant base URL")
+
+    partial = transport_from_environment(
+        {
+            "GENOMES_JIRA_BRIDGE_COMMAND": "node bridge.js",
+            "JIRA_BASE_URL": "https://jira.invalid",
+            "JIRA_EMAIL": "only@example.com",
+        }
+    )
+    assert partial is not None
+    try:
+        partial.request("verify_target", {"target": {}})
+    except JiraBridgeError as exc:
+        assert exc.code == "CONFIGURATION_ERROR"
+    else:
+        raise AssertionError("partial Jira authentication did not block")
+
+
+def test_jira_spec_reads_degrade_without_traceback_under_partial_config() -> None:
+    transport = transport_from_environment({"JIRA_BASE_URL": "https://jira.invalid"})
+    assert transport is not None
+    adapter = JiraSpecAdapter(
+        {
+            "enabled": True,
+            "target": {
+                "site_url": "https://jira.invalid",
+                "project_key": "APP",
+                "issue_type_id": "10001",
+            },
+        },
+        transport,
+    )
+    assert adapter.get("missing") is None
+    assert adapter.list() == []
