@@ -5,6 +5,47 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/) computed from Conventional Commits
 (breaking → major, `feat` → minor, `fix`/`perf` → patch).
 
+## [Unreleased]
+
+### Fixed
+- Persist full-identity Team PR review intent before helper launch, recover a
+  completed helper receipt after worker interruption, fence overlapping
+  attempts per review identity, and bind the helper to the exact review mode,
+  run ID, and summary path. Full-digest receipt paths, fsync-backed
+  persistence, and a durable helper-launch marker prevent cross-ticket recovery collisions,
+  torn intent writes, and relaunch while the PID still belongs to the exact
+  helper run. A shared marker lock prevents dispatch-failure writes from
+  clobbering a concurrently registered helper PID. Fresh and recovered
+  successes terminalize the marker.
+- Normalize case-insensitive repository, head, and source-key fields before
+  deriving the cross-repository review identity and helper run ID.
+- Keep the legacy projection key for already-admitted tasks that omitted
+  `review_mode`, while explicit current tasks use the full-intent key; this
+  preserves effect dedup across the upgrade boundary.
+- Keep enough bounded review attempts for error-driven retries to outlive the
+  helper fence, and classify transient durable-write, lock, and host-identity
+  failures as retryable.
+- Persist the first effect-key format per immutable review identity so legacy
+  and current task shapes cannot project the same helper result under two keys;
+  classify PID-less governor exceptions as retryable dispatch failures.
+- Validate each recorded effect key against its declared format, durably
+  materialize a valid stdout fallback summary, and remove host-ineligible
+  pinned queues before worker registration and claim.
+- Pin the host-local Team PR durability state to `bigmac`; a worker on any
+  other host fails retryably before helper execution.
+- Derive the helper receipt domain from the validated task route so the generic
+  execution-fabric package does not hard-code a private domain path.
+- Classify a failed helper with a dead registered PID instead of consuming the
+  retry budget as perpetually in progress, while keeping a live but
+  unverifiable PID fail-closed behind the orphan fence.
+- Preserve invalid-receipt classification and receipt paths for byte-corrupt
+  JSON, and classify a dispatch exception with a dead registered helper PID
+  immediately instead of spending an extra retry as in progress.
+- Ship the Agentic OS route before the paired object-library producer; the new
+  producer emits explicit `review_mode`, which an older closed route rejects.
+  Quiesce the review queue during this upgrade so an unacknowledged legacy
+  effect key cannot be replayed once under the full-intent key format.
+
 ## [0.6.0] - 2026-08-01
 
 ### Added
@@ -18,7 +59,6 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - Support legacy execution-fabric role-health bootstrap during protected
   rollout reconciliation.
-
 ## [0.5.7] - 2026-07-29
 
 ### Added
