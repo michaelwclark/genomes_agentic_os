@@ -334,6 +334,10 @@ MANAGED_RESOURCE_TREES = (
         "lib/skills/root/auto-dev-review-self",
     ),
     (
+        "harness/skills/auto-dev-review-self-opposing-model",
+        "lib/skills/root/auto-dev-review-self-opposing-model",
+    ),
+    (
         "harness/skills/auto-dev-review-others",
         "lib/skills/root/auto-dev-review-others",
     ),
@@ -1891,6 +1895,7 @@ the source of truth by themselves.
 | `auto-dev-pr-create` | Resolve and create or reuse the complete pull-request family before review. | `skills/auto-dev-pr-create/SKILL.md` |
 | `gitflow-pr-create` | Compatibility alias for Auto-Dev PR Create family mode. | `skills/gitflow-pr-create/SKILL.md` |
 | `auto-dev-review-self` | Review and repair our own active delivery. | `skills/auto-dev-review-self/SKILL.md` |
+| `auto-dev-review-self-opposing-model` | Run the canonical receipt-backed opposing-model review checkpoint. | `skills/auto-dev-review-self-opposing-model/SKILL.md` |
 | `auto-dev-review-others` | Review another author's live pull request. | `skills/auto-dev-review-others/SKILL.md` |
 | `auto-dev-qa` | Run project-configured QA independently. | `skills/auto-dev-qa/SKILL.md` |
 | `auto-dev-review-repair` | Own canonical review and repair behind Review Self. | `skills/auto-dev-review-repair/SKILL.md` |
@@ -1931,6 +1936,7 @@ the source of truth by themselves.
 | `/auto-dev-pr-create` | Resolve and create or reuse the complete pull-request family. | Runs before Review Self. |
 | `/gitflow-pr-create` | Invoke PR Create with GitFlow-family compatibility defaults. | Alias only; owns no policy. |
 | `/auto-dev-review-self` | Review and repair our own change. | Friendly route to canonical review/repair. |
+| `/auto-dev-review-self-opposing-model` | Run the canonical opposing-model review checkpoint. | Shared Claude/Codex receipt route for one ticket. |
 | `/auto-dev-review-others` | Review another author's live pull request. | Uses canonical PR Review. |
 | `/auto-dev-qa` | Run project-configured QA independently. | Records exact-revision evidence. |
 | `/auto-dev-review-repair` | Invoke the canonical review-and-repair owner directly. | Compatibility/manual expert entrypoint behind Review Self. |
@@ -3633,7 +3639,7 @@ def project_config_file_content(
                         },
                         "self_review": {
                             "command": "claude",
-                            "skill": "auto-dev-review-self",
+                            "skill": "auto-dev-review-self-opposing-model",
                             "failure_policy": "continue_with_receipt",
                         },
                     },

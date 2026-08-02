@@ -1,0 +1,17 @@
+id: auto_dev_opposing_model_review
+version: 1
+owner: development_delivery
+inputs: [work_item_id, pr_create_family_receipt, provider_pr_snapshot, builder_identity, review_policy, exact_head_sha]
+outputs: [review_request, reviewer_response_or_unavailable_receipt, model_receipt, review_ledger, readiness_decision]
+states: [pre_pr_review, post_pr_review, review_repair, ready_for_merge, awaiting_human_review, blocked]
+steps: [resolve_canonical_context, select_independent_model, prepare_review, execute_cli_native_review, ingest_structured_response, decide_readiness, return_findings_to_builder]
+validations: [single_pr_family, exact_head, independent_model, cli_native_auth, structured_response, sanitized_failure_receipt, deterministic_readiness]
+failure_modes:
+  ambiguous_or_missing_work_item: block_with_context_receipt
+  pr_family_missing_or_wrong: return_to_pr_create
+  stale_or_unverifiable_head: block_with_provider_readback
+  reviewer_unavailable: record_sanitized_receipt_and_honor_policy
+  malformed_reviewer_output: awaiting_human_review
+  review_findings: return_to_builder_for_repair
+events: [review.requested, review.model.selected, review.response.ingested, review.unavailable, review.finding.opened, review.decision.recorded]
+receipts: [review-request.json, reviewer-response.md, model-receipt.md, review-ledger.jsonl, validation-plan.json, readiness-decision.json]

@@ -1,0 +1,15 @@
+api_version: agentic-os-library-object/v1
+kind: skill
+id: auto-dev-review-self-opposing-model
+title: Auto-Dev Review Self Opposing Model
+description: Run the canonical opposing-model review leg for one Auto-Dev work item and emit receipt-backed readiness evidence.
+status: active
+scope: {level: root, domain: null, project: null}
+owner: {type: package, id: genomes_agentic_os}
+entrypoint: SKILL.md
+tags: [skill, review, opposing-model, receipts, sdlc]
+dependencies: [skill:root:auto-dev-review-repair, skill:root:finishing-touches-review]
+aliases: [harness/skills/auto-dev-review-self-opposing-model/SKILL.md]
+runtime: {root: runtime/objects/skills/skill/root/auto-dev-review-self-opposing-model}
+validation: {commands: [python3 harness/skills/auto-dev/tests/test_auto_dev_v2.py]}
+policy: {allow_implicit_invocation: true}
