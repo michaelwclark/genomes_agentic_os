@@ -64,7 +64,6 @@ RUNTIME_REQUIRED_TARGETS = {
     "composio_cli",
     "agentmail_api",
     "granola_local",
-    "notion_api",
 }
 REQUIRED_INTEGRATIONS = {"orgo", "composio", "agentmail", "granola", "notion"}
 RUN_QUEUE_STATES = (
