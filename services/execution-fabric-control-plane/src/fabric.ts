@@ -47,7 +47,9 @@ export class ExecutionFabric {
       queue,
       pool,
     });
-    if (result.task.status === "queued") {
+    // Re-admission returns durable task truth; it must not issue another
+    // delivery request. Recovery republishes from the ledger instead.
+    if (result.admitted && result.task.status === "queued") {
       await this.delivery.publish(result.task);
       await this.ledger.markPublished(result.task.id);
     }
