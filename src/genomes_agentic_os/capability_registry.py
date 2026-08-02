@@ -324,6 +324,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/os-clean-worktrees.md",
         },
         {
+            "id": "aos-stack-cleaner",
+            "command": "harness/bin/agentic-os-docker-reclaim",
+            "description": "Inspect or apply exact-name Docker resource reclamation for one reviewed, merged worktree stack.",
+            "source": "harness/commands/aos-stack-cleaner.md",
+        },
+        {
             "id": "develop",
             "command": "agentic-os develop",
             "description": "Run one or many tracker-backed programming tasks through canonical project-configured delivery.",
