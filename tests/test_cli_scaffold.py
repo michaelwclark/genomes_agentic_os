@@ -349,9 +349,9 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "execution-target.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "integration.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "run-queue-item.yml").is_file()
-    assert (
+    assert not (
         shared_factory(root) / "05-knowledge" / "templates" / "notion" / "runtime-tracking-database-spec.md"
-    ).is_file()
+    ).exists()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "connected-system.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "source-provider.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-source.yml").is_file()
