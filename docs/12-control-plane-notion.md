@@ -5,8 +5,7 @@
 > approve risky actions, and track runs without opening files.  The filesystem
 > remains the authoritative source of truth; Notion is always a projection.
 >
-> **You'll use:** `agentic-os notion plan-sync`, `notion sync`, `notion bootstrap`,
-> `notion track-runtime`.
+> **You'll use:** `agentic-os notion plan-sync`, `notion sync`, and `notion bootstrap`.
 > **Prereqs:** an installed OS root ([01 · Install & Quickstart](01-install-and-quickstart.md))
 > with at least one domain.  `notion bootstrap` additionally requires a verified
 > Notion workspace and an approved parent page ID.
@@ -34,7 +33,7 @@ The sync is **one-directional**: files → Notion.  Humans act in Notion (approv
 comment, reorder) and then record the decision back in the appropriate file.
 Notion never writes to the filesystem automatically.
 
-![Filesystem objects are fingerprinted and planned by notion plan-sync; the plan passes through an apply guard requiring a verified workspace and parent page; notion sync/bootstrap/track-runtime apply the plan and update the local mapping; Notion becomes a read-only cockpit; human approvals are written back to filesystem files](diagrams/notion-control-plane-flow.png)
+![Filesystem objects are fingerprinted and planned by notion plan-sync; the plan passes through an apply guard requiring a verified workspace and parent page; notion sync/bootstrap apply the plan and update the local mapping; Notion becomes a read-only cockpit; human approvals are written back to filesystem files](diagrams/notion-control-plane-flow.png)
 
 ---
 
@@ -105,27 +104,6 @@ agentic-os notion bootstrap --root ~/agentic_os \
 ```
 
 `--apply` without `--parent-page-id` raises an error and exits 2.
-
----
-
-### `agentic-os notion track-runtime`
-
-Plan or apply runtime-registry mirroring — heartbeats, schedules, and active
-run entries projected into the Runs and Work Items databases.
-
-| Arg / Flag | Required | Description |
-| --- | --- | --- |
-| `--root` | — | OS root path (default `~/agentic_os`). |
-| `--dry-run` | ✅ or `--apply` | Show plan. |
-| `--apply` | ✅ or `--dry-run` | Execute. |
-| `--verified-workspace` | Required with `--apply` | Verified workspace name. |
-
-```bash
-agentic-os notion track-runtime --root ~/agentic_os --dry-run
-```
-
-`--apply` without `--verified-workspace` exits 2 (unverified workspace
-refusal, confirmed in test suite).
 
 ---
 
@@ -234,7 +212,7 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
 
 - **`plan-sync` is always safe (exit 0).** It reads files, fingerprints them,
   and prints YAML.  Run it freely.
-- **`sync`, `bootstrap`, and `track-runtime` are guarded.** They require
+- **`sync` and `bootstrap` are guarded.** They require
   `--dry-run` or `--apply` explicitly; omitting both is a usage error (exit 2).
 - **`--apply` requires `--verified-workspace`.** The workspace name must match
   the expected value exactly (case-sensitive).  Mismatches are refused with
@@ -243,15 +221,10 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   wrong Notion account.
 - **`bootstrap --apply` additionally requires `--parent-page-id`.** Without an
   approved parent page, the bootstrap aborts before touching anything.
-- **`track-runtime --apply` exits 2 if the workspace is unverified.**
-  Confirmed in the test suite; runtime tracking cannot proceed without the
-  workspace guard.
 - **Know which paths write to live Notion (Gap B closed).** The Notion client
   is real — `notion_api.py` calls `https://api.notion.com/v1` with stdlib
-  `urllib`, token resolved from the `GENOMES_NOTION_PAT` env var.
-  `notion track-runtime --apply` (F-010, below) and
-  `notion active-work-sync --apply` write to the live workspace behind the
-  guard rails.  Plain `notion sync --apply` and `notion bootstrap --apply`
+  `urllib`, token resolved from the `GENOMES_NOTION_PAT` env var. Plain
+  `notion sync --apply` and `notion bootstrap --apply`
   remain local projections: they write `mapping.yml` under `.notion-sync/` and
   a manifest under `.notion-control-plane/`, with deterministic local
   placeholder IDs (`local-notion-<sha256[:16]>`, `local-bootstrap-<sha256[:16]>`).
@@ -268,8 +241,6 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   loop the cockpit supports.
 - [04 · Information Architecture](04-information-architecture.md) — the domain
   folder structure that `plan-sync` traverses.
-- [09 · Runtime & Always-On](09-runtime-and-always-on.md) — what
-  `track-runtime` mirrors into Notion.
 - [13 · Agent Surfaces](13-agent-surfaces.md) — harness commands and skills
   that invoke Notion sync.
 - [17 · CLI Reference](17-cli-reference.md) — full flag listing for all
@@ -280,56 +251,3 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   Gap B status (closed): [18 · Troubleshooting, Part B](18-troubleshooting-and-faq.md)
 
 ---
-
-## Live runtime-tracking path (F-010)
-
-The `agentic-os notion track-runtime --apply` command can write the 7 runtime
-tracking databases directly to Genome's Notion. The live path is opt-in and
-controlled by a config file installed into every root.
-
-### Config file
-
-Location inside each installed root:
-
-```
-harness/shared_factory/00-control-plane/notion-tracking.yml
-```
-
-Fresh installs receive this file via `agentic-os init`. It arrives in
-**local mode** (`parent_page_id` is empty) so no credentials are required.
-
-| Field | Default | Purpose |
-|---|---|---|
-| `workspace` | `Genome's Notion` | Expected workspace name — must match the bot's |
-| `parent_page_id` | *(empty)* | Parent page ID; leave empty for local mode |
-| `token_env` | `GENOMES_NOTION_PAT` | Name of the env var holding the token (never the value) |
-| `cockpit_page_title` | `Runtime Control Plane` | Title of the cockpit page under `parent_page_id` |
-
-### Activating the live path
-
-1. Set the Notion integration token: `export GENOMES_NOTION_PAT=secret_...`
-2. Set `parent_page_id` in `notion-tracking.yml` to a real Notion page ID.
-3. Run `agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace "Genome's Notion"`.
-
-The command verifies the workspace two ways: the string-match guard in
-`verify_workspace` and a live `/users/me` API call confirming the bot's
-`workspace_name`. If either check fails, the command exits with an error and
-writes nothing to Notion.
-
-### Idempotency
-
-Re-applying is safe. Existing pages and databases are reused (matched by the
-IDs in the manifest, or by title search). Records are upserted by their `Key`
-field — no duplicates are created. The manifest records `live: true` and all
-real Notion IDs.
-
-### Token safety
-
-The token value never appears in the manifest, result dict, log output, or
-exception messages. Only the env-var *name* is stored in config.
-
-### Supervisor constraint
-
-The launchd supervisor, heartbeat runner, and all scheduled paths are
-network-silent — they never call the Notion API. Only the explicit
-`notion track-runtime --apply` command goes live.

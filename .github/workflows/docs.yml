@@ -55,21 +55,25 @@ jobs:
       - name: Record successful non-documentation policy result
         if: github.event_name == 'pull_request' && steps.docs-scope.outputs.required != 'true'
         run: echo "No documentation-impacting paths changed; the stable docs policy check passes."
+      - uses: pnpm/action-setup@v6
+        if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
+        with:
+          version: 11.1.2
       - uses: actions/setup-node@v6
         if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: website/package-lock.json
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
       - name: Install dependencies
         if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Typecheck config and components
         if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
-        run: npm run typecheck
+        run: pnpm typecheck
       - name: Build site and check every internal link
         if: github.event_name == 'push' || steps.docs-scope.outputs.required == 'true'
-        run: npm run build
+        run: pnpm build
       - name: Package the built site for Pages
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v5

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import fcntl
+from datetime import datetime, timedelta, timezone
 import json
+import os
 from hashlib import sha256
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 from typing import Any
 from urllib.error import HTTPError
@@ -11,6 +15,7 @@ from urllib.error import HTTPError
 import pytest
 import yaml
 
+from genomes_agentic_os import execution_fabric_remote
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.execution_fabric_config import ExecutionFabricConfigError
 from genomes_agentic_os.execution_fabric_remote import (
@@ -962,6 +967,29 @@ def test_cli_submit_allows_commandless_domain_task_for_harness_target(
     assert "execution_target" not in result["task"]["payload"]
 
 
+def test_team_pr_route_rejects_non_review_mode(tmp_path: Path) -> None:
+    root = _root(tmp_path, remote=False)
+    with pytest.raises(ValueError, match="review_mode"):
+        validate_task_route(
+            root,
+            "pr_reviews",
+            "los.team_pr.ai_review.v1",
+            payload={
+                "repository": "example/repo",
+                "pull_request": 42,
+                "pull_request_url": "https://github.com/example/repo/pull/42",
+                "expected_head_sha": "a" * 40,
+                "base_branch": "develop",
+                "source_key": "FLYWL-409",
+                "review_mode": "review_and_merge",
+                "title": "Review example",
+                "notion_page_id": "a" * 32,
+                "author_identity": "github:external-author",
+            },
+            remote=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("author_identity", "expected_kind"),
     [
@@ -977,6 +1005,11 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
 ) -> None:
     from genomes_agentic_os import runtime_ops
 
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     assignment = _assignment(3)
     assignment["task"].update(
@@ -996,6 +1029,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
             },
         }
     )
+    if expected_kind == "ours":
+        assignment["task"]["payload"]["review_mode"] = "review_no_merge"
     development = (
         root
         / "domains/los/02-projects/los_app_los_django/config/development.yml"
@@ -1042,21 +1077,24 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
             canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode()
     ).hexdigest()
-    captured: dict[str, str] = {}
+    captured: dict[str, Any] = {"calls": 0}
 
     def run(_root: Path, command: str, **_kwargs: Any) -> dict[str, Any]:
         captured["command"] = command
+        captured["calls"] += 1
+        helper_command = shlex.split(command)
+        helper_result = {
+            "status": "findings",
+            "run_id": helper_command[helper_command.index("--run-id") + 1],
+            "source_key": "github-pr-42",
+            "canonical_review_receipt": canonical,
+            "receipt_sha256": canonical_hash,
+        }
         return {
             "supported": True,
             "ok": True,
             "exit_code": 0,
-            "stdout": json.dumps(
-                {
-                    "status": "findings",
-                    "canonical_review_receipt": canonical,
-                    "receipt_sha256": canonical_hash,
-                }
-            ),
+            "stdout": json.dumps(helper_result),
             "stderr": "",
             "errors": [],
             "warnings": [],
@@ -1068,13 +1106,23 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     command = shlex.split(captured["command"])
     assert command[:3] == ["python3", str(helper), "execute"]
     assert command[-1] == "--apply"
+    assert command[command.index("--review-mode") + 1] == "review_no_merge"
     assert "auto-dev-review-others" not in captured["command"]
     assert "auto-dev-review-self" not in captured["command"]
     assert "command" not in assignment["task"]["payload"]
     assert json.loads(result["result"]["stdout"])["canonical_review_receipt"] == canonical
-    assert result["effects"] == [
+    identity = execution_fabric_remote._team_pr_review_identity(
+        assignment["task"]["payload"]
+    )
+    intent_key = execution_fabric_remote._team_pr_review_intent_key(identity)
+    expected_effect_key = (
+        f"notion.pr_review.update:{intent_key}"
+        if "review_mode" in assignment["task"]["payload"]
+        else f"notion.pr_review.update:github-pr-42:{'a' * 40}"
+    )
+    expected_effects = [
         {
-            "effectKey": f"notion.pr_review.update:github-pr-42:{'a' * 40}",
+            "effectKey": expected_effect_key,
             "effectType": "notion.pr_review.update",
             "payload": {
                 "page_id": "a" * 32,
@@ -1083,6 +1131,8 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
                 "expected_head_sha": "a" * 40,
                 "base_branch": "develop",
                 "source_key": "github-pr-42",
+                "review_mode": "review_no_merge",
+                "review_intent_key": intent_key,
                 "task_identity": assignment["task"]["id"],
                 "operation": "project_completed_review",
                 "author_identity": author_identity,
@@ -1092,6 +1142,356 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
             "baseBackoffSeconds": 60,
         }
     ]
+    assert result["effects"] == expected_effects
+    intent_path = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
+        / assignment["task"]["id"]
+        / "review-intent.json"
+    )
+    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    assert intent["status"] == "completed"
+    assert intent["identity"] == identity
+    assert intent["effects"] == expected_effects
+
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "genomesbox",
+    )
+    with pytest.raises(TaskExecutionError) as wrong_host:
+        execute_assignment(root, assignment)
+    assert wrong_host.value.code == "task_host_affinity_violation"
+    assert wrong_host.value.retryable is True
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ExecutionFabricConfigError("transient host identity fixture")
+        ),
+    )
+    with pytest.raises(TaskExecutionError) as host_unavailable:
+        execute_assignment(root, assignment)
+    assert host_unavailable.value.code == "task_host_affinity_unavailable"
+    assert host_unavailable.value.retryable is True
+    assert captured["calls"] == 1
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
+    assignment["attemptId"] = "00000000-0000-4000-8000-999999999999"
+    retried = execute_assignment(root, assignment)
+
+    assert captured["calls"] == 1
+    assert retried["effects"] == expected_effects
+    assert retried["result"]["helperStatus"] == "findings"
+    assert json.loads(intent_path.read_text(encoding="utf-8")) == intent
+
+    transition_assignment = json.loads(json.dumps(assignment))
+    transition_assignment["task"]["id"] = "transition-task-same-review-identity"
+    transition_assignment["attemptId"] = "00000000-0000-4000-8000-777777777777"
+    if "review_mode" in transition_assignment["task"]["payload"]:
+        transition_assignment["task"]["payload"].pop("review_mode")
+    else:
+        transition_assignment["task"]["payload"]["review_mode"] = "review_no_merge"
+    transitioned = execute_assignment(root, transition_assignment)
+    assert captured["calls"] == 1
+    assert transitioned["effects"][0]["effectKey"] == expected_effect_key
+    effect_key_path = execution_fabric_remote._team_pr_review_summary_path(
+        root, identity, "los"
+    ).with_name("effect-key.json")
+    effect_key_record = json.loads(effect_key_path.read_text(encoding="utf-8"))
+    effect_key_path.write_text(
+        json.dumps({**effect_key_record, "effect_key": "tampered-key"}),
+        encoding="utf-8",
+    )
+    conflicting_assignment = json.loads(json.dumps(transition_assignment))
+    conflicting_assignment["task"]["id"] = "conflicting-effect-key-task"
+    with pytest.raises(TaskExecutionError) as conflicting_effect_key:
+        execute_assignment(root, conflicting_assignment)
+    assert conflicting_effect_key.value.code == "team_pr_review_intent_conflict"
+    effect_key_path.write_text(json.dumps(effect_key_record), encoding="utf-8")
+
+    helper_result = {
+        "status": "findings",
+        "run_id": command[command.index("--run-id") + 1],
+        "source_key": "github-pr-42",
+        "canonical_review_receipt": canonical,
+        "receipt_sha256": canonical_hash,
+    }
+    pending_intent = {
+        key: value
+        for key, value in intent.items()
+        if key not in {"completed_at", "helper_status", "helper_result", "effects"}
+    }
+    pending_intent["status"] = "pending"
+    intent_path.write_text(
+        json.dumps(pending_intent, sort_keys=True), encoding="utf-8"
+    )
+    summary_path = execution_fabric_remote._team_pr_review_summary_path(
+        root, identity, "los"
+    )
+    summary_path.unlink()
+    launch_path = summary_path.with_name("helper-launch.json")
+    terminal_launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    assert terminal_launch_marker["status"] == "succeeded"
+    terminal_launch_marker["status"] = "running"
+    terminal_launch_marker.pop("finished_at", None)
+    launch_path.write_text(json.dumps(terminal_launch_marker), encoding="utf-8")
+    assert summary_path.parent.name.endswith(intent_key.split(":", 1)[1])
+    assert command[command.index("--run-id") + 1] == summary_path.parent.name
+    assert command[command.index("--summary-path") + 1] == str(summary_path)
+    assert command[command.index("--launch-marker-path") + 1] == str(
+        summary_path.with_name("helper-launch.json")
+    )
+    with pytest.raises(TaskExecutionError) as possibly_running:
+        execute_assignment(root, assignment)
+    assert possibly_running.value.code == "team_pr_review_in_progress"
+    assert possibly_running.value.retryable is True
+    assert captured["calls"] == 1
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["helper_pid"] = os.getpid()
+    launch_marker["launched_at"] = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=execution_fabric_remote.TEAM_PR_HELPER_TIMEOUT_SECONDS + 1)
+    ).isoformat().replace("+00:00", "Z")
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+    with pytest.raises(TaskExecutionError) as orphan_still_bounded:
+        execute_assignment(root, assignment)
+    assert orphan_still_bounded.value.code == "team_pr_review_in_progress"
+    assert captured["calls"] == 1
+    launch_marker["launched_at"] = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=execution_fabric_remote.TEAM_PR_HELPER_STALE_SECONDS + 1)
+    ).isoformat().replace("+00:00", "Z")
+    launch_marker["status"] = "failed"
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+    real_helper_match = execution_fabric_remote._process_is_team_pr_helper
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: True,
+    )
+    with pytest.raises(TaskExecutionError) as verified_live_orphan:
+        execute_assignment(root, assignment)
+    assert verified_live_orphan.value.code == "team_pr_review_in_progress"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
+    launch_marker["status"] = "running"
+    launch_marker.pop("helper_pid")
+    launch_marker["launched_at"] = "2026-07-29T10:00:00"
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+    with pytest.raises(TaskExecutionError) as naive_launch_time:
+        execute_assignment(root, assignment)
+    assert naive_launch_time.value.code == "invalid_team_pr_durable_receipt"
+    assert naive_launch_time.value.receipt_path == str(launch_path)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps({**helper_result, "source_key": "other-ticket"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(TaskExecutionError) as wrong_summary_identity:
+        execute_assignment(root, assignment)
+    assert wrong_summary_identity.value.code == "invalid_team_pr_durable_receipt"
+    summary_path.write_text(json.dumps(helper_result), encoding="utf-8")
+    assignment["attemptId"] = "00000000-0000-4000-8000-888888888888"
+
+    recovered = execute_assignment(root, assignment)
+
+    assert captured["calls"] == 1
+    assert recovered["effects"] == expected_effects
+    assert recovered["result"]["helperStatus"] == "findings"
+
+    intent_path.write_text(
+        json.dumps(pending_intent, sort_keys=True), encoding="utf-8"
+    )
+    summary_path.unlink()
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_path.write_text(
+        json.dumps({**launch_marker, "status": "failed"}), encoding="utf-8"
+    )
+
+    def launch_error(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise PermissionError("fixture spawn failure")
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", launch_error)
+    with pytest.raises(TaskExecutionError) as failed_launch:
+        execute_assignment(root, assignment)
+    assert failed_launch.value.code == "team_pr_helper_launch_failed"
+    assert failed_launch.value.retryable is True
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+
+    def poll_error_before_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("fixture governor poll failed before PID registration")
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", poll_error_before_spawn)
+    with pytest.raises(TaskExecutionError) as failed_poll:
+        execute_assignment(root, assignment)
+    assert failed_poll.value.code == "team_pr_helper_launch_failed"
+    assert failed_poll.value.retryable is True
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+
+    def poll_error_after_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": os.getpid()}), encoding="utf-8"
+        )
+        raise RuntimeError("fixture governor poll failure")
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", poll_error_after_spawn)
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: True,
+    )
+    with pytest.raises(TaskExecutionError) as live_poll_error:
+        execute_assignment(root, assignment)
+    assert live_poll_error.value.code == "team_pr_review_in_progress"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "running"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
+
+    def poll_error_after_dead_spawn(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": 999999}), encoding="utf-8"
+        )
+        raise RuntimeError("fixture governor failure after child exit")
+
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["status"] = "failed"
+    launch_marker.pop("helper_pid", None)
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+    monkeypatch.setattr(runtime_ops, "_run_local_script", poll_error_after_dead_spawn)
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: False,
+    )
+    with pytest.raises(TaskExecutionError) as dead_poll_error:
+        execute_assignment(root, assignment)
+    assert dead_poll_error.value.code == "team_pr_helper_launch_failed"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["status"] = "failed"
+    launch_marker.pop("helper_pid", None)
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+
+    def stale_execution(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": os.getpid()}), encoding="utf-8"
+        )
+        return {
+            "supported": True,
+            "ok": False,
+            "returncode": None,
+            "governed_run": str(tmp_path / "run"),
+            "governed_status": "stale",
+            "errors": ["fixture governed run is stale"],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", stale_execution)
+    with pytest.raises(TaskExecutionError) as stale_child:
+        execute_assignment(root, assignment)
+    assert stale_child.value.code == "team_pr_review_in_progress"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "running"
+
+    launch_marker = json.loads(launch_path.read_text(encoding="utf-8"))
+    launch_marker["status"] = "failed"
+    launch_marker.pop("helper_pid", None)
+    launch_path.write_text(json.dumps(launch_marker), encoding="utf-8")
+
+    def terminal_helper_failure(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker = json.loads(launch_path.read_text(encoding="utf-8"))
+        launch_path.write_text(
+            json.dumps({**marker, "helper_pid": 999999}), encoding="utf-8"
+        )
+        return {
+            "supported": True,
+            "ok": False,
+            "returncode": 1,
+            "governed_run": str(tmp_path / "failed-run"),
+            "governed_status": "failure",
+            "timed_out": False,
+            "errors": ["fixture helper failed deterministically"],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", terminal_helper_failure)
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_process_is_team_pr_helper",
+        lambda *_args, **_kwargs: False,
+    )
+    with pytest.raises(TaskExecutionError) as terminal_child:
+        execute_assignment(root, assignment)
+    assert terminal_child.value.code != "team_pr_review_in_progress"
+    assert terminal_child.value.receipt_path is not None
+    assert Path(terminal_child.value.receipt_path).is_file()
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "failed"
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_team_pr_helper", real_helper_match
+    )
+    monkeypatch.setattr(runtime_ops, "_run_local_script", run)
+    summary_path.write_text(json.dumps(helper_result), encoding="utf-8")
+    recovered = execute_assignment(root, assignment)
+    assert recovered["result"]["helperStatus"] == "findings"
+
+    lock_path = summary_path.with_name("review-intent.lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        competing_assignment = json.loads(json.dumps(assignment))
+        competing_assignment["task"]["id"] = "different-task-same-review-identity"
+        with pytest.raises(TaskExecutionError) as locked:
+            execute_assignment(root, competing_assignment)
+        assert locked.value.code == "team_pr_review_in_progress"
+        assert locked.value.retryable is True
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    completed = json.loads(intent_path.read_text(encoding="utf-8"))
+    intent_path.write_text(
+        json.dumps({**completed, "author_kind": "conflicting"}), encoding="utf-8"
+    )
+    with pytest.raises(TaskExecutionError) as conflict:
+        execute_assignment(root, assignment)
+    assert conflict.value.code == "team_pr_review_intent_conflict"
+    assert conflict.value.retryable is False
+
+    intent_path.write_text("{", encoding="utf-8")
+    with pytest.raises(TaskExecutionError) as corrupt:
+        execute_assignment(root, assignment)
+    assert corrupt.value.code == "invalid_team_pr_durable_receipt"
+    assert corrupt.value.retryable is False
+    intent_path.write_bytes(b"\xff")
+    with pytest.raises(TaskExecutionError) as byte_corrupt:
+        execute_assignment(root, assignment)
+    assert byte_corrupt.value.code == "invalid_team_pr_durable_receipt"
+    assert byte_corrupt.value.receipt_path == str(intent_path)
+
+
+def test_team_pr_live_pid_with_unknown_command_stays_fenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execution_fabric_remote, "_process_is_alive", lambda _pid: True
+    )
+    monkeypatch.setattr(
+        execution_fabric_remote.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired("ps", 5)
+        ),
+    )
+
+    assert execution_fabric_remote._process_is_team_pr_helper(4242, "run-id") is True
 
 
 def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(
@@ -1100,6 +1500,11 @@ def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(
 ) -> None:
     from genomes_agentic_os import runtime_ops
 
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "resolve_execution_fabric_host_id",
+        lambda *_args, **_kwargs: "bigmac",
+    )
     root = _root(tmp_path, remote=False)
     assignment = _assignment(3)
     assignment["task"].update(
@@ -1137,30 +1542,122 @@ def test_team_pr_changed_head_helper_receipt_produces_no_projection_effect(
     )
     helper.parent.mkdir(parents=True, exist_ok=True)
     helper.write_text("# installed portable helper fixture\n", encoding="utf-8")
-    monkeypatch.setattr(
-        runtime_ops,
-        "_run_local_script",
-        lambda *_args, **_kwargs: {
+    calls = 0
+
+    def run(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        helper_command = shlex.split(str(_args[1]))
+        helper_result = {
+            "status": "superseded",
+            "run_id": helper_command[helper_command.index("--run-id") + 1],
+            "source_key": "github-pr-42",
+            "reason": "head_changed",
+            "observed_head_sha": "b" * 40,
+        }
+        helper_summary = Path(
+            helper_command[helper_command.index("--summary-path") + 1]
+        )
+        helper_summary.parent.mkdir(parents=True, exist_ok=True)
+        helper_summary.write_text(json.dumps(helper_result), encoding="utf-8")
+        return {
             "supported": True,
             "ok": True,
             "exit_code": 0,
-            "stdout": json.dumps(
-                {
-                    "status": "superseded",
-                    "reason": "head_changed",
-                    "observed_head_sha": "b" * 40,
-                }
-            ),
+            "stdout": "truncated governed output before terminal JSON",
             "stderr": "",
             "errors": [],
             "warnings": [],
-        },
-    )
+        }
+
+    monkeypatch.setattr(runtime_ops, "_run_local_script", run)
 
     result = execute_assignment(root, assignment)
+    assignment["attemptId"] = "00000000-0000-4000-8000-777777777777"
+    retried = execute_assignment(root, assignment)
 
     assert result["result"]["helperStatus"] == "superseded"
     assert result["effects"] == []
+    assert retried["effects"] == []
+    assert calls == 1
+    intent_path = (
+        root
+        / "harness/shared_factory/06-runs-and-logs/execution-fabric/worker-runs"
+        / assignment["task"]["id"]
+        / "review-intent.json"
+    )
+    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    assert intent["status"] == "completed"
+    assert intent["helper_status"] == "superseded"
+    assert intent["effects"] == []
+
+
+def test_team_pr_durable_receipt_os_error_is_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "review-intent.json"
+    real_read_text = Path.read_text
+
+    def unreadable(_self: Path, **_kwargs: Any) -> str:
+        raise PermissionError("transient fixture")
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    with pytest.raises(TaskExecutionError) as failure:
+        execution_fabric_remote._read_json_object(path, label="fixture")
+
+    assert failure.value.code == "team_pr_durable_receipt_unavailable"
+    assert failure.value.retryable is True
+
+    monkeypatch.setattr(Path, "read_text", real_read_text)
+
+    def lock_unavailable(_self: Path, *_args: Any, **_kwargs: Any) -> Any:
+        raise PermissionError("transient lock fixture")
+
+    monkeypatch.setattr(Path, "open", lock_unavailable)
+    with pytest.raises(TaskExecutionError) as lock_failure:
+        with execution_fabric_remote._TeamPRLaunchMarkerLock(
+            tmp_path / "helper-launch.json"
+        ):
+            raise AssertionError("unreachable")
+
+    assert lock_failure.value.code == "team_pr_durable_receipt_unavailable"
+    assert lock_failure.value.retryable is True
+
+    monkeypatch.setattr(
+        execution_fabric_remote,
+        "_write_receipt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("transient write fixture")
+        ),
+    )
+    with pytest.raises(TaskExecutionError) as write_failure:
+        execution_fabric_remote._write_team_pr_receipt(
+            tmp_path / "summary.json", {"status": "fixture"}, durable=True
+        )
+
+    assert write_failure.value.code == "team_pr_durable_receipt_unavailable"
+    assert write_failure.value.retryable is True
+
+
+def test_durable_receipt_writes_fsync_file_and_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+    real_fsync = os.fsync
+
+    def tracked_fsync(fd: int) -> None:
+        calls.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", tracked_fsync)
+    execution_fabric_remote._write_receipt(
+        tmp_path / "replace.json", {"ok": True}, durable=True
+    )
+    assert execution_fabric_remote._write_receipt_once(
+        tmp_path / "create.json", {"ok": True}
+    )
+
+    assert len(calls) == 4
 
 
 def test_unregistered_los_domain_worker_fails_closed(tmp_path: Path) -> None:

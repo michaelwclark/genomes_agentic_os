@@ -16,7 +16,7 @@
 | **Exit 0** | Success |
 | **Exit 1** | Health check "not ok" (doctor / validate) |
 | **Exit 2** | argparse usage error OR deliberate handled refusal (e.g. `here route` when routing confidence is low; `config install` when blocked by conflicts) |
-| **Dry-run default** | Several mutating commands default to `--dry-run`. Pass `--apply` to commit changes. Affected: `runtime run-next`, `run-queue prune`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `notion track-runtime`, `config install`, `config install-tree`. |
+| **Dry-run default** | Several mutating commands default to `--dry-run`. Pass `--apply` to commit changes. Affected: `runtime run-next`, `run-queue prune`, `schedule run-due`, `event process-due`, `event replay`, `backup run`, `heartbeat run`, `update pull`, `integration setup`, `watch-source poll`, `watch-source run-due`, `notion sync`, `notion bootstrap`, `config install`, `config install-tree`. |
 | **`backup run` prerequisite** | Requires `update register` first (generates an update grant). |
 | **`run-log close --status done`** | Requires `--validation` evidence; missing evidence is a guardrail, not a crash. |
 | **`config` subcommands** | `install`, `install-tree`, and `doctor`. No `config layers` subcommand exists. |
@@ -1469,25 +1469,6 @@ Status: not individually validated in RESULTS.md.
 
 ---
 
-### `notion track-runtime`
-
-Plan or apply runtime tracking setup in Notion. Dry-run or apply required.
-
-| Arg / Flag | Required | Description |
-|---|---|---|
-| `--root` | No | Installed OS root path |
-| `--dry-run` | Yes (or `--apply`) | Show plan |
-| `--apply` | Yes (or `--dry-run`) | Execute |
-| `--verified-workspace` | No | Verified workspace name |
-
-```bash
-agentic-os notion track-runtime --root /tmp/aos-ref --dry-run
-```
-
-Status: not individually validated in RESULTS.md. Note: `--apply` exits 2 when workspace is not verified (tested in test suite).
-
----
-
 ## 10. Codex config: `config`
 
 Subcommands: `install`, `install-tree`, and `doctor`. There is no `config layers` subcommand.
@@ -2249,4 +2230,4 @@ commands and skills provide the operator workflow for every named stage.
 | **GUARDED** | 1 | `here route` (rc 2, low confidence) |
 | Total validated | 53 | Re-run `docs/architecture/tools/validate-cli.sh` for the current matrix |
 
-Commands not in the 53-invocation matrix (`room`, `here context build`, `connected-system doctor`, `run-queue prune`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap/track-runtime`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.
+Commands not in the 53-invocation matrix (`room`, `here context build`, `connected-system doctor`, `run-queue prune`, `watch-source create/doctor/poll/run-due`, `event append/replay`, `chain test`, `notion sync/bootstrap`, `update plan/pull/apply/rollback/phone-home`, `migrate apply`, `integration setup`, `customer update`) are structurally sound (argparse defined, handlers exist) but lack captured real-output evidence.

@@ -30,8 +30,8 @@ taxonomy, or Linear synchronization path.
 ## Compatibility
 
 Historical Self Improvement Notion rows may remain source evidence. They are
-not the intake queue. Do not call `agentic-os-intake-row` or
-`agentic-os-intake-sync`; Spec Engine owns provider identity and idempotency.
+not the intake queue. Do not call `agentic-os-intake-row`; Spec Engine owns
+provider identity and idempotency.
 
 ## Guardrails
 
