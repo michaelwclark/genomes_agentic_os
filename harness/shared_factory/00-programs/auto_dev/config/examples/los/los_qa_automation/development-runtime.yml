@@ -1,0 +1,48 @@
+# Copy this policy into the installed LOS QA Automation project's
+# config/development.yml. It complements the LOS Django application policy:
+# the application owns assessment and release disposition, while this project
+# owns implementation and execution of QA coverage.
+auto_dev:
+  default:
+    start_stage: qa
+    completion_stage: merge
+  stages:
+    qa:
+      applicability: enabled
+      campaign:
+        owner: los_qa_automation
+        parent_project: los_app_los_django
+        ticket_family: independent_work_items
+        implementation_repository: github:Lenders-Cooperative/los-qa-automation
+        pull_request_required: true
+        direct_default_branch_push: false
+        qa_contract_required:
+          - tenant
+          - target_build
+          - personas
+          - playwright_path_and_tags
+          - required_capability
+          - expected_jira_transition
+        fixture_routing:
+          base_users_relations_loans: los_stage_demo_loans
+          reference_data_document_packages_lifecycle: registered_los_test_data_provider
+          product_configuration_or_rules: los_configuration_change
+        prerequisite_protocol:
+          - plan
+          - approved_apply
+          - independent_verify
+        final_evidence:
+          - merged_exact_revision
+          - target_tenant_and_build
+          - hosted_result
+        qa_only_pr_exemptions:
+          - cross_harness_review
+          - pr_family_health
+review:
+  opposing_harness:
+    required: false
+    unavailable_policy: continue_with_receipt
+merge:
+  policy: auto_after_gates
+  require_checks: true
+  require_opposing_review_or_unavailable_receipt: false

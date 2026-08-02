@@ -18,6 +18,13 @@ installed-project mutations. Replace explicit sentinel values, merge only the
 documented section into the owning project's live config, validate, and start a
 new Development Delivery run so the exact commands are frozen into task state.
 
+The LOS examples demonstrate two cooperating but independent project policies:
+`los_app_los_django` owns assessment, automation eligibility, child QA handoff,
+and the root Jira outcome; `los_qa_automation` owns the focused test delivery,
+fixture/configuration routing, and final hosted evidence. Copy both the
+machine-readable overlay and the accompanying project `auto_dev/` addendum to
+the respective installed project; they are deliberately not a global LOS rule.
+
 The LOS Django example uses the source-owned
 `agentic-os-los-fast-worktree-health.py` wrapper. Replace
 `__AGENTIC_OS_ROOT__` with the absolute installed OS root before copying its

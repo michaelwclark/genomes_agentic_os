@@ -31,6 +31,7 @@ specialize each workflow without forking shared code.
 | 6 | Document | code, issue, architecture, operations, QA, release, or handoff docs | `/auto-dev-document` | verified documentation receipt |
 | 7 | PR Create | resolve and create or reuse the complete 1-N PR family | `/auto-dev-pr-create`; GitFlow and Release Propagation are aliases | provider-read family receipt |
 | 8 | Review Self | opposing review, CI, and repair loops over the exact PR family | `/auto-dev-review-self` | `ready_for_merge` |
+| 8a | Opposing Model Review | canonical Claude/Codex review transport and receipt for an exact ticket/head | `/auto-dev-review-self-opposing-model <TICKET>` | `pre_pr_review` or `post_pr_review` receipt |
 | 9 | Review Others | review another author's live PR without merging | `/auto-dev-review-others` | clean review-only receipt or typed policy decision |
 | 10 | QA | independently callable risk-based validation | `/auto-dev-qa` | QA receipt for the exact reviewed revision |
 | 11 | Finalize | converge our PR family and record readiness without merging | `/auto-dev-finalize` | immutable readiness receipt or typed policy decision |
@@ -128,6 +129,14 @@ delivery task, work-item packet, and `autodev.json` per ticket under the shared
 run. Resume one ticket with that packet's `--state`; never combine several
 tickets into one mutable state file or restart the whole batch to repair one
 item.
+
+### Project-defined QA campaigns
+
+Projects may declare their own ticket-family QA campaigns in their `auto_dev`
+and `qa_gates` policy planes. The core program preserves one work item per
+ticket and records the effective policy fingerprint; it does not hard-code a
+project's test type, fixture strategy, child repository, merge policy, or
+tracker transition.
 
 ## Run evidence
 

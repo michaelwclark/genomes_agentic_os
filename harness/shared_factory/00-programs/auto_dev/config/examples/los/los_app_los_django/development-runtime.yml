@@ -15,6 +15,32 @@ auto_dev:
     qa:
       applicability: contextual
       decision_point: after_pr_create
+      campaign:
+        owner: los_app_los_django
+        ticket_family: independent_work_items
+        child_project: los_qa_automation
+        child_delivery_when: application_pr_open
+        classifications:
+          - playwright_automatable
+          - non_browser_automatable
+          - performance_or_observability
+          - blocked_by_fixture
+          - blocked_by_product_config_or_rules
+          - blocked_by_environment_or_provider
+        browser_exclusions:
+          - performance
+          - observability
+          - migration_only
+          - internal_only
+          - nondeterministic_background_work
+        root_transition:
+          provider: jira
+          to: Ready for Release
+          requires:
+            - acceptance_mapping
+            - fixture_or_configuration_readback
+            - merged_exact_revision_hosted_evidence
+            - jira_readback
       assessment:
         tracker: jira
         issue_type: Sub-task

@@ -23,6 +23,9 @@
   receipts are idempotent and never advance Development Delivery by themselves.
 - Everything and every single-stage verb parse and preserve the same work item,
   while `not_required` requires a policy reference.
+- Auto-Dev QA accepts a 1-N ticket family and produces a distinct task/work item
+  projection for each supplied ticket. The shared QA command and skill resolve
+  project policy instead of embedding a project's campaign rules.
 - Everything does not finish before Health is completed, including a receipt-
   audited no-op; Health cannot be `not_required`, and Closeout remains the
   owner of `delivery_complete`.

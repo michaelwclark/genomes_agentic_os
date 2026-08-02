@@ -2191,6 +2191,72 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
 
 
+def test_auto_dev_qa_accepts_a_ticket_family(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+
+    assert (
+        main(
+            [
+                "auto-dev",
+                "qa",
+                "acme",
+                "app",
+                "CC-QA-1",
+                "CC-QA-2",
+                "--root",
+                str(root),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert output["auto_dev"]["requested_stage"] == "qa"
+    assert output["tickets"] == ["CC-QA-1", "CC-QA-2"]
+
+
+def test_los_ticket_family_qa_examples_are_project_owned() -> None:
+    examples = (
+        Path(__file__).parents[1]
+        / "harness/shared_factory/00-programs/auto_dev/config/examples/los"
+    )
+    application = yaml.safe_load(
+        (examples / "los_app_los_django/development-runtime.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    qa_automation = yaml.safe_load(
+        (examples / "los_qa_automation/development-runtime.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    application_campaign = application["auto_dev"]["stages"]["qa"]["campaign"]
+    assert application_campaign["owner"] == "los_app_los_django"
+    assert application_campaign["child_project"] == "los_qa_automation"
+    assert "playwright_automatable" in application_campaign["classifications"]
+    assert application_campaign["root_transition"]["to"] == "Ready for Release"
+
+    qa_campaign = qa_automation["auto_dev"]["stages"]["qa"]["campaign"]
+    assert qa_campaign["owner"] == "los_qa_automation"
+    assert qa_campaign["parent_project"] == "los_app_los_django"
+    assert qa_campaign["fixture_routing"]["product_configuration_or_rules"] == (
+        "los_configuration_change"
+    )
+    assert qa_automation["merge"]["require_opposing_review_or_unavailable_receipt"] is False
+
+    application_policy = (
+        examples / "los_app_los_django/auto_dev/19-los-django-qa-campaign.md"
+    ).read_text(encoding="utf-8")
+    qa_policy = (
+        examples / "los_qa_automation/auto_dev/19-qa-automation-ticket-family.md"
+    ).read_text(encoding="utf-8")
+    assert "owns the application-ticket" in application_policy
+    assert "owns focused test delivery" in qa_policy
+
+
 def test_project_configures_default_and_everything_workflow_boundaries(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

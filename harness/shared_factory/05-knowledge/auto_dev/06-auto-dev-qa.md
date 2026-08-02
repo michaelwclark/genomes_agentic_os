@@ -36,6 +36,13 @@ Independent QA lanes may be delegated to subagents when they do not mutate the
 same fixtures or environment. The coordinator reconciles the results and owns
 the final QA judgment.
 
+## Project-owned campaign policy
+
+Ticket-family classification, child QA delivery, fixture/configuration routing,
+merge authority, and tracker transitions are project policy. Resolve those
+addenda with the other effective policy planes; the shared QA layer only
+requires exact-subject evidence and typed outcomes.
+
 ## Evidence outcomes
 
 - `passed`: all required checks ran against the intended subject and matched

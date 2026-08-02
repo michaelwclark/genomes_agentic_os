@@ -16,24 +16,15 @@ description: Run the project-configured risk-based QA gates as a standalone Auto
 5. Map every acceptance criterion to evidence or a gap. Record `qa` as
    completed only after evidence is current for the exact revision.
 
-## LOS Django child delivery
+## Project-owned campaign behavior
 
-For `Lenders-Cooperative/los-app-los-django`, create a Jira QA Automation
-Assessment subtask under the root Jira when the application PR is opened. The
-subtask is always created; Playwright implementation is contextual.
+Resolve the effective `auto_dev`, `qa_gates`, `environment_access`, and
+`gitflow_topology` planes before selecting a campaign path. A project may define
+ticket-family classification, child delivery, fixture/configuration ownership,
+merge authority, or tracker transitions. Those rules belong in that project's
+configuration and policy addenda, never in this shared skill.
 
-- If automation adds no meaningful coverage or is genuinely infeasible, close
-  the assessment with a typed policy decision and concrete reason.
-- If automation is required, treat the subtask as a child Auto-Dev delivery in
-  `Lenders-Cooperative/los-qa-automation`. Use a feature branch and PR; do not
-  push the delivery directly to `main`.
-- Analyze the application diff, acceptance criteria, existing Jira tests, and
-  `.agents/skills/qa-analysis/SKILL.md` in the Django repository before naming
-  files. The plan normally includes
-  `tests/jira/<PARENT>/<feature>.spec.ts`,
-  `tests/jira/<PARENT>/README.md`, any reusable `pages/**`, `helpers/**`, or
-  fixture changes, required tags/environment, evidence, and the exact
-  validation command.
-- Bind the child Jira, repository, PR, revision, checks, and outcome back to the
-  parent work item. The parent QA gate is terminal only when the child reaches
-  the project-configured completion boundary or the typed skip is accepted.
+Preserve one work item per ticket. When a project defines a child QA delivery,
+bind the child ticket, contract, repository, revision, evidence, and disposition
+back to its parent. The parent QA gate is terminal only at the completion
+boundary declared by the effective project policy.

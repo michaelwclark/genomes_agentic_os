@@ -1,0 +1,7 @@
+interface:
+  display_name: Auto-Dev QA
+  short_description: Run project-configured risk-based QA as a standalone receipt-backed
+    workflow.
+  default_prompt: Use the Agentic OS Auto-Dev QA skill.
+policy:
+  allow_implicit_invocation: true
