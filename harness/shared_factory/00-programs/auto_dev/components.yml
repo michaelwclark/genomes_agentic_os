@@ -34,6 +34,8 @@ commands:
     path: harness/commands/auto-dev-review-repair.md
   - id: auto-dev-review-self
     path: harness/commands/auto-dev-review-self.md
+  - id: auto-dev-review-self-opposing-model
+    path: harness/commands/auto-dev-review-self-opposing-model.md
   - id: auto-dev-review-others
     path: harness/commands/auto-dev-review-others.md
   - id: auto-dev-finalize
@@ -81,6 +83,8 @@ skills:
     path: harness/skills/auto-dev-review-repair/SKILL.md
   - id: auto-dev-review-self
     path: harness/skills/auto-dev-review-self/SKILL.md
+  - id: auto-dev-review-self-opposing-model
+    path: harness/skills/auto-dev-review-self-opposing-model/SKILL.md
   - id: auto-dev-review-others
     path: harness/skills/auto-dev-review-others/SKILL.md
   - id: auto-dev-finalize
@@ -125,6 +129,9 @@ workflows:
   - id: testing_review_and_pr_repair
     status: active
     path: ../../04-workflows/development_delivery/testing_review_and_pr_repair
+  - id: auto_dev_opposing_model_review
+    status: active
+    path: ../../04-workflows/development_delivery/opposing_model_review
   - id: release_propagation
     status: active
     path: ../../04-workflows/development_delivery/release_propagation

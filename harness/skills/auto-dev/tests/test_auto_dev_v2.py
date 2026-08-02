@@ -296,11 +296,13 @@ class AutoDevV2Tests(unittest.TestCase):
                     "--allowedTools",
                     auto_dev_state.CLAUDE_REVIEW_ALLOWED_TOOLS,
                     "--no-session-persistence",
+                    (review_dir / "reviewer-prompt.md").read_text(encoding="utf-8"),
                 ],
             )
             self.assertNotIn("ANTHROPIC_API_KEY", call.kwargs["env"])
             self.assertNotIn("ANTHROPIC_AUTH_TOKEN", call.kwargs["env"])
             self.assertEqual(call.kwargs["cwd"], str((run_dir.parent / "worktree").resolve()))
+            self.assertNotIn("input", call.kwargs)
             self.assertEqual(
                 (review_dir / "reviewer-response.md").read_text(encoding="utf-8"), response
             )
@@ -341,6 +343,30 @@ class AutoDevV2Tests(unittest.TestCase):
             self.assertEqual(receipt_args.review_unavailable_policy, "continue_with_receipt")
             self.assertNotIn("secret", receipt_args.failure_summary)
             self.assertNotIn("/Users/genome/private", receipt_args.failure_summary)
+            self.assertFalse((review_dir / "reviewer-response.md").exists())
+
+    def test_run_review_empty_output_records_unavailable_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            review_dir = self.prepare_review(run_dir)
+            args = self.run_review_args(run_dir, review_dir)
+            git_head = subprocess.CompletedProcess(
+                args=["git"], returncode=0, stdout="head\n", stderr=""
+            )
+            completed = subprocess.CompletedProcess(
+                args=["/usr/local/bin/claude"], returncode=0, stdout="", stderr=""
+            )
+            with mock.patch.object(auto_dev_state.shutil, "which", return_value="/usr/local/bin/claude"):
+                with mock.patch.object(
+                    auto_dev_state.subprocess, "run", side_effect=[git_head, completed]
+                ):
+                    with mock.patch.object(
+                        auto_dev_state, "command_record_review_unavailable", return_value=0
+                    ) as record:
+                        auto_dev_state.command_run_review(args)
+
+            receipt_args = record.call_args.args[0]
+            self.assertEqual(receipt_args.failure_code, "cli_output_invalid")
             self.assertFalse((review_dir / "reviewer-response.md").exists())
 
     def test_run_review_malformed_nonempty_output_pauses_without_downgrade(self) -> None:
