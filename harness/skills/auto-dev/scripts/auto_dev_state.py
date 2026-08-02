@@ -1277,11 +1277,11 @@ def command_run_review(args: argparse.Namespace) -> int:
         "--allowedTools",
         CLAUDE_REVIEW_ALLOWED_TOOLS,
         "--no-session-persistence",
+        prompt_path.read_text(encoding="utf-8"),
     ]
     try:
         completed = subprocess.run(
             command,
-            input=prompt_path.read_text(encoding="utf-8"),
             text=True,
             capture_output=True,
             check=False,

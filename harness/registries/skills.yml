@@ -250,6 +250,11 @@ skills:
   description: Review and repair our own change through the canonical independent
     merge-readiness path.
   source: harness/skills/auto-dev-review-self/SKILL.md
+- id: auto-dev-review-self-opposing-model
+  name: Auto-Dev Review Self Opposing Model
+  description: Run the canonical independent-model review checkpoint for one Auto-Dev
+    work item and emit receipt-backed readiness evidence.
+  source: harness/skills/auto-dev-review-self-opposing-model/SKILL.md
 - id: auto-dev-review-others
   name: Auto-Dev Review Others
   description: Review another author's live pull request through the canonical PR Review owner.
