@@ -12,6 +12,8 @@ import yaml
 from .runtime_backend import runtime_queue_items
 from .runtime_ops import append_run_queue_item
 from .scaffold import expand_path, validate_name
+from .state import db as state_db
+from .state import events as state_events
 
 
 CONTROL_PLANE = Path("harness/shared_factory/00-control-plane")
@@ -56,6 +58,9 @@ def default_event_graph() -> dict[str, Any]:
             "event_log": str(EVENTS),
             "chain_rules": str(CHAIN_RULES_FILE),
             "run_queue": str(RUN_QUEUE),
+            # The YAML ledger remains authoritative until a separate read-path
+            # cutover.  Enabling this creates a SQLite shadow ledger only.
+            "state_ledger": {"dual_write": False},
         }
     }
 
@@ -236,6 +241,52 @@ def append_ledger_index(root: Path, event: dict[str, Any]) -> None:
         path.write_text(f"{content}{row}", encoding="utf-8")
 
 
+def state_ledger_dual_write_enabled(root: Path) -> bool:
+    """Whether event appends should also target the SQLite shadow ledger.
+
+    The setting is deliberately opt-in and lives beside the event-graph
+    configuration so an existing installed root keeps its file-only behavior
+    until an operator has established a parity baseline.
+    """
+    config = load_yaml(root / EVENT_GRAPH_FILE).get("event_graph") or {}
+    state_ledger = config.get("state_ledger") if isinstance(config, dict) else {}
+    return isinstance(state_ledger, dict) and state_ledger.get("dual_write") is True
+
+
+def append_state_ledger_event(root: Path, event: dict[str, Any]) -> dict[str, Any]:
+    """Append the normalized SQLite projection for an existing YAML event.
+
+    Callers write the file-backed event first.  This preserves the established
+    ledger as the ground truth while a configured shadow write is active.
+    """
+    source = event.get("source") or {}
+    correlation = event.get("correlation") or {}
+    privacy = event.get("privacy") or {}
+    links = event.get("links") or {}
+    connection = state_db.connect(state_db.default_db_path(root))
+    try:
+        return state_events.append(
+            connection,
+            event_type=str(event["type"]),
+            id=str(event["id"]),
+            schema_version_value=int(event.get("schema_version") or 1),
+            occurred_at=str(event["occurred_at"]),
+            observed_at=str(event["observed_at"]),
+            source_ref=source.get("ref"),
+            correlation_id=correlation.get("correlation_id"),
+            idempotency_key=event.get("idempotency_key"),
+            summary=event.get("summary"),
+            payload=event.get("payload_ref") or {},
+            contains_secret=bool(privacy.get("contains_secret", False)),
+            contains_customer_data=bool(privacy.get("contains_customer_data", False)),
+            run_log_link=links.get("run_log"),
+            source_url=links.get("source_url"),
+            domain="shared_factory",
+        )
+    finally:
+        connection.close()
+
+
 def append_event(
     root: str | Path,
     *,
@@ -265,6 +316,8 @@ def append_event(
     path = os_root / EVENTS / f"{event['id']}.yml"
     write_yaml_once(path, event)
     append_ledger_index(os_root, event)
+    if state_ledger_dual_write_enabled(os_root):
+        append_state_ledger_event(os_root, event)
     event["path"] = str(path)
     return event
 

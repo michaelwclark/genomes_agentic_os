@@ -217,19 +217,19 @@ twice produces identical table counts): `run_queue` upserts by `id` (refreshes t
 YAML-mirrored columns, leaves `priority`/`attempts`/`lease_owner`/`lease_until` alone);
 `events` is insert-or-ignore by `id`; `cursors` upserts by `name`.
 
-## Two-Milestone Cutover Plan (future work, not tonight)
+## Cutover Plan
 
 The audit that preceded this change (`audit-forge-sqlite.md`) recommended sequencing the
 cutover of *live writers* — not tonight's scaffolding, which ships all three tables and
 importers together — by risk, separately from pain:
 
-1. **Milestone 1 — events ledger dual-write.** `event_graph.append_event` starts writing to
-   both the YAML file (ground truth, unchanged) and `events` (via `state.events.append`) for
-   one cycle; verify parity with `state verify-import`; then cut `event_graph`'s *read* paths
-   (`list_events`, `summarize_events`) over to SQLite. Lowest risk: append-only, already
-   idempotent, low current volume (5 files today), and chain rules are all disabled so almost
-   nothing depends on read-path correctness yet. This is where the migration tooling, backup
-   story, and WAL behavior under the OS's stateless-tick model get proven.
+1. **Milestone 1 — events ledger dual-write (AGE-53).** `event_graph.append_event` writes
+   the YAML file (ground truth, unchanged) and, only when
+   `event-graph.yml` enables `event_graph.state_ledger.dual_write: true`, appends its
+   normalized projection to `events` through `state.events.append`. Reads remain file-backed:
+   establish parity with `state verify-import` for one cycle before any read-path cutover of
+   `list_events` or `summarize_events`. This proves the migration tooling, backup story, and
+   WAL behavior without changing consumers.
 2. **Milestone 2 — run_queue backend flip.** Once Milestone 1's pattern is proven,
    `runtime_ops.py`'s queue read/write path (`_write_queue`, `_queue`,
    `_append_queue_item_to_queue`, and the scheduler's "what's due" scan) moves from
@@ -253,9 +253,9 @@ importers together — by risk, separately from pain:
 
 ## Non-Goals Tonight
 
-- **No live-writer cutover.** `runtime_ops.py`, `event_graph.py`, and `source_watch.py`
-  still read and write the YAML files exactly as before. This change adds a parallel,
-  importable mirror; it does not change what the OS's runtime actually reads from yet.
+- **No read-path or queue-writer cutover.** `runtime_ops.py`, `source_watch.py`, and all
+  `event_graph.py` readers still use YAML files exactly as before. AGE-53 adds only the
+  config-gated SQLite shadow append for events; it does not make the database authoritative.
 - **No `runs` (audit-log), `work_items`, `watcher_state`, or `intake_cursors` tables.** The
   audit sketched these for a *future* milestone; tonight's scope is exactly the three stores
   named in the AGE-39 task (events, run_queue, cursors), matching what's actually
