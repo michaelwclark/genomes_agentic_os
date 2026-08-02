@@ -121,6 +121,7 @@ class ReclaimPlan:
     decisions: list[Decision] = field(default_factory=list)
     live_tokens: dict[str, str] = field(default_factory=dict)
     scopes: tuple[str, ...] = DEFAULT_SCOPES
+    selected_names: tuple[str, ...] = ()
     applied: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -141,6 +142,7 @@ class ReclaimPlan:
             "generated_at": generated_at,
             "mode": "apply" if self.applied else "report",
             "scopes": list(self.scopes),
+            "selected_names": list(self.selected_names),
             "protected_worktrees": len(self.live_tokens),
             "summary": {
                 "reclaimable": len(self.reclaimable),
@@ -318,6 +320,7 @@ def build_plan(
     live_tokens: dict[str, str],
     scopes: Sequence[str] = DEFAULT_SCOPES,
     protected_names: Iterable[str] = (),
+    selected_names: Iterable[str] = (),
 ) -> ReclaimPlan:
     """Collect resources for the requested scopes and classify them."""
     resources: list[Resource] = []
@@ -326,7 +329,16 @@ def build_plan(
     if "volumes" in scopes:
         resources.extend(client.volumes())
 
-    plan = ReclaimPlan(scopes=tuple(scopes), live_tokens=dict(live_tokens))
+    selected = tuple(dict.fromkeys(selected_names))
+    if selected:
+        selected_set = set(selected)
+        resources = [resource for resource in resources if resource.name in selected_set]
+
+    plan = ReclaimPlan(
+        scopes=tuple(scopes),
+        live_tokens=dict(live_tokens),
+        selected_names=selected,
+    )
     plan.decisions = classify(resources, live_tokens, protected_names)
     return plan
 
