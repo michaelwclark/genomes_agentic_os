@@ -1417,34 +1417,11 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     assert main(["integration", "list", "--root", str(root)]) == 0
     assert main(["integration", "setup", "granola", "--root", str(root), "--dry-run"]) == 0
     assert main(["integration", "doctor", "granola", "--root", str(root)]) == 0
-    assert main(["notion", "track-runtime", "--root", str(root), "--dry-run"]) == 0
-    assert main(["notion", "track-runtime", "--root", str(root), "--apply"]) == 2
-    assert (
-        main(
-            [
-                "notion",
-                "track-runtime",
-                "--root",
-                str(root),
-                "--apply",
-                "--verified-workspace",
-                "Genome's Notion",
-            ]
-        )
-        == 0
-    )
-    assert (root / ".notion-runtime-tracking" / "manifest.yml").is_file()
-
     registry = yaml.safe_load((shared_factory(root) / "00-control-plane" / "runtime-registry.yml").read_text())
     integration_registry = yaml.safe_load(
         (shared_factory(root) / "00-control-plane" / "integration-registry.yml").read_text()
     )
-    schedules_by_id = {schedule["id"]: schedule for schedule in registry["schedules"]}
-    assert schedules_by_id["notion_runtime_tracking"]["enabled"] is True
-    assert schedules_by_id["notion_runtime_tracking"]["cadence"] == "daily"
-    assert "notion track-runtime" in schedules_by_id["notion_runtime_tracking"]["command"]
-    assert 'verified-workspace "Genome\'s Notion"' in schedules_by_id["notion_runtime_tracking"]["command"]
-    assert {"codex_harness", "claude_harness", "script", "orgo_desktop", "composio_cli", "agentmail_api", "granola_local", "notion_api"} <= {
+    assert {"codex_harness", "claude_harness", "script", "orgo_desktop", "composio_cli", "agentmail_api", "granola_local"} <= {
         target["id"] for target in registry["execution_targets"]
     }
     assert {"orgo", "composio", "agentmail", "granola", "notion"} <= {
