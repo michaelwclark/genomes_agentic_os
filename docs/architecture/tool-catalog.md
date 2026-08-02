@@ -128,7 +128,6 @@ registry is version-controlled in this worktree or installed-only today (see
 | `hooks` | Structured hook registry: id/status/source/events, 11 entries (includes conceptual hooks beyond the 7 files in §6) | Checking what fires on which agent event | Installed-only |
 | `hosts-routing` | Cross-host work-distribution policy; references `config/hosts.yml` for SSH identity | Read by `agentic-harness-run` for `--host auto`/`<name>` | Yes |
 | `intake-routing` | NL keyword routing for the OS Work Intake "Project" field | Read by `agentic-os-intake-row --route-text` | Yes |
-| `intake-sync` | Notion Work Intake → Linear sync config (team id, token env var) | Read by `agentic-os-intake-sync` | Yes |
 | `libraries` | Library/tool capability list (e.g. `context_mode`, `unified_memory`) | Checking available libraries | Installed-only |
 | `mcp-servers` | MCP server table: id/use-when/boundary/install scope | Before calling any `mcp__*` tool | Installed-only |
 | `notion-surfaces` | Slug → canonical Notion page/database ID registry | Before any Notion write, to resolve the target ID | Installed-only |
@@ -161,13 +160,11 @@ specific registry.
 | `agentic-os-automation-run-summary` | Replace one automation's Notion last-run-summary page. |
 | `agentic-os-claude-desktop-bridge` | Build/audit the Claude Desktop custom-skill + instructions package (Desktop doesn't read `CLAUDE.md` or hook settings). |
 | `agentic-os-intake-row` | Create a row in the OS Work Intake Notion database, routing `Project` via `intake-routing.yml`. |
-| `agentic-os-intake-sync` | Sync the OS Work Intake Notion DB through the reviewed shared Linear bridge, with exact-marker reconciliation and completed/canceled back-sync. |
 | `agentic-os-interim-executor` | Compatibility entry point that delegates all automation work to the runtime supervisor (kept for older LaunchAgents). |
-| `agentic-os-jira` | Deterministic policy/presentation wrapper over the reviewed `@genomes/jira` subprocess bridge for when MCP/Composio Jira routes are unhealthy. |
+| `agentic-os-jira` | Deterministic Jira wrapper (OAuth client-credentials first, basic-auth token fallback) for when MCP/Composio Jira routes are unhealthy. |
 | `agentic-os-memory-analytics` | Run the read-only memory retrieval-analytics report on the configured analytics host; `export` copies artifacts to the active work item. |
 | `agentic-os-monitor` | Real-time in-shell health monitor: queue depth, running agents per host, recent runs, token usage, host vitals, alert feed. |
 | `agentic-os-notify` | Deliver governed alerts through macOS Notification Center; the single delivery seam for automations and watchers, records deliveries + suppressions. |
-| `agentic-os-notion-migrate` | Diff the live Notion workspace against `notion-organization.yml` + `notion-surfaces.yml` and report (or fix) drift. |
 | `agentic-os-pr-crossreview` | Route a GitHub PR review to the harness OPPOSITE its author (Claude-authored PR → Codex reviews, and vice versa). |
 | `agentic-os-quiet-run` | Compatibility launcher for the universal long-running execution contract. |
 | `agentic-os-status-report` | Create durable Agentic OS status report artifacts. |
@@ -221,7 +218,6 @@ chain-rules, event-graph, integration-registry, work-item-limits, etc.).
 | `long-running-runs.json` | Central long-running-execution registry: phase, progress, budgets | `agentic-os long-run`; required for any qualifying run per `os-authoring-rules.md` |
 | `safe-action-allowlist.md` / `.yml` | Exact-string allowlist of commands a guarded/scheduled executor may run unattended | Read by the interim/guarded executor before running any scheduled command |
 | `watch-sources.yml` | Connected/watched external source definitions | `agentic-os watch-source` |
-| `notion-organization.yml` | IA contract for Genome's Notion (canonical structure) | Read by `agentic-os-notion-migrate`, `notion-org doctor` |
 | `doc-config.yml` | Document-capture routing config (filesystem + Notion destinations) | Read by the `doc-config-router` skill before any spec/bug/feature capture |
 | `locks/` | Orphan-safe mutation locks for long-running/migration work | Never hand-edit; created/released by the owning tool |
 

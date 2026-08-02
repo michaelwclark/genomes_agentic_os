@@ -1,0 +1,19 @@
+id: aos_stack_cleaner
+version: 1
+owner: host_agentic_os_health
+mode: manual_exact_pr
+inputs: [merged_pr_readback, merge_receipt, worktree_path, worktree_registry, health_preflight, runtime_receipt, docker_reclaim_report]
+outputs: [worktree_hold_or_removal_receipt, targeted_docker_reclaim_receipt, finalization_readback, summary]
+states: [requested, merge_verified, held, teardown_verified, worktree_finalized, resources_reclaimed, complete, blocked]
+steps: [provider_readback, preserve_and_check_git_state, tear_down_target_stack, finalize_worktree, report_orbstack, apply_selected_reclaim, verify_receipts]
+validations: [merged_pr_head_matches_receipt, clean_worktree_or_hold, no_reopen_marker, no_unpushed_commits, target_runtime_stopped, target_worktree_removed_or_held, selected_resources_only, no_attached_container, receipt_readback]
+failure_modes:
+  missing_merge_proof: block_without_mutation
+  dirty_or_unpushed_worktree: preserve_and_hold
+  reopen_marker: preserve_and_hold
+  teardown_failure: preserve_worktree_and_runtime_receipt
+  docker_resource_race: keep_resource_and_record_error
+  missing_event_consumer: remain_manual
+events: [pr.merged]
+event_policy: proposal_only_until_durable_consumer_and_idempotency_contract_exist
+receipts: [provider_merge_snapshot, git_preflight, runtime_teardown, worktree_finalization, docker_report, docker_apply, final_readback]

@@ -258,7 +258,7 @@ refusing Notion write: verified workspace appears to be Michael Clark's personal
 ```
 
 **Why it happens.** Every `notion` subcommand that writes (`notion sync --apply`,
-`notion bootstrap --apply`, `notion track-runtime --apply`) requires an explicit
+`notion bootstrap --apply`) requires an explicit
 `--verified-workspace` flag. The guard prevents accidental writes to the wrong
 Notion workspace, and explicitly blocks writes to Michael Clark's personal account.
 
@@ -324,7 +324,7 @@ re-verified against the source on 2026-07-13; most of the register has closed.
 | Gap | Was (severity) | Status today |
 | --- | --- | --- |
 | A | No always-on scheduler or daemon (S1) | **Closed.** `agentic-os runtime supervise` runs one full tick (`supervisor.py`); `installers/install-scheduler.sh` installs a launchd agent (macOS) or crontab line that calls `runtime supervise --apply` on a cadence. Residual below. |
-| B | Notion control plane is plan-only (S2) | **Closed.** `notion_api.py` is a real Notion client (stdlib `urllib` against `api.notion.com/v1`, token from the `GENOMES_NOTION_PAT` env var). Live writes exist behind `--apply` + `--verified-workspace`: `notion track-runtime` (F-010) and `notion active-work-sync`. `notion sync`/`bootstrap` maintain local mapping/manifest projections. Files stay authoritative. See [12 · Control Plane — Notion](12-control-plane-notion.md). |
+| B | Notion control plane is plan-only (S2) | **Closed.** `notion_api.py` is a real Notion client (stdlib `urllib` against `api.notion.com/v1`, token from the `GENOMES_NOTION_PAT` env var). Live writes exist behind `--apply` + `--verified-workspace`; `notion sync`/`bootstrap` maintain local mapping/manifest projections. Files stay authoritative. See [12 · Control Plane — Notion](12-control-plane-notion.md). |
 | C | No aggregated health, no `doctor --all` (S2) | **Closed.** `agentic-os doctor --all` (F-003) aggregates the core, runtime, event-graph, and config doctors, persists a per-subsystem snapshot, and appends an `os.doctor.regression` event when health regresses. Residual below. |
 | D | `validate` does not enforce `schemas/` (S2) | **Closed, opt-in.** `validate --strict` (F-011) checks structured YAML/JSON against `schemas/`. Plain `validate` still checks shape and parseability only. Residual below. |
 | E | No `metrics` command (S2) | **Closed.** `agentic-os metrics refresh` computes a scorecard from run logs, doctor findings, and automation maturity, writing `harness/shared_factory/07-metrics/scorecard.yml`. |

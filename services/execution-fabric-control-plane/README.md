@@ -11,9 +11,13 @@ environment, or agent-skill types. Those belong in producers and workers.
 ## Guarantees
 
 - Idempotent admission by `(namespace, idempotencyKey)`. Reusing a key with a
-  different request is rejected.
+  different request is rejected; a same-request duplicate returns durable task
+  truth and never republishes delivery.
 - Durable task, run, attempt, event, worker, and external-effect-outbox rows in
   PostgreSQL.
+- Attempts are immutable terminal history: each records its worker session,
+  lease duration/expiry, timing, result or error; run snapshots expose that
+  attempt history and any associated external-effect provider receipt.
 - Atomic claims using `FOR UPDATE SKIP LOCKED`.
 - Per-worker concurrency limits and capability-aware assignment.
 - Worker registration leases, task attempt leases, lease tokens, and monotonic

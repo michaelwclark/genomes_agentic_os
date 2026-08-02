@@ -154,7 +154,6 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/integration.yml",
     "templates/runtime/run-queue-item.yml",
     "templates/notion/control-plane-database-spec.md",
-    "templates/notion/runtime-tracking-database-spec.md",
     "templates/runtime/connected-system.yml",
     "templates/runtime/source-provider.yml",
     "templates/runtime/watch-source.yml",
