@@ -50,10 +50,6 @@ sources:
     enabled: true
     min_level: warning
     sound: Pop
-  automation.intake_sync:
-    enabled: true
-    min_level: warning
-    sound: Pop
   automation.pr_health:
     enabled: true
     min_level: warning
