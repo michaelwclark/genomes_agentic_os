@@ -155,7 +155,7 @@ circular imports. New shared primitives belong in `scaffold.py`, not a new
 | `automation_ops.py` | 282 | **Automation maturity ladder.** Readiness checks + `observe → prepare → propose → execute_approved → execute_guarded`. |
 | `workflow_ops.py` | 278 | **Workflow readiness + run closeout.** Required-section checks, `run-log close` audit gate. |
 | `workflow_engine.py` | — | **Governed workflow authoring.** Typed definition/version/instance/run projections, field-addressable validation, immutable publish, drift-safe rollback, and queue-only run requests. |
-| `notion_sync.py` | — | **Notion projection.** `plan-sync`, `sync`, `bootstrap`, `track-runtime`. Dry-run by default. |
+| `notion_sync.py` | — | **Notion projection.** `plan-sync`, `sync`, and `bootstrap`. Dry-run by default. |
 
 ---
 

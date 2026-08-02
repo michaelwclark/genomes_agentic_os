@@ -17,6 +17,9 @@ import yaml
 
 from .db import transaction, utc_now_iso
 
+
+SUCCESSFUL_CLAIM_STATES = frozenset({"done", "complete", "completed", "succeeded", "success"})
+
 CANONICAL_STATES = (
     "captured",
     "triaged",
@@ -462,6 +465,102 @@ def migrate_path_prefix(
                 ),
             )
     return result
+
+
+def reconcile_completion_claims(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Read-only reconciliation of recorded completion claims against events.
+
+    A completed queue item is a run claim.  A work-item-history transition into
+    one of ``SUCCESSFUL_CLAIM_STATES`` is an agent claim.  The latter preserves
+    the original actor and state, while requiring supporting ledger evidence
+    tied to the same work-item identifier and actor.  No state is repaired or
+    reclassified here: callers receive a deterministic doctor report instead.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+
+    # Import lazily to keep the two state-plane modules independently usable.
+    from . import events as events_module
+
+    claims: list[dict[str, Any]] = []
+    run_rows = conn.execute(
+        """
+        SELECT id, ref, idempotency_key, status, finished_at, updated_at
+        FROM run_queue
+        WHERE status = 'done'
+        ORDER BY COALESCE(finished_at, updated_at), id
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    for row in run_rows:
+        identifiers = (row["id"], row["ref"], row["idempotency_key"])
+        evidence = events_module.completion_evidence_for(conn, identifiers=identifiers)
+        claims.append(
+            {
+                "claim_id": f"run:{row['id']}",
+                "claim_type": "run",
+                "subject_id": row["id"],
+                "claim_state": row["status"],
+                "actor": None,
+                "claimed_at": row["finished_at"] or row["updated_at"],
+                "identifiers": [value for value in identifiers if value],
+                "status": "supported" if evidence else "phantom",
+                "supporting_event_ids": [event["id"] for event in evidence],
+            }
+        )
+
+    remaining = max(0, limit - len(claims))
+    if remaining:
+        state_placeholders = ", ".join("?" for _ in SUCCESSFUL_CLAIM_STATES)
+        agent_rows = conn.execute(
+            f"""
+            SELECT history.id, history.work_item_id, history.changed_at,
+                   history.actor, history.to_state, history.receipt_ref,
+                   item.source_key, item.source_url
+            FROM work_item_history AS history
+            JOIN work_items AS item ON item.id = history.work_item_id
+            WHERE lower(history.to_state) IN ({state_placeholders})
+            ORDER BY history.changed_at, history.id
+            LIMIT ?
+            """,
+            (*sorted(SUCCESSFUL_CLAIM_STATES), remaining),
+        ).fetchall()
+        for row in agent_rows:
+            identifiers = (row["work_item_id"], row["source_key"], row["source_url"], row["receipt_ref"])
+            evidence = events_module.completion_evidence_for(
+                conn,
+                identifiers=identifiers,
+                actor=row["actor"],
+            )
+            claims.append(
+                {
+                    "claim_id": f"agent:{row['work_item_id']}:{row['id']}",
+                    "claim_type": "agent",
+                    "subject_id": row["work_item_id"],
+                    "claim_state": row["to_state"],
+                    "actor": row["actor"],
+                    "claimed_at": row["changed_at"],
+                    "identifiers": [value for value in identifiers if value],
+                    "status": "supported" if evidence else "phantom",
+                    "supporting_event_ids": [event["id"] for event in evidence],
+                }
+            )
+
+    supported = sum(claim["status"] == "supported" for claim in claims)
+    phantom = len(claims) - supported
+    return {
+        "api_version": "agentic-os-trace-reconciliation/v1",
+        "status": "clean" if not phantom else "phantom_completions",
+        "claim_count": len(claims),
+        "supported_count": supported,
+        "phantom_count": phantom,
+        "claims": claims,
+    }
 
 
 def active_now(conn: sqlite3.Connection, *, stale_hours: int = 72) -> dict[str, Any]:

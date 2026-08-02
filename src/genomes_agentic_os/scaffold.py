@@ -47,7 +47,7 @@ SHARED_FACTORY_DOMAIN = "shared_factory"
 DEFAULT_PROJECTS_SOURCE = "~/projects"
 SOURCE_PACKAGE_VERSION = __version__
 DEFAULT_UPDATE_CHANNEL = "stable"
-DEFAULT_UPDATE_POLICY = "operator_approved"
+DEFAULT_UPDATE_POLICY = "auto_patch_minor"
 
 # Optional alias map: alternate spellings that normalize to an installed
 # domain slug. Intentionally empty in the generic product; operators can
@@ -888,6 +888,7 @@ commands.
 
 ## Approval Required
 
+- Major-version releases
 - Executable changes
 - Hook changes
 - MCP server registration changes
@@ -896,6 +897,7 @@ commands.
 
 ## Safe Without Additional Approval
 
+- Published patch and minor releases that pass receipt-backed reinstall verification
 - Missing templates
 - Missing docs
 - Missing registry entries
