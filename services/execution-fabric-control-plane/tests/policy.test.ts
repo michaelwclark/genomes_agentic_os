@@ -14,6 +14,13 @@ describe("canonical policy", () => {
       resolve(repository, "harness/config/execution-fabric.yml"),
       resolve(repository, "schemas/execution-fabric.schema.json"),
     );
+    expect(
+      policy
+        .effective()
+        .execution_fabric.task_routes.find(
+          (route) => route.task_type === "los.team_pr.ai_review.v1",
+        )?.execution.allowed_host_ids,
+    ).toEqual(["bigmac"]);
     const payloads: Record<string, Record<string, unknown>> = {
       "llm.codex": {
         work_item_id: "cc-357",

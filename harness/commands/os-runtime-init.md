@@ -19,7 +19,7 @@ agentic-os runtime doctor --root ~/agentic_os
 
 - This command is additive and file-backed.
 - It must not execute external provider actions.
-- Notion writes remain blocked until `agentic-os notion track-runtime --apply` receives a verified Genome's Notion workspace.
+- Notion writes remain blocked until the applicable approved workflow receives a verified Genome's Notion workspace.
 
 ## Output
 

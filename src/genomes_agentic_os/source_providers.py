@@ -62,6 +62,7 @@ from .jira_bridge import (
     base_url_from_environment as jira_base_url_from_environment,
     command_from_environment as jira_command_from_environment,
 )
+from .slack_adapter import fetch_slack_messages
 
 # ---------------------------------------------------------------------------
 # Token-shaped value guard
@@ -718,96 +719,9 @@ def poll_jira_source(
         }
 
 
-# ---------------------------------------------------------------------------
-# Slack adapter
-# ---------------------------------------------------------------------------
-
-_SLACK_API_BASE = "https://slack.com/api"
-
-# Fields we keep from each Slack message
-_SLACK_MSG_KEEP = {"ts", "type", "user", "text", "thread_ts", "reply_count",
-                   "reactions", "files", "subtype", "bot_id", "app_id"}
-
-# Maximum text length stored — Slack messages can be arbitrarily long
-_SLACK_TEXT_MAX = 500
-
-
-def _trim_slack_message(msg: dict[str, Any]) -> dict[str, Any]:
-    """Return a trimmed copy of a Slack message dict."""
-    trimmed: dict[str, Any] = {}
-    for key in _SLACK_MSG_KEEP:
-        if key in msg:
-            val = msg[key]
-            if key == "text" and isinstance(val, str):
-                val = val[:_SLACK_TEXT_MAX]
-            if key == "reactions" and isinstance(val, list):
-                val = [{"name": r.get("name"), "count": r.get("count")} for r in val
-                       if isinstance(r, dict)]
-            if key == "files" and isinstance(val, list):
-                # Only keep metadata, not content
-                val = [{"id": f.get("id"), "name": f.get("name"),
-                        "filetype": f.get("filetype")} for f in val if isinstance(f, dict)]
-            trimmed[key] = val
-    return trimmed
-
-
-def fetch_slack_messages(
-    channel_id: str,
-    *,
-    token: str,
-    oldest: str | None = None,
-    limit: int = 50,
-    fetcher: Callable[[urllib.request.Request], Any] = _default_fetcher,
-) -> list[dict[str, Any]]:
-    """Fetch recent messages from a Slack channel using conversations.history.
-
-    Parameters
-    ----------
-    channel_id:
-        Slack channel ID (e.g. ``C01234ABCD``).
-    token:
-        Bot token (``xoxb-...``).  Must not appear in config — resolved from env.
-    oldest:
-        Unix timestamp float as string; only messages after this time.
-    limit:
-        Max messages to fetch (default 50, capped by Slack at 1000).
-    fetcher:
-        Injectable HTTP transport.
-
-    Returns
-    -------
-    list[dict]
-        Trimmed message summaries.  Each item has ``_provider="slack"``,
-        ``_event_type="message"``, and ``_idempotency_key``.
-    """
-    url = f"{_SLACK_API_BASE}/conversations.history"
-    params = f"?channel={channel_id}&limit={limit}"
-    if oldest:
-        params += f"&oldest={oldest}"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "User-Agent": "genomes-agentic-os/source-watcher",
-    }
-
-    data = _get_json(url + params, headers, fetcher)
-    if not isinstance(data, dict) or not data.get("ok"):
-        error = data.get("error", "unknown") if isinstance(data, dict) else "invalid_response"
-        raise ValueError(f"Slack API error: {error}")
-
-    messages = data.get("messages") or []
-    result: list[dict[str, Any]] = []
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        trimmed = _trim_slack_message(msg)
-        ts = msg.get("ts", "")
-        trimmed["_provider"] = "slack"
-        trimmed["_event_type"] = "message"
-        trimmed["_idempotency_key"] = f"slack:message:{channel_id}:{ts}"
-        result.append(trimmed)
-    return result
+# Slack client transport and message normalization live in ``slack_adapter``.
+# This workflow module retains the compatibility import above plus credential,
+# source configuration, and event-persistence concerns.
 
 
 def poll_slack_source(

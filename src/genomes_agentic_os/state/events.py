@@ -25,6 +25,14 @@ import uuid
 
 from .db import days_ago_iso, row_to_dict, transaction, utc_now_iso
 
+
+# AGE-46 deliberately treats completion as a narrow, observable fact.  These
+# values are shared by the trace reconciler rather than guessing from an
+# arbitrary event's prose summary.
+COMPLETION_EVENT_SUFFIXES = frozenset({"done", "complete", "completed", "succeeded", "success"})
+COMPLETION_STATUS_VALUES = COMPLETION_EVENT_SUFFIXES
+ACTOR_PAYLOAD_KEYS = ("actor", "agent", "agent_id")
+
 _INSERT_SQL = """
 INSERT OR IGNORE INTO events (
     id, type, schema_version, occurred_at, observed_at, source_ref, correlation_id,
@@ -178,6 +186,76 @@ def count(
     )
     row = conn.execute(f"SELECT COUNT(*) FROM events {where}", params).fetchone()
     return int(row[0])
+
+
+def is_completion_evidence(event: dict[str, Any]) -> bool:
+    """Return whether an event explicitly records a successful completion.
+
+    The event type is the preferred signal (for example ``os.run.closed.done``).
+    Providers which keep the terminal result in the structured payload are also
+    supported, but summaries are intentionally ignored: a sentence saying that
+    something "looks complete" is not ledger evidence.
+    """
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type.rsplit(".", 1)[-1] in COMPLETION_EVENT_SUFFIXES:
+        return True
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    return any(
+        str(payload.get(key) or "").strip().lower() in COMPLETION_STATUS_VALUES
+        for key in ("status", "state", "outcome", "result")
+    )
+
+
+def completion_evidence_for(
+    conn: sqlite3.Connection,
+    *,
+    identifiers: Iterable[str | None],
+    actor: str | None = None,
+) -> list[dict[str, Any]]:
+    """Find exact-id completion events that support one recorded claim.
+
+    Matching is intentionally exact and only uses state-plane link fields:
+    correlation id, source ref, and idempotency key.  Agent claims additionally
+    require an exact structured actor field; this avoids using another agent's
+    completion event as support.
+    """
+    values = sorted(
+        {
+            str(value).strip()
+            for value in identifiers
+            if value is not None and str(value).strip()
+        }
+    )
+    if not values:
+        return []
+    placeholders = ", ".join("?" for _ in values)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM events
+        WHERE correlation_id IN ({placeholders})
+           OR source_ref IN ({placeholders})
+           OR idempotency_key IN ({placeholders})
+        ORDER BY occurred_at ASC, id ASC
+        """,
+        (*values, *values, *values),
+    ).fetchall()
+    normalized_actor = str(actor or "").strip()
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        event = _decode(row)
+        if event is None or not is_completion_evidence(event):
+            continue
+        if normalized_actor:
+            payload = event.get("payload")
+            if not isinstance(payload, dict) or not any(
+                str(payload.get(key) or "").strip() == normalized_actor
+                for key in ACTOR_PAYLOAD_KEYS
+            ):
+                continue
+        matches.append(event)
+    return matches
 
 
 def prune_events(
