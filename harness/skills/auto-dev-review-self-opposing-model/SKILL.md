@@ -24,15 +24,12 @@ opposing-model checkpoints within `$auto-dev-review-self` and
    quiet CI and thread repair where applicable, then pre-PR or post-PR review.
    This skill may repair only through that owner and must return to the original
    builder for actionable findings.
-4. Prepare and execute the review with the canonical state runner:
+4. Run the canonical executable; it resolves the ticket, exact worktree, PR
+   provider readback, selected native reviewer, and receipt directory:
 
 ```bash
-python3 harness/skills/auto-dev/scripts/auto_dev_state.py prepare-review \
-  --run-dir <auto-dev-run-dir> --mode <pre_pr|post_pr> \
-  --review-unavailable-policy <project-policy>
-python3 harness/skills/auto-dev/scripts/auto_dev_state.py run-review \
-  --run-dir <auto-dev-run-dir> --review-run-dir <finishing-touches-run-dir> \
-  --reviewer-model opus --review-unavailable-policy <project-policy>
+python3 harness/skills/auto-dev-review-self-opposing-model/scripts/run_opposing_model_review.py \
+  <TICKET> --os-root <agentic-os-root>
 ```
 
 5. Require the resulting `review-request.json`, `reviewer-response.md` when
