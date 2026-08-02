@@ -131,6 +131,22 @@ forward.
 | --- | --- | --- |
 | `--root` | `~/agentic_os` | Installed OS root. |
 
+### Multi-host rollout gate
+
+`update rollout-gate` is a read-only coordinator for a published release's
+local host receipts. It fixes the rollout order at **bigmac, then genomesbox**:
+bigmac must provide a matching `reinstalled` receipt and a matching `healthy`
+receipt before genomesbox is permitted. Any genomesbox evidence before that gate
+is an order violation. Final completion also requires a matching healthy receipt
+from genomesbox. The command does not open SSH connections, dispatch remote
+commands, or modify either host.
+
+```bash
+agentic-os update rollout-gate \
+  --release-receipt /srv/receipts/v1.2.4.json \
+  --evidence /srv/receipts/rollout-v1.2.4.json
+```
+
 ---
 
 ## Backup
