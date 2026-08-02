@@ -69,6 +69,11 @@ A daily report-only schedule (`host_health_docker_reclaim`) writes receipts to
 `harness/shared_factory/06-runs-and-logs/docker-reclaim/`. Review those before
 arming `--apply`.
 
+For a merged PR, use the manual exact-item
+`harness/shared_factory/04-workflows/development_delivery/aos_stack_cleaner/`
+workflow. Its `--only <resource-name>` apply step prevents one PR cleanup from
+applying every reclaimable item in a host-wide report.
+
 Do **not** move this into `$auto-dev-health`. That skill forbids host-wide
 container/volume/network cleanup so per-item cleanup cannot touch resources it
 does not own; the post-merge path is a chained host-scoped run after Health.
