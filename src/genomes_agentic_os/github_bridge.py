@@ -21,7 +21,7 @@ BRIDGE_VERSION = 1
 # Provider revision reviewed with this first migration slice. Runtime selection
 # remains explicit through GENOMES_GITHUB_BRIDGE_COMMAND; this pin makes the
 # cross-repository contract auditable and forces later revisions through review.
-REVIEWED_PLATFORM_BRIDGE_REVISION = "9fd83043c275a0959323735ab35d8be014898173"
+REVIEWED_PLATFORM_BRIDGE_REVISION = "6eca8ae5c3cd234bba737d39a8ffa3b01d70a5ac"
 
 
 class GitHubBridgeError(RuntimeError):
@@ -178,6 +178,65 @@ def get_pull_request(
             "GitHub bridge returned an invalid pull request",
         )
     return dict(pull_request)
+
+
+def list_pull_request_commits(
+    command: Sequence[str],
+    *,
+    owner: str,
+    repo: str,
+    number: int,
+    token: str,
+    limit: int = 250,
+    runner: BridgeRunner = subprocess.run,
+) -> list[dict[str, Any]]:
+    """Return bounded, JSON-safe commit identities and messages from the shared port."""
+    result = call_github_bridge(
+        command,
+        {
+            "operation": "listPullRequestCommits",
+            "repo": {"owner": owner, "repo": repo},
+            "number": number,
+            "limit": limit,
+        },
+        token=token,
+        runner=runner,
+    )
+    commits = result.get("commits")
+    if not isinstance(commits, list) or not all(
+        isinstance(item, dict)
+        and isinstance(item.get("sha"), str)
+        and isinstance(item.get("message"), str)
+        for item in commits
+    ):
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned invalid commits")
+    return [dict(item) for item in commits]
+
+
+def get_pull_request_diff(
+    command: Sequence[str],
+    *,
+    owner: str,
+    repo: str,
+    number: int,
+    token: str,
+    runner: BridgeRunner = subprocess.run,
+) -> str:
+    """Return the unified pull-request diff from the shared GitHub port."""
+    result = call_github_bridge(
+        command,
+        {
+            "operation": "getPullRequestDiff",
+            "repo": {"owner": owner, "repo": repo},
+            "number": number,
+        },
+        token=token,
+        runner=runner,
+    )
+    diff = result.get("diff")
+    if not isinstance(diff, str):
+        raise GitHubBridgeError("BRIDGE_INVALID_RESPONSE", "GitHub bridge returned an invalid diff")
+    return diff
 
 
 def list_workflow_runs(
