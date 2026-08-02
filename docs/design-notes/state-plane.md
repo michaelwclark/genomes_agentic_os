@@ -183,6 +183,35 @@ deliberate mapping choice, not an obvious 1:1 translation; flagged here for anyo
 it. Unlike `events`, `set_cursor` is a true upsert — a cursor's entire purpose is being
 overwritten as it advances.
 
+### Control-plane facts and read models
+
+Schema migration 4 adds two small durable fact tables for integration adapters:
+
+- `approval_requests` records one wait state with the requesting actor, named
+  approver, decision, expiry, and decision timestamp. A decision can only be
+  written by the named approver before expiry; expiry is a separate explicit
+  transition. Chat messages are never approval authority.
+- `artifact_references` stores only a URI, SHA-256 content hash,
+  classification, retention interval, and optional source reference. It has no
+  artifact-body column or renderer payload.
+
+`state.control_plane.control_plane_projection` derives an operator read model
+from these rows. It can calculate that a still-persisted wait state has expired,
+but it never writes that conclusion: `expire_approvals` is the explicit durable
+transition. This preserves SQLite facts as the source of truth and keeps UI
+projections disposable.
+
+`state.control_plane.validate_change_linkage` is the shared pre-commit/CI
+contract for code-changing integrations. It requires one canonical work item
+with a Linear `TEAM-123` source key, registered worktree path, and branch; it
+does not invent an alternate tracker or worktree registry.
+
+Use `scripts/check-change-linkage.py --db <canonical-state.db> --work-item
+<id>` from a CI job or harness hook. The guard opens the existing database
+read-only, emits a normalized receipt, and fails when any link is absent. It is
+not installed into the repository's shared Git hook path, which intentionally
+contains only commit-message validation for multi-worktree safety.
+
 ## Import Workflow
 
 `state/importers.py` has two deliberately separate function families:

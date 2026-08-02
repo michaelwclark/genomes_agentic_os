@@ -40,6 +40,8 @@ SCHEMA_TABLES: tuple[str, ...] = (
     "cursors",
     "work_items",
     "work_item_history",
+    "approval_requests",
+    "artifact_references",
 )
 
 
@@ -444,6 +446,40 @@ CREATE TABLE IF NOT EXISTS execution_workers (
 );
 CREATE INDEX IF NOT EXISTS idx_execution_workers_pool_status
     ON execution_workers(pool_name, status, lease_until);
+""",
+    ),
+    (
+        4,
+        "approval requests and artifact reference metadata",
+        """
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id TEXT PRIMARY KEY,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    approver TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('waiting', 'approved', 'denied', 'expired')),
+    decision_note TEXT,
+    requested_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry
+    ON approval_requests(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS artifact_references (
+    id TEXT PRIMARY KEY,
+    uri TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    retention_days INTEGER NOT NULL CHECK(retention_days > 0),
+    source_ref TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(uri, content_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_artifact_references_classification_retention
+    ON artifact_references(classification, retention_days);
 """,
     ),
 )
