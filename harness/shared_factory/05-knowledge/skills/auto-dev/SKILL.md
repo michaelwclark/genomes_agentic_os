@@ -218,7 +218,7 @@ Claude starts. It executes the equivalent of
 `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude -p --model opus
 --safe-mode --permission-mode dontAsk` from that verified worktree, with only
 `Read`, `Grep`, `Glob`, and read-only `git diff/show/status/log` Bash commands.
-It passes `reviewer-prompt.md` on stdin and writes only stdout to
+It supplies `reviewer-prompt.md` as the explicit Claude print prompt and writes only stdout to
 `reviewer-response.md`. It never persists raw stderr. On success it ingests the
 response automatically.
 

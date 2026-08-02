@@ -69,7 +69,9 @@ but non-blocking when its receipt records that the reviewer was unavailable.
 5. `$auto-dev-implementation` / `$auto-dev-develop`
 6. `$auto-dev-document`
 7. `$auto-dev-pr-create`
-8. `$auto-dev-review-repair` / `$auto-dev-review-self`
+8. `$auto-dev-review-repair` / `$auto-dev-review-self`; invoke
+   `$auto-dev-review-self-opposing-model <TICKET>` for every required
+   independent-model checkpoint
 9. `$auto-dev-review-others`
 10. `$auto-dev-qa`
 11. `$auto-dev-finalize`

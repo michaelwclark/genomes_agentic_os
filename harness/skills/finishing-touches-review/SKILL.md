@@ -94,8 +94,9 @@ That legacy runner verifies the review request still names the canonical Auto De
 worktree (falling back to the repository only when no worktree exists) and that
 its recorded head SHA still matches `git rev-parse HEAD`. It executes `claude -p
 --model opus --safe-mode --permission-mode dontAsk` there with only file reads,
-searches, and read-only `git diff/show/status/log` commands. It passes
-`reviewer-prompt.md` on stdin, writes only stdout to `reviewer-response.md`, and
+searches, and read-only `git diff/show/status/log` commands. It supplies the
+prepared `reviewer-prompt.md` as the explicit Claude print prompt, writes only
+stdout to `reviewer-response.md`, and
 never persists raw stderr. A valid response is ingested normally; actual findings
 remain blocking until resolved.
 

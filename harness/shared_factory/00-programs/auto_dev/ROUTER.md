@@ -10,6 +10,7 @@
 | Implement/fix/build one or many tracker items | Develop | `/auto-dev-develop` or `/auto-dev-implementation` |
 | Establish tracker/repository/policy context | Readiness and Context | `/auto-dev-readiness` |
 | Review/repair own active delivery | Review Self | `/auto-dev-review-self` |
+| Run the required independent-model review checkpoint | Opposing Model Review | `/auto-dev-review-self-opposing-model <TICKET>` |
 | Review another author's PR | Review Others | `/auto-dev-review-others` |
 | Run QA separately | QA | `/auto-dev-qa` |
 | Document code/issues/architecture/operations | Document | `/auto-dev-document` |
