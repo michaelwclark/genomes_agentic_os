@@ -48,6 +48,21 @@ def test_inventory_keeps_only_root_files_in_root_family(tmp_path: Path) -> None:
     assert result["families"]["runs"]["directories"] == 1
 
 
+def test_inventory_records_explicit_directory_exclusions(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+    evidence = root / "harness" / "runs"
+    dependency = root / "project" / "node_modules"
+    evidence.mkdir(parents=True)
+    dependency.mkdir(parents=True)
+    evidence.joinpath("run.yml").write_text("status: done\n", encoding="utf-8")
+    dependency.joinpath("dependency.js").write_text("large copy\n", encoding="utf-8")
+
+    result = inventory_run_evidence(root, excluded_directory_names=frozenset({"node_modules"}))
+
+    assert result["files"] == 1
+    assert result["excluded_directories"] == {"node_modules": 1}
+
+
 def test_inventory_rejects_missing_root(tmp_path: Path) -> None:
     try:
         inventory_run_evidence(tmp_path / "missing")

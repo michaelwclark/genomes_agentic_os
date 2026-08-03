@@ -35,6 +35,7 @@ def inventory_run_evidence(
     *,
     progress_path: Path | None = None,
     progress_every: int = 1000,
+    excluded_directory_names: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Return file, byte, extension, and top-family aggregates for *evidence_root*."""
     root = evidence_root.resolve()
@@ -47,6 +48,7 @@ def inventory_run_evidence(
     pending = [root]
     files = directories = bytes_total = errors = 0
     extensions: Counter[str] = Counter()
+    excluded_directories: Counter[str] = Counter()
     families: dict[str, dict[str, Any]] = {}
 
     def emit_progress(*, status: str = "running", phase: str = "scan") -> None:
@@ -89,6 +91,9 @@ def inventory_run_evidence(
                     is_file = entry.is_file(follow_symlinks=False)
                     if not is_directory and not is_file:
                         continue
+                    if is_directory and entry.name in excluded_directory_names:
+                        excluded_directories[entry.name] += 1
+                        continue
                     family = relative.parts[0] if len(relative.parts) > 1 or is_directory else "<root>"
                     aggregate = families.setdefault(
                         family,
@@ -123,6 +128,7 @@ def inventory_run_evidence(
         "directories": directories,
         "bytes": bytes_total,
         "errors": errors,
+        "excluded_directories": dict(sorted(excluded_directories.items())),
         "extensions": dict(sorted(extensions.items(), key=lambda item: (-item[1], item[0]))),
         "families": {
             key: {
@@ -145,8 +151,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--progress", type=Path)
+    parser.add_argument(
+        "--exclude-directory",
+        action="append",
+        default=[],
+        help="Directory basename to prune; repeat for multiple names.",
+    )
     args = parser.parse_args(argv)
-    result = inventory_run_evidence(args.root, progress_path=args.progress)
+    result = inventory_run_evidence(
+        args.root,
+        progress_path=args.progress,
+        excluded_directory_names=frozenset(args.exclude_directory),
+    )
     _atomic_json(args.output, result)
     print(json.dumps({key: result[key] for key in ("files", "directories", "bytes", "errors")}))
     return 0
