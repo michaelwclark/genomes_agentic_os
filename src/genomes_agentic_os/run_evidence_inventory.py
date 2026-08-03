@@ -49,7 +49,7 @@ def inventory_run_evidence(
     extensions: Counter[str] = Counter()
     families: dict[str, dict[str, Any]] = {}
 
-    def emit_progress() -> None:
+    def emit_progress(*, status: str = "running", phase: str = "scan") -> None:
         if progress_path is None:
             return
         _atomic_json(
@@ -58,8 +58,8 @@ def inventory_run_evidence(
                 "schema": "agentic-os-long-running-progress/v1",
                 "operation": "run-evidence-inventory",
                 "root": str(root),
-                "status": "running",
-                "phase": "scan",
+                "status": status,
+                "phase": phase,
                 "items_total": 0,
                 "items_completed": files + directories,
                 "files_total": 0,
@@ -85,16 +85,20 @@ def inventory_run_evidence(
             for entry in entries:
                 try:
                     relative = Path(entry.path).relative_to(root)
-                    family = relative.parts[0] if len(relative.parts) > 1 else "<root>"
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                    is_file = entry.is_file(follow_symlinks=False)
+                    if not is_directory and not is_file:
+                        continue
+                    family = relative.parts[0] if len(relative.parts) > 1 or is_directory else "<root>"
                     aggregate = families.setdefault(
                         family,
                         {"files": 0, "directories": 0, "bytes": 0, "extensions": Counter()},
                     )
-                    if entry.is_dir(follow_symlinks=False):
+                    if is_directory:
                         directories += 1
                         aggregate["directories"] += 1
                         pending.append(Path(entry.path))
-                    elif entry.is_file(follow_symlinks=False):
+                    elif is_file:
                         size = entry.stat(follow_symlinks=False).st_size
                         suffix = Path(entry.name).suffix.lower() or "<none>"
                         files += 1
@@ -132,7 +136,7 @@ def inventory_run_evidence(
             for key, value in sorted(families.items())
         },
     }
-    emit_progress()
+    emit_progress(status="completed", phase="terminal")
     return result
 
 

@@ -116,6 +116,18 @@ def test_loader_uses_installed_schema_and_returns_sorted_models(tmp_path: Path) 
     assert configured_model_keys(config) == tuple(sorted(config["models"]))
 
 
+def test_loader_falls_back_to_repository_schema(tmp_path: Path) -> None:
+    config_dir = tmp_path / "harness" / "config"
+    config_dir.mkdir(parents=True)
+    config_dir.joinpath("run-evidence.yml").write_text(
+        (REPO / "harness" / "config" / "run-evidence.yml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    config = load_run_evidence_config(tmp_path)
+
+    assert config["backend"] == "mongodb"
+
+
 def test_loader_rejects_model_without_count_limit(tmp_path: Path) -> None:
     config_dir = tmp_path / "harness" / "config"
     config_dir.mkdir(parents=True)

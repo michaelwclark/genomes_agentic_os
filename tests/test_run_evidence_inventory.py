@@ -25,11 +25,27 @@ def test_inventory_aggregates_families_without_following_symlinks(tmp_path: Path
     assert result["directories"] == 4
     assert result["bytes"] == len("status: done\n") + len("ok\n")
     assert result["families"]["runs"]["extensions"] == {".yml": 1}
+    assert result["families"]["runs"]["directories"] == 2
     assert result["families"]["async-runs"]["extensions"] == {".log": 1}
+    assert result["families"]["async-runs"]["directories"] == 2
     progress_document = json.loads(progress.read_text(encoding="utf-8"))
     assert progress_document["schema"] == "agentic-os-long-running-progress/v1"
-    assert progress_document["phase"] == "scan"
+    assert progress_document["status"] == "completed"
+    assert progress_document["phase"] == "terminal"
     assert progress_document["files_completed"] == 2
+
+
+def test_inventory_keeps_only_root_files_in_root_family(tmp_path: Path) -> None:
+    root = tmp_path / "evidence"
+    root.mkdir()
+    root.joinpath("single.log").write_text("root file\n", encoding="utf-8")
+    root.joinpath("runs").mkdir()
+
+    result = inventory_run_evidence(root)
+
+    assert result["families"]["<root>"]["files"] == 1
+    assert result["families"]["<root>"]["directories"] == 0
+    assert result["families"]["runs"]["directories"] == 1
 
 
 def test_inventory_rejects_missing_root(tmp_path: Path) -> None:
