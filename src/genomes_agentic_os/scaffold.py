@@ -3010,6 +3010,11 @@ def install_docs(root: str | Path) -> ScaffoldResult:
         harness_path(os_root, "config", "execution-fabric.yml"),
         result,
     )
+    copy_file(
+        harness_source_dir() / "config" / "run-evidence.yml",
+        harness_path(os_root, "config", "run-evidence.yml"),
+        result,
+    )
     ensure_capability_registries(os_root, result)
     # Existing roots predate harness/schemas/; docs update is their delivery path.
     ensure_schemas_dir(os_root, result)

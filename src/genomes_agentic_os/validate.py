@@ -1362,6 +1362,7 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "update-grant.schema.json": ["harness/registries/update-grant.json"],
     "backup-policy.schema.json": ["harness/registries/backup-policy.yml"],
     "execution-fabric.schema.json": ["harness/config/execution-fabric.yml"],
+    "run-evidence-config.schema.json": ["harness/config/run-evidence.yml"],
     "documentation-upkeep.schema.json": ["harness/shared_factory/00-control-plane/documentation-upkeep.yml"],
     "doc-config.schema.json": ["harness/shared_factory/00-control-plane/doc-config.yml"],
     "automation.schema.json": ["**/04-automations/*/*/automation.yml"],

@@ -517,6 +517,25 @@ def test_execution_fabric_program_installs_inactive_filesystem_default(tmp_path:
     assert not validate_root(root).errors
 
 
+def test_init_installs_schema_valid_run_evidence_registry(tmp_path: Path) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+
+    config_path = harness(root) / "config" / "run-evidence.yml"
+    schema_path = harness(root) / "schemas" / "run-evidence-config.schema.json"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    Draft202012Validator(schema).validate(config)
+    assert config["backend"] == "mongodb"
+    assert config["host_registry"]["initial_host"] == "bigmac"
+    assert all(
+        model["retention"]["max_age_days"] and model["retention"]["max_objects"]
+        for model in config["models"].values()
+    )
+    assert not validate_root(root).errors
+
+
 def test_auto_dev_artifact_contracts_install_and_validate(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
 
