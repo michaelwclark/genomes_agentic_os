@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from genomes_agentic_os.context_contracts import load_context_manifest, path_is_excluded, resolve_context_contract
-from genomes_agentic_os.routing import build_context
+from genomes_agentic_os.routing import _nearest_contract_target, build_context
 
 
 def write(path: Path, content: str) -> Path:
@@ -77,6 +77,14 @@ def test_legacy_sources_are_preserved_when_manifest_is_absent(tmp_path: Path) ->
     assert resolved.legacy_fallback
     assert [item.path for item in resolved.read_first] == [source]
     assert resolved.diagnostics[0].code == "legacy_fallback"
+
+
+def test_nearest_contract_target_does_not_walk_above_the_installed_root(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    linked_feature = tmp_path / "source-package" / "features" / "ticket"
+    linked_feature.mkdir(parents=True)
+
+    assert _nearest_contract_target(linked_feature, root) == root
 
 
 def test_manifest_rejects_unsafe_relative_paths(tmp_path: Path) -> None:

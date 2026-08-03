@@ -348,6 +348,14 @@ def _nearest_contract_target(target: Path, root: Path) -> Path:
 
     current = target.resolve()
     root = root.resolve()
+    try:
+        current.relative_to(root)
+    except ValueError:
+        # Linked source-package work items live outside the installed OS root.
+        # Their local files remain packet sources, but the installed root is
+        # the nearest contract that can safely govern them.  Do not climb past
+        # the filesystem root looking for a manifest that cannot apply.
+        return root
     while True:
         if load_context_manifest(current) is not None:
             return current
