@@ -111,17 +111,17 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "04-automations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations").is_dir()
-        assert (domain_root / "05-knowledge" / "auto_dev" / "README.md").is_file()
+        assert (domain_root / "config" / "auto_dev" / "README.md").is_file()
         assert (
-            domain_root / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+            domain_root / "config" / "auto_dev" / "environment_access" / "README.md"
         ).is_file()
         domain_auto_dev_readme = (
-            domain_root / "05-knowledge" / "auto_dev" / "README.md"
+            domain_root / "config" / "auto_dev" / "README.md"
         ).read_text(encoding="utf-8")
         assert "Do not leave the domain" in domain_auto_dev_readme
         assert "--plane auto_dev" in domain_auto_dev_readme
         domain_environment_readme = (
-            domain_root / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+            domain_root / "config" / "auto_dev" / "environment_access" / "README.md"
         ).read_text(encoding="utf-8")
         assert "cloud/runtime access" in domain_environment_readme
         assert "--plane environment_access" in domain_environment_readme
@@ -2061,12 +2061,12 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
     assert (created_domain / "02-projects" / "README.md").is_file()
     assert (created_domain / "03-workflows" / "engineering").is_dir()
     assert (created_domain / "04-automations" / "support").is_dir()
-    assert (created_domain / "05-knowledge" / "auto_dev" / "README.md").is_file()
+    assert (created_domain / "config" / "auto_dev" / "README.md").is_file()
     assert (
-        created_domain / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+        created_domain / "config" / "auto_dev" / "environment_access" / "README.md"
     ).is_file()
     assert "Do not leave the domain" in (
-        created_domain / "05-knowledge" / "auto_dev" / "README.md"
+        created_domain / "config" / "auto_dev" / "README.md"
     ).read_text(encoding="utf-8")
     assert (created_domain / "06-runs-and-logs" / "activity-log.md").is_file()
     assert (created_domain / "07-metrics" / "scorecards.md").is_file()
@@ -2478,7 +2478,7 @@ def test_project_onboard_normalizes_exact_legacy_policy_paths_and_preserves_cust
     repaired = yaml.safe_load(development_path.read_text(encoding="utf-8"))
     assert repaired["policies"]["dev_standards"]["paths"] == [
         "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
-        "domains/los/05-knowledge/auto_dev/dev_standards",
+        "domains/los/config/auto_dev/dev_standards",
         "config/auto_dev/dev_standards",
     ]
     assert repaired["policies"]["qa_gates"]["paths"] == [

@@ -455,6 +455,7 @@ DOMAIN_DIRECTORIES = (
     "02-projects",
     "03-workflows",
     "04-automations",
+    "config",
     "06-runs-and-logs",
     "06-runs-and-logs/runs",
     "06-runs-and-logs/failures",
@@ -2859,7 +2860,7 @@ def create_domain_structure(
 
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
-    migrate_auto_dev_policy_directories(domain_root / "05-knowledge", result)
+    migrate_auto_dev_policy_directories(domain_root / "config", result)
 
     write_file_once(domain_root / "00-programs" / "README.md", programs_readme(domain), result)
 
@@ -2881,10 +2882,10 @@ def create_domain_structure(
     write_file_once(domain_root / "03-workflows" / "README.md", workflows_readme(domain), result)
     write_file_once(domain_root / "04-automations" / "README.md", automations_readme(domain), result)
     write_file_once(
-        domain_root / "05-knowledge" / "auto_dev" / "README.md",
+        domain_root / "config" / "auto_dev" / "README.md",
         f"""# Auto-Dev: {titleize_name(domain)}
 
-This directory is the domain policy layer between shared Auto-Dev behavior and
+This is the canonical domain policy layer between shared Auto-Dev behavior and
 project-specific behavior. `README.md` is an index and is not active policy.
 
 Create numbered Markdown addenda for every stage whose tracker, investigation,
@@ -2906,7 +2907,7 @@ Verify the effective root -> domain -> project selection with
     }
     for plane, guidance in plane_guidance.items():
         write_file_once(
-            domain_root / "05-knowledge" / "auto_dev" / plane / "README.md",
+            domain_root / "config" / "auto_dev" / plane / "README.md",
             f"""# {plane.replace("_", " ").title()}: {titleize_name(domain)}
 
 This is the domain layer for {guidance}. Add numbered, plain-English Markdown
@@ -3739,35 +3740,35 @@ def project_config_file_content(
                     "dev_standards": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
-                            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+                            f"domains/{domain}/config/auto_dev/dev_standards",
                             "config/auto_dev/dev_standards",
                         ]
                     },
                     "qa_gates": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
-                            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+                            f"domains/{domain}/config/auto_dev/qa_gates",
                             "config/auto_dev/qa_gates",
                         ]
                     },
                     "gitflow_topology": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
-                            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+                            f"domains/{domain}/config/auto_dev/gitflow_topology",
                             "config/auto_dev/gitflow_topology",
                         ]
                     },
                     "auto_dev": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev",
-                            f"domains/{domain}/05-knowledge/auto_dev",
+                            f"domains/{domain}/config/auto_dev",
                             "config/auto_dev",
                         ]
                     },
                     "environment_access": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/environment_access",
-                            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+                            f"domains/{domain}/config/auto_dev/environment_access",
                             "config/auto_dev/environment_access",
                         ]
                     },
@@ -4055,37 +4056,44 @@ def ensure_project_code_settings_defaults(
     conventional_policy_paths = {
         "dev_standards": [
             "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
-            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+            f"domains/{domain}/config/auto_dev/dev_standards",
             "config/auto_dev/dev_standards",
         ],
         "qa_gates": [
             "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
-            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+            f"domains/{domain}/config/auto_dev/qa_gates",
             "config/auto_dev/qa_gates",
         ],
         "gitflow_topology": [
             "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
-            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+            f"domains/{domain}/config/auto_dev/gitflow_topology",
             "config/auto_dev/gitflow_topology",
         ],
         "auto_dev": [
             "harness/shared_factory/05-knowledge/auto_dev",
-            f"domains/{domain}/05-knowledge/auto_dev",
+            f"domains/{domain}/config/auto_dev",
             "config/auto_dev",
         ],
         "environment_access": [
             "harness/shared_factory/05-knowledge/auto_dev/environment_access",
-            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+            f"domains/{domain}/config/auto_dev/environment_access",
             "config/auto_dev/environment_access",
         ],
     }
     legacy_policy_paths = {
         plane: [
-            path.replace("/auto_dev", "")
-            for path in paths
+            paths[0],
+            paths[1].replace(
+                f"domains/{domain}/config/auto_dev",
+                f"domains/{domain}/05-knowledge/auto_dev",
+            ),
+            paths[2],
         ]
         for plane, paths in conventional_policy_paths.items()
-        if plane != "auto_dev"
+    }
+    flat_legacy_policy_paths = {
+        plane: [path.replace("/auto_dev", "") for path in paths]
+        for plane, paths in legacy_policy_paths.items()
     }
     for plane, paths in conventional_policy_paths.items():
         current = policies.get(plane)
@@ -4094,7 +4102,11 @@ def ensure_project_code_settings_defaults(
             changed = True
         elif (
             isinstance(current, dict)
-            and current.get("paths") == legacy_policy_paths.get(plane)
+            and current.get("paths")
+            in (
+                legacy_policy_paths.get(plane, []),
+                flat_legacy_policy_paths.get(plane, []),
+            )
         ):
             current["paths"] = paths
             changed = True
