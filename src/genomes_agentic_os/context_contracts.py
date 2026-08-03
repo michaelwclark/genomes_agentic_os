@@ -89,6 +89,14 @@ class ContextSource:
         }
 
 
+@dataclass(frozen=True)
+class _ExclusionRule:
+    """One manifest exclusion, anchored at the manifest that declares it."""
+
+    base: Path
+    pattern: str
+
+
 @dataclass
 class ResolvedContextContract:
     target: Path
@@ -101,6 +109,7 @@ class ResolvedContextContract:
     skipped_duplicates: list[dict[str, str]] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
     legacy_fallback: bool = False
+    _exclusion_rules: list[_ExclusionRule] = field(default_factory=list, repr=False)
 
     @property
     def ok(self) -> bool:
@@ -122,6 +131,12 @@ class ResolvedContextContract:
             "diagnostics": [item.as_dict() for item in self.diagnostics],
         }
 
+    def permits(self, path: str | Path) -> bool:
+        """Return whether a source can enter this resolved context packet."""
+
+        candidate = Path(path).expanduser().resolve()
+        return not any(_exclusion_matches(candidate, rule) for rule in self._exclusion_rules)
+
 
 def _string_list(value: Any, field_name: str) -> tuple[str, ...]:
     if value is None:
@@ -136,6 +151,31 @@ def _safe_relative(value: str, field_name: str) -> str:
     if path.is_absolute() or value.startswith("~") or ".." in path.parts:
         raise ValueError(f"{field_name} entries must be safe relative paths: {value!r}")
     return value
+
+
+def _role_exclusion(value: str) -> tuple[str | None, str]:
+    """Parse the compact ``role:<role>:<path>`` exclusion form.
+
+    Regular ``read.exclude`` entries apply to every role.  The optional tagged
+    form keeps an implementation or orchestration packet from loading a
+    holdout while leaving the default packet behavior unchanged.
+    """
+
+    if not value.startswith("role:"):
+        return None, value
+    _, role, pattern = value.split(":", 2) if value.count(":") >= 2 else ("", "", "")
+    if not role or not pattern or any(char.isspace() for char in role):
+        raise ValueError(f"read.exclude role entries must use role:<role>:<path>: {value!r}")
+    _safe_relative(pattern, "read.exclude")
+    return role, pattern
+
+
+def _exclusion_matches(path: Path, rule: _ExclusionRule) -> bool:
+    try:
+        relative = path.relative_to(rule.base).as_posix()
+    except ValueError:
+        return False
+    return fnmatch.fnmatch(relative, rule.pattern)
 
 
 def _normalize_capabilities(value: Any, field_name: str) -> tuple[dict[str, Any], ...]:
@@ -212,6 +252,8 @@ def load_context_manifest(path: str | Path) -> ContextManifest | None:
     first = tuple(_safe_relative(value, "read.first") for value in first)
     deferred = tuple(_safe_relative(value, "read.deferred") for value in deferred)
     excluded = tuple(_safe_relative(value, "read.exclude") for value in excluded)
+    for value in excluded:
+        _role_exclusion(value)
 
     capabilities = _normalize_capabilities(data.get("capabilities"), "capabilities")
     capabilities += _normalize_capabilities(overrides.get("capabilities"), "overrides.capabilities")
@@ -286,10 +328,13 @@ def _add_sources(
     phase: str,
     inherited: bool,
     seen_digest: dict[str, Path],
+    exclusion_rules: Iterable[_ExclusionRule] = (),
 ) -> None:
     destination = result.read_first if phase == "read_first" else result.deferred
     for value in values:
         path = (base / value).resolve()
+        if any(_exclusion_matches(path, rule) for rule in exclusion_rules):
+            continue
         exists = path.is_file()
         if exists:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -311,6 +356,7 @@ def resolve_context_contract(
     *,
     root: str | Path | None = None,
     legacy_sources: Iterable[str | Path] = (),
+    role: str | None = None,
 ) -> ResolvedContextContract:
     """Resolve inherited context and provenance without mutating the OS."""
 
@@ -318,6 +364,8 @@ def resolve_context_contract(
     if target_path.is_file():
         target_path = target_path.parent
     root_path = Path(root).expanduser().resolve() if root else target_path
+    if role is not None and (not isinstance(role, str) or not role.strip() or any(char.isspace() for char in role)):
+        raise ValueError("context role must be a non-empty, whitespace-free string")
     result = ResolvedContextContract(target=target_path, excluded=list(DEFAULT_EXCLUDES))
     result.providers.update(_central_provider_routes(root_path))
     seen_digest: dict[str, Path] = {}
@@ -353,6 +401,11 @@ def resolve_context_contract(
     inherit_parent = "parent" in target_manifest.inherits or "domain" in target_manifest.inherits
     effective_manifests = manifests if inherit_parent else [target_manifest]
     result.manifests = [manifest.path for manifest in effective_manifests]
+    for manifest in effective_manifests:
+        for value in manifest.excluded:
+            exclusion_role, pattern = _role_exclusion(value)
+            if exclusion_role is None or exclusion_role == role:
+                result._exclusion_rules.append(_ExclusionRule(manifest.path.parent, pattern))
     if inherit_parent:
         for directory in _ancestor_dirs(target_path.parent, root_path):
             for filename in PARENT_CONTRACT_FILES:
@@ -367,6 +420,7 @@ def resolve_context_contract(
                     phase="read_first",
                     inherited=True,
                     seen_digest=seen_digest,
+                    exclusion_rules=result._exclusion_rules,
                 )
 
     for manifest in effective_manifests:
@@ -379,6 +433,7 @@ def resolve_context_contract(
             phase="read_first",
             inherited=inherited,
             seen_digest=seen_digest,
+            exclusion_rules=result._exclusion_rules,
         )
         _add_sources(
             result,
@@ -388,6 +443,7 @@ def resolve_context_contract(
             phase="deferred",
             inherited=inherited,
             seen_digest=seen_digest,
+            exclusion_rules=result._exclusion_rules,
         )
         result.excluded.extend(pattern for pattern in manifest.excluded if pattern not in result.excluded)
         for capability in manifest.capabilities:
