@@ -47,9 +47,9 @@ jobs:
   python:
     name: Python suite and packaging
     runs-on: ubuntu-latest
-    # The full suite can consume nearly the entire former 25-minute budget;
-    # retain time for distribution validation and artifact upload.
-    timeout-minutes: 35
+    # The full suite consumed the entire 35-minute allowance on PR #169;
+    # retain time for distribution validation and artifact upload as well.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
