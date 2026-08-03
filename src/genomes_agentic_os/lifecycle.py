@@ -498,7 +498,7 @@ def work_item_file_content(filename: str, *, title: str, summary: str, status: s
 
 ## Architecture Prerequisite
 
-- [ ] Before code or state changes, read the routed architecture guide and the Ledgerline/LOSMON ports-and-adapters reference.
+- [ ] Before code or state changes, read the routed architecture guide and its canonical ports-and-adapters reference.
 - [ ] Record the exact architecture sources read in a work-item receipt.
 
 ## Approach

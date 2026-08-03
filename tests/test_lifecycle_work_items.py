@@ -84,7 +84,7 @@ def test_new_plan_requires_architecture_read_before_code() -> None:
 
     assert "## Architecture Prerequisite" in plan
     assert "Before code or state changes" in plan
-    assert "Ledgerline/LOSMON ports-and-adapters reference" in plan
+    assert "canonical ports-and-adapters reference" in plan
     assert "work-item receipt" in plan
 
 
