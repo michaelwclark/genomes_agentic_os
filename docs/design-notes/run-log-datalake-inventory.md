@@ -14,6 +14,12 @@ MongoDB is not control-plane truth. SQLite is not the shared evidence lake. A lo
 
 The canonical model inventory, ordered routing priority, source patterns, indexes, payload limits, redaction profile, age limit, count limit, compaction, and hold behavior live in `harness/config/run-evidence.yml`. Routing priorities are unique so overlapping patterns resolve deterministically. Changing its top-level `backend` value is the only caller-visible datastore selection.
 
+## Genomesbox datastore preflight
+
+The AGE-151 read-only preflight confirmed MongoDB 8.0.20 with WiredTiger and the normal 16 MiB BSON limit. The service is healthy but intentionally listens only on `127.0.0.1:27017`; the local shell currently connects without an authenticated user. That is not an acceptable cross-host production posture and must not be "fixed" by exposing the unauthenticated listener.
+
+AGE-152 must provision least-privilege SCRAM credentials, keep credential values outside source and receipts, bind only to loopback plus the canonical private host interface after authentication is verified, and prove both bigmac connectivity and rollback before enabling remote ingestion. Application code still imports only `RunLogStore`; only the Mongo adapter and composition root may use the driver. If this infrastructure preflight fails, writers stay nonblocking by spilling to the bounded outbox.
+
 ## Observed bigmac pressure
 
 The shared run-log root contained these immediate-entry counts during the baseline scan:
