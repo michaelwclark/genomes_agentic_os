@@ -61,7 +61,7 @@ def test_conventional_root_domain_project_files_are_dynamic_and_receipted(tmp_pa
     root, project = _tree(tmp_path)
     paths = [
         root / "harness/shared_factory/05-knowledge/auto_dev/dev_standards/10_root.md",
-        root / "domains/acme/05-knowledge/auto_dev/dev_standards/20_domain.md",
+        root / "domains/acme/config/auto_dev/dev_standards/20_domain.md",
         project / "config/auto_dev/dev_standards/30_project.md",
     ]
     for path in paths:
@@ -71,10 +71,10 @@ def test_conventional_root_domain_project_files_are_dynamic_and_receipted(tmp_pa
     first = resolve_development_policy(root, "acme", "app", "dev_standards")
     refs = [item["source_ref"] for item in first["sources"]]
     assert "harness/shared_factory/05-knowledge/auto_dev/dev_standards/10_root.md" in refs
-    assert "domains/acme/05-knowledge/auto_dev/dev_standards/20_domain.md" in refs
+    assert "domains/acme/config/auto_dev/dev_standards/20_domain.md" in refs
     assert "domains/acme/02-projects/app/config/auto_dev/dev_standards/30_project.md" in refs
     assert refs.index("harness/shared_factory/05-knowledge/auto_dev/dev_standards/10_root.md") < refs.index(
-        "domains/acme/05-knowledge/auto_dev/dev_standards/20_domain.md"
+        "domains/acme/config/auto_dev/dev_standards/20_domain.md"
     ) < refs.index("domains/acme/02-projects/app/config/auto_dev/dev_standards/30_project.md")
     added = project / "config/auto_dev/dev_standards/40_new_focus.md"
     added.write_text("# New Focus\n", encoding="utf-8")
@@ -85,6 +85,51 @@ def test_conventional_root_domain_project_files_are_dynamic_and_receipted(tmp_pa
     plan = start_development_run(root, "acme", "app", ["ENG-1"], run_id="policy-run", apply=False)
     assert plan["policy_fingerprint"]
     assert plan["policy_sources"]["dev_standards"][-1].endswith("40_new_focus.md")
+
+
+def test_domain_config_auto_dev_overrides_legacy_domain_knowledge_policy(
+    tmp_path: Path,
+) -> None:
+    root, _ = _tree(tmp_path)
+    legacy = root / "domains/acme/05-knowledge/auto_dev/qa_gates/10-legacy.md"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("# Legacy domain QA\n", encoding="utf-8")
+
+    legacy_result = resolve_development_policy(root, "acme", "app", "qa_gates")
+    assert legacy.relative_to(root).as_posix() in {
+        item["source_ref"] for item in legacy_result["sources"]
+    }
+
+    canonical = root / "domains/acme/config/auto_dev/qa_gates/10-canonical.md"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("# Canonical domain QA\n", encoding="utf-8")
+
+    canonical_result = resolve_development_policy(root, "acme", "app", "qa_gates")
+    refs = {item["source_ref"] for item in canonical_result["sources"]}
+    assert canonical.relative_to(root).as_posix() in refs
+    assert legacy.relative_to(root).as_posix() not in refs
+
+
+def test_explicit_legacy_domain_policy_path_normalizes_to_domain_config(
+    tmp_path: Path,
+) -> None:
+    root, project = _tree(tmp_path)
+    canonical = root / "domains/acme/config/auto_dev/dev_standards/10-canonical.md"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("# Canonical domain standard\n", encoding="utf-8")
+    profile_path = project / "config/development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["policies"] = {
+        "dev_standards": {
+            "paths": ["domains/acme/05-knowledge/auto_dev/dev_standards"]
+        }
+    }
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+
+    resolved = resolve_development_policy(root, "acme", "app", "dev_standards")
+    assert canonical.relative_to(root).as_posix() in {
+        item["source_ref"] for item in resolved["sources"]
+    }
 
 
 def test_auto_dev_parent_does_not_duplicate_nested_policy_planes(tmp_path: Path) -> None:

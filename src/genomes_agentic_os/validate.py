@@ -1344,6 +1344,9 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "auto-dev-stage-policy-decision.schema.json": [
         "**/work-items/*/*/artifacts/auto-dev-orchestration/proofs/*/policy-decision-*.json",
     ],
+    "program-run-packet.schema.json": [
+        "harness/shared_factory/06-runs-and-logs/program-runs/*/*.json",
+    ],
     "analytics-metrics.schema.json": ["harness/registries/analytics-metrics.yml"],
     "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
     "command-registry.schema.json": [REGISTRY_FILES["commands"]],
