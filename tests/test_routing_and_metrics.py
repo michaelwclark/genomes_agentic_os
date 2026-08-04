@@ -206,3 +206,64 @@ class TestMetricsRefresh:
         assert result["run_health"]["done"] == 1
         assert result["run_health"]["failed"] == 1
         assert result["run_health"]["success_rate"] == 0.5
+
+    def test_coordination_baseline_uses_receipt_and_queue_evidence(self, tmp_path: Path) -> None:
+        root = self._init_root(tmp_path)
+        from genomes_agentic_os.scaffold import shared_factory_path
+
+        runs_dir = shared_factory_path(root, "06-runs-and-logs", "runs")
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        (runs_dir / "handoff-gap.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "status": "queued",
+                    "idempotency_key": "schedule:daily",
+                    "created_at": "2026-08-01T09:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (runs_dir / "duplicate-complete.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "status": "done",
+                    "idempotency_key": "schedule:daily",
+                    "created_at": "2026-08-01T09:00:00Z",
+                    "started_at": "2026-08-01T09:10:00Z",
+                    "finished_at": "2026-08-01T09:40:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = metrics_refresh(root)["coordination_baseline"]
+
+        assert result["missed_handoffs"]["count"] == 1
+        assert result["duplicate_work"]["count"] == 1
+        assert result["discovery_time_minutes"] == {"median": 10.0, "samples": 1, "definition": "created_at to started_at on run receipts"}
+        assert result["operator_time_minutes"] == {"median": 30.0, "samples": 1, "definition": "started_at to finished_at on run receipts"}
+        assert [failure["id"] for failure in result["top_coordination_failures"]] == [
+            "missed_handoffs",
+            "duplicate_work",
+            "queue_pressure",
+        ]
+
+    def test_coordination_baseline_accepts_yaml_native_datetimes(self, tmp_path: Path) -> None:
+        root = self._init_root(tmp_path)
+        from genomes_agentic_os.scaffold import shared_factory_path
+
+        runs_dir = shared_factory_path(root, "06-runs-and-logs", "runs")
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        (runs_dir / "unquoted-timestamps.yml").write_text(
+            """status: done
+created_at: 2026-08-01T09:00:00Z
+started_at: 2026-08-01T09:10:00Z
+finished_at: 2026-08-01T09:40:00Z
+""",
+            encoding="utf-8",
+        )
+
+        result = metrics_refresh(root)["coordination_baseline"]
+
+        assert result["discovery_time_minutes"]["median"] == 10.0
+        assert result["operator_time_minutes"]["median"] == 30.0
