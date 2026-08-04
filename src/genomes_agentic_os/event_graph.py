@@ -80,6 +80,17 @@ def default_chain_rules() -> dict[str, Any]:
                         "workflow": "docs_update_after_merge",
                         "context_profile": "merged_feature_docs",
                         "maturity": "prepare",
+                        "documentation_site_delivery": {
+                            "required": True,
+                            "published_source_roots": ["docs/", "operating-manual/"],
+                            "validation": "npm --prefix website run build",
+                            "on_unavailable": {
+                                "provider": "linear",
+                                "action": "find_or_create_issue",
+                                "team": "Agentic OS",
+                                "project": "Rubicon: Documentation",
+                            },
+                        },
                     }
                 },
                 "approval": {"required": False},
@@ -428,6 +439,7 @@ def queue_item_for(rule: dict[str, Any], event: dict[str, Any]) -> dict[str, Any
         "context_profile": enqueue.get("context_profile", "default"),
         "execution_target": enqueue.get("execution_target"),
         "maturity": enqueue.get("maturity", "observe"),
+        "documentation_site_delivery": enqueue.get("documentation_site_delivery"),
         "idempotency_key": key,
         "correlation_id": correlation.get("correlation_id"),
         "chain_depth": event_chain_depth(event) + 1,

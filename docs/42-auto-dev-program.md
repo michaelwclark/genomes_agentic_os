@@ -137,6 +137,19 @@ Everything is the orchestrator, not another stage. It uses this one exact order:
 | 15 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
 | 16 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
 
+### Documentation delivery
+
+For this source package, a completed Auto-Dev Document outcome includes the
+reader-facing Docusaurus source change under `docs/` or `operating-manual/` and
+a successful `npm --prefix website run build`. Notion may project that result,
+but it is not a substitute for the published documentation site.
+
+If a documentation change cannot safely land in either site source tree,
+Auto-Dev records a provider-ready, idempotent request for Create Artifacts to
+create or reuse a Linear follow-up in **Rubicon: Documentation**. The follow-up
+is read back before closeout; a local draft, queue item, or skipped projection
+does not satisfy the Documentation stage.
+
 The skills perform the code/provider work. The recorder validates all typed
 `development-stage-evidence/v1` files before its first state mutation. Direct
 string-receipt transitions fail closed. Each workflow remains independently
