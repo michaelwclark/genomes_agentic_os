@@ -85,9 +85,11 @@ export type AttemptSnapshot = {
   hostId: string | null;
   workerSessionId: string | null;
   fabricEpoch: number;
+  leaseDurationSeconds: number;
   leaseExpiresAt: string;
   startedAt: string;
   finishedAt: string | null;
+  result: Record<string, unknown> | null;
   errorCode: string | null;
   errorSummary: string | null;
 };
@@ -824,8 +826,9 @@ export class PostgresLedger implements LedgerPort {
       if (succeeded) {
         const completion = input as AttemptCompletion;
         await client.query(
-          "UPDATE fabric_attempts SET status='succeeded',finished_at=now() WHERE id=$1",
-          [attemptId],
+          `UPDATE fabric_attempts SET status='succeeded',finished_at=now(),
+             result=$2::jsonb WHERE id=$1`,
+          [attemptId, JSON.stringify(completion.result)],
         );
         await client.query(
           "UPDATE fabric_runs SET status='succeeded',finished_at=now() WHERE id=$1",
@@ -1250,9 +1253,11 @@ export class PostgresLedger implements LedgerPort {
                'hostId',w.host_id,
                'workerSessionId',a.worker_session_id,
                'fabricEpoch',a.fabric_epoch,
+               'leaseDurationSeconds',a.lease_duration_seconds,
                'leaseExpiresAt',a.lease_expires_at,
                'startedAt',a.started_at,
                'finishedAt',a.finished_at,
+               'result',a.result,
                'errorCode',a.error_code,
                'errorSummary',a.error_summary
              ) ORDER BY a.attempt_number DESC,a.id
@@ -1272,6 +1277,7 @@ export class PostgresLedger implements LedgerPort {
              'maxAttempts',e.max_attempts,
              'availableAt',e.available_at,
              'deliveredAt',e.delivered_at,
+             'providerReceipt',e.provider_receipt,
              'lastError',e.last_error,
              'createdAt',e.created_at,
              'updatedAt',e.updated_at
@@ -1337,10 +1343,14 @@ export class PostgresLedger implements LedgerPort {
           ? String(attempt.workerSessionId)
           : null,
         fabricEpoch: Number(attempt.fabricEpoch),
+        leaseDurationSeconds: Number(attempt.leaseDurationSeconds),
         leaseExpiresAt: iso(attempt.leaseExpiresAt as string),
         startedAt: iso(attempt.startedAt as string),
         finishedAt: attempt.finishedAt
           ? iso(attempt.finishedAt as string)
+          : null,
+        result: attempt.result
+          ? (attempt.result as Record<string, unknown>)
           : null,
         errorCode: attempt.errorCode ? String(attempt.errorCode) : null,
         errorSummary: attempt.errorSummary

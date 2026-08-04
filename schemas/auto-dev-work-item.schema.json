@@ -71,6 +71,7 @@
       "additionalProperties": false
     },
     "delivery": {"type": "object"},
+    "run_packet": {"type": ["object", "null"]},
     "compatibility": {"type": "object"},
     "blocker": {"type": ["object", "null"]},
     "next_action": {"type": ["string", "null"]},

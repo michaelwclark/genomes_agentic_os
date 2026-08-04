@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genomes-agentic-os.local/schemas/program-run-packet.schema.json",
+  "title": "Immutable Program Run Packet Record",
+  "oneOf": [
+    { "$ref": "#/$defs/program" },
+    { "$ref": "#/$defs/workflow" }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,180}$"
+    },
+    "configRef": {
+      "type": "object",
+      "required": ["kind", "ref", "sha256"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1 },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "transport": {
+      "type": "object",
+      "required": ["driver", "mode", "queue_ref", "worker_ref", "attempt_ref", "run_ref"],
+      "properties": {
+        "driver": { "type": "string", "minLength": 1 },
+        "mode": {
+          "type": "string",
+          "enum": ["execution_fabric", "queue", "direct", "manual"]
+        },
+        "queue_ref": { "type": ["string", "null"] },
+        "worker_ref": { "type": ["string", "null"] },
+        "attempt_ref": { "type": ["string", "null"] },
+        "run_ref": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": ["status", "transport", "failure"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["completed", "failed", "timed_out", "cancelled"]
+        },
+        "transport": { "$ref": "#/$defs/transport" },
+        "failure": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["kind", "reason", "receipt_ref"],
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "reason": { "type": "string", "minLength": 1 },
+                "receipt_ref": { "type": ["string", "null"] }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "required": ["status", "failures"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["passed", "failed", "not_applicable", "unknown"]
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tracker_ref", "summary", "receipt_ref"],
+            "properties": {
+              "tracker_ref": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 },
+              "receipt_ref": { "type": ["string", "null"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "program": {
+      "type": "object",
+      "required": [
+        "schema",
+        "record_type",
+        "packet_id",
+        "program_id",
+        "run_id",
+        "title",
+        "subject",
+        "execution",
+        "config_refs",
+        "started_at"
+      ],
+      "properties": {
+        "schema": { "const": "program-run-packet/v1" },
+        "record_type": { "const": "program" },
+        "packet_id": { "$ref": "#/$defs/identifier" },
+        "program_id": { "$ref": "#/$defs/identifier" },
+        "run_id": { "$ref": "#/$defs/identifier" },
+        "title": { "type": ["string", "null"] },
+        "subject": { "type": "object", "minProperties": 1 },
+        "execution": { "$ref": "#/$defs/transport" },
+        "config_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/configRef" }
+        },
+        "started_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "required": [
+        "schema",
+        "record_type",
+        "packet_id",
+        "program_id",
+        "run_id",
+        "sequence",
+        "workflow_id",
+        "previous_workflow_id",
+        "next_workflow_id",
+        "started_at",
+        "finished_at",
+        "duration_seconds",
+        "timing_status",
+        "execution",
+        "quality",
+        "outcome",
+        "receipt_refs",
+        "idempotency_key",
+        "input_sha256"
+      ],
+      "properties": {
+        "schema": { "const": "program-run-packet/v1" },
+        "record_type": { "const": "workflow" },
+        "packet_id": { "$ref": "#/$defs/identifier" },
+        "program_id": { "$ref": "#/$defs/identifier" },
+        "run_id": { "$ref": "#/$defs/identifier" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "workflow_id": { "$ref": "#/$defs/identifier" },
+        "previous_workflow_id": { "type": ["string", "null"] },
+        "next_workflow_id": { "type": ["string", "null"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "timing_status": { "type": "string", "enum": ["observed", "unobserved"] },
+        "execution": { "$ref": "#/$defs/execution" },
+        "quality": { "$ref": "#/$defs/quality" },
+        "outcome": {
+          "type": "string",
+          "enum": ["completed", "quality_failed", "execution_failed"]
+        },
+        "receipt_refs": { "type": "array", "items": { "type": "string" } },
+        "idempotency_key": { "$ref": "#/$defs/identifier" },
+        "input_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

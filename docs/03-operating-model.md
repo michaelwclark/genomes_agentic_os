@@ -200,8 +200,7 @@ Full mechanics and setup: [13 · Agent Surfaces](13-agent-surfaces.md).
   The evidence field is the loop's integrity gate — every closed run must have a
   stated basis.
 - **Notion writes are real but gated (Gap B closed).** `notion plan-sync` computes
-  a reviewable diff; the live write paths (`notion track-runtime`,
-  `notion active-work-sync`) require `--apply` plus a verified workspace, and
+  a reviewable diff; live write paths require `--apply` plus a verified workspace, and
   `notion sync`/`bootstrap` maintain local projection records. Files are
   authoritative; Notion is a projection. Do not treat a plan-sync output as
   confirmation that Notion was updated.

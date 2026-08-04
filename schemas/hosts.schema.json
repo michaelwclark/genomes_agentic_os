@@ -28,6 +28,10 @@
           "type": "string",
           "description": "Remote username (informational; real auth is via ~/.ssh/config)."
         },
+        "home": {
+          "type": "string",
+          "description": "Remote home directory used for host path resolution."
+        },
         "description": {
           "type": "string",
           "description": "Human-readable description of this host."

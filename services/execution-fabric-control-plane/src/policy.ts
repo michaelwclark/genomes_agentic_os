@@ -32,6 +32,7 @@ const taskRouteSchema = z
         required_capability: z.string().min(1).max(128).nullable(),
         command_template: z.array(z.string().min(1).max(512)).min(1).nullable(),
         domain_worker: id.nullable(),
+        allowed_host_ids: z.array(scopeId).min(1).optional(),
       })
       .strict(),
     mutation_class: z.enum([
