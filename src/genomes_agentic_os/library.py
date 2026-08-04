@@ -1064,6 +1064,47 @@ def _recover_install_transaction(root: Path) -> dict[str, Any] | None:
     return {"status": "rolled_back", "run_id": journal.get("run_id")}
 
 
+def _retained_rollback_available(
+    root: Path,
+    backup: Path,
+    previous_receipt_bytes: bytes | None,
+    previous_projection_sha256: object,
+) -> bool:
+    """Report whether a retained predecessor satisfies rollback's exact checks."""
+
+    if (
+        previous_receipt_bytes is None
+        or not isinstance(previous_projection_sha256, str)
+        or not previous_projection_sha256
+        or backup.is_symlink()
+        or not backup.is_dir()
+    ):
+        return False
+    try:
+        if _projection_sha256(backup) != previous_projection_sha256:
+            return False
+        receipt = json.loads(previous_receipt_bytes)
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("status") != "installed"
+            or receipt.get("projection_sha256") != previous_projection_sha256
+        ):
+            return False
+        historical_receipt = _journal_path(
+            root,
+            receipt,
+            "success_receipt",
+            INSTALL_RECEIPT_DIR,
+        )
+        return bool(
+            historical_receipt
+            and historical_receipt.is_file()
+            and historical_receipt.read_bytes() == previous_receipt_bytes
+        )
+    except (LibraryError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+
+
 def _installed_projection_state(root: Path, target: Path) -> dict[str, Any]:
     present = target.exists() or target.is_symlink()
     if target.is_symlink():
@@ -1445,8 +1486,11 @@ def _install_library_locked(
                 if had_previous_target and previous_receipt_bytes is not None
                 else None
             ),
-            "rollback_available": bool(
-                had_previous_target and previous_receipt_bytes is not None
+            "rollback_available": _retained_rollback_available(
+                os_root,
+                backup,
+                previous_receipt_bytes,
+                installed_state.get("projection_sha256"),
             ),
             "success_receipt": success_receipt.relative_to(os_root).as_posix(),
         }

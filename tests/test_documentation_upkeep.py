@@ -93,3 +93,90 @@ def test_documentation_upkeep_falls_back_to_installed_template(tmp_path: Path, c
     assert result["ok"] is True
     assert result["config_path"].endswith("harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml")
     assert result["entry_count"] == 2
+
+
+def test_documentation_upkeep_requires_site_delivery_or_a_rubicon_follow_up(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    config_path = root / "harness/shared_factory/00-control-plane/documentation-upkeep.yml"
+    source = root / "harness/skills/example/SKILL.md"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("# example\n", encoding="utf-8")
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "id": "documentation_upkeep",
+                "mode": "observe",
+                "registry": [
+                    {
+                        "id": "missing_site_destination",
+                        "scope": "workflow",
+                        "title": "Example workflow documentation",
+                        "sources": ["harness/skills/example/SKILL.md"],
+                        "target": {"system": "notion", "path": "Programs -> Example"},
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    capsys.readouterr()
+    assert main(["docs", "upkeep", "--root", str(root)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+
+    delivery = result["entries"][0]["documentation_site_delivery"]
+    assert delivery["status"] == "follow_up_required"
+    assert delivery["follow_up"]["provider"] == "linear"
+    assert delivery["follow_up"]["project"] == "Rubicon: Documentation"
+    assert result["linear_writes"] is False
+    assert result["follow_up_requests"] == [delivery["follow_up"]]
+
+
+def test_documentation_upkeep_accepts_a_published_site_path(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "agentic_os"
+
+    assert main(["init", "--target", str(root)]) == 0
+    source = root / "harness/skills/example/SKILL.md"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("# example\n", encoding="utf-8")
+    config_path = root / "harness/shared_factory/00-control-plane/documentation-upkeep.yml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "id": "documentation_upkeep",
+                "mode": "observe",
+                "registry": [
+                    {
+                        "id": "published_site_destination",
+                        "scope": "workflow",
+                        "title": "Example workflow documentation",
+                        "sources": ["harness/skills/example/SKILL.md"],
+                        "target": {
+                            "system": "github_pages",
+                            "path": "Reference -> Example",
+                            "site_path": "docs/example.md",
+                        },
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    capsys.readouterr()
+    assert main(["docs", "upkeep", "--root", str(root)]) == 0
+    result = yaml.safe_load(capsys.readouterr().out)
+
+    delivery = result["entries"][0]["documentation_site_delivery"]
+    assert delivery == {
+        "status": "required",
+        "site_paths": ["docs/example.md"],
+        "validation": "npm --prefix website run build",
+    }
+    assert result["counts"]["site_delivery_required"] == 1

@@ -94,13 +94,6 @@ agentic-os integration setup granola --root ~/agentic_os --dry-run
 agentic-os integration doctor --root ~/agentic_os
 ```
 
-Track runtime state in the Notion control plane:
-
-```bash
-agentic-os notion track-runtime --root ~/agentic_os --dry-run
-agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace "Genome's Notion"
-```
-
 ## Heartbeats
 
 Heartbeats are named recurring checks or syncs. They should write local evidence
@@ -149,20 +142,6 @@ script execution.
 
 Do not treat a listed integration as active until `integration doctor` and the
 relevant approval gates pass.
-
-## Notion Runtime Tracking
-
-Notion is the control plane, not the runtime database.
-
-`notion track-runtime --dry-run` previews tracking output. Apply requires a
-verified workspace:
-
-```bash
-agentic-os notion track-runtime --root ~/agentic_os --apply --verified-workspace "Genome's Notion"
-```
-
-If the active workspace is Michael Clark's personal Notion or cannot be
-verified as Genome's Notion, stop before writing.
 
 ## Validation
 

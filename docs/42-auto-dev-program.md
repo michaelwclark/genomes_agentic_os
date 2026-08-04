@@ -30,17 +30,24 @@ are adjacent contracts, not additional development planes.
 
 | Behavior | Root | Domain | Project |
 | --- | --- | --- | --- |
-| Auto-Dev workflow behavior | `harness/shared_factory/05-knowledge/auto_dev/` | `05-knowledge/auto_dev/` | `config/auto_dev/` |
-| Hosts/VPN/cloud access | `harness/shared_factory/05-knowledge/auto_dev/environment_access/` | `05-knowledge/auto_dev/environment_access/` | `config/auto_dev/environment_access/` |
-| Code/review | `harness/shared_factory/05-knowledge/auto_dev/dev_standards/` | `05-knowledge/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` |
-| QA | `harness/shared_factory/05-knowledge/auto_dev/qa_gates/` | `05-knowledge/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` |
-| Gitflow | `harness/shared_factory/05-knowledge/auto_dev/gitflow_topology/` | `05-knowledge/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` |
+| Auto-Dev workflow behavior | `harness/shared_factory/05-knowledge/auto_dev/` | `config/auto_dev/` | `config/auto_dev/` |
+| Hosts/VPN/cloud access | `harness/shared_factory/05-knowledge/auto_dev/environment_access/` | `config/auto_dev/environment_access/` | `config/auto_dev/environment_access/` |
+| Code/review | `harness/shared_factory/05-knowledge/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` |
+| QA | `harness/shared_factory/05-knowledge/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` |
+| Gitflow | `harness/shared_factory/05-knowledge/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` |
 | Artifact output | `harness/artifact-config/<provider>/<type>.md` | `artifact-config/<provider>/<type>.md` | `artifact-config/<provider>/<type>.md` |
 | Investigation | `harness/investigation-config/` | `investigation-config/` | `investigation-config/` |
 
 Every resolution records ordered sources and a content fingerprint. Narrower
 configuration may specialize behavior but cannot weaken parent safety,
 approval, sanitization, target verification, or readback.
+
+Domain policy is now shaped exactly like project policy. The resolver reads a
+domain's `config/auto_dev/` first and uses
+`05-knowledge/auto_dev/` only when the canonical domain folder has no active
+Markdown policy. It never merges both trees. This makes a domain the natural
+home for a typed 1-N repository-family configuration without forking Auto-Dev;
+the legacy tree is a migration compatibility input, not a new write target.
 
 ## Object Library self-hosting
 
@@ -130,12 +137,49 @@ Everything is the orchestrator, not another stage. It uses this one exact order:
 | 15 | Closeout | `/auto-dev-closeout` | `develop stage --stage closeout` |
 | 16 | Health | `/auto-dev-health` | strict Health receipt after cleanup and finished-state readback |
 
+### Documentation delivery
+
+For this source package, a completed Auto-Dev Document outcome includes the
+reader-facing Docusaurus source change under `docs/` or `operating-manual/` and
+a successful `npm --prefix website run build`. Notion may project that result,
+but it is not a substitute for the published documentation site.
+
+If a documentation change cannot safely land in either site source tree,
+Auto-Dev records a provider-ready, idempotent request for Create Artifacts to
+create or reuse a Linear follow-up in **Rubicon: Documentation**. The follow-up
+is read back before closeout; a local draft, queue item, or skipped projection
+does not satisfy the Documentation stage.
+
 The skills perform the code/provider work. The recorder validates all typed
 `development-stage-evidence/v1` files before its first state mutation. Direct
 string-receipt transitions fail closed. Each workflow remains independently
 callable, but an Auto-Dev item cannot perform an external later stage until all
 canonical predecessors are terminal and receipt-backed. Neither a domain nor a
 project can reorder the list.
+
+## Canonical program run packet
+
+Every Auto-Dev Everything run also has a generic, immutable program-run packet
+under `harness/shared_factory/06-runs-and-logs/program-runs/<packet-id>/`.
+The packet supplements, but never replaces, Development Delivery, the
+Execution Fabric, workflow run requests, or provider receipts.
+
+- `00-program.json` records the program/run identity, subject, selected
+  execution transport, and every configuration source read.
+- `01-<workflow>.json`, `02-<workflow>.json`, and later ordered records seal
+  the individual workflow observations: start and finish times, observed
+  duration, prior/next workflow, transport/queue/worker/attempt references,
+  receipt references, and outcome.
+- `events.jsonl` is append-only start/completion evidence. The reader derives
+  current state and metrics rather than rewriting a mutable summary.
+
+Execution and quality are deliberately separate. A test assertion failure is
+`execution.status: completed` plus `quality.status: failed`, and requires a
+tracker-backed remediation reference; it is not an execution failure. An
+unexpected exit, timeout, cancellation, lost worker, or corrupt evidence is an
+execution failure with its own reason and receipt reference. This distinction
+lets a family release controller loop quality regressions into Auto-Dev while
+keeping real runtime failures visible to operators.
 
 ### Governed `not_required`
 

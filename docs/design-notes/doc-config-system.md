@@ -75,7 +75,7 @@ deterministic route plan from Agentic OS config before writing.
 ## Validation
 
 ```bash
-PYTHONPATH=src python -m pytest tests/test_doc_config.py tests/test_cli_scaffold.py tests/test_notion_runtime_tracking.py tests/test_source_adapters.py -q
+PYTHONPATH=src python -m pytest tests/test_doc_config.py tests/test_cli_scaffold.py tests/test_source_adapters.py -q
 PYTHONPATH=src python -m pytest -q
 agentic-os validate --root <fresh-root> --strict
 ```
