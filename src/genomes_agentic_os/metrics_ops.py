@@ -14,12 +14,14 @@ Usage:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .scaffold import expand_path, harness_path, shared_factory_path
+from .runtime_backend import queue_mode_status
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +127,126 @@ def _backup_run_counts(root: Path) -> dict[str, int]:
     return {"completed": completed, "skipped": skipped}
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    """Return a timezone-aware ISO timestamp, or ``None`` for absent evidence."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _coordination_baseline(root: Path, runs_dir: Path) -> dict[str, Any]:
+    """Build a read-only baseline from existing run receipts and queue state.
+
+    The baseline deliberately does not infer people, work content, or provider
+    activity.  It reports only observable receipt gaps and timings so operators
+    can address coordination failures without introducing another backend.
+    """
+    records = [_read_yaml(path) for path in runs_dir.rglob("*.yml")] if runs_dir.is_dir() else []
+    records = [record for record in records if record]
+    active_statuses = {"queued", "running", "approval-needed", "blocked"}
+    missed_handoffs = sum(
+        1
+        for record in records
+        if str(record.get("status") or "").lower() in active_statuses
+        and not str(record.get("next_action") or "").strip()
+    )
+
+    idempotency_counts: dict[str, int] = {}
+    for record in records:
+        key = str(record.get("idempotency_key") or "").strip()
+        if key:
+            idempotency_counts[key] = idempotency_counts.get(key, 0) + 1
+    duplicate_work = sum(count - 1 for count in idempotency_counts.values() if count > 1)
+
+    discovery_minutes: list[float] = []
+    operator_minutes: list[float] = []
+    for record in records:
+        created = _parse_timestamp(record.get("created_at"))
+        started = _parse_timestamp(record.get("started_at"))
+        finished = _parse_timestamp(record.get("finished_at"))
+        if created and started and started >= created:
+            discovery_minutes.append((started - created).total_seconds() / 60)
+        if started and finished and finished >= started:
+            operator_minutes.append((finished - started).total_seconds() / 60)
+
+    try:
+        runtime = queue_mode_status(root)
+        queues = (runtime.get("metrics") or {}).get("queues") or []
+    except Exception:  # queue projection is optional in a freshly initialized OS
+        runtime = {"queue_mode": "unavailable", "metrics": {"queues": []}}
+        queues = []
+    queue_statuses: dict[str, int] = {}
+    for queue in queues:
+        for status, count in (queue.get("statuses") or {}).items():
+            queue_statuses[str(status)] = queue_statuses.get(str(status), 0) + int(count)
+    queue_waiting = queue_statuses.get("queued", 0) + queue_statuses.get("approval-needed", 0)
+    queue_failures = queue_statuses.get("failed", 0) + queue_statuses.get("dead-letter", 0)
+
+    return {
+        "evidence": {
+            "run_receipts_scanned": len(records),
+            "queue_mode": runtime.get("queue_mode"),
+            "queue_count": len(queues),
+        },
+        "missed_handoffs": {
+            "count": missed_handoffs,
+            "definition": "active run receipts without a next_action",
+        },
+        "duplicate_work": {
+            "count": duplicate_work,
+            "definition": "extra run receipts sharing an idempotency_key",
+        },
+        "discovery_time_minutes": {
+            "median": round(_median(discovery_minutes), 2),
+            "samples": len(discovery_minutes),
+            "definition": "created_at to started_at on run receipts",
+        },
+        "operator_time_minutes": {
+            "median": round(_median(operator_minutes), 2),
+            "samples": len(operator_minutes),
+            "definition": "started_at to finished_at on run receipts",
+        },
+        "queue_health": {
+            "waiting": queue_waiting,
+            "failed_or_dead_letter": queue_failures,
+            "statuses": queue_statuses,
+        },
+        "top_coordination_failures": [
+            {
+                "id": "missed_handoffs",
+                "count": missed_handoffs,
+                "evidence": "active run receipts lack next_action",
+            },
+            {
+                "id": "duplicate_work",
+                "count": duplicate_work,
+                "evidence": "run receipts reuse an idempotency_key",
+            },
+            {
+                "id": "queue_pressure",
+                "count": queue_waiting + queue_failures,
+                "evidence": "runtime queue status projection",
+            },
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -153,6 +275,9 @@ def metrics_refresh(root: str | Path) -> dict[str, Any]:
     # Backup counts
     backup_counts = _backup_run_counts(os_root)
 
+    # Coordination baseline: receipt and queue projections only, no new backend.
+    coordination_baseline = _coordination_baseline(os_root, runs_dir)
+
     # Doctor findings
     doctor_counts = _doctor_finding_counts(os_root)
 
@@ -179,6 +304,7 @@ def metrics_refresh(root: str | Path) -> dict[str, Any]:
             "log_count": heartbeat_count,
         },
         "backups": backup_counts,
+        "coordination_baseline": coordination_baseline,
         "doctor_findings": doctor_counts,
         "automation_maturity": {
             "total": total_automations,

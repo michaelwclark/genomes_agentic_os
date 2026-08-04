@@ -565,9 +565,8 @@ def _preflight(project_dir: Path, project_yml: dict, packet: Path, spec: dict) -
                 "        root: /absolute/path/to/repo\n"
                 "        default_base_branch: main\n"
                 "  After adding dev_factory, mint a tracker item:\n"
-                "    1. Run: agentic-os-intake-row --title '<title>' --type spec --project '<project>'\n"
-                "    2. Run: agentic-os-intake-sync  (to mirror to Linear/Jira)\n"
-                "    3. Copy the tracker id into SPEC.md frontmatter: tracker: <id>"
+                "    1. Create the approved tracker item for the work.\n"
+                "    2. Copy the tracker id into SPEC.md frontmatter: tracker: <id>"
             ),
         })
         repo_root = None
@@ -584,10 +583,8 @@ def _preflight(project_dir: Path, project_yml: dict, packet: Path, spec: dict) -
                 "No tracker id found in SPEC.md frontmatter ('tracker:' key) or\n"
                 "  artifacts/auto-dev/tracker/source-snapshot.json.\n"
                 "  Remedy — mint a tracker item and link it:\n"
-                "    1. agentic-os-intake-row --title '<work item title>' --type spec --project '<project>'\n"
-                "       (prints the Notion row URL; note the Linear id from the sync)\n"
-                "    2. agentic-os-intake-sync  (syncs to Linear; note the Linear issue id)\n"
-                "    3. Add to SPEC.md frontmatter:\n"
+                "    1. Create the approved tracker item.\n"
+                "    2. Add to SPEC.md frontmatter:\n"
                 "         ---\n"
                 "         tracker: <TEAM>-<NNN>\n"
                 "         ---"
