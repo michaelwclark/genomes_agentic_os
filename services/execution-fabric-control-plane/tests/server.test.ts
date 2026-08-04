@@ -468,6 +468,28 @@ describe("HTTP contract", () => {
     await server.close();
   });
 
+  it("keeps delivery reconciliation read-only unless apply is explicit", async () => {
+    const { server, delivery, ledger, task } = fixture();
+    vi.mocked(ledger.listPublishable).mockResolvedValue([task]);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/v1/admin/delivery-reconciliation",
+      headers: { authorization: `Bearer ${config.adminToken}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      dryRun: true,
+      eligible: 1,
+      deliveriesPublished: 0,
+      taskIds: [task.id],
+    });
+    expect(delivery.publish).not.toHaveBeenCalled();
+    expect(ledger.markPublished).not.toHaveBeenCalled();
+    await server.close();
+  });
+
   it("rejects every API and metrics route without its exact scoped token", async () => {
     const { server } = fixture();
     const taskId = randomUUID();
@@ -565,6 +587,11 @@ describe("HTTP contract", () => {
       {
         method: "POST" as const,
         url: "/api/v1/admin/reconcile",
+        scope: "admin",
+      },
+      {
+        method: "POST" as const,
+        url: "/api/v1/admin/delivery-reconciliation",
         scope: "admin",
       },
       {

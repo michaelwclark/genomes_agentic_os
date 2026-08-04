@@ -185,6 +185,17 @@ export const configReloadSchema = z
   })
   .strict();
 
+export const deliveryReconciliationSchema = z
+  .object({
+    // Projection repair is opt-in. The default reads PostgreSQL truth and
+    // reports the bounded plan without publishing a BullMQ job or writing a
+    // delivery timestamp.
+    apply: z.boolean().default(false),
+    limit: z.number().int().min(1).max(500).default(500),
+  })
+  .strict()
+  .default({});
+
 export const scheduleUpsertSchema = z.object({
   id: identifier,
   namespace: identifier,
@@ -220,6 +231,7 @@ export type ReliabilityObservation = z.infer<
   typeof reliabilityObservationSchema
 >;
 export type ScheduleUpsert = z.infer<typeof scheduleUpsertSchema>;
+export type DeliveryReconciliation = z.infer<typeof deliveryReconciliationSchema>;
 
 export type TaskRecord = {
   id: string;
@@ -259,6 +271,14 @@ export type ReconcileReceipt = {
   effectsRequeued: number;
   effectsDeadLettered: number;
   deliveriesPublished: number;
+  occurredAt: string;
+};
+
+export type DeliveryReconciliationReceipt = {
+  dryRun: boolean;
+  eligible: number;
+  deliveriesPublished: number;
+  taskIds: string[];
   occurredAt: string;
 };
 
