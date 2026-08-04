@@ -180,6 +180,32 @@ def test_import_run_queue_maps_core_fields_and_catch_all_payload(fixture_root: P
     assert item["payload"]["dispatch_log"] == "harness/logs/dispatch-0001.log"
 
 
+def test_import_run_queue_skips_distinct_ids_with_duplicate_idempotency_key(
+    fixture_root: Path, conn: sqlite3.Connection
+) -> None:
+    paths = importers.default_source_paths(fixture_root)
+    source = yaml.safe_load(paths.run_queue.read_text(encoding="utf-8"))
+    source["items"].append(
+        {
+            "id": "queue_synthetic0003",
+            "kind": "schedule",
+            "status": "queued",
+            "created_at": "2026-01-03T00:00:00Z",
+            "idempotency_key": source["items"][0]["idempotency_key"],
+        }
+    )
+    _write_yaml(paths.run_queue, source)
+
+    result = importers.import_run_queue(conn, paths.run_queue)
+
+    assert result["source_item_count"] == 3
+    assert result["processed"] == 2
+    assert result["skipped_duplicate_idempotency_key"] == 1
+    assert result["inserted"] == 2
+    assert queue.get(conn, "queue_synthetic0001") is not None
+    assert queue.get(conn, "queue_synthetic0003") is None
+
+
 def test_import_events_maps_envelope_fields(fixture_root: Path, conn: sqlite3.Connection) -> None:
     paths = importers.default_source_paths(fixture_root)
     result = importers.import_events(conn, paths.events_dir)
@@ -228,6 +254,8 @@ def test_import_all_is_idempotent_across_two_runs(fixture_root: Path, conn: sqli
         "cursors": 3,
         "work_items": 0,
         "work_item_history": 0,
+        "approval_requests": 0,
+        "artifact_references": 0,
     }
 
 
@@ -242,6 +270,8 @@ def test_import_all_respects_source_filter(fixture_root: Path, conn: sqlite3.Con
         "cursors": 0,
         "work_items": 0,
         "work_item_history": 0,
+        "approval_requests": 0,
+        "artifact_references": 0,
     }
 
 

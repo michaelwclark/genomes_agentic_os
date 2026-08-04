@@ -15,11 +15,18 @@ import fcntl
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 import uuid
 
 import yaml
 from jsonschema import Draft202012Validator
+
+from .program_run_packets import (
+    begin_program_workflow,
+    read_program_run_packet,
+    record_program_workflow,
+    start_program_run_packet,
+)
 
 
 AUTO_DEV_SCHEMA = "auto-dev-work-item/v1"
@@ -703,6 +710,189 @@ def _next_stage(
     return None
 
 
+def _auto_dev_packet_transport(task: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = task.get("runtime") if isinstance(task.get("runtime"), Mapping) else {}
+    provider = str(runtime.get("provider") or "").strip()
+    mode = "execution_fabric" if provider == "execution_fabric" else "queue" if provider == "queue" else "direct"
+    return {
+        "driver": "development_delivery",
+        "mode": mode,
+        "queue_ref": str(runtime.get("queue_ref") or "").strip() or None,
+        "worker_ref": str(runtime.get("worker_ref") or "").strip() or None,
+        "attempt_ref": str(runtime.get("attempt_ref") or "").strip() or None,
+        "run_ref": str(task.get("run_id") or "").strip() or None,
+    }
+
+
+def _auto_dev_packet_config_refs(task: Mapping[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    policy_ref = str(task.get("policy_receipt") or "").strip()
+    if policy_ref:
+        policy_path = Path(policy_ref).expanduser()
+        refs.append(
+            {
+                "kind": "effective_policy",
+                "ref": policy_ref,
+                "sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest()
+                if policy_path.is_file()
+                else None,
+            }
+        )
+    sources = task.get("policy_sources")
+    if isinstance(sources, Mapping):
+        for plane, values in sources.items():
+            if not isinstance(values, list):
+                continue
+            for ref in values:
+                if str(ref).strip():
+                    refs.append(
+                        {
+                            "kind": f"policy:{plane}",
+                            "ref": str(ref).strip(),
+                            "sha256": None,
+                        }
+                    )
+    return refs
+
+
+def _auto_dev_stage_quality(
+    work_item: Path,
+    stage: str,
+    row: Mapping[str, Any],
+) -> dict[str, Any]:
+    if stage != "qa" or row.get("status") == "not_required":
+        return {"status": "not_applicable", "failures": []}
+    raw_ref = str(row.get("run_ref") or "").strip()
+    if raw_ref:
+        candidate = Path(raw_ref).expanduser()
+        if not candidate.is_absolute():
+            candidate = work_item / candidate
+        if candidate.is_file():
+            wrapper = _read_json(candidate)
+            snapshot = wrapper.get("evidence_snapshot") if isinstance(wrapper, Mapping) else {}
+            structured = snapshot.get("evidence") if isinstance(snapshot, Mapping) else {}
+            quality = structured.get("quality") if isinstance(structured, Mapping) else None
+            if isinstance(quality, Mapping):
+                return dict(quality)
+    return {"status": "passed", "failures": []}
+
+
+def _auto_dev_next_packet_stage(
+    stage_order: Sequence[str], stages: Mapping[str, Mapping[str, Any]], stage: str
+) -> str | None:
+    try:
+        start = list(stage_order).index(stage) + 1
+    except ValueError:
+        return None
+    for candidate in stage_order[start:]:
+        row = stages.get(candidate)
+        if isinstance(row, Mapping) and row.get("status") != "out_of_scope":
+            return candidate
+    return None
+
+
+def _sync_auto_dev_program_run_packet(
+    task: Mapping[str, Any],
+    value: Mapping[str, Any],
+    work_item: Path,
+) -> dict[str, str] | None:
+    """Project an Everything run into the generic immutable packet contract.
+
+    Development Delivery and the Auto-Dev projection remain authoritative. This
+    adapter only observes their typed receipts and preserves the independent
+    execution-versus-quality result classification for cross-program metrics.
+    """
+
+    if value.get("mode") != "everything":
+        return None
+    os_root = str(task.get("os_root") or "").strip()
+    run_id = str(task.get("run_id") or "").strip()
+    ticket = str(task.get("ticket") or "").strip()
+    if not os_root or not run_id or not ticket:
+        return None
+    prior = value.get("run_packet") if isinstance(value.get("run_packet"), Mapping) else {}
+    packet_id = str(prior.get("packet_id") or f"{run_id}-{ticket}-auto-dev")
+    source = task.get("source") if isinstance(task.get("source"), Mapping) else {}
+    subject = {
+        "canonical_work_id": str(task.get("canonical_work_id") or "").strip(),
+        "tracker_ref": f"{source.get('system') or 'tracker'}:{source.get('key') or ticket}",
+        "repository": str(
+            (task.get("repository") or {}).get("id")
+            if isinstance(task.get("repository"), Mapping)
+            else ""
+        ).strip(),
+    }
+    descriptor = start_program_run_packet(
+        os_root,
+        packet_id=packet_id,
+        program_id="auto_dev",
+        run_id=run_id,
+        title=str(task.get("title") or ticket),
+        subject={key: item for key, item in subject.items() if item},
+        execution=_auto_dev_packet_transport(task),
+        config_refs=_auto_dev_packet_config_refs(task),
+        started_at=str(value.get("created_at") or task.get("created_at") or _utc_now()),
+    )
+    sealed_workflows = {
+        str(record.get("workflow_id") or "")
+        for record in read_program_run_packet(os_root, packet_id).get("workflows", [])
+        if isinstance(record, Mapping)
+    }
+    stages = value.get("stages") if isinstance(value.get("stages"), Mapping) else {}
+    stage_order = [str(name) for name in value.get("stage_order") or AUTO_DEV_STAGE_ORDER]
+    transport = _auto_dev_packet_transport(task)
+    for stage in stage_order:
+        row = stages.get(stage)
+        if not isinstance(row, Mapping) or row.get("status") not in TERMINAL_STAGE_STATUSES:
+            continue
+        if stage in sealed_workflows:
+            continue
+        receipt_ref = str(row.get("run_ref") or "").strip()
+        record_program_workflow(
+            os_root,
+            packet_id=packet_id,
+            workflow_id=stage,
+            execution={"status": "completed", "transport": transport},
+            quality=_auto_dev_stage_quality(work_item, stage, row),
+            idempotency_key=f"{run_id}:{ticket}:{stage}:completed",
+            finished_at=str(row.get("last_verified_at") or value.get("updated_at") or _utc_now()),
+            next_workflow_id=_auto_dev_next_packet_stage(stage_order, stages, stage),
+            receipt_refs=[receipt_ref] if receipt_ref else [],
+        )
+    current_stage = str(value.get("current_stage") or "").strip()
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else None
+    if failure and current_stage and current_stage not in sealed_workflows:
+        record_program_workflow(
+            os_root,
+            packet_id=packet_id,
+            workflow_id=current_stage,
+            execution={
+                "status": "failed",
+                "transport": transport,
+                "failure": {
+                    "kind": str(failure.get("kind") or "unexpected_exit"),
+                    "reason": str(failure.get("detail") or failure.get("reason") or "task failed"),
+                    "receipt_ref": str(failure.get("receipt") or "").strip() or None,
+                },
+            },
+            quality={"status": "unknown", "failures": []},
+            idempotency_key=f"{run_id}:{ticket}:{current_stage}:execution-failed",
+            finished_at=str(value.get("updated_at") or _utc_now()),
+            receipt_refs=[str(failure.get("receipt") or "").strip()] if failure.get("receipt") else [],
+        )
+    elif current_stage and current_stage not in sealed_workflows:
+        begin_program_workflow(
+            os_root,
+            packet_id=packet_id,
+            workflow_id=current_stage,
+            transport=transport,
+            config_refs=_auto_dev_packet_config_refs(task),
+            idempotency_key=f"{run_id}:{ticket}:{current_stage}:started",
+            started_at=str(value.get("updated_at") or _utc_now()),
+        )
+    return descriptor
+
+
 def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | None:
     """Refresh ``autodev.json`` from canonical delivery state when linked."""
     task_path = Path(task_state_path).expanduser().resolve()
@@ -826,7 +1016,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "stage_order": stage_order,
             "stage_policies": stage_policies,
             "stages": stages,
-        "delivery": {
+            "delivery": {
                 "engine": "development_delivery",
                 "state": task.get("state"),
                 "goal": task.get("goal"),
@@ -844,6 +1034,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 "deployed_revision": task.get("deployed_revision"),
                 "canonical_work_id": task.get("canonical_work_id") or existing.get("canonical_work_id"),
             },
+            "run_packet": existing.get("run_packet"),
             "compatibility": {
                 "legacy_state_ref": str(legacy) if legacy.is_file() else None,
                 "migration_mode": "reference_only" if legacy.is_file() else "not_present",
@@ -853,6 +1044,9 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
             "created_at": existing.get("created_at") or _utc_now(),
             "updated_at": _utc_now(),
         }
+        run_packet = _sync_auto_dev_program_run_packet(task, value, work_item)
+        if run_packet is not None:
+            value["run_packet"] = run_packet
         before = {key: val for key, val in existing.items() if key != "updated_at"}
         after = {key: val for key, val in value.items() if key != "updated_at"}
         changed = before != after
