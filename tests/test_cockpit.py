@@ -16,6 +16,9 @@ from genomes_agentic_os.cockpit import (
     collect_hygiene,
     collect_work_items,
 )
+from genomes_agentic_os.review_queue import queue_kind, review_payload
+from genomes_agentic_os.state import db as state_db
+from genomes_agentic_os.state import queue as state_queue
 
 
 NOW = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
@@ -94,6 +97,33 @@ def test_snapshot_is_schema_valid_and_read_only(tmp_path: Path) -> None:
     assert snapshot["root"] == str(root.resolve())
     assert all(isinstance(item, dict) for item in snapshot["diagnostics"])
     assert all(item.get("id") for group in snapshot["sources"].values() for item in group)
+
+
+def test_snapshot_surfaces_generalized_state_plane_reviews(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    connection = state_db.connect(state_db.default_db_path(root))
+    try:
+        state_queue.enqueue(
+            connection,
+            id="proposal-review",
+            kind=queue_kind("proposal"),
+            status="approval-needed",
+            payload=review_payload(
+                "proposal",
+                title="Approve control-plane proposal",
+                summary="A proposal is waiting for adjudication.",
+                subject="AGE-49",
+            ),
+        )
+    finally:
+        connection.close()
+
+    snapshot = build_cockpit_snapshot(root, now=NOW, max_files=20, include_harness_sessions=False)
+
+    review = next(item for item in snapshot["reviews"] if item["id"] == "review-queue:proposal-review")
+    assert review["review_kind"] == "proposal"
+    assert review["status"] == "approval-needed"
+    assert "review-queue" in review["tags"]
 
 
 def test_hygiene_only_proposes_existing_guarded_commands(tmp_path: Path) -> None:

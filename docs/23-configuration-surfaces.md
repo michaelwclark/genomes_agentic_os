@@ -168,11 +168,11 @@ contracts and are not counted as development planes.
 
 | Plane | Root | Domain | Project | CLI |
 | --- | --- | --- | --- | --- |
-| Auto-Dev behavior | `harness/shared_factory/05-knowledge/auto_dev/` | `05-knowledge/auto_dev/` | `config/auto_dev/` | `agentic-os develop policy ... --plane auto_dev` |
-| Environment access | `harness/shared_factory/05-knowledge/auto_dev/environment_access/` | `05-knowledge/auto_dev/environment_access/` | `config/auto_dev/environment_access/` | `agentic-os develop policy ... --plane environment_access` |
-| Development standards | `harness/shared_factory/05-knowledge/auto_dev/dev_standards/` | `05-knowledge/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` | `agentic-os develop policy ... --plane dev_standards` |
-| QA gates | `harness/shared_factory/05-knowledge/auto_dev/qa_gates/` | `05-knowledge/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` | `agentic-os develop policy ... --plane qa_gates` |
-| Gitflow topology | `harness/shared_factory/05-knowledge/auto_dev/gitflow_topology/` | `05-knowledge/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` | `agentic-os develop policy ... --plane gitflow_topology` |
+| Auto-Dev behavior | `harness/shared_factory/05-knowledge/auto_dev/` | `config/auto_dev/` | `config/auto_dev/` | `agentic-os develop policy ... --plane auto_dev` |
+| Environment access | `harness/shared_factory/05-knowledge/auto_dev/environment_access/` | `config/auto_dev/environment_access/` | `config/auto_dev/environment_access/` | `agentic-os develop policy ... --plane environment_access` |
+| Development standards | `harness/shared_factory/05-knowledge/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` | `config/auto_dev/dev_standards/` | `agentic-os develop policy ... --plane dev_standards` |
+| QA gates | `harness/shared_factory/05-knowledge/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` | `config/auto_dev/qa_gates/` | `agentic-os develop policy ... --plane qa_gates` |
+| Gitflow topology | `harness/shared_factory/05-knowledge/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` | `config/auto_dev/gitflow_topology/` | `agentic-os develop policy ... --plane gitflow_topology` |
 | Artifact contracts | `harness/artifact-config/` | `artifact-config/` | `artifact-config/` | `agentic-os artifacts resolve ... --explain` |
 | Investigation sources | `harness/investigation-config/` | `investigation-config/` | `investigation-config/` | `agentic-os detective resolve ... --explain` |
 
@@ -181,6 +181,11 @@ Projects may replace a plane's ordered folders through
 `any/any`, `any/<type>`, `<provider>/any`, and `<provider>/<type>` at each scope.
 Narrower scopes may specialize behavior but cannot weaken inherited safety,
 approval, sanitization, target verification, or readback.
+
+New domain policy always writes to `domains/<domain>/config/auto_dev/`. The
+resolver retains `domains/<domain>/05-knowledge/auto_dev/` as a fallback only
+when the canonical domain plane has no active Markdown; it never merges the
+two domain roots.
 
 Use `agentic-os artifacts doctor` after changing artifact contracts and
 `agentic-os detective doctor` after changing investigation packs. Applied
