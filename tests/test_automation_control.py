@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from genomes_agentic_os.automation_control import CONTROL_CONFIG, run_automation_control
+from genomes_agentic_os.preconditions import PRECONDITION_CONFIG
 from genomes_agentic_os.cli import main
 from genomes_agentic_os.runtime_ops import runtime_run_next
 
@@ -127,9 +128,36 @@ def test_automation_control_ready_enqueues_once(tmp_path: Path) -> None:
     assert first["actions"][0]["decision"] == "ready"
     assert first["actions"][0]["action"] == "enqueued"
     assert second["actions"][0]["action"] == "already_queued"
+    assert first["actions"][0]["dispatch_performed"] is False
     queue = yaml.safe_load((root / "harness/shared_factory/00-control-plane/run-queue.yml").read_text())
     assert len(queue["items"]) == 1
     assert queue["items"][0]["kind"] == "automation_control"
+    assert queue["items"][0]["dispatch_performed"] is False
+
+
+def test_automation_control_failed_precondition_does_not_enqueue(tmp_path: Path) -> None:
+    root = _fresh_root(tmp_path)
+    _write_watch_source(root)
+    _write_control(root, [{"id": "page1", "last_edited_time": "2026-06-22T00:00:00Z", "Status": "Queue Start"}])
+    config = yaml.safe_load((root / CONTROL_CONFIG).read_text(encoding="utf-8"))
+    config["managed_automations"][0]["preconditions"] = ["build-succeeds"]
+    (root / CONTROL_CONFIG).write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    registry = root / PRECONDITION_CONFIG
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(
+        yaml.safe_dump({"preconditions": {"build-succeeds": {"type": "always", "value": False}}}),
+        encoding="utf-8",
+    )
+
+    result = run_automation_control(root, dry_run=False)
+
+    action = result["actions"][0]
+    assert action["decision"] == "precondition_failed"
+    assert action["action"] == "none"
+    assert action["preconditions"]["mode"] == "evaluate_only"
+    assert action["dispatch_performed"] is False
+    queue = yaml.safe_load((root / "harness/shared_factory/00-control-plane/run-queue.yml").read_text())
+    assert queue["items"] == []
 
 
 def test_automation_control_cli_apply_enqueues(tmp_path: Path) -> None:

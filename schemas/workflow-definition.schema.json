@@ -43,6 +43,10 @@
     "inputs": {"type": "object"},
     "outputs": {"type": "object"},
     "approvals": {"type": "array"},
+    "preconditions": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,79}$"}
+    },
     "retry": {
       "type": "object",
       "additionalProperties": true,
