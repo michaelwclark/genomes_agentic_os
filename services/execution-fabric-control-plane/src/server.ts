@@ -11,6 +11,7 @@ import {
   attemptFailureSchema,
   claimSchema,
   configReloadSchema,
+  deliveryReconciliationSchema,
   effectClaimSchema,
   effectDeliverySchema,
   effectFailureSchema,
@@ -657,6 +658,11 @@ export function buildServer(
   });
   server.post("/api/v1/admin/reconcile", async (request, reply) => {
     return fabric.reconcile();
+  });
+  server.post("/api/v1/admin/delivery-reconciliation", async (request) => {
+    return fabric.reconcileDeliveryProjection(
+      deliveryReconciliationSchema.parse(request.body),
+    );
   });
   server.post("/api/v1/admin/config/reload", async (request) => {
     return fabric.reloadPolicy(configReloadSchema.parse(request.body));
