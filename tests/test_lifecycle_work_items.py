@@ -20,6 +20,7 @@ from genomes_agentic_os.lifecycle import (
     cleanup_terminal_worktrees,
     create_project_work_item,
     local_project_work_items,
+    work_item_file_content,
 )
 
 
@@ -70,6 +71,21 @@ def test_new_canonical_packet_names_the_canonical_spec_root(tmp_path: Path) -> N
         "type": "local",
         "path": "work-items",
     }
+
+
+def test_new_plan_requires_architecture_read_before_code() -> None:
+    plan = work_item_file_content(
+        "PLAN.md",
+        title="Architecture gated work",
+        summary="Build safely.",
+        status="building",
+        work_id="fixture",
+    )
+
+    assert "## Architecture Prerequisite" in plan
+    assert "Before code or state changes" in plan
+    assert "canonical ports-and-adapters reference" in plan
+    assert "work-item receipt" in plan
 
 
 def _cleanup_fixture(tmp_path: Path, entry_fields: dict[str, object]) -> tuple[Path, Path, Path]:
