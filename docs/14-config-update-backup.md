@@ -5,7 +5,7 @@
 > destructive action by default.
 >
 > **You'll use:** `agentic-os config install-tree`,
-> `agentic-os update {check,register,pull,plan,apply,rollback,status,phone-home}`,
+> `agentic-os update {check,register,pull,plan,apply,rollback,status,phone-home,watch-release,verify-reinstall,rollback-drill}`,
 > `agentic-os backup {run,push,restore-plan}`, `agentic-os license activate`, `agentic-os migrate {plan,apply}`.
 >
 > **Prereqs:** a working OS root ([01 · Install & Quickstart](01-install-and-quickstart.md)).
@@ -22,7 +22,7 @@ source of truth for install-scoped identity and update behavior:
 | Key | Meaning |
 | --- | --- |
 | `update_channel` | Which channel to track (`stable` is the default). |
-| `update_policy` | Approval requirement (`operator_approved` is the default). |
+| `update_policy` | Release-install policy (`auto_patch_minor` is the default; major releases remain operator-approved). |
 | `project_link_scope` | Project repository symlinks are scoped to `domain/02-projects/<project>/src`. |
 
 The marker is read on every CLI call — it is never cached in a singleton. The lock
@@ -146,6 +146,47 @@ agentic-os update rollout-gate \
   --release-receipt /srv/receipts/v1.2.4.json \
   --evidence /srv/receipts/rollout-v1.2.4.json
 ```
+
+### Receipt-backed post-release reinstall
+
+`update watch-release` runs locally on each target host. It consumes an
+upstream-produced published-release JSON/YAML receipt rather than creating or
+guessing a release itself. A receipt must declare `published: true`, `draft:
+false`, stable `version`, matching `tag`, and (when available) the exact
+`source_revision`.
+
+Patch and minor releases are eligible under `auto_patch_minor`; major releases
+always require `--approve-major`. Older roots that deliberately retain
+`operator_approved` need `--approve-release` for patch/minor releases. The
+command is a plan by default. `--apply`
+authorizes only that local target's transactional library reinstall; it never
+opens SSH connections or executes a release remotely. A successful apply records
+the release state and verifies object count, current content/projection hashes,
+source revision, and any retained predecessor generation. A failed post-install
+verification invokes the already-authorized transactional rollback and reports
+the result.
+
+```bash
+agentic-os update watch-release \
+  --root /srv/agentic_os \
+  --release-receipt /srv/receipts/v1.2.4.json \
+  --repository https://example.invalid/agentic-library.git
+
+agentic-os update watch-release \
+  --root /srv/agentic_os \
+  --release-receipt /srv/receipts/v1.2.4.json \
+  --repository https://example.invalid/agentic-library.git \
+  --apply
+```
+
+Use `update verify-reinstall --release-receipt <receipt>` for a read-only
+recheck. It fails if the receipt, object count, hashes, expected source revision,
+or retained rollback generation disagree.
+
+`update rollback-drill` proves the one-command library revert only on a test
+target bearing an operator-created `.agentic-os-rollback-drill` marker. It plans
+by default and needs both `--apply` and `--approve-rollback-drill` to mutate the
+marked test root. It is never a production rollback command.
 
 ---
 

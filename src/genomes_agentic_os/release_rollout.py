@@ -8,12 +8,14 @@ planning command into an SSH, deployment, or release side effect.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 from typing import Any, Mapping
 
+import yaml
+
 from .scaffold import expand_path
-from .update_ops import read_structured
 
 
 API_VERSION = "agentic-os-release-rollout/v1"
@@ -24,13 +26,24 @@ HOST_ORDER = ("first_host", "second_host")
 _SEMVER = re.compile(r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 
+def _load_mapping(path: str | Path, *, label: str) -> dict[str, Any]:
+    structured_path = expand_path(path)
+    if not structured_path.is_file():
+        raise ValueError(f"{label} is missing or invalid: {structured_path}")
+    try:
+        text = structured_path.read_text(encoding="utf-8")
+        data = json.loads(text) if structured_path.suffix == ".json" else yaml.safe_load(text)
+    except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        raise ValueError(f"{label} is missing or invalid: {structured_path}") from exc
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{label} is missing or invalid: {structured_path}")
+    return dict(data)
+
+
 def load_published_release(path: str | Path) -> dict[str, Any]:
     """Load the compact release receipt consumed by a host-local watcher."""
 
-    receipt_path = expand_path(path)
-    release = read_structured(receipt_path)
-    if not isinstance(release, dict):
-        raise ValueError(f"release receipt is missing or invalid: {receipt_path}")
+    release = _load_mapping(path, label="release receipt")
     version = str(release.get("version") or "").removeprefix("v")
     if not _SEMVER.fullmatch(version):
         raise ValueError("release receipt version must be stable SemVer")
@@ -44,10 +57,7 @@ def load_published_release(path: str | Path) -> dict[str, Any]:
 def load_rollout_evidence(path: str | Path) -> dict[str, Any]:
     """Load locally collected receipts without reaching either rollout host."""
 
-    evidence_path = expand_path(path)
-    evidence = read_structured(evidence_path)
-    if not isinstance(evidence, dict):
-        raise ValueError(f"rollout evidence is missing or invalid: {evidence_path}")
+    evidence = _load_mapping(path, label="rollout evidence")
     hosts = evidence.get("hosts", evidence)
     if not isinstance(hosts, dict):
         raise ValueError("rollout evidence hosts must be a mapping")

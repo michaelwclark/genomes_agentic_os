@@ -171,7 +171,7 @@ Be precise about the current state:
 
 | Does not do | Status |
 | --- | --- |
-| Run as a persistent, always-on scheduler | `runtime supervise`, `heartbeat run`, and `schedule run-due` each execute one tick and exit; something external (cron, launchd, a wrapper) must call them on a cadence. The CLI calls the real Notion API where it counts (`notion track-runtime`, `notion active-work-sync` — dry-run by default, `--apply` + verified workspace to write; `notion sync`/`bootstrap` maintain local projections) — the control plane is wired, not plan-only. |
+| Run as a persistent, always-on scheduler | `runtime supervise`, `heartbeat run`, and `schedule run-due` each execute one tick and exit; something external (cron, launchd, a wrapper) must call them on a cadence. The CLI calls the real Notion API through approved workflows; `notion sync`/`bootstrap` maintain local projections. |
 | Execute automations autonomously past their maturity gate | Automation specs advance through `observe` → `prepare` → `propose` → `execute_approved` → `execute_guarded`; each step still needs the evidence and approval its level requires. |
 | Schema-enforce structured content on every plain `validate` run | `validate --strict` (F-011, closing Gap D) checks workflow/automation and other structured YAML/JSON against `schemas/`; plain `validate` checks shape and parseability only. |
 | Install Claude or Codex skills into local harness folders | Skills are authored in this repo; installation into `~/.claude/` or `~/.codex/` is manual in V1. |
@@ -214,8 +214,8 @@ Full mechanics: [13 · Agent Surfaces](13-agent-surfaces.md).
   `runtime supervise`, `heartbeat run`, `schedule run-due`, and `watch-source run-due`
   each execute one tick and exit; something external has to call them repeatedly
   (cron, launchd, a wrapper script) for the system to feel always-on.
-- **Notion writes are real but gated.** `notion sync` / `notion bootstrap` /
-  `notion track-runtime` call the live Notion API through `GENOMES_NOTION_PAT`;
+- **Notion writes are real but gated.** `notion sync` / `notion bootstrap` call
+  the live Notion API through `GENOMES_NOTION_PAT`;
   they default to dry-run and only write with `--apply`.
 
 ---

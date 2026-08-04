@@ -16,7 +16,8 @@ Two deliberately separate function families:
       YAML-mirrored columns but never touching ``priority``/``attempts``/
       ``lease_owner``/``lease_until`` — those only exist for the future
       SQLite-native claim path and re-importing from YAML must not clobber
-      them.
+      them. Distinct source ids with the same non-null idempotency key are
+      deterministically skipped after the first source item.
     - cursors: reuses ``cursors.set_cursor`` (already an upsert).
 
 Never mutates a source file. Never calls ``event_graph``'s writer
@@ -220,8 +221,21 @@ def _run_queue_row_from_item(item: dict[str, Any]) -> dict[str, Any]:
 def import_run_queue(conn: sqlite3.Connection, path: Path) -> dict[str, Any]:
     data = load_yaml(path)
     items = [item for item in (data.get("items") or data.get("run_queue") or []) if isinstance(item, dict)]
-    rows = [_run_queue_row_from_item(item) for item in items if item.get("id")]
-    skipped_missing_id = len(items) - len(rows)
+    rows: list[dict[str, Any]] = []
+    seen_idempotency_keys: set[str] = set()
+    skipped_missing_id = 0
+    skipped_duplicate_idempotency_key = 0
+    for item in items:
+        if not item.get("id"):
+            skipped_missing_id += 1
+            continue
+        idempotency_key = item.get("idempotency_key")
+        if idempotency_key is not None:
+            if idempotency_key in seen_idempotency_keys:
+                skipped_duplicate_idempotency_key += 1
+                continue
+            seen_idempotency_keys.add(idempotency_key)
+        rows.append(_run_queue_row_from_item(item))
     with transaction(conn):
         before = conn.execute("SELECT COUNT(*) FROM run_queue").fetchone()[0]
         conn.executemany(_RUN_QUEUE_UPSERT_SQL, rows)
@@ -232,6 +246,7 @@ def import_run_queue(conn: sqlite3.Connection, path: Path) -> dict[str, Any]:
         "source_item_count": len(items),
         "processed": len(rows),
         "skipped_missing_id": skipped_missing_id,
+        "skipped_duplicate_idempotency_key": skipped_duplicate_idempotency_key,
         "inserted": inserted,
         "updated": len(rows) - inserted,
     }

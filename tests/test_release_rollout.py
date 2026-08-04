@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from genomes_agentic_os.release_rollout import rollout_gate
+from genomes_agentic_os.release_rollout import load_published_release, load_rollout_evidence, rollout_gate
 
 
 RELEASE = {"published": True, "draft": False, "version": "1.2.4", "tag": "v1.2.4"}
@@ -10,6 +12,20 @@ RELEASE = {"published": True, "draft": False, "version": "1.2.4", "tag": "v1.2.4
 
 def _receipt(status: str) -> dict[str, object]:
     return {"status": status, "release": {"version": "1.2.4", "tag": "v1.2.4"}}
+
+
+@pytest.mark.parametrize("loader", (load_published_release, load_rollout_evidence))
+def test_receipt_loaders_fail_closed_for_missing_files(tmp_path: Path, loader) -> None:
+    with pytest.raises(ValueError, match="missing or invalid"):
+        loader(tmp_path / "missing.json")
+
+
+@pytest.mark.parametrize("loader", (load_published_release, load_rollout_evidence))
+def test_receipt_loaders_reject_non_mapping_documents(tmp_path: Path, loader) -> None:
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text('["not", "a", "mapping"]', encoding="utf-8")
+    with pytest.raises(ValueError, match="missing or invalid"):
+        loader(receipt)
 
 
 def test_rollout_starts_with_first_host_and_only_releases_second_host_after_health() -> None:
