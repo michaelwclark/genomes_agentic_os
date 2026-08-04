@@ -5,6 +5,12 @@ from __future__ import annotations
 import argparse
 
 from ..metrics_ops import format_metrics_result, metrics_refresh
+from ..release_reinstall import (
+    load_release_receipt,
+    rollback_drill,
+    verify_reinstall,
+    watch_release,
+)
 from ..update_ops import (
     activate_license,
     backup_push,
@@ -64,6 +70,41 @@ def handle_update_status(args: argparse.Namespace) -> int:
 def handle_update_phone_home(args: argparse.Namespace) -> int:
     print(format_update_result(phone_home_payload(args.root)))
     return 0
+
+
+def handle_update_watch_release(args: argparse.Namespace) -> int:
+    result = watch_release(
+        args.root,
+        release_receipt=args.release_receipt,
+        repository=args.repository,
+        apply=args.apply,
+        approve_major=args.approve_major,
+        approve_release=args.approve_release,
+    )
+    print(format_update_result(result))
+    return 2 if result.get("status") in {"blocked", "approval_required", "failed"} else 0
+
+
+def handle_update_verify_reinstall(args: argparse.Namespace) -> int:
+    result = verify_reinstall(args.root, load_release_receipt(args.release_receipt))
+    print(format_update_result(result))
+    return 0 if result.get("status") == "verified" else 1
+
+
+def handle_update_rollback_drill(args: argparse.Namespace) -> int:
+    if args.apply and not args.approve_rollback_drill:
+        print(
+            format_update_result(
+                {
+                    "status": "blocked",
+                    "blocker": "--apply for a rollback drill requires --approve-rollback-drill",
+                }
+            )
+        )
+        return 2
+    result = rollback_drill(args.root, apply=args.apply)
+    print(format_update_result(result))
+    return 0 if result.get("status") in {"planned", "completed"} else 2
 
 
 def handle_license_activate(args: argparse.Namespace) -> int:
@@ -138,6 +179,59 @@ def register(subparsers) -> None:
     )
     update_phone_home_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     update_phone_home_parser.set_defaults(handler=handle_update_phone_home)
+    update_watch_parser = update_subparsers.add_parser(
+        "watch-release",
+        help="Read one published-release receipt and plan or apply this target's transactional reinstall.",
+    )
+    update_watch_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_watch_parser.add_argument(
+        "--release-receipt",
+        required=True,
+        help="Published release JSON/YAML receipt; draft or unverified releases are rejected.",
+    )
+    update_watch_parser.add_argument(
+        "--repository",
+        help="Canonical object-library repository. Required for --apply unless configured in the environment.",
+    )
+    update_watch_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Explicitly authorize the local target reinstall after policy checks.",
+    )
+    update_watch_parser.add_argument(
+        "--approve-major",
+        action="store_true",
+        help="Explicitly authorize a major-version release; patch/minor policy remains independent.",
+    )
+    update_watch_parser.add_argument(
+        "--approve-release",
+        action="store_true",
+        help="Explicitly authorize patch/minor releases for an installed operator_approved policy.",
+    )
+    update_watch_parser.set_defaults(handler=handle_update_watch_release)
+    update_verify_parser = update_subparsers.add_parser(
+        "verify-reinstall",
+        help="Verify receipt object counts, projection hashes, source revision, and retained rollback generation.",
+    )
+    update_verify_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    update_verify_parser.add_argument(
+        "--release-receipt",
+        required=True,
+        help="Published release JSON/YAML receipt.",
+    )
+    update_verify_parser.set_defaults(handler=handle_update_verify_reinstall)
+    update_drill_parser = update_subparsers.add_parser(
+        "rollback-drill",
+        help="Plan or exercise one-command rollback on a separately marked test target.",
+    )
+    update_drill_parser.add_argument("--root", default=DEFAULT_ROOT, help="Marked test OS root path.")
+    update_drill_parser.add_argument("--apply", action="store_true", help="Execute the test-target rollback.")
+    update_drill_parser.add_argument(
+        "--approve-rollback-drill",
+        action="store_true",
+        help="Acknowledge the destructive test-target rollback when used with --apply.",
+    )
+    update_drill_parser.set_defaults(handler=handle_update_rollback_drill)
 
     license_parser = subparsers.add_parser("license", help="Manage customer OS license metadata.")
     license_subparsers = license_parser.add_subparsers(dest="license_command", required=True)

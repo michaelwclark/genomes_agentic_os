@@ -3,7 +3,8 @@
 - **Owner:** Agentic OS maintainers
 - **Applies to:** Agentic OS, Harness, Library, and Brain repository roles
 - **Last verified:** 2026-07-29, using GitHub provider reads
-- **Status:** canonical policy; the reusable workflow is installed in Agentic OS, while the other repository roles remain pending adoption
+- **Status:** canonical release policy; branch topology is defined by the
+  [GitFlow contract](gitflow-contract.md)
 
 This is the single policy source for releasing the four repository roles. Each
 repository may carry a short `RELEASING.md`, but that file contains adapter values
@@ -51,27 +52,15 @@ path.
 
 ## Branch roles
 
-The policy standardizes roles, not identical branch names:
+The [GitFlow contract](gitflow-contract.md) is the canonical definition of
+branch topology for the four repository roles. `develop` receives normal
+feature work, and `main` is the release target for Agentic OS, Harness, Library,
+and Brain. The contract governs the exceptional short-lived `release/*` and
+`hotfix/*` lanes and their required forward ports.
 
-- `integration_ref` receives normal feature work.
-- `release_ref` is the branch from which a release target must be reachable.
-
-| Repository role | `integration_ref` | `release_ref` |
-| --- | --- | --- |
-| Agentic OS | `main` | `main` |
-| Harness | `main` | `main` |
-| Library | `main` | `main` |
-| Brain | `develop` | `main` |
-
-The main-only and develop-to-main topologies are both legitimate. Pending the
-open product decision, the recommended default is to defer `develop` in a
-main-only repository until a staging deployment or prerelease channel has a
-concrete use for it. A long-lived branch without a consumer adds a back-merge
-obligation without adding a promotion gate.
-
-A future prerelease lane may add a short-lived `release/*` branch as an optional
-`prerelease_ref`. It is not part of any current repository topology and must be
-defined by the adopting repository before the lane is enabled.
+`integration_ref` is therefore `develop`, and `release_ref` is `main` for each
+repository. A release branch is an approved stabilization lane, not an implicit
+prerelease lane.
 
 Every release target must be reachable from `release_ref`. The contract guard
 must use a GitHub compare API read, not a local shallow-clone check. The installed

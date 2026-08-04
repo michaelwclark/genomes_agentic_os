@@ -254,6 +254,8 @@ def test_import_all_is_idempotent_across_two_runs(fixture_root: Path, conn: sqli
         "cursors": 3,
         "work_items": 0,
         "work_item_history": 0,
+        "approval_requests": 0,
+        "artifact_references": 0,
     }
 
 
@@ -268,6 +270,8 @@ def test_import_all_respects_source_filter(fixture_root: Path, conn: sqlite3.Con
         "cursors": 0,
         "work_items": 0,
         "work_item_history": 0,
+        "approval_requests": 0,
+        "artifact_references": 0,
     }
 
 

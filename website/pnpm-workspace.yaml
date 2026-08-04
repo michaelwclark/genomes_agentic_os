@@ -1,0 +1,5 @@
+# Build scripts run only after an explicit review. These are the Docusaurus
+# dependency scripts required for the site typecheck and production build.
+allowBuilds:
+  '@swc/core': true
+  core-js: true
