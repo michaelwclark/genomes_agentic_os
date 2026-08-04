@@ -784,22 +784,41 @@ def resolve_development_policy(
             )
         )
 
-    def conventional_root(parent: Path) -> Path:
-        canonical = parent / canonical_suffix
-        legacy = parent / legacy_suffix
+    def conventional_root(canonical_parent: Path, legacy_parent: Path) -> Path:
+        """Select one policy root without merging canonical and compatibility files.
+
+        Domain policy now follows the same ``config/auto_dev`` shape as project
+        policy.  The historic ``05-knowledge/auto_dev`` tree remains a fallback
+        until a domain is migrated.  A still-older flat ``<plane>`` folder is
+        also retained as a compatibility fallback for every scope.
+        """
+
+        candidates: list[Path] = []
+        for candidate in (
+            canonical_parent / canonical_suffix,
+            legacy_parent / canonical_suffix,
+            legacy_parent / legacy_suffix,
+        ):
+            if candidate not in candidates:
+                candidates.append(candidate)
         # Existing installations can still be read before they are migrated.
         # A README-only canonical scaffold must not hide substantive legacy
-        # policy, and the two roots are never merged.
-        if has_active_markdown(canonical):
-            return canonical
-        if has_active_markdown(legacy):
-            return legacy
-        return canonical if canonical.is_dir() or not legacy.is_dir() else legacy
+        # policy, and the candidate roots are never merged.
+        for candidate in candidates:
+            if has_active_markdown(candidate):
+                return candidate
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        return candidates[0]
 
     conventional_parents = (
-        os_root / "harness" / "shared_factory" / "05-knowledge",
-        domain_root / "05-knowledge",
-        project_path / "config",
+        (
+            os_root / "harness" / "shared_factory" / "05-knowledge",
+            os_root / "harness" / "shared_factory" / "05-knowledge",
+        ),
+        (domain_root / "config", domain_root / "05-knowledge"),
+        (project_path / "config", project_path / "config"),
     )
 
     def configured_root(raw: str) -> Path:
@@ -809,9 +828,15 @@ def resolve_development_policy(
             domain_root=domain_root,
             project_path=project_path,
         )
-        for parent in conventional_parents:
-            if selected == (parent / legacy_suffix).resolve():
-                return conventional_root(parent)
+        for canonical_parent, legacy_parent in conventional_parents:
+            conventional_members = {
+                (canonical_parent / canonical_suffix).resolve(),
+                (canonical_parent / legacy_suffix).resolve(),
+                (legacy_parent / canonical_suffix).resolve(),
+                (legacy_parent / legacy_suffix).resolve(),
+            }
+            if selected in conventional_members:
+                return conventional_root(canonical_parent, legacy_parent)
         return selected
 
     if paths:
@@ -827,11 +852,11 @@ def resolve_development_policy(
         layers = [
             PolicyLayer(
                 "root",
-                conventional_root(conventional_parents[0]),
+                conventional_root(*conventional_parents[0]),
                 0,
             ),
-            PolicyLayer("domain", conventional_root(conventional_parents[1]), 1),
-            PolicyLayer("project", conventional_root(conventional_parents[2]), 2),
+            PolicyLayer("domain", conventional_root(*conventional_parents[1]), 1),
+            PolicyLayer("project", conventional_root(*conventional_parents[2]), 2),
         ]
     try:
         result = resolve_markdown_plane(

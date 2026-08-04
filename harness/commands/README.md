@@ -6,6 +6,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 
 | Command document | Concise purpose |
 | --- | --- |
+| [`aos-stack-cleaner.md`](aos-stack-cleaner.md) | Reclaim one merged PR's exact fast-worktree stack after merge and worktree safety checks. |
 | [`auto-dev.md`](auto-dev.md) | Route to the complete lifecycle or one named Auto-Dev workflow. |
 | [`auto-dev-closeout.md`](auto-dev-closeout.md) | Reconcile provider and delivery state and prove delivery complete after merge/deployment evidence exists. |
 | [`auto-dev-create-artifacts.md`](auto-dev-create-artifacts.md) | Resolve, render, validate, apply, and read back polymorphic artifacts. |

@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 from genomes_agentic_os.context_contracts import load_context_manifest, path_is_excluded, resolve_context_contract
+from genomes_agentic_os.routing import _nearest_contract_target, build_context
 
 
 def write(path: Path, content: str) -> Path:
@@ -78,6 +79,14 @@ def test_legacy_sources_are_preserved_when_manifest_is_absent(tmp_path: Path) ->
     assert resolved.diagnostics[0].code == "legacy_fallback"
 
 
+def test_nearest_contract_target_does_not_walk_above_the_installed_root(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    linked_feature = tmp_path / "source-package" / "features" / "ticket"
+    linked_feature.mkdir(parents=True)
+
+    assert _nearest_contract_target(linked_feature, root) == root
+
+
 def test_manifest_rejects_unsafe_relative_paths(tmp_path: Path) -> None:
     target = tmp_path / "workflow"
     write(
@@ -94,3 +103,92 @@ def test_default_search_exclusions_cover_high_volume_evidence() -> None:
     assert path_is_excluded("los/06-runs-and-logs/runs/123/run-log.md")
     assert path_is_excluded("project/artifacts/large.json")
     assert not path_is_excluded("los/03-workflows/engineering/ship/workflow.md")
+
+
+def test_role_tagged_holdout_is_excluded_at_the_packet_load_chokepoint(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    workflow = root / "domains" / "acme" / "03-workflows" / "engineering" / "ship_release"
+    workflow_file = write(workflow / "workflow.md", "# Workflow\n")
+    always_excluded = write(workflow / "private.md", "# Never load\n")
+    holdout = write(workflow / "holdout.md", "# Private holdout\n")
+    write(
+        workflow / "context-contract.yml",
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "workflow",
+                "inherits": [],
+                "read": {
+                    "first": ["workflow.md", "private.md", "holdout.md"],
+                    "exclude": ["private.md", "role:implementation:holdout.md"],
+                },
+            },
+            sort_keys=False,
+        ),
+    )
+
+    default_packet = build_context(root, domain="acme", workflow="ship_release", lane="engineering")
+    implementation_packet = build_context(
+        root,
+        domain="acme",
+        workflow="ship_release",
+        lane="engineering",
+        role="implementation",
+    )
+
+    assert workflow_file in default_packet.sources_to_load
+    assert always_excluded not in default_packet.sources_to_load
+    assert holdout in default_packet.sources_to_load
+    assert workflow_file in implementation_packet.sources_to_load
+    assert always_excluded not in implementation_packet.sources_to_load
+    assert holdout not in implementation_packet.sources_to_load
+
+
+def test_domain_contract_excludes_an_inbox_source_at_the_final_packet_target(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    domain = root / "domains" / "acme"
+    raw_ideas = write(domain / "01-inbox" / "raw-ideas.md", "# Private intake\n")
+    write(
+        domain / "context-contract.yml",
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "domain",
+                "inherits": [],
+                "read": {"exclude": ["01-inbox/raw-ideas.md"]},
+            },
+            sort_keys=False,
+        ),
+    )
+
+    packet = build_context(root, domain="acme", inbox=True)
+
+    assert raw_ideas not in packet.sources_to_load
+
+
+def test_project_contract_excludes_a_selected_work_item_holdout(tmp_path: Path) -> None:
+    root = tmp_path / "os"
+    project = root / "domains" / "acme" / "02-projects" / "app"
+    work_item = project / "work-items" / "ticket"
+    holdout = write(work_item / "HOLDOUT_QA.md", "# Holdout\n")
+    write(work_item / "SPEC.md", "# Spec\n")
+    write(work_item / "PLAN.md", "# Plan\n")
+    write(work_item / "WORKLOG.md", "# Worklog\n")
+    write(work_item / "NEXT.md", "# Next\n")
+    write(work_item / "work.yml", "id: ticket\ntitle: Ticket\nstatus: validating\n")
+    write(
+        project / "context-contract.yml",
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "project",
+                "inherits": [],
+                "read": {"exclude": ["work-items/ticket/HOLDOUT_QA.md"]},
+            },
+            sort_keys=False,
+        ),
+    )
+
+    packet = build_context(root, domain="acme", project="app", work_item="ticket")
+
+    assert holdout not in packet.sources_to_load

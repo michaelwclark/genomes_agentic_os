@@ -165,3 +165,19 @@ If the connector is bound to another workspace, unavailable, or cannot prove
 the target parent, pause publication. Preserve the rendered content and resume
 the same handoff after access is verified; never create a fallback page in a
 different workspace.
+
+## Documentation-site delivery
+
+For this source package, Auto-Dev Document has a required reader-facing
+destination before any supplemental control-plane projection: a change under
+`docs/` or `operating-manual/`, rendered by the repository Docusaurus site.
+The implementation receipt records that source path and the successful
+`npm --prefix website run build` validation. A Notion page, local draft, or
+queued event alone is not documentation delivery.
+
+When the documentation cannot safely be represented in either published source
+tree, Auto-Dev Create Artifacts must create or reuse an idempotent Linear
+follow-up in **Rubicon: Documentation** and read it back. The follow-up states
+the missing site destination and source hash; it is a visible hold, not a
+successful skip. Event-driven documentation work carries the same requirement
+and may only proceed after that site proof or follow-up receipt exists.

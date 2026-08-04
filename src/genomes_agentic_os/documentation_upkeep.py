@@ -16,6 +16,9 @@ CONFIG_RELATIVE_PATH = Path("harness/shared_factory/00-control-plane/documentati
 TEMPLATE_RELATIVE_PATH = Path("templates/runtime/documentation-upkeep.yml")
 INSTALLED_TEMPLATE_RELATIVE_PATH = Path("harness/shared_factory/05-knowledge/templates/runtime/documentation-upkeep.yml")
 DEFAULT_RECEIPT_ROOT = Path("harness/shared_factory/06-runs-and-logs/documentation-upkeep/runs")
+DOCUMENTATION_SITE_PREFIXES = ("docs/", "operating-manual/")
+RUBICON_DOCUMENTATION_PROJECT = "Rubicon: Documentation"
+RUBICON_DOCUMENTATION_TEAM = "Agentic OS"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -71,6 +74,58 @@ def _registry_entries(config: dict[str, Any]) -> list[dict[str, Any]]:
     return [entry for entry in registry if isinstance(entry, dict)] if isinstance(registry, list) else []
 
 
+def _documentation_site_paths(raw: dict[str, Any]) -> list[str]:
+    """Return configured source paths that Docusaurus publishes in this repository."""
+    target = raw.get("target") or {}
+    candidates = target.get("site_paths") or target.get("site_path") or []
+    if isinstance(candidates, str):
+        candidates = [candidates]
+    return [str(path) for path in candidates if isinstance(path, str) and path]
+
+
+def documentation_site_delivery(
+    raw: dict[str, Any],
+    *,
+    source_hash: str,
+    status: str,
+) -> dict[str, Any]:
+    """Plan the mandatory source-site disposition for one documentation update.
+
+    This planner never writes Linear.  Instead it emits an idempotent provider
+    request for Auto-Dev Create Artifacts when no published documentation path
+    is available.  That keeps the follow-up visible and governed rather than
+    silently treating a Notion-only projection as documentation delivery.
+    """
+    if status == "unchanged":
+        return {"status": "not_needed", "site_paths": []}
+    if status == "missing_sources":
+        return {"status": "blocked", "site_paths": []}
+
+    site_paths = _documentation_site_paths(raw)
+    if site_paths and all(path.startswith(DOCUMENTATION_SITE_PREFIXES) for path in site_paths):
+        return {
+            "status": "required",
+            "site_paths": site_paths,
+            "validation": "npm --prefix website run build",
+        }
+
+    entry_id = str(raw.get("id") or "documentation")
+    title = str(raw.get("title") or entry_id)
+    return {
+        "status": "follow_up_required",
+        "site_paths": site_paths,
+        "reason": "No published docs/ or operating-manual/ path is configured for this update.",
+        "follow_up": {
+            "provider": "linear",
+            "action": "find_or_create_issue",
+            "team": RUBICON_DOCUMENTATION_TEAM,
+            "project": RUBICON_DOCUMENTATION_PROJECT,
+            "title": f"Publish documentation-site update: {title}",
+            "idempotency_key": f"documentation-site:{entry_id}:{source_hash}",
+        },
+    }
+
+
 def build_documentation_upkeep_plan(
     root: str | Path,
     *,
@@ -80,7 +135,8 @@ def build_documentation_upkeep_plan(
     os_root = expand_path(root)
     config_path, config = load_documentation_upkeep_config(os_root)
     entries: list[dict[str, Any]] = []
-    counts = {"unchanged": 0, "stale": 0, "missing_sources": 0}
+    counts = {"unchanged": 0, "stale": 0, "missing_sources": 0, "site_delivery_required": 0, "site_follow_up_required": 0}
+    follow_up_requests: list[dict[str, Any]] = []
     for raw in _registry_entries(config):
         sources = [str(source) for source in raw.get("sources", []) or []]
         current_hash, found, missing = _source_hash(os_root, sources)
@@ -92,6 +148,12 @@ def build_documentation_upkeep_plan(
         else:
             status = "stale"
         counts[status] += 1
+        site_delivery = documentation_site_delivery(raw, source_hash=current_hash, status=status)
+        if site_delivery["status"] == "required":
+            counts["site_delivery_required"] += 1
+        elif site_delivery["status"] == "follow_up_required":
+            counts["site_follow_up_required"] += 1
+            follow_up_requests.append(site_delivery["follow_up"])
         entries.append(
             {
                 "id": str(raw.get("id") or ""),
@@ -105,7 +167,8 @@ def build_documentation_upkeep_plan(
                 "sources_found": found,
                 "sources_missing": missing,
                 "target": raw.get("target", {}),
-                "next_action": _next_action(status),
+                "documentation_site_delivery": site_delivery,
+                "next_action": _next_action(status, site_delivery),
             }
         )
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -116,9 +179,11 @@ def build_documentation_upkeep_plan(
         "generated_at": generated_at,
         "config_path": str(config_path),
         "notion_writes": False,
+        "linear_writes": False,
         "counts": counts,
         "entry_count": len(entries),
         "entries": entries,
+        "follow_up_requests": follow_up_requests,
     }
     if not config:
         result["findings"] = [{"severity": "blocker", "message": "documentation-upkeep.yml is missing or invalid"}]
@@ -134,12 +199,14 @@ def build_documentation_upkeep_plan(
     return result
 
 
-def _next_action(status: str) -> str:
+def _next_action(status: str, site_delivery: dict[str, Any]) -> str:
     if status == "unchanged":
         return "Skip; sources match the last recorded hash."
     if status == "missing_sources":
         return "Fix the registry sources before drafting documentation updates."
-    return "Draft or review documentation update; do not write Notion in observe mode."
+    if site_delivery["status"] == "follow_up_required":
+        return "Create or reuse the required Rubicon Documentation Linear follow-up through Auto-Dev Create Artifacts."
+    return "Update the configured docs-site source path and verify the Docusaurus build before publishing projections."
 
 
 def _run_id(timestamp: str) -> str:
@@ -153,6 +220,7 @@ def _markdown_report(result: dict[str, Any]) -> str:
         f"- Generated: `{result['generated_at']}`",
         f"- Mode: `{result['mode']}`",
         f"- Notion writes: `{result['notion_writes']}`",
+        f"- Linear writes: `{result['linear_writes']}`",
         "",
         "## Counts",
         "",
@@ -168,6 +236,7 @@ def _markdown_report(result: dict[str, Any]) -> str:
                 f"- Title: {entry['title']}",
                 f"- Status: `{entry['status']}`",
                 f"- Source hash: `{entry['source_hash']}`",
+                f"- Docs site delivery: `{entry['documentation_site_delivery']['status']}`",
                 f"- Next action: {entry['next_action']}",
                 "",
             ]

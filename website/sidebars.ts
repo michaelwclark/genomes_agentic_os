@@ -94,6 +94,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'docs/24-auto-dev-readiness',
         'docs/42-auto-dev-program',
+        'docs/integration-plane',
+        'docs/qa-harness',
         'docs/auto-dev-continuous-release',
         'docs/auto-dev-dep-updater',
         'docs/40-auto-dev-everything-maintainers',

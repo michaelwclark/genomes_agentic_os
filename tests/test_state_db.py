@@ -13,13 +13,15 @@ from genomes_agentic_os.state import db
 def test_memory_connect_creates_current_schema() -> None:
     conn = db.connect(":memory:")
     try:
-        assert db.schema_version(conn) == 3
+        assert db.schema_version(conn) == 4
         assert db.table_counts(conn) == {
             "events": 0,
             "run_queue": 0,
             "cursors": 0,
             "work_items": 0,
             "work_item_history": 0,
+            "approval_requests": 0,
+            "artifact_references": 0,
         }
     finally:
         conn.close()
@@ -112,13 +114,15 @@ def test_reopening_file_db_is_idempotent(tmp_path: Path) -> None:
 
     conn2 = db.connect(db_path)
     try:
-        assert db.schema_version(conn2) == 3
+        assert db.schema_version(conn2) == 4
         assert db.table_counts(conn2) == {
             "events": 0,
             "run_queue": 0,
             "cursors": 0,
             "work_items": 0,
             "work_item_history": 0,
+            "approval_requests": 0,
+            "artifact_references": 0,
         }
     finally:
         conn2.close()
@@ -129,10 +133,10 @@ def test_ensure_schema_is_idempotent_on_same_connection() -> None:
     try:
         version_before = db.ensure_schema(conn)
         version_after = db.ensure_schema(conn)
-        assert version_before == version_after == 3
+        assert version_before == version_after == 4
         # One schema_version row per migration ever applied, not one per call.
         row_count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-        assert row_count == 3
+        assert row_count == 4
     finally:
         conn.close()
 
@@ -142,7 +146,7 @@ def test_current_schema_check_does_not_acquire_a_write_transaction() -> None:
     statements: list[str] = []
     try:
         conn.set_trace_callback(statements.append)
-        assert db.ensure_schema(conn) == 3
+        assert db.ensure_schema(conn) == 4
         assert not any(statement.startswith("BEGIN IMMEDIATE") for statement in statements)
     finally:
         conn.close()
