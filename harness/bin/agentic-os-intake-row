@@ -52,9 +52,7 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-# Hardcoded DB ID — not in intake-sync.yml (which covers only Linear-sync config).
-# 50/50 decision: mirror agentic-os-intake-sync's pattern of hardcoding this constant
-# rather than requiring it in a config file that does not currently carry it.
+# Hardcoded DB ID for the direct OS Work Intake row-creation utility.
 NOTION_DB_ID = "c442dd56a24340f0880acfd195f34225"
 
 # Routing registry path — resolved relative to THIS script's parent's parent.

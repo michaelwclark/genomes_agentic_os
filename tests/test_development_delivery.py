@@ -2191,6 +2191,47 @@ def test_auto_dev_plain_english_cli_dry_run(tmp_path: Path, capsys: pytest.Captu
     assert not (root / "domains" / "acme" / "02-projects" / "app" / "state" / "development-runs").exists()
 
 
+def test_everything_projection_creates_a_linked_program_run_packet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from genomes_agentic_os.program_run_packets import read_program_run_packet
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-412",
+            "path": "/tmp/cc-412",
+            "branch": "feature/cc-412",
+            "base_sha": base_sha,
+        },
+    )
+
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-412"],
+        run_id="program-packet",
+        auto_dev_mode="everything",
+        goal="delivery_complete",
+        apply=True,
+    )
+
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    projection = read_auto_dev_state(task["autodev_path"])
+    link = projection["run_packet"]
+    summary = read_program_run_packet(root, link["packet_id"])
+    assert link["program_ref"] == "00-program.json"
+    assert summary["packet"]["program_id"] == "auto_dev"
+    assert summary["state"] == "running"
+    assert summary["running_workflows"] == ["groom"]
+    assert any(item["kind"] == "effective_policy" for item in summary["packet"]["config_refs"])
+
+
 def test_project_configures_default_and_everything_workflow_boundaries(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

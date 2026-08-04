@@ -485,7 +485,7 @@ def test_runtime_dispatch_supports_nightly_apply_command(tmp_path: Path) -> None
     )
 
 
-def test_runtime_dispatch_passes_configured_parent_to_nightly_apply(
+def test_runtime_dispatch_ignores_retired_tracking_config_for_nightly_apply(
     tmp_path: Path, monkeypatch
 ) -> None:
     from genomes_agentic_os.scaffold import shared_factory_path
@@ -527,7 +527,7 @@ def test_runtime_dispatch_passes_configured_parent_to_nightly_apply(
     )
 
     assert execution["ok"] is True
-    assert seen["approved_parent_page_id"] == "approved-parent"
+    assert "approved_parent_page_id" not in seen
 
 
 def test_repair_validation_drift_creates_work_item_placeholders_and_json_backup(tmp_path: Path) -> None:
@@ -1037,7 +1037,7 @@ def test_doctor_flags_missing_conversation_root(tmp_path: Path) -> None:
     assert any("conversation evidence root is missing" in m for m in messages)
 
 
-def test_doctor_flags_missing_self_improvement_db_id(tmp_path: Path) -> None:
+def test_doctor_ignores_retired_runtime_tracking_manifest(tmp_path: Path) -> None:
     root = tmp_path / "agentic_os"
     assert main(["init", "--target", str(root)]) == 0
     assert main(["runtime", "init", "--root", str(root)]) == 0
@@ -1045,7 +1045,7 @@ def test_doctor_flags_missing_self_improvement_db_id(tmp_path: Path) -> None:
 
     report = runtime_doctor(root)
     messages = [f["message"] for f in report["findings"]]
-    assert any("'Self Improvement' database id" in m for m in messages)
+    assert not any("'Self Improvement' database id" in m for m in messages)
 
 
 def test_doctor_silent_on_fresh_disabled_install(tmp_path: Path) -> None:

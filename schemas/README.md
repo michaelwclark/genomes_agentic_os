@@ -22,6 +22,12 @@ Development Delivery state; it is not another tracker or transition engine.
 `auto-dev-health-evidence.schema.json` validates the stricter, item-scoped final
 audit used before Auto-Dev can call a preserved packet healthy and finished.
 
+`program-run-packet.schema.json` validates immutable `00-program.json` and
+ordered workflow records in the canonical cross-program run packet. Its
+execution outcome is intentionally separate from its quality outcome so a
+test regression is routed to tracker-backed remediation without being
+misreported as an execution crash.
+
 Auto-Dev Health uses packet-local receipt contracts before
 that final audit:
 

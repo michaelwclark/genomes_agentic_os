@@ -219,22 +219,81 @@ from a task producer.
 
 Team PR review uses `los.team_pr.ai_review.v1` on `pr_reviews`. The Notion
 button adapter snapshots repository, PR number and URL, expected head SHA, base
-branch, source/Jira key, title, Notion page ID, and optional GitHub author into
-the closed payload. Its idempotency key is stable for one Notion request and PR
-head SHA, so repeated button observations return the same task instead of
+branch, source/Jira key, `review_no_merge` mode, title, Notion page ID, and the
+provider-read GitHub author into the closed payload. Its idempotency key binds
+repository, PR, head SHA, source key, and review mode, so repeated button
+observations return the same task instead of
 starting duplicate reviews. The `team_pr_ai_review` worker invokes the
 installed portable helper at
 `lib/programs/domains/los/team_pr_sync/scripts/team_pr_review_fabric.py`.
 That helper reads the canonical LOS project policy from
 `domains/los/02-projects/los_app_los_django/config/development.yml`, routes
-team-authored PRs through `auto-dev review-self` and other PRs through
-`auto-dev review-others`, and delegates both convenience routes to canonical
-PR review. It revalidates the immutable provider head before and after review.
-The review subprocess receives only `TEAM_PR_GITHUB_READ_TOKEN`, an empty
-GitHub CLI config, ignored user configuration, and a read-only sandbox with
-posting, repair, and merge disabled. A changed head returns `superseded` and
-creates no effect. Only the route-derived `notion.pr_review.update` effect
+team-authored PRs through Review Self semantics and other PRs through Review
+Others semantics, and delegates both to canonical PR review. The helper freezes
+one terminal-packet resolution in a create-once review-only snapshot; it never
+runs Auto-Dev with `--apply` or writes the shared SQLite work registry.
+The worker first persists review intent keyed by repository, PR, immutable
+head, source ticket, and review mode. It reuses the helper's terminal receipt
+after interruption and derives a stable effect key from that identity.
+Repository, head SHA, and source-key casing are normalized before the worker
+and helper derive that identity, preventing case drift from splitting one
+admitted review across multiple run directories.
+The worker uses a per-review-identity file lock to reject overlapping attempts
+as retryable, even
+when an upgrade leaves two task IDs for the same immutable review. The helper
+must accept the controller-derived review mode, full-identity run ID, and exact
+summary path before it performs provider work. Corrupt receipts fail closed;
+transient filesystem read, write, and lock errors remain retryable. Receipt paths use the full
+identity digest, intent writes fsync file and directory state, and a durable
+launch marker prevents a lease retry from starting a second helper while an
+orphaned helper may still be within its nominal timeout plus a ten-minute
+grace. The review pool's ten-minute retry backoff and bounded attempt budget
+ensure the last configured attempt lands after that fence instead of exhausting
+the immutable task early, including when retries begin after an ambiguous
+dispatch failure.
+The paired helper records its PID in the same identity-bound marker before any
+provider read. Controller and helper compare-and-replace operations share a
+marker lock, so an exceptional dispatch cannot overwrite a concurrently
+registered PID. A live PID remains fenced inside the age threshold, while a
+dead PID permits immediate recovery. Spawn exceptions durably mark the launch
+failed before returning a classified retryable error, and a validated helper
+result terminalizes the marker as `succeeded`.
+PID reuse is rejected by verifying the live process command against the exact
+helper script and full-identity run ID; only that verified helper remains
+fenced beyond the age grace.
+Create-once losers revalidate the winning intent before using it. The
+trusted controller revalidates the immutable provider head before and after
+review, and binds every recovered summary's run ID and source key back to the
+admitted identity; Agentic OS and Codex receive no provider credential. A
+changed head
+returns `superseded` and creates no effect. Only the route-derived
+`notion.pr_review.update` effect
 consumer may project a validated terminal review receipt back to Notion.
+For upgrade compatibility, a task admitted before explicit `review_mode`
+continues to emit the legacy `{type}:{source_key}:{head}` effect key. Current
+tasks that carry `review_mode` emit the full-intent key. This transition rule
+preserves control-plane dedup when a legacy effect was staged before a lost
+completion acknowledgment. The first key chosen for an immutable review is
+published create-once beside its helper summary; any later task shape reuses
+that durable key instead of projecting the same result under another format.
+The record is rederived and validated against its declared format before use.
+
+Deployment order is strict: deploy this Agentic OS route before installing the
+paired object-library producer. The producer emits explicit `review_mode`, and
+the prior closed route correctly rejects that previously unknown field.
+Quiesce and drain `pr_reviews` across the upgrade boundary before resuming the
+producer. This prevents a legacy effect whose acknowledgment was lost from
+being projected once more under the new full-review-intent effect key.
+
+The review pool is two-wide on the pinned `bigmac` execution host. Its intent
+files, helper marker, PID fence, and summaries are host-local; do not
+distribute this pool across hosts until those records move into the shared
+control plane. Remote task admission does not imply cross-host retry safety for this route. The
+worker resolves the canonical fabric host ID and fails retryably before helper
+execution when it is not `bigmac`, allowing a bounded retry on the pinned host.
+Normal remote workers mechanically remove queues whose routes are all pinned
+to other hosts before registration, so a non-`bigmac` worker does not claim
+`pr_reviews` and spend the task's attempt budget.
 
 The watcher state is runtime data at
 `runtime/objects/programs/program/domain/los/team_pr_sync/state/team-pr-review-trigger-state.json`;
