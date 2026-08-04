@@ -17,3 +17,6 @@ Projects may replace the ordered folder list through
 `config/development.yml policies.dev_standards.paths`. Adding a Markdown file
 changes the next run without a code or registry edit. `README.md` is explanatory
 and is not loaded as policy.
+
+Helper outputs that select production branches are governed by
+[Helper Control-Flow Contracts](70_HELPER_CONTROL_FLOW_CONTRACTS.md).
