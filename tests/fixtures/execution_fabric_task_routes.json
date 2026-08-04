@@ -11,6 +11,7 @@
         "expected_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "base_branch": "develop",
         "source_key": "FLYWL-409",
+        "review_mode": "review_no_merge",
         "jira_key": "FLYWL-409",
         "title": "Add queue visibility",
         "notion_page_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -370,11 +370,10 @@ overrides, and `config doctor`): `agentic_os_root`, `automation`,
 | `notion bootstrap` | Plan or apply the Notion control-plane bootstrap. |
 | `notion plan-sync` | Build a reviewable Notion sync plan. |
 | `notion sync` | Run a guarded Notion sync. |
-| `notion track-runtime` | Plan or apply guarded Notion tracking for runtime registries and runs. |
 | `notion-org` | Check Notion IA organization before page moves. |
 | `notion-org doctor` | Check Notion organization config and backup readiness. |
 
-`notion sync` / `notion bootstrap` / `notion track-runtime` call the real
+`notion sync` / `notion bootstrap` call the real
 Notion API (`https://api.notion.com/v1`, stdlib `urllib`, bearer token from
 `GENOMES_NOTION_PAT`) — this is wired, not a stub. All three default to
 dry-run; pass `--apply` to write.

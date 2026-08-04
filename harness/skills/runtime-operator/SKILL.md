@@ -17,7 +17,6 @@ Use this skill when a task asks to initialize, inspect, dry-run, or diagnose the
    - `agentic-os schedule run-due --root <root> --dry-run`
    - `agentic-os run-queue prune --root <root> --dry-run`
 5. Run `agentic-os runtime doctor --root <root>` or `agentic-os heartbeat doctor --root <root>` before treating the runtime as healthy.
-6. Use `agentic-os notion track-runtime --root <root> --dry-run` before any apply.
 
 ## Guardrails
 

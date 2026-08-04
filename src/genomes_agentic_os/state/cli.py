@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from typing import Any
 
 import yaml
@@ -24,7 +25,17 @@ import yaml
 from . import cursors as cursors_module
 from . import events as events_module
 from . import queue as queue_module
-from .db import backup_state_database, connect, default_db_path, resolve_os_root, schema_version, table_counts
+from . import work_items as work_items_module
+from .db import (
+    StateDbError,
+    backup_state_database,
+    connect,
+    connect_readonly,
+    default_db_path,
+    resolve_os_root,
+    schema_version,
+    table_counts,
+)
 from .importers import import_all, scan_all, verify_import
 
 DEFAULT_ROOT = "~/agentic_os"
@@ -156,6 +167,44 @@ def handle_state_verify_import(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def handle_state_reconcile_traces(args: argparse.Namespace) -> int:
+    """Report unsupported successful run/agent claims without mutating state."""
+    db_path = _resolve_db_path(args)
+    try:
+        conn = connect_readonly(db_path)
+    except StateDbError as exc:
+        result = {
+            "api_version": "agentic-os-trace-reconciliation/v1",
+            "status": "unavailable",
+            "reason": "state_database_missing" if "is missing:" in str(exc) else "state_database_unavailable",
+            "db_path": db_path,
+            "detail": str(exc),
+            "claim_count": 0,
+            "supported_count": 0,
+            "phantom_count": 0,
+            "claims": [],
+        }
+    else:
+        try:
+            result = work_items_module.reconcile_completion_claims(conn, limit=args.limit)
+        except sqlite3.Error as exc:
+            result = {
+                "api_version": "agentic-os-trace-reconciliation/v1",
+                "status": "unavailable",
+                "reason": "state_database_unavailable",
+                "db_path": db_path,
+                "detail": str(exc),
+                "claim_count": 0,
+                "supported_count": 0,
+                "phantom_count": 0,
+                "claims": [],
+            }
+        finally:
+            conn.close()
+    print(_format_result(result, as_json=args.json))
+    return 0 if result["status"] == "clean" else 1
+
+
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
     parser.add_argument("--db", default=None, help="Override state.db path (default: derived from --root).")
@@ -231,3 +280,11 @@ def register_state_cli(subparsers: argparse._SubParsersAction) -> None:
     )
     _add_common_arguments(verify_parser)
     verify_parser.set_defaults(handler=handle_state_verify_import)
+
+    reconcile_traces_parser = state_subparsers.add_parser(
+        "reconcile-traces",
+        help="Read-only doctor: flag successful run/agent claims without exact completion evidence.",
+    )
+    _add_common_arguments(reconcile_traces_parser)
+    reconcile_traces_parser.add_argument("--limit", type=int, default=100, help="Maximum completion claims to inspect.")
+    reconcile_traces_parser.set_defaults(handler=handle_state_reconcile_traces)

@@ -111,17 +111,17 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
         assert (domain_root / "04-automations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations" / "README.md").is_file()
         assert (domain_root / "04-automations" / "operations").is_dir()
-        assert (domain_root / "05-knowledge" / "auto_dev" / "README.md").is_file()
+        assert (domain_root / "config" / "auto_dev" / "README.md").is_file()
         assert (
-            domain_root / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+            domain_root / "config" / "auto_dev" / "environment_access" / "README.md"
         ).is_file()
         domain_auto_dev_readme = (
-            domain_root / "05-knowledge" / "auto_dev" / "README.md"
+            domain_root / "config" / "auto_dev" / "README.md"
         ).read_text(encoding="utf-8")
         assert "Do not leave the domain" in domain_auto_dev_readme
         assert "--plane auto_dev" in domain_auto_dev_readme
         domain_environment_readme = (
-            domain_root / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+            domain_root / "config" / "auto_dev" / "environment_access" / "README.md"
         ).read_text(encoding="utf-8")
         assert "cloud/runtime access" in domain_environment_readme
         assert "--plane environment_access" in domain_environment_readme
@@ -349,9 +349,9 @@ def test_init_creates_domain_first_tree_and_shared_templates(tmp_path: Path) -> 
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "execution-target.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "integration.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "run-queue-item.yml").is_file()
-    assert (
+    assert not (
         shared_factory(root) / "05-knowledge" / "templates" / "notion" / "runtime-tracking-database-spec.md"
-    ).is_file()
+    ).exists()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "connected-system.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "source-provider.yml").is_file()
     assert (shared_factory(root) / "05-knowledge" / "templates" / "runtime" / "watch-source.yml").is_file()
@@ -1417,34 +1417,11 @@ def test_runtime_init_and_dry_run_paths_are_file_backed(tmp_path: Path) -> None:
     assert main(["integration", "list", "--root", str(root)]) == 0
     assert main(["integration", "setup", "granola", "--root", str(root), "--dry-run"]) == 0
     assert main(["integration", "doctor", "granola", "--root", str(root)]) == 0
-    assert main(["notion", "track-runtime", "--root", str(root), "--dry-run"]) == 0
-    assert main(["notion", "track-runtime", "--root", str(root), "--apply"]) == 2
-    assert (
-        main(
-            [
-                "notion",
-                "track-runtime",
-                "--root",
-                str(root),
-                "--apply",
-                "--verified-workspace",
-                "Genome's Notion",
-            ]
-        )
-        == 0
-    )
-    assert (root / ".notion-runtime-tracking" / "manifest.yml").is_file()
-
     registry = yaml.safe_load((shared_factory(root) / "00-control-plane" / "runtime-registry.yml").read_text())
     integration_registry = yaml.safe_load(
         (shared_factory(root) / "00-control-plane" / "integration-registry.yml").read_text()
     )
-    schedules_by_id = {schedule["id"]: schedule for schedule in registry["schedules"]}
-    assert schedules_by_id["notion_runtime_tracking"]["enabled"] is True
-    assert schedules_by_id["notion_runtime_tracking"]["cadence"] == "daily"
-    assert "notion track-runtime" in schedules_by_id["notion_runtime_tracking"]["command"]
-    assert 'verified-workspace "Genome\'s Notion"' in schedules_by_id["notion_runtime_tracking"]["command"]
-    assert {"codex_harness", "claude_harness", "script", "orgo_desktop", "composio_cli", "agentmail_api", "granola_local", "notion_api"} <= {
+    assert {"codex_harness", "claude_harness", "script", "orgo_desktop", "composio_cli", "agentmail_api", "granola_local"} <= {
         target["id"] for target in registry["execution_targets"]
     }
     assert {"orgo", "composio", "agentmail", "granola", "notion"} <= {
@@ -2084,12 +2061,12 @@ def test_domain_create_creates_expected_top_level_domain(tmp_path: Path) -> None
     assert (created_domain / "02-projects" / "README.md").is_file()
     assert (created_domain / "03-workflows" / "engineering").is_dir()
     assert (created_domain / "04-automations" / "support").is_dir()
-    assert (created_domain / "05-knowledge" / "auto_dev" / "README.md").is_file()
+    assert (created_domain / "config" / "auto_dev" / "README.md").is_file()
     assert (
-        created_domain / "05-knowledge" / "auto_dev" / "environment_access" / "README.md"
+        created_domain / "config" / "auto_dev" / "environment_access" / "README.md"
     ).is_file()
     assert "Do not leave the domain" in (
-        created_domain / "05-knowledge" / "auto_dev" / "README.md"
+        created_domain / "config" / "auto_dev" / "README.md"
     ).read_text(encoding="utf-8")
     assert (created_domain / "06-runs-and-logs" / "activity-log.md").is_file()
     assert (created_domain / "07-metrics" / "scorecards.md").is_file()
@@ -2501,7 +2478,7 @@ def test_project_onboard_normalizes_exact_legacy_policy_paths_and_preserves_cust
     repaired = yaml.safe_load(development_path.read_text(encoding="utf-8"))
     assert repaired["policies"]["dev_standards"]["paths"] == [
         "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
-        "domains/los/05-knowledge/auto_dev/dev_standards",
+        "domains/los/config/auto_dev/dev_standards",
         "config/auto_dev/dev_standards",
     ]
     assert repaired["policies"]["qa_gates"]["paths"] == [

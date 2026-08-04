@@ -648,6 +648,27 @@ def test_rollback_blocks_when_retained_receipt_no_longer_matches(tmp_path: Path)
     assert verify_library_install(root)["status"] == "verified"
 
 
+def test_install_does_not_advertise_an_invalid_prior_receipt_as_rollback_available(
+    tmp_path: Path,
+) -> None:
+    remote, _ = _library_remote(tmp_path)
+    root = _root(tmp_path / "target")
+    install_library(root, repository=str(remote), dry_run=False)
+    (root / library_module.INSTALL_RECEIPT).write_text("{}\n", encoding="utf-8")
+
+    installed = install_library(
+        root,
+        repository=str(remote),
+        replace_dirty=True,
+        dry_run=False,
+    )
+
+    assert installed["rollback_available"] is False
+    blocked = library_module.rollback_library_install(root)
+    assert blocked["status"] == "blocked"
+    assert "no receipt-backed rollback generation" in blocked["blocker"]
+
+
 def test_install_rolls_back_post_replace_verification_failure_without_success_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
