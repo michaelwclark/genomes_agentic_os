@@ -59,6 +59,12 @@ writers:
     model_keys: [run_log]
     replacement: run_evidence_writer
     cutover_issue: AGE-155
+  program_run_packets:
+    owner: program_runtime
+    paths: [src/genomes_agentic_os/program_run_packets.py]
+    model_keys: [run_log]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
   runtime_ops:
     owner: runtime
     paths: [src/genomes_agentic_os/runtime_ops.py, src/genomes_agentic_os/runtime_backend.py]

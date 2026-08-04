@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from genomes_agentic_os.run_evidence_inventory import inventory_run_evidence
 
@@ -61,6 +63,28 @@ def test_inventory_records_explicit_directory_exclusions(tmp_path: Path) -> None
 
     assert result["files"] == 1
     assert result["excluded_directories"] == {"node_modules": 1}
+
+
+def test_inventory_counts_scandir_errors(tmp_path: Path) -> None:
+    root = tmp_path / "evidence"
+    blocked = root / "blocked"
+    blocked.mkdir(parents=True)
+    root.joinpath("visible.log").write_text("safe\n", encoding="utf-8")
+    original_scandir = os.scandir
+
+    def raising_scandir(path: str | bytes | os.PathLike[str] | os.PathLike[bytes]):
+        if Path(path) == blocked:
+            raise OSError("simulated scan denial")
+        return original_scandir(path)
+
+    with patch(
+        "genomes_agentic_os.run_evidence_inventory.os.scandir",
+        side_effect=raising_scandir,
+    ):
+        result = inventory_run_evidence(root)
+
+    assert result["files"] == 1
+    assert result["errors"] == 1
 
 
 def test_inventory_rejects_missing_root(tmp_path: Path) -> None:
