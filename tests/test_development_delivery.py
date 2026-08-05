@@ -4852,3 +4852,150 @@ def test_missing_evidence_file_reports_the_evidence_flag_not_the_state() -> None
 def test_workflow_docs_are_complete_and_shallow() -> None:
     repository = Path(__file__).resolve().parents[1]
     assert validate_workflow_contracts(repository) == []
+
+
+# The title below is the exact one that broke provisioning for FLYWL-3391 on
+# 2026-08-04. It matters that it is verbatim: the defect only fires when the
+# 48-character cut inside ``_slug`` lands on a separator, so the composed work id
+# keeps a trailing underscore that the scaffolder's own normalisation strips.
+_TRUNCATING_TITLE = "Architecture spike: consolidate global reference data in the public schema"
+
+
+def test_find_delivery_work_item_matches_the_normalised_packet_name(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    # The composed id keeps the trailing underscore the packet name never has.
+    composed = "github_acme_app_flywl_3391_architecture_spike_consolidate_global_reference_"
+    packet = project / "work-items" / "02-active" / f"080526-203_{composed.rstrip('_')}"
+    packet.mkdir(parents=True)
+    assert delivery.find_delivery_work_item(project, composed) == packet
+
+
+def test_long_title_provisions_its_own_packet_and_registry_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+
+    work_id = f"github_acme_app_{delivery._slug('FLYWL-3391').replace('-', '_')}_" + delivery._slug(
+        _TRUNCATING_TITLE
+    ).replace("-", "_")
+    assert work_id.endswith("_"), "fixture no longer reproduces the truncation defect"
+
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "flywl-3391",
+            "path": f"{tmp_path}/wt/flywl-3391",
+            "branch": "feature/flywl-3391",
+            "base_sha": base_sha,
+        },
+    )
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["FLYWL-3391"],
+        titles={"FLYWL-3391": _TRUNCATING_TITLE},
+        run_id="long-title-provisioning",
+        auto_dev_mode="everything",
+        apply=True,
+    )
+
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    # Surfaced first so a regression reports "work item receipt missing" rather
+    # than the downstream run state it turns into.
+    assert task.get("failure") is None, task.get("failure")
+    assert run["state"] == "dispatching"
+    work_item = Path(task["work_item"])
+    assert work_item.is_dir()
+    assert (work_item / "work.yml").is_file()
+    assert Path(task["autodev_path"]) == work_item / "autodev.json"
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert Path(projection["delivery"]["work_item"]) == work_item
+
+    # The packet name is the normalised id, one character shorter than the
+    # composed id. Looking it up by that composed id has to still find it.
+    assert work_item.name.endswith(work_id.rstrip("_"))
+    assert not work_item.name.endswith(work_id)
+    assert delivery.find_delivery_work_item(project, work_id) == work_item
+
+    connection = connect_state(default_db_path(root))
+    try:
+        canonical = canonical_work_items.get(connection, "acme:app:flywl-3391")
+        assert canonical is not None
+        assert Path(canonical["packet_path"]) == work_item
+    finally:
+        connection.close()
+
+
+def test_long_title_retry_adopts_its_packet_instead_of_orphaning_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+
+    def worktree(**kwargs):
+        if not attempts:
+            attempts.append("first")
+            raise DevelopmentDeliveryError("git fetch provider unavailable")
+        return {
+            "name": "flywl-3391",
+            "path": f"{tmp_path}/wt/flywl-3391",
+            "branch": "feature/flywl-3391",
+            "base_sha": base_sha,
+        }
+
+    attempts: list[str] = []
+    monkeypatch.setattr(delivery, "create_isolated_worktree", worktree)
+    for _ in range(2):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["FLYWL-3391"],
+            titles={"FLYWL-3391": _TRUNCATING_TITLE},
+            run_id="long-title-retry",
+            auto_dev_mode="everything",
+            apply=True,
+        )
+
+    assert len(_work_item_packets(project)) == 1
+
+
+def test_run_id_refuses_a_corrected_title_instead_of_reusing_the_pinned_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "flywl-3391",
+            "path": f"{tmp_path}/wt/flywl-3391",
+            "branch": "feature/flywl-3391",
+            "base_sha": base_sha,
+        },
+    )
+    kwargs = dict(run_id="pinned-title", auto_dev_mode="everything", apply=True)
+    delivery.start_development_run(
+        root, "acme", "app", ["FLYWL-3391"], titles={"FLYWL-3391": _TRUNCATING_TITLE}, **kwargs
+    )
+
+    with pytest.raises(DevelopmentDeliveryError, match="already pinned the title for FLYWL-3391"):
+        delivery.start_development_run(
+            root,
+            "acme",
+            "app",
+            ["FLYWL-3391"],
+            titles={"FLYWL-3391": "Public schema reference data spike"},
+            **kwargs,
+        )
+
+    # Resuming without an explicit title still inherits the pinned one.
+    resumed = delivery.start_development_run(root, "acme", "app", ["FLYWL-3391"], **kwargs)
+    assert resumed["titles"]["FLYWL-3391"] == _TRUNCATING_TITLE

@@ -47,6 +47,7 @@ from .lifecycle import (
     create_project_work_item,
     lane_root as work_item_lane_root,
     next_work_item_index,
+    slugify_work_id,
     worktree_entries_for_project,
 )
 from .policy_plane import (
@@ -1952,15 +1953,20 @@ def find_delivery_work_item(project_path: Path, work_id: str) -> Path | None:
     root = project_path / "work-items"
     if not root.is_dir():
         return None
+    # Packet directories carry the id the scaffolder normalised, not the raw id
+    # composed here. A long title truncates on a separator, so the raw id keeps a
+    # trailing underscore the folder name never has; match the normalised form so
+    # a retry adopts the packet an earlier attempt already created.
+    pattern = slugify_work_id(work_id)
     candidates: list[Path] = []
-    candidates.extend(path for path in root.glob(f"*{work_id}*") if path.is_dir())
+    candidates.extend(path for path in root.glob(f"*{pattern}*") if path.is_dir())
     archive = root / "99-archived"
     if archive.is_dir():
-        candidates.extend(path for path in archive.glob(f"*{work_id}*") if path.is_dir())
+        candidates.extend(path for path in archive.glob(f"*{pattern}*") if path.is_dir())
     for lane in ("01-intake", "02-active", "03-complete"):
         lane_root = root / lane
         if lane_root.is_dir():
-            candidates.extend(path for path in lane_root.glob(f"*{work_id}*") if path.is_dir())
+            candidates.extend(path for path in lane_root.glob(f"*{pattern}*") if path.is_dir())
     unique = sorted({path.resolve(): path for path in candidates}.values(), key=str)
     if len(unique) > 1:
         raise DevelopmentDeliveryError(
@@ -2583,7 +2589,18 @@ def start_development_run(
                 "run id authorship boundary differs from the selected project profile"
             )
         plan = existing
-        requested_titles = dict(plan.get("titles") or requested_titles)
+        pinned_titles = dict(plan.get("titles") or {})
+        # A portfolio pins each title when the run id is created. Silently reusing
+        # the pinned title hid corrected retries behind an identical failure, so a
+        # caller supplying a different one has to learn the run id is the wrong lever.
+        for pinned_ticket, supplied_title in (titles or {}).items():
+            pinned_title = pinned_titles.get(pinned_ticket)
+            if pinned_title is not None and supplied_title and supplied_title != pinned_title:
+                raise DevelopmentDeliveryError(
+                    f"run id already pinned the title for {pinned_ticket}: {pinned_title!r}; "
+                    "start a new run id to deliver that ticket under a different title"
+                )
+        requested_titles = pinned_titles or requested_titles
         policy_path = run_dir / "effective-policies.json"
         if policy_path.is_file():
             run_policies = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -3083,8 +3100,12 @@ def start_development_run(
                     work_id=work_id,
                     item_format="packet",
                 )
-                created_dirs = [path for path in result.created if path.is_dir() and path.name.endswith(work_id)]
-                work_item = created_dirs[0] if created_dirs else find_delivery_work_item(project_path, work_id)
+                # Trust the packet the scaffolder reports it created. Re-deriving
+                # it from directory names loses to the id normalisation the
+                # scaffolder applies, and every miss left the run an orphan packet.
+                work_item = result.entity_path
+                if work_item is None or not work_item.is_dir():
+                    work_item = find_delivery_work_item(project_path, work_id)
             if work_item is None:
                 raise DevelopmentDeliveryError(f"work item receipt missing for {ticket}")
             current = task_state.read()
