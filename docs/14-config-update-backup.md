@@ -131,6 +131,22 @@ forward.
 | --- | --- | --- |
 | `--root` | `~/agentic_os` | Installed OS root. |
 
+### Multi-host rollout gate
+
+`update rollout-gate` is a read-only coordinator for a published release's
+local host receipts. It fixes the rollout order at **first host, then second
+host**: the first host must provide a matching `reinstalled` receipt and a
+matching `healthy` receipt before the second host is permitted. Any second-host
+evidence before that gate is an order violation. Final completion also requires
+a matching healthy receipt from the second host. The command does not open SSH
+connections, dispatch remote commands, or modify either host.
+
+```bash
+agentic-os update rollout-gate \
+  --release-receipt /srv/receipts/v1.2.4.json \
+  --evidence /srv/receipts/rollout-v1.2.4.json
+```
+
 ### Receipt-backed post-release reinstall
 
 `update watch-release` runs locally on each target host. It consumes an
