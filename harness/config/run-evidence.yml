@@ -1,0 +1,311 @@
+schema_version: 1
+
+# Changing this one value selects the evidence backend. Application code must
+# depend on RunLogStore, never on the selected adapter.
+backend: mongodb
+
+datastores:
+  mongodb:
+    uri_env: AGENTIC_OS_MONGODB_URI
+    database: agentic_os
+  filesystem:
+    root: harness/shared_factory/06-runs-and-logs/evidence
+
+ingress:
+  outbox_root: harness/shared_factory/06-runs-and-logs/outbox
+  queue_capacity: 4096
+  batch_size: 100
+  flush_interval_ms: 100
+  write_timeout_ms: 250
+
+host_registry:
+  source: harness/config/hosts.yml
+  initial_host: bigmac
+
+writers:
+  conversation_auto_log:
+    owner: conversation_logging
+    paths: [harness/hooks/conversation-auto-log.py, src/genomes_agentic_os/conversation_logging.py]
+    model_keys: [conversation]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  harness_runner:
+    owner: harness_runtime
+    paths: [harness/bin/agentic-harness-run, harness/bin/agentic-os-pr-crossreview]
+    model_keys: [harness_run]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  monitor_and_notify:
+    owner: runtime_observability
+    paths: [harness/bin/agentic-os-monitor, harness/bin/agentic-os-notify]
+    model_keys: [harness_run, alert]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  scheduler_process_logs:
+    owner: scheduler
+    paths: [installers/install-scheduler.sh]
+    model_keys: [process_log]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  long_run:
+    owner: long_running_execution
+    paths: [src/genomes_agentic_os/long_run.py]
+    model_keys: [async_run]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  workflow_run_log:
+    owner: workflow_runtime
+    paths: [src/genomes_agentic_os/workflow_ops.py, src/genomes_agentic_os/scaffold.py, src/genomes_agentic_os/thread_closeout.py]
+    model_keys: [run_log]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  program_run_packets:
+    owner: program_runtime
+    paths: [src/genomes_agentic_os/program_run_packets.py]
+    model_keys: [run_log]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  runtime_ops:
+    owner: runtime
+    paths: [src/genomes_agentic_os/runtime_ops.py, src/genomes_agentic_os/runtime_backend.py]
+    model_keys: [run_log, health_report, maintenance_run]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  execution_fabric:
+    owner: execution_fabric
+    paths: [src/genomes_agentic_os/execution_fabric_worker.py, src/genomes_agentic_os/execution_fabric_remote.py]
+    model_keys: [async_run, health_report]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  automation_control:
+    owner: automation_runtime
+    paths: [src/genomes_agentic_os/automation_control.py, harness/bin/agentic-os-automation-run-summary]
+    model_keys: [automation_action]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  resource_actions:
+    owner: resource_lifecycle
+    paths: [src/genomes_agentic_os/resource_actions.py, src/genomes_agentic_os/registry_resource_actions.py, src/genomes_agentic_os/filesystem_resource_actions.py]
+    model_keys: [resource_action]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  report_engine:
+    owner: reporting
+    paths: [src/genomes_agentic_os/report_engine.py, harness/bin/agentic-os-memory-analytics]
+    model_keys: [report_run]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  runtime_health:
+    owner: runtime_observability
+    paths: [src/genomes_agentic_os/runtime_health.py, src/genomes_agentic_os/host_doctor.py]
+    model_keys: [health_report]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  events_and_sources:
+    owner: event_graph
+    paths: [src/genomes_agentic_os/event_graph.py, src/genomes_agentic_os/source_watch.py, src/genomes_agentic_os/activity_ingestion.py]
+    model_keys: [event_evidence]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  maintenance:
+    owner: os_health
+    paths: [src/genomes_agentic_os/docker_reclaim.py, src/genomes_agentic_os/documentation_upkeep.py, src/genomes_agentic_os/work_item_archive.py]
+    model_keys: [maintenance_run]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  investigation_runs:
+    owner: investigations
+    paths: [src/genomes_agentic_os/investigation_contracts.py]
+    model_keys: [run_log, work_artifact, receipt]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  state_backups:
+    owner: control_plane
+    paths: [src/genomes_agentic_os/state/db.py]
+    model_keys: [state_backup]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+  auto_dev_evidence:
+    owner: development_delivery
+    paths: [src/genomes_agentic_os/auto_dev_orchestration.py]
+    model_keys: [test_evidence, receipt, work_artifact, conversation]
+    replacement: run_evidence_writer
+    cutover_issue: AGE-155
+
+models:
+  run_log:
+    schema_version: 1
+    routing_priority: 10
+    collection: run_logs
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/runs/*/run-log.yml", "**/06-runs-and-logs/runs/*/run-log.md"]
+    indexes: [[host_id, occurred_at], [run_id], [work_item_id], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 365, max_objects: 2000000, compaction: failure_exemplars, hold_policy: failures_active_or_held}
+  conversation:
+    schema_version: 1
+    routing_priority: 20
+    collection: conversations
+    classification: durable_evidence
+    payload_mode: jsonl
+    source_patterns: ["**/06-runs-and-logs/conversations/*.jsonl", "**/logs/conversations/*.jsonl", "harness/logs/conversations/*.jsonl"]
+    indexes: [[host_id, occurred_at], [conversation_id], [project, occurred_at], [content_sha256]]
+    redaction_profile: conversation_strict
+    max_payload_bytes: 2097152
+    retention: {max_age_days: 180, max_objects: 500000, compaction: summary, hold_policy: active_or_held}
+  async_run:
+    schema_version: 1
+    routing_priority: 30
+    collection: async_runs
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/async-runs/*/*", "**/artifacts/async-runs/*/*"]
+    indexes: [[host_id, occurred_at], [run_id], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 4194304
+    retention: {max_age_days: 180, max_objects: 500000, compaction: failure_exemplars, hold_policy: failures_active_or_held}
+  process_log:
+    schema_version: 1
+    routing_priority: 40
+    collection: process_logs
+    classification: durable_evidence
+    payload_mode: text
+    source_patterns: ["**/06-runs-and-logs/interim-executor/*.log", "**/logs/*.log"]
+    indexes: [[host_id, occurred_at], [source, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: log_strict
+    max_payload_bytes: 2097152
+    retention: {max_age_days: 30, max_objects: 250000, compaction: failure_exemplars, hold_policy: failures_active_or_held}
+  automation_action:
+    schema_version: 1
+    routing_priority: 50
+    collection: automation_actions
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/automation-control/*", "**/04-automations/*/*/runs/**/*"]
+    indexes: [[host_id, occurred_at], [automation_id, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 180, max_objects: 500000, compaction: failure_exemplars, hold_policy: failures_active_or_held}
+  health_report:
+    schema_version: 1
+    routing_priority: 60
+    collection: health_reports
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/runtime-health/*/*", "**/06-runs-and-logs/heartbeats/*"]
+    indexes: [[host_id, occurred_at], [source, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 90, max_objects: 250000, compaction: summary, hold_policy: failures_active_or_held}
+  harness_run:
+    schema_version: 1
+    routing_priority: 70
+    collection: harness_runs
+    classification: durable_evidence
+    payload_mode: text
+    source_patterns: ["**/06-runs-and-logs/harness-runs/*"]
+    indexes: [[host_id, occurred_at], [harness, occurred_at], [content_sha256]]
+    redaction_profile: conversation_strict
+    max_payload_bytes: 2097152
+    retention: {max_age_days: 90, max_objects: 250000, compaction: summary, hold_policy: active_or_held}
+  resource_action:
+    schema_version: 1
+    routing_priority: 80
+    collection: resource_actions
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/resource-actions/*"]
+    indexes: [[host_id, occurred_at], [resource_type, resource_id, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 365, max_objects: 250000, compaction: summary, hold_policy: active_or_held}
+  maintenance_run:
+    schema_version: 1
+    routing_priority: 90
+    collection: maintenance_runs
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/run-queue-prune/*", "**/06-runs-and-logs/migrations/**/*", "**/06-runs-and-logs/docker-reclaim/**/*"]
+    indexes: [[host_id, occurred_at], [operation, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 180, max_objects: 250000, compaction: summary, hold_policy: failures_active_or_held}
+  event_evidence:
+    schema_version: 1
+    routing_priority: 100
+    collection: event_evidence
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/source-events/*", "**/06-runs-and-logs/events/*"]
+    indexes: [[host_id, occurred_at], [event_type, occurred_at], [correlation_id], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 180, max_objects: 1000000, compaction: summary, hold_policy: active_or_held}
+  alert:
+    schema_version: 1
+    routing_priority: 110
+    collection: alerts
+    classification: durable_evidence
+    payload_mode: jsonl
+    source_patterns: ["**/06-runs-and-logs/alerts/*.jsonl", "**/06-runs-and-logs/failures/**/*"]
+    indexes: [[host_id, occurred_at], [severity, occurred_at], [source, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 365, max_objects: 500000, compaction: failure_exemplars, hold_policy: failures_active_or_held}
+  report_run:
+    schema_version: 1
+    routing_priority: 120
+    collection: report_runs
+    classification: derived_artifact
+    payload_mode: document
+    source_patterns: ["**/06-runs-and-logs/reports/**/*", "**/06-runs-and-logs/report-engine/**/*", "**/07-metrics/**/*"]
+    indexes: [[host_id, occurred_at], [report_id, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 4194304
+    retention: {max_age_days: 365, max_objects: 250000, compaction: summary, hold_policy: active_or_held}
+  test_evidence:
+    schema_version: 1
+    routing_priority: 130
+    collection: test_evidence
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/work-items/**/artifacts/**/*test*", "**/work-items/**/artifacts/**/*qa*", "**/artifacts/pr-*-watch/**/*"]
+    indexes: [[host_id, occurred_at], [work_item_id, occurred_at], [status, occurred_at], [content_sha256]]
+    redaction_profile: operational
+    max_payload_bytes: 4194304
+    retention: {max_age_days: 180, max_objects: 500000, compaction: failure_exemplars, hold_policy: failures_active_or_held}
+  receipt:
+    schema_version: 1
+    routing_priority: 140
+    collection: receipts
+    classification: durable_evidence
+    payload_mode: document
+    source_patterns: ["**/receipts/*.json", "**/terminal-receipt.json", "**/provider-readback.json"]
+    indexes: [[host_id, occurred_at], [receipt_type, occurred_at], [work_item_id], [content_sha256]]
+    redaction_profile: receipt_strict
+    max_payload_bytes: 2097152
+    retention: {max_age_days: 365, max_objects: 1000000, compaction: summary, hold_policy: active_or_held}
+  work_artifact:
+    schema_version: 1
+    routing_priority: 900
+    collection: work_artifacts
+    classification: derived_artifact
+    payload_mode: artifact_reference
+    source_patterns: ["**/work-items/**/artifacts/**/*"]
+    indexes: [[host_id, occurred_at], [work_item_id, occurred_at], [classification, occurred_at], [content_sha256]]
+    redaction_profile: artifact_strict
+    max_payload_bytes: 8388608
+    retention: {max_age_days: 365, max_objects: 1000000, compaction: artifact_reference, hold_policy: active_or_held}
+  state_backup:
+    schema_version: 1
+    routing_priority: 150
+    collection: state_backup_references
+    classification: authoritative_state
+    payload_mode: artifact_reference
+    source_patterns: ["**/06-runs-and-logs/state-backups/*"]
+    indexes: [[host_id, occurred_at], [content_sha256]]
+    redaction_profile: artifact_strict
+    max_payload_bytes: 1048576
+    retention: {max_age_days: 30, max_objects: 100, compaction: artifact_reference, hold_policy: source_backup}
