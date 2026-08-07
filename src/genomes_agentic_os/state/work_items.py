@@ -37,6 +37,7 @@ TERMINAL_STATES = {"finished", "documented", "archived"}
 ACTIVE_NOW_RELATIVE = Path("harness/shared_factory/00-control-plane/active-now.json")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]*$")
 COMPACT_REFERENCE = re.compile(r"^\S{1,512}$")
+MAX_COMPACT_LINK_ENTRIES = 100
 SOURCE_LINK_FIELDS = frozenset({"system", "key", "url"})
 BLOCKER_FIELDS = frozenset({"kind", "id", "source", "url", "receipt_ref"})
 LEGACY_LANE_STATE = {
@@ -73,6 +74,13 @@ def _compact_reference(value: Any, *, label: str) -> str | None:
     return text
 
 
+def _is_compact_reference(value: Any) -> bool:
+    try:
+        return _compact_reference(value, label="reference") is not None
+    except WorkItemError:
+        return False
+
+
 def _json_mapping(value: Mapping[str, Any] | None) -> str:
     return json.dumps(dict(value or {}), sort_keys=True, separators=(",", ":"))
 
@@ -94,6 +102,8 @@ def _link_mappings(
         return []
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         raise WorkItemError(f"{label} must be a list of mappings")
+    if len(value) > MAX_COMPACT_LINK_ENTRIES:
+        raise WorkItemError(f"{label} may contain at most {MAX_COMPACT_LINK_ENTRIES} entries")
     normalized: list[dict[str, Any]] = []
     for entry in value:
         if not isinstance(entry, Mapping):
@@ -137,7 +147,7 @@ def _normalize(
     *,
     item_id: str,
     title: str,
-    state: str,
+    state: str | None,
     kind: str,
     lifecycle: str | None,
     attention: str,
@@ -160,10 +170,10 @@ def _normalize(
     metadata: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     item_id = _identifier(item_id, "work-item id")
-    requested_state = _identifier(state, "work-item state")
+    requested_state = _identifier(state or "captured", "work-item state")
     if lifecycle is not None:
         requested_lifecycle = _identifier(lifecycle, "work-item lifecycle")
-        if requested_state != "captured" and requested_state != requested_lifecycle:
+        if state is not None and requested_state != requested_lifecycle:
             raise WorkItemError("state and lifecycle must agree when both are supplied")
         state = requested_lifecycle
     else:
@@ -203,6 +213,11 @@ def _normalize(
                 **({"url": source_url} if source_url else {}),
             }
         ]
+    if normalized_sources and not source_system and not source_key:
+        primary_source = normalized_sources[0]
+        source_system = primary_source["system"]
+        source_key = primary_source["key"]
+        source_url = primary_source.get("url")
     normalized_blockers = _link_mappings(
         blockers,
         label="blockers",
@@ -279,7 +294,7 @@ def upsert(
     *,
     item_id: str,
     title: str,
-    state: str = "captured",
+    state: str | None = None,
     kind: str = "task",
     lifecycle: str | None = None,
     attention: str = "queued",
@@ -470,6 +485,21 @@ def update(
     )
     if (state or lifecycle) and next_state != "blocked" and blocked_reason is None:
         next_blocked_reason = None
+    legacy_source = {
+        "system": current["source_system"],
+        "key": current["source_key"],
+        "url": current["source_url"],
+    }
+    legacy_source_is_compact = all(
+        _is_compact_reference(value)
+        for value in (legacy_source["system"], legacy_source["key"])
+    ) and (
+        legacy_source["url"] is None
+        or _is_compact_reference(legacy_source["url"])
+    )
+    next_metadata = dict(current["metadata"])
+    if source_links is None and not legacy_source_is_compact and any(legacy_source.values()):
+        next_metadata.setdefault("legacy_source_reference", legacy_source)
     return upsert(
         conn,
         item_id=current["id"],
@@ -480,10 +510,14 @@ def update(
         attention=next_attention,
         domain=current["domain"],
         project=current["project"],
-        source_system=current["source_system"],
-        source_key=current["source_key"],
-        source_url=current["source_url"],
-        source_links=source_links if source_links is not None else current["source_links"],
+        source_system=current["source_system"] if legacy_source_is_compact else None,
+        source_key=current["source_key"] if legacy_source_is_compact else None,
+        source_url=current["source_url"] if legacy_source_is_compact else None,
+        source_links=(
+            source_links
+            if source_links is not None
+            else current["source_links"] if legacy_source_is_compact else []
+        ),
         parent_id=parent_id if parent_id is not None else current["parent_id"],
         related_ids=related_ids if related_ids is not None else current["related_ids"],
         blockers=blockers if blockers is not None else current["blockers"],
@@ -500,7 +534,7 @@ def update(
             context_summary if context_summary is not None else current["context_summary"]
         ),
         blocked_reason=next_blocked_reason,
-        metadata=current["metadata"],
+        metadata=next_metadata,
         actor=actor,
         receipt_ref=receipt_ref,
         verified=verified,

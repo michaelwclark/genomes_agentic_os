@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -96,6 +97,76 @@ def test_work_item_contract_rejects_self_links_and_unexplained_blocking() -> Non
         conn.close()
 
 
+def test_work_item_contract_rejects_explicit_state_lifecycle_disagreement() -> None:
+    conn = db.connect(":memory:")
+    try:
+        with pytest.raises(work_items.WorkItemError, match="must agree"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                state="captured",
+                lifecycle="archived",
+            )
+    finally:
+        conn.close()
+
+
+def test_source_links_populate_legacy_dedup_columns() -> None:
+    conn = db.connect(":memory:")
+    try:
+        first = work_items.upsert(
+            conn,
+            item_id="one",
+            title="One",
+            source_links=[{"system": "linear", "key": "AGE-86"}],
+        )
+        assert first["source_system"] == "linear"
+        assert first["source_key"] == "AGE-86"
+        with pytest.raises(sqlite3.IntegrityError):
+            work_items.upsert(
+                conn,
+                item_id="two",
+                title="Two",
+                source_links=[{"system": "linear", "key": "AGE-86"}],
+            )
+    finally:
+        conn.close()
+
+
+def test_update_preserves_noncompact_legacy_source_as_metadata() -> None:
+    conn = db.connect(":memory:")
+    try:
+        conn.execute(
+            """
+            INSERT INTO work_items (
+                id, title, state, attention, source_system, source_key,
+                context_summary, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-one",
+                "Legacy One",
+                "building",
+                "queued",
+                "legacy-filesystem",
+                "02-active/my packet",
+                "Legacy source needs migration.",
+                "{}",
+                "2026-08-01T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+            ),
+        )
+        conn.commit()
+        updated = work_items.update(conn, "legacy-one", state="validating")
+        assert updated["state"] == "validating"
+        assert updated["source_system"] is None
+        assert updated["source_key"] is None
+        assert updated["metadata"]["legacy_source_reference"]["key"] == "02-active/my packet"
+    finally:
+        conn.close()
+
+
 def test_work_item_contract_rejects_nested_or_prose_reference_payloads() -> None:
     conn = db.connect(":memory:")
     try:
@@ -127,6 +198,13 @@ def test_work_item_contract_rejects_nested_or_prose_reference_payloads() -> None
                 title="One",
                 source_system="legacy-filesystem",
                 source_key={"transcript": "do not retain this"},
+            )
+        with pytest.raises(work_items.WorkItemError, match="at most"):
+            work_items.upsert(
+                conn,
+                item_id="many-links",
+                title="Many links",
+                source_links=[{"system": "linear", "key": f"AGE-{index}"} for index in range(101)],
             )
     finally:
         conn.close()
