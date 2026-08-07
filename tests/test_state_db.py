@@ -13,7 +13,7 @@ from genomes_agentic_os.state import db
 def test_memory_connect_creates_current_schema() -> None:
     conn = db.connect(":memory:")
     try:
-        assert db.schema_version(conn) == 4
+        assert db.schema_version(conn) == 5
         assert db.table_counts(conn) == {
             "events": 0,
             "run_queue": 0,
@@ -114,7 +114,7 @@ def test_reopening_file_db_is_idempotent(tmp_path: Path) -> None:
 
     conn2 = db.connect(db_path)
     try:
-        assert db.schema_version(conn2) == 4
+        assert db.schema_version(conn2) == 5
         assert db.table_counts(conn2) == {
             "events": 0,
             "run_queue": 0,
@@ -133,10 +133,10 @@ def test_ensure_schema_is_idempotent_on_same_connection() -> None:
     try:
         version_before = db.ensure_schema(conn)
         version_after = db.ensure_schema(conn)
-        assert version_before == version_after == 4
+        assert version_before == version_after == 5
         # One schema_version row per migration ever applied, not one per call.
         row_count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-        assert row_count == 4
+        assert row_count == 5
     finally:
         conn.close()
 
@@ -146,8 +146,55 @@ def test_current_schema_check_does_not_acquire_a_write_transaction() -> None:
     statements: list[str] = []
     try:
         conn.set_trace_callback(statements.append)
-        assert db.ensure_schema(conn) == 4
+        assert db.ensure_schema(conn) == 5
         assert not any(statement.startswith("BEGIN IMMEDIATE") for statement in statements)
+    finally:
+        conn.close()
+
+
+def test_v5_migration_backfills_existing_work_item_lifecycle(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    legacy = sqlite3.connect(db_path)
+    try:
+        legacy.execute(db._SCHEMA_VERSION_TABLE_SQL)
+        for version, description, sql in db._MIGRATIONS[:3]:
+            for statement in sql.split(";"):
+                if statement.strip():
+                    legacy.execute(statement)
+            legacy.execute(
+                "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
+                (version, description, "2026-08-01T00:00:00Z"),
+            )
+        legacy.execute(
+            """
+            INSERT INTO work_items (
+                id, title, state, attention, context_summary, metadata_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-item",
+                "Legacy item",
+                "building",
+                "queued",
+                "Existing canonical row.",
+                "{}",
+                "2026-08-01T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+            ),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    conn = db.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT kind, lifecycle, source_links_json, related_ids_json, blockers_json FROM work_items WHERE id = ?",
+            ("legacy-item",),
+        ).fetchone()
+        assert db.schema_version(conn) == 5
+        assert tuple(row) == ("task", "building", "[]", "[]", "[]")
     finally:
         conn.close()
 
