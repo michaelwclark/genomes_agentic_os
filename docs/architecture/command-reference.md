@@ -484,6 +484,35 @@ Status: not individually validated in RESULTS.md.
 
 ---
 
+### `agentic-os-policy-context`
+
+Resolve the complete, hashed policy context before making a source change or
+reviewing one. This harness executable composes the five Agentic OS policy
+planes with the selected checkout's `AGENTS.md`, nested `AGENTS.md`, and
+declared Claude rule surfaces. It emits a paste-ready
+`effective-policy-context/v1` block and can persist the structured result as a
+work-item receipt.
+
+```bash
+harness/bin/agentic-os-policy-context \
+  --path /path/to/registered/worktree \
+  --strict-source-rules \
+  --receipt artifacts/policy-context.json
+```
+
+It recognizes only canonical project profiles:
+
+- `domains/<domain>/02-projects/<project>/config/development.yml`
+- `harness/shared_factory/02-projects/<project>/config/development.yml`
+
+When `--path` targets a registered worktree, source-rule hashing uses that
+worktree rather than silently substituting the configured primary checkout.
+The executable fails closed (exit 2) for missing profiles, missing required
+source rules, alias profiles, or an inventory that exceeds the reviewed safety
+limit; it never emits a partial effective-policy fingerprint.
+
+---
+
 ## 3A. Canonical work state: `work`
 
 The `work` group reads and updates the SQLite work-item registry without
