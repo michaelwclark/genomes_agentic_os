@@ -247,6 +247,11 @@ export type TaskRecord = {
   attemptCount: number;
   availableAt: string;
   createdAt: string;
+  result: Record<string, unknown> | null;
+  completedAt: string | null;
+  updatedAt: string;
+  lastErrorCode: string | null;
+  lastErrorSummary: string | null;
 };
 
 export type Assignment = {

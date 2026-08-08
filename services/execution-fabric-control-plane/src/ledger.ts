@@ -256,6 +256,13 @@ function taskFromRow(row: Record<string, unknown>): TaskRecord {
     attemptCount: Number(row.attempt_count),
     availableAt: iso(row.available_at as string),
     createdAt: iso(row.created_at as string),
+    result: (row.result ?? null) as Record<string, unknown> | null,
+    completedAt: row.completed_at ? iso(row.completed_at as string) : null,
+    updatedAt: iso(row.updated_at as string),
+    lastErrorCode: row.last_error_code ? String(row.last_error_code) : null,
+    lastErrorSummary: row.last_error_summary
+      ? String(row.last_error_summary)
+      : null,
   };
 }
 

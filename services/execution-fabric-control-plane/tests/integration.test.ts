@@ -133,6 +133,23 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
       ],
     });
     expect(completed.status).toBe("succeeded");
+    expect(completed).toMatchObject({
+      result: { echoed: true },
+      lastErrorCode: null,
+      lastErrorSummary: null,
+    });
+    expect(completed.completedAt).toEqual(expect.any(String));
+    expect(completed.updatedAt).toEqual(expect.any(String));
+    const restartedLedger = new PostgresLedger(pool, 45);
+    expect(await restartedLedger.getTask(first.task.id)).toMatchObject({
+      id: first.task.id,
+      status: "succeeded",
+      result: { echoed: true },
+      completedAt: completed.completedAt,
+      updatedAt: completed.updatedAt,
+      lastErrorCode: null,
+      lastErrorSummary: null,
+    });
     const afterCompletion = await fabric.ledger.runSnapshot(10);
     const attemptHistory = afterCompletion.find(
       (run) => run.taskId === first.task.id,
