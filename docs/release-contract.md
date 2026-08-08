@@ -254,6 +254,30 @@ A workflow must not rename a required check accidentally. Protection changes are
 separate, explicitly reviewed provider mutations and are never a side effect of
 release-contract adoption.
 
+## Auto-merge and protection policy
+
+All four repositories use pull requests as the only normal path into a
+protected release branch. Auto-merge may be enabled on an individual pull
+request only after the repository's required checks, the configured opposing
+review, and the exact-head Finalize receipt are green. It never bypasses a
+required check, review, or merge method.
+
+The provider policy is deliberately staged by repository readiness:
+
+| Repository | Protection baseline | Auto-merge eligibility |
+| --- | --- | --- |
+| Agentic OS `main` | Required checks listed above; administrators enforced; force-push and deletion disabled | Eligible when Auto-Dev Finalize is green |
+| Harness `main` | `validate-and-package`; administrators enforced; force-push and deletion disabled | Eligible when the gate is green |
+| Brain `main` | `test`; stale-review dismissal enabled; force-push and deletion disabled | Eligible when the gate is green |
+| Library `main` | Require the `validate` workflow check only after provider readback confirms the workflow is present on the target branch | Remains in staged adoption until direct-push/release behavior is verified |
+
+The library row is an intentional safety boundary: a missing or skipped check
+must not be replaced with a guessed context, and branch protection must not be
+enabled until its release workflow and direct-push behavior are independently
+verified. Any provider mutation records the repository, branch, exact required
+contexts, actor, timestamp, and readback. No administrator bypass, force push,
+or branch deletion is permitted.
+
 ## Manual run and per-repository runbooks
 
 The contract itself has no manual entry point; it is callable only as a reusable
