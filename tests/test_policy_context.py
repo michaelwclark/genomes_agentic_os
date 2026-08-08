@@ -8,6 +8,7 @@ import importlib.machinery
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import uuid
 
 import pytest
@@ -355,6 +356,35 @@ def test_repository_selection_cannot_disagree_with_path_checkout(
         )
 
 
+def test_explicit_route_cannot_disagree_with_routed_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    root = tmp_path / "os"
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    write_profile(
+        root,
+        "domains/acme/02-projects/payments/config/development.yml",
+        {"root": str(checkout)},
+    )
+    patch_plane_resolution(monkeypatch, module)
+
+    with pytest.raises(module.Blocker, match="explicit route other/project disagrees"):
+        module.resolve(
+            argparse.Namespace(
+                root=str(root),
+                path=str(checkout / "src"),
+                domain="other",
+                project="project",
+                repository=None,
+                overlay=[],
+                strict_source_rules=False,
+                detail="compact",
+            )
+        )
+
+
 def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path: Path) -> None:
     module = load_policy_context()
     checkout = tmp_path / "checkout"
@@ -365,6 +395,8 @@ def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path
     (checkout / ".claude" / "rules" / "nested" / "guard.md").write_text(
         "# guard\n", encoding="utf-8"
     )
+    (checkout / ".venv" / "nested").mkdir(parents=True)
+    (checkout / ".venv" / "nested" / "AGENTS.md").write_text("# excluded\n", encoding="utf-8")
 
     rules = module.resolve_source_rules(
         {"root": str(checkout)}, module.rule_surface_config({}), strict=True
@@ -385,6 +417,28 @@ def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path
             {"root": str(overflow)}, module.rule_surface_config({}), strict=True
         )
 
+
+def test_git_worktree_common_dir_parsing_normalizes_real_worktree(tmp_path: Path) -> None:
+    module = load_policy_context()
+    repository = tmp_path / "repository"
+    worktree = tmp_path / "worktree"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "-q", str(worktree), "-b", "feature"],
+        check=True,
+    )
+
+    common_dir = module.git_worktree_common_dir(worktree)
+    assert common_dir == (repository / ".git").resolve()
+    assert module.parse_git_worktree_common_dir(worktree, "true\n.git\n", returncode=0) == (
+        worktree / ".git"
+    ).resolve()
 
 def test_effective_fingerprint_includes_checkout_and_priority_contract() -> None:
     module = load_policy_context()

@@ -304,9 +304,21 @@ def git_worktree_common_dir(checkout: Path) -> Path:
             f"could not verify Git worktree ownership for {checkout}: {exc}",
             "Repair or register a reachable Git worktree, then re-run with --path.",
         ) from exc
-    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    if completed.returncode != 0 or len(lines) != 2 or lines[0].lower() != "true":
-        detail = (completed.stderr or completed.stdout or "Git did not identify a worktree").strip()
+    return parse_git_worktree_common_dir(
+        checkout,
+        completed.stdout,
+        returncode=completed.returncode,
+        stderr=completed.stderr,
+    )
+
+
+def parse_git_worktree_common_dir(
+    checkout: Path, stdout: str, *, returncode: int, stderr: str = ""
+) -> Path:
+    """Parse and normalize ``rev-parse --git-common-dir`` output."""
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if returncode != 0 or len(lines) != 2 or lines[0].lower() != "true":
+        detail = (stderr or stdout or "Git did not identify a worktree").strip()
         raise Blocker(
             f"path is not a verifiable Git worktree: {checkout} ({detail})",
             "Repair or register the project worktree, then re-run with --path.",
@@ -328,7 +340,8 @@ def verify_selected_worktree(checkout: Path, selection: dict[str, Any]) -> Path:
     if not root_text:
         raise Blocker(
             f"cannot verify worktree ownership without a selected repository root: {checkout}",
-            "Declare repository.root or select a catalog repository with --repository.",
+            "Set repository.root in config/development.yml or select a catalog repository "
+            "with --repository.",
         )
     selected_root = absolute_path(Path(root_text))
     expected_common_dir = git_worktree_common_dir(selected_root)
@@ -574,14 +587,21 @@ def expand_rule_globs(checkout: Path, globs: list[str]) -> list[Path]:
             # Rule surfaces are checkout-relative by contract; an absolute or
             # escaping pattern would silently widen the trusted policy set.
             continue
-        if "**" in pattern:
-            for candidate in checkout.glob(pattern):
-                if candidate.is_file() and not _is_skipped(checkout, candidate):
-                    matched.add(candidate)
-            continue
-        for candidate in checkout.glob(pattern):
-            if candidate.is_file() and not _is_skipped(checkout, candidate):
-                matched.add(candidate)
+        # Walk once with explicit pruning so documented exclusions are never
+        # traversed, rather than discovering excluded files and filtering them
+        # after the fact.  A slashless glob is rooted at the checkout; a
+        # recursive ``**`` glob may match at any depth (including the root).
+        recursive = "**" in pattern
+        for directory, dirnames, filenames in os.walk(checkout, topdown=True):
+            dirnames[:] = sorted(name for name in dirnames if name not in SKIP_DIRS)
+            relative_dir = Path(directory).relative_to(checkout)
+            for filename in filenames:
+                relative = relative_dir / filename
+                if _matches_rule_pattern(relative, pattern, recursive):
+                    matched.add(checkout / relative)
+            if not recursive:
+                # Non-recursive patterns only inspect the checkout root.
+                break
     files = sorted(matched)
     if len(files) > MAX_RULE_FILES:
         raise Blocker(
@@ -590,6 +610,15 @@ def expand_rule_globs(checkout: Path, globs: list[str]) -> list[Path]:
             "reviewed policy decision; do not proceed with a truncated inventory.",
         )
     return files
+
+
+def _matches_rule_pattern(relative: Path, pattern: str, recursive: bool) -> bool:
+    """Match a checkout-relative rule pattern with predictable glob scope."""
+    if not recursive and len(relative.parts) != 1:
+        return False
+    if recursive and pattern.startswith("**/") and len(relative.parts) == 1:
+        return fnmatch.fnmatchcase(relative.name, pattern[3:])
+    return relative.match(pattern)
 
 
 def _is_skipped(checkout: Path, candidate: Path) -> bool:
@@ -797,7 +826,18 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
 
     checkout_override: Path | None = None
     if args.path:
-        domain, project = route_from_path(root, Path(args.path))
+        routed_domain, routed_project = route_from_path(root, Path(args.path))
+        if args.domain and args.project and (args.domain, args.project) != (
+            routed_domain,
+            routed_project,
+        ):
+            raise Blocker(
+                f"explicit route {args.domain}/{args.project} disagrees with --path routing "
+                f"{routed_domain}/{routed_project}",
+                "Remove the conflicting --domain/--project, or pass a --path inside the "
+                "explicit project.",
+            )
+        domain, project = routed_domain, routed_project
     else:
         domain, project = args.domain, args.project
 
