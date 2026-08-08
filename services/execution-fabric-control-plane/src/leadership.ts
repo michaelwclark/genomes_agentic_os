@@ -495,9 +495,16 @@ export class LeadershipGuard {
     expectedCurrentDigest: string;
     candidateDigest: string;
   }): ConfigRotationPreparationProof {
-    this.assertMutation();
     if (!this.proof) {
       throw new LeadershipFencedError("leadership is unverified");
+    }
+    if (this.configDigest() === this.proof.configDigest) {
+      // The ordinary rotation path keeps the universal mutation guard. The
+      // narrower path below exists only for the intentional disk drift that
+      // the signed reload is about to authorize.
+      this.assertMutation();
+    } else {
+      this.assertStandalonePolicyReload(input.expectedCurrentDigest);
     }
     const preparation = verifyConfigRotationPreparationToken(
       input.preparationToken,
@@ -521,6 +528,58 @@ export class LeadershipGuard {
       );
     }
     return preparation;
+  }
+
+  /**
+   * Authorize the one intentional-drift mutation: an exact, signed policy
+   * reload on the opted-in standalone primary. This is deliberately separate
+   * from assertMutation so task, effect, scheduler, promotion, and HA paths
+   * remain fenced whenever the mounted policy differs from the signed proof.
+   */
+  private assertStandalonePolicyReload(expectedCurrentDigest: string): void {
+    if (!this.proof) {
+      throw new LeadershipFencedError("leadership is unverified");
+    }
+    if (this.proof.leader !== this.config.hostId) {
+      throw new LeadershipFencedError("this host is not the witnessed leader");
+    }
+    if (this.proof.authorityMode !== "standalone_primary") {
+      throw new LeadershipFencedError(
+        "intentional policy drift can be reloaded only by an opted-in standalone primary",
+      );
+    }
+    const standalone = this.standalonePolicy();
+    if (
+      !standalone.enabled ||
+      standalone.host_id !== this.config.hostId ||
+      this.proof.degradedUntil !== null
+    ) {
+      throw new LeadershipFencedError(
+        "standalone-primary reload requires exact canonical policy opt-in for this host",
+      );
+    }
+    if (!this.durability?.standalonePrimaryDurabilityReady) {
+      throw new LeadershipFencedError(
+        "standalone-primary reload requires verified local PostgreSQL durability",
+      );
+    }
+    if (this.proof.configDigest !== expectedCurrentDigest) {
+      throw new LeadershipFencedError(
+        "signed witness proof does not match the expected current policy digest",
+      );
+    }
+    if (new Date(this.proof.expiresAt).getTime() <= this.now().getTime()) {
+      this.lastError = "leadership proof expired before policy reload";
+      throw new LeadershipFencedError(this.lastError);
+    }
+    if (
+      this.recoveryHoldUntil &&
+      this.recoveryHoldUntil.getTime() > this.now().getTime()
+    ) {
+      throw new LeadershipFencedError(
+        `leadership recovery hold remains active until ${this.recoveryHoldUntil.toISOString()}`,
+      );
+    }
   }
 
   assertTaskMutation(taskType: string): void {

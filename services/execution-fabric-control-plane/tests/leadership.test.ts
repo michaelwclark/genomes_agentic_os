@@ -352,6 +352,43 @@ describe("leadership fencing", () => {
     guard.stop();
   });
 
+  it("allows a prepared policy reload through intentional drift only on an opted-in standalone primary", async () => {
+    const { guard } = fixture({ standalone: true, durabilityReady: false });
+    await guard.start();
+    (guard as unknown as { configDigest: () => string }).configDigest = () =>
+      "b".repeat(64);
+
+    expect(() => guard.assertMutation()).toThrow(
+      /local policy digest differs from the signed witness proof/,
+    );
+    expect(
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toMatchObject({ candidateDigest: "b".repeat(64) });
+    guard.stop();
+  });
+
+  it("keeps intentional policy drift fenced outside an opted-in standalone primary", async () => {
+    const { guard } = fixture();
+    await guard.start();
+    (guard as unknown as { configDigest: () => string }).configDigest = () =>
+      "b".repeat(64);
+
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toThrow(/only by an opted-in standalone primary/);
+    guard.stop();
+  });
+
   it("validates transfer receipt and enforces recovery hold", async () => {
     const { guard, advance } = fixture({ receipt: true });
     await guard.start();
