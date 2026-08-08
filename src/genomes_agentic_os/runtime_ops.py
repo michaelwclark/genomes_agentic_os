@@ -2646,11 +2646,20 @@ def _run_quiet_run_script(
     return result
 
 
-def runtime_run_next(root: str | Path, *, dry_run: bool = True, item_id: str | None = None) -> dict[str, Any]:
+def runtime_run_next(
+    root: str | Path,
+    *,
+    dry_run: bool = True,
+    item_id: str | None = None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
+) -> dict[str, Any]:
     os_root = expand_path(root)
     mode = _queue_mode(os_root)
     if mode == EXECUTION_FABRIC_MODE:
-        return _runtime_run_next_execution_fabric(os_root, dry_run=dry_run, item_id=item_id)
+        return _runtime_run_next_execution_fabric(
+            os_root, dry_run=dry_run, item_id=item_id, queue_name=queue_name, worker_pool=worker_pool
+        )
     return _runtime_run_next_filesystem(os_root, dry_run=dry_run, item_id=item_id)
 
 
@@ -2918,8 +2927,12 @@ def _runtime_run_next_execution_fabric(
     *,
     dry_run: bool,
     item_id: str | None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
 ) -> dict[str, Any]:
-    preparation = _prepare_execution_fabric_dispatch(os_root, dry_run=dry_run, item_id=item_id)
+    preparation = _prepare_execution_fabric_dispatch(
+        os_root, dry_run=dry_run, item_id=item_id, queue_name=queue_name, worker_pool=worker_pool
+    )
     if "result" in preparation:
         return preparation["result"]
     return _execute_prepared_execution_fabric_dispatch(os_root, preparation)
@@ -3046,6 +3059,8 @@ def _prepare_execution_fabric_dispatch(
     *,
     dry_run: bool,
     item_id: str | None,
+    queue_name: str | None = None,
+    worker_pool: str | None = None,
 ) -> dict[str, Any]:
     registry = _registry(os_root)
     with queue_backend_mutation_guard(os_root, EXECUTION_FABRIC_MODE):
@@ -3057,14 +3072,17 @@ def _prepare_execution_fabric_dispatch(
                 candidate_state = state_queue.get(conn, item_id)
             else:
                 now_value = state_db.utc_now_iso()
+                queue_filter = "AND queue_name = ?" if queue_name else ""
+                pool_filter = "AND worker_pool = ?" if worker_pool else ""
                 row = conn.execute(
                     """
                     SELECT id FROM run_queue
                     WHERE status = 'queued' AND (due_at IS NULL OR due_at <= ?)
+                    """ + queue_filter + pool_filter + """
                     ORDER BY priority DESC, (due_at IS NULL) ASC, due_at, created_at, id
                     LIMIT 1
                     """,
-                    (now_value,),
+                    (now_value, *((queue_name,) if queue_name else ()), *((worker_pool,) if worker_pool else ())),
                 ).fetchone()
                 candidate_state = state_queue.get(conn, str(row["id"])) if row is not None else None
             if candidate_state is None:

@@ -1008,6 +1008,35 @@ def test_runtime_dispatch_claims_and_completes_in_execution_fabric(
     assert queue_mode_status(root)["metrics"]["live_worker_count"] == 0
 
 
+def test_runtime_dispatch_queue_filter_keeps_other_queues_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _root(tmp_path)
+    registry_path = root / "harness/shared_factory/00-control-plane/runtime-registry.yml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["execution_targets"] = [{"id": "script", "status": "active"}]
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        fabric.configure_queue(conn, "codex", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "codex_workers", queue_name="codex", max_workers=1, max_concurrency=1)
+        fabric.configure_queue(conn, "non_llm", max_concurrency=1)
+        fabric.configure_worker_pool(conn, "non_llm_workers", queue_name="non_llm", max_workers=1, max_concurrency=1)
+    finally:
+        conn.close()
+    for item_id, queue_name, worker_pool in (("codex-item", "codex", "codex_workers"), ("other-item", "non_llm", "non_llm_workers")):
+        runtime_ops.append_run_queue_item(root, {"id": item_id, "kind": "manual", "status": "queued", "approval_state": "not_required", "execution_target": "script", "command": "true", "queue_name": queue_name, "worker_pool": worker_pool})
+    monkeypatch.setattr(runtime_ops, "_run_local_script", lambda *_args, **_kwargs: {"supported": True, "ok": True, "command": "true", "errors": [], "warnings": [], "external_effect": "test command executed"})
+    result = runtime_ops.runtime_run_next(root, dry_run=False, queue_name="codex", worker_pool="codex_workers")
+    assert result["queue_item"]["id"] == "codex-item"
+    conn = db.connect(db.default_db_path(root))
+    try:
+        assert state_queue.get(conn, "other-item")["status"] == "queued"
+    finally:
+        conn.close()
+
+
 def test_runtime_dispatch_retries_transient_failures_and_honors_nested_policy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

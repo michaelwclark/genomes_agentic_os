@@ -342,8 +342,21 @@ def handle_runtime_work(args: argparse.Namespace) -> int:
                 "local/degraded worker mode supports max concurrency 1; use remote transport for a shared worker pool"
             )
         results = []
+        queue_pools = {
+            str(queue["id"]): str(queue["worker_pool"])
+            for queue in fabric["queues"]
+            if queue.get("enabled")
+        }
         while max_tasks is None or len(results) < max_tasks:
-            result = runtime_run_next(args.root, dry_run=False)
+            requested_queue = queues[len(results) % len(queues)]
+            result = runtime_run_next(
+                args.root,
+                dry_run=False,
+                queue_name=requested_queue,
+                worker_pool=queue_pools[requested_queue],
+            )
+            result["requested_queue"] = requested_queue
+            result["selected_queue"] = (result.get("queue_item") or {}).get("queue_name")
             results.append(result)
             if result.get("status") == "idle":
                 break
