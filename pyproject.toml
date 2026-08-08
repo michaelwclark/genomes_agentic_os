@@ -17,6 +17,9 @@ dependencies = [
 # Installed by CI and by anyone using pip: `pip install -e '.[dev]'`.
 # Keep in sync with the uv-facing `[dependency-groups] dev` below.
 [project.optional-dependencies]
+mongodb = [
+  "pymongo>=4.10,<5",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=7.0,<8",
