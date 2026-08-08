@@ -765,12 +765,23 @@ def record_investigation_evidence(
         asserted = {str(item).strip().casefold() for item in prerequisites_satisfied if str(item).strip()}
         missing_prerequisites: list[str] = []
         version = _read_json(run_dir / "deployed-version.json")
+        version_source = next(
+            (item for item in manifest.get("sources") or [] if item.get("id") == "deployed-version"),
+            {},
+        )
         for prerequisite in match.get("prerequisites") or []:
             text = str(prerequisite).strip()
             normalized = text.casefold()
             automatic = False
             if "deployed" in normalized and "version" in normalized:
-                automatic = version.get("status") == "resolved"
+                # The source policy is conditional: environment-scoped runs
+                # require the exact resolved deployed-version receipt, while
+                # non-environment runs must explicitly disposition that
+                # conditional source as not applicable before source-code can
+                # be recorded.
+                automatic = version.get("status") == "resolved" or (
+                    not state.get("environment") and version_source.get("status") == "not_applicable"
+                )
             elif normalized in {"environment identity", "environment"}:
                 automatic = bool(state.get("environment"))
             elif normalized in {"tenant identity", "tenant/schema resolution"}:
