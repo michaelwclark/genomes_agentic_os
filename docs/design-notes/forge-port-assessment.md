@@ -4,6 +4,19 @@ Status: assessment complete (2026-07-13 night run). Source evidence: comparative
 `losmon` FORGE (file plane + `src/data/forge*` modules) versus this repository's runtime,
 events, automations, and run-log subsystems, plus the installed-instance state inventory.
 
+## AGE-51 Decision Readback (2026-08-08)
+
+The workflow-DAG question remains intentionally deferred. The six earlier port items
+(event ledger, trace reconciliation, lease outbox, declarative preconditions, generalized
+review queue, and context-builder enforcement) are prerequisites for a trustworthy
+convergence decision. The existing folder-plus-runbook workflow surface has not been
+shown to have reached its documented ceiling, so this issue produces no DAG executor
+implementation or rollout. Re-open the evaluation after those prerequisites have
+terminal evidence and attach a bounded comparison using current runtime measurements.
+
+Owner: Agentic OS architecture owner. Source of truth: this assessment and the linked
+Linear AGE-51 issue. Freshness: verify when any prerequisite reaches terminal state.
+
 ## Why This Document Exists
 
 FORGE is losmon's event-driven, multi-agent SDLC engine. It solves the same problem family
