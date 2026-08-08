@@ -230,6 +230,8 @@ def test_path_resolution_hashes_a_registered_worktree_not_the_primary_checkout(
     worktree_rules = worktree / "AGENTS.md"
     worktree_rules.write_text("# worktree rules\n", encoding="utf-8")
     patch_plane_resolution(monkeypatch, module)
+    common_dir = primary_checkout / ".git"
+    monkeypatch.setattr(module, "git_worktree_common_dir", lambda _checkout: common_dir)
 
     resolution = module.resolve(
         argparse.Namespace(
@@ -252,6 +254,105 @@ def test_path_resolution_hashes_a_registered_worktree_not_the_primary_checkout(
             "sha256": hashlib.sha256(worktree_rules.read_bytes()).hexdigest(),
         }
     ]
+
+
+def test_path_resolution_preserves_a_project_visible_external_worktree_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    root = tmp_path / "os"
+    primary_checkout = tmp_path / "primary-checkout"
+    external_worktree = tmp_path / "external-worktrees" / "feature-123"
+    primary_checkout.mkdir()
+    (external_worktree / "src").mkdir(parents=True)
+    external_rules = external_worktree / "AGENTS.md"
+    external_rules.write_text("# external worktree rules\n", encoding="utf-8")
+    profile = write_profile(
+        root,
+        "domains/acme/02-projects/payments/config/development.yml",
+        {"root": str(primary_checkout), "rule_surfaces": {"globs": ["AGENTS.md"]}},
+    )
+    visible_worktree = profile.parent.parent / "worktrees" / "feature-123"
+    visible_worktree.parent.mkdir()
+    visible_worktree.symlink_to(external_worktree, target_is_directory=True)
+    patch_plane_resolution(monkeypatch, module)
+    common_dir = primary_checkout / ".git"
+    monkeypatch.setattr(module, "git_worktree_common_dir", lambda _checkout: common_dir)
+
+    resolution = module.resolve(
+        argparse.Namespace(
+            root=str(root),
+            path=str(visible_worktree / "src"),
+            domain=None,
+            project=None,
+            repository=None,
+            overlay=[],
+            strict_source_rules=True,
+            detail="compact",
+        )
+    )
+
+    assert resolution["source_rules"]["checkout"] == str(external_worktree)
+    assert resolution["source_rules"]["files"][0]["absolute_path"] == str(external_rules)
+
+
+def test_registered_worktree_must_belong_to_the_selected_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    primary_checkout = tmp_path / "primary-checkout"
+    worktree = tmp_path / "project" / "worktrees" / "feature-123"
+    primary_checkout.mkdir()
+    worktree.mkdir(parents=True)
+    expected_common_dir = primary_checkout / ".git"
+    other_common_dir = tmp_path / "other-checkout" / ".git"
+
+    def common_dir_for(checkout: Path) -> Path:
+        return expected_common_dir if checkout == primary_checkout else other_common_dir
+
+    monkeypatch.setattr(module, "git_worktree_common_dir", common_dir_for)
+
+    with pytest.raises(module.Blocker, match="does not belong to selected repository"):
+        module.verify_selected_worktree(worktree, {"id": "source", "root": str(primary_checkout)})
+
+
+def test_repository_selection_cannot_disagree_with_path_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    root = tmp_path / "os"
+    source_checkout = tmp_path / "source-checkout"
+    docs_checkout = tmp_path / "docs-checkout"
+    (source_checkout / "src").mkdir(parents=True)
+    (docs_checkout / "src").mkdir(parents=True)
+    (source_checkout / "AGENTS.md").write_text("# source\n", encoding="utf-8")
+    (docs_checkout / "AGENTS.md").write_text("# docs\n", encoding="utf-8")
+    write_profile(
+        root,
+        "domains/acme/02-projects/payments/config/development.yml",
+        {
+            "catalog": [
+                {"id": "source", "root": str(source_checkout)},
+                {"id": "docs", "root": str(docs_checkout)},
+            ],
+            "rule_surfaces": {"globs": ["AGENTS.md"], "required": True},
+        },
+    )
+    patch_plane_resolution(monkeypatch, module)
+
+    with pytest.raises(module.Blocker, match="selected repository source does not own --path"):
+        module.resolve(
+            argparse.Namespace(
+                root=str(root),
+                path=str(docs_checkout / "src"),
+                domain=None,
+                project=None,
+                repository="source",
+                overlay=[],
+                strict_source_rules=True,
+                detail="compact",
+            )
+        )
 
 
 def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path: Path) -> None:

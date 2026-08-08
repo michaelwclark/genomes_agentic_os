@@ -507,6 +507,10 @@ It recognizes only canonical project profiles:
 
 When `--path` targets a registered worktree, source-rule hashing uses that
 worktree rather than silently substituting the configured primary checkout.
+Project-visible external worktree links are matched before symlink resolution
+and must share the selected repository's Git common directory. In a
+multi-repository project, `--repository` and `--path` must identify the same
+checkout; a mismatch is a blocker rather than a misleading policy receipt.
 The executable fails closed (exit 2) for missing profiles, missing required
 source rules, alias profiles, or an inventory that exceeds the reviewed safety
 limit; it never emits a partial effective-policy fingerprint.
