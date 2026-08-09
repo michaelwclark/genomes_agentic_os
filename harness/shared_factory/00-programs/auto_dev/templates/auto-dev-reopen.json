@@ -19,6 +19,15 @@
   "finished_autodev_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
   "health_receipt": "artifacts/auto-dev-health/evidence.json",
   "health_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "context": {
+    "mode": "carried",
+    "prior_content_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "selected_content_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "touched_paths": ["los/services/vendors/rule_engine.py"],
+    "subjects": ["rules-engine"],
+    "rulebook_ids": ["applicabledocuments"],
+    "rules_engine_status": "insufficient-evidence"
+  },
   "active_packet": "/absolute/path/to/work-items/02-active/example-123-reopen",
   "decision": "preserve finished history and provision fresh resources",
   "created_at": "2026-01-01T00:00:00Z"

@@ -57,6 +57,19 @@ uses `project work-item set ... --state finished --health-relocation`, which
 updates state-bearing metadata without appending to the packet-local worklog or
 next-action files covered by the pre-cleanup manifest.
 
+Reopen retains the finished packet's frozen context selection by default. To
+change a Rules Engine route, make that authority explicit and durable:
+
+```bash
+agentic-os auto-dev reopen --state <finished-packet-or-autodev.json> \
+  --run-id <new-run-id> --reason "<new evidence requires a reselect>" --stage qa \
+  --reselect-context --touched-path <repo-relative-path> \
+  --subject rulebook --rulebook-id <exact-rulebook-key> --root <os-root> --apply
+```
+
+The replacement is valid only through the normal fail-closed context resolver;
+the reopen receipt records both the prior and selected context hashes.
+
 This command does not enable a schedule or provide a host-wide/all-resource mode. A
 future automation may call the same item state and evidence contract without
 owning a second lifecycle.

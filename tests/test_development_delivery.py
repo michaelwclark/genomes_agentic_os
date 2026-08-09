@@ -119,6 +119,47 @@ def _project(root: Path, repo: Path, *, canonical: bool = True) -> Path:
     return project
 
 
+def _context_kit_policy(root: Path) -> None:
+    """Install two selector dimensions that merge into one frozen kit."""
+
+    source_root = root / "harness" / "investigation-config" / "sources"
+    source_root.mkdir(parents=True, exist_ok=True)
+    common = """\
+schema_version: 1
+id: rules-engine-kit
+kind: source
+title: Rules Engine kit
+priority: 18
+authority:
+  class: snapshot-backed test evidence
+freshness:
+  mode: fixture
+requirements:
+  kit: contract.yml
+---
+"""
+    (source_root / "caller.md").write_text(
+        "---\n"
+        + common.replace(
+            "authority:",
+            "applies_to:\n  domains: [acme]\n  projects: [app]\n"
+            "  touched_paths: [src/rules_engine.py]\nauthority:",
+        )
+        + "\n# Caller context\n\nLoad the caller kit.\n",
+        encoding="utf-8",
+    )
+    (source_root / "rulebook.md").write_text(
+        "---\n"
+        + common.replace(
+            "authority:",
+            "applies_to:\n  domains: [acme]\n  projects: [app]\n"
+            "  subjects: [rulebook]\nauthority:",
+        )
+        + "\n# Rulebook context\n\nLoad the rulebook kit.\n",
+        encoding="utf-8",
+    )
+
+
 def _repository(tmp_path: Path) -> tuple[Path, str]:
     remote = tmp_path / "remote.git"
     _git("init", "--bare", str(remote))
@@ -1406,6 +1447,7 @@ def test_ci_deferral_uses_frozen_selected_repository_override(
     repo, base_sha = _repository(tmp_path)
     root = tmp_path / "os"
     project = _project(root, repo)
+    _context_kit_policy(root)
     profile_path = project / "config" / "development.yml"
     profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
     profile["validation"]["ci_fallback_on_environment_failure"] = base_allows
@@ -2029,6 +2071,264 @@ def test_start_creates_one_linked_auto_dev_projection_and_policy_planes(
     assert projection["stages"]["review_self"]["command"] == "/auto-dev-review-self"
     assert projection["stages"]["review_others"]["command"] == "/auto-dev-review-others"
     assert not (Path(task["work_item"]) / "artifacts" / "auto-dev" / "state.json").exists()
+
+
+def test_rules_engine_context_selection_is_frozen_through_delivery_and_qa_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _context_kit_policy(root)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": "cc-rules",
+            "path": "/tmp/cc-rules",
+            "branch": "feature/cc-rules",
+            "base_sha": base_sha,
+        },
+    )
+
+    run = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-RULES"],
+        run_id="rules-context",
+        touched_paths=["src/rules_engine.py", "src/rules_engine.py"],
+        subjects=["rulebook", "rulebook"],
+        auto_dev_mode="everything",
+        goal="delivery_complete",
+        apply=True,
+    )
+    task = TaskState(Path(run["tasks"][0]["state_ref"])).read()
+    frozen = json.loads(Path(task["policy_receipt"]).read_text(encoding="utf-8"))
+    context = frozen["context_selection"]
+
+    assert context["selection"]["touched_paths"] == ["src/rules_engine.py"]
+    assert context["selection"]["subjects"] == ["rulebook"]
+    assert len(context["selection"]["selected_documents"]) == 2
+    assert [document["id"] for document in context["context_documents"]] == [
+        "rules-engine-kit"
+    ]
+    assert len(context["context_documents"][0]["source_refs"]) == 2
+    assert task["context_selection"] == context
+
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert projection["delivery"]["context_selection"] == context
+    refs = auto_dev._auto_dev_packet_config_refs(task)
+    assert {row["kind"] for row in refs} >= {"context_policy:rules-engine-kit"}
+    context_policy_refs = {
+        row["ref"]: row["sha256"]
+        for row in refs
+        if row["kind"] == "context_policy:rules-engine-kit"
+    }
+    assert set(context_policy_refs) == set(context["context_documents"][0]["source_refs"])
+    assert context_policy_refs == {
+        row["source_ref"]: row["sha256"]
+        for row in context["selection"]["selected_documents"]
+    }
+
+    # A resume with different invocation input does not replace a frozen kit.
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-RULES"],
+        run_id="rules-context",
+        touched_paths=["src/unrelated.py"],
+        apply=True,
+    )
+    assert resumed["context_selection"] == context
+    assert resumed["policy_drift"]["behavior"] == "continue_with_run_snapshot"
+
+
+def test_loaded_frozen_rules_engine_context_requires_available_known_findings() -> None:
+    source_ref = "harness/investigation-config/sources/rules-engine.md"
+    artifacts = [
+        {
+            "name": name,
+            "ref": f"evidence/kits/applicable-documents/{name}",
+            "sha256": character * 64,
+        }
+        for name, character in zip(
+            ["contract.yml", "dictionary.yml", "checks.yml", "coverage.yml", "redundancy.yml"],
+            "abcde",
+            strict=True,
+        )
+    ]
+    kit = {
+        "id": "applicable-documents-v1",
+        "rulebook": "ApplicableDocuments",
+        "root_ref": "evidence/kits/applicable-documents",
+        "artifacts": artifacts,
+    }
+    kit["content_sha256"] = delivery._json_sha256(kit)
+    context = {
+        "schema": "rules-engine-frozen-context/v1",
+        "status": "loaded",
+        "source_refs": [source_ref],
+        "selected_rulebook_ids": ["applicabledocuments"],
+        "catalog": {"status": "available"},
+        "kit": kit,
+        "snapshot": {"status": "usable"},
+        "known_findings": {
+            "status": "available",
+            "ref": "evidence/findings.json",
+            "sha256": "f" * 64,
+            "count": 0,
+            "by_severity": {},
+            "items": [],
+        },
+        "reason_codes": [],
+    }
+    context["content_sha256"] = delivery._json_sha256(context)
+    delivery._validate_frozen_rules_engine_context(context, document_refs={source_ref})
+
+    for status in ("not-declared", "unavailable"):
+        candidate = json.loads(json.dumps(context))
+        candidate["known_findings"] = {"status": status}
+        candidate["content_sha256"] = delivery._json_sha256(
+            {key: value for key, value in candidate.items() if key != "content_sha256"}
+        )
+        with pytest.raises(DevelopmentDeliveryError, match="loaded Rules Engine kit"):
+            delivery._validate_frozen_rules_engine_context(
+                candidate, document_refs={source_ref}
+            )
+
+
+def test_develop_cli_exposes_frozen_context_kit_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, _ = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _context_kit_policy(root)
+
+    assert main(
+        [
+            "develop",
+            "start",
+            "acme",
+            "app",
+            "CC-CLI",
+            "--touched-path",
+            "src/rules_engine.py",
+            "--subject",
+            "rulebook",
+            "--root",
+            str(root),
+            "--json",
+        ]
+    ) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["context_selection"]["selection"]["touched_paths"] == [
+        "src/rules_engine.py"
+    ]
+    assert plan["context_selection"]["selection"]["subjects"] == ["rulebook"]
+
+
+def test_reopen_context_requires_explicit_reselect_and_records_lineage() -> None:
+    prior = {
+        "schema": "development-context-selection/v1",
+        "trigger": "ticket-comment",
+        "output_type": "planning-evidence",
+        "policy_fingerprint": "a" * 64,
+        "selection": {
+            "touched_paths": ["src/rules_engine.py"],
+            "subjects": ["rulebook"],
+            "rulebook_ids": [],
+            "selected_documents": [],
+        },
+        "context_documents": [],
+    }
+    prior["content_sha256"] = delivery._json_sha256(prior)
+
+    carried, mode = delivery._reopen_context_plan(
+        prior,
+        reselect_context=False,
+        touched_paths=[],
+        subjects=[],
+        rulebook_ids=[],
+    )
+    assert mode == "carried"
+    assert carried == prior
+    provenance = delivery._reopen_context_provenance(
+        mode=mode,
+        prior=prior,
+        selected=carried,
+    )
+    assert provenance["touched_paths"] == ["src/rules_engine.py"]
+    assert provenance["subjects"] == ["rulebook"]
+
+    with pytest.raises(DevelopmentDeliveryError, match="--reselect-context"):
+        delivery._reopen_context_plan(
+            prior,
+            reselect_context=False,
+            touched_paths=["src/other.py"],
+            subjects=[],
+            rulebook_ids=[],
+        )
+    selected, selected_mode = delivery._reopen_context_plan(
+        prior,
+        reselect_context=True,
+        touched_paths=["src/other.py"],
+        subjects=[],
+        rulebook_ids=[],
+    )
+    assert selected is None
+    assert selected_mode == "reselected"
+
+
+@pytest.mark.parametrize("action", ["readiness", "qa"])
+def test_auto_dev_routes_freeze_rules_engine_context_selection(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    _project(root, repo)
+    _context_kit_policy(root)
+    monkeypatch.setattr(
+        delivery,
+        "create_isolated_worktree",
+        lambda **kwargs: {
+            "name": f"cc-{action}",
+            "path": f"/tmp/cc-{action}",
+            "branch": f"feature/cc-{action}",
+            "base_sha": base_sha,
+        },
+    )
+
+    assert main(
+        [
+            "auto-dev",
+            action,
+            "acme",
+            "app",
+            f"CC-{action.upper()}",
+            "--touched-path",
+            "src/rules_engine.py",
+            "--subject",
+            "rulebook",
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    task = TaskState(Path(result["tasks"][0]["state_ref"])).read()
+    selection = task["context_selection"]
+    assert selection["selection"]["touched_paths"] == ["src/rules_engine.py"]
+    assert selection["selection"]["subjects"] == ["rulebook"]
+    projection = read_auto_dev_state(task["autodev_path"])
+    assert projection["requested_stage"] == action
+    assert projection["delivery"]["context_selection"] == selection
 
 
 def test_start_registers_exact_managed_runtime_from_project_profile(
@@ -3681,12 +3981,15 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
         "app",
         ["CC-54"],
         run_id="health-finished-packet",
+        touched_paths=["src/rules_engine.py"],
+        subjects=["rulebook"],
         auto_dev_mode="everything",
         goal="delivery_complete",
         apply=True,
     )
     task_path = Path(run["tasks"][0]["state_ref"])
     task = TaskState(task_path)
+    original_context_selection = task.read()["context_selection"]
     work_item = Path(task.read()["work_item"])
     reviewed_head = "a" * 40
     pull_request = "github:acme/app#54"
@@ -4593,6 +4896,24 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
         "create_isolated_worktree",
         provision_reopened_worktree,
     )
+    assert main(
+        [
+            "auto-dev",
+            "reopen",
+            "--state",
+            str(finished),
+            "--run-id",
+            "cc-54-context-without-reselect",
+            "--reason",
+            "Attempted selector replacement without an explicit reselect.",
+            "--touched-path",
+            "src/other.py",
+            "--root",
+            str(root),
+            "--json",
+        ]
+    ) == 2
+    assert "--reselect-context" in capsys.readouterr().err
     reopen_args = [
         "auto-dev",
         "reopen",
@@ -4646,12 +4967,22 @@ def test_auto_dev_health_audits_then_relinks_finished_packet(
     assert reopen_receipt["health_sha256"] == hashlib.sha256(
         (finished / reopen_receipt["health_receipt"]).read_bytes()
     ).hexdigest()
+    assert reopen_receipt["context"]["mode"] == "carried"
+    assert reopen_receipt["context"]["prior_content_sha256"] == original_context_selection[
+        "content_sha256"
+    ]
+    assert reopen_receipt["context"]["selected_content_sha256"] == original_context_selection[
+        "content_sha256"
+    ]
+    assert reopen_receipt["context"]["touched_paths"] == ["src/rules_engine.py"]
+    assert reopen_receipt["context"]["subjects"] == ["rulebook"]
     reopened_task = TaskState(
         Path(reopened["delivery"]["tasks"][0]["state_ref"])
     ).read()
     assert Path(reopened_task["work_item"]) == active_packet
     assert reopened_task["worktree"]["name"] == "cc-54-qa-reopen"
     assert reopened_task["runtime"]["ownership"] == "not_managed"
+    assert reopened_task["context_selection"] == original_context_selection
     assert {
         path.relative_to(finished).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in finished.rglob("*")

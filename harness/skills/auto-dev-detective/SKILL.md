@@ -19,11 +19,21 @@ authority and freshness.
 
 ```bash
 agentic-os detective resolve --trigger <bug|qa-failure|ticket-comment|log-entry|alert|incident|question> \
-  --domain <domain> --project <project> --environment <environment> --explain --json
+  --domain <domain> --project <project> --environment <environment> \
+  --touched-path <repo-relative-path> --subject <semantic-subject> \
+  --rulebook-id <exact-rulebook-key> --explain --json
 ```
 
 The source order is root → domain → project → invocation overlay. Same-id files
 compose; narrower packs may add tools and authority but cannot weaken safety.
+
+For LOS Rules Engine callers or rulebooks, pass every known changed
+repository-relative path and `--subject rules-engine` or `--subject rulebook`.
+Pass `--rulebook-id <exact-key>` when one rulebook must be resolved. A selector
+match is only a candidate: the resolution pins concrete five-file artifact
+hashes and compact snapshot/finding evidence only when the declared local
+catalog and evidence are usable. Otherwise it emits `kit-unavailable` or
+`insufficient-evidence`; it is never a reason to query or mutate live rules.
 
 ## Start one run
 
@@ -33,6 +43,8 @@ folder, then start one idempotent packet:
 ```bash
 agentic-os detective start --input <signal.yml> --trigger <trigger> \
   --domain <domain> --project <project> --environment <env> --tenant <tenant> \
+  --touched-path <repo-relative-path> --subject <semantic-subject> \
+  --rulebook-id <exact-rulebook-key> \
   --run-id <stable-id> --json
 ```
 

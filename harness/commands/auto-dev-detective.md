@@ -16,7 +16,8 @@ entries, alerts, incidents, suspected causes, RCA work, or questions such as
 
 ```bash
 agentic-os detective resolve --trigger <trigger> --domain <domain> \
-  --project <project> --environment <env> --explain
+  --project <project> --environment <env> --touched-path <repo-relative-path> \
+  --subject rulebook --rulebook-id <exact-rulebook-key> --explain
 agentic-os detective start --input <signal.yml> --trigger <trigger> \
   --domain <domain> --project <project> --environment <env> --tenant <tenant>
 agentic-os detective record-version --run-dir <run> \
@@ -34,6 +35,15 @@ agentic-os detective render --run-dir <run> --provider <provider> \
 
 Investigation is read-only. A conclusion does not authorize a fix, deployment,
 configuration/data mutation, or external artifact write.
+
+For LOS Rules Engine work, `--touched-path`/`--subject` selects a policy
+candidate and `--rulebook-id` identifies the only catalog entry that may be
+loaded. The frozen result names and hashes all five concrete kit artifacts only
+when their v1 identity/entity/readiness headers agree, local snapshot coverage
+is usable, and a compact known-findings receipt is available (including an
+empty verified list). Otherwise it records
+`kit-unavailable` or `insufficient-evidence` with compact freshness/coverage
+provenance.
 
 The version receipt must use `investigation-version-authority/v1`, match the
 run's environment, tenant, source, and policy authority class, and contain the

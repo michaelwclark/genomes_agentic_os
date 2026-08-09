@@ -136,6 +136,9 @@ def handle_launch(args: argparse.Namespace) -> int:
         repository_id=args.repository,
         base_branch=args.base_branch,
         policy_overlays=_overlays(args.policy_overlay),
+        touched_paths=args.touched_path or [],
+        subjects=args.subject or [],
+        rulebook_ids=args.rulebook_id or [],
         auto_dev_mode=mode,
         requested_stage=requested_stage,
         goal=None if mode in {"default", "everything"} else requested_stage,
@@ -218,6 +221,10 @@ def handle_reopen(args: argparse.Namespace) -> int:
         requested_stage=args.stage,
         repository_id=args.repository,
         base_branch=args.base_branch,
+        touched_paths=args.touched_path or [],
+        subjects=args.subject or [],
+        rulebook_ids=args.rulebook_id or [],
+        reselect_context=args.reselect_context,
         apply=args.apply,
     )
     _print(result, json_output=args.json)
@@ -245,6 +252,21 @@ def _launch_parser(subparsers, action: str, help_text: str) -> None:
         "--policy-overlay",
         action="append",
         help="Invocation policy addendum as PLANE=PATH; repeatable.",
+    )
+    parser.add_argument(
+        "--touched-path",
+        action="append",
+        help="Normalized repository-relative changed path for frozen context-kit selection; repeatable.",
+    )
+    parser.add_argument(
+        "--subject",
+        action="append",
+        help="Declared semantic work subject for frozen context-kit selection; repeatable.",
+    )
+    parser.add_argument(
+        "--rulebook-id",
+        action="append",
+        help="Exact Rules Engine rulebook identity for concrete catalog-kit selection; repeatable.",
     )
     apply_help = (
         "Resume the selected existing work item; this action never creates a replacement packet or worktree."
@@ -325,6 +347,31 @@ def register(subparsers) -> None:
     reopen.add_argument("--stage", choices=("develop", "qa"), default="qa")
     reopen.add_argument("--repository", help="Repository id for a multi-repository project.")
     reopen.add_argument("--base-branch", help="Ticket/release-authoritative base branch.")
+    reopen.add_argument(
+        "--reselect-context",
+        "--reselect-rules-engine-context",
+        dest="reselect_context",
+        action="store_true",
+        help=(
+            "Explicitly replace the prior frozen context using the supplied selectors; "
+            "the reopen receipt records both prior and new context hashes."
+        ),
+    )
+    reopen.add_argument(
+        "--touched-path",
+        action="append",
+        help="New repository-relative selector path; requires --reselect-context.",
+    )
+    reopen.add_argument(
+        "--subject",
+        action="append",
+        help="New semantic selector subject; requires --reselect-context.",
+    )
+    reopen.add_argument(
+        "--rulebook-id",
+        action="append",
+        help="Exact Rules Engine rulebook identity for a reselect; requires --reselect-context.",
+    )
     reopen.add_argument(
         "--apply",
         action="store_true",
