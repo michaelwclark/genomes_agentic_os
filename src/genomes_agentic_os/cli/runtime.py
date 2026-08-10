@@ -307,6 +307,9 @@ def handle_runtime_work(args: argparse.Namespace) -> int:
     queues = args.queue or [
         str(queue["id"]) for queue in fabric["queues"] if queue.get("enabled")
     ]
+    queues = list(dict.fromkeys(queues))
+    if not queues:
+        raise ValueError("no enabled queues are configured for runtime work")
     configured_concurrency, configured_heartbeat = _configured_worker_defaults(
         args.root,
         queues,
@@ -347,8 +350,18 @@ def handle_runtime_work(args: argparse.Namespace) -> int:
             for queue in fabric["queues"]
             if queue.get("enabled")
         }
-        while max_tasks is None or len(results) < max_tasks:
-            requested_queue = queues[len(results) % len(queues)]
+        unknown_queues = [queue for queue in queues if queue not in queue_pools]
+        if unknown_queues:
+            raise ValueError(
+                "runtime work requested disabled or unknown queues: "
+                + ", ".join(unknown_queues)
+            )
+        completed_tasks = 0
+        idle_queues: set[str] = set()
+        queue_index = 0
+        while max_tasks is None or completed_tasks < max_tasks:
+            requested_queue = queues[queue_index]
+            queue_index = (queue_index + 1) % len(queues)
             result = runtime_run_next(
                 args.root,
                 dry_run=False,
@@ -359,7 +372,12 @@ def handle_runtime_work(args: argparse.Namespace) -> int:
             result["selected_queue"] = (result.get("queue_item") or {}).get("queue_name")
             results.append(result)
             if result.get("status") == "idle":
-                break
+                idle_queues.add(requested_queue)
+                if len(idle_queues) == len(queues):
+                    break
+                continue
+            idle_queues.clear()
+            completed_tasks += 1
         _print_structured(
             {
                 "status": "stopped-local-degraded",
