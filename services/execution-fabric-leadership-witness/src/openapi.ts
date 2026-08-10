@@ -162,7 +162,7 @@ export const openApiDocument = {
         additionalProperties: false,
         required: ["actor", "reason", "approvalReference", "maintenanceWindow"],
         properties: {
-          actor: { type: "string", pattern: "^[a-zA-Z0-9._-]{1,128}$" },
+          actor: { type: "string", pattern: "^[a-zA-Z0-9._:-]{1,128}$" },
           reason: { type: "string", minLength: 1, maxLength: 2048 },
           approvalReference: { type: "string", minLength: 1, maxLength: 512 },
           maintenanceWindow: {

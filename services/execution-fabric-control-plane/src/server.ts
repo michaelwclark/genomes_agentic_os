@@ -119,7 +119,13 @@ function policyOverrideObservation(input: {
     },
     affected: { kind: "policy_rotation", id: input.rotationId },
     runbook: { ref: "installers/execution-fabric/bin/rotate-policy.sh" },
-    observedAt: new Date().toISOString(),
+    // A resumed rotation reuses its signed override envelope.  Keep the
+    // pre-commit observation canonical so the reliability ledger can return
+    // its idempotent receipt before the policy-reload ledger is replayed.
+    observedAt:
+      input.phase === "invoked"
+        ? input.override.maintenanceWindow.startsAt
+        : new Date().toISOString(),
   };
 }
 
@@ -733,6 +739,7 @@ export function buildServer(
       }),
       before.fabricEpoch,
     );
+    let reloadApplied = false;
     try {
       const result = await fabric.reloadPolicy({
         rotationId: input.rotationId,
@@ -741,6 +748,7 @@ export function buildServer(
         expectedCandidateFingerprint: input.expectedCandidateFingerprint,
         operatorOverride: input.operatorOverride,
       });
+      reloadApplied = true;
       const after = await fabric.ledger.systemSnapshot();
       const outcome = await options.reliability.ingestExternalObservation(
         policyOverrideObservation({
@@ -755,20 +763,27 @@ export function buildServer(
       );
       return { ...result, alerts: { invocation, outcome } };
     } catch (error) {
-      const errorSummary =
-        error instanceof Error ? error.message : "unknown policy override failure";
-      await options.reliability.ingestExternalObservation(
-        policyOverrideObservation({
-          rotationId: input.rotationId,
-          override: input.operatorOverride,
-          phase: "failed",
-          fabricEpoch: before.fabricEpoch,
-          expectedCurrentFingerprint: input.expectedCurrentFingerprint,
-          expectedCandidateFingerprint: input.expectedCandidateFingerprint,
-          errorSummary,
-        }),
-        before.fabricEpoch,
-      );
+      if (!reloadApplied) {
+        const errorSummary =
+          error instanceof Error ? error.message : "unknown policy override failure";
+        try {
+          await options.reliability.ingestExternalObservation(
+            policyOverrideObservation({
+              rotationId: input.rotationId,
+              override: input.operatorOverride,
+              phase: "failed",
+              fabricEpoch: before.fabricEpoch,
+              expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+              expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+              errorSummary,
+            }),
+            before.fabricEpoch,
+          );
+        } catch {
+          // The critical invocation alert is already durable.  Preserve the
+          // reload failure rather than masking it with a secondary alert error.
+        }
+      }
       throw error;
     }
   });

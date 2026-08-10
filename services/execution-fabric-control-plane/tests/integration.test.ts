@@ -401,6 +401,57 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     expect(acknowledgedAlarms.rows).toEqual([{ status: "acknowledged" }]);
   });
 
+  it("replays a signed policy-override invocation but fences a changed envelope", async () => {
+    const store = new PostgresReliabilityStore(pool, "integration-host");
+    const rotationId = randomUUID();
+    const operatorOverride = {
+      actor: "operator:primary",
+      reason: "resume a pre-commit policy reload",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    const observation = {
+      source: "control-plane-policy-override",
+      incidentKey: `policy-rotation:${rotationId}:invoked`,
+      revision: 1,
+      active: true,
+      severity: "critical" as const,
+      code: "standalone_policy_override_invoked",
+      summary:
+        "Standalone policy override invoked; signed maintenance authorization is being checked.",
+      evidence: {
+        rotationId,
+        ...operatorOverride,
+        expectedCurrentFingerprint: "a".repeat(64),
+        expectedCandidateFingerprint: "b".repeat(64),
+        fabricEpoch: 1,
+      },
+      affected: { kind: "policy_rotation", id: rotationId },
+      runbook: { ref: "installers/execution-fabric/bin/rotate-policy.sh" },
+      observedAt: operatorOverride.maintenanceWindow.startsAt,
+    };
+    const first = await store.ingestExternalObservation(observation, 1);
+    const retry = await store.ingestExternalObservation(observation, 1);
+    expect(first).toMatchObject({ admitted: true, alarmDerived: true });
+    expect(retry).toMatchObject({
+      admitted: false,
+      idempotent: true,
+      finding: { id: first.finding.id },
+    });
+    await expect(
+      store.ingestExternalObservation(
+        {
+          ...observation,
+          evidence: { ...observation.evidence, reason: "different signed reason" },
+        },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
   it("enforces queue depth and provider concurrency transactionally", async () => {
     const namespace = `policy-${randomUUID()}`;
     const task = (idempotencyKey: string) => ({
