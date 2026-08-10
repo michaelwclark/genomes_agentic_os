@@ -1139,7 +1139,7 @@ def _resolve_development_context_selection(
 
     Development Delivery remains the lifecycle owner.  Investigation contracts
     are used here only as a deterministic, read-only context selector, so a
-    selected LOS Rules Engine evidence is frozen once and reused by Readiness,
+    selected Rules Engine evidence is frozen once and reused by Readiness,
     implementation, review, and QA instead of being rediscovered per stage.
     """
 
