@@ -78,6 +78,7 @@ function fixture(
     durabilityReady?: boolean;
     degraded?: boolean;
     standalone?: boolean;
+    standalonePolicyEnabled?: boolean;
     standalonePolicyHost?: string;
   } = {},
 ) {
@@ -163,7 +164,7 @@ function fixture(
         allow_scheduler: false,
       }),
       standalonePolicy: () => ({
-        enabled: options.standalone === true,
+        enabled: options.standalonePolicyEnabled ?? options.standalone === true,
         host_id: options.standalonePolicyHost ?? "bigmac",
       }),
     },
@@ -386,6 +387,106 @@ describe("leadership fencing", () => {
         candidateDigest: "b".repeat(64),
       }),
     ).toThrow(/only by an opted-in standalone primary/);
+    guard.stop();
+  });
+
+  it("fails closed when standalone policy opt-in is disabled or names another host", async () => {
+    for (const options of [
+      { standalone: true, standalonePolicyEnabled: false },
+      { standalone: true, standalonePolicyHost: "genomesbox" },
+    ]) {
+      const { guard } = fixture(options);
+      await guard.start();
+      (guard as unknown as { configDigest: () => string }).configDigest = () =>
+        "b".repeat(64);
+
+      expect(() =>
+        guard.authorizePolicyRotation({
+          rotationId: "00000000-0000-4000-8000-000000000001",
+          preparationToken: preparationToken(),
+          expectedCurrentDigest: digest,
+          candidateDigest: "b".repeat(64),
+        }),
+      ).toThrow(/exact canonical policy opt-in/);
+      guard.stop();
+    }
+  });
+
+  it("fails closed on every standalone drift safety fence", async () => {
+    const cases: Array<{
+      options: Parameters<typeof fixture>[0];
+      expectedCurrentDigest?: string;
+      message: RegExp;
+    }> = [
+      {
+        options: { standalone: true, durabilityReady: true },
+        message: /verified local PostgreSQL durability/,
+      },
+      {
+        options: { standalone: true, persistedHold: true, durabilityReady: false },
+        message: /recovery hold remains active/,
+      },
+      {
+        options: { standalone: true, degraded: true, durabilityReady: false },
+        message: /exact canonical policy opt-in/,
+      },
+      {
+        options: { standalone: true, durabilityReady: false },
+        expectedCurrentDigest: "c".repeat(64),
+        message: /signed witness proof does not match/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { guard } = fixture(testCase.options);
+      await guard.start();
+      (guard as unknown as { configDigest: () => string }).configDigest = () =>
+        "b".repeat(64);
+
+      expect(() =>
+        guard.authorizePolicyRotation({
+          rotationId: "00000000-0000-4000-8000-000000000001",
+          preparationToken: preparationToken(),
+          expectedCurrentDigest: testCase.expectedCurrentDigest ?? digest,
+          candidateDigest: "b".repeat(64),
+        }),
+      ).toThrow(testCase.message);
+      guard.stop();
+    }
+  });
+
+  it("fails closed when the standalone leader proof expires before reload", async () => {
+    const { guard, advance } = fixture({ standalone: true, durabilityReady: false });
+    await guard.start();
+    (guard as unknown as { configDigest: () => string }).configDigest = () =>
+      "b".repeat(64);
+    advance(61);
+
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toThrow(/proof expired before policy reload/);
+    guard.stop();
+  });
+
+  it("binds standalone drift authorization to the on-disk candidate digest", async () => {
+    const { guard } = fixture({ standalone: true, durabilityReady: false });
+    await guard.start();
+    (guard as unknown as { configDigest: () => string }).configDigest = () =>
+      "c".repeat(64);
+
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+      }),
+    ).toThrow(/on-disk policy digest does not match the signed candidate/);
     guard.stop();
   });
 

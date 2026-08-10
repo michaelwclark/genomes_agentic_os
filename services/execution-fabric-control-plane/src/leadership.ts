@@ -504,7 +504,10 @@ export class LeadershipGuard {
       // the signed reload is about to authorize.
       this.assertMutation();
     } else {
-      this.assertStandalonePolicyReload(input.expectedCurrentDigest);
+      this.assertStandalonePolicyReload(
+        input.expectedCurrentDigest,
+        input.candidateDigest,
+      );
     }
     const preparation = verifyConfigRotationPreparationToken(
       input.preparationToken,
@@ -536,7 +539,10 @@ export class LeadershipGuard {
    * from assertMutation so task, effect, scheduler, promotion, and HA paths
    * remain fenced whenever the mounted policy differs from the signed proof.
    */
-  private assertStandalonePolicyReload(expectedCurrentDigest: string): void {
+  private assertStandalonePolicyReload(
+    expectedCurrentDigest: string,
+    candidateDigest: string,
+  ): void {
     if (!this.proof) {
       throw new LeadershipFencedError("leadership is unverified");
     }
@@ -566,6 +572,11 @@ export class LeadershipGuard {
     if (this.proof.configDigest !== expectedCurrentDigest) {
       throw new LeadershipFencedError(
         "signed witness proof does not match the expected current policy digest",
+      );
+    }
+    if (this.configDigest() !== candidateDigest) {
+      throw new LeadershipFencedError(
+        "on-disk policy digest does not match the signed candidate policy digest",
       );
     }
     if (new Date(this.proof.expiresAt).getTime() <= this.now().getTime()) {
