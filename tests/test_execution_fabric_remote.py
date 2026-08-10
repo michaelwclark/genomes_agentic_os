@@ -1104,7 +1104,7 @@ def test_registered_team_pr_domain_worker_invokes_installed_safe_helper(
     result = execute_assignment(root, assignment)
 
     command = shlex.split(captured["command"])
-    assert command[:3] == ["python3", str(helper), "execute"]
+    assert command[:3] == [sys.executable, str(helper), "execute"]
     assert command[-1] == "--apply"
     assert command[command.index("--review-mode") + 1] == "review_no_merge"
     assert "auto-dev-review-others" not in captured["command"]

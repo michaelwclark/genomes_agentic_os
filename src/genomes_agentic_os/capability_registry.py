@@ -1019,6 +1019,12 @@ def skill_entries() -> list[dict[str, str]]:
             "source": "harness/skills/auto-dev-finalize/SKILL.md",
         },
         {
+            "id": "auto-dev-validate-production-release",
+            "name": "Auto-Dev Validate Production Release",
+            "description": "Validate exact release-candidate evidence and operational gates before merge.",
+            "source": "harness/skills/auto-dev-validate-production-release/SKILL.md",
+        },
+        {
             "id": "auto-dev-merge",
             "name": "Auto-Dev Merge",
             "description": "Execute the final authorized live merge from a PR-owner readiness receipt.",
