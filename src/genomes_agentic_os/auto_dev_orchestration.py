@@ -752,6 +752,59 @@ def _auto_dev_packet_config_refs(task: Mapping[str, Any]) -> list[dict[str, Any]
                             "sha256": None,
                         }
                     )
+    context_selection = task.get("context_selection")
+    if isinstance(context_selection, Mapping):
+        policy_hash = str(context_selection.get("content_sha256") or "").strip() or None
+        selection = (
+            context_selection.get("selection")
+            if isinstance(context_selection.get("selection"), Mapping)
+            else {}
+        )
+        source_hashes = {
+            str(item.get("source_ref")): str(item.get("sha256"))
+            for item in selection.get("selected_documents") or []
+            if isinstance(item, Mapping)
+            and str(item.get("source_ref") or "").strip()
+            and str(item.get("sha256") or "").strip()
+        }
+        context_documents = context_selection.get(
+            "context_documents", context_selection.get("kits", [])
+        )
+        for document in context_documents or []:
+            if not isinstance(document, Mapping):
+                continue
+            document_id = (
+                str(document.get("id") or "context-policy").strip()
+                or "context-policy"
+            )
+            for ref in document.get("source_refs") or []:
+                if str(ref).strip():
+                    refs.append(
+                        {
+                            "kind": f"context_policy:{document_id}",
+                            "ref": str(ref).strip(),
+                            "sha256": source_hashes.get(str(ref).strip(), policy_hash),
+                        }
+                    )
+        rules_engine_context = context_selection.get("rules_engine_context")
+        if isinstance(rules_engine_context, Mapping):
+            kit = rules_engine_context.get("kit")
+            if isinstance(kit, Mapping):
+                kit_id = str(kit.get("id") or "rules-engine-kit").strip() or "rules-engine-kit"
+                for artifact in kit.get("artifacts") or []:
+                    if not isinstance(artifact, Mapping):
+                        continue
+                    ref = str(artifact.get("ref") or "").strip()
+                    sha256 = str(artifact.get("sha256") or "").strip()
+                    name = str(artifact.get("name") or "artifact").strip() or "artifact"
+                    if ref and sha256:
+                        refs.append(
+                            {
+                                "kind": f"rules_engine_kit:{kit_id}:{name}",
+                                "ref": ref,
+                                "sha256": sha256,
+                            }
+                        )
     return refs
 
 
@@ -1026,6 +1079,7 @@ def sync_delivery_projection(task_state_path: str | Path) -> dict[str, Any] | No
                 "policy_receipt": task.get("policy_receipt"),
                 "policy_fingerprint": task.get("policy_fingerprint"),
                 "policy_sources": task.get("policy_sources") or {},
+                "context_selection": task.get("context_selection"),
                 "repository": task.get("repository"),
                 "worktree": task.get("worktree"),
                 "runtime": task.get("runtime"),

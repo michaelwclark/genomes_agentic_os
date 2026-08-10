@@ -10,6 +10,13 @@
 - Load the effective root/domain/project/invocation bundle for all five nested
   Auto-Dev policy planes before analysis, implementation, review, QA, PR
   creation, or artifact rendering.
+- An LOS Rules Engine caller path or rulebook subject selects a candidate, not
+  a loaded kit. Freeze and reuse concrete contract, dictionary, checks,
+  coverage, redundancy, snapshot, and finding evidence only after a declared
+  local catalog identifies one ready kit and all five files hash successfully.
+  An absent catalog/kit is `kit-unavailable`; an unmapped rulebook or incomplete
+  snapshot is `insufficient-evidence`, never a claim that a rule is unused or
+  healthy.
 - Object Library changes are authored in the registered source repository.
   Installed `lib/` is a replaceable projection and may not become a second
   source checkout or a place to bypass build, QA, Release, Deploy readback, or
@@ -17,6 +24,9 @@
 - Resolve deployed environment version before environment-scoped code analysis.
 - Read-only investigation does not authorize a mutation. External writes,
   merges, deployments, and production actions retain their own approval gates.
+- Rules Engine evidence is compatible with Project Rubicon only as a domain
+  evidence producer. It must not duplicate or mutate Control Plane lifecycle,
+  queue, lease, fence, cursor, idempotency, or raw tenant-data records.
 - A state change or external effect without a verified receipt is invalid.
 - Facts, inference, contradictions, hypotheses, confidence, and evidence gaps
   remain distinct in analysis and external artifacts.
