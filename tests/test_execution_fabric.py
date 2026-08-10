@@ -1040,6 +1040,48 @@ def test_runtime_dispatch_queue_filter_keeps_other_queues_queued(
         conn.close()
 
 
+def test_runtime_dispatch_blocks_divergent_pool_item_instead_of_reporting_idle(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    apply_queue_mode(root, "execution_fabric", dry_run=False)
+    conn = db.connect(db.default_db_path(root))
+    try:
+        state_queue.enqueue(
+            conn,
+            id="misrouted-item",
+            kind="manual",
+            approval_state="not_required",
+            execution_target="script",
+            queue_name="codex",
+            worker_pool="non_llm_workers",
+        )
+    finally:
+        conn.close()
+
+    result = runtime_ops.runtime_run_next(
+        root,
+        dry_run=False,
+        queue_name="codex",
+        worker_pool="codex_workers",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["queue_item"]["id"] == "misrouted-item"
+    assert result["blocked_reason"] == (
+        "queue item worker pool does not match the requested queue: "
+        "non_llm_workers != codex_workers"
+    )
+    conn = db.connect(db.default_db_path(root))
+    try:
+        item = state_queue.get(conn, "misrouted-item")
+        assert item is not None
+        assert item["status"] == "blocked"
+        assert item["blocked_reason"] == result["blocked_reason"]
+    finally:
+        conn.close()
+
+
 def _local_runtime_work_args(root: Path, queues: list[str]) -> argparse.Namespace:
     return argparse.Namespace(
         root=str(root),
