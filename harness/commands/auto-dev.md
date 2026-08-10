@@ -4,7 +4,8 @@ Route a request to `$auto-dev-everything` or one named Auto-Dev workflow. The
 same work item and `autodev.json` are reused throughout.
 
 Canonical order is Groom, Detective, Create Artifacts, Readiness, Develop,
-Document, PR Create, Review Self, Review Others, QA, Finalize, Merge, Release,
+Document, PR Create, Review Self, Review Others, QA, Finalize, Validate
+Production Release, Merge, Release,
 Deploy, Closeout, Health. Each stage remains manually callable, but project
 policy cannot reorder this lifecycle. Release Propagation is the lower-level
 compatibility recorder/alias for PR Create, not another Auto-Dev stage.

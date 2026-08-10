@@ -450,6 +450,39 @@ def _health_gate(
             if stage == "finalize":
                 structured.update(authority)
                 structured["readiness_decision"] = "ready_for_merge"
+            if stage == "validate_production_release":
+                structured.update(authority)
+                structured["readiness_decision"] = "ready_for_merge"
+                structured["check_matrix"] = [
+                    {"check_id": check_id, "status": "pass"}
+                    for check_id in (
+                        "jira_github_alignment",
+                        "exact_release_identity",
+                        "qa_per_jira",
+                        "whole_diff_policy",
+                        "risk_gates",
+                        "artifact_rollback_observability",
+                        "runtime_consumer_contracts",
+                    )
+                ]
+                structured["qa_runs"] = [{"jira": "fixture-health", "status": "pass"}]
+                structured["consumer_contract_matrix"] = [
+                    {"consumer_id": "fixture", "status": "pass", "evidence_ref": "fixture"}
+                ]
+                structured["tenant_impact_matrix"] = [
+                    {"tenant": "fixture", "status": "pass", "evidence_ref": "fixture"}
+                ]
+                structured["compatibility_strategy"] = "fixture compatibility"
+                structured["contract_test_runs"] = ["fixture"]
+                structured["runtime_readbacks"] = ["fixture"]
+                structured["independent_review"] = {
+                    "status": "pass",
+                    "reviewer": "test:independent",
+                }
+                structured["policy_fingerprint"] = "fixture-policy-fingerprint"
+                structured["provider_readbacks"] = [
+                    {"provider": "github", "status": "pass"}
+                ]
         payload: dict[str, object] = {
             "schema": AUTO_DEV_STAGE_EVIDENCE_SCHEMA,
             "stage": stage,
@@ -476,6 +509,7 @@ def _health_gate(
     record_stage("review_others", not_required=True)
     record_stage("qa", revision=subject_revision)
     record_stage("finalize", revision=subject_revision)
+    record_stage("validate_production_release", revision=subject_revision)
     record_stage("release", revision=terminal_revision)
     if runtime_collision:
         collision = (

@@ -52,7 +52,8 @@ Auto Dev
 
 The stage child-page sequence is the shared safe order: Groom,
 Detective, Create Artifacts, Readiness, Develop, Document, PR Create, Review
-Self, Review Others, QA, Finalize, Merge, Release, Deploy, Closeout, Health.
+Self, Review Others, QA, Finalize, Validate Production Release, Merge, Release,
+Deploy, Closeout, Health.
 Everything explains the orchestration across those pages; it is not a
 seventeenth stage. Project profiles define Default and Everything start/end
 boundaries and may supply a full alternative order that preserves required

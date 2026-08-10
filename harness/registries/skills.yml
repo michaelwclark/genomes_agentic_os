@@ -276,6 +276,12 @@ skills:
   description: Converge our tracker pull-request family and record immutable merge
     readiness without merging.
   source: harness/skills/auto-dev-finalize/SKILL.md
+- id: auto-dev-validate-production-release
+  name: Auto-Dev Validate Production Release
+  description: Validate the complete Jira/GitHub release family, exact revisions,
+    matching QA evidence, effective-policy diff review, risk gates, and release
+    operations before Auto-Dev Merge.
+  source: harness/skills/auto-dev-validate-production-release/SKILL.md
 - id: auto-dev-merge
   name: Auto-Dev Merge
   description: Execute the final authorized live merge from a pull-request-owner readiness receipt.

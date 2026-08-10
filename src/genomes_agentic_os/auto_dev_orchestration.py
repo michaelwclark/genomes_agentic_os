@@ -47,6 +47,7 @@ AUTO_DEV_STAGE_ORDER = (
     "review_others",
     "qa",
     "finalize",
+    "validate_production_release",
     "merge",
     "release",
     "deploy",
@@ -66,6 +67,7 @@ AUTO_DEV_STAGE_COMMANDS = {
     "review_others": "/auto-dev-review-others",
     "qa": "/auto-dev-qa",
     "finalize": "/auto-dev-finalize",
+    "validate_production_release": "/auto-dev-validate-production-release",
     "release": "/auto-dev-release",
     "merge": "/auto-dev-merge",
     "deploy": "/auto-dev-deploy",
@@ -82,9 +84,10 @@ NOT_REQUIRED_ALLOWED_STAGES = {
     "review_others",
     "qa",
     "finalize",
+    "validate_production_release",
     "release",
 }
-READINESS_AUTHORITY_STAGES = {"finalize", "review_others"}
+READINESS_AUTHORITY_STAGES = {"finalize", "review_others", "validate_production_release"}
 DELIVERY_MANAGED_STAGES = {
     "readiness",
     "develop",
@@ -94,12 +97,13 @@ DELIVERY_MANAGED_STAGES = {
     "deploy",
     "closeout",
 }
-REVIEW_REVISION_STAGES = {"qa", "review_others", "finalize"}
+REVIEW_REVISION_STAGES = {"qa", "review_others", "finalize", "validate_production_release"}
 TERMINAL_REVISION_STAGES = {"release"}
 REVISION_SENSITIVE_STAGES = REVIEW_REVISION_STAGES | TERMINAL_REVISION_STAGES | {"health"}
 STAGE_MINIMUM_DELIVERY_STATE = {
     "qa": "worktree_ready",
     "finalize": "ready_for_merge",
+    "validate_production_release": "ready_for_merge",
     "release": "merged",
     "health": "delivery_complete",
 }
@@ -178,7 +182,8 @@ REQUIRED_STAGE_PRECEDENCE = (
     ("review_self", "review_others"),
     ("review_others", "qa"),
     ("qa", "finalize"),
-    ("finalize", "merge"),
+    ("finalize", "validate_production_release"),
+    ("validate_production_release", "merge"),
     ("pr_create", "merge"),
     ("merge", "release"),
     ("release", "deploy"),
@@ -1770,15 +1775,100 @@ def _readiness_stage_authority(
             f"{stage} must bind provider, pull_request, repository, base_branch, "
             "subject_revision, and provider readback"
         )
-    expected_author_kind = "ours" if stage == "finalize" else "others"
+    expected_author_kind = (
+        "ours" if stage in {"finalize", "validate_production_release"} else "others"
+    )
     if authority["author_kind"] != expected_author_kind:
         raise AutoDevStateError(
             f"{stage} can authorize only author_kind={expected_author_kind}"
         )
-    if stage == "finalize" and structured.get("readiness_decision") != "ready_for_merge":
+    if (
+        stage in {"finalize", "validate_production_release"}
+        and structured.get("readiness_decision") != "ready_for_merge"
+    ):
         raise AutoDevStateError(
-            "finalize must record readiness_decision=ready_for_merge and cannot execute the merge"
+            f"{stage} must record readiness_decision=ready_for_merge and cannot execute the merge"
         )
+    if stage == "validate_production_release":
+        check_matrix = structured.get("check_matrix")
+        if not isinstance(check_matrix, list) or not check_matrix:
+            raise AutoDevStateError(
+                "validate_production_release requires a non-empty check_matrix"
+            )
+        check_ids = {
+            str(row.get("check_id") or "").strip()
+            for row in check_matrix
+            if isinstance(row, Mapping)
+        }
+        required_check_ids = {
+            "jira_github_alignment",
+            "exact_release_identity",
+            "qa_per_jira",
+            "whole_diff_policy",
+            "risk_gates",
+            "artifact_rollback_observability",
+            "runtime_consumer_contracts",
+        }
+        missing_check_ids = sorted(required_check_ids - check_ids)
+        if missing_check_ids:
+            raise AutoDevStateError(
+                "validate_production_release check_matrix is missing: "
+                + ", ".join(missing_check_ids)
+            )
+        if not isinstance(structured.get("qa_runs"), list) or not structured[
+            "qa_runs"
+        ]:
+            raise AutoDevStateError(
+                "validate_production_release requires qa_runs per Jira item"
+            )
+        for field, identity_field in (
+            ("consumer_contract_matrix", "consumer_id"),
+            ("tenant_impact_matrix", "tenant"),
+        ):
+            matrix = structured.get(field)
+            if not isinstance(matrix, list) or not matrix:
+                raise AutoDevStateError(
+                    f"validate_production_release requires non-empty {field}"
+                )
+            invalid = [
+                row
+                for row in matrix
+                if not isinstance(row, Mapping)
+                or row.get("status") != "pass"
+                or not str(row.get(identity_field) or "").strip()
+                or not str(row.get("evidence_ref") or "").strip()
+            ]
+            if invalid:
+                raise AutoDevStateError(
+                    f"validate_production_release requires passing, evidence-backed {field}"
+                )
+        if not str(structured.get("compatibility_strategy") or "").strip():
+            raise AutoDevStateError(
+                "validate_production_release requires compatibility_strategy"
+            )
+        for field in ("contract_test_runs", "runtime_readbacks"):
+            if not isinstance(structured.get(field), list) or not structured[field]:
+                raise AutoDevStateError(
+                    f"validate_production_release requires non-empty {field}"
+                )
+        independent_review = structured.get("independent_review")
+        if (
+            not isinstance(independent_review, Mapping)
+            or independent_review.get("status") != "pass"
+        ):
+            raise AutoDevStateError(
+                "validate_production_release requires an independent review receipt"
+            )
+        if not str(structured.get("policy_fingerprint") or "").strip():
+            raise AutoDevStateError(
+                "validate_production_release requires policy_fingerprint"
+            )
+        if not isinstance(structured.get("provider_readbacks"), list) or not structured[
+            "provider_readbacks"
+        ]:
+            raise AutoDevStateError(
+                "validate_production_release requires provider_readbacks"
+            )
     if stage == "review_others" and not (
         structured.get("review_mode") == "review_no_merge"
         and structured.get("review_result") == "clean"

@@ -65,11 +65,12 @@ runs next.
 | 9 | Review Others | `04-auto-dev-review-others.md` |
 | 10 | QA | `06-auto-dev-qa.md` |
 | 11 | Finalize | `07-auto-dev-finalize.md` |
-| 12 | Merge | `08-auto-dev-merge.md` |
-| 13 | Release | `10-auto-dev-release.md` |
-| 14 | Deploy | `09-auto-dev-deploy.md` |
-| 15 | Closeout | `17-auto-dev-closeout.md` |
-| 16 | Health | `14-auto-dev-health.md` |
+| 12 | Validate Production Release | `15-auto-dev-validate-production-release.md` |
+| 13 | Merge | `08-auto-dev-merge.md` |
+| 14 | Release | `10-auto-dev-release.md` |
+| 15 | Deploy | `09-auto-dev-deploy.md` |
+| 16 | Closeout | `17-auto-dev-closeout.md` |
+| 17 | Health | `14-auto-dev-health.md` |
 
 `16-auto-dev-release-propagation.md` is compatibility policy for the
 lower-level Development Delivery recorder and legacy command alias used by PR

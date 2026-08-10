@@ -337,11 +337,43 @@ def _record_standalone_stage(
     else:
         proof = _packet_proof(work_item, stage)
         structured = {"receipt_refs": [str(proof)]}
-        if stage in {"review_others", "finalize"}:
+        if stage in {"review_others", "finalize", "validate_production_release"}:
             assert pull_request is not None
             structured.update(_provider_authority(task, pull_request=pull_request))
             if stage == "finalize":
                 structured["readiness_decision"] = "ready_for_merge"
+            elif stage == "validate_production_release":
+                structured["readiness_decision"] = "ready_for_merge"
+                structured["check_matrix"] = [
+                    {"check_id": check_id, "status": "pass"}
+                    for check_id in (
+                        "jira_github_alignment",
+                        "exact_release_identity",
+                        "qa_per_jira",
+                        "whole_diff_policy",
+                        "risk_gates",
+                        "artifact_rollback_observability",
+                        "runtime_consumer_contracts",
+                    )
+                ]
+                structured["qa_runs"] = [{"jira": "fixture", "status": "pass"}]
+                structured["consumer_contract_matrix"] = [
+                    {"consumer_id": "fixture", "status": "pass", "evidence_ref": "fixture"}
+                ]
+                structured["tenant_impact_matrix"] = [
+                    {"tenant": "fixture", "status": "pass", "evidence_ref": "fixture"}
+                ]
+                structured["compatibility_strategy"] = "fixture compatibility"
+                structured["contract_test_runs"] = ["fixture"]
+                structured["runtime_readbacks"] = ["fixture"]
+                structured["independent_review"] = {
+                    "status": "pass",
+                    "reviewer": "test:independent",
+                }
+                structured["policy_fingerprint"] = "fixture-policy-fingerprint"
+                structured["provider_readbacks"] = [
+                    {"provider": "github", "status": "pass"}
+                ]
             else:
                 structured.update(
                     {"review_mode": "review_no_merge", "review_result": "clean"}
@@ -456,6 +488,12 @@ def _complete_pre_merge_auto_dev(
     _record_standalone_stage(
         task,
         "finalize",
+        revision=subject_revision,
+        pull_request=pull_request,
+    )
+    _record_standalone_stage(
+        task,
+        "validate_production_release",
         revision=subject_revision,
         pull_request=pull_request,
     )
@@ -3392,6 +3430,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         "review_others": "Review Others",
         "qa": "QA",
         "finalize": "Finalize",
+        "validate_production_release": "Validate Production Release",
         "merge": "Merge",
         "release": "Release",
         "deploy": "Deploy",
@@ -3469,7 +3508,7 @@ def test_shipped_auto_dev_knowledge_matches_canonical_stage_order() -> None:
         for line in auto_dev_skill.splitlines()
         if re.match(r"^\d+\. ", line)
     ]
-    assert len(numbered_skill_stages) == 16
+    assert len(numbered_skill_stages) == 17
     assert numbered_skill_stages[6] == "7. `$auto-dev-pr-create`"
     assert "$auto-dev-review-self" in numbered_skill_stages[7]
     assert numbered_skill_stages[9] == "10. `$auto-dev-qa`"

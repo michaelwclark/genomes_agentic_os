@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Fail closed when a runtime payload contract changes without consumer proof."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+SERIALIZER_PATH = re.compile(r"(^|/)(?:serializers?|requests?)(?:/|[^/]*\\.py$)", re.IGNORECASE)
+RUNTIME_PATH = re.compile(r"(^|/)(?:views?|api|services?|rules?|config(?:uration)?)(?:/|[^/]*\\.py$)", re.IGNORECASE)
+TEST_PATH = re.compile(r"(^|/)(?:tests?|test_)(?:/|[^/]*$)|(?:^|/)test_[^/]+\\.py$", re.IGNORECASE)
+CONTRACT_CHANGE = re.compile(r"canonical|payload|serializer|request[_. ]data|rule|jq|configuration|template|transform", re.IGNORECASE)
+CONSUMER_INVENTORY = re.compile(r"consumer.{0,40}(?:inventory|matrix)|(?:inventory|matrix).{0,40}consumer", re.IGNORECASE)
+TENANT_IMPACT = re.compile(r"tenant.{0,40}(?:impact|matrix)|(?:impact|matrix).{0,40}tenant", re.IGNORECASE)
+DUAL_SHAPE = re.compile(r"(?:legacy|flat|previous).{0,120}(?:canonical|nested|new)|(?:canonical|nested|new).{0,120}(?:legacy|flat|previous)", re.IGNORECASE | re.DOTALL)
+EVALUATOR = re.compile(r"ApplicableDocuments|(?:rule|jq|template).{0,80}(?:evaluate|eval|execute|apply)|(?:evaluate|eval|execute|apply).{0,80}(?:rule|jq|template)", re.IGNORECASE | re.DOTALL)
+COMPATIBILITY = re.compile(r"backward.{0,40}compatib|legacy.{0,40}(?:preserv|compatib)|coordinated.{0,40}migrat|migrat.{0,40}consumer", re.IGNORECASE | re.DOTALL)
+RESULT_ASSERTION = re.compile(r"assert.{0,100}(?:document|result|response|empty)|(?:document|result|response).{0,100}assert", re.IGNORECASE | re.DOTALL)
+
+
+def git(root: Path, *args: str) -> str:
+    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=False)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def ref_exists(root: Path, ref: str) -> bool:
+    return bool(git(root, "rev-parse", "--verify", ref).strip())
+
+
+def changed_files(root: Path, base: str) -> list[str]:
+    names: set[str] = set()
+    if ref_exists(root, base):
+        names.update(git(root, "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD").splitlines())
+    names.update(git(root, "diff", "--name-only", "--diff-filter=ACMR").splitlines())
+    names.update(git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR").splitlines())
+    names.update(git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+    return sorted(name.strip() for name in names if name.strip())
+
+
+def diff_text(root: Path, base: str) -> str:
+    chunks = [git(root, "diff"), git(root, "diff", "--cached")]
+    if ref_exists(root, base):
+        chunks.insert(0, git(root, "diff", f"{base}...HEAD"))
+    for name in git(root, "ls-files", "--others", "--exclude-standard").splitlines():
+        path = root / name.strip()
+        if path.is_file():
+            try:
+                chunks.append(path.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+    return "\n".join(chunks)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", default="origin/develop")
+    parser.add_argument("--root", default=".")
+    args = parser.parse_args(argv)
+    root = Path(args.root).expanduser().resolve()
+    if not git(root, "rev-parse", "--show-toplevel").strip():
+        print(f"RUNTIME CONTRACT GATE BLOCKED: not a git repository: {root}", file=sys.stderr)
+        return 2
+
+    files = changed_files(root, args.base)
+    text = diff_text(root, args.base)
+    risk_files = [name for name in files if not TEST_PATH.search(name) and (SERIALIZER_PATH.search(name) or (RUNTIME_PATH.search(name) and CONTRACT_CHANGE.search(text)))]
+    if not risk_files:
+        print("RUNTIME CONTRACT GATE PASS: no runtime payload contract change detected.")
+        return 0
+
+    missing: list[str] = []
+    if not [name for name in files if TEST_PATH.search(name)]:
+        missing.append("real consumer regression tests")
+    requirements = (
+        (CONSUMER_INVENTORY, "consumer inventory or consumer matrix evidence"),
+        (TENANT_IMPACT, "tenant impact matrix evidence"),
+        (DUAL_SHAPE, "legacy and canonical payload-shape evidence"),
+        (EVALUATOR, "actual rule/template/evaluator execution evidence"),
+        (COMPATIBILITY, "explicit compatibility preservation or coordinated consumer migration"),
+        (RESULT_ASSERTION, "business-result and empty-result assertion evidence"),
+    )
+    for pattern, label in requirements:
+        if not pattern.search(text):
+            missing.append(label)
+    if missing:
+        print("RUNTIME CONTRACT GATE BLOCKED: payload contract change lacks consumer proof.", file=sys.stderr)
+        print("Risk files:", file=sys.stderr)
+        for name in risk_files:
+            print(f"  - {name}", file=sys.stderr)
+        print("Missing:", file=sys.stderr)
+        for item in missing:
+            print(f"  - {item}", file=sys.stderr)
+        return 1
+    print("RUNTIME CONTRACT GATE PASS: consumer inventory, tenant impact, dual-shape evaluator, compatibility, and result evidence found.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

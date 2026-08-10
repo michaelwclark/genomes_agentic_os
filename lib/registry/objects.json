@@ -1,0 +1,51 @@
+{
+  "api_version": "agentic-os-library-registry/v1",
+  "content_sha256": "920e8cfff08c3a0e23a0e0dcd39434a7c9b6b3203bd15b773aa5a9bda73770ce",
+  "generated_at": "2026-08-06T16:36:38Z",
+  "object_count": 1,
+  "objects": [
+    {
+      "aliases": [
+        "harness/shared_factory/04-workflows/development_delivery/validate_production_release"
+      ],
+      "api_version": "agentic-os-library-object/v1",
+      "definition_sha256": "3e041b08516d73049f8775a84dd45a24fc8f8d9a574088167b83d47f81507f93",
+      "dependencies": [
+        "skill:root:auto-dev-create-artifacts",
+        "skill:root:auto-dev-finalize",
+        "skill:root:auto-dev-qa"
+      ],
+      "description": "Validate the complete Jira/GitHub release family, exact revisions, matching QA evidence, runtime consumer contracts, effective-policy diff review, risk gates, and release operations before Merge.",
+      "entrypoint": "workflow.md",
+      "id": "validate_production_release",
+      "kind": "workflow",
+      "manifest": "lib/workflows/root/validate_production_release/object.yml",
+      "object_id": "workflow:root:validate_production_release",
+      "owner": {
+        "id": "genomes_agentic_os",
+        "type": "package"
+      },
+      "path": "lib/workflows/root/validate_production_release",
+      "runtime": {
+        "legacy_roots": [],
+        "root": "runtime/objects/workflows/workflow/root/validate_production_release"
+      },
+      "scope": {
+        "domain": null,
+        "level": "root",
+        "project": null
+      },
+      "status": "active",
+      "tags": [
+        "auto-dev",
+        "production-validation",
+        "release",
+        "runtime-contracts"
+      ],
+      "title": "Auto-Dev Validate Production Release",
+      "validation": {
+        "commands": []
+      }
+    }
+  ]
+}

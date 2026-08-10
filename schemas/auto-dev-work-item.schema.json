@@ -28,7 +28,7 @@
     "mode": {"enum": ["default", "everything", "single_stage"]},
     "requested_stage": {
       "type": ["string", "null"],
-      "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]
+      "enum": [null, "groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"]
     },
     "subject_revision": {"type": ["string", "null"]},
     "terminal_revision": {"type": ["string", "null"]},
@@ -42,14 +42,14 @@
     },
     "stage_order": {
       "type": "array",
-      "items": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"]},
-      "minItems": 16,
-      "maxItems": 16,
+      "items": {"enum": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"]},
+      "minItems": 17,
+      "maxItems": 17,
       "uniqueItems": true
     },
     "stages": {
       "type": "object",
-      "required": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "merge", "release", "deploy", "closeout", "health"],
+      "required": ["groom", "detective", "create_artifacts", "readiness", "develop", "document", "pr_create", "review_self", "review_others", "qa", "finalize", "validate_production_release", "merge", "release", "deploy", "closeout", "health"],
       "properties": {
         "groom": {"$ref": "#/$defs/stage"},
         "detective": {"$ref": "#/$defs/stage"},
@@ -62,6 +62,7 @@
         "review_others": {"$ref": "#/$defs/stage"},
         "qa": {"$ref": "#/$defs/stage"},
         "finalize": {"$ref": "#/$defs/stage"},
+        "validate_production_release": {"$ref": "#/$defs/stage"},
         "merge": {"$ref": "#/$defs/stage"},
         "release": {"$ref": "#/$defs/stage"},
         "deploy": {"$ref": "#/$defs/stage"},

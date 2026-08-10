@@ -1,0 +1,30 @@
+api_version: agentic-os-library-object/v1
+kind: workflow
+id: validate_production_release
+title: Auto-Dev Validate Production Release
+description: Validate the complete Jira/GitHub release family, exact revisions, matching QA evidence, runtime consumer contracts, effective-policy diff review, risk gates, and release operations before Merge.
+status: active
+scope:
+  level: root
+  domain: null
+  project: null
+owner:
+  type: package
+  id: genomes_agentic_os
+entrypoint: workflow.md
+tags:
+- auto-dev
+- release
+- production-validation
+- runtime-contracts
+dependencies:
+- skill:root:auto-dev-create-artifacts
+- skill:root:auto-dev-finalize
+- skill:root:auto-dev-qa
+aliases:
+- harness/shared_factory/04-workflows/development_delivery/validate_production_release
+runtime:
+  root: runtime/objects/workflows/workflow/root/validate_production_release
+  legacy_roots: []
+validation:
+  commands: []
