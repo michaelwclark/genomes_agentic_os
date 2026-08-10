@@ -696,6 +696,9 @@ def test_policy_rotation_is_fenced_resumable_and_receipted() -> None:
     assert '.controlPlane.leadership.state=="active"' in script
     assert "policy-rotation-$rotation_id.receipt.json" in script
     assert "FABRIC_LEADERSHIP_ADMIN_TOKEN_FILE" in script
+    assert "FABRIC_POLICY_OVERRIDE_ACTOR" in script
+    assert "FABRIC_POLICY_OVERRIDE_REASON" in script
+    assert "operatorOverride" in script
     assert "converge-policy-roles.sh" in script
     convergence = (INSTALLERS / "bin" / "converge-policy-roles.sh").read_text(
         encoding="utf-8"
@@ -2567,3 +2570,5 @@ def test_standalone_primary_is_explicit_non_ha_and_uses_installed_canonical_moun
     assert 'FABRIC_WITNESS_MODE:-independent}" = standalone_primary' in rotation
     assert '.authorityMode=="standalone_primary"' in rotation
     assert "standalone-primary policy maintenance must run on its exact primary host" in rotation
+    assert "FABRIC_POLICY_OVERRIDE_WINDOW_START" in rotation
+    assert "FABRIC_POLICY_OVERRIDE_WINDOW_END" in rotation

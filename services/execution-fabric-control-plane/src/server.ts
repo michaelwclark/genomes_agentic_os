@@ -18,6 +18,8 @@ import {
   reliabilityObservationSchema,
   scheduleUpsertSchema,
   taskAdmissionSchema,
+  type PolicyReloadOperatorOverride,
+  type ReliabilityObservation,
   workerHeartbeatSchema,
   workerRegistrationSchema,
 } from "./contracts.js";
@@ -79,6 +81,46 @@ function authorized(actual: string | undefined, expected: string | undefined): b
     actualBuffer.length === expectedBuffer.length &&
     timingSafeEqual(actualBuffer, expectedBuffer)
   );
+}
+
+function policyOverrideObservation(input: {
+  rotationId: string;
+  override: PolicyReloadOperatorOverride;
+  phase: "invoked" | "succeeded" | "failed";
+  fabricEpoch: number;
+  expectedCurrentFingerprint: string;
+  expectedCandidateFingerprint: string;
+  errorSummary?: string;
+}): ReliabilityObservation {
+  const phaseSummary =
+    input.phase === "invoked"
+      ? "Standalone policy override invoked; signed maintenance authorization is being checked."
+      : input.phase === "succeeded"
+        ? "Standalone policy override committed; witness commit and control-plane readback are required."
+        : "Standalone policy override failed closed before a complete outcome could be confirmed.";
+  return {
+    source: "control-plane-policy-override",
+    incidentKey: `policy-rotation:${input.rotationId}:${input.phase}`,
+    revision: 1,
+    active: true,
+    severity: "critical",
+    code: `standalone_policy_override_${input.phase}`,
+    summary: phaseSummary,
+    evidence: {
+      rotationId: input.rotationId,
+      actor: input.override.actor,
+      reason: input.override.reason,
+      approvalReference: input.override.approvalReference,
+      maintenanceWindow: input.override.maintenanceWindow,
+      expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+      expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+      fabricEpoch: input.fabricEpoch,
+      ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
+    },
+    affected: { kind: "policy_rotation", id: input.rotationId },
+    runbook: { ref: "installers/execution-fabric/bin/rotate-policy.sh" },
+    observedAt: new Date().toISOString(),
+  };
 }
 
 function bearerToken(authorization: string | undefined): string | undefined {
@@ -665,7 +707,70 @@ export function buildServer(
     );
   });
   server.post("/api/v1/admin/config/reload", async (request) => {
-    return fabric.reloadPolicy(configReloadSchema.parse(request.body));
+    const input = configReloadSchema.parse(request.body);
+    if (!input.operatorOverride) {
+      return fabric.reloadPolicy({
+        rotationId: input.rotationId,
+        preparationToken: input.preparationToken,
+        expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+        expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+      });
+    }
+    if (!options.reliability) {
+      throw new FencedError(
+        "standalone policy override requires the durable reliability alert plane",
+      );
+    }
+    const before = await fabric.ledger.systemSnapshot();
+    const invocation = await options.reliability.ingestExternalObservation(
+      policyOverrideObservation({
+        rotationId: input.rotationId,
+        override: input.operatorOverride,
+        phase: "invoked",
+        fabricEpoch: before.fabricEpoch,
+        expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+        expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+      }),
+      before.fabricEpoch,
+    );
+    try {
+      const result = await fabric.reloadPolicy({
+        rotationId: input.rotationId,
+        preparationToken: input.preparationToken,
+        expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+        expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+        operatorOverride: input.operatorOverride,
+      });
+      const after = await fabric.ledger.systemSnapshot();
+      const outcome = await options.reliability.ingestExternalObservation(
+        policyOverrideObservation({
+          rotationId: input.rotationId,
+          override: input.operatorOverride,
+          phase: "succeeded",
+          fabricEpoch: after.fabricEpoch,
+          expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+          expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+        }),
+        after.fabricEpoch,
+      );
+      return { ...result, alerts: { invocation, outcome } };
+    } catch (error) {
+      const errorSummary =
+        error instanceof Error ? error.message : "unknown policy override failure";
+      await options.reliability.ingestExternalObservation(
+        policyOverrideObservation({
+          rotationId: input.rotationId,
+          override: input.operatorOverride,
+          phase: "failed",
+          fabricEpoch: before.fabricEpoch,
+          expectedCurrentFingerprint: input.expectedCurrentFingerprint,
+          expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+          errorSummary,
+        }),
+        before.fabricEpoch,
+      );
+      throw error;
+    }
   });
   server.put(
     "/api/v1/admin/schedules/:scheduleId",

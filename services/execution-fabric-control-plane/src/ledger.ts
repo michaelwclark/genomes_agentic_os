@@ -12,6 +12,7 @@ import type {
   ReconcileReceipt,
   TaskAdmission,
   TaskRecord,
+  PolicyReloadOperatorOverride,
   WorkerHeartbeat,
   WorkerRegistration,
   WorkerRegistrationReceipt,
@@ -176,7 +177,11 @@ export type ConfigReloadReceipt = {
   appliedFingerprint: string;
   fabricEpoch: number;
   hostId: string;
+  authorizedAt?: string;
   appliedAt: string;
+  decision: "standalone_policy_override_applied" | "policy_reload_applied";
+  recoveryAction: string;
+  operatorOverride?: PolicyReloadOperatorOverride;
 };
 
 export interface LedgerPort {
@@ -210,10 +215,12 @@ export interface LedgerPort {
   activatePolicyReload(input: {
     rotationId: string;
     preparationTokenHash: string;
+    authorizationIssuedAt?: string;
     authorizationExpiresAt: string;
     expectedEpoch: number;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
   }): Promise<ConfigReloadReceipt>;
   activateLeadership(input: LeadershipActivation): Promise<void>;
   ping(): Promise<void>;
@@ -1440,13 +1447,38 @@ export class PostgresLedger implements LedgerPort {
   async activatePolicyReload(input: {
     rotationId: string;
     preparationTokenHash: string;
+    authorizationIssuedAt?: string;
     authorizationExpiresAt: string;
     expectedEpoch: number;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
   }): Promise<ConfigReloadReceipt> {
     if (!this.hostId) {
       throw new FencedError("policy reload requires a stable control-plane host id");
+    }
+    if (input.operatorOverride) {
+      const startsAt = new Date(
+        input.operatorOverride.maintenanceWindow.startsAt,
+      ).getTime();
+      const endsAt = new Date(
+        input.operatorOverride.maintenanceWindow.endsAt,
+      ).getTime();
+      const authorizationExpiresAt = new Date(
+        input.authorizationExpiresAt,
+      ).getTime();
+      const now = Date.now();
+      if (
+        !Number.isFinite(startsAt) ||
+        !Number.isFinite(endsAt) ||
+        startsAt > now ||
+        endsAt <= now ||
+        authorizationExpiresAt > endsAt
+      ) {
+        throw new FencedError(
+          "standalone policy reload is outside its signed maintenance window",
+        );
+      }
     }
     const hostId = this.hostId;
     return this.transaction(async (client) => {
@@ -1463,10 +1495,21 @@ export class PostgresLedger implements LedgerPort {
         fabric_epoch: string | number;
         host_id: string;
         applied_at: string;
+        decision: ConfigReloadReceipt["decision"] | null;
+        recovery_action: string | null;
+        operator_id: string | null;
+        override_reason: string | null;
+        approval_reference: string | null;
+        maintenance_window_start: string | null;
+        maintenance_window_end: string | null;
+        authorization_issued_at: string | null;
       }>(
         `SELECT id,rotation_id,preparation_token_hash,
                 expected_current_fingerprint,expected_candidate_fingerprint,
-                applied_fingerprint,fabric_epoch,host_id,applied_at
+                applied_fingerprint,fabric_epoch,host_id,applied_at,decision,
+                recovery_action,operator_id,override_reason,approval_reference,
+                maintenance_window_start,maintenance_window_end,
+                authorization_issued_at
            FROM fabric_config_reload_receipts
           WHERE rotation_id=$1`,
         [input.rotationId],
@@ -1475,11 +1518,22 @@ export class PostgresLedger implements LedgerPort {
       if (prior) {
         if (
           prior.preparation_token_hash !== input.preparationTokenHash ||
+          (input.authorizationIssuedAt !== undefined &&
+            iso(prior.authorization_issued_at!) !== input.authorizationIssuedAt) ||
           Number(prior.fabric_epoch) !== input.expectedEpoch ||
           prior.expected_current_fingerprint !==
             input.expectedCurrentFingerprint ||
           prior.expected_candidate_fingerprint !==
-            input.expectedCandidateFingerprint
+            input.expectedCandidateFingerprint ||
+          (prior.operator_id === null) !== (input.operatorOverride === undefined) ||
+          (input.operatorOverride !== undefined &&
+            (prior.operator_id !== input.operatorOverride.actor ||
+              prior.override_reason !== input.operatorOverride.reason ||
+              prior.approval_reference !== input.operatorOverride.approvalReference ||
+              iso(prior.maintenance_window_start!) !==
+                input.operatorOverride.maintenanceWindow.startsAt ||
+              iso(prior.maintenance_window_end!) !==
+                input.operatorOverride.maintenanceWindow.endsAt))
         ) {
           throw new ConflictError(
             "configuration rotation id was already used by another request",
@@ -1496,7 +1550,35 @@ export class PostgresLedger implements LedgerPort {
           appliedFingerprint: prior.applied_fingerprint,
           fabricEpoch: Number(prior.fabric_epoch),
           hostId: prior.host_id,
+          ...(prior.authorization_issued_at
+            ? { authorizedAt: iso(prior.authorization_issued_at) }
+            : {}),
           appliedAt: iso(prior.applied_at),
+          decision:
+            prior.decision ??
+            (prior.operator_id
+              ? "standalone_policy_override_applied"
+              : "policy_reload_applied"),
+          recoveryAction:
+            prior.recovery_action ??
+            "verify witness commit or run rotate-policy.sh --resume",
+          ...(prior.operator_id &&
+          prior.override_reason &&
+          prior.approval_reference &&
+          prior.maintenance_window_start &&
+          prior.maintenance_window_end
+            ? {
+                operatorOverride: {
+                  actor: prior.operator_id,
+                  reason: prior.override_reason,
+                  approvalReference: prior.approval_reference,
+                  maintenanceWindow: {
+                    startsAt: iso(prior.maintenance_window_start),
+                    endsAt: iso(prior.maintenance_window_end),
+                  },
+                },
+              }
+            : {}),
         };
       }
       const state = await client.query<{
@@ -1543,6 +1625,11 @@ export class PostgresLedger implements LedgerPort {
       const receiptId = randomUUID();
       const appliedAt = new Date().toISOString();
       const fabricEpoch = input.expectedEpoch;
+      const decision: ConfigReloadReceipt["decision"] = input.operatorOverride
+        ? "standalone_policy_override_applied"
+        : "policy_reload_applied";
+      const recoveryAction =
+        "verify witness commit or run rotate-policy.sh --resume";
       const updated = await client.query(
         `UPDATE fabric_state SET policy_fingerprint=$1,updated_at=now()
          WHERE singleton=true
@@ -1551,6 +1638,11 @@ export class PostgresLedger implements LedgerPort {
            AND leader_lease_expires_at > clock_timestamp()
            AND clock_timestamp() < $4::timestamptz
            AND current_epoch=$5
+           AND (
+             $6::timestamptz IS NULL OR
+             (clock_timestamp() >= $6::timestamptz AND
+              clock_timestamp() < $7::timestamptz)
+           )
          RETURNING policy_fingerprint`,
         [
           input.expectedCandidateFingerprint,
@@ -1558,6 +1650,8 @@ export class PostgresLedger implements LedgerPort {
           hostId,
           input.authorizationExpiresAt,
           input.expectedEpoch,
+          input.operatorOverride?.maintenanceWindow.startsAt ?? null,
+          input.operatorOverride?.maintenanceWindow.endsAt ?? null,
         ],
       );
       if (updated.rowCount !== 1) {
@@ -1569,8 +1663,10 @@ export class PostgresLedger implements LedgerPort {
         `INSERT INTO fabric_config_reload_receipts(
            id,rotation_id,preparation_token_hash,
            expected_current_fingerprint,expected_candidate_fingerprint,
-           applied_fingerprint,fabric_epoch,host_id,applied_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+           applied_fingerprint,fabric_epoch,host_id,applied_at,decision,
+           recovery_action,operator_id,override_reason,approval_reference,
+           maintenance_window_start,maintenance_window_end,authorization_issued_at
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [
           receiptId,
           input.rotationId,
@@ -1581,6 +1677,14 @@ export class PostgresLedger implements LedgerPort {
           fabricEpoch,
           hostId,
           appliedAt,
+          decision,
+          recoveryAction,
+          input.operatorOverride?.actor ?? null,
+          input.operatorOverride?.reason ?? null,
+          input.operatorOverride?.approvalReference ?? null,
+          input.operatorOverride?.maintenanceWindow.startsAt ?? null,
+          input.operatorOverride?.maintenanceWindow.endsAt ?? null,
+          input.authorizationIssuedAt ?? null,
         ],
       );
       return {
@@ -1593,7 +1697,15 @@ export class PostgresLedger implements LedgerPort {
         appliedFingerprint: input.expectedCandidateFingerprint,
         fabricEpoch,
         hostId,
+        ...(input.authorizationIssuedAt
+          ? { authorizedAt: input.authorizationIssuedAt }
+          : {}),
         appliedAt,
+        decision,
+        recoveryAction,
+        ...(input.operatorOverride
+          ? { operatorOverride: input.operatorOverride }
+          : {}),
       };
     });
   }

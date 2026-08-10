@@ -12,6 +12,7 @@ import type {
   WorkerRegistrationReceipt,
   EffectAssignment,
   EffectClaim,
+  PolicyReloadOperatorOverride,
 } from "./contracts.js";
 import {
   evaluateRoleHealth,
@@ -217,6 +218,7 @@ export class ExecutionFabric {
     preparationToken: string;
     expectedCurrentFingerprint: string;
     expectedCandidateFingerprint: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
   }): Promise<Record<string, unknown>> {
     if (!this.leadership) {
       throw new ConflictError(
@@ -228,6 +230,9 @@ export class ExecutionFabric {
       preparationToken: input.preparationToken,
       expectedCurrentDigest: input.expectedCurrentFingerprint,
       candidateDigest: input.expectedCandidateFingerprint,
+      ...(input.operatorOverride
+        ? { operatorOverride: input.operatorOverride }
+        : {}),
     });
     const prepared = this.policy.prepareReload();
     if (prepared.previousFingerprint !== input.expectedCurrentFingerprint) {
@@ -247,10 +252,14 @@ export class ExecutionFabric {
       preparationTokenHash: createHash("sha256")
         .update(input.preparationToken)
         .digest("hex"),
+      authorizationIssuedAt: authorization.issuedAt,
       authorizationExpiresAt: authorization.expiresAt,
       expectedEpoch: authorization.expectedEpoch,
       expectedCurrentFingerprint: input.expectedCurrentFingerprint,
       expectedCandidateFingerprint: input.expectedCandidateFingerprint,
+      ...(authorization.operatorOverride
+        ? { operatorOverride: authorization.operatorOverride }
+        : {}),
     });
     const snapshot = this.policy.activatePrepared(prepared);
     return { ...snapshot, receipt, appliedFingerprint: snapshot.appliedFingerprint };

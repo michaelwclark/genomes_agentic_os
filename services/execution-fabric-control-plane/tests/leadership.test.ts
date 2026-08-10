@@ -12,6 +12,15 @@ const keys = generateKeyPairSync("ed25519");
 const privateKey = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const publicKey = keys.publicKey.export({ type: "spki", format: "pem" }).toString();
 const digest = "a".repeat(64);
+const standaloneOverride = {
+  actor: "operator-1",
+  reason: "restore fenced standalone policy reload",
+  approvalReference: "AGE-161",
+  maintenanceWindow: {
+    startsAt: "2026-07-24T19:59:00.000Z",
+    endsAt: "2026-07-24T20:05:00.000Z",
+  },
+};
 
 function token(
   leader: string,
@@ -47,6 +56,7 @@ function token(
 
 function preparationToken(
   expiresAt = "2026-07-24T20:01:00.000Z",
+  operatorOverride?: typeof standaloneOverride,
 ): string {
   const payload = Buffer.from(
     JSON.stringify({
@@ -58,6 +68,7 @@ function preparationToken(
       expectedEpoch: 2,
       expectedCurrentDigest: digest,
       candidateDigest: "b".repeat(64),
+      ...(operatorOverride ? { operatorOverride } : {}),
       issuedAt: "2026-07-24T20:00:00.000Z",
       expiresAt,
     }),
@@ -365,11 +376,54 @@ describe("leadership fencing", () => {
     expect(
       guard.authorizePolicyRotation({
         rotationId: "00000000-0000-4000-8000-000000000001",
-        preparationToken: preparationToken(),
+        preparationToken: preparationToken(undefined, standaloneOverride),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+        operatorOverride: standaloneOverride,
+      }),
+    ).toMatchObject({ candidateDigest: "b".repeat(64) });
+    guard.stop();
+  });
+
+  it("requires an exact signed operator override during standalone policy drift", async () => {
+    const { guard } = fixture({ standalone: true, durabilityReady: false });
+    await guard.start();
+    (guard as unknown as { configDigest: () => string }).configDigest = () =>
+      "b".repeat(64);
+
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(undefined, standaloneOverride),
         expectedCurrentDigest: digest,
         candidateDigest: "b".repeat(64),
       }),
-    ).toMatchObject({ candidateDigest: "b".repeat(64) });
+    ).toThrow(/requires a signed operator reason/);
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(undefined, standaloneOverride),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+        operatorOverride: { ...standaloneOverride, reason: "different reason" },
+      }),
+    ).toThrow(/does not match the signed preparation/);
+    const futureOverride = {
+      ...standaloneOverride,
+      maintenanceWindow: {
+        startsAt: "2026-07-24T20:02:00.000Z",
+        endsAt: "2026-07-24T20:05:00.000Z",
+      },
+    };
+    expect(() =>
+      guard.authorizePolicyRotation({
+        rotationId: "00000000-0000-4000-8000-000000000001",
+        preparationToken: preparationToken(undefined, futureOverride),
+        expectedCurrentDigest: digest,
+        candidateDigest: "b".repeat(64),
+        operatorOverride: futureOverride,
+      }),
+    ).toThrow(/outside its signed maintenance window/);
     guard.stop();
   });
 
@@ -382,9 +436,13 @@ describe("leadership fencing", () => {
     expect(() =>
       guard.authorizePolicyRotation({
         rotationId: "00000000-0000-4000-8000-000000000001",
-        preparationToken: preparationToken(),
+        preparationToken: preparationToken(
+          "2026-07-24T20:01:00.000Z",
+          standaloneOverride,
+        ),
         expectedCurrentDigest: digest,
         candidateDigest: "b".repeat(64),
+        operatorOverride: standaloneOverride,
       }),
     ).toThrow(/only by an opted-in standalone primary/);
     guard.stop();

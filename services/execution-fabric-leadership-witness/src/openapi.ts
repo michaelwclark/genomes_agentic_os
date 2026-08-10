@@ -150,6 +150,30 @@ export const openApiDocument = {
             pattern: "^[a-f0-9]{64}$",
             description: "Must differ from expectedCurrentDigest.",
           },
+          operatorOverride: {
+            allOf: [{ $ref: "#/components/schemas/ConfigDigestRotationOperatorOverride" }],
+            description:
+              "Required only for the explicit standalone-primary manual override; signed into the expiring preparation.",
+          },
+        },
+      },
+      ConfigDigestRotationOperatorOverride: {
+        type: "object",
+        additionalProperties: false,
+        required: ["actor", "reason", "approvalReference", "maintenanceWindow"],
+        properties: {
+          actor: { type: "string", pattern: "^[a-zA-Z0-9._-]{1,128}$" },
+          reason: { type: "string", minLength: 1, maxLength: 2048 },
+          approvalReference: { type: "string", minLength: 1, maxLength: 512 },
+          maintenanceWindow: {
+            type: "object",
+            additionalProperties: false,
+            required: ["startsAt", "endsAt"],
+            properties: {
+              startsAt: { type: "string", format: "date-time" },
+              endsAt: { type: "string", format: "date-time" },
+            },
+          },
         },
       },
       ConfigDigestRotationReceipt: {
@@ -188,6 +212,9 @@ export const openApiDocument = {
           configDigest: {
             type: "string",
             pattern: "^[a-f0-9]{64}$",
+          },
+          operatorOverride: {
+            $ref: "#/components/schemas/ConfigDigestRotationOperatorOverride",
           },
           candidateHosts: {
             type: "array",
@@ -248,6 +275,9 @@ export const openApiDocument = {
           candidateDigest: {
             type: "string",
             pattern: "^[a-f0-9]{64}$",
+          },
+          operatorOverride: {
+            $ref: "#/components/schemas/ConfigDigestRotationOperatorOverride",
           },
           candidateHosts: {
             type: "array",

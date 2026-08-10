@@ -42,6 +42,16 @@ const config: WitnessConfig = {
   maxDegradedPrimarySeconds: 3600,
 };
 
+const standaloneOperatorOverride = {
+  actor: "operator-1",
+  reason: "restore fenced standalone policy reload",
+  approvalReference: "AGE-161",
+  maintenanceWindow: {
+    startsAt: "2026-07-24T19:59:00.000Z",
+    endsAt: "2026-07-24T20:05:00.000Z",
+  },
+};
+
 function fixture() {
   let now = new Date("2026-07-24T20:00:00.000Z");
   let id = 0;
@@ -238,8 +248,13 @@ describe("leadership witness", () => {
       expectedEpoch: 1,
       expectedCurrentDigest: config.initialConfigDigest,
       candidateDigest,
+      operatorOverride: standaloneOperatorOverride,
     });
-    expect(preparation.candidateHosts).toEqual(["genomesbox"]);
+    expect(preparation).toMatchObject({
+      candidateHosts: ["genomesbox"],
+      operatorOverride: standaloneOperatorOverride,
+      expiresAt: "2026-07-24T20:05:00.000Z",
+    });
 
     await update({
       configDigest: candidateDigest,
@@ -256,11 +271,41 @@ describe("leadership witness", () => {
       previousConfigDigest: config.initialConfigDigest,
       configDigest: candidateDigest,
       candidateHosts: ["genomesbox"],
+      operatorOverride: standaloneOperatorOverride,
     });
     await expect(witness.status()).resolves.toMatchObject({
       authorityMode: "standalone_primary",
       configDigest: candidateDigest,
     });
+  });
+
+  it("rejects standalone rotation preparation without a current operator maintenance authorization", async () => {
+    const { witness, update } = standaloneFixture();
+    await witness.initialize();
+    const candidateDigest = "b".repeat(64);
+    await update({ policyCandidateDigest: candidateDigest });
+    const request = {
+      rotationId: "00000000-0000-4000-8000-000000000779",
+      expectedLeader: "genomesbox",
+      expectedEpoch: 1,
+      expectedCurrentDigest: config.initialConfigDigest,
+      candidateDigest,
+    };
+    await expect(
+      witness.prepareConfigDigestRotation(request),
+    ).rejects.toThrow(/requires an operator reason, approval reference, and maintenance window/);
+    await expect(
+      witness.prepareConfigDigestRotation({
+        ...request,
+        operatorOverride: {
+          ...standaloneOperatorOverride,
+          maintenanceWindow: {
+            startsAt: "2026-07-24T20:01:00.000Z",
+            endsAt: "2026-07-24T20:05:00.000Z",
+          },
+        },
+      }),
+    ).rejects.toThrow(/outside its maintenance window/);
   });
 
   it("aborts expired standalone maintenance only from fresh old-digest evidence", async () => {
@@ -274,6 +319,7 @@ describe("leadership witness", () => {
       expectedEpoch: 1,
       expectedCurrentDigest: config.initialConfigDigest,
       candidateDigest,
+      operatorOverride: standaloneOperatorOverride,
     });
 
     advance(config.planTtlSeconds + 1);

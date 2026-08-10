@@ -1,6 +1,7 @@
 import { createHash, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import type { PolicyReloadOperatorOverride } from "./contracts.js";
 import type { LedgerPort } from "./ledger.js";
 import type { PostgresReplicationSnapshot } from "./postgres-replication.js";
 import type { PostgresMutationDurabilitySnapshot } from "./postgres-replication.js";
@@ -37,6 +38,20 @@ const transferReceiptSchema = z.object({
   fenceToken: z.string().min(1),
 });
 
+const policyReloadOperatorOverrideSchema = z
+  .object({
+    actor: z.string().min(1).max(128).regex(/^[a-zA-Z0-9._:-]+$/),
+    reason: z.string().min(1).max(2048),
+    approvalReference: z.string().min(1).max(512),
+    maintenanceWindow: z
+      .object({
+        startsAt: z.string().datetime({ offset: true }),
+        endsAt: z.string().datetime({ offset: true }),
+      })
+      .strict(),
+  })
+  .strict();
+
 const configRotationPreparationProofSchema = z
   .object({
     v: z.literal(1),
@@ -47,6 +62,7 @@ const configRotationPreparationProofSchema = z
     expectedEpoch: z.number().int().min(1),
     expectedCurrentDigest: z.string().regex(/^[a-f0-9]{64}$/),
     candidateDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    operatorOverride: policyReloadOperatorOverrideSchema.optional(),
     issuedAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
   })
@@ -494,11 +510,13 @@ export class LeadershipGuard {
     preparationToken: string;
     expectedCurrentDigest: string;
     candidateDigest: string;
+    operatorOverride?: PolicyReloadOperatorOverride;
   }): ConfigRotationPreparationProof {
     if (!this.proof) {
       throw new LeadershipFencedError("leadership is unverified");
     }
-    if (this.configDigest() === this.proof.configDigest) {
+    const intentionalDrift = this.configDigest() !== this.proof.configDigest;
+    if (!intentionalDrift) {
       // The ordinary rotation path keeps the universal mutation guard. The
       // narrower path below exists only for the intentional disk drift that
       // the signed reload is about to authorize.
@@ -525,12 +543,65 @@ export class LeadershipGuard {
         "configuration rotation preparation is not bound to this leader, epoch, or digest transition",
       );
     }
+    if (intentionalDrift) {
+      this.assertStandalonePolicyOverride(
+        input.operatorOverride,
+        preparation.operatorOverride,
+        preparation.expiresAt,
+      );
+    } else if (input.operatorOverride || preparation.operatorOverride) {
+      throw new LeadershipFencedError(
+        "operator override is restricted to the standalone policy-drift reload path",
+      );
+    }
     if (new Date(preparation.expiresAt).getTime() <= this.now().getTime()) {
       throw new LeadershipFencedError(
         "configuration rotation preparation has expired",
       );
     }
     return preparation;
+  }
+
+  private assertStandalonePolicyOverride(
+    requested: PolicyReloadOperatorOverride | undefined,
+    prepared: PolicyReloadOperatorOverride | undefined,
+    authorizationExpiresAt: string,
+  ): void {
+    if (!requested || !prepared) {
+      throw new LeadershipFencedError(
+        "standalone policy reload requires a signed operator reason, approval reference, and maintenance window",
+      );
+    }
+    if (
+      requested.actor !== prepared.actor ||
+      requested.reason !== prepared.reason ||
+      requested.approvalReference !== prepared.approvalReference ||
+      requested.maintenanceWindow.startsAt !==
+        prepared.maintenanceWindow.startsAt ||
+      requested.maintenanceWindow.endsAt !== prepared.maintenanceWindow.endsAt
+    ) {
+      throw new LeadershipFencedError(
+        "operator override request does not match the signed preparation",
+      );
+    }
+    const now = this.now().getTime();
+    const startsAt = new Date(prepared.maintenanceWindow.startsAt).getTime();
+    const endsAt = new Date(prepared.maintenanceWindow.endsAt).getTime();
+    if (
+      !Number.isFinite(startsAt) ||
+      !Number.isFinite(endsAt) ||
+      startsAt > now ||
+      endsAt <= now
+    ) {
+      throw new LeadershipFencedError(
+        "standalone policy reload is outside its signed maintenance window",
+      );
+    }
+    if (new Date(authorizationExpiresAt).getTime() > endsAt) {
+      throw new LeadershipFencedError(
+        "standalone policy authorization outlives its maintenance window",
+      );
+    }
   }
 
   /**

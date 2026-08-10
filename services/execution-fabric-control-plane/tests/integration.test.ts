@@ -744,6 +744,105 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
     );
   });
 
+  it("persists a scoped standalone override receipt and rejects an expired maintenance window", async () => {
+    const currentFingerprint =
+      createTestPolicy().policy.snapshot().appliedFingerprint;
+    const candidateFingerprint = "c".repeat(64);
+    const leaderLedger = new PostgresLedger(pool, 45, "genomesbox");
+    await leaderLedger.activateLeadership({
+      clusterId: "test-fabric",
+      leaderHostId: "genomesbox",
+      fabricEpoch: 1,
+      receiptId: "standalone-override-epoch-1",
+      fenceDigest: "d".repeat(64),
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      recoveryHoldUntil: null,
+    });
+    const expiredOverride = {
+      actor: "operator-1",
+      reason: "expired standalone maintenance",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 60_000).toISOString(),
+        endsAt: new Date(Date.now() - 1_000).toISOString(),
+      },
+    };
+    await expect(
+      leaderLedger.activatePolicyReload({
+        rotationId: randomUUID(),
+        preparationTokenHash: "1".repeat(64),
+        authorizationExpiresAt: expiredOverride.maintenanceWindow.endsAt,
+        expectedEpoch: 1,
+        expectedCurrentFingerprint: currentFingerprint,
+        expectedCandidateFingerprint: candidateFingerprint,
+        operatorOverride: expiredOverride,
+      }),
+    ).rejects.toBeInstanceOf(FencedError);
+    expect((await leaderLedger.systemSnapshot()).databasePolicyFingerprint).toBe(
+      currentFingerprint,
+    );
+
+    const operatorOverride = {
+      actor: "operator-1",
+      reason: "restore fenced standalone policy reload",
+      approvalReference: "AGE-161",
+      maintenanceWindow: {
+        startsAt: new Date(Date.now() - 30_000).toISOString(),
+        endsAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+    const rotationId = randomUUID();
+    const authorizationIssuedAt = new Date(Date.now() - 5_000).toISOString();
+    const receipt = await leaderLedger.activatePolicyReload({
+      rotationId,
+      preparationTokenHash: "2".repeat(64),
+      authorizationIssuedAt,
+      authorizationExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+      expectedEpoch: 1,
+      expectedCurrentFingerprint: currentFingerprint,
+      expectedCandidateFingerprint: candidateFingerprint,
+      operatorOverride,
+    });
+    expect(receipt).toMatchObject({
+      decision: "standalone_policy_override_applied",
+      operatorOverride,
+      authorizedAt: authorizationIssuedAt,
+      expectedCurrentFingerprint: currentFingerprint,
+      appliedFingerprint: candidateFingerprint,
+    });
+    const persisted = await pool.query<{
+      operator_id: string;
+      override_reason: string;
+      approval_reference: string;
+      maintenance_window_start: string;
+      maintenance_window_end: string;
+      decision: string;
+      authorization_issued_at: string;
+    }>(
+      `SELECT operator_id,override_reason,approval_reference,
+              maintenance_window_start,maintenance_window_end,decision
+              ,authorization_issued_at
+         FROM fabric_config_reload_receipts
+        WHERE rotation_id=$1`,
+      [rotationId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      operator_id: operatorOverride.actor,
+      override_reason: operatorOverride.reason,
+      approval_reference: operatorOverride.approvalReference,
+      decision: "standalone_policy_override_applied",
+    });
+    expect(new Date(persisted.rows[0]!.maintenance_window_start).toISOString()).toBe(
+      operatorOverride.maintenanceWindow.startsAt,
+    );
+    expect(new Date(persisted.rows[0]!.maintenance_window_end).toISOString()).toBe(
+      operatorOverride.maintenanceWindow.endsAt,
+    );
+    expect(new Date(persisted.rows[0]!.authorization_issued_at).toISOString()).toBe(
+      authorizationIssuedAt,
+    );
+  });
+
   it("rejects a signed policy authorization that expires while its transaction waits", async () => {
     const currentFingerprint =
       createTestPolicy().policy.snapshot().appliedFingerprint;
