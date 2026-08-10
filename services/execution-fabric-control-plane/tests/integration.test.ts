@@ -313,7 +313,7 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
       `requeue:${admitted.task.id}`,
     );
 
-    expect(receipt.after).toMatchObject({
+    expect(receipt.after_state).toMatchObject({
       id: admitted.task.id,
       status: "queued",
       attempt_count: 3,
