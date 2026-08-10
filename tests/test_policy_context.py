@@ -43,6 +43,13 @@ def write_profile(
     return profile
 
 
+def write_worktree_registry(project: Path, entries: list[dict[str, object]]) -> Path:
+    registry = project / "worktrees" / "index.yml"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(json.dumps({"worktrees": entries}, indent=2) + "\n", encoding="utf-8")
+    return registry
+
+
 def resolved_plane(plane: str) -> dict[str, object]:
     return {
         "plane": plane,
@@ -230,6 +237,17 @@ def test_path_resolution_hashes_a_registered_worktree_not_the_primary_checkout(
     (worktree / ".git").write_text("gitdir: /tmp/feature-123\n", encoding="utf-8")
     worktree_rules = worktree / "AGENTS.md"
     worktree_rules.write_text("# worktree rules\n", encoding="utf-8")
+    write_worktree_registry(
+        profile.parent.parent,
+        [
+            {
+                "id": "feature-123",
+                "path": str(worktree),
+                "link": "worktrees/feature-123",
+                "status": "active",
+            }
+        ],
+    )
     patch_plane_resolution(monkeypatch, module)
     common_dir = primary_checkout / ".git"
     monkeypatch.setattr(module, "git_worktree_common_dir", lambda _checkout: common_dir)
@@ -276,6 +294,17 @@ def test_path_resolution_preserves_a_project_visible_external_worktree_link(
     visible_worktree = profile.parent.parent / "worktrees" / "feature-123"
     visible_worktree.parent.mkdir()
     visible_worktree.symlink_to(external_worktree, target_is_directory=True)
+    write_worktree_registry(
+        profile.parent.parent,
+        [
+            {
+                "id": "feature-123",
+                "path": str(external_worktree),
+                "link": "worktrees/feature-123",
+                "status": "active",
+            }
+        ],
+    )
     patch_plane_resolution(monkeypatch, module)
     common_dir = primary_checkout / ".git"
     monkeypatch.setattr(module, "git_worktree_common_dir", lambda _checkout: common_dir)
@@ -295,6 +324,40 @@ def test_path_resolution_preserves_a_project_visible_external_worktree_link(
 
     assert resolution["source_rules"]["checkout"] == str(external_worktree)
     assert resolution["source_rules"]["files"][0]["absolute_path"] == str(external_rules)
+
+
+def test_path_resolution_rejects_an_unregistered_same_repository_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    root = tmp_path / "os"
+    primary_checkout = tmp_path / "primary-checkout"
+    primary_checkout.mkdir()
+    profile = write_profile(
+        root,
+        "domains/acme/02-projects/payments/config/development.yml",
+        {"root": str(primary_checkout), "rule_surfaces": {"globs": ["AGENTS.md"]}},
+    )
+    worktree = profile.parent.parent / "worktrees" / "feature-123"
+    (worktree / "src").mkdir(parents=True)
+    (worktree / "AGENTS.md").write_text("# unregistered worktree rules\n", encoding="utf-8")
+    patch_plane_resolution(monkeypatch, module)
+    common_dir = primary_checkout / ".git"
+    monkeypatch.setattr(module, "git_worktree_common_dir", lambda _checkout: common_dir)
+
+    with pytest.raises(module.Blocker, match="is not registered"):
+        module.resolve(
+            argparse.Namespace(
+                root=str(root),
+                path=str(worktree / "src"),
+                domain=None,
+                project=None,
+                repository=None,
+                overlay=[],
+                strict_source_rules=True,
+                detail="compact",
+            )
+        )
 
 
 def test_registered_worktree_must_belong_to_the_selected_repository(
@@ -392,6 +455,7 @@ def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path
     (checkout / ".claude" / "rules" / "nested").mkdir(parents=True)
     (checkout / "AGENTS.md").write_text("# root\n", encoding="utf-8")
     (checkout / "nested" / "AGENTS.md").write_text("# nested\n", encoding="utf-8")
+    (checkout / ".claude" / "rules" / "guard.md").write_text("# direct guard\n", encoding="utf-8")
     (checkout / ".claude" / "rules" / "nested" / "guard.md").write_text(
         "# guard\n", encoding="utf-8"
     )
@@ -404,6 +468,7 @@ def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path
     assert {entry["source_ref"] for entry in rules["files"]} == {
         "AGENTS.md",
         "nested/AGENTS.md",
+        ".claude/rules/guard.md",
         ".claude/rules/nested/guard.md",
     }
 
@@ -416,6 +481,42 @@ def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path
         module.resolve_source_rules(
             {"root": str(overflow)}, module.rule_surface_config({}), strict=True
         )
+
+
+def test_direct_claude_rule_changes_the_effective_policy_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_policy_context()
+    root = tmp_path / "os"
+    checkout = tmp_path / "checkout"
+    direct_rule = checkout / ".claude" / "rules" / "guard.md"
+    direct_rule.parent.mkdir(parents=True)
+    direct_rule.write_text("# direct guard v1\n", encoding="utf-8")
+    write_profile(
+        root,
+        "domains/acme/02-projects/payments/config/development.yml",
+        {"root": str(checkout)},
+    )
+    patch_plane_resolution(monkeypatch, module)
+    args = argparse.Namespace(
+        root=str(root),
+        path=None,
+        domain="acme",
+        project="payments",
+        repository=None,
+        overlay=[],
+        strict_source_rules=True,
+        detail="compact",
+    )
+
+    first = module.resolve(args)
+    direct_rule.write_text("# direct guard v2\n", encoding="utf-8")
+    second = module.resolve(args)
+
+    assert ".claude/rules/guard.md" in {
+        entry["source_ref"] for entry in first["source_rules"]["files"]
+    }
+    assert first["effective_policy_fingerprint"] != second["effective_policy_fingerprint"]
 
 
 def test_git_worktree_common_dir_parsing_normalizes_real_worktree(tmp_path: Path) -> None:
