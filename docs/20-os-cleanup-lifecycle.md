@@ -162,6 +162,31 @@ Physical removal has no `--force`, Git metadata sweep, host-wide container-
 resource operation, all-resource selector, guessed identity, or shared-runtime
 path.
 
+## Merged-PR Host Event Proposals
+
+`genomes_agentic_os.host_events` defines the local durable contract used before
+any host-cleanup workflow is considered. A provider-read merge event records the
+repository, PR number, merge SHA, reviewed source-head SHA, merge timestamp,
+and provider readback. Its idempotency key is exactly
+`repository:pr_number:merge_sha`.
+
+Delivery is local and replay-safe: a consumer claims a short lease, then either
+acknowledges a durable proposal receipt or releases it for bounded retry. Exhausted
+events land in a dead-letter record and require an explicit replay. This contract
+has no webhook listener and no host mutation path.
+
+The AOS Stack Cleaner consumer can resolve only one matching managed worktree.
+Its proposal must show provider merge readback, clean Git status, no unpushed
+commits, no `REOPEN.md` hold, a runtime-teardown receipt, a worktree-finalization
+receipt, and the exact reviewed Docker resource names before it is eligible for
+human approval. The proposal remains non-executing and carries no host-wide
+selector.
+
+Container and named-volume cleanup remain exact-resource review work. Shared
+images, including `los-django-local:shared`, are retained. Dangling images and
+build cache are opt-in review-only work requiring ownership, age, size, and a
+receipt; merged-PR automation must never prune either class.
+
 ## Operator Runbook
 
 1. Refresh cached Jira and GitHub metadata for registered worktrees.

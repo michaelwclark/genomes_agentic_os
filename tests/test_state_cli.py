@@ -38,7 +38,7 @@ def test_register_state_cli_adds_state_group_with_all_subcommands() -> None:
 
 @pytest.mark.parametrize(
     "state_command",
-    ["init", "status", "backup", "import", "query", "prune", "verify-import"],
+    ["init", "status", "backup", "import", "query", "prune", "verify-import", "reconcile-traces"],
 )
 def test_all_documented_subcommands_are_registered(state_command: str) -> None:
     parser = _build_parser()
@@ -55,13 +55,15 @@ def test_init_creates_schema_at_explicit_db_path(tmp_path: Path, capsys: pytest.
     assert rc == 0
     assert db_path.is_file()
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 5
     assert payload["table_counts"] == {
         "events": 0,
         "run_queue": 0,
         "cursors": 0,
         "work_items": 0,
         "work_item_history": 0,
+        "approval_requests": 0,
+        "artifact_references": 0,
     }
 
 
@@ -77,6 +79,38 @@ def test_status_reports_counts_after_writes(tmp_path: Path, capsys: pytest.Captu
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["table_counts"]["events"] == 1
+
+
+def test_reconcile_traces_returns_nonzero_for_phantom_claims(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db_path = tmp_path / "state.db"
+    conn = db_module.connect(db_path)
+    from genomes_agentic_os.state import queue as queue_module
+
+    item = queue_module.enqueue(conn, kind="run", id="queue_phantom")
+    queue_module.complete(conn, item["id"], now="2026-08-01T00:00:00Z")
+    conn.close()
+
+    rc, _ = _run(["state", "reconcile-traces", "--db", str(db_path), "--json"])
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "phantom_completions"
+    assert payload["claims"][0]["claim_id"] == "run:queue_phantom"
+
+
+def test_reconcile_traces_missing_database_returns_unavailable_without_creating_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db_path = tmp_path / "does-not-exist" / "state.db"
+
+    rc, _ = _run(["state", "reconcile-traces", "--db", str(db_path), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "state_database_missing"
+    assert payload["db_path"] == str(db_path)
+    assert not db_path.exists()
+    assert not db_path.parent.exists()
 
 
 def test_backup_is_dry_run_by_default_and_apply_writes_valid_snapshot(

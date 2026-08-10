@@ -23,6 +23,7 @@ dependencies:
   - skill:root:auto-dev-qa
   - skill:root:auto-dev-review-repair
   - skill:root:auto-dev-review-self
+  - skill:root:auto-dev-review-self-opposing-model
   - skill:root:auto-dev-review-others
   - skill:root:auto-dev-finalize
   - skill:root:auto-dev-merge

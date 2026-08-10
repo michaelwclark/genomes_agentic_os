@@ -15,7 +15,6 @@ from ..notion_sync import (
     format_sync_result,
 )
 from ..notion_org import doctor_notion_org, format_notion_org_result
-from ..runtime_ops import apply_runtime_tracking, build_runtime_tracking_plan, format_runtime_result
 
 from ._shared import DEFAULT_ROOT
 
@@ -46,14 +45,6 @@ def handle_notion_bootstrap(args: argparse.Namespace) -> int:
                 )
             )
         )
-    return 0
-
-
-def handle_notion_track_runtime(args: argparse.Namespace) -> int:
-    if args.dry_run:
-        print(format_runtime_result(build_runtime_tracking_plan(args.root)))
-    else:
-        print(format_runtime_result(apply_runtime_tracking(args.root, verified_workspace=args.verified_workspace)))
     return 0
 
 
@@ -103,16 +94,6 @@ def register(subparsers) -> None:
     notion_bootstrap.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
     notion_bootstrap.add_argument("--parent-page-id", help="Approved parent page id in the verified workspace.")
     notion_bootstrap.set_defaults(handler=handle_notion_bootstrap)
-    notion_track_runtime = notion_subparsers.add_parser(
-        "track-runtime",
-        help="Plan or apply guarded Notion tracking for runtime registries and runs.",
-    )
-    notion_track_runtime.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
-    notion_track_runtime_mode = notion_track_runtime.add_mutually_exclusive_group(required=True)
-    notion_track_runtime_mode.add_argument("--dry-run", action="store_true")
-    notion_track_runtime_mode.add_argument("--apply", action="store_true")
-    notion_track_runtime.add_argument("--verified-workspace", help="Workspace name verified by the operator or connector.")
-    notion_track_runtime.set_defaults(handler=handle_notion_track_runtime)
     notion_active_work = notion_subparsers.add_parser(
         "active-work-sync",
         help="Plan or apply guarded Notion sync for the generated OS Active Work database.",

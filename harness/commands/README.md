@@ -6,6 +6,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 
 | Command document | Concise purpose |
 | --- | --- |
+| [`aos-stack-cleaner.md`](aos-stack-cleaner.md) | Reclaim one merged PR's exact fast-worktree stack after merge and worktree safety checks. |
 | [`auto-dev.md`](auto-dev.md) | Route to the complete lifecycle or one named Auto-Dev workflow. |
 | [`auto-dev-closeout.md`](auto-dev-closeout.md) | Reconcile provider and delivery state and prove delivery complete after merge/deployment evidence exists. |
 | [`auto-dev-create-artifacts.md`](auto-dev-create-artifacts.md) | Resolve, render, validate, apply, and read back polymorphic artifacts. |
@@ -27,6 +28,7 @@ command document explains routing, inputs, safety gates, and output receipts.
 | [`auto-dev-review-others.md`](auto-dev-review-others.md) | Review another author's PR through the canonical PR Review owner. |
 | [`auto-dev-review-repair.md`](auto-dev-review-repair.md) | Verify the PR Create family, then run tests, opposing review, CI, and repair convergence. |
 | [`auto-dev-review-self.md`](auto-dev-review-self.md) | Run review and repair for our own change through evidence-backed merge readiness. |
+| [`auto-dev-review-self-opposing-model.md`](auto-dev-review-self-opposing-model.md) | Run the canonical receipt-backed opposing-model review checkpoint for one Auto-Dev ticket. |
 | [`gitflow-pr-create.md`](gitflow-pr-create.md) | Compatibility alias for Auto-Dev PR Create GitFlow-family mode. |
 | [`composio-debug-bundle.md`](composio-debug-bundle.md) | Capture a sanitized Composio diagnostics bundle. |
 | [`develop.md`](develop.md) | Run one or many tracker-backed programming tasks through canonical delivery. |

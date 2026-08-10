@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   Assignment,
+  DeliveryReconciliation,
+  DeliveryReconciliationReceipt,
   AttemptCompletion,
   ClaimRequest,
   ReconcileReceipt,
@@ -47,7 +49,9 @@ export class ExecutionFabric {
       queue,
       pool,
     });
-    if (result.task.status === "queued") {
+    // Re-admission returns durable task truth; it must not issue another
+    // delivery request. Recovery republishes from the ledger instead.
+    if (result.admitted && result.task.status === "queued") {
       await this.delivery.publish(result.task);
       await this.ledger.markPublished(result.task.id);
     }
@@ -135,15 +139,38 @@ export class ExecutionFabric {
   }
 
   async dispatchAvailable(limit = 500): Promise<number> {
+    const receipt = await this.reconcileDeliveryProjection({ apply: true, limit });
+    return receipt.deliveriesPublished;
+  }
+
+  /**
+   * Rebuild the reconstructable BullMQ projection from queued PostgreSQL truth.
+   *
+   * The default is intentionally a no-op plan. Applying the plan is safe to
+   * retry after a process restart: BullMQ uses the durable task ID as its job
+   * ID, so a retry after publish-before-receipt only observes the existing job
+   * before marking the same queued task as published.
+   */
+  async reconcileDeliveryProjection(
+    input: DeliveryReconciliation = { apply: false, limit: 500 },
+  ): Promise<DeliveryReconciliationReceipt> {
+    const tasks = await this.ledger.listPublishable(input.limit);
+    const receipt: DeliveryReconciliationReceipt = {
+      dryRun: !input.apply,
+      eligible: tasks.length,
+      deliveriesPublished: 0,
+      taskIds: tasks.map((task) => task.id),
+      occurredAt: new Date().toISOString(),
+    };
+    if (!input.apply) return receipt;
+
     this.assertMutation();
-    const tasks = await this.ledger.listPublishable(limit);
-    let published = 0;
     for (const task of tasks) {
       await this.delivery.publish(task);
       await this.ledger.markPublished(task.id);
-      published += 1;
+      receipt.deliveriesPublished += 1;
     }
-    return published;
+    return receipt;
   }
 
   async reconcile(): Promise<ReconcileReceipt> {

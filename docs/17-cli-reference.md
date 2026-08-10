@@ -139,8 +139,8 @@ adapter behavior, and compatibility commands.
 
 | Command | What it does |
 | --- | --- |
-| `detective resolve` | Compose and explain the root/domain/project/invocation evidence plan. |
-| `detective start` | Create one idempotent request, policy, source-manifest, version-gate, event, and state packet. |
+| `detective resolve` | Compose and explain the root/domain/project/invocation evidence plan. `--touched-path`, `--subject`, and `--rulebook-id` freeze Rules Engine context candidates; only concrete kits with matching ready headers, usable snapshots, and an available compact known-findings receipt are marked loaded. |
+| `detective start` | Create one idempotent request, policy, source-manifest, version-gate, event, and state packet; it receipts the same normalized context selectors. |
 | `detective status` | Read compact state, deployed version, source coverage, evidence count, and receipts. |
 | `detective record-version` | Pin the environment's exact version/ref/commit authority before code analysis. |
 | `detective record-evidence` | Append one bounded source receipt with facts, limitations, authority, and freshness. |
@@ -154,7 +154,7 @@ adapter behavior, and compatibility commands.
 
 | Command | What it does |
 | --- | --- |
-| `develop start` | Plan or create a 1-N development portfolio with one active work item and isolated worktree per ticket; multi-repository projects require `--repository <id>`. |
+| `develop start` | Plan or create a 1-N development portfolio with one active work item and isolated worktree per ticket; multi-repository projects require `--repository <id>`. `--touched-path`, `--subject`, and `--rulebook-id` freeze context selection. |
 | `develop status` | Read portfolio and task state receipts. |
 | `develop transition` | Compatibility command that fails closed; direct string-receipt transitions are disabled. Use `develop stage`. |
 | `develop stage` | Preflight all typed `development-stage-evidence/v1` receipts for one named workflow stage, then apply its legal state transitions atomically. |
@@ -370,11 +370,10 @@ overrides, and `config doctor`): `agentic_os_root`, `automation`,
 | `notion bootstrap` | Plan or apply the Notion control-plane bootstrap. |
 | `notion plan-sync` | Build a reviewable Notion sync plan. |
 | `notion sync` | Run a guarded Notion sync. |
-| `notion track-runtime` | Plan or apply guarded Notion tracking for runtime registries and runs. |
 | `notion-org` | Check Notion IA organization before page moves. |
 | `notion-org doctor` | Check Notion organization config and backup readiness. |
 
-`notion sync` / `notion bootstrap` / `notion track-runtime` call the real
+`notion sync` / `notion bootstrap` call the real
 Notion API (`https://api.notion.com/v1`, stdlib `urllib`, bearer token from
 `GENOMES_NOTION_PAT`) — this is wired, not a stub. All three default to
 dry-run; pass `--apply` to write.

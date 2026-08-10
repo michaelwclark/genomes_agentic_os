@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/agentic-os/run-evidence-config.schema.json",
+  "title": "Agentic OS Run Evidence Configuration",
+  "type": "object",
+  "required": ["schema_version", "backend", "datastores", "ingress", "host_registry", "models", "writers"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "backend": {"enum": ["mongodb", "filesystem"]},
+    "datastores": {
+      "type": "object",
+      "required": ["mongodb", "filesystem"],
+      "properties": {
+        "mongodb": {
+          "type": "object",
+          "required": ["uri_env", "database"],
+          "properties": {
+            "uri_env": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+            "database": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+          },
+          "additionalProperties": false
+        },
+        "filesystem": {
+          "type": "object",
+          "required": ["root"],
+          "properties": {"root": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["outbox_root", "queue_capacity", "batch_size", "flush_interval_ms", "write_timeout_ms"],
+      "properties": {
+        "outbox_root": {"type": "string", "minLength": 1},
+        "queue_capacity": {"type": "integer", "minimum": 1},
+        "batch_size": {"type": "integer", "minimum": 1},
+        "flush_interval_ms": {"type": "integer", "minimum": 1},
+        "write_timeout_ms": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "host_registry": {
+      "type": "object",
+      "required": ["source", "initial_host"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "initial_host": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"}
+      },
+      "additionalProperties": false
+    },
+    "models": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"$ref": "#/$defs/model"}
+    },
+    "writers": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"$ref": "#/$defs/writer"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "writer": {
+      "type": "object",
+      "required": ["owner", "paths", "model_keys", "replacement", "cutover_issue"],
+      "properties": {
+        "owner": {"type": "string", "minLength": 1},
+        "paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "model_keys": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}, "uniqueItems": true},
+        "replacement": {"const": "run_evidence_writer"},
+        "cutover_issue": {"type": "string", "pattern": "^AGE-[0-9]+$"}
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "routing_priority",
+        "collection",
+        "classification",
+        "payload_mode",
+        "source_patterns",
+        "indexes",
+        "retention"
+      ],
+      "properties": {
+        "schema_version": {"type": "integer", "minimum": 1},
+        "routing_priority": {"type": "integer", "minimum": 1},
+        "collection": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "classification": {
+          "enum": ["authoritative_state", "durable_evidence", "derived_artifact", "cache", "fixture", "scratch"]
+        },
+        "payload_mode": {"enum": ["document", "text", "jsonl", "artifact_reference", "exclude"]},
+        "source_patterns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "indexes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        },
+        "redaction_profile": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "max_payload_bytes": {"type": "integer", "minimum": 1},
+        "retention": {
+          "type": "object",
+          "required": ["max_age_days", "max_objects", "compaction", "hold_policy"],
+          "properties": {
+            "max_age_days": {"type": "integer", "minimum": 1},
+            "max_objects": {"type": "integer", "minimum": 1},
+            "compaction": {"enum": ["none", "summary", "failure_exemplars", "artifact_reference"]},
+            "hold_policy": {"enum": ["none", "active_or_held", "failures_active_or_held", "source_backup"]}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

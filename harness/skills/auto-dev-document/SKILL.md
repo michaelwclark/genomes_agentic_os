@@ -14,10 +14,16 @@ This workflow can run at any point.
 3. Choose the right form: code/API docs, architecture note, runbook, issue or
    decision record, RCA, QA plan/result, release notes, or handoff.
 4. Draft in plain English. Mark facts, inferences, decisions, and unknowns.
-5. Use Auto-Dev Create Artifacts for governed external writes and read back the
+5. For source-package documentation, land the reader-facing change in the
+   Docusaurus source tree (`docs/` or `operating-manual/`) and verify the site
+   build. A Notion projection is supplemental; it never replaces the site.
+6. If no safe published-site change can be made, use Auto-Dev Create Artifacts
+   to create or reuse an idempotent follow-up in Linear's **Rubicon:
+   Documentation** project. Do not silently skip the site delivery.
+7. Use Auto-Dev Create Artifacts for governed external writes and read back the
    rendered result. Never expose local paths, secrets, or private links.
-6. Record `document` evidence in `autodev.json`, including freshness owner and
-   the verified output reference.
+8. Record `document` evidence in `autodev.json`, including freshness owner,
+   site-build or Linear-follow-up readback, and the verified output reference.
 
 The canonical program projection is **Auto-Dev — Canonical SDLC Program** in
 Genome's Notion (page id `3a3683b48dab81b88875f5ec875dab3e`). Project policy

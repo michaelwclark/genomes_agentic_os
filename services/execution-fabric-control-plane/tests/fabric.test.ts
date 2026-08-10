@@ -93,6 +93,68 @@ describe("ExecutionFabric", () => {
     expect(ledger.markPublished).toHaveBeenCalledWith(task.id);
   });
 
+  it("does not republish a duplicate admission", async () => {
+    const { fabric, delivery, ledger } = fixture();
+    vi.mocked(ledger.admitTask)
+      .mockResolvedValueOnce({ task, admitted: true })
+      .mockResolvedValueOnce({ task, admitted: false });
+    const input = {
+      namespace: "test",
+      queue: "code",
+      taskType: "example.run",
+      idempotencyKey: "deduplicated",
+      payload: {},
+      requiredCapabilities: ["test.run"],
+      priority: 0,
+      maxAttempts: 3,
+    };
+
+    const first = await fabric.admit(input);
+    const duplicate = await fabric.admit(input);
+
+    expect(first.admitted).toBe(true);
+    expect(duplicate.admitted).toBe(false);
+    expect(duplicate.task.id).toBe(first.task.id);
+    expect(delivery.publish).toHaveBeenCalledTimes(1);
+    expect(ledger.markPublished).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults delivery reconciliation to a persisted-queue read-only plan", async () => {
+    const { fabric, delivery, ledger } = fixture();
+    vi.mocked(ledger.listPublishable).mockResolvedValue([task]);
+
+    const receipt = await fabric.reconcileDeliveryProjection();
+
+    expect(receipt).toMatchObject({
+      dryRun: true,
+      eligible: 1,
+      deliveriesPublished: 0,
+      taskIds: [task.id],
+    });
+    expect(delivery.publish).not.toHaveBeenCalled();
+    expect(ledger.markPublished).not.toHaveBeenCalled();
+  });
+
+  it("restarts safely when a delivery projection plan is applied again", async () => {
+    const { fabric, delivery, ledger } = fixture();
+    const bullMqJobIds = new Set<string>();
+    vi.mocked(ledger.listPublishable).mockResolvedValue([task]);
+    vi.mocked(delivery.publish).mockImplementation(async (queuedTask) => {
+      bullMqJobIds.add(queuedTask.id);
+    });
+
+    const first = await fabric.reconcileDeliveryProjection({ apply: true, limit: 1 });
+    const afterRestart = await fabric.reconcileDeliveryProjection({
+      apply: true,
+      limit: 1,
+    });
+
+    expect(first.deliveriesPublished).toBe(1);
+    expect(afterRestart.deliveriesPublished).toBe(1);
+    expect(bullMqJobIds).toEqual(new Set([task.id]));
+    expect(ledger.markPublished).toHaveBeenCalledTimes(2);
+  });
+
   it("long-polls once and returns no work without inventing an assignment", async () => {
     const { fabric, delivery, ledger } = fixture();
     const result = await fabric.claim({

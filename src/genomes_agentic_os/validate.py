@@ -154,7 +154,6 @@ SHARED_KNOWLEDGE_FILES = (
     "templates/runtime/integration.yml",
     "templates/runtime/run-queue-item.yml",
     "templates/notion/control-plane-database-spec.md",
-    "templates/notion/runtime-tracking-database-spec.md",
     "templates/runtime/connected-system.yml",
     "templates/runtime/source-provider.yml",
     "templates/runtime/watch-source.yml",
@@ -1345,6 +1344,9 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "auto-dev-stage-policy-decision.schema.json": [
         "**/work-items/*/*/artifacts/auto-dev-orchestration/proofs/*/policy-decision-*.json",
     ],
+    "program-run-packet.schema.json": [
+        "harness/shared_factory/06-runs-and-logs/program-runs/*/*.json",
+    ],
     "analytics-metrics.schema.json": ["harness/registries/analytics-metrics.yml"],
     "capability-registry.schema.json": [REGISTRY_FILES["capabilities"]],
     "command-registry.schema.json": [REGISTRY_FILES["commands"]],
@@ -1363,6 +1365,7 @@ SCHEMA_TARGETS: dict[str, list[str]] = {
     "update-grant.schema.json": ["harness/registries/update-grant.json"],
     "backup-policy.schema.json": ["harness/registries/backup-policy.yml"],
     "execution-fabric.schema.json": ["harness/config/execution-fabric.yml"],
+    "run-evidence-config.schema.json": ["harness/config/run-evidence.yml"],
     "documentation-upkeep.schema.json": ["harness/shared_factory/00-control-plane/documentation-upkeep.yml"],
     "doc-config.schema.json": ["harness/shared_factory/00-control-plane/doc-config.yml"],
     "automation.schema.json": ["**/04-automations/*/*/automation.yml"],

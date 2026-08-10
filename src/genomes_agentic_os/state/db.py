@@ -40,6 +40,8 @@ SCHEMA_TABLES: tuple[str, ...] = (
     "cursors",
     "work_items",
     "work_item_history",
+    "approval_requests",
+    "artifact_references",
 )
 
 
@@ -111,6 +113,35 @@ def connect(db_path: str | Path = MEMORY_DB_PATH, *, busy_timeout_ms: int = 5000
     # the WAL frame to reach durable storage over NORMAL's smaller latency.
     conn.execute("PRAGMA synchronous = FULL")
     ensure_schema(conn)
+    return conn
+
+
+def connect_readonly(db_path: str | Path, *, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
+    """Open an existing state database without creating files or applying schema.
+
+    Doctor commands use this path when the act of inspecting evidence must not
+    bootstrap a missing state plane.  SQLite's URI ``mode=ro`` fails before a
+    file or parent directory can be created; ``query_only`` protects the
+    already-open connection from accidental writes.
+    """
+    raw_path = str(db_path)
+    if raw_path in (MEMORY_DB_PATH, ""):
+        raise StateDbError("a read-only state inspection requires an existing database path")
+    resolved = expand_path(db_path)
+    if not resolved.is_file():
+        raise StateDbError(f"state database is missing: {resolved}")
+    try:
+        conn = sqlite3.connect(
+            f"{resolved.resolve().as_uri()}?mode=ro",
+            uri=True,
+            isolation_level=None,
+            timeout=busy_timeout_ms / 1000,
+        )
+    except sqlite3.Error as exc:
+        raise StateDbError(f"state database is unavailable: {resolved}: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+    conn.execute("PRAGMA query_only = ON")
     return conn
 
 
@@ -444,6 +475,54 @@ CREATE TABLE IF NOT EXISTS execution_workers (
 );
 CREATE INDEX IF NOT EXISTS idx_execution_workers_pool_status
     ON execution_workers(pool_name, status, lease_until);
+""",
+    ),
+    (
+        4,
+        "approval requests and artifact reference metadata",
+        """
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id TEXT PRIMARY KEY,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    approver TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('waiting', 'approved', 'denied', 'expired')),
+    decision_note TEXT,
+    requested_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry
+    ON approval_requests(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS artifact_references (
+    id TEXT PRIMARY KEY,
+    uri TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    retention_days INTEGER NOT NULL CHECK(retention_days > 0),
+    source_ref TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(uri, content_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_artifact_references_classification_retention
+    ON artifact_references(classification, retention_days);
+""",
+    ),
+    (
+        5,
+        "compact work-item contract links and lifecycle",
+        """
+ALTER TABLE work_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'task';
+ALTER TABLE work_items ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'captured';
+ALTER TABLE work_items ADD COLUMN source_links_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE work_items ADD COLUMN parent_id TEXT;
+ALTER TABLE work_items ADD COLUMN related_ids_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE work_items ADD COLUMN blockers_json TEXT NOT NULL DEFAULT '[]';
+UPDATE work_items SET lifecycle = state;
+CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_id);
 """,
     ),
 )

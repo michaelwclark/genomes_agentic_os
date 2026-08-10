@@ -9,12 +9,13 @@
 | One named workflow | `agentic-os auto-dev <verb> ...` and the matching skill | resumable single-stage state |
 | Grooming | `/auto-dev-grooming` | implementation-ready source of truth |
 | Deep bug/RCA investigation | `/auto-dev-detective` or `agentic-os detective ...` | versioned evidence packet and report |
+| LOS Rules Engine caller/rulebook context | `agentic-os detective resolve ... --touched-path <repo-path> --subject rulebook --rulebook-id <key>` | frozen candidate plus concrete artifact/snapshot provenance when available, else fail-closed evidence status |
 | Excellent provider artifact | `/auto-dev-create-artifacts` or `agentic-os artifacts ...` | native draft, validation, apply/readback receipts |
 | Readiness/context stage | `/auto-dev-readiness` then `agentic-os develop stage ... --stage readiness` | verified context and `planned` state |
 | Isolated implementation stage | `/auto-dev-develop` (canonical owner: `/auto-dev-implementation`) then `develop stage --stage implementation` | code/test receipts and `local_validation` |
 | Code and issue documentation | `/auto-dev-document` | verified audience-specific documentation |
 | PR family creation | `/auto-dev-pr-create` then compatibility recorder `develop stage --stage release_propagation` | target matrix and provider-read family receipt projected as `pr_create` |
-| Test/review/PR repair stage | `/auto-dev-review-self` (canonical owner: `/auto-dev-review-repair`) then `develop stage --stage review` | review of the exact PR Create family and `ready_for_merge` |
+| Test/review/PR repair stage | `/auto-dev-review-self` (canonical owner: `/auto-dev-review-repair`); use `/auto-dev-review-self-opposing-model <TICKET>` for each independent-model checkpoint, then `develop stage --stage review` | review of the exact PR Create family and `ready_for_merge` |
 | Others' PR review | `/auto-dev-review-others` (`/pull-request` is compatibility) | clean review-only receipt with provider authorship |
 | Standalone QA | `/auto-dev-qa` | exact revision/acceptance evidence |
 | Legacy release propagation invocation | `/auto-dev-release-propagation` | compatibility alias to PR Create family mode |

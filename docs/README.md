@@ -118,6 +118,7 @@ vs Codex"** callout for its task; the full mechanics live on
 | [40 · Auto-Dev Everything for Maintainers](40-auto-dev-everything-maintainers.md) | Linear-first delivery, canonical work items, reinstall-safe QA, optional Claude review, gated merge, release, and documentation projection. |
 | [42 · Auto-Dev Program](42-auto-dev-program.md) | One polymorphic SDLC family, five nested root/domain/project/invocation policy planes, artifact rendering/readback, investigation routing, development delivery, receipts, and retirement map. |
 | [43 · Python Coverage Gate](43-python-coverage-gate.md) | Python 3.14 branch-coverage enforcement, durable CI evidence, and the monotonic floor rule. |
+| [44 · Integration Adapter Routing](44-integration-adapters.md) | Reviewed adapter choice for Atlassian, Notion, Slack, and Valkey delivery boundaries. |
 | [Release contract](release-contract.md) | Canonical branch roles, commit grammar, version derivation, release artifacts, publish targets, idempotency, repair, and rollback policy for the repository family. |
 
 Operator shortcut: use `/add-spec` for ideas, features, bugs, configuration

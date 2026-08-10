@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -21,6 +22,189 @@ def test_active_attention_requires_resume_context() -> None:
                 title="One",
                 state="building",
                 attention="active",
+            )
+    finally:
+        conn.close()
+
+
+def test_work_item_contract_preserves_compact_links_and_verification() -> None:
+    conn = db.connect(":memory:")
+    try:
+        item = work_items.upsert(
+            conn,
+            item_id="agentic-os:rubicon:age-86",
+            title="Define the WorkItem contract",
+            kind="feature",
+            lifecycle="building",
+            attention="active",
+            context_summary="Implementing the canonical WorkItem contract.",
+            owner="agentic-os",
+            source_links=[
+                {
+                    "system": "linear",
+                    "key": "AGE-86",
+                    "url": "https://linear.app/example/issue/AGE-86",
+                }
+            ],
+            parent_id="agentic-os:rubicon",
+            related_ids=["agentic-os:rubicon:age-85", "agentic-os:rubicon:age-87"],
+            blockers=[{"kind": "dependency", "id": "AGE-85"}],
+            verified=True,
+            now="2026-08-01T12:00:00Z",
+        )
+
+        assert item["kind"] == "feature"
+        assert item["state"] == item["lifecycle"] == "building"
+        assert item["attention"] == "active"
+        assert item["source_links"] == [
+            {
+                "system": "linear",
+                "key": "AGE-86",
+                "url": "https://linear.app/example/issue/AGE-86",
+            }
+        ]
+        assert item["parent_id"] == "agentic-os:rubicon"
+        assert item["related_ids"] == ["agentic-os:rubicon:age-85", "agentic-os:rubicon:age-87"]
+        assert item["blockers"] == [{"kind": "dependency", "id": "AGE-85"}]
+        assert item["last_verified_at"] == "2026-08-01T12:00:00Z"
+
+        updated = work_items.update(
+            conn,
+            item["id"],
+            lifecycle="validating",
+            verified=True,
+            now="2026-08-01T12:05:00Z",
+        )
+        assert updated["kind"] == "feature"
+        assert updated["lifecycle"] == "validating"
+        assert updated["source_links"] == item["source_links"]
+        assert updated["related_ids"] == item["related_ids"]
+        assert updated["last_verified_at"] == "2026-08-01T12:05:00Z"
+    finally:
+        conn.close()
+
+
+def test_work_item_contract_rejects_self_links_and_unexplained_blocking() -> None:
+    conn = db.connect(":memory:")
+    try:
+        with pytest.raises(work_items.WorkItemError, match="own parent"):
+            work_items.upsert(conn, item_id="one", title="One", parent_id="one")
+        with pytest.raises(work_items.WorkItemError, match="related to itself"):
+            work_items.upsert(conn, item_id="one", title="One", related_ids=["one"])
+        with pytest.raises(work_items.WorkItemError, match="blocker receipt or reason"):
+            work_items.upsert(conn, item_id="one", title="One", state="blocked")
+    finally:
+        conn.close()
+
+
+def test_work_item_contract_rejects_explicit_state_lifecycle_disagreement() -> None:
+    conn = db.connect(":memory:")
+    try:
+        with pytest.raises(work_items.WorkItemError, match="must agree"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                state="captured",
+                lifecycle="archived",
+            )
+    finally:
+        conn.close()
+
+
+def test_source_links_populate_legacy_dedup_columns() -> None:
+    conn = db.connect(":memory:")
+    try:
+        first = work_items.upsert(
+            conn,
+            item_id="one",
+            title="One",
+            source_links=[{"system": "linear", "key": "AGE-86"}],
+        )
+        assert first["source_system"] == "linear"
+        assert first["source_key"] == "AGE-86"
+        with pytest.raises(sqlite3.IntegrityError):
+            work_items.upsert(
+                conn,
+                item_id="two",
+                title="Two",
+                source_links=[{"system": "linear", "key": "AGE-86"}],
+            )
+    finally:
+        conn.close()
+
+
+def test_update_preserves_noncompact_legacy_source_as_metadata() -> None:
+    conn = db.connect(":memory:")
+    try:
+        conn.execute(
+            """
+            INSERT INTO work_items (
+                id, title, state, attention, source_system, source_key,
+                context_summary, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-one",
+                "Legacy One",
+                "building",
+                "queued",
+                "legacy-filesystem",
+                "02-active/my packet",
+                "Legacy source needs migration.",
+                "{}",
+                "2026-08-01T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+            ),
+        )
+        conn.commit()
+        updated = work_items.update(conn, "legacy-one", state="validating")
+        assert updated["state"] == "validating"
+        assert updated["source_system"] is None
+        assert updated["source_key"] is None
+        assert updated["metadata"]["legacy_source_reference"]["key"] == "02-active/my packet"
+    finally:
+        conn.close()
+
+
+def test_work_item_contract_rejects_nested_or_prose_reference_payloads() -> None:
+    conn = db.connect(":memory:")
+    try:
+        with pytest.raises(work_items.WorkItemError, match="unsupported fields"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                source_links=[{"system": "linear", "key": "AGE-86", "transcript": "do the work"}],
+            )
+        with pytest.raises(work_items.WorkItemError, match="compact scalar reference"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                source_links=[{"system": "linear", "key": {"id": "AGE-86"}}],
+            )
+        with pytest.raises(work_items.WorkItemError, match="compact scalar reference"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                blockers=[{"kind": "dependency", "id": "await the release approval"}],
+            )
+        with pytest.raises(work_items.WorkItemError, match="source_key must be a compact scalar reference"):
+            work_items.upsert(
+                conn,
+                item_id="one",
+                title="One",
+                source_system="legacy-filesystem",
+                source_key={"transcript": "do not retain this"},
+            )
+        with pytest.raises(work_items.WorkItemError, match="at most"):
+            work_items.upsert(
+                conn,
+                item_id="many-links",
+                title="Many links",
+                source_links=[{"system": "linear", "key": f"AGE-{index}"} for index in range(101)],
             )
     finally:
         conn.close()

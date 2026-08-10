@@ -784,22 +784,41 @@ def resolve_development_policy(
             )
         )
 
-    def conventional_root(parent: Path) -> Path:
-        canonical = parent / canonical_suffix
-        legacy = parent / legacy_suffix
+    def conventional_root(canonical_parent: Path, legacy_parent: Path) -> Path:
+        """Select one policy root without merging canonical and compatibility files.
+
+        Domain policy now follows the same ``config/auto_dev`` shape as project
+        policy.  The historic ``05-knowledge/auto_dev`` tree remains a fallback
+        until a domain is migrated.  A still-older flat ``<plane>`` folder is
+        also retained as a compatibility fallback for every scope.
+        """
+
+        candidates: list[Path] = []
+        for candidate in (
+            canonical_parent / canonical_suffix,
+            legacy_parent / canonical_suffix,
+            legacy_parent / legacy_suffix,
+        ):
+            if candidate not in candidates:
+                candidates.append(candidate)
         # Existing installations can still be read before they are migrated.
         # A README-only canonical scaffold must not hide substantive legacy
-        # policy, and the two roots are never merged.
-        if has_active_markdown(canonical):
-            return canonical
-        if has_active_markdown(legacy):
-            return legacy
-        return canonical if canonical.is_dir() or not legacy.is_dir() else legacy
+        # policy, and the candidate roots are never merged.
+        for candidate in candidates:
+            if has_active_markdown(candidate):
+                return candidate
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        return candidates[0]
 
     conventional_parents = (
-        os_root / "harness" / "shared_factory" / "05-knowledge",
-        domain_root / "05-knowledge",
-        project_path / "config",
+        (
+            os_root / "harness" / "shared_factory" / "05-knowledge",
+            os_root / "harness" / "shared_factory" / "05-knowledge",
+        ),
+        (domain_root / "config", domain_root / "05-knowledge"),
+        (project_path / "config", project_path / "config"),
     )
 
     def configured_root(raw: str) -> Path:
@@ -809,9 +828,15 @@ def resolve_development_policy(
             domain_root=domain_root,
             project_path=project_path,
         )
-        for parent in conventional_parents:
-            if selected == (parent / legacy_suffix).resolve():
-                return conventional_root(parent)
+        for canonical_parent, legacy_parent in conventional_parents:
+            conventional_members = {
+                (canonical_parent / canonical_suffix).resolve(),
+                (canonical_parent / legacy_suffix).resolve(),
+                (legacy_parent / canonical_suffix).resolve(),
+                (legacy_parent / legacy_suffix).resolve(),
+            }
+            if selected in conventional_members:
+                return conventional_root(canonical_parent, legacy_parent)
         return selected
 
     if paths:
@@ -827,11 +852,11 @@ def resolve_development_policy(
         layers = [
             PolicyLayer(
                 "root",
-                conventional_root(conventional_parents[0]),
+                conventional_root(*conventional_parents[0]),
                 0,
             ),
-            PolicyLayer("domain", conventional_root(conventional_parents[1]), 1),
-            PolicyLayer("project", conventional_root(conventional_parents[2]), 2),
+            PolicyLayer("domain", conventional_root(*conventional_parents[1]), 1),
+            PolicyLayer("project", conventional_root(*conventional_parents[2]), 2),
         ]
     try:
         result = resolve_markdown_plane(
@@ -1093,7 +1118,267 @@ def _effective_policy_snapshot_fingerprint(
         digest_values["selected_profile"] = str(
             selected_profile.get("sha256") or ""
         )
+    context_selection = snapshot.get("context_selection")
+    if isinstance(context_selection, Mapping):
+        digest_values["context_selection"] = str(
+            context_selection.get("content_sha256") or ""
+        )
     return _json_sha256(digest_values)
+
+
+def _resolve_development_context_selection(
+    root: str | Path,
+    domain: str,
+    project: str,
+    *,
+    touched_paths: Sequence[str] = (),
+    subjects: Sequence[str] = (),
+    rulebook_ids: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Pin path/subject-selected investigation context into a delivery run.
+
+    Development Delivery remains the lifecycle owner.  Investigation contracts
+    are used here only as a deterministic, read-only context selector, so a
+    selected Rules Engine evidence is frozen once and reused by Readiness,
+    implementation, review, and QA instead of being rediscovered per stage.
+    """
+
+    # Keep this import local: investigation contracts may use artifact helpers
+    # that are intentionally independent from the lifecycle engine at module
+    # import time.
+    from .investigation_contracts import (
+        InvestigationContractError,
+        resolve_investigation_contract,
+    )
+
+    try:
+        resolution = resolve_investigation_contract(
+            root,
+            trigger="ticket-comment",
+            output_type="planning-evidence",
+            domain=domain,
+            project=project,
+            touched_paths=touched_paths,
+            subjects=subjects,
+            rulebook_ids=rulebook_ids,
+        )
+    except InvestigationContractError as exc:
+        raise DevelopmentDeliveryError(
+            f"invalid development context selection: {exc}"
+        ) from exc
+
+    selection = resolution.get("selection")
+    if not isinstance(selection, Mapping):
+        raise DevelopmentDeliveryError("investigation context selection is missing")
+    selected_documents = selection.get("selected_documents")
+    if not isinstance(selected_documents, list):
+        raise DevelopmentDeliveryError("investigation context selection is malformed")
+    selected_refs = {
+        str(item.get("source_ref") or "")
+        for item in selected_documents
+        if isinstance(item, Mapping) and str(item.get("source_ref") or "")
+    }
+    effective = resolution.get("effective")
+    effective_documents = (
+        effective.get("documents")
+        if isinstance(effective, Mapping) and isinstance(effective.get("documents"), list)
+        else []
+    )
+    context_documents: list[dict[str, Any]] = []
+    for document in effective_documents:
+        if not isinstance(document, Mapping):
+            continue
+        source_refs = document.get("source_refs")
+        if not isinstance(source_refs, list) or not selected_refs.intersection(
+            str(item) for item in source_refs
+        ):
+            continue
+        # Store only the deterministic, operator-relevant contract surface.
+        # The source hashes in ``selection`` bind these instructions to their
+        # exact Markdown inputs without duplicating arbitrary policy metadata.
+        context_documents.append(
+            {
+                key: deepcopy(document[key])
+                for key in (
+                    "id",
+                    "kind",
+                    "title",
+                    "source_refs",
+                    "authority",
+                    "freshness",
+                    "requirements",
+                    "tools",
+                    "evidence",
+                    "failure",
+                    "instructions_markdown",
+                )
+                if key in document
+            }
+        )
+    context_documents.sort(
+        key=lambda item: (str(item.get("id") or ""), str(item.get("title") or ""))
+    )
+    value: dict[str, Any] = {
+        "schema": "development-context-selection/v1",
+        "trigger": resolution["trigger"],
+        "output_type": resolution["output_type"],
+        "policy_fingerprint": resolution["fingerprint"],
+        "selection": deepcopy(dict(selection)),
+        # These are policy documents, not kit artifacts.  A Rules Engine kit
+        # is represented separately below only after concrete files and local
+        # evidence have been resolved and hashed.
+        "context_documents": context_documents,
+    }
+    rules_engine_context = selection.get("rules_engine_context")
+    if isinstance(rules_engine_context, Mapping):
+        value["rules_engine_context"] = deepcopy(dict(rules_engine_context))
+    value["content_sha256"] = _json_sha256(value)
+    return value
+
+
+def _validate_frozen_rules_engine_context(
+    value: Mapping[str, Any],
+    *,
+    document_refs: set[str],
+) -> None:
+    """Verify that only concrete, privacy-safe Rules Engine evidence is loaded."""
+
+    payload = {key: deepcopy(item) for key, item in value.items() if key != "content_sha256"}
+    if not (
+        value.get("schema") == "rules-engine-frozen-context/v1"
+        and value.get("status") in {"loaded", "kit-unavailable", "insufficient-evidence"}
+        and isinstance(value.get("source_refs"), list)
+        and all(isinstance(item, str) and item in document_refs for item in value["source_refs"])
+        and isinstance(value.get("selected_rulebook_ids"), list)
+        and all(isinstance(item, str) and item for item in value["selected_rulebook_ids"])
+        and value["selected_rulebook_ids"] == sorted(set(value["selected_rulebook_ids"]))
+        and isinstance(value.get("catalog"), Mapping)
+        and isinstance(value.get("snapshot"), Mapping)
+        and isinstance(value.get("known_findings"), Mapping)
+        and isinstance(value.get("reason_codes"), list)
+        and all(isinstance(item, str) and item for item in value["reason_codes"])
+        and re.fullmatch(r"[a-f0-9]{64}", str(value.get("content_sha256") or ""))
+        and value.get("content_sha256") == _json_sha256(payload)
+    ):
+        raise DevelopmentDeliveryError(
+            "effective policy receipt has malformed frozen Rules Engine context"
+        )
+    kit = value.get("kit")
+    if value.get("status") != "loaded":
+        if kit is not None:
+            if not isinstance(kit, Mapping):
+                raise DevelopmentDeliveryError(
+                    "effective policy receipt has malformed unavailable Rules Engine kit"
+                )
+        return
+    known_findings = value["known_findings"]
+    if not (
+        isinstance(kit, Mapping)
+        and isinstance(kit.get("id"), str)
+        and isinstance(kit.get("rulebook"), str)
+        and isinstance(kit.get("root_ref"), str)
+        and isinstance(kit.get("artifacts"), list)
+        and [item.get("name") for item in kit["artifacts"] if isinstance(item, Mapping)]
+        == ["contract.yml", "dictionary.yml", "checks.yml", "coverage.yml", "redundancy.yml"]
+        and len(kit["artifacts"]) == 5
+        and all(
+            isinstance(item, Mapping)
+            and isinstance(item.get("ref"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", str(item.get("sha256") or ""))
+            for item in kit["artifacts"]
+        )
+        and re.fullmatch(r"[a-f0-9]{64}", str(kit.get("content_sha256") or ""))
+        and kit.get("content_sha256")
+        == _json_sha256({key: deepcopy(item) for key, item in kit.items() if key != "content_sha256"})
+        and value["snapshot"].get("status") == "usable"
+        and known_findings.get("status") == "available"
+        and isinstance(known_findings.get("ref"), str)
+        and bool(known_findings["ref"])
+        and re.fullmatch(r"[a-f0-9]{64}", str(known_findings.get("sha256") or ""))
+        and isinstance(known_findings.get("count"), int)
+        and not isinstance(known_findings["count"], bool)
+        and known_findings["count"] >= 0
+        and isinstance(known_findings.get("items"), list)
+        and len(known_findings["items"]) <= min(known_findings["count"], 100)
+    ):
+        raise DevelopmentDeliveryError(
+            "effective policy receipt claims a loaded Rules Engine kit without concrete usable evidence"
+        )
+
+
+def _validate_development_context_selection(value: Mapping[str, Any]) -> None:
+    """Reject a tampered or incomplete frozen context selector receipt."""
+
+    payload = {
+        key: deepcopy(item)
+        for key, item in value.items()
+        if key != "content_sha256"
+    }
+    if not (
+        value.get("schema") == "development-context-selection/v1"
+        and value.get("trigger") == "ticket-comment"
+        and value.get("output_type") == "planning-evidence"
+        and re.fullmatch(r"[a-f0-9]{64}", str(value.get("policy_fingerprint") or ""))
+        and isinstance(value.get("selection"), Mapping)
+        and isinstance(value.get("context_documents", value.get("kits")), list)
+        and re.fullmatch(r"[a-f0-9]{64}", str(value.get("content_sha256") or ""))
+        and value.get("content_sha256") == _json_sha256(payload)
+    ):
+        raise DevelopmentDeliveryError(
+            "effective policy receipt has invalid frozen context selection"
+        )
+    selection = value["selection"]
+    touched_paths = selection.get("touched_paths")
+    subjects = selection.get("subjects")
+    rulebook_ids = selection.get("rulebook_ids", [])
+    selected_documents = selection.get("selected_documents")
+    if not (
+        isinstance(touched_paths, list)
+        and isinstance(subjects, list)
+        and isinstance(rulebook_ids, list)
+        and isinstance(selected_documents, list)
+        and all(isinstance(item, str) and item for item in touched_paths + subjects + rulebook_ids)
+        and touched_paths == sorted(set(touched_paths))
+        and subjects == sorted(set(subjects))
+        and rulebook_ids == sorted(set(rulebook_ids))
+    ):
+        raise DevelopmentDeliveryError(
+            "effective policy receipt has malformed frozen context selection inputs"
+        )
+    document_refs: set[str] = set()
+    for document in selected_documents:
+        if not (
+            isinstance(document, Mapping)
+            and isinstance(document.get("source_ref"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", str(document.get("sha256") or ""))
+            and isinstance(document.get("selectors"), Mapping)
+        ):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has malformed frozen context selection provenance"
+            )
+        document_refs.add(document["source_ref"])
+    context_documents = value.get("context_documents", value.get("kits", []))
+    for kit in context_documents:
+        refs = kit.get("source_refs") if isinstance(kit, Mapping) else None
+        if not (
+            isinstance(kit, Mapping)
+            and isinstance(kit.get("id"), str)
+            and isinstance(refs, list)
+            and document_refs.intersection(str(ref) for ref in refs)
+        ):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has malformed frozen context kit"
+            )
+    rules_engine_context = value.get("rules_engine_context")
+    if rules_engine_context is not None:
+        if not isinstance(rules_engine_context, Mapping):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has malformed frozen Rules Engine context"
+            )
+        _validate_frozen_rules_engine_context(
+            rules_engine_context,
+            document_refs=document_refs,
+        )
 
 
 def _validate_effective_policy_snapshot(
@@ -1242,6 +1527,13 @@ def _validate_effective_policy_snapshot(
             raise DevelopmentDeliveryError(
                 "effective policy receipt has invalid selected repository authority"
             )
+    context_selection = snapshot.get("context_selection")
+    if context_selection is not None:
+        if not isinstance(context_selection, Mapping):
+            raise DevelopmentDeliveryError(
+                "effective policy receipt has malformed frozen context selection"
+            )
+        _validate_development_context_selection(context_selection)
     expected = _effective_policy_snapshot_fingerprint(snapshot)
     if (
         not re.fullmatch(r"[a-f0-9]{64}", str(snapshot.get("fingerprint") or ""))
@@ -1262,6 +1554,10 @@ def resolve_development_policies(
     selected_profile: Mapping[str, Any] | None = None,
     profile_source: str | Path | None = None,
     include_body: bool = False,
+    touched_paths: Sequence[str] = (),
+    subjects: Sequence[str] = (),
+    rulebook_ids: Sequence[str] = (),
+    context_selection_override: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve every development policy plane consumed by an SDLC run."""
 
@@ -1297,6 +1593,18 @@ def resolve_development_policies(
     selected_profile_authority = _selected_profile_policy_authority(
         effective_profile
     )
+    if context_selection_override is None:
+        context_selection = _resolve_development_context_selection(
+            root,
+            domain,
+            project,
+            touched_paths=touched_paths,
+            subjects=subjects,
+            rulebook_ids=rulebook_ids,
+        )
+    else:
+        context_selection = deepcopy(dict(context_selection_override))
+        _validate_development_context_selection(context_selection)
     value = {
         "schema": "development-effective-policies/v1",
         "domain": normalize_domain(domain),
@@ -1304,6 +1612,7 @@ def resolve_development_policies(
         "planes": planes,
         "folder_profile": folder_profile,
         "selected_profile": selected_profile_authority,
+        "context_selection": context_selection,
     }
     value["fingerprint"] = _effective_policy_snapshot_fingerprint(value)
     _validate_effective_policy_snapshot(value, require_selected_profile=True)
@@ -2223,6 +2532,10 @@ def start_development_run(
     repository_id: str | None = None,
     base_branch: str | None = None,
     policy_overlays: Mapping[str, Sequence[str | Path]] | None = None,
+    touched_paths: Sequence[str] = (),
+    subjects: Sequence[str] = (),
+    rulebook_ids: Sequence[str] = (),
+    context_selection_override: Mapping[str, Any] | None = None,
     auto_dev_mode: str = "single_stage",
     requested_stage: str | None = None,
     goal: str | None = None,
@@ -2411,6 +2724,10 @@ def start_development_run(
         selected_profile=profile,
         profile_source=source,
         include_body=True,
+        touched_paths=touched_paths,
+        subjects=subjects,
+        rulebook_ids=rulebook_ids,
+        context_selection_override=context_selection_override,
     )
     project_path = project_root(root, domain, project)
     if apply and selected_packet is None:
@@ -2503,6 +2820,7 @@ def start_development_run(
             name: [item["source_ref"] for item in value["sources"]]
             for name, value in effective_policies["planes"].items()
         },
+        "context_selection": effective_policies["context_selection"],
         "auto_dev": {
             "mode": auto_dev_mode,
             "requested_stage": requested_stage,
@@ -2626,6 +2944,15 @@ def start_development_run(
     operation_tickets = (
         list(dict.fromkeys(tickets)) if selected_packet is not None else list(plan["tickets"])
     )
+    frozen_context_selection = run_policies.get("context_selection")
+    if isinstance(frozen_context_selection, Mapping):
+        if plan.get("context_selection") is None:
+            plan["context_selection"] = deepcopy(dict(frozen_context_selection))
+            _atomic_json(portfolio_path, plan)
+        elif plan.get("context_selection") != frozen_context_selection:
+            raise DevelopmentDeliveryError(
+                "frozen context selection differs between portfolio and effective policy receipt"
+            )
     plan.setdefault(
         "policy_sources",
         {
@@ -2963,6 +3290,7 @@ def start_development_run(
                     "policy_receipt": str(run_dir / "effective-policies.json"),
                     "policy_fingerprint": run_policies["fingerprint"],
                     "policy_sources": plan["policy_sources"],
+                    "context_selection": run_policies.get("context_selection"),
                     "repository": plan["repository"],
                     "authorship": plan["authorship"],
                     "canonical_work_id": canonical_work_id,
@@ -3083,6 +3411,7 @@ def start_development_run(
                     "policy_receipt": str(run_dir / "effective-policies.json"),
                     "policy_fingerprint": run_policies["fingerprint"],
                     "policy_sources": plan["policy_sources"],
+                    "context_selection": run_policies.get("context_selection"),
                     "repository": plan["repository"],
                     "authorship": plan["authorship"],
                     "canonical_work_id": canonical_work_id,
@@ -3298,6 +3627,85 @@ def start_development_run(
     return plan
 
 
+def _prior_reopen_context_selection(projection: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Read the prior frozen context from the finished Auto-Dev projection."""
+
+    delivery = projection.get("delivery")
+    if not isinstance(delivery, Mapping) or delivery.get("context_selection") is None:
+        return None
+    context = delivery.get("context_selection")
+    if not isinstance(context, Mapping):
+        raise DevelopmentDeliveryError(
+            "finished Auto-Dev state has malformed frozen context selection"
+        )
+    frozen = deepcopy(dict(context))
+    _validate_development_context_selection(frozen)
+    return frozen
+
+
+def _reopen_context_plan(
+    prior: Mapping[str, Any] | None,
+    *,
+    reselect_context: bool,
+    touched_paths: Sequence[str],
+    subjects: Sequence[str],
+    rulebook_ids: Sequence[str],
+) -> tuple[dict[str, Any] | None, str]:
+    """Choose carry-forward versus explicit Rules Engine context reselection."""
+
+    supplied = bool(touched_paths or subjects or rulebook_ids)
+    if reselect_context:
+        if not supplied:
+            raise DevelopmentDeliveryError(
+                "Auto-Dev reopen --reselect-context requires --touched-path, --subject, or --rulebook-id"
+            )
+        return None, "reselected"
+    if supplied:
+        raise DevelopmentDeliveryError(
+            "Auto-Dev reopen preserves its prior frozen context by default; pass "
+            "--reselect-context to provide new --touched-path, --subject, or --rulebook-id values"
+        )
+    if prior is None:
+        return None, "not-present"
+    return deepcopy(dict(prior)), "carried"
+
+
+def _reopen_context_provenance(
+    *,
+    mode: str,
+    prior: Mapping[str, Any] | None,
+    selected: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the compact, idempotency-bound context lineage for reopen."""
+
+    selection = (
+        selected.get("selection")
+        if isinstance(selected, Mapping) and isinstance(selected.get("selection"), Mapping)
+        else {}
+    )
+    rules_engine = (
+        selected.get("rules_engine_context")
+        if isinstance(selected, Mapping)
+        and isinstance(selected.get("rules_engine_context"), Mapping)
+        else {}
+    )
+    return {
+        "mode": mode,
+        "prior_content_sha256": (
+            str(prior.get("content_sha256") or "") if isinstance(prior, Mapping) else None
+        ),
+        "selected_content_sha256": (
+            str(selected.get("content_sha256") or "") if isinstance(selected, Mapping) else None
+        ),
+        "touched_paths": list(selection.get("touched_paths") or []),
+        "subjects": list(selection.get("subjects") or []),
+        "rulebook_ids": list(selection.get("rulebook_ids") or []),
+        "rules_engine_status": (
+            str(rules_engine.get("status") or "") if isinstance(rules_engine, Mapping) else None
+        ),
+    }
+
+
 def reopen_auto_dev_item(
     root: str | Path,
     state_file: str | Path,
@@ -3307,6 +3715,10 @@ def reopen_auto_dev_item(
     requested_stage: str = "qa",
     repository_id: str | None = None,
     base_branch: str | None = None,
+    touched_paths: Sequence[str] = (),
+    subjects: Sequence[str] = (),
+    rulebook_ids: Sequence[str] = (),
+    reselect_context: bool = False,
     apply: bool = False,
 ) -> dict[str, Any]:
     """Reopen immutable Health history into one fresh active packet and run."""
@@ -3378,6 +3790,14 @@ def reopen_auto_dev_item(
     health_sha256 = hashlib.sha256(health_receipt.read_bytes()).hexdigest()
     health_receipt_ref = health_receipt.relative_to(finished_packet).as_posix()
     title = str(canonical.get("title") or f"Implement {ticket}")
+    prior_context_selection = _prior_reopen_context_selection(projection)
+    context_override, context_mode = _reopen_context_plan(
+        prior_context_selection,
+        reselect_context=reselect_context,
+        touched_paths=touched_paths,
+        subjects=subjects,
+        rulebook_ids=rulebook_ids,
+    )
     launch_preflight = start_development_run(
         root,
         domain,
@@ -3387,11 +3807,28 @@ def reopen_auto_dev_item(
         run_id=run_id,
         repository_id=repository_id,
         base_branch=base_branch,
+        touched_paths=touched_paths,
+        subjects=subjects,
+        rulebook_ids=rulebook_ids,
+        context_selection_override=context_override,
         auto_dev_mode="single_stage",
         requested_stage=requested_stage,
         goal=requested_stage,
         provision_worktree=True,
         apply=False,
+    )
+    selected_context_selection = launch_preflight.get("context_selection")
+    if not isinstance(selected_context_selection, Mapping):
+        raise DevelopmentDeliveryError("Auto-Dev reopen preflight did not return frozen context selection")
+    selected_context_selection = deepcopy(dict(selected_context_selection))
+    _validate_development_context_selection(selected_context_selection)
+    # Freeze a reselect at preflight time.  Launch consumes this exact payload
+    # rather than resolving dynamic catalog/snapshot state a second time.
+    launch_context_override = selected_context_selection
+    context_provenance = _reopen_context_provenance(
+        mode=context_mode,
+        prior=prior_context_selection,
+        selected=(selected_context_selection if context_mode != "not-present" else None),
     )
     selected_repository = dict(launch_preflight["repository"])
     request = {
@@ -3407,6 +3844,7 @@ def reopen_auto_dev_item(
         "health_receipt": health_receipt_ref,
         "health_sha256": health_sha256,
         "repository": selected_repository,
+        "context": context_provenance,
     }
     request_fingerprint = hashlib.sha256(
         json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -3425,6 +3863,7 @@ def reopen_auto_dev_item(
         "health_receipt": str(health_receipt),
         "health_sha256": health_sha256,
         "repository": selected_repository,
+        "context": context_provenance,
         "request_fingerprint": request_fingerprint,
         "safety": {
             "preserve_finished_packet": True,
@@ -3484,6 +3923,7 @@ def reopen_auto_dev_item(
             and value.get("finished_autodev_sha256") == finished_autodev_sha256
             and value.get("health_receipt") == health_receipt_ref
             and value.get("health_sha256") == health_sha256
+            and value.get("context") == context_provenance
             and prior_finished == finished_packet
             and resolved_packet(value.get("active_packet")) == active_packet
         ):
@@ -3502,6 +3942,7 @@ def reopen_auto_dev_item(
             run_id=run_id,
             repository_id=repository_id,
             base_branch=base_branch,
+            context_selection_override=launch_context_override,
             auto_dev_mode="single_stage",
             requested_stage=requested_stage,
             goal=requested_stage,
@@ -3682,6 +4123,7 @@ def reopen_auto_dev_item(
             "finished_autodev_sha256": finished_autodev_sha256,
             "health_receipt": health_receipt_ref,
             "health_sha256": health_sha256,
+            "context": context_provenance,
             "active_packet": str(active_packet),
             "decision": "preserve finished history and provision fresh resources",
             "created_at": str(intent["created_at"]),

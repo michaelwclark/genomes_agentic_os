@@ -23,7 +23,7 @@ from ._shared import DEFAULT_ROOT
 
 
 def handle_route(args: argparse.Namespace) -> int:
-    print(format_packet(route_request(args.root, args.request)))
+    print(format_packet(route_request(args.root, args.request, role=args.role)))
     return 0
 
 
@@ -65,6 +65,7 @@ def handle_context_build(args: argparse.Namespace) -> int:
                 workflow=workflow,
                 lane=lane,
                 cwd=cwd,
+                role=args.role,
             )
         )
     )
@@ -72,12 +73,12 @@ def handle_context_build(args: argparse.Namespace) -> int:
 
 
 def handle_here_route(args: argparse.Namespace) -> int:
-    print(format_packet(route_request(args.root, args.request, cwd=Path.cwd())))
+    print(format_packet(route_request(args.root, args.request, cwd=Path.cwd(), role=args.role)))
     return 0
 
 
 def handle_here_context_build(args: argparse.Namespace) -> int:
-    print(format_packet(context_from_here(args.root, cwd=Path.cwd())))
+    print(format_packet(context_from_here(args.root, cwd=Path.cwd(), role=args.role)))
     return 0
 
 
@@ -131,7 +132,7 @@ def handle_context_explain(args: argparse.Namespace) -> int:
         path = target / filename
         if path.is_file():
             legacy_sources.append(path)
-    resolved = resolve_context_contract(target, root=root, legacy_sources=legacy_sources)
+    resolved = resolve_context_contract(target, root=root, legacy_sources=legacy_sources, role=args.role)
     print(yaml.safe_dump(resolved.as_dict(), sort_keys=False).strip())
     return 0 if resolved.ok else 1
 
@@ -201,6 +202,7 @@ def _add_context_target_args(parser: argparse.ArgumentParser) -> None:
     target_kind.add_argument("--workflow")
     target_kind.add_argument("--automation")
     parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    parser.add_argument("--role", help="Optional packet role for role-tagged exclusions.")
 
 
 def register(subparsers) -> None:
@@ -208,6 +210,7 @@ def register(subparsers) -> None:
     route_parser = subparsers.add_parser("route", help="Route a request to a domain, project, or workflow.")
     route_parser.add_argument("request")
     route_parser.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    route_parser.add_argument("--role", help="Optional packet role for role-tagged exclusions.")
     route_parser.set_defaults(handler=handle_route)
 
     context_parser = subparsers.add_parser("context", help="Build deterministic context packets.")
@@ -219,6 +222,7 @@ def register(subparsers) -> None:
     context_build.add_argument("--workflow")
     context_build.add_argument("--lane")
     context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    context_build.add_argument("--role", help="Optional packet role for role-tagged exclusions.")
     context_build.set_defaults(handler=handle_context_build)
     context_explain = context_subparsers.add_parser(
         "explain",
@@ -277,9 +281,11 @@ def register(subparsers) -> None:
     here_route = here_subparsers.add_parser("route", help="Route a request from the current directory.")
     here_route.add_argument("request")
     here_route.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    here_route.add_argument("--role", help="Optional packet role for role-tagged exclusions.")
     here_route.set_defaults(handler=handle_here_route)
     here_context = here_subparsers.add_parser("context", help="Build context from the current directory.")
     here_context_subparsers = here_context.add_subparsers(dest="here_context_command", required=True)
     here_context_build = here_context_subparsers.add_parser("build", help="Build context from the current directory.")
     here_context_build.add_argument("--root", default=DEFAULT_ROOT, help="Installed OS root path.")
+    here_context_build.add_argument("--role", help="Optional packet role for role-tagged exclusions.")
     here_context_build.set_defaults(handler=handle_here_context_build)

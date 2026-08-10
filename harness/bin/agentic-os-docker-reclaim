@@ -66,6 +66,13 @@ def parse_args(argv=None):
         metavar="NAME",
         help="Exact resource name that must never be removed. Repeatable.",
     )
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Only consider this exact resource name. Repeatable; use names from a report receipt.",
+    )
     parser.add_argument("--apply", action="store_true", help="Delete; default is report-only")
     parser.add_argument("--json", action="store_true", help="Emit the receipt to stdout")
     parser.add_argument(
@@ -95,7 +102,13 @@ def main(argv=None) -> int:
     roots = default_worktree_roots(root, Path(args.projects_root).expanduser())
     live = discover_worktree_dirs(roots)
 
-    plan = build_plan(client, live, scopes=scopes, protected_names=args.protect)
+    plan = build_plan(
+        client,
+        live,
+        scopes=scopes,
+        protected_names=args.protect,
+        selected_names=args.only,
+    )
     if args.apply:
         plan = apply_plan(client, plan)
 

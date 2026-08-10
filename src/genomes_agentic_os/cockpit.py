@@ -18,6 +18,7 @@ import webbrowser
 import yaml
 
 from .report_registry import collect_reports
+from .review_queue import read_review_queue
 from .runtime_backend import queue_mode_status
 from .source_observation import build_source_observation_snapshot
 
@@ -342,7 +343,11 @@ def collect_conversations(
     return sorted(conversations, key=lambda item: (item["updated_at"], item["id"]), reverse=True)
 
 
-def collect_reviews(work_items: list[dict[str, Any]], conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def collect_reviews(
+    work_items: list[dict[str, Any]],
+    conversations: list[dict[str, Any]],
+    review_queue: Iterable[dict[str, Any]] = (),
+) -> list[dict[str, Any]]:
     reviews: dict[str, dict[str, Any]] = {}
     for item in [*work_items, *conversations]:
         for pr in item.get("pull_requests", []):
@@ -370,7 +375,11 @@ def collect_reviews(work_items: list[dict[str, Any]], conversations: list[dict[s
                 review["evidence"].append(evidence)
             if str(item.get("updated_at") or "") > str(review.get("updated_at") or ""):
                 review["updated_at"] = item.get("updated_at", "")
-    return sorted(reviews.values(), key=lambda item: (item["updated_at"], item["title"]), reverse=True)
+    for review in review_queue:
+        key = str(review.get("id") or "")
+        if key:
+            reviews[key] = dict(review)
+    return sorted(reviews.values(), key=lambda item: (item.get("updated_at", ""), item["title"]), reverse=True)
 
 
 def collect_automations(root: str | Path, *, max_items: int = 500) -> list[dict[str, Any]]:
@@ -639,7 +648,8 @@ def build_cockpit_snapshot(
         ),
         [],
     )
-    reviews = collect("reviews", lambda: collect_reviews(work_items, conversations), [])
+    review_queue = collect("review_queue", lambda: read_review_queue(os_root), [])
+    reviews = collect("reviews", lambda: collect_reviews(work_items, conversations, review_queue), [])
     reports = collect("reports", lambda: collect_reports(os_root, now=now, max_files=max_files), [])
     automations = collect("automations", lambda: collect_automations(os_root), [])
     runtime = collect("runtime", lambda: collect_runtime(os_root), [])

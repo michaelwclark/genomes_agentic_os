@@ -133,6 +133,18 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
       ],
     });
     expect(completed.status).toBe("succeeded");
+    const afterCompletion = await fabric.ledger.runSnapshot(10);
+    const attemptHistory = afterCompletion.find(
+      (run) => run.taskId === first.task.id,
+    );
+    expect(attemptHistory?.attempts).toHaveLength(1);
+    expect(attemptHistory?.attempts[0]).toMatchObject({
+      attemptId: assignment!.attemptId,
+      workerId,
+      fabricEpoch: assignment!.fabricEpoch,
+      leaseDurationSeconds: 120,
+      result: { echoed: true },
+    });
     const outbox = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM fabric_effect_outbox WHERE effect_key=$1",
       [effectKey],
@@ -258,6 +270,18 @@ describe.skipIf(!enabled)("PostgreSQL + Valkey integration", () => {
       [effectKey],
     );
     expect(delivered.rows[0]?.status).toBe("delivered");
+    const afterDelivery = await fabric.ledger.runSnapshot(10);
+    const effectHistory = afterDelivery.find(
+      (run) => run.taskId === first.task.id,
+    )?.effects;
+    expect(effectHistory).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          effectKey,
+          providerReceipt: { providerId: "integration-receipt" },
+        }),
+      ]),
+    );
     const status = await fabric.status("integration-host", 20);
     expect(status).toMatchObject({
       schemaVersion: "agentic-os-execution-fabric-status/v1",

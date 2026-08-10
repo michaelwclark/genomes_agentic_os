@@ -47,7 +47,7 @@ SHARED_FACTORY_DOMAIN = "shared_factory"
 DEFAULT_PROJECTS_SOURCE = "~/projects"
 SOURCE_PACKAGE_VERSION = __version__
 DEFAULT_UPDATE_CHANNEL = "stable"
-DEFAULT_UPDATE_POLICY = "operator_approved"
+DEFAULT_UPDATE_POLICY = "auto_patch_minor"
 
 # Optional alias map: alternate spellings that normalize to an installed
 # domain slug. Intentionally empty in the generic product; operators can
@@ -334,6 +334,10 @@ MANAGED_RESOURCE_TREES = (
         "lib/skills/root/auto-dev-review-self",
     ),
     (
+        "harness/skills/auto-dev-review-self-opposing-model",
+        "lib/skills/root/auto-dev-review-self-opposing-model",
+    ),
+    (
         "harness/skills/auto-dev-review-others",
         "lib/skills/root/auto-dev-review-others",
     ),
@@ -451,6 +455,7 @@ DOMAIN_DIRECTORIES = (
     "02-projects",
     "03-workflows",
     "04-automations",
+    "config",
     "06-runs-and-logs",
     "06-runs-and-logs/runs",
     "06-runs-and-logs/failures",
@@ -884,6 +889,7 @@ commands.
 
 ## Approval Required
 
+- Major-version releases
 - Executable changes
 - Hook changes
 - MCP server registration changes
@@ -892,6 +898,7 @@ commands.
 
 ## Safe Without Additional Approval
 
+- Published patch and minor releases that pass receipt-backed reinstall verification
 - Missing templates
 - Missing docs
 - Missing registry entries
@@ -1327,6 +1334,7 @@ def ensure_self_improvement_surface(root: Path, result: ScaffoldResult) -> None:
     ensure_runtime_control_config(root, "doc-config.yml", "doc-config.yml", result)
     ensure_runtime_control_config(root, "notion-organization.yml", "notion-organization.yml", result)
     ensure_runtime_control_config(root, "automation-control.yml", "automation-control.yml", result)
+    ensure_runtime_control_config(root, "preconditions.yml", "preconditions.yml", result)
     ensure_runtime_control_config(
         root,
         "adaptive-routing-observation-report.yml",
@@ -1890,6 +1898,7 @@ the source of truth by themselves.
 | `auto-dev-pr-create` | Resolve and create or reuse the complete pull-request family before review. | `skills/auto-dev-pr-create/SKILL.md` |
 | `gitflow-pr-create` | Compatibility alias for Auto-Dev PR Create family mode. | `skills/gitflow-pr-create/SKILL.md` |
 | `auto-dev-review-self` | Review and repair our own active delivery. | `skills/auto-dev-review-self/SKILL.md` |
+| `auto-dev-review-self-opposing-model` | Run the canonical receipt-backed opposing-model review checkpoint. | `skills/auto-dev-review-self-opposing-model/SKILL.md` |
 | `auto-dev-review-others` | Review another author's live pull request. | `skills/auto-dev-review-others/SKILL.md` |
 | `auto-dev-qa` | Run project-configured QA independently. | `skills/auto-dev-qa/SKILL.md` |
 | `auto-dev-review-repair` | Own canonical review and repair behind Review Self. | `skills/auto-dev-review-repair/SKILL.md` |
@@ -1930,6 +1939,7 @@ the source of truth by themselves.
 | `/auto-dev-pr-create` | Resolve and create or reuse the complete pull-request family. | Runs before Review Self. |
 | `/gitflow-pr-create` | Invoke PR Create with GitFlow-family compatibility defaults. | Alias only; owns no policy. |
 | `/auto-dev-review-self` | Review and repair our own change. | Friendly route to canonical review/repair. |
+| `/auto-dev-review-self-opposing-model` | Run the canonical opposing-model review checkpoint. | Shared Claude/Codex receipt route for one ticket. |
 | `/auto-dev-review-others` | Review another author's live pull request. | Uses canonical PR Review. |
 | `/auto-dev-qa` | Run project-configured QA independently. | Records exact-revision evidence. |
 | `/auto-dev-review-repair` | Invoke the canonical review-and-repair owner directly. | Compatibility/manual expert entrypoint behind Review Self. |
@@ -2851,7 +2861,7 @@ def create_domain_structure(
 
     for directory in DOMAIN_DIRECTORIES:
         ensure_dir(domain_root / directory, result)
-    migrate_auto_dev_policy_directories(domain_root / "05-knowledge", result)
+    migrate_auto_dev_policy_directories(domain_root / "config", result)
 
     write_file_once(domain_root / "00-programs" / "README.md", programs_readme(domain), result)
 
@@ -2873,10 +2883,10 @@ def create_domain_structure(
     write_file_once(domain_root / "03-workflows" / "README.md", workflows_readme(domain), result)
     write_file_once(domain_root / "04-automations" / "README.md", automations_readme(domain), result)
     write_file_once(
-        domain_root / "05-knowledge" / "auto_dev" / "README.md",
+        domain_root / "config" / "auto_dev" / "README.md",
         f"""# Auto-Dev: {titleize_name(domain)}
 
-This directory is the domain policy layer between shared Auto-Dev behavior and
+This is the canonical domain policy layer between shared Auto-Dev behavior and
 project-specific behavior. `README.md` is an index and is not active policy.
 
 Create numbered Markdown addenda for every stage whose tracker, investigation,
@@ -2898,7 +2908,7 @@ Verify the effective root -> domain -> project selection with
     }
     for plane, guidance in plane_guidance.items():
         write_file_once(
-            domain_root / "05-knowledge" / "auto_dev" / plane / "README.md",
+            domain_root / "config" / "auto_dev" / plane / "README.md",
             f"""# {plane.replace("_", " ").title()}: {titleize_name(domain)}
 
 This is the domain layer for {guidance}. Add numbered, plain-English Markdown
@@ -3000,6 +3010,11 @@ def install_docs(root: str | Path) -> ScaffoldResult:
     copy_file(
         harness_source_dir() / "config" / "execution-fabric.yml",
         harness_path(os_root, "config", "execution-fabric.yml"),
+        result,
+    )
+    copy_file(
+        harness_source_dir() / "config" / "run-evidence.yml",
+        harness_path(os_root, "config", "run-evidence.yml"),
         result,
     )
     ensure_capability_registries(os_root, result)
@@ -3632,7 +3647,7 @@ def project_config_file_content(
                         },
                         "self_review": {
                             "command": "claude",
-                            "skill": "auto-dev-review-self",
+                            "skill": "auto-dev-review-self-opposing-model",
                             "failure_policy": "continue_with_receipt",
                         },
                     },
@@ -3731,35 +3746,35 @@ def project_config_file_content(
                     "dev_standards": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
-                            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+                            f"domains/{domain}/config/auto_dev/dev_standards",
                             "config/auto_dev/dev_standards",
                         ]
                     },
                     "qa_gates": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
-                            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+                            f"domains/{domain}/config/auto_dev/qa_gates",
                             "config/auto_dev/qa_gates",
                         ]
                     },
                     "gitflow_topology": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
-                            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+                            f"domains/{domain}/config/auto_dev/gitflow_topology",
                             "config/auto_dev/gitflow_topology",
                         ]
                     },
                     "auto_dev": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev",
-                            f"domains/{domain}/05-knowledge/auto_dev",
+                            f"domains/{domain}/config/auto_dev",
                             "config/auto_dev",
                         ]
                     },
                     "environment_access": {
                         "paths": [
                             "harness/shared_factory/05-knowledge/auto_dev/environment_access",
-                            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+                            f"domains/{domain}/config/auto_dev/environment_access",
                             "config/auto_dev/environment_access",
                         ]
                     },
@@ -4047,37 +4062,44 @@ def ensure_project_code_settings_defaults(
     conventional_policy_paths = {
         "dev_standards": [
             "harness/shared_factory/05-knowledge/auto_dev/dev_standards",
-            f"domains/{domain}/05-knowledge/auto_dev/dev_standards",
+            f"domains/{domain}/config/auto_dev/dev_standards",
             "config/auto_dev/dev_standards",
         ],
         "qa_gates": [
             "harness/shared_factory/05-knowledge/auto_dev/qa_gates",
-            f"domains/{domain}/05-knowledge/auto_dev/qa_gates",
+            f"domains/{domain}/config/auto_dev/qa_gates",
             "config/auto_dev/qa_gates",
         ],
         "gitflow_topology": [
             "harness/shared_factory/05-knowledge/auto_dev/gitflow_topology",
-            f"domains/{domain}/05-knowledge/auto_dev/gitflow_topology",
+            f"domains/{domain}/config/auto_dev/gitflow_topology",
             "config/auto_dev/gitflow_topology",
         ],
         "auto_dev": [
             "harness/shared_factory/05-knowledge/auto_dev",
-            f"domains/{domain}/05-knowledge/auto_dev",
+            f"domains/{domain}/config/auto_dev",
             "config/auto_dev",
         ],
         "environment_access": [
             "harness/shared_factory/05-knowledge/auto_dev/environment_access",
-            f"domains/{domain}/05-knowledge/auto_dev/environment_access",
+            f"domains/{domain}/config/auto_dev/environment_access",
             "config/auto_dev/environment_access",
         ],
     }
     legacy_policy_paths = {
         plane: [
-            path.replace("/auto_dev", "")
-            for path in paths
+            paths[0],
+            paths[1].replace(
+                f"domains/{domain}/config/auto_dev",
+                f"domains/{domain}/05-knowledge/auto_dev",
+            ),
+            paths[2],
         ]
         for plane, paths in conventional_policy_paths.items()
-        if plane != "auto_dev"
+    }
+    flat_legacy_policy_paths = {
+        plane: [path.replace("/auto_dev", "") for path in paths]
+        for plane, paths in legacy_policy_paths.items()
     }
     for plane, paths in conventional_policy_paths.items():
         current = policies.get(plane)
@@ -4086,7 +4108,11 @@ def ensure_project_code_settings_defaults(
             changed = True
         elif (
             isinstance(current, dict)
-            and current.get("paths") == legacy_policy_paths.get(plane)
+            and current.get("paths")
+            in (
+                legacy_policy_paths.get(plane, []),
+                flat_legacy_policy_paths.get(plane, []),
+            )
         ):
             current["paths"] = paths
             changed = True
