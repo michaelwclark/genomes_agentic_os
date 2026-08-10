@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -524,6 +524,53 @@ def test_rules_engine_context_hashes_concrete_kit_and_compact_dynamic_evidence(
     )["selection"]["rules_engine_context"]
     assert empty_findings["status"] == "loaded"
     assert empty_findings["known_findings"]["count"] == 0
+
+    # A partial fresh snapshot cannot mask a stale registry: daily validation
+    # must fail closed until every discovered environment is current.
+    original_snapshot = json.loads(snapshot.read_text(encoding="utf-8"))
+    preprod_snapshot = evidence / "snapshots" / "preprod" / "rulesmeta.json"
+    preprod_snapshot.parent.mkdir(parents=True)
+    preprod_snapshot.write_text(
+        json.dumps(
+            {
+                **original_snapshot,
+                "environment": "preprod",
+                "tenants": {"safe-tenant-preprod": {"rule_count": 2}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale_snapshot = {
+        **original_snapshot,
+        "last_successful_sync_at": (datetime.now(timezone.utc) - timedelta(hours=73))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+    snapshot.write_text(json.dumps(stale_snapshot), encoding="utf-8")
+    stale_evidence = resolve_investigation_contract(
+        root,
+        trigger="bug",
+        domain="acme",
+        project="app",
+        subjects=["rulebook"],
+        rulebook_ids=["ApplicableDocuments"],
+    )["selection"]["rules_engine_context"]
+    assert stale_evidence["status"] == "insufficient-evidence"
+    assert stale_evidence["reason_codes"] == ["snapshot-insufficient"]
+    assert stale_evidence["snapshot"]["status"] == "insufficient-evidence"
+    assert stale_evidence["snapshot"]["coverage"] == {
+        "environment_count": 2,
+        "tenant_count": 2,
+        "rule_count": 4,
+        "complete": True,
+    }
+    assert {
+        item["environment"]: item["freshness"]
+        for item in stale_evidence["snapshot"]["registries"]
+    } == {"preprod": "current", "qa": "stale"}
+    snapshot.write_text(json.dumps(original_snapshot), encoding="utf-8")
+    preprod_snapshot.unlink()
 
     policy_path = root / "domains/acme/02-projects/app/investigation-config/sources/rules-engine.md"
     policy_text = policy_path.read_text(encoding="utf-8")
