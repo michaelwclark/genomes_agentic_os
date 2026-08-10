@@ -215,7 +215,7 @@ def test_strict_source_rules_returns_a_handled_blocker(
 
     captured = capsys.readouterr()
     assert result == 2
-    assert "BLOCKER: no source-checkout rule files matched" in captured.err
+    assert "BLOCKER: declared source-rule glob matched no files" in captured.err
     assert "Do not proceed on inferred policy." in captured.err
 
 
@@ -481,6 +481,62 @@ def test_recursive_rule_surfaces_are_complete_and_overflow_is_a_blocker(tmp_path
         module.resolve_source_rules(
             {"root": str(overflow)}, module.rule_surface_config({}), strict=True
         )
+
+
+def test_declared_multi_segment_rule_globs_match_full_relative_paths(tmp_path: Path) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    direct_rule = checkout / "docs" / "rules" / "style.md"
+    nested_rule = checkout / "docs" / "rules" / "nested" / "style.md"
+    direct_rule.parent.mkdir(parents=True)
+    nested_rule.parent.mkdir(parents=True)
+    (checkout / "AGENTS.md").write_text("# root\n", encoding="utf-8")
+    direct_rule.write_text("# direct\n", encoding="utf-8")
+    nested_rule.write_text("# nested\n", encoding="utf-8")
+    config = module.rule_surface_config(
+        {
+            "repository": {
+                "rule_surfaces": {
+                    "globs": ["AGENTS.md", "docs/rules/*.md"],
+                    "required": True,
+                }
+            }
+        }
+    )
+
+    rules = module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
+
+    assert {entry["source_ref"] for entry in rules["files"]} == {
+        "AGENTS.md",
+        "docs/rules/style.md",
+    }
+
+
+def test_declared_rule_glob_that_matches_nothing_is_a_blocker(tmp_path: Path) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "AGENTS.md").write_text("# root\n", encoding="utf-8")
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md", "docs/rules/*.md"]}}}
+    )
+
+    with pytest.raises(module.Blocker, match="declared source-rule glob matched no files"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
+
+
+@pytest.mark.parametrize("pattern", ["/etc/AGENTS.md", "../outside.md"])
+def test_declared_rule_glob_must_be_checkout_relative(tmp_path: Path, pattern: str) -> None:
+    module = load_policy_context()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "AGENTS.md").write_text("# root\n", encoding="utf-8")
+    config = module.rule_surface_config(
+        {"repository": {"rule_surfaces": {"globs": ["AGENTS.md", pattern]}}}
+    )
+
+    with pytest.raises(module.Blocker, match="must be checkout-relative"):
+        module.resolve_source_rules({"root": str(checkout)}, config, strict=True)
 
 
 def test_direct_claude_rule_changes_the_effective_policy_fingerprint(

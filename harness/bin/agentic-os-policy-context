@@ -629,29 +629,50 @@ def rule_surface_config(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def expand_rule_globs(checkout: Path, globs: list[str]) -> list[Path]:
-    """Expand rule globs against the checkout without walking vendored trees."""
+def expand_rule_globs(
+    checkout: Path, globs: list[str], *, declared: bool = False
+) -> list[Path]:
+    """Expand rule globs against a checkout without walking vendored trees.
+
+    Declared globs are part of the policy contract, so an invalid or unmatched
+    one must not disappear from the effective-policy fingerprint. Built-in
+    convention globs remain best-effort because not every repository uses every
+    supported rule surface.
+    """
     matched: set[Path] = set()
     for pattern in globs:
         if pattern.startswith("/") or ".." in Path(pattern).parts:
-            # Rule surfaces are checkout-relative by contract; an absolute or
-            # escaping pattern would silently widen the trusted policy set.
+            if declared:
+                raise Blocker(
+                    f"declared source-rule glob must be checkout-relative: {pattern!r}",
+                    "Make repository.rule_surfaces.globs checkout-relative; absolute and "
+                    "escaping paths cannot contribute to the policy fingerprint.",
+                )
+            # Built-in convention globs are controlled by this executable and
+            # contain no path escapes. Preserve the defensive skip for them.
             continue
-        # Walk once with explicit pruning so documented exclusions are never
-        # traversed, rather than discovering excluded files and filtering them
-        # after the fact.  A slashless glob is rooted at the checkout; a
-        # recursive ``**`` glob may match at any depth (including the root).
-        recursive = "**" in pattern
+        # Walk with explicit pruning so documented exclusions are never
+        # traversed. A bare pattern is rooted at the checkout; any pattern with
+        # a path separator matches the full relative path at its declared depth.
+        root_only = "/" not in pattern and "**" not in pattern
+        pattern_matches: set[Path] = set()
         for directory, dirnames, filenames in os.walk(checkout, topdown=True):
             dirnames[:] = sorted(name for name in dirnames if name not in SKIP_DIRS)
             relative_dir = Path(directory).relative_to(checkout)
             for filename in filenames:
                 relative = relative_dir / filename
-                if _matches_rule_pattern(relative, pattern, recursive):
-                    matched.add(checkout / relative)
-            if not recursive:
-                # Non-recursive patterns only inspect the checkout root.
+                if _matches_rule_pattern(relative, pattern):
+                    pattern_matches.add(checkout / relative)
+            if root_only:
+                # Bare non-recursive patterns only inspect the checkout root.
                 break
+        if declared and not pattern_matches:
+            raise Blocker(
+                f"declared source-rule glob matched no files: {pattern!r} under {checkout}",
+                "Restore a matching rule surface or correct "
+                "repository.rule_surfaces.globs; do not emit a partial policy fingerprint.",
+            )
+        matched.update(pattern_matches)
     files = sorted(matched)
     if len(files) > MAX_RULE_FILES:
         raise Blocker(
@@ -662,10 +683,8 @@ def expand_rule_globs(checkout: Path, globs: list[str]) -> list[Path]:
     return files
 
 
-def _matches_rule_pattern(relative: Path, pattern: str, recursive: bool) -> bool:
+def _matches_rule_pattern(relative: Path, pattern: str) -> bool:
     """Match a checkout-relative rule pattern with predictable glob scope."""
-    if not recursive and len(relative.parts) != 1:
-        return False
     path_parts = relative.parts
     pattern_parts = tuple(part for part in pattern.split("/") if part)
 
@@ -684,16 +703,6 @@ def _matches_rule_pattern(relative: Path, pattern: str, recursive: bool) -> bool
         )
 
     return matches(0, 0)
-
-
-def _is_skipped(checkout: Path, candidate: Path) -> bool:
-    try:
-        relative = candidate.relative_to(checkout)
-    except ValueError:
-        return True
-    return any(part in SKIP_DIRS for part in relative.parts[:-1])
-
-
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -727,7 +736,9 @@ def resolve_source_rules(
             "project's config/development.yml.",
         )
 
-    files = expand_rule_globs(checkout.resolve(), config["globs"])
+    files = expand_rule_globs(
+        checkout.resolve(), config["globs"], declared=config["mode"] == "declared"
+    )
     entries = [
         {
             "source_ref": str(path.relative_to(checkout.resolve())),
