@@ -635,6 +635,15 @@ skills:
     builtin: true
     bootstrap: false
     purpose: Converge our tracker pull-request family and record immutable merge readiness without merging.
+  - id: auto-dev-validate-production-release
+    title: Auto-Dev Validate Production Release
+    source_path: harness/skills/auto-dev-validate-production-release
+    installed_path: shared_factory/05-knowledge/skills/auto-dev-validate-production-release
+    harness_targets: [codex, claude]
+    status: active
+    builtin: true
+    bootstrap: false
+    purpose: Validate exact release-candidate evidence and operational gates before merge.
   - id: auto-dev-merge
     title: Auto-Dev Merge
     source_path: harness/skills/auto-dev-merge

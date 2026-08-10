@@ -144,6 +144,12 @@ def command_entries() -> list[dict[str, str]]:
             "source": "harness/commands/auto-dev-finalize.md",
         },
         {
+            "id": "auto-dev-validate-production-release",
+            "command": "/auto-dev-validate-production-release",
+            "description": "Validate the production release candidate and its exact evidence before the final merge.",
+            "source": "harness/commands/auto-dev-validate-production-release.md",
+        },
+        {
             "id": "auto-dev-merge",
             "command": "/auto-dev-merge",
             "description": "Execute the final authorized merge from a PR-owner readiness receipt with live provider readback.",
