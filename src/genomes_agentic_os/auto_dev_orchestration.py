@@ -914,7 +914,15 @@ def _sync_auto_dev_program_run_packet(
         )
     current_stage = str(value.get("current_stage") or "").strip()
     failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else None
-    if failure and current_stage and current_stage not in sealed_workflows:
+    # An executor handoff happens before a workflow starts. It is a durable
+    # task-level pending/blocked boundary, not an immutable workflow result.
+    # Recording it as execution_failed would permanently misstate a stage that
+    # has not run and would prevent the later accepted execution from closing
+    # the packet correctly.
+    pre_execution_handoff = (
+        isinstance(failure, Mapping) and failure.get("kind") == "executor_unavailable"
+    )
+    if failure and not pre_execution_handoff and current_stage and current_stage not in sealed_workflows:
         record_program_workflow(
             os_root,
             packet_id=packet_id,
@@ -933,7 +941,7 @@ def _sync_auto_dev_program_run_packet(
             finished_at=str(value.get("updated_at") or _utc_now()),
             receipt_refs=[str(failure.get("receipt") or "").strip()] if failure.get("receipt") else [],
         )
-    elif current_stage and current_stage not in sealed_workflows:
+    elif not pre_execution_handoff and current_stage and current_stage not in sealed_workflows:
         begin_program_workflow(
             os_root,
             packet_id=packet_id,

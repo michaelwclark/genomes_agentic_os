@@ -2613,6 +2613,12 @@ def test_everything_apply_records_pending_executor_handoff(
     assert handoff["worktree"] == task["worktree"]
     assert handoff["policy"]["fingerprint"] == task["policy_fingerprint"]
     assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
+    from genomes_agentic_os.program_run_packets import read_program_run_packet
+
+    run_packet = read_auto_dev_state(task["autodev_path"])["run_packet"]
+    run_summary = read_program_run_packet(root, run_packet["packet_id"])
+    assert run_summary["state"] == "running"
+    assert run_summary["running_workflows"] == []
     events = [
         json.loads(line)
         for line in (Path(output["tasks"][0]["state_ref"]).parent / "events.jsonl")
