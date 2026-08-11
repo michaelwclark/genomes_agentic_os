@@ -2557,6 +2557,33 @@ def test_everything_apply_records_pending_executor_handoff(
     assert handoff["policy"]["fingerprint"] == task["policy_fingerprint"]
     assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
 
+    # A named single-stage resume of this Everything packet must retain the
+    # original pending handoff, not automatically clear it and masquerade as
+    # a new worktree-ready success.
+    assert main(
+        [
+            "auto-dev",
+            "readiness",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["state"] == "pending"
+    resumed_task = TaskState(Path(resumed["tasks"][0]["state_ref"])).read()
+    assert resumed_task["state"] == "worktree_ready"
+    assert resumed_task["failure"]["kind"] == "executor_unavailable"
+    assert resumed_task["failure"]["receipt"] == task["failure"]["receipt"]
+    assert resumed_task["attempts"]["executor_unavailable"] == 1
+    assert not (
+        Path(resumed_task["failure"]["receipt"]).parent
+        / "executor-unavailable-attempt-02.json"
+    ).exists()
+
 
 def test_everything_apply_marks_four_unmanaged_tasks_pending_without_stage_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

@@ -3263,7 +3263,13 @@ def start_development_run(
         task_state = TaskState(state_path)
         current = task_state.read()
         failure = current.get("failure") if isinstance(current.get("failure"), Mapping) else {}
-        if failure.get("recoverable"):
+        # An unaccepted executor handoff is a durable, idempotent pending
+        # boundary.  Do not clear it merely because the same Everything
+        # packet is resumed: that would make the second invocation look like
+        # a fresh worktree-ready success while retaining no failed handoff
+        # evidence.  A distinct recovery after executor remediation remains
+        # the only way to advance this retry-bounded failure.
+        if failure.get("recoverable") and failure.get("kind") != "executor_unavailable":
             task_state.recover(
                 receipt="automatic provisioning resume",
                 idempotency_key=f"{run_id}:{ticket}:auto-recover:{current.get('updated_at')}",
@@ -3455,9 +3461,17 @@ def start_development_run(
             current_index = FORWARD_STATES.index(current_name)
             worktree_index = FORWARD_STATES.index("worktree_ready")
             if not provision_worktree or (current_index >= worktree_index and current.get("worktree")):
-                task_rows.append(
-                    dict(prior_rows.get(ticket) or {"ticket": ticket, "state_ref": str(state_path), **current})
+                handoff = _record_post_materialization_handoff(
+                    task_state,
+                    require_executor_handoff=require_executor_handoff,
                 )
+                row = dict(
+                    prior_rows.get(ticket)
+                    or {"ticket": ticket, "state_ref": str(state_path), **current}
+                )
+                if handoff is not None:
+                    row["handoff"] = handoff
+                task_rows.append(row)
                 continue
             if current_index > FORWARD_STATES.index("work_item_ready"):
                 raise DevelopmentDeliveryError(
