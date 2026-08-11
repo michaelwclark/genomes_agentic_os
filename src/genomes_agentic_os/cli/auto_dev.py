@@ -178,6 +178,7 @@ def handle_launch(args: argparse.Namespace) -> int:
     run_id = args.run_id
     selected_work_item: Path | None = None
     resumed_mode = ""
+    pending_executor_handoff = False
     if action in EXISTING_STATE_REQUIRED_ACTIONS and not args.state:
         raise DevelopmentDeliveryError(
             f"auto-dev {action} requires --state for an existing work item"
@@ -189,6 +190,16 @@ def handle_launch(args: argparse.Namespace) -> int:
         existing = read_auto_dev_state(args.state)
         resumed_mode = str(existing.get("mode") or "")
         selected_work_item = selected_state.parent
+        delivery = existing.get("delivery") if isinstance(existing.get("delivery"), dict) else {}
+        task_state_ref = Path(str(delivery.get("task_state_ref") or "")).expanduser()
+        if task_state_ref.is_file():
+            task_state = json.loads(task_state_ref.read_text(encoding="utf-8"))
+            failure = task_state.get("failure") if isinstance(task_state, dict) else None
+            pending_executor_handoff = (
+                isinstance(failure, dict)
+                and failure.get("kind") == "executor_unavailable"
+                and bool(failure.get("recoverable"))
+            )
         state_domain = str(existing.get("domain") or "")
         state_project = str(existing.get("project") or "")
         state_ticket = str(existing.get("source", {}).get("key") or "")
@@ -239,7 +250,7 @@ def handle_launch(args: argparse.Namespace) -> int:
             args.apply
             and (
                 action == "everything"
-                or (action == "readiness" and resumed_mode == "everything")
+                or (resumed_mode == "everything" and pending_executor_handoff)
             )
         ),
         apply=args.apply,

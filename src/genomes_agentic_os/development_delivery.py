@@ -1952,7 +1952,7 @@ class TaskState:
         )
         self.emit(
             event_type="development.task.failed",
-            idempotency_key=state["last_failure_key"],
+            idempotency_key=f"{state['last_failure_key']}:failed",
             payload={"ticket": state["ticket"], **state["failure"], "attempt": handoff["attempt"]},
         )
         _refresh_portfolio_state(self.path)

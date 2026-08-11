@@ -2571,6 +2571,34 @@ def test_everything_apply_records_pending_executor_handoff(
     assert handoff["worktree"] == task["worktree"]
     assert handoff["policy"]["fingerprint"] == task["policy_fingerprint"]
     assert read_auto_dev_state(task["autodev_path"])["stages"]["groom"]["status"] == "not_started"
+    events = [
+        json.loads(line)
+        for line in (Path(output["tasks"][0]["state_ref"]).parent / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert {event["type"] for event in events} >= {
+        "development.task.executor_handoff_pending",
+        "development.task.failed",
+    }
+
+    # Every named stage of an unrecovered Everything packet must preserve the
+    # same pending handoff, not return a success-looking dispatch result.
+    assert main(
+        [
+            "auto-dev",
+            "groom",
+            "--state",
+            task["autodev_path"],
+            "--root",
+            str(root),
+            "--apply",
+            "--json",
+        ]
+    ) == 1
+    groom_resume = json.loads(capsys.readouterr().out)
+    assert groom_resume["state"] == "pending"
+    assert groom_resume["tasks"][0]["handoff"]["receipt"] == task["failure"]["receipt"]
 
     # A named single-stage resume of this Everything packet must retain the
     # original pending handoff, not automatically clear it and masquerade as
