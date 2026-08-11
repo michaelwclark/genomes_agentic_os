@@ -27,8 +27,17 @@ and receipt-backed lifecycle hygiene, while leaving a resumable work packet.
 | Gitflow topology | `05-knowledge/auto_dev/gitflow_topology` + domain/project addenda | branch/PR/release planning |
 | Artifact contracts | `artifact-config/<provider>/<type>.md` at root/domain/project | every artifact-producing workflow |
 | Investigation config | `investigation-config/` at root/domain/project | Detective and ticket grooming |
+| Rules Engine validation kits | `lib/programs/domains/los/los_rules_engine/` selected by investigation context | LOS caller/rulebook Readiness, implementation, review, and QA |
 
 Every resolver is dynamic: add a Markdown file and the next run consumes it.
+
+A Rules Engine selector result is a frozen, evidence-only delivery input. It
+always records matching paths/subjects and source hashes. It records a
+canonical contract, five concrete artifact hashes, snapshot freshness/coverage,
+and known findings only when local catalog and snapshot evidence actually
+exist. Otherwise it carries `kit-unavailable` or `insufficient-evidence` into
+review and QA; it never grants live rule or tenant configuration mutation
+authority.
 
 Closeout and Health are separate responsibilities. Closeout reconciles live
 provider/delivery truth and proves `delivery_complete`. Health audits that proof
