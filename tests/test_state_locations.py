@@ -47,7 +47,11 @@ def test_migration_copies_common_rows_and_never_allows_cleanup(tmp_path: Path) -
         pass
     result = migrate_legacy_store(source, destination, apply=True)
     assert result["copied"] == {"events": 1}
+    assert result["destination_counts"] == {"events": 1}
     with connect(destination) as conn:
         assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+    retry = migrate_legacy_store(source, destination, apply=True)
+    assert retry["copied"] == {"events": 0}
+    assert retry["destination_counts"] == {"events": 1}
     with pytest.raises(ValueError, match="cleanup is not supported"):
         migrate_legacy_store(source, destination, cleanup=True)

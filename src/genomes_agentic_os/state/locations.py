@@ -94,6 +94,7 @@ def migrate_legacy_store(
         }
         source_counts = {table: int(source_conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]) for table in source_tables}
         copied: dict[str, int] = {}
+        destination_counts: dict[str, int] = {}
         if apply:
             with connect(destination_path) as destination_conn:
                 destination_tables = {
@@ -109,20 +110,23 @@ def migrate_legacy_store(
                         continue
                     quoted = ", ".join(f'"{column}"' for column in columns)
                     rows = source_conn.execute(f'SELECT {quoted} FROM "{table}"').fetchall()
+                    before_count = int(destination_conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
                     with transaction(destination_conn):
                         destination_conn.executemany(
                             f'INSERT OR IGNORE INTO "{table}" ({quoted}) VALUES ({", ".join("?" for _ in columns)})',
                             [tuple(row[column] for column in columns) for row in rows],
                         )
-                    copied[table] = len(rows)
+                    destination_count = int(destination_conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+                    copied[table] = destination_count - before_count
+                    destination_counts[table] = destination_count
     after_digest = _digest(source_path)
     return {
         "source": str(source_path),
         "destination": str(destination_path),
         "applied": apply,
         "copied": copied,
+        "destination_counts": destination_counts,
         "source_counts": source_counts,
         "source_unchanged": before_digest == after_digest,
         "cleanup": "not_performed",
     }
-
