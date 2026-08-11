@@ -2029,6 +2029,123 @@ def test_multi_ticket_provisioning_preserves_success_and_auto_recovers_retryable
         assert json.loads(receipt.read_text(encoding="utf-8"))["run_id"] == "portfolio-recovery"
 
 
+def _historical_origin_main_failure(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    """Create the pre-AGE-179 failure shape without creating task source effects."""
+
+    repo, base_sha = _repository(tmp_path)
+    root = tmp_path / "os"
+    project = _project(root, repo)
+    profile_path = project / "config" / "development.yml"
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    profile["repository"]["base_branch"] = "origin/main"
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    first = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-179"],
+        titles={"CC-179": "Retry selection"},
+        run_id="origin-main-retry",
+        apply=True,
+    )
+    task_path = Path(first["tasks"][0]["state_ref"])
+    failed = TaskState(task_path).read()
+    assert failed["state"] == "work_item_ready"
+    assert failed["failure"]["kind"] == "provisioning_failed"
+    assert "remote ref origin/main" in failed["failure"]["detail"]
+    profile["repository"]["base_branch"] = "main"
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    return root, repo, task_path, base_sha
+
+
+def test_correct_failed_base_selection_preserves_failure_then_allows_retry(tmp_path: Path) -> None:
+    root, repo, task_path, base_sha = _historical_origin_main_failure(tmp_path)
+    before = TaskState(task_path).read()
+    portfolio_path = task_path.parent.parent.parent / "portfolio.json"
+    assert json.loads(portfolio_path.read_text(encoding="utf-8"))["repository"]["base_branch"] == "origin/main"
+
+    corrected = delivery.correct_failed_base_selection(
+        task_path,
+        corrected_base_branch="main",
+        idempotency_key="cc-179:correct-main",
+        apply=True,
+    )
+
+    assert corrected["result"] == "corrected"
+    assert corrected["base_sha"] == base_sha
+    receipt = Path(corrected["receipt"])
+    recorded = json.loads(receipt.read_text(encoding="utf-8"))
+    assert recorded["original"]["failure"] == before["failure"]
+    assert recorded["original"]["repository"]["base_branch"] == "origin/main"
+    assert recorded["corrected"]["repository"]["base_branch"] == "main"
+    assert recorded["preflight"]["no_worktree_or_runtime_effect"] is True
+    selected = TaskState(task_path).read()
+    assert selected["failure"] == before["failure"]
+    assert selected["repository"]["base_branch"] == "main"
+    assert selected["base_selection_corrections"][0]["receipt"] == str(receipt)
+    portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+    assert portfolio["repository"]["base_branch"] == "main"
+    assert _git("branch", "--list", "feature/cc-179-retry-selection", cwd=repo) == ""
+
+    resumed = delivery.start_development_run(
+        root,
+        "acme",
+        "app",
+        ["CC-179"],
+        titles={"CC-179": "Retry selection"},
+        run_id="origin-main-retry",
+        apply=True,
+    )
+    assert resumed["state"] == "dispatching"
+    recovered = TaskState(task_path).read()
+    assert recovered["state"] == "worktree_ready"
+    assert recovered["failure"] is None
+    assert recovered["base_selection_corrections"][0]["receipt"] == str(receipt)
+
+
+@pytest.mark.parametrize("effect", ["worktree", "local_branch", "provider_branch"])
+def test_correct_failed_base_selection_rejects_every_post_failure_effect(
+    tmp_path: Path, effect: str
+) -> None:
+    _, repo, task_path, _ = _historical_origin_main_failure(tmp_path)
+    task = TaskState(task_path)
+    branch = "feature/cc-179-retry-selection"
+    if effect == "worktree":
+        state = task.read()
+        state["worktree"] = {"path": "/tmp/not-a-real-worktree", "branch": branch}
+        state["updated_at"] = "2026-08-11T00:00:00Z"
+        task.path.write_text(json.dumps(state), encoding="utf-8")
+    elif effect == "local_branch":
+        _git("branch", branch, cwd=repo)
+    else:
+        _git("branch", branch, cwd=repo)
+        _git("push", "origin", branch, cwd=repo)
+        _git("branch", "-D", branch, cwd=repo)
+
+    with pytest.raises(DevelopmentDeliveryError, match="forbidden after"):
+        delivery.correct_failed_base_selection(
+            task_path,
+            corrected_base_branch="main",
+            idempotency_key=f"cc-179:{effect}",
+            apply=True,
+        )
+
+    rejected = task.read()
+    assert rejected["repository"]["base_branch"] == "origin/main"
+    assert not rejected.get("base_selection_corrections")
+
+
+def test_correct_failed_base_selection_rejects_any_replacement_other_than_main(tmp_path: Path) -> None:
+    _, _, task_path, _ = _historical_origin_main_failure(tmp_path)
+    with pytest.raises(DevelopmentDeliveryError, match="only permits"):
+        delivery.correct_failed_base_selection(
+            task_path,
+            corrected_base_branch="release/2026-08",
+            idempotency_key="cc-179:not-main",
+            apply=True,
+        )
+
+
 def test_multi_ticket_run_can_resume_one_explicitly_selected_packet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2482,6 +2482,282 @@ def create_isolated_worktree(
     }
 
 
+def _base_selection_correction_context(
+    state_path: Path,
+    *,
+    corrected_base_branch: str,
+    runner: Any,
+) -> dict[str, Any]:
+    """Prove an old invalid-base failure is still safe to correct.
+
+    This is deliberately narrower than normal recovery.  It recognizes only
+    the historical ``origin/main`` provisioning failure, and every check here
+    runs before the correction receipt or either mutable selection is changed.
+    """
+
+    task = TaskState(state_path).read()
+    requested = corrected_base_branch.strip()
+    if requested != "main":
+        raise DevelopmentDeliveryError(
+            "base-selection correction only permits the verified branch 'main'"
+        )
+    failure = task.get("failure") if isinstance(task.get("failure"), Mapping) else {}
+    detail = str(failure.get("detail") or "").lower()
+    if not (
+        task.get("state") == "work_item_ready"
+        and failure.get("kind") == "provisioning_failed"
+        and failure.get("recoverable") is True
+        and failure.get("retry_state") == "work_item_ready"
+        and "origin/main" in detail
+        and "remote ref" in detail
+    ):
+        raise DevelopmentDeliveryError(
+            "base-selection correction requires the exact retryable origin/main provisioning failure"
+        )
+    if task.get("worktree") or task.get("runtime"):
+        raise DevelopmentDeliveryError(
+            "base-selection correction is forbidden after a worktree or runtime effect"
+        )
+    repository = task.get("repository") if isinstance(task.get("repository"), Mapping) else {}
+    if repository.get("base_branch") != "origin/main":
+        raise DevelopmentDeliveryError(
+            "base-selection correction requires the recorded base branch origin/main"
+        )
+    os_root = str(task.get("os_root") or "").strip()
+    domain = str(task.get("domain") or "").strip()
+    project = str(task.get("project") or "").strip()
+    title = str(task.get("title") or "").strip()
+    ticket = str(task.get("ticket") or "").strip()
+    work_item_raw = str(task.get("work_item") or "").strip()
+    if not all((os_root, domain, project, title, ticket, work_item_raw)):
+        raise DevelopmentDeliveryError(
+            "base-selection correction requires a fully linked pre-worktree delivery task"
+        )
+    project_path = project_root(os_root, domain, project)
+    work_item = Path(work_item_raw).expanduser().resolve()
+    try:
+        work_item.relative_to((project_path / "work-items").resolve())
+    except ValueError as exc:
+        raise DevelopmentDeliveryError(
+            "base-selection correction work item is outside the owning project"
+        ) from exc
+    if not work_item.is_dir():
+        raise DevelopmentDeliveryError("base-selection correction work item is missing")
+    run_dir = state_path.parent.parent.parent
+    portfolio_path = run_dir / "portfolio.json"
+    portfolio = _read_mapping(portfolio_path)
+    portfolio_repository = (
+        portfolio.get("repository") if isinstance(portfolio.get("repository"), Mapping) else {}
+    )
+    if portfolio_repository != repository:
+        raise DevelopmentDeliveryError(
+            "base-selection correction requires matching task and portfolio selections"
+        )
+    profile, _ = load_development_profile(os_root, domain, project)
+    configured_repository = (
+        profile.get("repository") if isinstance(profile.get("repository"), Mapping) else {}
+    )
+    if configured_repository.get("base_branch") != "main":
+        raise DevelopmentDeliveryError(
+            "base-selection correction requires the current project base branch to be main"
+        )
+    repo = expand_path(str(repository.get("root") or ""))
+    configured_root = expand_path(str(configured_repository.get("root") or ""))
+    if not repo.is_dir() or repo.resolve() != configured_root.resolve():
+        raise DevelopmentDeliveryError(
+            "base-selection correction repository does not match the current project profile"
+        )
+    branch = _task_branch(
+        str(profile["worktrees"].get("branch_template") or "feature/{ticket}-{slug}"),
+        ticket,
+        _slug(title),
+    )
+    worktrees = runner(["git", "-C", str(repo), "worktree", "list", "--porcelain"])
+    if worktrees.returncode != 0:
+        raise DevelopmentDeliveryError(
+            (worktrees.stderr or worktrees.stdout or "git worktree inspection failed").strip()
+        )
+    if f"branch refs/heads/{branch}" in worktrees.stdout:
+        raise DevelopmentDeliveryError(
+            "base-selection correction is forbidden after the task worktree exists"
+        )
+    local_branch = runner(
+        ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]
+    )
+    if local_branch.returncode == 0:
+        raise DevelopmentDeliveryError(
+            "base-selection correction is forbidden after a task source branch exists"
+        )
+    if local_branch.returncode not in {0, 1}:
+        raise DevelopmentDeliveryError("cannot prove the task source branch is absent")
+    remote_branch = runner(["git", "-C", str(repo), "ls-remote", "--heads", "origin", branch])
+    if remote_branch.returncode != 0:
+        raise DevelopmentDeliveryError(
+            (remote_branch.stderr or remote_branch.stdout or "cannot inspect origin task branch").strip()
+        )
+    if remote_branch.stdout.strip():
+        raise DevelopmentDeliveryError(
+            "base-selection correction is forbidden after a provider task branch exists"
+        )
+    fetched = runner(["git", "-C", str(repo), "fetch", "origin", "main"])
+    if fetched.returncode != 0:
+        raise DevelopmentDeliveryError(
+            (fetched.stderr or fetched.stdout or "cannot verify origin/main").strip()
+        )
+    resolved = runner(["git", "-C", str(repo), "rev-parse", "origin/main"])
+    base_sha = resolved.stdout.strip()
+    if resolved.returncode != 0 or not re.fullmatch(r"[a-fA-F0-9]{7,64}", base_sha):
+        raise DevelopmentDeliveryError("cannot prove the corrected origin/main revision")
+    return {
+        "task": task,
+        "failure": dict(failure),
+        "repository": dict(repository),
+        "portfolio": portfolio,
+        "portfolio_path": portfolio_path,
+        "work_item": work_item,
+        "run_dir": run_dir,
+        "branch": branch,
+        "base_sha": base_sha,
+        "corrected_repository": {**dict(repository), "base_branch": "main"},
+    }
+
+
+def correct_failed_base_selection(
+    state_file: str | Path,
+    *,
+    corrected_base_branch: str,
+    idempotency_key: str,
+    apply: bool = False,
+    runner: Any = _run_command,
+) -> dict[str, Any]:
+    """Correct one historical pre-worktree ``origin/main`` failure safely.
+
+    The immutable receipt snapshots the original failure before normal resume
+    clears it.  This operation never creates a worktree, source branch, or
+    provider branch; the caller must resume Auto-Dev separately after apply.
+    """
+
+    state_path = Path(state_file).expanduser().resolve()
+    state = TaskState(state_path)
+    current = state.read()
+    corrections = current.get("base_selection_corrections")
+    if isinstance(corrections, list):
+        for correction in corrections:
+            if not isinstance(correction, Mapping) or correction.get("idempotency_key") != idempotency_key:
+                continue
+            if correction.get("to_base_branch") != corrected_base_branch.strip():
+                raise DevelopmentDeliveryError("idempotency key belongs to a different base-selection correction")
+            return {
+                "schema": "development-base-selection-correction-result/v1",
+                "result": "replayed",
+                "state": str(state_path),
+                "ticket": current.get("ticket"),
+                "correction": dict(correction),
+            }
+    if not idempotency_key.strip():
+        raise DevelopmentDeliveryError("base-selection correction requires an idempotency key")
+    context = _base_selection_correction_context(
+        state_path,
+        corrected_base_branch=corrected_base_branch,
+        runner=runner,
+    )
+    original_state_sha256 = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    original_failure = context["failure"]
+    original_failure_sha256 = _json_sha256(original_failure)
+    receipt = {
+        "schema": "development-base-selection-correction/v1",
+        "kind": "retryable-pre-worktree-base-selection-correction",
+        "idempotency_key": idempotency_key,
+        "run_id": context["task"].get("run_id"),
+        "ticket": context["task"].get("ticket"),
+        "recorded_at": utc_now(),
+        "original": {
+            "repository": context["repository"],
+            "failure": original_failure,
+            "failure_sha256": original_failure_sha256,
+            "task_state_ref": str(state_path),
+            "task_state_sha256_before_correction": original_state_sha256,
+        },
+        "corrected": {
+            "repository": context["corrected_repository"],
+            "verified_remote_ref": "origin/main",
+            "base_sha": context["base_sha"],
+        },
+        "preflight": {
+            "task_branch": context["branch"],
+            "no_worktree_or_runtime_effect": True,
+            "no_local_task_branch": True,
+            "no_provider_task_branch": True,
+        },
+    }
+    digest = _json_sha256(receipt)
+    receipt_path = (
+        context["work_item"]
+        / "artifacts"
+        / "development-delivery"
+        / "base-selection-corrections"
+        / f"{digest}.json"
+    )
+    result = {
+        "schema": "development-base-selection-correction-result/v1",
+        "result": "planned" if not apply else "corrected",
+        "state": str(state_path),
+        "ticket": context["task"].get("ticket"),
+        "receipt": str(receipt_path),
+        "receipt_sha256": digest,
+        "corrected_base_branch": "main",
+        "base_sha": context["base_sha"],
+        "next_action": "resume the same Auto-Dev run after this receipt is recorded",
+    }
+    if not apply:
+        return result
+    with _file_lock(state_path.with_suffix(state_path.suffix + ".lock")):
+        latest = state.read()
+        if latest.get("updated_at") != context["task"].get("updated_at"):
+            raise DevelopmentDeliveryError("task changed during base-selection correction; rerun preflight")
+        _atomic_json(receipt_path, receipt)
+        latest["repository"] = context["corrected_repository"]
+        correction_row = {
+            "idempotency_key": idempotency_key,
+            "from_base_branch": "origin/main",
+            "to_base_branch": "main",
+            "receipt": str(receipt_path),
+            "sha256": digest,
+            "recorded_at": receipt["recorded_at"],
+        }
+        latest.setdefault("base_selection_corrections", []).append(correction_row)
+        latest.setdefault("receipts", []).append(
+            {"state": latest["state"], "ref": str(receipt_path), "sha256": digest, "recorded_at": receipt["recorded_at"]}
+        )
+        latest["updated_at"] = utc_now()
+        latest["last_base_selection_correction_key"] = idempotency_key
+        _atomic_json(state_path, latest)
+    with _file_lock(context["portfolio_path"].with_suffix(".json.lock")):
+        portfolio = _read_mapping(context["portfolio_path"])
+        if portfolio.get("repository") != context["repository"]:
+            raise DevelopmentDeliveryError("portfolio changed during base-selection correction; manual reconciliation required")
+        portfolio["repository"] = context["corrected_repository"]
+        portfolio.setdefault("base_selection_corrections", []).append(
+            {**correction_row, "task_state_ref": str(state_path)}
+        )
+        portfolio["updated_at"] = utc_now()
+        _atomic_json(context["portfolio_path"], portfolio)
+    state.emit(
+        event_type="development.task.base_selection_corrected",
+        idempotency_key=idempotency_key,
+        payload={
+            "ticket": latest["ticket"],
+            "from_base_branch": "origin/main",
+            "to_base_branch": "main",
+            "base_sha": context["base_sha"],
+            "receipt": str(receipt_path),
+        },
+    )
+    _sync_auto_dev_projection(state_path)
+    _refresh_portfolio_state(state_path)
+    return result
+
+
 def _adopt_registered_worktree(
     *,
     os_root: str | Path,
